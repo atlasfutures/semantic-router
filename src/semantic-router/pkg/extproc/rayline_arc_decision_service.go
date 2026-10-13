@@ -30,6 +30,7 @@ import (
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/metrics"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/routerruntime"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
@@ -89,6 +90,11 @@ func (service *raylineARCDecisionService) RouteDecision(
 		episodeMode,
 	)
 	if failure := selectionContext.RaylineARC.PreparationFailure; failure != "" {
+		// Counted here because this path returns before Select(), whose
+		// failure constructor is where the routed path counts the same
+		// class; without this a preparation refusal on a lookup is invisible
+		// to the failure metric.
+		metrics.RecordRaylineARCFailure(failure)
 		service.router.finalizeRaylineARCAbort(requestContext, failure)
 		return routerruntime.RouteDecision{}, prepareFailureError(failure)
 	}

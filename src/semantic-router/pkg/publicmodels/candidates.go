@@ -97,11 +97,12 @@ func routingCandidatesOf(cfg *config.RouterConfig, recipe *config.RoutingRecipe)
 
 // routingContextLimitOf is the recipe's declared ARC context limit: the
 // smallest max_context_tokens across its rayline_arc decisions that declare
-// one, since the alias cannot choose the decision and only the smaller is
-// guaranteed, or nil when none declares one. Readiness holds two ARC
-// decisions in one recipe to one selection config, so they declare the same
-// limit in practice; the minimum is what the listing can promise if they did
-// not.
+// one, or nil when none declares one. Readiness refuses the default recipe's
+// ARC decisions as conflicting_config when their selection configs differ,
+// this field included, so there the decisions agree or the cell serves
+// nothing; an entrypoint recipe is not held to that, and the alias cannot
+// choose the decision, so the smaller is what the listing can promise, as
+// appendArm keeps the smaller output cap.
 func routingContextLimitOf(recipe *config.RoutingRecipe) *int {
 	if recipe == nil {
 		return nil

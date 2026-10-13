@@ -66,18 +66,21 @@ routing:
           # most 300 s. Keep it below the deployment's ext_proc
           # message_timeout (60 s in the shipped Gateway API manifests).
           readiness_wait_seconds: 0
-          # max_context_tokens: the longest context this cell's decision
-          # scores, in the router's token estimate: the encoder's capacity,
-          # or a smaller window the operator chooses to promise. Declared
-          # here, beside the encoder pointer, because the encoder deploy is
-          # what sets it. A longer turn is refused before the episode lease
-          # and the encoder call as over_context_limit (503, replayed by a
-          # gateway), and GET /v1/models publishes it on the alias as
-          # routing.max_context_tokens. It may not exceed the artifact
-          # encoder manifest's max_tokens (checked at readiness) or the
-          # policy package's encoding_profile.max_tokens (checked at load).
-          # Omitted, nothing is refused on it and nothing is published.
-          max_context_tokens: 262144
+          # max_context_tokens: the longest context this cell promises to
+          # score, in the router's token estimate: the encoder's capacity, or
+          # a smaller window the operator chooses. Declared beside the
+          # encoder pointer that sets it. GET /v1/models publishes it on the
+          # alias as routing.max_context_tokens; in artifact mode a longer
+          # turn is refused before the episode lease and the encoder call as
+          # over_context_limit (503, replayed by a gateway). It may not exceed
+          # the artifact encoder manifest's max_tokens (readiness refuses as
+          # artifact_context_limit, without reprobe) or a policy package's
+          # encoding_profile.max_tokens (refused at load). Omitted, nothing
+          # is refused on it and nothing is published. The mounted artifact
+          # is not pinned by this file, so this stays at the arms' own
+          # windows, below the fixture encoder's 262144: a cell declares its
+          # encoder's capacity, or the window it chooses under it.
+          max_context_tokens: 131072
           # routes_api serves POST /v1/routes from this cell: the selector's
           # choice for a request, returned without executing it. Off, and not
           # implied by configuring this algorithm -- a lookup drives the

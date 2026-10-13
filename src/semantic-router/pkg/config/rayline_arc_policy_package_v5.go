@@ -254,9 +254,17 @@ func validateRaylineARCPolicyPackageV5Dispatch(cfg *RouterConfig, decision Decis
 	// The package's encoding profile states the encoder's capacity. A cell
 	// may promise less than that, never more: a longer declared window
 	// would publish a context the policy service refuses.
-	if limit, capacity := arc.ContextLimit(), pkg.manifest.EncodingProfile.MaxTokens; limit > capacity {
-		return fmt.Errorf("max_context_tokens %d exceeds the package's encoding_profile.max_tokens %d",
-			limit, capacity)
+	if limit, capacity := arc.ContextLimit(), pkg.manifest.EncodingProfile.MaxTokens; limit > 0 {
+		// A v5 profile is not required to state max_tokens (only the v6
+		// decoder checks it), so a missing one is named rather than
+		// compared against as zero.
+		if capacity <= 0 {
+			return fmt.Errorf("max_context_tokens %d cannot be bounded: the package's encoding_profile states no max_tokens", limit)
+		}
+		if limit > capacity {
+			return fmt.Errorf("max_context_tokens %d exceeds the package's encoding_profile.max_tokens %d",
+				limit, capacity)
+		}
 	}
 	if lever := arc.ThinkingLever; lever != nil && lever.Enabled {
 		return fmt.Errorf("thinking_lever does not apply to a v5 package: the registry renders each action's control")

@@ -339,13 +339,11 @@ only on route lookups.
 
 ## The cell's context limit
 
-`max_context_tokens` is the longest context the cell's decision scores, in the
-router's own token estimate: the encoder's capacity, or a smaller window the
-operator chooses to promise. It is declared on the decision, beside the
-encoder pointer, because the encoder deploy is what sets it and nothing the
-router reads at runtime reports it: the session encoder refuses a longer
-session only after the turn is admitted, and a policy service's capacity is
-a deploy setting of its own.
+`max_context_tokens` is the longest context the cell promises to score, in
+the router's own token estimate: the encoder's capacity, or a smaller window
+the operator chooses. It is declared on the decision, beside the encoder
+pointer that sets it, so the number a gateway advertises is declared once in
+the cell's config rather than hard-coded downstream.
 
 ```yaml
 algorithm:
@@ -354,20 +352,34 @@ algorithm:
     max_context_tokens: 1000000
 ```
 
-Three things follow from declaring it. A turn whose estimate exceeds it is
-refused before the episode lease and before any encoder call, as
-`over_context_limit`: a 503 the gateway replays to its fallback provider, like
-`no_context_arm`, never a 400 that would end the turn. `GET /v1/models`
-publishes it on the alias as `routing.max_context_tokens`, so a gateway
-derives the window it advertises from the cell instead of hard-coding one.
-And it may not exceed what the encoder serves: in artifact mode readiness
-refuses a limit above the manifest's `encoder.max_tokens` as
-`artifact_context_limit`, and in policy-service mode load refuses one above
-the package's `encoding_profile.max_tokens`. Less than the encoder holds is a
-choice; more is a promise the encoder would break after admission.
+Three things follow from declaring it. `GET /v1/models` publishes it on the
+alias as `routing.max_context_tokens`, so a gateway derives the window it
+advertises from the cell. It may not exceed what the encoder serves: in
+artifact mode readiness refuses a limit above the manifest's
+`encoder.max_tokens` as `artifact_context_limit` (an unrecoverable selector,
+like the other artifact contract failures), and in policy-service mode load
+refuses one above the package's `encoding_profile.max_tokens`, or one on a
+v4 package, which states no capacity. Less than the encoder holds is a
+choice. And in artifact mode a turn whose estimate exceeds it is refused
+before the episode lease and before any encoder call, as
+`over_context_limit`: a 503 the gateway replays to its fallback provider,
+like `no_context_arm`, never a 400 that would end the turn.
+
+That refusal is on the router's estimate, the same conservative byte count
+the per-arm masks read, not on the encoder's tokenizer: a turn under the
+limit here can still be refused by the encoder, and a Responses turn that
+resumes stored history is counted by its body alone, as the masks count it.
+A close-header turn refused this way closes no retained session, which then
+waits for the encoder's idle eviction. Policy-service mode does not refuse on
+it: the service refuses a context its encoder cannot hold on its own count,
+and the router keeps the episode on its held arm for that turn
+(pathfinder#3329), which a pre-lease refusal would bypass.
 
 Omitted, it declares nothing: no turn is refused on it and the listing omits
-it, so a cell that predates the field behaves as it did. The per-arm
+it, so a cell that predates the field behaves as it did. The reference config
+declares the arms' own 131072, under the fixture encoder's 262144, because
+the artifact it mounts is not pinned there; a cell declares its encoder's
+capacity, or the window it chooses under it. The per-arm
 `context_window_size` masks below apply either way; the limit bounds the
 alias, the windows bound which arms a turn can land on.
 
@@ -683,9 +695,10 @@ derives.
 
 Beside the candidates, the alias carries `routing.max_context_tokens` when
 the decision declares `max_context_tokens` ("The cell's context limit"
-above): the longest context the cell scores, which bounds the window a
-gateway may advertise for the alias whatever the arms' windows are. It is
-absent when the decision declares none. Nothing else about the decision is
+above): the longest context the cell promises to score, bounded by its
+encoder's capacity, which bounds the window a gateway may advertise for the
+alias whatever the arms' windows are. It is absent when the decision declares
+none. Nothing else about the decision is
 published: the gateway derives its document from the candidates and that
 limit, and when the arm set changes the candidates change with it, so there
 is no artifact pin to key on.

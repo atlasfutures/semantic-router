@@ -218,6 +218,21 @@ func TestValidateRaylineARCAlgorithmConfigAcceptsAnOptionalContextLimit(t *testi
 	}
 }
 
+// A policy-service cell on a v4 package states no encoder capacity, so a
+// declared limit there could be checked against nothing and is refused;
+// undeclared, the cell loads as before.
+func TestValidateRaylineARCAlgorithmConfigRefusesAContextLimitOnAV4PolicyCell(t *testing.T) {
+	cfg, decision := policyDispatchFixture()
+	if err := validatePolicyDispatch(cfg, decision); err != nil {
+		t.Fatalf("undeclared on a v4 cell: %v", err)
+	}
+	decision.Algorithm.RaylineARC.MaxContextTokens = 262144
+	err := validatePolicyDispatch(cfg, decision)
+	if err == nil || !strings.Contains(err.Error(), "max_context_tokens needs a policy_service.package_manifest") {
+		t.Fatalf("declared on a v4 cell: error = %v, want the package_manifest requirement", err)
+	}
+}
+
 // The readiness re-probe schedule must stay optional: every deployment that
 // predates it leaves it unset, and unset means the shipped default rather
 // than a zero-second hot loop. What it may not be is negative, or so long

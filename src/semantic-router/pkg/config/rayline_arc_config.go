@@ -151,26 +151,35 @@ type RaylineARCAlgorithmConfig struct {
 	// as before. It cannot exceed 300 s, and must stay below the deployment's
 	// ext_proc message_timeout, or Envoy ends the exchange first.
 	ReadinessWaitSeconds int `yaml:"readiness_wait_seconds,omitempty"`
-	// MaxContextTokens is the longest context this cell's decision scores,
-	// in the router's own token estimate: the encoder's capacity, or a
-	// smaller window the operator chooses to promise. It is declared here,
-	// beside the encoder pointer, because the encoder deploy is what sets it
-	// and nothing the router reads at runtime reports it: the session
-	// encoder refuses a longer session only after the turn is admitted, and
-	// the policy service's capacity is a deploy setting of its own.
+	// MaxContextTokens is the longest context this cell promises to score,
+	// in the router's own token estimate (the same conservative count the
+	// per-arm context_window_size masks read). It is the window a gateway
+	// may advertise for the alias: GET /v1/models publishes it there as
+	// routing.max_context_tokens, so the number is declared once, beside the
+	// encoder pointer that sets it, instead of hard-coded downstream.
 	//
-	// A turn whose estimate exceeds it is refused before the episode lease
-	// and the encoder call, as over_context_limit (503, which a gateway
-	// replays to its fallback). GET /v1/models publishes it on the alias as
-	// routing.max_context_tokens, so a gateway can derive the window it
-	// advertises instead of hard-coding one. It must not exceed what the
-	// mounted artifact's encoder manifest or the policy package's encoding
-	// profile declares as max_tokens, which readiness and load check, so
-	// the cell never promises a longer context than its encoder serves.
+	// The encoder's own capacity is stated by the mounted artifact's encoder
+	// manifest (max_tokens) or the policy package's encoding profile
+	// (max_tokens); this declaration may not exceed it, which readiness
+	// checks in artifact mode and load checks in policy-service mode. Less
+	// than the capacity is the operator's choice. A policy-service cell
+	// needs a package_manifest to declare it, since a v4 package states no
+	// capacity to check against.
+	//
+	// In artifact mode a turn whose estimate exceeds it is refused before
+	// the episode lease and the encoder call, as over_context_limit (503,
+	// which a gateway replays to its fallback). The estimate is the router's
+	// byte heuristic of the request body, not the encoder's tokenizer, so a
+	// turn under the limit here can still be refused by the encoder, and a
+	// Responses turn that resumes stored history is counted by its body
+	// alone. In policy-service mode no turn is refused on it: the service
+	// refuses a context its encoder cannot hold on its own count, and the
+	// router keeps the episode on its held arm for that turn
+	// (policyCapacityHold), which a pre-lease refusal would bypass.
 	//
 	// Zero, the default, declares nothing: no turn is refused on it and the
 	// listing omits it, so a cell that has not declared a limit behaves as
-	// it did. The per-arm context_window_size masks still apply.
+	// it did.
 	MaxContextTokens int `yaml:"max_context_tokens,omitempty"`
 }
 
@@ -435,6 +444,12 @@ func validateRaylineARCPolicyServiceMode(cfg *RaylineARCAlgorithmConfig) error {
 	}
 	if cfg.Episode.CloseHeader != "" {
 		return fmt.Errorf("episode: close_header is not served in the policy-service mode")
+	}
+	// A v4 package states no encoder capacity, so a declared limit on such
+	// a cell could not be checked against anything and would publish a
+	// window nothing bounds.
+	if cfg.MaxContextTokens > 0 && !cfg.PolicyService.IsPackageV5() {
+		return fmt.Errorf("max_context_tokens needs a policy_service.package_manifest whose encoding_profile states the encoder's max_tokens")
 	}
 	if err := validateRaylineARCRoutesAPIConfig(cfg.RoutesAPI); err != nil {
 		return fmt.Errorf("routes_api: %w", err)

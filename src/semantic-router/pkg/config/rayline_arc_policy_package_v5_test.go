@@ -501,18 +501,31 @@ func TestRaylineARCPolicyPackageV5BoundsTheDeclaredContextLimit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	stripped := bytes.Replace(raw, []byte(`"max_tokens": 1010000,`), nil, 1)
+	if bytes.Equal(stripped, raw) {
+		t.Fatal("the YaRN fixture no longer states max_tokens where the test strips it")
+	}
 	for _, tc := range []struct {
 		name    string
 		limit   int
+		strip   bool
 		wantErr string
 	}{
 		{name: "undeclared", limit: 0},
 		{name: "under the encoder", limit: 1_000_000},
 		{name: "at the encoder", limit: 1_010_000},
 		{name: "over the encoder", limit: 1_010_001, wantErr: "max_context_tokens 1010001 exceeds the package's encoding_profile.max_tokens 1010000"},
+		// A v5 profile need not state max_tokens; one that does not is
+		// named, not compared against as zero.
+		{name: "profile states no capacity", limit: 100_000, strip: true,
+			wantErr: "max_context_tokens 100000 cannot be bounded: the package's encoding_profile states no max_tokens"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			cfg, decision := policyV5Decision(t, raw)
+			manifest := raw
+			if tc.strip {
+				manifest = stripped
+			}
+			cfg, decision := policyV5Decision(t, manifest)
 			decision.Algorithm.RaylineARC.MaxContextTokens = tc.limit
 			err := validatePolicyDispatch(cfg, decision)
 			if tc.wantErr == "" {

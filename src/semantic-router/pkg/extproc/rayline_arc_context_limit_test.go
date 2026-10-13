@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/routerruntime"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
@@ -78,6 +79,29 @@ func TestRaylineARCSelectionContextRefusesATurnOverTheContextLimit(t *testing.T)
 					arcContext.Turns, arcContext.OverContextArms, arcContext.State)
 			}
 		})
+	}
+}
+
+// A policy-service cell is not refused on its limit here: the service
+// refuses a context its encoder cannot hold on its own count, and the router
+// keeps the episode on its held arm through that refusal, which a pre-lease
+// 503 would bypass. The limit is still published and still bounded at load.
+func TestRaylineARCSelectionContextDoesNotRefuseOnTheLimitInPolicyServiceMode(t *testing.T) {
+	t.Parallel()
+	router := &OpenAIRouter{Config: &config.RouterConfig{}}
+	algorithm := contextLimitAlgorithm(1_000_000)
+	algorithm.RaylineARC.PolicyService = &config.RaylineARCPolicyServiceConfig{BaseURL: "http://policy-service:8000"}
+	request := contextLimitRequest(1_000_001)
+	request.SourceFormat = llmprotocol.OpenAIChatV1
+	arcContext := router.buildRaylineARCSelectionContext(
+		algorithm, request, []config.ModelRef{{Model: "arm-0"}}, raylineARCEpisodeEphemeral,
+	)
+	if arcContext.PreparationFailure == arcFailureOverContextLimit {
+		t.Fatalf("a policy-service turn was refused %s; the service's own refusal and the capacity hold govern there",
+			arcFailureOverContextLimit)
+	}
+	if arcContext.ContextTokens != 1_000_001 {
+		t.Fatalf("context tokens = %d, want the estimate carried for the masks", arcContext.ContextTokens)
 	}
 }
 
