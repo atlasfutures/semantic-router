@@ -259,6 +259,52 @@ def encoder_shed_answers_429_with_retry_after(stack: Stack) -> None:
     assert stack.metric(ADMISSION_METRIC, outcome="shed") >= before_shed + len(shed)
 
 
+# --- checks against the context-limited stack --------------------------------
+
+CELL_CONTEXT_LIMIT = 1024
+FAILURE_METRIC = "llm_rayline_arc_selection_failures_total"
+OVER_LIMIT_WORDS = 400
+
+
+def cell_context_limit_is_published_and_enforced(stack: Stack) -> None:
+    """The declared max_context_tokens reaches a caller over the wire.
+
+    GET /v1/models carries it on every alias beside the candidates, and a
+    consult over it answers 503 before the encoder or a provider is asked
+    anything, counted under its own class; a consult within it is served.
+    """
+    status, listing, _ = stack.request(stack.api_port, "/v1/models")
+    assert status == HTTP_OK, (status, listing)
+    aliases = [
+        model
+        for model in listing.get("data", [])
+        if model.get("routing", {}).get("candidates")
+    ]
+    assert aliases, listing
+    for model in aliases:
+        assert model["routing"].get("max_context_tokens") == CELL_CONTEXT_LIMIT, model
+
+    pooling = stack.encoder_stats()["pooling_requests"]
+    dispatched = len(stack.provider_requests())
+    over_limit = {"class": "over_context_limit"}
+    before = stack.metric(FAILURE_METRIC, **over_limit)
+    long_text = "the quick brown fox jumps over the lazy dog " * OVER_LIMIT_WORDS
+    status, body, _ = stack.route(
+        "episode-over-limit", "over", messages=[{"role": "user", "content": long_text}]
+    )
+    assert status == HTTP_UNAVAILABLE, (status, body)
+    assert stack.metric(FAILURE_METRIC, **over_limit) == before + 1, (
+        "an over-limit consult must be counted under over_context_limit",
+    )
+    assert stack.encoder_stats()["pooling_requests"] == pooling, (
+        "a refused consult must not reach the encoder",
+    )
+    assert len(stack.provider_requests()) == dispatched, stack.provider_requests()
+
+    status, body, _ = stack.route("episode-under-limit", "under")
+    assert status == HTTP_OK, (status, body)
+
+
 UNCAPPED_CHECKS: tuple[Callable[[Stack], None], ...] = (
     decision_names_a_worker_without_dispatching,
     mints_a_decision_id_when_absent,
@@ -272,6 +318,10 @@ UNCAPPED_CHECKS: tuple[Callable[[Stack], None], ...] = (
 
 CAPPED_CHECKS: tuple[Callable[[Stack], None], ...] = (
     encoder_shed_answers_429_with_retry_after,
+)
+
+LIMITED_CHECKS: tuple[Callable[[Stack], None], ...] = (
+    cell_context_limit_is_published_and_enforced,
 )
 
 
@@ -297,7 +347,9 @@ def main() -> int:
         failures += _run(stack, UNCAPPED_CHECKS)
     with Stack(max_inflight=1) as stack:
         failures += _run(stack, CAPPED_CHECKS)
-    total = len(UNCAPPED_CHECKS) + len(CAPPED_CHECKS)
+    with Stack(max_context_tokens=CELL_CONTEXT_LIMIT) as stack:
+        failures += _run(stack, LIMITED_CHECKS)
+    total = len(UNCAPPED_CHECKS) + len(CAPPED_CHECKS) + len(LIMITED_CHECKS)
     if failures:
         print(
             f"Rayline ARC acceptance: {total - len(failures)}/{total} passed; "

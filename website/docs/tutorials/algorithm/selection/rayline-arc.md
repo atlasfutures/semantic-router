@@ -337,6 +337,50 @@ names. An eval against the current router decides that, not this probe.
 Turning it on changes what the selector is asked on every routed turn, not
 only on route lookups.
 
+## The cell's context limit
+
+`max_context_tokens` is the longest context the cell promises to score, in
+the router's own token estimate: the encoder's capacity, or a smaller window
+the operator chooses. It is declared on the decision, beside the encoder
+pointer that sets it, so the number a gateway advertises is declared once in
+the cell's config rather than hard-coded downstream.
+
+```yaml
+algorithm:
+  type: rayline_arc
+  rayline_arc:
+    max_context_tokens: 1000000
+```
+
+It is the operator's statement and the cell config is its one source: the
+router takes it as written and does not compare it with the encoder's own
+capacity (the artifact manifest's or the package profile's `max_tokens`).
+Declare the encoder's capacity, or a smaller window; a larger one publishes
+a context the encoder refuses after admission.
+
+Two things follow from declaring it. `GET /v1/models` publishes it on the
+alias as `routing.max_context_tokens`, so a gateway derives the window it
+advertises from the cell. And in artifact mode a turn whose estimate exceeds
+it is refused before the episode lease and before any encoder call, as
+`over_context_limit`: a 503 the gateway replays to its fallback provider,
+like `no_context_arm`, never a 400 that would end the turn.
+
+That refusal is on the router's estimate, the same conservative byte count
+the per-arm masks read, not on the encoder's tokenizer: a turn under the
+limit here can still be refused by the encoder, and a Responses turn that
+resumes stored history is counted by its body alone, as the masks count it.
+A close-header turn refused this way closes no retained session, which then
+waits for the encoder's idle eviction. Policy-service mode does not refuse on
+it: the service refuses a context its encoder cannot hold on its own count,
+and the router keeps the episode on its held arm for that turn
+(pathfinder#3329), which a pre-lease refusal would bypass.
+
+Omitted, it declares nothing: no turn is refused on it and the listing omits
+it, so a cell that predates the field behaves as it did. The reference config
+declares the arms' own 131072. The per-arm
+`context_window_size` masks below apply either way; the limit bounds the
+alias, the windows bound which arms a turn can land on.
+
 ## Holding a tool loop on its model family
 
 `hold_family_in_tool_loop` keeps a tool loop on the model family that opened
@@ -647,9 +691,14 @@ out-of-service flag: a disabled arm is listed, so the arms keep their
 artifact ordinals, and marked, so the gateway leaves it out of what it
 derives.
 
-Nothing else about the decision is published: the gateway derives its
-document from the candidates, and when the arm set changes the candidates
-change with it, so there is no artifact pin to key on.
+Beside the candidates, the alias carries `routing.max_context_tokens` when
+the decision declares `max_context_tokens` ("The cell's context limit"
+above): the longest context the cell promises to score, which bounds the
+window a gateway may advertise for the alias whatever the arms' windows are.
+It is absent when the decision declares none. Nothing else about the decision is
+published: the gateway derives its document from the candidates and that
+limit, and when the arm set changes the candidates change with it, so there
+is no artifact pin to key on.
 
 Two things about the numbers. `max_output_tokens` is also the limit the
 router dispatches when a request states none of its own, so declaring it on a

@@ -70,9 +70,16 @@ def _library_path() -> str:
 class Stack:
     """One running acceptance stack: encoder, provider, router."""
 
-    def __init__(self, *, max_inflight: int = 0, acquire_timeout: int = 5) -> None:
+    def __init__(
+        self,
+        *,
+        max_inflight: int = 0,
+        acquire_timeout: int = 5,
+        max_context_tokens: int = 0,
+    ) -> None:
         self.max_inflight = max_inflight
         self.acquire_timeout = acquire_timeout
+        self.max_context_tokens = max_context_tokens
         self.encoder_port = free_port()
         self.provider_port = free_port()
         self.api_port = free_port()
@@ -247,6 +254,7 @@ class Stack:
             artifact_dir=artifact_dir,
             artifact_revision=artifact_fixture.ARTIFACT_ID,
             max_inflight=self.max_inflight,
+            max_context_tokens=self.max_context_tokens,
             acquire_timeout=self.acquire_timeout,
             episode_backend="redis" if using_redis else "memory",
             development_mode="false" if using_redis else "true",

@@ -542,6 +542,22 @@ def test_rayline_arc_policy_fallback_matches_the_go_contract():
             RaylineARCPolicyFallbackConfig.model_validate(invalid)
 
 
+def test_rayline_arc_accepts_a_context_limit_within_its_bound():
+    fields = RaylineARCAlgorithmConfig.model_fields
+    assert "max_context_tokens" in fields
+    assert fields["max_context_tokens"].default == 0
+    base = _valid_decision().algorithm.rayline_arc.model_dump(exclude_none=True)
+    for tokens in (0, 262144, 1_000_000, 1 << 24):
+        RaylineARCAlgorithmConfig.model_validate(
+            {**base, "max_context_tokens": tokens}
+        )
+    for tokens in (-1, (1 << 24) + 1):
+        with pytest.raises(ValidationError):
+            RaylineARCAlgorithmConfig.model_validate(
+                {**base, "max_context_tokens": tokens}
+            )
+
+
 def test_rayline_arc_accepts_readiness_wait_within_its_bound():
     fields = RaylineARCAlgorithmConfig.model_fields
     assert "readiness_wait_seconds" in fields

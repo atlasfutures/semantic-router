@@ -50,6 +50,25 @@ const arcFailureNoCapableArm = "no_capable_arm"
 // turn.
 const arcFailureNoContextArm = "no_context_arm"
 
+// arcFailureOverContextLimit is the bounded class for a turn whose estimate
+// exceeds the cell's declared max_context_tokens: the window the cell
+// promises, bounded by its encoder's capacity, whatever the arms could hold.
+// Artifact mode refuses it before the episode lease and the encoder call,
+// so the encoder is not asked to hold a session the cell did not promise.
+// Like no_context_arm it answers 503, which the gateway replays to its
+// fallback provider; a 400 would end the turn.
+//
+// It is a refusal on the router's estimate, not the encoder's count: a turn
+// under the limit here can still be refused by the encoder, and a Responses
+// turn resuming stored history is counted by its body alone, as the per-arm
+// masks count it. Two known edges follow from refusing before the lease. A
+// close-header turn refused here closes no retained session, which then
+// waits for the encoder's idle eviction. And policy-service mode does not
+// refuse on it at all: the service refuses a context its encoder cannot
+// hold on its own count, and the router keeps the episode on its held arm
+// for that turn (policyCapacityHold), which a refusal here would bypass.
+const arcFailureOverContextLimit = "over_context_limit"
+
 // arcFailureSelectorUnavailable is a request refused by a selector that
 // construction left unarmed for good; unlike not_ready, it will not recover.
 const arcFailureSelectorUnavailable = "selector_unavailable"
@@ -137,6 +156,24 @@ func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 		result.PreparationFailure = arcFailurePolicyRequestFormat
 		return result
 	}
+	// The cell's own context limit, before the lease, in artifact mode: a
+	// turn past the window the cell promises is refused here, with the
+	// episode untouched and no encoder call made. It reads the same estimate
+	// the per-arm masks read (ContextTokens below), so the published limit
+	// and the masks disagree about no turn. A policy-service cell is not
+	// refused here: its service refuses on its own count, and the router
+	// holds the episode's arm through that refusal (policyCapacityHold).
+	result.ContextTokens = reqCtx.VSRContextTokenCount
+	if limit := algorithm.RaylineARC.ContextLimit(); limit > 0 &&
+		algorithm.RaylineARC.PolicyService == nil && result.ContextTokens > limit {
+		logging.ComponentEvent("extproc", "rayline_arc_over_context_limit", map[string]interface{}{
+			"request_id":         reqCtx.RequestID,
+			"context_tokens":     result.ContextTokens,
+			"max_context_tokens": limit,
+		})
+		result.PreparationFailure = arcFailureOverContextLimit
+		return result
+	}
 	// An ephemeral lookup skips preparation entirely, which is the whole of
 	// what makes it free: no lease to acquire, renew or release, and nothing
 	// written to the episode store. prepareSelection builds a fresh episode
@@ -217,7 +254,6 @@ func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 	}
 	result.ImageBearing = imageBearing
 	result.NonVisionArms = r.nonVisionArms(modelRefs)
-	result.ContextTokens = reqCtx.VSRContextTokenCount
 	result.OverContextArms = r.overContextArms(modelRefs, result.ContextTokens)
 	result.DisabledArms = r.disabledArms(modelRefs)
 	result.RequiredCapabilities = requestRoutingCapabilities(reqCtx)

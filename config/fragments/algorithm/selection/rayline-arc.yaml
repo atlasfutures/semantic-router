@@ -66,6 +66,18 @@ routing:
           # most 300 s. Keep it below the deployment's ext_proc
           # message_timeout (60 s in the shipped Gateway API manifests).
           readiness_wait_seconds: 0
+          # max_context_tokens: the longest context this cell promises to
+          # score, in the router's token estimate: the encoder's capacity, or
+          # a smaller window the operator chooses. The cell config is the one
+          # source and the value is taken as written; nothing compares it
+          # with the encoder's own max_tokens, so a larger value publishes a
+          # context the encoder refuses after admission. GET /v1/models
+          # publishes it on the alias as routing.max_context_tokens; in
+          # artifact mode a longer turn is refused before the episode lease
+          # and the encoder call as over_context_limit (503, replayed by a
+          # gateway). Omitted, nothing is refused on it and nothing is
+          # published. This reference declares the arms' own windows.
+          max_context_tokens: 131072
           # routes_api serves POST /v1/routes from this cell: the selector's
           # choice for a request, returned without executing it. Off, and not
           # implied by configuring this algorithm -- a lookup drives the

@@ -492,6 +492,24 @@ func TestRaylineARCPolicyPackageV5CanonicalFixtureLoads(t *testing.T) {
 	}
 }
 
+// A declared max_context_tokens is the cell's statement and is taken as
+// written: the package's encoding_profile.max_tokens is not compared with
+// it, so a policy cell loads with any bounded value, above the package's
+// 1,010,000 included.
+func TestRaylineARCPolicyPackageV5TakesTheDeclaredContextLimitAsWritten(t *testing.T) {
+	raw, err := os.ReadFile(policyV5Yarn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, limit := range []int{0, 262_144, 1_010_000, 2_000_000} {
+		cfg, decision := policyV5Decision(t, raw)
+		decision.Algorithm.RaylineARC.MaxContextTokens = limit
+		if err := validatePolicyDispatch(cfg, decision); err != nil {
+			t.Fatalf("limit %d refused: %v", limit, err)
+		}
+	}
+}
+
 // pathfinder's ARC 0.4 fixture (a depth-12 YaRN encoder: layer block_11, rope
 // yarn-f4, max_tokens 1010000) loads through startup validation under the same
 // bindings, as a configured package_manifest does.

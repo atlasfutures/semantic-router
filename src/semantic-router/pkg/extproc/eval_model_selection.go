@@ -31,6 +31,14 @@ func (r *OpenAIRouter) SelectModelForEval(
 	// refuse, a turn no arm holds, and execution_required otherwise.
 	eligibleModelRefs, excluded := decision.ModelRefs, 0
 	if raylineARCSelection(decision.Algorithm) {
+		// The cell's own limit, as the routed path applies it in artifact
+		// mode (buildRaylineARCSelectionContext): a turn over it is refused
+		// before any arm is consulted, so Eval reports it unavailable too
+		// rather than execution_required for a request routing would refuse.
+		if arc := decision.Algorithm.RaylineARC; arc.PolicyService == nil &&
+			arc.ContextLimit() > 0 && input.ContextTokenCount > arc.ContextLimit() {
+			return evalSelectionUnavailable("the request context exceeds the cell's max_context_tokens")
+		}
 		if overContext := r.overContextArms(decision.ModelRefs, input.ContextTokenCount); len(overContext) > 0 && !slices.Contains(overContext, false) {
 			return evalSelectionUnavailable("no decision model can satisfy the request context")
 		}

@@ -178,6 +178,43 @@ func raylineARCInvalidContracts() []raylineARCInvalidContract {
 			},
 			wantErr: "max_inflight_encoder_calls must be between",
 		},
+		{
+			name: "negative context limit",
+			mutate: func(decision *Decision) {
+				decision.Algorithm.RaylineARC.MaxContextTokens = -1
+			},
+			wantErr: "max_context_tokens cannot be negative",
+		},
+		{
+			name: "context limit above the bound",
+			mutate: func(decision *Decision) {
+				decision.Algorithm.RaylineARC.MaxContextTokens = maxRaylineARCContextTokens + 1
+			},
+			wantErr: "max_context_tokens cannot exceed",
+		},
+	}
+}
+
+// max_context_tokens is optional, so every cell that predates it loads as
+// before and declares nothing; declared, it is read back as the limit.
+func TestValidateRaylineARCAlgorithmConfigAcceptsAnOptionalContextLimit(t *testing.T) {
+	decision := validRaylineARCDecision()
+	if err := validateRaylineARCAlgorithmConfig(decision.Algorithm.RaylineARC); err != nil {
+		t.Fatalf("undeclared: %v", err)
+	}
+	if got := decision.Algorithm.RaylineARC.ContextLimit(); got != 0 {
+		t.Fatalf("ContextLimit() = %d, want 0 for an undeclared limit", got)
+	}
+	decision.Algorithm.RaylineARC.MaxContextTokens = 1_000_000
+	if err := validateRaylineARCAlgorithmConfig(decision.Algorithm.RaylineARC); err != nil {
+		t.Fatalf("declared: %v", err)
+	}
+	if got := decision.Algorithm.RaylineARC.ContextLimit(); got != 1_000_000 {
+		t.Fatalf("ContextLimit() = %d, want the declared 1000000", got)
+	}
+	var none *RaylineARCAlgorithmConfig
+	if got := none.ContextLimit(); got != 0 {
+		t.Fatalf("nil ContextLimit() = %d, want 0", got)
 	}
 }
 

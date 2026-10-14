@@ -151,6 +151,59 @@ type RaylineARCAlgorithmConfig struct {
 	// as before. It cannot exceed 300 s, and must stay below the deployment's
 	// ext_proc message_timeout, or Envoy ends the exchange first.
 	ReadinessWaitSeconds int `yaml:"readiness_wait_seconds,omitempty"`
+	// MaxContextTokens is the longest context this cell promises to score,
+	// in the router's own token estimate (the same conservative count the
+	// per-arm context_window_size masks read). It is the window a gateway
+	// may advertise for the alias: GET /v1/models publishes it there as
+	// routing.max_context_tokens, so the number is declared once, in the
+	// cell's config beside the encoder pointer, instead of hard-coded
+	// downstream.
+	//
+	// It is the operator's statement and is taken as written: the cell
+	// config is the one source, and nothing compares it with the encoder's
+	// own capacity (the artifact manifest's or the package profile's
+	// max_tokens). Declare the encoder's capacity, or a smaller window;
+	// a larger one publishes a context the encoder refuses after admission.
+	//
+	// In artifact mode a turn whose estimate exceeds it is refused before
+	// the episode lease and the encoder call, as over_context_limit (503,
+	// which a gateway replays to its fallback). The estimate is the router's
+	// byte heuristic of the request body, not the encoder's tokenizer, so a
+	// turn under the limit here can still be refused by the encoder, and a
+	// Responses turn that resumes stored history is counted by its body
+	// alone. In policy-service mode no turn is refused on it: the service
+	// refuses a context its encoder cannot hold on its own count, and the
+	// router keeps the episode on its held arm for that turn
+	// (policyCapacityHold), which a pre-lease refusal would bypass.
+	//
+	// Zero, the default, declares nothing: no turn is refused on it and the
+	// listing omits it, so a cell that has not declared a limit behaves as
+	// it did.
+	MaxContextTokens int `yaml:"max_context_tokens,omitempty"`
+}
+
+// maxRaylineARCContextTokens bounds max_context_tokens. No encoder serves
+// anything near it; it exists so a mistyped value cannot publish an absurd
+// window.
+const maxRaylineARCContextTokens = 1 << 24
+
+// ContextLimit is the declared max_context_tokens, or zero when the cell
+// declares none.
+func (cfg *RaylineARCAlgorithmConfig) ContextLimit() int {
+	if cfg == nil || cfg.MaxContextTokens <= 0 {
+		return 0
+	}
+	return cfg.MaxContextTokens
+}
+
+func validateRaylineARCMaxContextTokens(cfg *RaylineARCAlgorithmConfig) error {
+	if cfg.MaxContextTokens < 0 {
+		return fmt.Errorf("max_context_tokens cannot be negative")
+	}
+	if cfg.MaxContextTokens > maxRaylineARCContextTokens {
+		return fmt.Errorf("max_context_tokens cannot exceed %d", maxRaylineARCContextTokens)
+	}
+	return nil
 }
 
 // DefaultRaylineARCReadinessWaitSeconds is the shipped readiness wait. It is
@@ -331,6 +384,9 @@ func validateRaylineARCAlgorithmConfig(cfg *RaylineARCAlgorithmConfig) error {
 	}
 	if cfg.ReadinessWaitSeconds > maxRaylineARCReadinessWaitSeconds {
 		return fmt.Errorf("readiness_wait_seconds cannot exceed %d", maxRaylineARCReadinessWaitSeconds)
+	}
+	if err := validateRaylineARCMaxContextTokens(cfg); err != nil {
+		return err
 	}
 	if cfg.PolicyService != nil {
 		return validateRaylineARCPolicyServiceMode(cfg)
