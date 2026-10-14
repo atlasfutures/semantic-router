@@ -1,0 +1,30 @@
+{
+  "schema": "arc-routing-prices.v1",
+  "store_version": "v000000000042",
+  "as_of": "2026-10-14T16:00:00Z",
+  "currency": "USD",
+  "unit": "usd_per_million_tokens",
+  "models": [
+    {
+      "model": "anthropic/claude-sonnet-4.5",
+      "input": 3.0,
+      "cache_read": 0.3,
+      "cache_write": 3.75,
+      "output": 15.0,
+      "valid_from": "2026-10-14T09:00:00Z",
+      "valid_until": "2026-10-14T17:00:00Z",
+      "source": "openrouter"
+    },
+    {
+      "model": "z-ai/glm-4.6",
+      "input": 0.6,
+      "cache_read": null,
+      "cache_write": null,
+      "output": 2.2,
+      "valid_from": "2026-10-01T00:00:00Z",
+      "valid_until": null,
+      "source": "openrouter",
+      "billing_model": "glm-4.6"
+    }
+  ]
+}

@@ -109,6 +109,10 @@ type RaylineARCPolicyServiceConfig struct {
 	// dispatch: a binding's declared model, or the worker of bindings that
 	// declare none.
 	DerivedHoldModel string `yaml:"derived_hold_model,omitempty"`
+	// RoutingPrices attaches live per-model rates from the routing price
+	// feed to every decision request. Absent (the default), the service
+	// scores with the package's prices.
+	RoutingPrices *RaylineARCRoutingPricesConfig `yaml:"routing_prices,omitempty"`
 
 	packageV5 *raylineARCPolicyPackageV5
 }
@@ -202,6 +206,85 @@ func (cfg *RaylineARCPolicyServiceConfig) DispatchesProviderDefaultEffort() bool
 	return cfg != nil && cfg.DispatchEffort == RaylineARCPolicyDispatchEffortProviderDefault
 }
 
+// RaylineARCRoutingPricesConfig is the routing price feed and its in-process
+// cache. A background loop fetches the feed, again RefreshAheadSeconds
+// before each TTL runs out; requests only read the cache. Rates older than
+// the TTL are still sent until MaxAgeSeconds; past it, or before the first
+// fetch succeeds, a request carries no rates and uses the package's prices.
+type RaylineARCRoutingPricesConfig struct {
+	// URL is the feed endpoint, an absolute HTTP(S) URL.
+	URL string `yaml:"url"`
+	// Auth picks the bearer: "bearer" (or empty), a static token named by
+	// CredentialEnv; or "google_id_token", a Google-signed identity token
+	// for the runtime service account, minted by the metadata server for
+	// Audience and cached until shortly before it expires.
+	Auth string `yaml:"auth,omitempty"`
+	// Audience is the google_id_token audience, which the feed checks
+	// exactly. For routerProxy it is the service's Cloud Run URL
+	// (https://<service>-<hash>-<region>.a.run.app), so URL must be that
+	// same Cloud Run URL: a Cloudflare or custom-domain front does not
+	// match the audience the feed expects.
+	Audience string `yaml:"audience,omitempty"`
+	// CredentialEnv names the environment variable holding the static
+	// bearer token (auth bearer); empty sends no Authorization header.
+	CredentialEnv       string `yaml:"credential_env,omitempty"`
+	TTLSeconds          int    `yaml:"ttl_seconds"`
+	RefreshAheadSeconds int    `yaml:"refresh_ahead_seconds,omitempty"`
+	MaxAgeSeconds       int    `yaml:"max_age_seconds"`
+	// FetchTimeoutMillis bounds one feed fetch.
+	FetchTimeoutMillis int `yaml:"fetch_timeout_ms"`
+}
+
+const (
+	RaylineARCRoutingPricesAuthBearer        = "bearer"
+	RaylineARCRoutingPricesAuthGoogleIDToken = "google_id_token"
+
+	maxRaylineARCRoutingPricesTTLSeconds    = 24 * 60 * 60
+	maxRaylineARCRoutingPricesMaxAgeSeconds = 7 * 24 * 60 * 60
+	maxRaylineARCRoutingPricesFetchMillis   = 30_000
+)
+
+func validateRaylineARCRoutingPricesConfig(cfg *RaylineARCRoutingPricesConfig) error {
+	if cfg == nil {
+		return nil
+	}
+	if err := validateRaylineARCBaseURL(cfg.URL); err != nil {
+		return fmt.Errorf("routing_prices url: %w", err)
+	}
+	switch cfg.Auth {
+	case "", RaylineARCRoutingPricesAuthBearer:
+		if cfg.Audience != "" {
+			return fmt.Errorf("routing_prices audience applies only to auth %s", RaylineARCRoutingPricesAuthGoogleIDToken)
+		}
+		if cfg.CredentialEnv != "" && !raylineARCEnvNamePattern.MatchString(cfg.CredentialEnv) {
+			return fmt.Errorf("routing_prices credential_env must name a valid environment variable")
+		}
+	case RaylineARCRoutingPricesAuthGoogleIDToken:
+		if cfg.CredentialEnv != "" {
+			return fmt.Errorf("routing_prices credential_env does not apply to auth %s", RaylineARCRoutingPricesAuthGoogleIDToken)
+		}
+		if err := validateRaylineARCBaseURL(cfg.Audience); err != nil {
+			return fmt.Errorf("routing_prices audience: %w", err)
+		}
+	default:
+		return fmt.Errorf("routing_prices auth must be %s or %s",
+			RaylineARCRoutingPricesAuthBearer, RaylineARCRoutingPricesAuthGoogleIDToken)
+	}
+	if cfg.TTLSeconds <= 0 || cfg.TTLSeconds > maxRaylineARCRoutingPricesTTLSeconds {
+		return fmt.Errorf("routing_prices ttl_seconds must be between 1 and %d", maxRaylineARCRoutingPricesTTLSeconds)
+	}
+	if cfg.RefreshAheadSeconds < 0 || cfg.RefreshAheadSeconds >= cfg.TTLSeconds {
+		return fmt.Errorf("routing_prices refresh_ahead_seconds must be at least 0 and below ttl_seconds")
+	}
+	if cfg.MaxAgeSeconds < cfg.TTLSeconds || cfg.MaxAgeSeconds > maxRaylineARCRoutingPricesMaxAgeSeconds {
+		return fmt.Errorf("routing_prices max_age_seconds must be between ttl_seconds and %d", maxRaylineARCRoutingPricesMaxAgeSeconds)
+	}
+	if cfg.FetchTimeoutMillis <= 0 || cfg.FetchTimeoutMillis > maxRaylineARCRoutingPricesFetchMillis {
+		return fmt.Errorf("routing_prices fetch_timeout_ms must be between 1 and %d", maxRaylineARCRoutingPricesFetchMillis)
+	}
+	return nil
+}
+
 // RaylineARCPolicyBinding binds one package action to a worker and level.
 //
 // A binding that names Model also declares what the action dispatches, as
@@ -272,6 +355,9 @@ func validateRaylineARCPolicyServiceConfig(cfg *RaylineARCPolicyServiceConfig) e
 	default:
 		return fmt.Errorf("dispatch_effort must be %s or %s",
 			RaylineARCPolicyDispatchEffortDeclared, RaylineARCPolicyDispatchEffortProviderDefault)
+	}
+	if err := validateRaylineARCRoutingPricesConfig(cfg.RoutingPrices); err != nil {
+		return err
 	}
 	if len(cfg.Bindings) == 0 {
 		return fmt.Errorf("bindings are required")

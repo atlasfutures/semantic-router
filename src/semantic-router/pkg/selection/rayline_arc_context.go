@@ -141,6 +141,17 @@ type RaylineARCTrace struct {
 	// boundary, to be stored before dispatch; nil off a boundary, for a side
 	// call, and for a retry that reused a stored one.
 	PolicyBoundary *raylinearc.PolicyBoundaryDecision
+	// PolicyPackageSHA256 is the package that decided, and
+	// PolicyPredictedCostUSD the chosen action's predicted cost when the
+	// service returned one.
+	PolicyPackageSHA256    string
+	PolicyPredictedCostUSD *float64
+	// RoutingPricesStatus is the routing price cache status the request
+	// read (fresh, stale, expired, absent); empty when live prices are not
+	// configured. RoutingPricesUsed is the service's echo, nil when it sent
+	// none. Together they are the decision's price audit.
+	RoutingPricesStatus string
+	RoutingPricesUsed   *raylinearc.PolicyRoutingPricesUsed
 	// ArtifactID and ArtifactRevision hold SHA256-derived hashes of the
 	// deployment-private artifact identity, never the raw pins.
 	ArtifactID          string

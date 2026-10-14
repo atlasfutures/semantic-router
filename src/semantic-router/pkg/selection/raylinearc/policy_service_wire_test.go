@@ -145,20 +145,6 @@ func TestDecodePolicyDecisionResponseRefusesAmbiguousDecisions(t *testing.T) {
 	}
 }
 
-func TestDecodePolicyPackageManifestRefusesLivePrices(t *testing.T) {
-	body := readPolicyFixture(t, "package_manifest.v4.json")
-	if _, err := DecodePolicyPackageManifest(body); err != nil {
-		t.Fatal(err)
-	}
-	live := bytes.Replace(body, []byte(`"live_prices_affect_decisions": false`), []byte(`"live_prices_affect_decisions": true`), 1)
-	if bytes.Equal(live, body) {
-		t.Fatal("fixture no longer carries live_prices_affect_decisions")
-	}
-	if _, err := DecodePolicyPackageManifest(live); err == nil {
-		t.Fatal("a package letting live prices affect decisions was accepted")
-	}
-}
-
 // A v5 manifest decodes, and each action's control_id is recomputed from its
 // control: a control edited without its id, or a level that is not the
 // instruction's, is refused (ADR 0107 decision 8).

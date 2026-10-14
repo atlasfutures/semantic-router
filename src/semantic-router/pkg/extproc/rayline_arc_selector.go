@@ -135,6 +135,9 @@ type raylineARCArmedComponents struct {
 	// policy is set only in the policy-service mode, where it decides and
 	// encoder is nil.
 	policy *raylinearc.PolicyServiceClient
+	// prices is the routing price cache, set only in the policy-service
+	// mode with routing_prices configured.
+	prices *raylinearc.RoutingPriceCache
 }
 
 type raylineARCSelector struct {

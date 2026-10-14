@@ -29,11 +29,90 @@ import (
 // under its size limit; older turns fall off and are sent unattributed.
 const MaxPolicyLedgerEntries = 256
 
-// PolicyLedgerEntry records which action produced one assistant message.
+// MaxPolicyPriceAudits is how many of the newest ledger entries keep their
+// price audit; older entries drop it, so the ledger stays inside the episode
+// size limit. The selection log carries every decision's audit in full.
+const MaxPolicyPriceAudits = 4
+
+// maxPolicyAuditFallbackArms bounds the fallback arms one ledger audit
+// lists; FallbackArmCount keeps the true count.
+const maxPolicyAuditFallbackArms = 8
+
+// PolicyLedgerEntry records which action produced one assistant message and,
+// for a decision whose service echoed routing_prices_used, which prices
+// scored it. Prices is omitted otherwise, so an entry without it is
+// byte-identical to one written before live prices.
 type PolicyLedgerEntry struct {
-	Message  int    `json:"message"`
-	ActionID string `json:"action_id"`
-	ArmID    string `json:"arm_id"`
+	Message  int               `json:"message"`
+	ActionID string            `json:"action_id"`
+	ArmID    string            `json:"arm_id"`
+	Prices   *PolicyPriceAudit `json:"prices,omitempty"`
+}
+
+// PolicyPriceAudit is the price identity of one decision: the package that
+// scored it, whether live or package rates did, the feed version and as-of
+// time, the digest of the effective per-arm rates, the arms that fell back
+// to their package rate, and the chosen action's predicted cost when the
+// service returned one.
+type PolicyPriceAudit struct {
+	PackageSHA256    string   `json:"package_sha256"`
+	Mode             string   `json:"mode"`
+	StoreVersion     string   `json:"store_version,omitempty"`
+	AsOf             string   `json:"as_of,omitempty"`
+	Digest           string   `json:"digest,omitempty"`
+	FallbackArms     []string `json:"fallback_arms,omitempty"`
+	FallbackArmCount int      `json:"fallback_arm_count,omitempty"`
+	PredictedCostUSD *float64 `json:"predicted_cost_usd,omitempty"`
+}
+
+// NewPolicyPriceAudit is the audit of a decision whose response echoed
+// used; nil when it did not, since there is then nothing to record.
+func NewPolicyPriceAudit(packageSHA256 string, used *PolicyRoutingPricesUsed, predictedCostUSD *float64) *PolicyPriceAudit {
+	if used == nil {
+		return nil
+	}
+	audit := &PolicyPriceAudit{
+		PackageSHA256: packageSHA256, Mode: used.Mode,
+		FallbackArmCount: len(used.FallbackArms), PredictedCostUSD: predictedCostUSD,
+	}
+	if used.StoreVersion != nil {
+		audit.StoreVersion = *used.StoreVersion
+	}
+	if used.AsOf != nil {
+		audit.AsOf = *used.AsOf
+	}
+	if used.Digest != nil {
+		audit.Digest = *used.Digest
+	}
+	arms := used.FallbackArms
+	if len(arms) > maxPolicyAuditFallbackArms {
+		arms = arms[:maxPolicyAuditFallbackArms]
+	}
+	if len(arms) > 0 {
+		audit.FallbackArms = append([]string(nil), arms...)
+	}
+	return audit
+}
+
+func (audit *PolicyPriceAudit) validate() error {
+	if audit == nil {
+		return nil
+	}
+	if !isLowerHex64(audit.PackageSHA256) ||
+		(audit.Mode != RoutingPricesModeLive && audit.Mode != RoutingPricesModePackage) ||
+		len(audit.StoreVersion) > maxRoutingPriceStoreVersionBytes ||
+		len(audit.AsOf) > maxRoutingPriceTimestampBytes ||
+		(audit.Digest != "" && !isLowerHex64(audit.Digest)) ||
+		len(audit.FallbackArms) > maxPolicyAuditFallbackArms ||
+		audit.FallbackArmCount < len(audit.FallbackArms) {
+		return errors.New("ARC policy episode price audit is malformed")
+	}
+	for _, arm := range audit.FallbackArms {
+		if arm == "" || len(arm) > maxPolicyArmIDBytes {
+			return errors.New("ARC policy episode price audit is malformed")
+		}
+	}
+	return nil
 }
 
 // PolicyEpisodeState is the policy-service mode's per-episode memory: the
@@ -212,11 +291,21 @@ func (state *PolicyEpisodeState) Validate() error {
 	if len(state.Ledger) > MaxPolicyLedgerEntries {
 		return errors.New("ARC policy episode ledger exceeds its bound")
 	}
+	audits := 0
 	for _, entry := range state.Ledger {
 		if entry.Message < 0 || entry.Message > state.PrefixLen ||
 			!isLowerHex64(entry.ActionID) || len(entry.ArmID) > maxPolicyArmIDBytes {
 			return errors.New("ARC policy episode ledger entry is malformed")
 		}
+		if entry.Prices != nil {
+			audits++
+		}
+		if err := entry.Prices.validate(); err != nil {
+			return err
+		}
+	}
+	if audits > MaxPolicyPriceAudits {
+		return errors.New("ARC policy episode ledger keeps too many price audits")
 	}
 	if len(state.Exclusions) > MaxPolicyExclusions {
 		return errors.New("ARC policy episode exclusions exceed their bound")
@@ -505,10 +594,33 @@ func (state *PolicyEpisodeState) Next(
 	actionID string,
 	armID string,
 ) *PolicyEpisodeState {
+	return state.NextWithPrices(messages, actionID, armID, nil)
+}
+
+// NextWithPrices is Next with this decision's price audit, nil when the
+// service echoed none; only the newest MaxPolicyPriceAudits entries keep
+// theirs.
+func (state *PolicyEpisodeState) NextWithPrices(
+	messages []json.RawMessage,
+	actionID string,
+	armID string,
+	prices *PolicyPriceAudit,
+) *PolicyEpisodeState {
 	next := state.Clone()
-	next.Ledger = append(next.Ledger, PolicyLedgerEntry{Message: len(messages), ActionID: actionID, ArmID: armID})
+	next.Ledger = append(next.Ledger, PolicyLedgerEntry{
+		Message: len(messages), ActionID: actionID, ArmID: armID, Prices: prices,
+	})
 	if len(next.Ledger) > MaxPolicyLedgerEntries {
 		next.Ledger = next.Ledger[len(next.Ledger)-MaxPolicyLedgerEntries:]
+	}
+	kept := 0
+	for index := len(next.Ledger) - 1; index >= 0; index-- {
+		if next.Ledger[index].Prices == nil {
+			continue
+		}
+		if kept++; kept > MaxPolicyPriceAudits {
+			next.Ledger[index].Prices = nil
+		}
 	}
 	next.PrefixLen = len(messages)
 	next.PrefixDigest = MessagesDigest(messages, len(messages))

@@ -315,6 +315,39 @@ class RaylineARCPolicyFallbackConfig(BaseModel):
     cell_exclusion_seconds: int = Field(default=0, ge=0, le=3600)
 
 
+class RaylineARCRoutingPricesConfig(BaseModel):
+    """The live routing price feed and its in-process cache (Go loader bounds)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    url: str
+    # "" or "bearer": a static token named by credential_env.
+    # "google_id_token": a metadata-server identity token for `audience`,
+    # the feed's Cloud Run URL (a custom-domain front does not match it).
+    auth: Literal["", "bearer", "google_id_token"] = ""
+    audience: str = ""
+    credential_env: str = ""
+    ttl_seconds: int = Field(ge=1, le=86400)
+    refresh_ahead_seconds: int = Field(default=0, ge=0)
+    max_age_seconds: int = Field(ge=1, le=604800)
+    fetch_timeout_ms: int = Field(ge=1, le=30000)
+
+    @model_validator(mode="after")
+    def _windows_fit_the_ttl(self):
+        if self.auth == "google_id_token":
+            if not self.audience:
+                raise ValueError("google_id_token needs an audience")
+            if self.credential_env:
+                raise ValueError("credential_env does not apply to google_id_token")
+        elif self.audience:
+            raise ValueError("audience applies only to google_id_token")
+        if self.refresh_ahead_seconds >= self.ttl_seconds:
+            raise ValueError("refresh_ahead_seconds must be below ttl_seconds")
+        if self.max_age_seconds < self.ttl_seconds:
+            raise ValueError("max_age_seconds must be at least ttl_seconds")
+        return self
+
+
 class RaylineARCPolicyServiceConfig(BaseModel):
     """The policy-service mode: an external service returns the decision."""
 
@@ -354,6 +387,8 @@ class RaylineARCPolicyServiceConfig(BaseModel):
     # one, for a package without a package_manifest. The Go loader checks it
     # against the bindings and refuses it beside a manifest.
     derived_hold_model: str = ""
+    # Absent: the service scores with the package's prices.
+    routing_prices: RaylineARCRoutingPricesConfig | None = None
 
 
 class RaylineARCAlgorithmConfig(BaseModel):

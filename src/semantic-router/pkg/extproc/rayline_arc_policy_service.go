@@ -330,6 +330,10 @@ func createRaylineARCPolicySelector(
 		scorer:    newPolicyServiceScorer(cfg, decision),
 		admission: raylinearc.NewAdmissionGate(policy.MaxInflightCalls),
 		policy:    client,
+		prices:    newRoutingPriceCache(policy.RoutingPrices),
+	}
+	if armed.prices != nil {
+		go armed.prices.Run(probeContext)
 	}
 	scorer := armed.scorer.(*policyServiceScorer)
 	probe := func(ctx context.Context) error {
@@ -583,6 +587,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	if sideCall {
 		request.EpisodeMode = scorer.sideCallEpisodeMode(selector.now())
 	}
+	pricesStatus := attachRoutingPrices(armed.prices, &request)
 	// Admission is checked after the episode lease and before each service
 	// call, as the artifact mode checks it before encoding: a shed request
 	// answers 429 and never occupies the service. A slot is held for one
@@ -709,6 +714,15 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	if (response.Encoding.SessionRevision == nil) != servedRelaxed {
 		return nil, arcSelectionFailure("policy_session_revision")
 	}
+	// The echo is recorded as the decision's price audit, so it must be the
+	// prices this request sent.
+	if class := routingPriceEchoMismatch(request.RoutingPrices, response.RoutingPricesUsed); class != "" {
+		logging.ComponentErrorEvent("extproc", "rayline_arc_policy_service_failed", map[string]interface{}{
+			"class": class, "episode_id_hash": arcContext.EpisodeIDHash,
+		})
+		return nil, arcSelectionFailure(class)
+	}
+	recordRoutingPriceDecision(response.RoutingPricesUsed)
 	decision := policyDecision(scorer, response, binding, workerIDs, excluded)
 	if !validARCDecision(decision, workerIDs) {
 		return nil, arcSelectionFailure("artifact_result")
@@ -739,10 +753,17 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	result.RaylineARC.PolicySideCall = sideCall
 	result.RaylineARC.OfferKind = policyOfferKind(derivedOffer, forced, retained, held)
 	result.RaylineARC.MaskedArms = policyMaskedArms(scorer, workerIDs, excluded, fallback, turn, offeredRoutes)
+	result.RaylineARC.PolicyPackageSHA256 = scorer.sha256
+	result.RaylineARC.RoutingPricesStatus = pricesStatus
+	result.RaylineARC.RoutingPricesUsed = response.RoutingPricesUsed
+	result.RaylineARC.PolicyPredictedCostUSD = policySelectedPredictedCost(response)
 	if !sideCall {
+		// A side call commits no ledger entry, so its price audit is in the
+		// selection log only.
+		audit := raylinearc.NewPolicyPriceAudit(scorer.sha256, response.RoutingPricesUsed, result.RaylineARC.PolicyPredictedCostUSD)
 		result.RaylineARC.PolicyTurnState = turn.Clone()
-		result.RaylineARC.PolicyNextState = turn.Next(
-			messages, response.Decision.SelectedActionID, response.Decision.SelectedArmID,
+		result.RaylineARC.PolicyNextState = turn.NextWithPrices(
+			messages, response.Decision.SelectedActionID, response.Decision.SelectedArmID, audit,
 		)
 	}
 	if atBoundary && !retained {
