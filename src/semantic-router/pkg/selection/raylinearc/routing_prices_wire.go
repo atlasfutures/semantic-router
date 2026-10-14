@@ -43,7 +43,12 @@ const (
 	maxRoutingPriceTimestampBytes    = 64
 	maxRoutingPriceModelIDBytes      = 256
 	maxRoutingPriceModels            = 4096
-	maxRoutingPriceFallbackArms      = 1024
+	// maxRoutingPriceFallbackArms is only a safety bound: the service lists
+	// every arm that fell back, unbounded, and a package can price over a
+	// thousand arms, most of which fall back when the feed covers few of
+	// their models. That must degrade to package prices, not fail the
+	// decode. The ledger and the log keep only the first few and the count.
+	maxRoutingPriceFallbackArms = 65_536
 )
 
 // RoutingPriceFeedModel is one model's effective rates at the feed's as_of,

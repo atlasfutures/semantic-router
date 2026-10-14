@@ -35,6 +35,10 @@ const (
 	arcFailurePolicyPricesUnsent   = "policy_prices_unsent"
 	arcFailurePolicyPricesMismatch = "policy_prices_mismatch"
 	arcFailurePolicyPricesUnechoed = "policy_prices_unechoed"
+
+	// maxLoggedFallbackArms bounds the fallback arms one selection log
+	// lists, the same as the ledger audit keeps.
+	maxLoggedFallbackArms = 8
 )
 
 // newRoutingPriceCache resolves the configured feed; nil when routing_prices
@@ -160,7 +164,14 @@ func addPolicyPriceAuditFields(fields map[string]interface{}, trace *selection.R
 		return
 	}
 	fields["routing_prices_mode"] = used.Mode
-	fields["routing_prices_fallback_arms"] = used.FallbackArms
+	// The echo lists every arm that fell back, over a thousand on a large
+	// package; the log keeps the first few, as the ledger does, and the count.
+	arms := used.FallbackArms
+	if len(arms) > maxLoggedFallbackArms {
+		arms = arms[:maxLoggedFallbackArms]
+	}
+	fields["routing_prices_fallback_arms"] = arms
+	fields["routing_prices_fallback_arm_count"] = len(used.FallbackArms)
 	for name, value := range map[string]*string{
 		"routing_prices_store_version": used.StoreVersion,
 		"routing_prices_as_of":         used.AsOf,

@@ -19,6 +19,7 @@ package raylinearc
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -267,6 +268,37 @@ func TestDecodePolicyDecisionResponseReadsTheRoutingPriceEcho(t *testing.T) {
 		if _, err := DecodePolicyDecisionResponse([]byte(changed)); err == nil {
 			t.Errorf("a response with %s was accepted", name)
 		}
+	}
+}
+
+// A large package can fall back on over a thousand arms when the feed covers
+// few of their models; the service lists them all. The echo decodes, and
+// the ledger audit keeps the first few and the true count.
+func TestRoutingPriceEchoWithManyFallbackArmsDecodes(t *testing.T) {
+	var response map[string]any
+	if err := json.Unmarshal(readRoutingPriceFixture(t, "decision_response_live.v1.json"), &response); err != nil {
+		t.Fatal(err)
+	}
+	arms := make([]any, 1300)
+	for index := range arms {
+		arms[index] = fmt.Sprintf("%064x", index)
+	}
+	response["routing_prices_used"].(map[string]any)["fallback_arms"] = arms
+	body, err := json.Marshal(response)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := DecodePolicyDecisionResponse(body)
+	if err != nil {
+		t.Fatalf("an echo with 1300 fallback arms was refused: %v", err)
+	}
+	if len(decoded.RoutingPricesUsed.FallbackArms) != 1300 {
+		t.Fatalf("decoded %d fallback arms", len(decoded.RoutingPricesUsed.FallbackArms))
+	}
+	audit := NewPolicyPriceAudit(strings.Repeat("a", 64), decoded.RoutingPricesUsed, nil)
+	if err := audit.validate(); err != nil || audit.FallbackArmCount != 1300 ||
+		len(audit.FallbackArms) != maxPolicyAuditFallbackArms || audit.FallbackArms[0] != arms[0] {
+		t.Fatalf("audit %+v: %v", audit, err)
 	}
 }
 

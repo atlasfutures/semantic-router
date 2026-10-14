@@ -150,6 +150,37 @@ func TestPolicySelectorSendsLivePricesAndAuditsTheEcho(t *testing.T) {
 	}
 }
 
+// A feed that covers few of a large package's models leaves most arms on
+// package prices, and the service lists every one: 1300 fallback arms are
+// served, not refused, and the ledger and log keep 8 and the count.
+func TestPolicySelectorServesAnEchoWithManyFallbackArms(t *testing.T) {
+	fixture := newPolicySelectorFixture(t, "")
+	bindings := fixture.decision.Algorithm.RaylineARC.PolicyService.Bindings
+	fixture.fake.chooseWith(func(raylinearc.PolicyDecisionRequest) string { return bindings[0].ActionID })
+	arms := make([]string, 1300)
+	for index := range arms {
+		arms[index] = fmt.Sprintf("%064x", index)
+	}
+	fixture.fake.echo = liveEcho(strings.Repeat("d", 64), arms...)
+	fixture.withRoutingPrices(t, true)
+	state, _ := raylinearc.NewEpisodeState(2)
+
+	result, err := fixture.selectOn(t, state, policyTestRequest(t, map[string]any{"role": "user", "content": "go"}))
+	if err != nil {
+		t.Fatalf("select with 1300 fallback arms: %v", err)
+	}
+	audit := result.RaylineARC.PolicyNextState.Ledger[0].Prices
+	if audit == nil || audit.FallbackArmCount != 1300 || len(audit.FallbackArms) != 8 || audit.FallbackArms[0] != arms[0] {
+		t.Fatalf("ledger audit = %+v", audit)
+	}
+	fields := map[string]interface{}{}
+	addPolicyPriceAuditFields(fields, result.RaylineARC)
+	if logged, _ := fields["routing_prices_fallback_arms"].([]string); len(logged) != 8 ||
+		fields["routing_prices_fallback_arm_count"] != 1300 {
+		t.Fatalf("selection log fallback arms = %v, count %v", fields["routing_prices_fallback_arms"], fields["routing_prices_fallback_arm_count"])
+	}
+}
+
 // Past max age, or before the first fetch, the request carries no rates:
 // the service scores with package prices and the turn is still served.
 func TestPolicySelectorFallsBackToPackagePricesWithoutUsableRates(t *testing.T) {
