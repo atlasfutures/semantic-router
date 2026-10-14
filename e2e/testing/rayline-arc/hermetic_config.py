@@ -19,7 +19,7 @@ listeners:
 
 providers:
   defaults:
-    default_model: worker-a
+    model: worker-a
   models:
     - name: worker-a
       provider_model_id: synthetic/provider-a
@@ -34,7 +34,6 @@ providers:
         - name: synthetic-a
           base_url: http://127.0.0.1:{provider_port}
           provider: openai
-          type: openai
           api_key_env: SYNTHETIC_API_KEY
     - name: worker-b
       provider_model_id: synthetic/provider-b
@@ -49,7 +48,6 @@ providers:
         - name: synthetic-b
           base_url: http://127.0.0.1:{provider_port}
           provider: openai
-          type: openai
           api_key_env: SYNTHETIC_API_KEY
 
 routing:
@@ -82,6 +80,9 @@ routing:
         type: rayline_arc
         on_error: fail_closed
         rayline_arc:
+          # The cell's own context limit; 0 declares none (the lane's
+          # default), so the checks that predate it run exactly as before.
+          max_context_tokens: {max_context_tokens}
           artifact_dir: {artifact_dir}
           artifact_revision: {artifact_revision}
           encoder:
