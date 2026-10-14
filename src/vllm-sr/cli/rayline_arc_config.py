@@ -395,11 +395,11 @@ class RaylineARCAlgorithmConfig(BaseModel):
     # for readiness before it is refused not_ready. 0 selects the router's
     # default (30 s); a negative value refuses at once; at most 300 s.
     readiness_wait_seconds: int = Field(default=0, le=300)
-    # The longest context the cell's decision scores, in the router's token
-    # estimate. 0 declares none. The router refuses a longer turn before the
-    # encoder (artifact mode), publishes it on the alias in GET /v1/models,
-    # and refuses a value above the encoder's own max_tokens at readiness or
-    # load; those checks are the router's, this only bounds the number.
+    # The longest context the cell promises to score, in the router's token
+    # estimate: the cell config is the one source, taken as written. 0
+    # declares none. The router refuses a longer turn before the encoder
+    # (artifact mode) and publishes it on the alias in GET /v1/models; this
+    # only bounds the number.
     max_context_tokens: int = Field(default=0, ge=0, le=1 << 24)
 
     @model_validator(mode="after")

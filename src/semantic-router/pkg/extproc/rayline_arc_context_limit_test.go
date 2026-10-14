@@ -8,7 +8,6 @@ import (
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/routerruntime"
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
 
 func contextLimitAlgorithm(limit int) *config.AlgorithmConfig {
@@ -134,27 +133,5 @@ func TestOverContextLimitIsAReplayableSelectionFailure(t *testing.T) {
 	_, selectErr := selector.Select(context.Background(), selectionContext)
 	if !errors.As(selectErr, &failure) || failure.class != arcFailureOverContextLimit || failure.contended() {
 		t.Fatalf("Select() error = %v, want the %s class as a 503", selectErr, arcFailureOverContextLimit)
-	}
-}
-
-// The declared limit may not exceed what the mounted artifact's encoder
-// manifest serves: a cell that promised more would publish a window whose
-// longest turns the encoder refuses after admission. Less is a choice;
-// undeclared promises nothing.
-func TestRaylineARCReadinessRefusesAContextLimitAboveTheArtifactEncoder(t *testing.T) {
-	t.Parallel()
-	runtime, err := raylinearc.LoadRuntime(writeARCArtifact(t, "https://provider.example.test"))
-	if err != nil {
-		t.Fatalf("LoadRuntime() error = %v", err)
-	}
-	capacity := runtime.EncoderContract().MaxTokens
-	if capacity != 262144 {
-		t.Fatalf("fixture encoder max_tokens = %d, want 262144", capacity)
-	}
-	for limit, within := range map[int]bool{0: true, capacity - 1: true, capacity: true, capacity + 1: false} {
-		arcConfig := &config.RaylineARCAlgorithmConfig{MaxContextTokens: limit}
-		if got := raylineARCContextLimitWithinEncoder(runtime, arcConfig); got != within {
-			t.Fatalf("limit %d within encoder %d = %t, want %t", limit, capacity, got, within)
-		}
 	}
 }

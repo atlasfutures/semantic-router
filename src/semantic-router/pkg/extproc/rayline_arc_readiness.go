@@ -200,9 +200,6 @@ func raylineARCLoadedContractFailure(
 	if !raylineARCEncoderContractMatches(runtime, arcConfig) {
 		return "artifact_encoder_contract"
 	}
-	if !raylineARCContextLimitWithinEncoder(runtime, arcConfig) {
-		return "artifact_context_limit"
-	}
 	workerIDs := runtime.WorkerIDs()
 	for index := range decisions {
 		if !raylineARCCandidatesMatch(decisions[index].ModelRefs, workerIDs) {
@@ -681,20 +678,6 @@ func raylineARCEncoderContractMatches(
 		contract.Revision == arcConfig.Encoder.ModelRevision &&
 		contract.Dimension == 1024 &&
 		contract.Serialization == arcConfig.Encoder.SerializerVersion
-}
-
-// raylineARCContextLimitWithinEncoder refuses a declared max_context_tokens
-// above the artifact encoder's max_tokens. The declaration is what the cell
-// publishes and refuses on; the manifest is what the encoder serves. A cell
-// may promise less than the encoder holds, never more, or it advertises a
-// window whose longest turns the encoder refuses after admission. An
-// undeclared limit promises nothing and always passes.
-func raylineARCContextLimitWithinEncoder(
-	runtime *raylinearc.Runtime,
-	arcConfig *config.RaylineARCAlgorithmConfig,
-) bool {
-	limit := arcConfig.ContextLimit()
-	return limit == 0 || limit <= runtime.EncoderContract().MaxTokens
 }
 
 func raylineARCCandidatesMatch(

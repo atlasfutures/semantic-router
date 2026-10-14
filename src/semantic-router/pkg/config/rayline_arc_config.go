@@ -155,16 +155,15 @@ type RaylineARCAlgorithmConfig struct {
 	// in the router's own token estimate (the same conservative count the
 	// per-arm context_window_size masks read). It is the window a gateway
 	// may advertise for the alias: GET /v1/models publishes it there as
-	// routing.max_context_tokens, so the number is declared once, beside the
-	// encoder pointer that sets it, instead of hard-coded downstream.
+	// routing.max_context_tokens, so the number is declared once, in the
+	// cell's config beside the encoder pointer, instead of hard-coded
+	// downstream.
 	//
-	// The encoder's own capacity is stated by the mounted artifact's encoder
-	// manifest (max_tokens) or the policy package's encoding profile
-	// (max_tokens); this declaration may not exceed it, which readiness
-	// checks in artifact mode and load checks in policy-service mode. Less
-	// than the capacity is the operator's choice. A policy-service cell
-	// needs a package_manifest to declare it, since a v4 package states no
-	// capacity to check against.
+	// It is the operator's statement and is taken as written: the cell
+	// config is the one source, and nothing compares it with the encoder's
+	// own capacity (the artifact manifest's or the package profile's
+	// max_tokens). Declare the encoder's capacity, or a smaller window;
+	// a larger one publishes a context the encoder refuses after admission.
 	//
 	// In artifact mode a turn whose estimate exceeds it is refused before
 	// the episode lease and the encoder call, as over_context_limit (503,
@@ -444,12 +443,6 @@ func validateRaylineARCPolicyServiceMode(cfg *RaylineARCAlgorithmConfig) error {
 	}
 	if cfg.Episode.CloseHeader != "" {
 		return fmt.Errorf("episode: close_header is not served in the policy-service mode")
-	}
-	// A v4 package states no encoder capacity, so a declared limit on such
-	// a cell could not be checked against anything and would publish a
-	// window nothing bounds.
-	if cfg.MaxContextTokens > 0 && !cfg.PolicyService.IsPackageV5() {
-		return fmt.Errorf("max_context_tokens needs a policy_service.package_manifest whose encoding_profile states the encoder's max_tokens")
 	}
 	if err := validateRaylineARCRoutesAPIConfig(cfg.RoutesAPI); err != nil {
 		return fmt.Errorf("routes_api: %w", err)

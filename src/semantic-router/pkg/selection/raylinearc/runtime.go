@@ -172,9 +172,6 @@ type EncoderContract struct {
 	Revision      string
 	Dimension     int
 	Serialization string
-	// MaxTokens is the longest session the manifest says the encoder
-	// serves; a cell's declared context limit may not exceed it.
-	MaxTokens int
 }
 
 func (runtime *Runtime) EncoderContract() EncoderContract {
@@ -183,7 +180,6 @@ func (runtime *Runtime) EncoderContract() EncoderContract {
 		Revision:      runtime.manifest.Encoder.Revision,
 		Dimension:     runtime.manifest.Encoder.Dimension,
 		Serialization: runtime.manifest.Encoder.Serialization,
-		MaxTokens:     runtime.manifest.Encoder.MaxTokens,
 	}
 }
 
