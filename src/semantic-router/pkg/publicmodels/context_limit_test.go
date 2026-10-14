@@ -42,24 +42,26 @@ func TestAliasPublishesTheDeclaredContextLimit(t *testing.T) {
 	}
 }
 
-// Two ARC decisions in one recipe publish the smaller limit, since the alias
-// cannot choose the decision and only the smaller is guaranteed; a decision
-// that declares none does not lower it to nothing.
-func TestAliasPublishesTheSmallerLimitAcrossDecisions(t *testing.T) {
+// A recipe has one ARC limit: its ARC decisions share one selector and
+// startup refuses differing selection configs, so the listing reads the
+// first ARC decision's, skipping decisions of other algorithms, and nil when
+// it declares none.
+func TestAliasReadsTheRecipesOneLimit(t *testing.T) {
 	declared := func(limit int) config.Decision {
 		decision := arcDecision("arc", config.ModelRef{Model: "arm"})
 		decision.Algorithm.RaylineARC.MaxContextTokens = limit
 		return decision
 	}
+	plain := config.Decision{Name: "plain", ModelRefs: []config.ModelRef{{Model: "arm"}}}
 	recipe := &config.RoutingRecipe{Profile: config.RoutingProfile{Decisions: []config.Decision{
-		declared(1_000_000), declared(0), declared(262_144),
+		plain, declared(1_000_000), declared(1_000_000),
 	}}}
-	if got := routingContextLimitOf(recipe); got == nil || *got != 262_144 {
-		t.Fatalf("routingContextLimitOf() = %v, want the smaller declared limit 262144", got)
+	if got := routingContextLimitOf(recipe); got == nil || *got != 1_000_000 {
+		t.Fatalf("routingContextLimitOf() = %v, want the ARC decision's 1000000 past the plain decision", got)
 	}
-	recipe.Profile.Decisions = []config.Decision{declared(0)}
+	recipe.Profile.Decisions = []config.Decision{plain, declared(0)}
 	if got := routingContextLimitOf(recipe); got != nil {
-		t.Fatalf("routingContextLimitOf() = %d, want nil when no decision declares a limit", *got)
+		t.Fatalf("routingContextLimitOf() = %d, want nil when the ARC decision declares none", *got)
 	}
 	if got := routingContextLimitOf(nil); got != nil {
 		t.Fatalf("routingContextLimitOf(nil) = %d, want nil", *got)

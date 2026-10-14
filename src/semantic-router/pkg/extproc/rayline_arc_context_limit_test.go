@@ -3,11 +3,13 @@ package extproc
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/routerruntime"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/services"
 )
 
 func contextLimitAlgorithm(limit int) *config.AlgorithmConfig {
@@ -78,6 +80,60 @@ func TestRaylineARCSelectionContextRefusesATurnOverTheContextLimit(t *testing.T)
 					arcContext.Turns, arcContext.OverContextArms, arcContext.State)
 			}
 		})
+	}
+}
+
+// Eval refuses what the routed path refuses: in artifact mode a turn over
+// the cell's limit is unavailable even when an arm's window would hold it,
+// a turn within it is execution_required, and a policy-service decision is
+// not refused on the limit, as the routed path is not.
+func TestEvalRefusesAnARCTurnOverTheContextLimit(t *testing.T) {
+	t.Parallel()
+	router := &OpenAIRouter{Config: &config.RouterConfig{BackendModels: config.BackendModels{ModelConfig: map[string]config.ModelParams{
+		"arm-0": {ContextWindowSize: 1048576}, "arm-1": {ContextWindowSize: 262144},
+	}}}}
+	decision := func(limit int, policy bool) *config.Decision {
+		algorithm := contextLimitAlgorithm(limit)
+		algorithm.OnError = "fail_closed"
+		if policy {
+			algorithm.RaylineARC.PolicyService = &config.RaylineARCPolicyServiceConfig{BaseURL: "http://policy-service:8000"}
+		}
+		return &config.Decision{Name: "rayline-arc", ModelRefs: []config.ModelRef{{Model: "arm-0"}, {Model: "arm-1"}}, Algorithm: algorithm}
+	}
+	eval := func(decision *config.Decision, tokens int) services.EvalModelSelection {
+		return router.SelectModelForEval(services.EvalModelSelectionInput{Decision: decision, ContextTokenCount: tokens})
+	}
+	if result := eval(decision(500_000, false), 600_000); result.Status != services.EvalSelectionUnavailable {
+		t.Fatalf("eval status = %q (%s), want %s over the cell limit, though arm-0 would hold it", result.Status, result.Reason, services.EvalSelectionUnavailable)
+	}
+	if result := eval(decision(500_000, false), 300_000); result.Status != services.EvalSelectionExecutionRequired {
+		t.Fatalf("eval status = %q (%s), want %s within the cell limit", result.Status, result.Reason, services.EvalSelectionExecutionRequired)
+	}
+	if result := eval(decision(0, false), 600_000); result.Status != services.EvalSelectionExecutionRequired {
+		t.Fatalf("eval status = %q (%s), want %s with no limit declared", result.Status, result.Reason, services.EvalSelectionExecutionRequired)
+	}
+	if result := eval(decision(500_000, true), 600_000); result.Status == services.EvalSelectionUnavailable &&
+		strings.Contains(result.Reason, "max_context_tokens") {
+		t.Fatalf("eval refused a policy-service decision on the cell limit: %s", result.Reason)
+	}
+}
+
+// A recipe's ARC decisions share one selector, so two that declare
+// different limits are one of the conflicting configs startup refuses, as
+// the listing's one-limit reading relies on; the same limit, or none on
+// both, shares the selector as before.
+func TestDifferingContextLimitsAreConflictingSelectionConfigs(t *testing.T) {
+	t.Parallel()
+	base := *raylineARCAlgorithmConfigForTest().RaylineARC
+	same, differing := base, base
+	same.MaxContextTokens, differing.MaxContextTokens = 262144, 1_000_000
+	declared := base
+	declared.MaxContextTokens = 262144
+	if !sameRaylineARCSelectionConfig(&base, &base) || !sameRaylineARCSelectionConfig(&declared, &same) {
+		t.Fatal("equal limits read as conflicting selector configs")
+	}
+	if sameRaylineARCSelectionConfig(&same, &differing) || sameRaylineARCSelectionConfig(&base, &declared) {
+		t.Fatal("different limits read as one selector config")
 	}
 }
 

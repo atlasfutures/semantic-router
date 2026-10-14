@@ -95,30 +95,25 @@ func routingCandidatesOf(cfg *config.RouterConfig, recipe *config.RoutingRecipe)
 	return candidates
 }
 
-// routingContextLimitOf is the recipe's declared ARC context limit: the
-// smallest max_context_tokens across its rayline_arc decisions that declare
-// one, or nil when none declares one. Readiness refuses the default recipe's
-// ARC decisions as conflicting_config when their selection configs differ,
-// this field included, so there the decisions agree or the cell serves
-// nothing; an entrypoint recipe is not held to that, and the alias cannot
-// choose the decision, so the smaller is what the listing can promise, as
-// appendArm keeps the smaller output cap.
+// routingContextLimitOf is the recipe's declared ARC context limit, or nil
+// when its rayline_arc decision declares none. A recipe's ARC decisions
+// share one selector and one encoder, and startup refuses them as
+// conflicting_config when their selection configs differ, this field
+// included (sameRaylineARCSelectionConfig, on the default recipe and on an
+// entrypoint recipe alike); so there is one limit to read, and the first
+// decision's is every decision's on a cell that serves.
 func routingContextLimitOf(recipe *config.RoutingRecipe) *int {
 	if recipe == nil {
 		return nil
 	}
-	var limit *int
 	for index := range recipe.Profile.Decisions {
 		decision := &recipe.Profile.Decisions[index]
 		if decision.Algorithm == nil || decision.Algorithm.Type != config.RaylineARCAlgorithmType {
 			continue
 		}
-		declared := decision.Algorithm.RaylineARC.ContextLimit()
-		if declared > 0 && (limit == nil || declared < *limit) {
-			limit = positiveIntPointer(declared)
-		}
+		return positiveIntPointer(decision.Algorithm.RaylineARC.ContextLimit())
 	}
-	return limit
+	return nil
 }
 
 // appendArm lists an arm unless one of the same model and thinking mode is
