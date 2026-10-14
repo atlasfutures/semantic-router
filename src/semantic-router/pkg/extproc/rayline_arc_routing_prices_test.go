@@ -24,6 +24,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -91,9 +92,11 @@ func liveEcho(digest string, fallback ...string) func(raylinearc.PolicyDecisionR
 			return nil // the service echoes only when the request carried prices
 		}
 		version, asOf := request.RoutingPrices.StoreVersion, request.RoutingPrices.AsOf
+		// The feed fixture sends glm-4.6's cache legs null; the package fills them.
 		return &raylinearc.PolicyRoutingPricesUsed{
 			Mode: raylinearc.RoutingPricesModeLive, StoreVersion: &version, AsOf: &asOf,
 			Digest: &digest, FallbackArms: append([]string{}, fallback...),
+			FilledLegs: map[string][]string{"z-ai/glm-4.6": {"cache_read", "cache_write"}},
 		}
 	}
 }
@@ -132,13 +135,16 @@ func TestPolicySelectorSendsLivePricesAndAuditsTheEcho(t *testing.T) {
 	if audit == nil || audit.Mode != raylinearc.RoutingPricesModeLive || audit.PackageSHA256 != policyTestPackage ||
 		audit.StoreVersion != "v000000000042" || audit.AsOf != "2026-10-14T16:00:00Z" || audit.Digest != digest ||
 		len(audit.FallbackArms) != 1 || audit.FallbackArms[0] != "arm-fallback" ||
-		ledger[len(ledger)-1].ActionID != bindings[2].ActionID {
+		ledger[len(ledger)-1].ActionID != bindings[2].ActionID || audit.FilledModelCount != 1 ||
+		!slices.Equal(audit.FilledLegs["z-ai/glm-4.6"], []string{"cache_read", "cache_write"}) {
 		t.Fatalf("ledger audit = %+v", audit)
 	}
 	fields := map[string]interface{}{}
 	addPolicyPriceAuditFields(fields, trace)
 	if fields["routing_prices_mode"] != "live" || fields["routing_prices_digest"] != digest ||
-		fields["policy_package_sha256"] != policyTestPackage || fields["routing_prices_status"] != "fresh" {
+		fields["policy_package_sha256"] != policyTestPackage || fields["routing_prices_status"] != "fresh" ||
+		fields["routing_prices_filled_model_count"] != 1 ||
+		len(fields["routing_prices_filled_legs"].(map[string][]string)["z-ai/glm-4.6"]) != 2 {
 		t.Fatalf("selection log audit = %v", fields)
 	}
 
@@ -273,6 +279,11 @@ func TestPolicySelectorRefusesAnUntrueRoutingPriceEcho(t *testing.T) {
 			used := liveEcho(digest)(request)
 			later := "2026-10-14T16:05:00Z"
 			used.AsOf = &later
+			return used
+		}, arcFailurePolicyPricesMismatch},
+		"a filled model the request did not send": {true, func(request raylinearc.PolicyDecisionRequest) *raylinearc.PolicyRoutingPricesUsed {
+			used := liveEcho(digest)(request)
+			used.FilledLegs["vendor/unsent"] = []string{"output"}
 			return used
 		}, arcFailurePolicyPricesMismatch},
 		// Prices sent but no echo: the decision would have no price audit.

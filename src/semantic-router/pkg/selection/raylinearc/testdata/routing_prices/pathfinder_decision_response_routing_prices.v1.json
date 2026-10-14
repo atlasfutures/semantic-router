@@ -141,6 +141,11 @@
     "digest": "9ae247b186f767dbfc0704a844cd748d83211842b79e90a0a2f34d845ed9d9e7",
     "fallback_arms": [
       "5e3f0015ba42b3d5b7cf75c47e678f9c7e2003ef8dbff89d7fd2881ac3d658cd"
-    ]
+    ],
+    "filled_legs": {
+      "z-ai/glm-5.3-flash": [
+        "cache_write"
+      ]
+    }
   }
 }

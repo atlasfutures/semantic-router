@@ -139,6 +139,7 @@
     "store_version": "v000000000042",
     "as_of": "2026-10-14T16:00:00Z",
     "digest": null,
-    "fallback_arms": []
+    "fallback_arms": [],
+    "filled_legs": {}
   }
 }

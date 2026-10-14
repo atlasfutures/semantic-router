@@ -22,6 +22,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"sort"
 	"strconv"
 )
 
@@ -37,6 +38,15 @@ const MaxPolicyPriceAudits = 4
 // maxPolicyAuditFallbackArms bounds the fallback arms one ledger audit
 // lists; FallbackArmCount keeps the true count.
 const maxPolicyAuditFallbackArms = 8
+
+// maxPolicyAuditFilledModels bounds the models whose filled legs one ledger
+// audit lists (the first in id order); FilledModelCount keeps the true count.
+const maxPolicyAuditFilledModels = 8
+
+// maxPolicyAuditFilledModelBytes bounds a model id the ledger audit lists,
+// so a full ledger keeps its margin under the episode size limit. Real
+// OpenRouter slugs are well inside it; a longer id is counted, not listed.
+const maxPolicyAuditFilledModelBytes = 96
 
 // PolicyLedgerEntry records which action produced one assistant message and,
 // for a decision whose service echoed routing_prices_used, which prices
@@ -63,6 +73,35 @@ type PolicyPriceAudit struct {
 	FallbackArms     []string `json:"fallback_arms,omitempty"`
 	FallbackArmCount int      `json:"fallback_arm_count,omitempty"`
 	PredictedCostUSD *float64 `json:"predicted_cost_usd,omitempty"`
+	// FilledLegs are the first maxPolicyAuditFilledModels models, in id
+	// order, whose null legs took the package's value; FilledModelCount
+	// is how many models were filled in all.
+	FilledLegs       map[string][]string `json:"filled_legs,omitempty"`
+	FilledModelCount int                 `json:"filled_model_count,omitempty"`
+}
+
+// BoundedFilledLegs is the first limit models of filled, in id order,
+// leaving out ids longer than maxIDBytes, and how many models filled names
+// in all.
+func BoundedFilledLegs(filled map[string][]string, limit int, maxIDBytes int) (map[string][]string, int) {
+	if len(filled) == 0 {
+		return nil, 0
+	}
+	models := make([]string, 0, len(filled))
+	for model := range filled {
+		if len(model) <= maxIDBytes {
+			models = append(models, model)
+		}
+	}
+	sort.Strings(models)
+	if len(models) > limit {
+		models = models[:limit]
+	}
+	kept := make(map[string][]string, len(models))
+	for _, model := range models {
+		kept[model] = append([]string{}, filled[model]...)
+	}
+	return kept, len(filled)
 }
 
 // NewPolicyPriceAudit is the audit of a decision whose response echoed
@@ -91,6 +130,8 @@ func NewPolicyPriceAudit(packageSHA256 string, used *PolicyRoutingPricesUsed, pr
 	if len(arms) > 0 {
 		audit.FallbackArms = append([]string(nil), arms...)
 	}
+	audit.FilledLegs, audit.FilledModelCount = BoundedFilledLegs(
+		used.FilledLegs, maxPolicyAuditFilledModels, maxPolicyAuditFilledModelBytes)
 	return audit
 }
 
@@ -109,6 +150,14 @@ func (audit *PolicyPriceAudit) validate() error {
 	}
 	for _, arm := range audit.FallbackArms {
 		if arm == "" || len(arm) > maxPolicyArmIDBytes {
+			return errors.New("ARC policy episode price audit is malformed")
+		}
+	}
+	if len(audit.FilledLegs) > maxPolicyAuditFilledModels || audit.FilledModelCount < len(audit.FilledLegs) {
+		return errors.New("ARC policy episode price audit is malformed")
+	}
+	for model, legs := range audit.FilledLegs {
+		if model == "" || len(model) > maxPolicyAuditFilledModelBytes || validRoutingPriceLegs(legs) != nil {
 			return errors.New("ARC policy episode price audit is malformed")
 		}
 	}

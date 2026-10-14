@@ -39,6 +39,9 @@ const (
 	// maxLoggedFallbackArms bounds the fallback arms one selection log
 	// lists, the same as the ledger audit keeps.
 	maxLoggedFallbackArms = 8
+	// maxLoggedFilledModels bounds the models whose filled legs one
+	// selection log lists, the same as the ledger audit keeps.
+	maxLoggedFilledModels = 8
 )
 
 // newRoutingPriceCache resolves the configured feed; nil when routing_prices
@@ -124,6 +127,13 @@ func routingPriceEchoMismatch(sent *raylinearc.PolicyRoutingPrices, used *raylin
 	if *used.StoreVersion != sent.StoreVersion || !sameInstant(*used.AsOf, sent.AsOf) {
 		return arcFailurePolicyPricesMismatch
 	}
+	// filled_legs is keyed by the request's rate keys; a model this request
+	// did not send cannot have had a leg filled.
+	for model := range used.FilledLegs {
+		if _, ok := sent.Rates[model]; !ok {
+			return arcFailurePolicyPricesMismatch
+		}
+	}
 	return ""
 }
 
@@ -172,6 +182,12 @@ func addPolicyPriceAuditFields(fields map[string]interface{}, trace *selection.R
 	}
 	fields["routing_prices_fallback_arms"] = arms
 	fields["routing_prices_fallback_arm_count"] = len(used.FallbackArms)
+	filled, filledCount := raylinearc.BoundedFilledLegs(used.FilledLegs, maxLoggedFilledModels, raylinearc.MaxRoutingPriceModelIDBytes)
+	if filled == nil {
+		filled = map[string][]string{}
+	}
+	fields["routing_prices_filled_legs"] = filled
+	fields["routing_prices_filled_model_count"] = filledCount
 	for name, value := range map[string]*string{
 		"routing_prices_store_version": used.StoreVersion,
 		"routing_prices_as_of":         used.AsOf,

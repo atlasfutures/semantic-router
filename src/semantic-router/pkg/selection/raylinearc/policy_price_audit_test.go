@@ -43,6 +43,7 @@ func TestPolicyPriceAuditRecordsTheEcho(t *testing.T) {
 		Digest:           "3b4c1f0e5a6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f",
 		FallbackArms:     []string{"4951fcf2b0d2c10050e8d69681e8deda04f2e3a7b5c3e8b2945bf291be9b9279"},
 		FallbackArmCount: 1, PredictedCostUSD: audit.PredictedCostUSD,
+		FilledLegs: map[string][]string{"z-ai/glm-4.6": {"cache_read", "cache_write"}}, FilledModelCount: 1,
 	}
 	if !reflect.DeepEqual(audit, want) || *audit.PredictedCostUSD != 0.007 {
 		t.Fatalf("audit = %+v", audit)
@@ -57,6 +58,22 @@ func TestPolicyPriceAuditRecordsTheEcho(t *testing.T) {
 	many := NewPolicyPriceAudit(want.PackageSHA256, &PolicyRoutingPricesUsed{Mode: RoutingPricesModePackage, FallbackArms: arms}, nil)
 	if len(many.FallbackArms) != maxPolicyAuditFallbackArms || many.FallbackArmCount != 20 {
 		t.Fatalf("20 fallback arms recorded as %d, count %d", len(many.FallbackArms), many.FallbackArmCount)
+	}
+	if many.FilledLegs != nil || many.FilledModelCount != 0 {
+		t.Fatalf("nothing filled recorded as %v, count %d", many.FilledLegs, many.FilledModelCount)
+	}
+
+	// Filled legs keep the first 8 models in id order and the true count; an
+	// id past the ledger's bound is counted but not listed.
+	filled := map[string][]string{"a/" + strings.Repeat("x", maxPolicyAuditFilledModelBytes): {"input"}}
+	for index := 18; index >= 0; index-- {
+		filled[fmt.Sprintf("vendor/model-%02d", index)] = []string{"cache_write"}
+	}
+	wide := NewPolicyPriceAudit(want.PackageSHA256, &PolicyRoutingPricesUsed{Mode: RoutingPricesModeLive, FilledLegs: filled}, nil)
+	if len(wide.FilledLegs) != maxPolicyAuditFilledModels || wide.FilledModelCount != 20 ||
+		wide.FilledLegs["vendor/model-00"] == nil || wide.FilledLegs["vendor/model-07"] == nil ||
+		wide.FilledLegs["vendor/model-08"] != nil || wide.validate() != nil {
+		t.Fatalf("20 filled models recorded as %v, count %d", wide.FilledLegs, wide.FilledModelCount)
 	}
 }
 
@@ -132,11 +149,17 @@ func TestFullLedgerWithPriceAuditsFitsTheEpisodeLimit(t *testing.T) {
 		arms[index] = strings.Repeat("c", maxPolicyArmIDBytes)
 	}
 	cost := 1.0
+	filled := map[string][]string{}
+	for index := 0; index < maxPolicyAuditFilledModels; index++ {
+		model := fmt.Sprintf("%d", index) + strings.Repeat("m", maxPolicyAuditFilledModelBytes-1)
+		filled[model] = RoutingPriceLegs[:]
+	}
 	audit := &PolicyPriceAudit{
 		PackageSHA256: strings.Repeat("a", 64), Mode: RoutingPricesModeLive,
 		StoreVersion: strings.Repeat("v", maxRoutingPriceStoreVersionBytes),
 		AsOf:         strings.Repeat("t", maxRoutingPriceTimestampBytes), Digest: strings.Repeat("d", 64),
 		FallbackArms: arms, FallbackArmCount: maxRoutingPriceFallbackArms, PredictedCostUSD: &cost,
+		FilledLegs: filled, FilledModelCount: maxRoutingPriceModels,
 	}
 	policy := &PolicyEpisodeState{PrefixLen: MaxPolicyLedgerEntries * 1000, PrefixDigest: strings.Repeat("a", 64)}
 	for index := 0; index < MaxPolicyLedgerEntries; index++ {
@@ -163,12 +186,15 @@ func TestFullLedgerWithPriceAuditsFitsTheEpisodeLimit(t *testing.T) {
 
 func TestPolicyStateRefusesMalformedPriceAudits(t *testing.T) {
 	for name, mutate := range map[string]func(*PolicyPriceAudit){
-		"an unknown mode":         func(a *PolicyPriceAudit) { a.Mode = "snapshot" },
-		"a malformed package":     func(a *PolicyPriceAudit) { a.PackageSHA256 = "pkg" },
-		"a malformed digest":      func(a *PolicyPriceAudit) { a.Digest = "digest" },
-		"a count below the list":  func(a *PolicyPriceAudit) { a.FallbackArmCount = 0 },
-		"an empty fallback arm":   func(a *PolicyPriceAudit) { a.FallbackArms = []string{""} },
-		"an overlong store label": func(a *PolicyPriceAudit) { a.StoreVersion = strings.Repeat("v", 300) },
+		"an unknown mode":              func(a *PolicyPriceAudit) { a.Mode = "snapshot" },
+		"a malformed package":          func(a *PolicyPriceAudit) { a.PackageSHA256 = "pkg" },
+		"a malformed digest":           func(a *PolicyPriceAudit) { a.Digest = "digest" },
+		"a count below the list":       func(a *PolicyPriceAudit) { a.FallbackArmCount = 0 },
+		"an empty fallback arm":        func(a *PolicyPriceAudit) { a.FallbackArms = []string{""} },
+		"an overlong store label":      func(a *PolicyPriceAudit) { a.StoreVersion = strings.Repeat("v", 300) },
+		"a filled count below the map": func(a *PolicyPriceAudit) { a.FilledModelCount = 0 },
+		"an unknown filled leg":        func(a *PolicyPriceAudit) { a.FilledLegs = map[string][]string{"m": {"tokens"}} },
+		"an empty filled model":        func(a *PolicyPriceAudit) { a.FilledLegs = map[string][]string{"": {"input"}} },
 	} {
 		audit := *testPriceAudit(t)
 		mutate(&audit)

@@ -232,8 +232,26 @@ func TestDecodePolicyDecisionResponseReadsTheRoutingPriceEcho(t *testing.T) {
 		t.Fatalf("live echo decoded as %+v", live.RoutingPricesUsed)
 	}
 	golden, err := DecodePolicyDecisionResponse(readRoutingPriceFixture(t, "pathfinder_decision_response_routing_prices.v1.json"))
-	if err != nil || golden.RoutingPricesUsed == nil || *golden.RoutingPricesUsed.StoreVersion != "rps-000000000017" {
-		t.Fatalf("pathfinder golden echo: %+v, %v", golden, err)
+	if err != nil || golden.RoutingPricesUsed == nil || *golden.RoutingPricesUsed.StoreVersion != "rps-000000000017" ||
+		!reflect.DeepEqual(golden.RoutingPricesUsed.FilledLegs, map[string][]string{"z-ai/glm-5.3-flash": {"cache_write"}}) {
+		t.Fatalf("pathfinder golden echo: %+v, %v", golden.RoutingPricesUsed, err)
+	}
+	// Every leg in the contract's order, and an empty list, decode.
+	allLegs := strings.Replace(string(readRoutingPriceFixture(t, "decision_response_live.v1.json")),
+		`["cache_read", "cache_write"]`, `["input", "cache_read", "cache_write", "output"], "anthropic/claude-sonnet-4.5": []`, 1)
+	if _, err = DecodePolicyDecisionResponse([]byte(allLegs)); err != nil {
+		t.Fatalf("every leg in order was refused: %v", err)
+	}
+	// A service from before per-leg fill omits filled_legs: nothing filled.
+	var withoutFill map[string]any
+	if err = json.Unmarshal(readRoutingPriceFixture(t, "decision_response_live.v1.json"), &withoutFill); err != nil {
+		t.Fatal(err)
+	}
+	delete(withoutFill["routing_prices_used"].(map[string]any), "filled_legs")
+	older, _ := json.Marshal(withoutFill)
+	decodedOlder, err := DecodePolicyDecisionResponse(older)
+	if err != nil || decodedOlder.RoutingPricesUsed.FilledLegs == nil || len(decodedOlder.RoutingPricesUsed.FilledLegs) != 0 {
+		t.Fatalf("an echo without filled_legs: %+v, %v", decodedOlder, err)
 	}
 	pkg, err := DecodePolicyDecisionResponse(readRoutingPriceFixture(t, "decision_response_package.v1.json"))
 	if err != nil || pkg.RoutingPricesUsed == nil || pkg.RoutingPricesUsed.Mode != RoutingPricesModePackage {
@@ -259,6 +277,11 @@ func TestDecodePolicyDecisionResponseReadsTheRoutingPriceEcho(t *testing.T) {
 		"a live echo, no as_of":    {`"as_of": "2026-10-14T16:00:00Z"`, `"as_of": null`},
 		"an unknown echo field":    {`"fallback_arms"`, `"surprise": 1, "fallback_arms"`},
 		"an empty fallback arm":    {`"fallback_arms": [`, `"fallback_arms": ["", `},
+		"an unknown filled leg":    {`["cache_read", "cache_write"]`, `["cache_read", "cache_miss"]`},
+		"filled legs out of order": {`["cache_read", "cache_write"]`, `["cache_write", "cache_read"]`},
+		"a repeated filled leg":    {`["cache_read", "cache_write"]`, `["cache_read", "cache_read"]`},
+		"an empty filled model":    {`"z-ai/glm-4.6": [`, `"": [`},
+		"a filled leg not a list":  {`["cache_read", "cache_write"]`, `"cache_read"`},
 	}
 	for name, edit := range cases {
 		changed := strings.Replace(body, edit[0], edit[1], 1)

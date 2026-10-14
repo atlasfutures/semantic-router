@@ -42,7 +42,10 @@ const (
 	maxRoutingPriceStoreVersionBytes = 256
 	maxRoutingPriceTimestampBytes    = 64
 	maxRoutingPriceModelIDBytes      = 256
-	maxRoutingPriceModels            = 4096
+	// MaxRoutingPriceModelIDBytes is the longest model id the feed and the
+	// echo may name.
+	MaxRoutingPriceModelIDBytes = maxRoutingPriceModelIDBytes
+	maxRoutingPriceModels       = 4096
 	// maxRoutingPriceFallbackArms is only a safety bound: the service lists
 	// every arm that fell back, unbounded, and a package can price over a
 	// thousand arms, most of which fall back when the feed covers few of
@@ -97,14 +100,16 @@ type PolicyRoutingPrices struct {
 
 // PolicyRoutingPricesUsed is the decision response's routing_prices_used:
 // whether live rates scored the decision, the feed identity it used, the
-// digest of the effective per-arm rates, and the arms that fell back to the
-// package's rate.
+// digest of the effective per-arm rates, the arms that fell back to the
+// package's rate, and per request rate key the legs the feed sent null that
+// took the package's value (per-leg fill), in the contract's leg order.
 type PolicyRoutingPricesUsed struct {
-	Mode         string   `json:"mode"`
-	StoreVersion *string  `json:"store_version"`
-	AsOf         *string  `json:"as_of"`
-	Digest       *string  `json:"digest"`
-	FallbackArms []string `json:"fallback_arms"`
+	Mode         string              `json:"mode"`
+	StoreVersion *string             `json:"store_version"`
+	AsOf         *string             `json:"as_of"`
+	Digest       *string             `json:"digest"`
+	FallbackArms []string            `json:"fallback_arms"`
+	FilledLegs   map[string][]string `json:"filled_legs"`
 }
 
 // DecodeRoutingPriceFeed reads a feed response. Unknown fields are allowed,
@@ -203,6 +208,49 @@ func (used *PolicyRoutingPricesUsed) validate() error {
 		if arm == "" || len(arm) > maxPolicyArmIDBytes {
 			return errors.New("routing_prices_used fallback arm id is empty or too long")
 		}
+	}
+	// A service from before per-leg fill sends no filled_legs: nothing was
+	// filled.
+	if used.FilledLegs == nil {
+		used.FilledLegs = map[string][]string{}
+	}
+	if len(used.FilledLegs) > maxRoutingPriceModels {
+		return errors.New("routing_prices_used fills too many models")
+	}
+	for model, legs := range used.FilledLegs {
+		if model == "" || len(model) > maxRoutingPriceModelIDBytes {
+			return errors.New("routing_prices_used filled model id is empty or too long")
+		}
+		if err := validRoutingPriceLegs(legs); err != nil {
+			return fmt.Errorf("routing_prices_used filled_legs: %w", err)
+		}
+	}
+	return nil
+}
+
+// RoutingPriceLegs are a rate's legs in the contract's order, the order
+// filled_legs lists them in.
+var RoutingPriceLegs = [...]string{"input", "cache_read", "cache_write", "output"}
+
+// validRoutingPriceLegs refuses an unknown leg, a repeated one, or legs out
+// of the contract's order.
+func validRoutingPriceLegs(legs []string) error {
+	next := 0
+	for _, leg := range legs {
+		position := -1
+		for index, known := range RoutingPriceLegs {
+			if leg == known {
+				position = index
+				break
+			}
+		}
+		if position < 0 {
+			return fmt.Errorf("unknown leg %q", leg)
+		}
+		if position < next {
+			return fmt.Errorf("leg %q repeated or out of order", leg)
+		}
+		next = position + 1
 	}
 	return nil
 }
