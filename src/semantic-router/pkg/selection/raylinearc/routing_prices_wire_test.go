@@ -63,6 +63,7 @@ func TestRoutingPriceFixturesRoundTripStrictly(t *testing.T) {
 		// tests/fixtures/arc_policy_service (branch arc-live-prices).
 		"pathfinder_decision_response_routing_prices.v1.json": &PolicyDecisionResponse{},
 		"pathfinder_package_manifest.v4.live_prices.json":     &PolicyPackageManifest{},
+		"pathfinder_package_manifest.v5.live_prices.json":     &PolicyPackageManifestV5{},
 	}
 	for name, target := range cases {
 		body := readRoutingPriceFixture(t, name)
@@ -297,5 +298,40 @@ func TestDecodePolicyPackageManifestRecognizesTheLivePricesCapability(t *testing
 		[]byte(`"live_prices_affect_decisions": true, "external_routing_prices": true`), 1)
 	if _, err = DecodePolicyPackageManifest(extra); err == nil {
 		t.Fatal("a manifest naming external_routing_prices was accepted")
+	}
+}
+
+// Every manifest version VSR decodes takes the capability on a factored
+// package and refuses it on any other: Pathfinder's v5 live-prices manifest,
+// and the v6 fixture with the flag set.
+func TestLivePricesCapabilityHoldsAcrossManifestVersions(t *testing.T) {
+	v5 := readRoutingPriceFixture(t, "pathfinder_package_manifest.v5.live_prices.json")
+	manifest, err := DecodePolicyPackageManifestV5(v5)
+	if err != nil || !manifest.Pricing.LivePricesAffectDecisions || manifest.Decision.Mode != "factored" {
+		t.Fatalf("v5 live-priced manifest: %v", err)
+	}
+	if _, err = DecodePolicyPackageManifestV5OrLater(v5); err != nil {
+		t.Fatalf("v5-or-later refused the v5 live-priced manifest: %v", err)
+	}
+	learned := bytes.Replace(v5, []byte(`"mode": "factored"`), []byte(`"mode": "learned"`), 1)
+	if bytes.Equal(learned, v5) {
+		t.Fatal("v5 fixture no longer names its decision mode")
+	}
+	if _, err = DecodePolicyPackageManifestV5(learned); err == nil {
+		t.Fatal("a learned v5 package claiming live prices was accepted")
+	}
+	learnedOff := bytes.Replace(learned, []byte(`"live_prices_affect_decisions": true`), []byte(`"live_prices_affect_decisions": false`), 1)
+	if _, err = DecodePolicyPackageManifestV5(learnedOff); err != nil {
+		t.Fatalf("a learned v5 package without live prices was refused: %v", err)
+	}
+
+	v6 := manifestMap(t, policyV6Fixture)
+	v6["pricing"].(map[string]any)["live_prices_affect_decisions"] = true
+	if _, err = DecodePolicyPackageManifestV6(encodeManifest(t, v6)); err != nil {
+		t.Fatalf("a factored v6 package with live prices was refused: %v", err)
+	}
+	v6["decision"].(map[string]any)["mode"] = "learned"
+	if _, err = DecodePolicyPackageManifestV6(encodeManifest(t, v6)); err == nil {
+		t.Fatal("a learned v6 package claiming live prices was accepted")
 	}
 }

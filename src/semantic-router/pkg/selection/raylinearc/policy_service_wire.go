@@ -638,6 +638,17 @@ func (common *PolicyPackageCommon) checkProfileMembers(conversation string) erro
 	return nil
 }
 
+// checkLivePrices allows live_prices_affect_decisions only on a factored
+// package, in every manifest version: only a factored package ranks
+// price-free heads against priced usage, so only one can score the
+// request's routing_prices (Pathfinder's contract does the same).
+func (common *PolicyPackageCommon) checkLivePrices() error {
+	if common.Pricing.LivePricesAffectDecisions && common.Decision.Mode != policyDecisionModeFactored {
+		return fmt.Errorf("policy package live_prices_affect_decisions on a %q package", common.Decision.Mode)
+	}
+	return nil
+}
+
 // PolicyPackageCommon is every manifest section v4 and v5 share; v5 differs
 // only in its actions and thinking_controls_sha256.
 type PolicyPackageCommon struct {
@@ -838,10 +849,8 @@ func DecodePolicyPackageManifest(body []byte) (*PolicyPackageManifest, error) {
 	if manifest.SchemaVersion != PolicyPackageSchema {
 		return nil, fmt.Errorf("policy package schema %q", manifest.SchemaVersion)
 	}
-	// Only a factored package ranks price-free heads against priced usage,
-	// so only one may claim that live prices affect its decisions.
-	if manifest.Pricing.LivePricesAffectDecisions && manifest.Decision.Mode != policyDecisionModeFactored {
-		return nil, fmt.Errorf("policy package live_prices_affect_decisions on a %q package", manifest.Decision.Mode)
+	if err := manifest.checkLivePrices(); err != nil {
+		return nil, err
 	}
 	if err := manifest.checkConversation(); err != nil {
 		return nil, err
@@ -865,8 +874,8 @@ func DecodePolicyPackageManifestV5(body []byte) (*PolicyPackageManifestV5, error
 	if manifest.SchemaVersion != PolicyPackageSchemaV5 {
 		return nil, fmt.Errorf("policy package schema %q", manifest.SchemaVersion)
 	}
-	if manifest.Pricing.LivePricesAffectDecisions {
-		return nil, fmt.Errorf("policy package lets live prices affect decisions")
+	if err := manifest.checkLivePrices(); err != nil {
+		return nil, err
 	}
 	if err := manifest.checkConversation(); err != nil {
 		return nil, err
