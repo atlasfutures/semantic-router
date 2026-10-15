@@ -92,9 +92,13 @@ func readDispatchedOutboundParams(body []byte, dispatch *providerDispatch) *disp
 		PresencePenalty     *float64 `json:"presence_penalty"`
 		N                   *int64   `json:"n"`
 		ParallelToolCalls   *bool    `json:"parallel_tool_calls"`
-		Stream              *bool    `json:"stream"`
-		PromptCacheKey      *string  `json:"prompt_cache_key"`
-		Provider            struct {
+		// Messages spells the same control inverted, inside tool_choice.
+		ToolChoice struct {
+			DisableParallelToolUse *bool `json:"disable_parallel_tool_use"`
+		} `json:"tool_choice"`
+		Stream         *bool   `json:"stream"`
+		PromptCacheKey *string `json:"prompt_cache_key"`
+		Provider       struct {
 			Only []string `json:"only"`
 		} `json:"provider"`
 		cacheLocations
@@ -124,6 +128,10 @@ func readDispatchedOutboundParams(body []byte, dispatch *providerDispatch) *disp
 	params.TopP, params.TopK, params.Seed = wire.TopP, wire.TopK, wire.Seed
 	params.FrequencyPenalty, params.PresencePenalty = wire.FrequencyPenalty, wire.PresencePenalty
 	params.N, params.ParallelToolCalls = wire.N, wire.ParallelToolCalls
+	if params.ParallelToolCalls == nil && wire.ToolChoice.DisableParallelToolUse != nil {
+		parallel := !*wire.ToolChoice.DisableParallelToolUse
+		params.ParallelToolCalls = &parallel
+	}
 	params.Stream = wire.Stream
 	params.ToolCount = len(wire.Tools)
 	params.PromptCacheKey = wire.PromptCacheKey != nil && *wire.PromptCacheKey != ""
@@ -133,7 +141,7 @@ func readDispatchedOutboundParams(body []byte, dispatch *providerDispatch) *disp
 
 // cacheLocations are the places a cache_control directive is defined: the
 // top level (automatic caching), each tool, each system block, and each
-// message and its content blocks. A member of that name anywhere else (a
+// message, its content blocks and their nested blocks (a tool_result's). A member of that name anywhere else (a
 // tool's input schema, metadata) is data, not a directive.
 type cacheLocations struct {
 	CacheControl json.RawMessage `json:"cache_control"`
@@ -145,8 +153,11 @@ type cacheLocations struct {
 	} `json:"messages"`
 }
 
+// cacheMarked is a tool or content block. A block's own content (a Messages
+// tool_result's blocks) can carry directives too.
 type cacheMarked struct {
 	CacheControl json.RawMessage `json:"cache_control"`
+	Content      cacheBlocks     `json:"content"`
 }
 
 // cacheBlocks is a content or system member: a block list, whose blocks may
@@ -173,18 +184,21 @@ func (locations cacheLocations) markers() int {
 			count++
 		}
 	}
+	var blocks func(list cacheBlocks)
+	blocks = func(list cacheBlocks) {
+		for _, block := range list {
+			marked(block.CacheControl)
+			blocks(block.Content)
+		}
+	}
 	marked(locations.CacheControl)
 	for _, tool := range locations.Tools {
 		marked(tool.CacheControl)
 	}
-	for _, block := range locations.System {
-		marked(block.CacheControl)
-	}
+	blocks(locations.System)
 	for _, message := range locations.Messages {
 		marked(message.CacheControl)
-		for _, block := range message.Content {
-			marked(block.CacheControl)
-		}
+		blocks(message.Content)
 	}
 	return count
 }

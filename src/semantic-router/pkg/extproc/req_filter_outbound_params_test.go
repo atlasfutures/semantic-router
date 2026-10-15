@@ -19,11 +19,12 @@ func TestOutboundParamsReadAMessagesBody(t *testing.T) {
 		`"cache_control":{"type":"ephemeral"},` +
 		`"system":[{"type":"text","text":"` + outboundSecret + `","cache_control":{"type":"ephemeral"}}],` +
 		`"messages":[{"role":"user","content":"` + outboundSecret + `"},` +
-		`{"role":"user","content":[{"type":"text","text":"` + outboundSecret + `","cache_control":{"type":"ephemeral"}}]}],` +
+		`{"role":"user","content":[{"type":"text","text":"` + outboundSecret + `","cache_control":{"type":"ephemeral"}},` +
+		`{"type":"tool_result","tool_use_id":"t1","content":[{"type":"text","text":"` + outboundSecret + `","cache_control":{"type":"ephemeral"}}]}]}],` +
 		// A schema property named cache_control is data, not a directive.
 		`"tools":[{"name":"Bash","description":"` + outboundSecret + `","input_schema":{"properties":{"cache_control":{"type":"string"}}}},` +
 		`{"name":"Edit","input_schema":{},"cache_control":{"type":"ephemeral"}}],` +
-		`"top_p":0.9,"top_k":40,"seed":7,"frequency_penalty":0.1,"presence_penalty":0.2,"n":1,"parallel_tool_calls":false,` +
+		`"top_p":0.9,"top_k":40,"seed":7,"frequency_penalty":0.1,"presence_penalty":0.2,"n":1,"tool_choice":{"type":"auto","disable_parallel_tool_use":true},` +
 		`"thinking":{"type":"enabled","budget_tokens":4096},"output_config":{"effort":"high"},` +
 		`"provider":{"only":["anthropic"],"order":["anthropic"],"allow_fallbacks":false}}`
 	dispatch := &providerDispatch{
@@ -44,7 +45,7 @@ func TestOutboundParamsReadAMessagesBody(t *testing.T) {
 		"outbound_temperature":            0.5,
 		"outbound_stream":                 true,
 		"outbound_tool_count":             2,
-		"outbound_cache_control_markers":  4,
+		"outbound_cache_control_markers":  5,
 		"outbound_top_p":                  0.9,
 		"outbound_top_k":                  int64(40),
 		"outbound_seed":                   int64(7),
