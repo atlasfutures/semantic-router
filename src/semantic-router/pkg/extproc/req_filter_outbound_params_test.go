@@ -271,6 +271,31 @@ func TestOutboundParamsReadTemplateSwitches(t *testing.T) {
 	}
 }
 
+// Extension keys cannot crowd a catalog switch out of the bounded record.
+func TestOutboundParamsTemplateSwitchesKeepKnownControls(t *testing.T) {
+	members := []string{`"thinking":true`}
+	for i := 0; i < 20; i++ {
+		members = append(members, fmt.Sprintf(`"a%02d":true`, i))
+	}
+	record := map[string]interface{}{}
+	appendOutboundParamFields(record, readDispatchedOutboundParams([]byte(`{"model":"m","chat_template_kwargs":{`+strings.Join(members, ",")+`}}`), nil))
+	encoded, _ := record["outbound_template_switches"].(string)
+	var got map[string]interface{}
+	if json.Unmarshal([]byte(encoded), &got) != nil || got["thinking"] != true || len(got) != outboundListLimit {
+		t.Fatalf("outbound_template_switches = %s", encoded)
+	}
+}
+
+// Responses include selections are recorded as known categories or digests.
+func TestOutboundParamsReadInclude(t *testing.T) {
+	record := map[string]interface{}{}
+	appendOutboundParamFields(record, readDispatchedOutboundParams([]byte(`{"model":"m","include":["reasoning.encrypted_content","`+outboundSecret+`"]}`), nil))
+	if include, _ := record["outbound_include"].([]string); len(include) != 2 || include[0] != "reasoning.encrypted_content" ||
+		include[1] != outboundDigest(outboundSecret) {
+		t.Fatalf("outbound_include = %v", record["outbound_include"])
+	}
+}
+
 // A client-sized provider list is bounded on the record.
 func TestOutboundParamsBoundProviderLists(t *testing.T) {
 	only := make([]string, 40)

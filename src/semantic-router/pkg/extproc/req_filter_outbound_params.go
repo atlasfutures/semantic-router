@@ -52,6 +52,9 @@ type dispatchedOutboundParams struct {
 	// Store and AutoStore are Chat/Responses' provider-side storage flags.
 	Store     *bool
 	AutoStore *bool
+	// Include is Responses' include selections, each a known category or a
+	// digest, at most outboundListLimit.
+	Include []string
 	// Truncation is Responses' context truncation mode.
 	Truncation string
 	// StreamIncludeUsage and StreamIncludeObfuscation are stream_options.
@@ -133,6 +136,7 @@ func readDispatchedOutboundParams(body []byte, dispatch *providerDispatch) *disp
 		Conversation         json.RawMessage `json:"conversation"`
 		Store                *bool           `json:"store"`
 		Truncation           string          `json:"truncation"`
+		Include              json.RawMessage `json:"include"`
 		StreamOptions        struct {
 			IncludeUsage       *bool `json:"include_usage"`
 			IncludeObfuscation *bool `json:"include_obfuscation"`
@@ -215,6 +219,16 @@ func readDispatchedOutboundParams(body []byte, dispatch *providerDispatch) *disp
 	params.Conversation = len(wire.Conversation) > 0 && string(wire.Conversation) != "null" && string(wire.Conversation) != `""`
 	params.Store, params.AutoStore = wire.Store, wire.AutoStore
 	params.Truncation = knownOrDigest(wire.Truncation, knownTruncations)
+	var include []string
+	if json.Unmarshal(wire.Include, &include) == nil {
+		for _, selection := range include {
+			if len(params.Include) == outboundListLimit {
+				params.Include = append(params.Include, "+"+strconv.Itoa(len(include)-outboundListLimit)+" more")
+				break
+			}
+			params.Include = append(params.Include, knownOrDigest(selection, knownIncludes))
+		}
+	}
 	params.StreamIncludeUsage = wire.StreamOptions.IncludeUsage
 	params.StreamIncludeObfuscation = wire.StreamOptions.IncludeObfuscation
 	for _, tool := range wire.Tools {
@@ -314,6 +328,9 @@ var (
 	knownCacheTTLs       = enumSet("5m", "1h")
 	knownCacheScopes     = enumSet()
 	knownTruncations     = enumSet("auto", "disabled")
+	knownIncludes        = enumSet("reasoning.encrypted_content", "file_search_call.results", "web_search_call.results",
+		"web_search_call.action.sources", "message.input_image.image_url", "computer_call_output.output.image_url",
+		"code_interpreter_call.outputs", "message.output_text.logprobs")
 )
 
 // outboundListLimit bounds every client-sized list or map the record carries,
@@ -348,7 +365,14 @@ func (kwargs *templateKwargs) UnmarshalJSON(raw []byte) error {
 	for key := range members {
 		keys = append(keys, key)
 	}
-	sort.Strings(keys)
+	// The catalog's switches sort first, so extension keys cannot crowd a
+	// reasoning control out of the bounded record.
+	sort.Slice(keys, func(i, j int) bool {
+		if knownTemplateSwitches[keys[i]] != knownTemplateSwitches[keys[j]] {
+			return knownTemplateSwitches[keys[i]]
+		}
+		return keys[i] < keys[j]
+	})
 	switches := map[string]interface{}{}
 	for _, key := range keys {
 		value := members[key]
@@ -650,6 +674,9 @@ func appendOutboundParamFields(record map[string]interface{}, params *dispatched
 	}
 	if params.AutoStore != nil {
 		record["outbound_auto_store"] = *params.AutoStore
+	}
+	if len(params.Include) > 0 {
+		record["outbound_include"] = params.Include
 	}
 	if params.Truncation != "" {
 		record["outbound_truncation"] = params.Truncation
