@@ -49,6 +49,9 @@ type dispatchedOutboundParams struct {
 	// references provider-held context; the ids themselves are not recorded.
 	PreviousResponseID bool
 	Conversation       bool
+	// Store and AutoStore are Chat/Responses' provider-side storage flags.
+	Store     *bool
+	AutoStore *bool
 
 	OutputConfigEffort    string
 	ReasoningObjectEffort string
@@ -116,6 +119,8 @@ func readDispatchedOutboundParams(body []byte, dispatch *providerDispatch) *disp
 		PromptCacheRetention *string         `json:"prompt_cache_retention"`
 		PreviousResponseID   *string         `json:"previous_response_id"`
 		Conversation         json.RawMessage `json:"conversation"`
+		Store                *bool           `json:"store"`
+		AutoStore            *bool           `json:"auto_store"`
 		Reasoning            struct {
 			Effort    string          `json:"effort"`
 			MaxTokens *int64          `json:"max_tokens"`
@@ -194,6 +199,7 @@ func readDispatchedOutboundParams(body []byte, dispatch *providerDispatch) *disp
 	}
 	params.PreviousResponseID = wire.PreviousResponseID != nil && *wire.PreviousResponseID != ""
 	params.Conversation = len(wire.Conversation) > 0 && string(wire.Conversation) != "null" && string(wire.Conversation) != `""`
+	params.Store, params.AutoStore = wire.Store, wire.AutoStore
 	var taskBudget int64
 	if json.Unmarshal(wire.OutputConfig.TaskBudget, &taskBudget) == nil && string(wire.OutputConfig.TaskBudget) != "null" {
 		params.TaskBudget = &taskBudget
@@ -242,21 +248,38 @@ func readDispatchedOutboundParams(body []byte, dispatch *providerDispatch) *disp
 // into a pin) is recorded only as a digest.
 var providerSlug = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]{0,31}(/[A-Za-z0-9][A-Za-z0-9-]{0,31})?$`)
 
+// maxPriceKinds are the price kinds OpenRouter's max_price accepts; any other
+// key is recorded as a digest.
+var maxPriceKinds = map[string]bool{"prompt": true, "completion": true, "request": true, "image": true}
+
 // redactProviderPreferences keeps the provider lists' slugs and the
 // data_collection enum readable and replaces any other value: a same-format
 // dispatch carries the client's own provider object, whose strings are not
 // validated.
 func redactProviderPreferences(provider *config.OpenRouterProviderPreferences) {
+	digest := func(value string) string {
+		sum := sha256.Sum256([]byte(value))
+		return "sha256:" + hex.EncodeToString(sum[:6])
+	}
 	redact := func(values []string) []string {
 		for i, value := range values {
 			if !providerSlug.MatchString(value) {
-				sum := sha256.Sum256([]byte(value))
-				values[i] = "sha256:" + hex.EncodeToString(sum[:6])
+				values[i] = digest(value)
 			}
 		}
 		return values
 	}
 	provider.Order, provider.Only, provider.Ignore = redact(provider.Order), redact(provider.Only), redact(provider.Ignore)
+	if provider.MaxPrice != nil {
+		known := make(map[string]float64, len(provider.MaxPrice))
+		for kind, ceiling := range provider.MaxPrice {
+			if !maxPriceKinds[kind] {
+				kind = digest(kind)
+			}
+			known[kind] = ceiling
+		}
+		provider.MaxPrice = known
+	}
 	if provider.DataCollection != "" && provider.DataCollection != "allow" && provider.DataCollection != "deny" {
 		provider.DataCollection = "other"
 	}
@@ -457,6 +480,12 @@ func appendOutboundParamFields(record map[string]interface{}, params *dispatched
 	}
 	if params.Conversation {
 		record["outbound_conversation"] = true
+	}
+	if params.Store != nil {
+		record["outbound_store"] = *params.Store
+	}
+	if params.AutoStore != nil {
+		record["outbound_auto_store"] = *params.AutoStore
 	}
 	if params.TaskBudget != nil {
 		record["outbound_task_budget"] = *params.TaskBudget

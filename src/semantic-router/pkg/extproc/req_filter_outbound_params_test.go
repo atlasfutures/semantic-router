@@ -173,6 +173,11 @@ func TestOutboundParamsRecordProviderContextPresence(t *testing.T) {
 		t.Fatalf("record = %v", record)
 	}
 	record = map[string]interface{}{}
+	appendOutboundParamFields(record, readDispatchedOutboundParams([]byte(`{"model":"m","store":false,"auto_store":true}`), nil))
+	if record["outbound_store"] != false || record["outbound_auto_store"] != true {
+		t.Fatalf("storage flags: record = %v", record)
+	}
+	record = map[string]interface{}{}
 	appendOutboundParamFields(record, readDispatchedOutboundParams([]byte(`{"model":"m","conversation":"conv_1"}`), nil))
 	if _, present := record["outbound_previous_response_id"]; present || record["outbound_conversation"] != true {
 		t.Fatalf("record = %v", record)
@@ -186,7 +191,8 @@ func TestOutboundParamsRecordProviderContextPresence(t *testing.T) {
 // any other value (a hostname, a pasted key) only as a digest.
 func TestOutboundParamsRedactUnslugProviderValues(t *testing.T) {
 	body := `{"model":"m","provider":{"order":["deepinfra/fp8","Anthropic"],"only":["` + outboundSecret + `.internal.example"],` +
-		`"ignore":["sk-or-v1-` + outboundSecret + `-0123456789abcdef0123456789"],"data_collection":"` + outboundSecret + `"}}`
+		`"ignore":["sk-or-v1-` + outboundSecret + `-0123456789abcdef0123456789"],"data_collection":"` + outboundSecret + `",` +
+		`"max_price":{"prompt":1.5,"` + outboundSecret + `":2}}}`
 	record := map[string]interface{}{}
 	appendOutboundParamFields(record, readDispatchedOutboundParams([]byte(body), nil))
 	encoded, _ := json.Marshal(record)
@@ -194,7 +200,8 @@ func TestOutboundParamsRedactUnslugProviderValues(t *testing.T) {
 		t.Fatalf("a provider value reached the record: %s", encoded)
 	}
 	preferences, _ := record["outbound_provider_preferences"].(string)
-	if !strings.Contains(preferences, `"order":["deepinfra/fp8","Anthropic"]`) || !strings.Contains(preferences, `"data_collection":"other"`) {
+	if !strings.Contains(preferences, `"order":["deepinfra/fp8","Anthropic"]`) || !strings.Contains(preferences, `"data_collection":"other"`) ||
+		!strings.Contains(preferences, `"prompt":1.5`) || !strings.Contains(preferences, `"sha256:`) {
 		t.Fatalf("outbound_provider_preferences = %s", preferences)
 	}
 	if only, _ := record["outbound_provider_only"].([]string); len(only) != 1 || !strings.HasPrefix(only[0], "sha256:") {
