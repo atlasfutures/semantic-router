@@ -59,6 +59,7 @@ func (r *OpenAIRouter) emitRoutingDecision(ctx *RequestContext) {
 	if len(ctx.DispatchedProviderOrder) > 0 {
 		record["provider_order"] = ctx.DispatchedProviderOrder
 	}
+	appendOutboundParamFields(record, ctx.DispatchedOutbound)
 	appendRaylineARCThinkingFields(record, ctx)
 	appendRaylineARCUpstreamFields(record, ctx)
 	record["routing_latency_ms"] = time.Since(ctx.ProcessingStartTime).Milliseconds()
