@@ -26,6 +26,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"time"
 )
 
@@ -168,9 +169,19 @@ func (feed *RoutingPriceFeed) RequestPrices() *PolicyRoutingPrices {
 	}
 }
 
+// routingPriceTimestampPattern is the policy service's RFC 3339 form
+// (service.py _RFC3339): time.Parse alone also accepts a comma before the
+// fraction and more than nine fraction digits, which the service refuses as
+// an invalid request.
+var routingPriceTimestampPattern = regexp.MustCompile(
+	`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?(Z|[+-]\d{2}:\d{2})$`)
+
 func validRoutingPriceTimestamp(value string) error {
 	if len(value) > maxRoutingPriceTimestampBytes {
 		return errors.New("timestamp too long")
+	}
+	if !routingPriceTimestampPattern.MatchString(value) {
+		return fmt.Errorf("timestamp %q is not RFC 3339 with an offset", value)
 	}
 	_, err := time.Parse(time.RFC3339Nano, value)
 	return err

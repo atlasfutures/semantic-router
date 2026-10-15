@@ -608,3 +608,35 @@ def test_rayline_arc_cli_mirrors_policy_routing_prices():
     ):
         with pytest.raises(ValidationError):
             RaylineARCRoutingPricesConfig.model_validate({**id_token, **changed})
+
+
+def test_rayline_arc_cli_checks_routing_prices_urls():
+    prices = {
+        "url": "https://feed.example/arc/routing-prices",
+        "credential_env": "RAYLINE_ARC_ROUTING_PRICES_TOKEN",
+        "ttl_seconds": 300,
+        "max_age_seconds": 3600,
+        "fetch_timeout_ms": 2000,
+    }
+    decision = _policy_service_decision()
+    policy = decision.algorithm.rayline_arc.policy_service
+    policy.routing_prices = RaylineARCRoutingPricesConfig.model_validate(prices)
+    assert _validate_rayline_arc_decision(decision) == []
+    for changed, field in (
+        ({"url": "not-a-url"}, "routing_prices.url"),
+        ({"url": "https://feed.example/p?x=1"}, "routing_prices.url"),
+        ({"credential_env": "1BAD-NAME"}, "routing_prices.credential_env"),
+        (
+            {
+                "credential_env": "",
+                "auth": "google_id_token",
+                "audience": "feed.example",
+            },
+            "routing_prices.audience",
+        ),
+    ):
+        policy.routing_prices = RaylineARCRoutingPricesConfig.model_validate(
+            {**prices, **changed}
+        )
+        errors = _validate_rayline_arc_decision(decision)
+        assert any(error.field.endswith(field) for error in errors), (field, errors)

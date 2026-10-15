@@ -196,16 +196,19 @@ func TestDecodeRoutingPriceFeedRefusesWhatItCannotForward(t *testing.T) {
 		t.Fatalf("a feed with an added field was refused: %v", err)
 	}
 	cases := map[string][2]string{
-		"another schema":      {`"arc-routing-prices.v1"`, `"arc-routing-prices.v2"`},
-		"another unit":        {`"usd_per_million_tokens"`, `"usd_per_token"`},
-		"another currency":    {`"USD"`, `"EUR"`},
-		"no store version":    {`"v000000000042"`, `""`},
-		"a malformed as_of":   {`"as_of": "2026-10-14T16:00:00Z"`, `"as_of": "yesterday"`},
-		"a duplicate model":   {`"z-ai/glm-4.6"`, `"anthropic/claude-sonnet-4.5"`},
-		"an empty model id":   {`"z-ai/glm-4.6"`, `""`},
-		"a malformed expiry":  {`"valid_until": "2026-10-14T17:00:00Z"`, `"valid_until": "soon"`},
-		"a non-numeric rate":  {`"input": 3.0`, `"input": "3.0"`},
-		"a truncated payload": {`]`, ``},
+		"another schema":    {`"arc-routing-prices.v1"`, `"arc-routing-prices.v2"`},
+		"another unit":      {`"usd_per_million_tokens"`, `"usd_per_token"`},
+		"another currency":  {`"USD"`, `"EUR"`},
+		"no store version":  {`"v000000000042"`, `""`},
+		"a malformed as_of": {`"as_of": "2026-10-14T16:00:00Z"`, `"as_of": "yesterday"`},
+		// time.Parse accepts these two; the policy service refuses them.
+		"a comma fraction":     {`"as_of": "2026-10-14T16:00:00Z"`, `"as_of": "2026-10-14T16:00:00,5Z"`},
+		"a ten-digit fraction": {`"as_of": "2026-10-14T16:00:00Z"`, `"as_of": "2026-10-14T16:00:00.1234567891Z"`},
+		"a duplicate model":    {`"z-ai/glm-4.6"`, `"anthropic/claude-sonnet-4.5"`},
+		"an empty model id":    {`"z-ai/glm-4.6"`, `""`},
+		"a malformed expiry":   {`"valid_until": "2026-10-14T17:00:00Z"`, `"valid_until": "soon"`},
+		"a non-numeric rate":   {`"input": 3.0`, `"input": "3.0"`},
+		"a truncated payload":  {`]`, ``},
 	}
 	for name, edit := range cases {
 		changed := strings.Replace(body, edit[0], edit[1], 1)
