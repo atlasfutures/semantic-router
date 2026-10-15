@@ -73,6 +73,10 @@ type dispatchedOutboundParams struct {
 	ReasoningBudgetTokens  *int64
 	TemplateEffort         string
 	TemplateEnableThinking *bool
+	// TemplateSwitches is every scalar chat_template_kwargs member, compact
+	// JSON: catalogs spell reasoning switches differently (thinking,
+	// low_effort, ...). See templateKwargs for what is kept.
+	TemplateSwitches string
 
 	MaxTokens         *int64
 	Temperature       *float64
@@ -139,13 +143,10 @@ func readDispatchedOutboundParams(body []byte, dispatch *providerDispatch) *disp
 			MaxTokens *int64          `json:"max_tokens"`
 			Summary   json.RawMessage `json:"summary"`
 		} `json:"reasoning"`
-		ReasoningEffort       string `json:"reasoning_effort"`
-		ReasoningBudgetTokens *int64 `json:"reasoning_budget_tokens"`
-		ChatTemplateKwargs    struct {
-			ReasoningEffort string `json:"reasoning_effort"`
-			EnableThinking  *bool  `json:"enable_thinking"`
-		} `json:"chat_template_kwargs"`
-		Thinking struct {
+		ReasoningEffort       string         `json:"reasoning_effort"`
+		ReasoningBudgetTokens *int64         `json:"reasoning_budget_tokens"`
+		ChatTemplateKwargs    templateKwargs `json:"chat_template_kwargs"`
+		Thinking              struct {
 			Type         string `json:"type"`
 			BudgetTokens *int64 `json:"budget_tokens"`
 			Display      string `json:"display"`
@@ -248,6 +249,7 @@ func readDispatchedOutboundParams(body []byte, dispatch *providerDispatch) *disp
 	params.ReasoningBudgetTokens = wire.ReasoningBudgetTokens
 	params.TemplateEffort = knownOrDigest(wire.ChatTemplateKwargs.ReasoningEffort, knownEfforts)
 	params.TemplateEnableThinking = wire.ChatTemplateKwargs.EnableThinking
+	params.TemplateSwitches = wire.ChatTemplateKwargs.Switches
 	params.MaxTokens = wire.MaxTokens
 	if params.MaxTokens == nil {
 		params.MaxTokens = wire.MaxCompletionTokens
@@ -314,6 +316,76 @@ var (
 	knownTruncations     = enumSet("auto", "disabled")
 )
 
+// outboundListLimit bounds every client-sized list or map the record carries,
+// so a large client object cannot make each routing line large.
+const outboundListLimit = 16
+
+// templateKey is the shape a chat_template_kwargs key is recorded verbatim in.
+var templateKey = regexp.MustCompile(`^[a-z][a-z0-9_]{0,31}$`)
+
+// templateKwargs reads chat_template_kwargs: the two named reasoning
+// controls, and Switches, the scalar members as compact JSON. A bool or
+// number is kept, a string only as a known effort (else a digest), a key
+// outside templateKey as a digest; objects and arrays are left out, and at
+// most outboundListLimit members (by sorted key) are kept.
+type templateKwargs struct {
+	ReasoningEffort string
+	EnableThinking  *bool
+	Switches        string
+}
+
+func (kwargs *templateKwargs) UnmarshalJSON(raw []byte) error {
+	*kwargs = templateKwargs{}
+	var members map[string]json.RawMessage
+	if json.Unmarshal(raw, &members) != nil {
+		return nil
+	}
+	keys := make([]string, 0, len(members))
+	for key := range members {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	switches := map[string]interface{}{}
+	for _, key := range keys {
+		value := members[key]
+		var text string
+		var flag bool
+		var number json.Number
+		var recorded interface{}
+		switch {
+		case string(value) == "null":
+			continue
+		case json.Unmarshal(value, &flag) == nil:
+			recorded = flag
+			if key == "enable_thinking" {
+				kwargs.EnableThinking = &flag
+			}
+		case json.Unmarshal(value, &text) == nil:
+			recorded = knownOrDigest(text, knownEfforts)
+			if key == "reasoning_effort" {
+				kwargs.ReasoningEffort = text
+			}
+		case json.Unmarshal(value, &number) == nil:
+			recorded = number
+		default:
+			continue
+		}
+		if len(switches) >= outboundListLimit {
+			continue
+		}
+		if !templateKey.MatchString(key) {
+			key = outboundDigest(key)
+		}
+		switches[key] = recorded
+	}
+	if len(switches) > 0 {
+		if encoded, err := json.Marshal(switches); err == nil {
+			kwargs.Switches = string(encoded)
+		}
+	}
+	return nil
+}
+
 // maxPriceKinds are the price kinds OpenRouter's max_price accepts; any other
 // key is recorded as a digest.
 var maxPriceKinds = map[string]bool{"prompt": true, "completion": true, "request": true, "image": true}
@@ -325,7 +397,13 @@ var maxPriceKinds = map[string]bool{"prompt": true, "completion": true, "request
 func redactProviderPreferences(provider *config.OpenRouterProviderPreferences) {
 	digest := outboundDigest
 	redact := func(values []string) []string {
+		if len(values) > outboundListLimit {
+			values = append(values[:outboundListLimit:outboundListLimit], "+"+strconv.Itoa(len(values)-outboundListLimit)+" more")
+		}
 		for i, value := range values {
+			if i == outboundListLimit {
+				break
+			}
 			if !providerSlug.MatchString(value) {
 				values[i] = digest(value)
 			}
@@ -334,12 +412,21 @@ func redactProviderPreferences(provider *config.OpenRouterProviderPreferences) {
 	}
 	provider.Order, provider.Only, provider.Ignore = redact(provider.Order), redact(provider.Only), redact(provider.Ignore)
 	if provider.MaxPrice != nil {
+		kinds := make([]string, 0, len(provider.MaxPrice))
+		for kind := range provider.MaxPrice {
+			kinds = append(kinds, kind)
+		}
+		sort.Strings(kinds)
 		known := make(map[string]float64, len(provider.MaxPrice))
-		for kind, ceiling := range provider.MaxPrice {
-			if !maxPriceKinds[kind] {
-				kind = digest(kind)
+		for _, kind := range kinds {
+			if len(known) >= outboundListLimit {
+				break
 			}
-			known[kind] = ceiling
+			key := kind
+			if !maxPriceKinds[kind] {
+				key = digest(kind)
+			}
+			known[key] = provider.MaxPrice[kind]
 		}
 		provider.MaxPrice = known
 	}
@@ -594,6 +681,9 @@ func appendOutboundParamFields(record map[string]interface{}, params *dispatched
 	}
 	if params.TemplateEnableThinking != nil {
 		record["outbound_template_enable_thinking"] = *params.TemplateEnableThinking
+	}
+	if params.TemplateSwitches != "" {
+		record["outbound_template_switches"] = params.TemplateSwitches
 	}
 	if params.MaxTokens != nil {
 		record["outbound_max_tokens"] = *params.MaxTokens

@@ -251,6 +251,35 @@ func TestOutboundParamsReadTruncationStreamOptionsAndStrictTools(t *testing.T) {
 	}
 }
 
+// Catalog-specific chat-template switches reach the record as scalars; a
+// client string or odd key is a digest, and nested values are left out.
+func TestOutboundParamsReadTemplateSwitches(t *testing.T) {
+	body := `{"model":"m","chat_template_kwargs":{"thinking":true,"low_effort":false,"unset":null,"reasoning_effort":"high","budget":512,` +
+		`"note":"` + outboundSecret + `","` + outboundSecret + `":true,"nested":{"x":"` + outboundSecret + `"}}}`
+	record := map[string]interface{}{}
+	appendOutboundParamFields(record, readDispatchedOutboundParams([]byte(body), nil))
+	digest := outboundDigest(outboundSecret)
+	want := `{"budget":512,"low_effort":false,"note":"` + digest + `","reasoning_effort":"high","` + digest + `":true,"thinking":true}`
+	if record["outbound_template_switches"] != want || record["outbound_template_effort"] != "high" {
+		t.Fatalf("record = %v\nwant switches %s", record, want)
+	}
+}
+
+// A client-sized provider list is bounded on the record.
+func TestOutboundParamsBoundProviderLists(t *testing.T) {
+	only := make([]string, 40)
+	for i := range only {
+		only[i] = fmt.Sprintf("p%d", i)
+	}
+	encodedOnly, _ := json.Marshal(only)
+	record := map[string]interface{}{}
+	appendOutboundParamFields(record, readDispatchedOutboundParams([]byte(`{"model":"m","provider":{"only":`+string(encodedOnly)+`}}`), nil))
+	recorded, _ := record["outbound_provider_only"].([]string)
+	if len(recorded) != outboundListLimit+1 || recorded[outboundListLimit] != "+24 more" || recorded[0] != "p0" {
+		t.Fatalf("outbound_provider_only = %v", recorded)
+	}
+}
+
 // A Chat body names its top-level reasoning budget and its chat-template
 // reasoning controls.
 func TestOutboundParamsReadAChatBody(t *testing.T) {
