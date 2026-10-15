@@ -77,9 +77,10 @@ func TestOutboundShapeScopesEnumsToTheirParameter(t *testing.T) {
 
 // A number is verbatim only under a numeric parameter.
 func TestOutboundShapeDigestsNumbersOutsideNumericParameters(t *testing.T) {
-	body := `{"model":"m","temperature":0.5,"api_key":123456789,"provider":{"max_price":{"prompt":1.5}},` +
+	body := `{"model":"m","temperature":0.5,"api_key":123456789,"provider":{"max_price":{"prompt":1.5},"max_price.prompt":123456789},` +
 		`"diagnostics":{"value":123456789,"effort":"high","type":"mcp","context_management":{"value":123456789}},` +
-		`"output_config":{"max_price":{"prompt":123456789},"effort":"low"},` +
+		`"output_config":{"max_price":{"prompt":123456789},"effort":"low"},"thinking":{"budget_tokens.x":1,"x[]":2},` +
+		`"provider.max_price.prompt":123456789,"reasoning":{"effort.":"high"},` +
 		`"response_format":{"type":"json_schema","json_schema":{"schema":{"const":987654321}}}}`
 	shape := outboundShape([]byte(body))
 	encoded, _ := json.Marshal(shape)

@@ -43,7 +43,7 @@ func outboundShape(body []byte) map[string]interface{} {
 			shape[key] = contentShape(value)
 			continue
 		}
-		shape[shapeKey(key)] = shaper.describe(value, 1, key, key)
+		shape[shapeKey(key)] = shaper.describe(value, 1, key, pathSegment(key))
 	}
 	return shape
 }
@@ -177,11 +177,21 @@ func (shaper *outboundShaper) describe(raw json.RawMessage, depth int, owner, pa
 				shape[key] = contentShape(object[key])
 				continue
 			}
-			shape[shapeKey(key)] = shaper.describe(object[key], depth+1, key, path+"."+key)
+			shape[shapeKey(key)] = shaper.describe(object[key], depth+1, key, path+"."+pathSegment(key))
 		}
 		return shape
 	}
 	return "unknown"
+}
+
+// pathSegment is a key as a path segment: a known parameter name (none holds
+// "." or "[]"), or "?" for any other key, so a client key spelling a path
+// ("max_price.prompt") can never compose an allowlisted one.
+func pathSegment(key string) string {
+	if outboundKnownKeys[key] {
+		return key
+	}
+	return "?"
 }
 
 // shapeString is a value its owning parameter defines verbatim, anything else
