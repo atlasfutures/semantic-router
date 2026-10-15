@@ -41,6 +41,7 @@ type dispatchedOutboundParams struct {
 	ReasoningObjectEffort string
 	TopLevelEffort        string
 	ThinkingType          string
+	ThinkingDisplay       string
 	ThinkingBudgetTokens  *int64
 	ReasoningMaxTokens    *int64
 	// ReasoningBudgetTokens is Chat's top-level reasoning_budget_tokens; the
@@ -112,6 +113,7 @@ func readDispatchedOutboundParams(body []byte, dispatch *providerDispatch) *disp
 		Thinking struct {
 			Type         string `json:"type"`
 			BudgetTokens *int64 `json:"budget_tokens"`
+			Display      string `json:"display"`
 		} `json:"thinking"`
 		MaxTokens           *int64   `json:"max_tokens"`
 		MaxCompletionTokens *int64   `json:"max_completion_tokens"`
@@ -176,6 +178,7 @@ func readDispatchedOutboundParams(body []byte, dispatch *providerDispatch) *disp
 	params.ReasoningMaxTokens = wire.Reasoning.MaxTokens
 	params.TopLevelEffort = wire.ReasoningEffort
 	params.ThinkingType = wire.Thinking.Type
+	params.ThinkingDisplay = wire.Thinking.Display
 	params.ThinkingBudgetTokens = wire.Thinking.BudgetTokens
 	params.ReasoningBudgetTokens = wire.ReasoningBudgetTokens
 	params.TemplateEffort = wire.ChatTemplateKwargs.ReasoningEffort
@@ -388,6 +391,7 @@ func appendOutboundParamFields(record map[string]interface{}, params *dispatched
 		"outbound_reasoning_effort":     params.ReasoningObjectEffort,
 		"outbound_top_level_effort":     params.TopLevelEffort,
 		"outbound_thinking_type":        params.ThinkingType,
+		"outbound_thinking_display":     params.ThinkingDisplay,
 		"outbound_template_effort":      params.TemplateEffort,
 	}
 	for key, value := range optionalString {

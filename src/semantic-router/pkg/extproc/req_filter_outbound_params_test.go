@@ -25,7 +25,7 @@ func TestOutboundParamsReadAMessagesBody(t *testing.T) {
 		`"tools":[{"name":"Bash","description":"` + outboundSecret + `","input_schema":{"properties":{"cache_control":{"type":"string"}}}},` +
 		`{"name":"Edit","input_schema":{},"cache_control":{"type":"ephemeral"}}],` +
 		`"top_p":0.9,"top_k":40,"seed":7,"frequency_penalty":0.1,"presence_penalty":0.2,"n":1,"tool_choice":{"type":"tool","name":"Bash","disable_parallel_tool_use":true},"stop_sequences":["` + outboundSecret + `","x"],` +
-		`"thinking":{"type":"enabled","budget_tokens":4096},"output_config":{"effort":"high","format":{"type":"json_schema","schema":{"title":"` + outboundSecret + `"}}},` +
+		`"thinking":{"type":"enabled","budget_tokens":4096,"display":"summarized"},"output_config":{"effort":"high","format":{"type":"json_schema","schema":{"title":"` + outboundSecret + `"}}},` +
 		`"provider":{"only":["anthropic"],"order":["anthropic"],"allow_fallbacks":false,"api_key":"` + outboundSecret + `"}}`
 	dispatch := &providerDispatch{
 		targetFormat: llmprotocol.AnthropicMessagesV1, backendName: "openrouter",
@@ -40,6 +40,7 @@ func TestOutboundParamsReadAMessagesBody(t *testing.T) {
 		"outbound_backend":                "openrouter",
 		"outbound_output_config_effort":   "high",
 		"outbound_thinking_type":          "enabled",
+		"outbound_thinking_display":       "summarized",
 		"outbound_thinking_budget_tokens": int64(4096),
 		"outbound_max_tokens":             int64(32000),
 		"outbound_temperature":            0.5,
