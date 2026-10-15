@@ -188,14 +188,8 @@ func decodeChatUsage(wire chatUsageWire) llmprotocol.Usage {
 		ProviderCost:    wire.providerUsageCostWire.decode(),
 	}
 	if wire.PromptTokensDetails != nil {
-		cached, cacheWrite := wire.PromptTokensDetails.CachedTokens, wire.PromptTokensDetails.CacheWriteTokens
-		if cached >= 0 && cacheWrite >= 0 && wire.PromptTokens >= cached && cacheWrite <= wire.PromptTokens-cached {
-			usage.InputCacheRead = authoritative(cached)
-			usage.InputCacheWrite = authoritative(cacheWrite)
-			usage.InputUncached = derived(wire.PromptTokens - cached - cacheWrite)
-		} else {
-			reportUnreconciledUsage("usage.prompt_tokens_details")
-		}
+		decodeInputCacheLegs(&usage, wire.PromptTokens, wire.PromptTokensDetails.CachedTokens,
+			wire.PromptTokensDetails.CacheWriteTokens, "usage.prompt_tokens_details")
 	}
 	if wire.CompletionTokensDetails != nil {
 		reasoning := wire.CompletionTokensDetails.ReasoningTokens
@@ -305,8 +299,9 @@ func encodeChatUsage(usage llmprotocol.Usage) *chatUsageWire {
 	}
 	wire := &chatUsageWire{PromptTokens: prompt, CompletionTokens: completion, TotalTokens: total}
 	if usage.InputCacheRead.Value != nil || usage.InputCacheWrite.Value != nil {
+		// The encoded bytes are as before: cached_tokens always, cache_write_tokens when nonzero.
 		wire.PromptTokensDetails = &chatPromptTokensDetailsWire{
-			CachedTokens: tokenValue(usage.InputCacheRead), CacheWriteTokens: tokenValue(usage.InputCacheWrite),
+			CachedTokens: int64Pointer(tokenValue(usage.InputCacheRead)), CacheWriteTokens: nonzeroPointer(tokenValue(usage.InputCacheWrite)),
 		}
 	}
 	if usage.OutputReasoning.Value != nil {

@@ -811,3 +811,38 @@ func requestedServiceTier(raw json.RawMessage) json.RawMessage {
 	}
 	return raw
 }
+
+// decodeInputCacheLegs sets the cache legs an OpenAI-shaped usage details
+// object reported, out of an input total. Without cached_tokens nothing about
+// the cache was reported: every input leg stays unknown, never 0. With it, an
+// omitted cache_write_tokens is 0: neither schema bills a write separately
+// unless it says so (OpenRouter omits a zero write), so its absence beside a
+// reported read is the upstream's statement that nothing was written. Legs
+// that do not fit in the input are reported unreconciled and left unknown.
+func decodeInputCacheLegs(usage *llmprotocol.Usage, input int64, cached *int64, cacheWrite *int64, field string) {
+	if cached == nil {
+		return
+	}
+	read, write := *cached, int64(0)
+	if cacheWrite != nil {
+		write = *cacheWrite
+	}
+	if read < 0 || write < 0 || input < read || write > input-read {
+		reportUnreconciledUsage(field)
+		return
+	}
+	usage.InputCacheRead = authoritative(read)
+	usage.InputCacheWrite = authoritative(write)
+	usage.InputUncached = derived(input - read - write)
+}
+
+func int64Pointer(value int64) *int64 {
+	return &value
+}
+
+func nonzeroPointer(value int64) *int64 {
+	if value == 0 {
+		return nil
+	}
+	return &value
+}
