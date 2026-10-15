@@ -16,7 +16,7 @@ const outboundSecret = "SECRET-PROMPT-TEXT"
 // and no content does.
 func TestOutboundParamsReadAMessagesBody(t *testing.T) {
 	body := `{"model":"anthropic/claude-sonnet-5.5","max_tokens":32000,"temperature":0.5,"stream":true,` +
-		`"cache_control":{"type":"ephemeral"},` +
+		`"cache_control":{"type":"ephemeral","ttl":"1h"},` +
 		`"system":[{"type":"text","text":"` + outboundSecret + `","cache_control":{"type":"ephemeral"}}],` +
 		`"messages":[{"role":"user","content":"` + outboundSecret + `"},` +
 		`{"role":"user","content":[{"type":"text","text":"` + outboundSecret + `","cache_control":{"type":"ephemeral"}},` +
@@ -59,6 +59,9 @@ func TestOutboundParamsReadAMessagesBody(t *testing.T) {
 		if fmt.Sprint(record[key]) != fmt.Sprint(value) {
 			t.Errorf("%s = %v, want %v", key, record[key], value)
 		}
+	}
+	if policies, _ := record["outbound_cache_control_policies"].([]string); fmt.Sprint(policies) != "[ephemeral// ephemeral/1h/]" {
+		t.Errorf("outbound_cache_control_policies = %v", record["outbound_cache_control_policies"])
 	}
 	if only, _ := record["outbound_provider_only"].([]string); len(only) != 1 || only[0] != "anthropic" {
 		t.Errorf("outbound_provider_only = %v", record["outbound_provider_only"])
@@ -127,6 +130,18 @@ func TestOutboundParamsReadAChatBody(t *testing.T) {
 	appendOutboundParamFields(record, readDispatchedOutboundParams([]byte(body), nil))
 	if record["outbound_reasoning_budget_tokens"] != int64(4096) || record["outbound_template_effort"] != "low" ||
 		record["outbound_template_enable_thinking"] != true {
+		t.Fatalf("record = %v", record)
+	}
+}
+
+// A scalar tool_choice ("auto") is common on Chat and Responses and must not
+// cost the record its other parameters.
+func TestOutboundParamsReadAScalarToolChoice(t *testing.T) {
+	body := `{"model":"openai/gpt-6.1-sol","tool_choice":"auto","tools":[{"type":"function"}],"parallel_tool_calls":true,"max_tokens":10}`
+	record := map[string]interface{}{}
+	appendOutboundParamFields(record, readDispatchedOutboundParams([]byte(body), nil))
+	if record["outbound_model"] != "openai/gpt-6.1-sol" || record["outbound_tool_count"] != 1 ||
+		record["outbound_parallel_tool_calls"] != true || record["outbound_max_tokens"] != int64(10) {
 		t.Fatalf("record = %v", record)
 	}
 }

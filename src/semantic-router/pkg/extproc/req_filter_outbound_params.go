@@ -2,6 +2,7 @@ package extproc
 
 import (
 	"encoding/json"
+	"sort"
 	"strings"
 )
 
@@ -44,7 +45,9 @@ type dispatchedOutboundParams struct {
 	// CacheControlMarkers counts cache_control directives where the protocol
 	// defines them (cacheLocations).
 	CacheControlMarkers int
-	PromptCacheKey      bool
+	// CachePolicies are the directives' distinct type/ttl/scope values.
+	CachePolicies  []string
+	PromptCacheKey bool
 }
 
 // readDispatchedOutboundParams reads the outbound parameters off the final
@@ -93,11 +96,9 @@ func readDispatchedOutboundParams(body []byte, dispatch *providerDispatch) *disp
 		N                   *int64   `json:"n"`
 		ParallelToolCalls   *bool    `json:"parallel_tool_calls"`
 		// Messages spells the same control inverted, inside tool_choice.
-		ToolChoice struct {
-			DisableParallelToolUse *bool `json:"disable_parallel_tool_use"`
-		} `json:"tool_choice"`
-		Stream         *bool   `json:"stream"`
-		PromptCacheKey *string `json:"prompt_cache_key"`
+		ToolChoice     toolChoiceObject `json:"tool_choice"`
+		Stream         *bool            `json:"stream"`
+		PromptCacheKey *string          `json:"prompt_cache_key"`
 		Provider       struct {
 			Only []string `json:"only"`
 		} `json:"provider"`
@@ -135,8 +136,30 @@ func readDispatchedOutboundParams(body []byte, dispatch *providerDispatch) *disp
 	params.Stream = wire.Stream
 	params.ToolCount = len(wire.Tools)
 	params.PromptCacheKey = wire.PromptCacheKey != nil && *wire.PromptCacheKey != ""
-	params.CacheControlMarkers = wire.cacheLocations.markers()
+	params.CacheControlMarkers, params.CachePolicies = wire.cacheLocations.markers()
 	return params
+}
+
+// toolChoiceObject is tool_choice's object form; its scalar form ("auto",
+// "none", "required") carries no parallel flag and decodes to nothing rather
+// than failing the whole read.
+type toolChoiceObject struct {
+	DisableParallelToolUse *bool
+}
+
+func (choice *toolChoiceObject) UnmarshalJSON(raw []byte) error {
+	*choice = toolChoiceObject{}
+	if len(raw) == 0 || raw[0] != '{' {
+		return nil
+	}
+	var object struct {
+		DisableParallelToolUse *bool `json:"disable_parallel_tool_use"`
+	}
+	if err := json.Unmarshal(raw, &object); err != nil {
+		return err
+	}
+	choice.DisableParallelToolUse = object.DisableParallelToolUse
+	return nil
 }
 
 // cacheLocations are the places a cache_control directive is defined: the
@@ -177,11 +200,23 @@ func (blocks *cacheBlocks) UnmarshalJSON(raw []byte) error {
 	return nil
 }
 
-func (locations cacheLocations) markers() int {
+// markers counts the directives and names their distinct policies, each as
+// type/ttl/scope with an empty member left empty (provider default).
+func (locations cacheLocations) markers() (int, []string) {
 	count := 0
+	policies := map[string]bool{}
 	marked := func(raw json.RawMessage) {
-		if len(raw) > 0 && string(raw) != "null" {
-			count++
+		if len(raw) == 0 || string(raw) == "null" {
+			return
+		}
+		count++
+		var directive struct {
+			Type  string `json:"type"`
+			TTL   string `json:"ttl"`
+			Scope string `json:"scope"`
+		}
+		if json.Unmarshal(raw, &directive) == nil {
+			policies[directive.Type+"/"+directive.TTL+"/"+directive.Scope] = true
 		}
 	}
 	var blocks func(list cacheBlocks)
@@ -200,7 +235,12 @@ func (locations cacheLocations) markers() int {
 		marked(message.CacheControl)
 		blocks(message.Content)
 	}
-	return count
+	names := make([]string, 0, len(policies))
+	for name := range policies {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return count, names
 }
 
 // appendOutboundParamFields writes the outbound parameters on the routing
@@ -270,5 +310,8 @@ func appendOutboundParamFields(record map[string]interface{}, params *dispatched
 	}
 	record["outbound_tool_count"] = params.ToolCount
 	record["outbound_cache_control_markers"] = params.CacheControlMarkers
+	if len(params.CachePolicies) > 0 {
+		record["outbound_cache_control_policies"] = params.CachePolicies
+	}
 	record["outbound_prompt_cache_key"] = params.PromptCacheKey
 }
