@@ -75,6 +75,18 @@ func TestOutboundShapeScopesEnumsToTheirParameter(t *testing.T) {
 	}
 }
 
+// A number is verbatim only under a numeric parameter.
+func TestOutboundShapeDigestsNumbersOutsideNumericParameters(t *testing.T) {
+	body := `{"model":"m","temperature":0.5,"api_key":123456789,"provider":{"max_price":{"prompt":1.5}},` +
+		`"response_format":{"type":"json_schema","json_schema":{"schema":{"const":987654321}}}}`
+	shape := outboundShape([]byte(body))
+	encoded, _ := json.Marshal(shape)
+	if strings.Contains(string(encoded), "123456789") || strings.Contains(string(encoded), "987654321") || shape["temperature"] != 0.5 ||
+		!strings.Contains(string(encoded), `"max_price":{"prompt":1.5}`) {
+		t.Fatalf("shape = %s", encoded)
+	}
+}
+
 // A client-sized body yields a bounded shape.
 func TestOutboundShapeIsBounded(t *testing.T) {
 	members := make([]string, 0, 500)

@@ -65,7 +65,15 @@ var outboundContentKeys = enumSet("messages", "input", "instructions", "system",
 
 // outboundOpaqueKeys are free-form client maps: only their key count is
 // recorded, since a member name or value there is the client's own data.
-var outboundOpaqueKeys = enumSet("metadata", "logit_bias", "user", "safety_identifier")
+var outboundOpaqueKeys = enumSet("metadata", "logit_bias", "user", "safety_identifier", "schema", "input_schema",
+	"parameters")
+
+// outboundNumericKeys are the request parameters whose numbers are recorded
+// as values.
+var outboundNumericKeys = enumSet("max_tokens", "max_completion_tokens", "max_output_tokens", "temperature", "top_p",
+	"top_k", "min_p", "seed", "n", "frequency_penalty", "presence_penalty", "repetition_penalty", "top_logprobs",
+	"reasoning_budget_tokens", "budget_tokens", "task_budget", "max_tool_calls", "value", "clear_at_least",
+	"max_price", "prompt", "completion", "request", "image", "max_tokens_per_turn")
 
 // shapeKeyOrder puts known keys first, then the rest, each sorted, so unknown
 // keys cannot crowd a known parameter out of the bounded record.
@@ -115,9 +123,13 @@ func (shaper *outboundShaper) describe(raw json.RawMessage, depth int, owner str
 	case "bool":
 		return string(bytes.TrimSpace(raw)) == "true"
 	case "number":
-		number, err := strconv.ParseFloat(string(bytes.TrimSpace(raw)), 64)
-		if err != nil {
-			return "number"
+		// A number is verbatim only under a numeric request parameter; under
+		// any other key it may be the client's data (a schema constant, an
+		// unmodeled id), so it is digested like a string.
+		literal := string(bytes.TrimSpace(raw))
+		number, err := strconv.ParseFloat(literal, 64)
+		if err != nil || !outboundNumericKeys[owner] {
+			return map[string]interface{}{"sha256": outboundDigest(literal), "length": len(literal)}
 		}
 		return number
 	case "string":
@@ -140,7 +152,8 @@ func (shaper *outboundShaper) describe(raw json.RawMessage, depth int, owner str
 				shape["+more"] = len(object) - outboundListLimit
 				break
 			}
-			if outboundContentKeys[key] {
+			// max_price's prompt is a price kind, not a prompt.
+			if outboundContentKeys[key] && owner != "max_price" {
 				shape[key] = contentShape(object[key])
 				continue
 			}
