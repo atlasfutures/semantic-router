@@ -18,8 +18,12 @@ func TestOutboundParamsReadAMessagesBody(t *testing.T) {
 	body := `{"model":"anthropic/claude-sonnet-5.5","max_tokens":32000,"temperature":0.5,"stream":true,` +
 		`"cache_control":{"type":"ephemeral"},` +
 		`"system":[{"type":"text","text":"` + outboundSecret + `","cache_control":{"type":"ephemeral"}}],` +
-		`"messages":[{"role":"user","content":"` + outboundSecret + `"}],` +
-		`"tools":[{"name":"Bash","description":"` + outboundSecret + `","input_schema":{}},{"name":"Edit","input_schema":{}}],` +
+		`"messages":[{"role":"user","content":"` + outboundSecret + `"},` +
+		`{"role":"user","content":[{"type":"text","text":"` + outboundSecret + `","cache_control":{"type":"ephemeral"}}]}],` +
+		// A schema property named cache_control is data, not a directive.
+		`"tools":[{"name":"Bash","description":"` + outboundSecret + `","input_schema":{"properties":{"cache_control":{"type":"string"}}}},` +
+		`{"name":"Edit","input_schema":{},"cache_control":{"type":"ephemeral"}}],` +
+		`"top_p":0.9,"top_k":40,"seed":7,"frequency_penalty":0.1,"presence_penalty":0.2,"n":1,"parallel_tool_calls":false,` +
 		`"thinking":{"type":"enabled","budget_tokens":4096},"output_config":{"effort":"high"},` +
 		`"provider":{"only":["anthropic"],"order":["anthropic"],"allow_fallbacks":false}}`
 	dispatch := &providerDispatch{
@@ -40,7 +44,14 @@ func TestOutboundParamsReadAMessagesBody(t *testing.T) {
 		"outbound_temperature":            0.5,
 		"outbound_stream":                 true,
 		"outbound_tool_count":             2,
-		"outbound_cache_control_markers":  2,
+		"outbound_cache_control_markers":  4,
+		"outbound_top_p":                  0.9,
+		"outbound_top_k":                  int64(40),
+		"outbound_seed":                   int64(7),
+		"outbound_frequency_penalty":      0.1,
+		"outbound_presence_penalty":       0.2,
+		"outbound_n":                      int64(1),
+		"outbound_parallel_tool_calls":    false,
 		"outbound_prompt_cache_key":       false,
 	}
 	for key, value := range want {
@@ -78,7 +89,8 @@ func TestOutboundParamsReadAResponsesBody(t *testing.T) {
 		record["outbound_provider"] != "openai" || record["outbound_tool_count"] != 0 {
 		t.Fatalf("record = %v", record)
 	}
-	for _, absent := range []string{"outbound_temperature", "outbound_stream", "outbound_output_config_effort", "outbound_thinking_type"} {
+	for _, absent := range []string{"outbound_temperature", "outbound_stream", "outbound_output_config_effort", "outbound_thinking_type",
+		"outbound_top_p", "outbound_top_k", "outbound_seed", "outbound_n", "outbound_parallel_tool_calls"} {
 		if _, present := record[absent]; present {
 			t.Errorf("%s is set on a body that does not carry it", absent)
 		}

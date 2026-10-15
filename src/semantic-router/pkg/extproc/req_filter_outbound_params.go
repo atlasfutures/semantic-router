@@ -25,19 +25,26 @@ type dispatchedOutboundParams struct {
 	ThinkingBudgetTokens  *int64
 	ReasoningMaxTokens    *int64
 
-	MaxTokens   *int64
-	Temperature *float64
-	Stream      *bool
-	ToolCount   int
-	// CacheControlMarkers counts cache_control members anywhere in the body
-	// (top-level automatic caching and per-block breakpoints).
+	MaxTokens         *int64
+	Temperature       *float64
+	TopP              *float64
+	TopK              *int64
+	Seed              *int64
+	FrequencyPenalty  *float64
+	PresencePenalty   *float64
+	N                 *int64
+	ParallelToolCalls *bool
+	Stream            *bool
+	ToolCount         int
+	// CacheControlMarkers counts cache_control directives where the protocol
+	// defines them (cacheLocations).
 	CacheControlMarkers int
 	PromptCacheKey      bool
 }
 
 // readDispatchedOutboundParams reads the outbound parameters off the final
-// provider body. A body that is not a JSON object yields only the dispatch's
-// own facts.
+// provider body in one typed decode: content members are never materialized.
+// A body that is not a JSON object yields only the dispatch's own facts.
 func readDispatchedOutboundParams(body []byte, dispatch *providerDispatch) *dispatchedOutboundParams {
 	params := &dispatchedOutboundParams{}
 	if dispatch != nil {
@@ -64,16 +71,23 @@ func readDispatchedOutboundParams(body []byte, dispatch *providerDispatch) *disp
 			Type         string `json:"type"`
 			BudgetTokens *int64 `json:"budget_tokens"`
 		} `json:"thinking"`
-		MaxTokens           *int64            `json:"max_tokens"`
-		MaxCompletionTokens *int64            `json:"max_completion_tokens"`
-		MaxOutputTokens     *int64            `json:"max_output_tokens"`
-		Temperature         *float64          `json:"temperature"`
-		Stream              *bool             `json:"stream"`
-		Tools               []json.RawMessage `json:"tools"`
-		PromptCacheKey      *string           `json:"prompt_cache_key"`
+		MaxTokens           *int64   `json:"max_tokens"`
+		MaxCompletionTokens *int64   `json:"max_completion_tokens"`
+		MaxOutputTokens     *int64   `json:"max_output_tokens"`
+		Temperature         *float64 `json:"temperature"`
+		TopP                *float64 `json:"top_p"`
+		TopK                *int64   `json:"top_k"`
+		Seed                *int64   `json:"seed"`
+		FrequencyPenalty    *float64 `json:"frequency_penalty"`
+		PresencePenalty     *float64 `json:"presence_penalty"`
+		N                   *int64   `json:"n"`
+		ParallelToolCalls   *bool    `json:"parallel_tool_calls"`
+		Stream              *bool    `json:"stream"`
+		PromptCacheKey      *string  `json:"prompt_cache_key"`
 		Provider            struct {
 			Only []string `json:"only"`
 		} `json:"provider"`
+		cacheLocations
 	}
 	if json.Unmarshal(body, &wire) != nil {
 		return params
@@ -94,30 +108,69 @@ func readDispatchedOutboundParams(body []byte, dispatch *providerDispatch) *disp
 		params.MaxTokens = wire.MaxOutputTokens
 	}
 	params.Temperature = wire.Temperature
+	params.TopP, params.TopK, params.Seed = wire.TopP, wire.TopK, wire.Seed
+	params.FrequencyPenalty, params.PresencePenalty = wire.FrequencyPenalty, wire.PresencePenalty
+	params.N, params.ParallelToolCalls = wire.N, wire.ParallelToolCalls
 	params.Stream = wire.Stream
 	params.ToolCount = len(wire.Tools)
 	params.PromptCacheKey = wire.PromptCacheKey != nil && *wire.PromptCacheKey != ""
-	var tree interface{}
-	if json.Unmarshal(body, &tree) == nil {
-		params.CacheControlMarkers = countMembers(tree, "cache_control")
-	}
+	params.CacheControlMarkers = wire.cacheLocations.markers()
 	return params
 }
 
-// countMembers counts object members named key at any depth.
-func countMembers(node interface{}, key string) int {
+// cacheLocations are the places a cache_control directive is defined: the
+// top level (automatic caching), each tool, each system block, and each
+// message and its content blocks. A member of that name anywhere else (a
+// tool's input schema, metadata) is data, not a directive.
+type cacheLocations struct {
+	CacheControl json.RawMessage `json:"cache_control"`
+	Tools        []cacheMarked   `json:"tools"`
+	System       cacheBlocks     `json:"system"`
+	Messages     []struct {
+		CacheControl json.RawMessage `json:"cache_control"`
+		Content      cacheBlocks     `json:"content"`
+	} `json:"messages"`
+}
+
+type cacheMarked struct {
+	CacheControl json.RawMessage `json:"cache_control"`
+}
+
+// cacheBlocks is a content or system member: a block list, whose blocks may
+// carry cache_control, or a string, which cannot.
+type cacheBlocks []cacheMarked
+
+func (blocks *cacheBlocks) UnmarshalJSON(raw []byte) error {
+	if len(raw) == 0 || raw[0] != '[' {
+		*blocks = nil
+		return nil
+	}
+	var list []cacheMarked
+	if err := json.Unmarshal(raw, &list); err != nil {
+		return err
+	}
+	*blocks = list
+	return nil
+}
+
+func (locations cacheLocations) markers() int {
 	count := 0
-	switch typed := node.(type) {
-	case map[string]interface{}:
-		for name, child := range typed {
-			if name == key {
-				count++
-			}
-			count += countMembers(child, key)
+	marked := func(raw json.RawMessage) {
+		if len(raw) > 0 && string(raw) != "null" {
+			count++
 		}
-	case []interface{}:
-		for _, child := range typed {
-			count += countMembers(child, key)
+	}
+	marked(locations.CacheControl)
+	for _, tool := range locations.Tools {
+		marked(tool.CacheControl)
+	}
+	for _, block := range locations.System {
+		marked(block.CacheControl)
+	}
+	for _, message := range locations.Messages {
+		marked(message.CacheControl)
+		for _, block := range message.Content {
+			marked(block.CacheControl)
 		}
 	}
 	return count
@@ -159,6 +212,24 @@ func appendOutboundParamFields(record map[string]interface{}, params *dispatched
 	}
 	if params.Temperature != nil {
 		record["outbound_temperature"] = *params.Temperature
+	}
+	optionalFloat := map[string]*float64{
+		"outbound_top_p": params.TopP, "outbound_frequency_penalty": params.FrequencyPenalty,
+		"outbound_presence_penalty": params.PresencePenalty,
+	}
+	for key, value := range optionalFloat {
+		if value != nil {
+			record[key] = *value
+		}
+	}
+	optionalInt := map[string]*int64{"outbound_top_k": params.TopK, "outbound_seed": params.Seed, "outbound_n": params.N}
+	for key, value := range optionalInt {
+		if value != nil {
+			record[key] = *value
+		}
+	}
+	if params.ParallelToolCalls != nil {
+		record["outbound_parallel_tool_calls"] = *params.ParallelToolCalls
 	}
 	if params.Stream != nil {
 		record["outbound_stream"] = *params.Stream
