@@ -125,8 +125,15 @@ func samePolicyContext(a, b *raylinearc.PolicyEpisodeState) bool {
 	}
 	// The ledger tells a committed turn from the state it read even when the
 	// turn's request did not grow the prefix (it is bounded, so compared whole).
+	// Entries compare by what produced each message: the price audit is a
+	// pointer that a reread from the store allocates anew.
 	return a.Epoch == b.Epoch && a.CompactionCount == b.CompactionCount &&
-		a.PrefixLen == b.PrefixLen && a.PrefixDigest == b.PrefixDigest && slices.Equal(a.Ledger, b.Ledger)
+		a.PrefixLen == b.PrefixLen && a.PrefixDigest == b.PrefixDigest &&
+		slices.EqualFunc(a.Ledger, b.Ledger, sameLedgerEntry)
+}
+
+func sameLedgerEntry(a, b raylinearc.PolicyLedgerEntry) bool {
+	return a.Message == b.Message && a.ActionID == b.ActionID && a.ArmID == b.ArmID
 }
 
 // apply is state with the refusal's changes, and whether it changed.

@@ -399,3 +399,29 @@ func TestRouteFailureHandOverKeepsAPendingRefusal(t *testing.T) {
 		}
 	}
 }
+
+// A policy state reread from the store is the same context as the one
+// written, price audits included: the audit is a pointer the decode
+// allocates anew, so it cannot decide equality.
+func TestSamePolicyContextSurvivesAStoreRoundTrip(t *testing.T) {
+	cost := 0.25
+	state := &raylinearc.PolicyEpisodeState{Ledger: []raylinearc.PolicyLedgerEntry{{
+		Message: 1, ActionID: "a", ArmID: "arm",
+		Prices: &raylinearc.PolicyPriceAudit{PackageSHA256: "p", Mode: raylinearc.RoutingPricesModeLive, PredictedCostUSD: &cost},
+	}}}
+	encoded, err := json.Marshal(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var reread raylinearc.PolicyEpisodeState
+	if err := json.Unmarshal(encoded, &reread); err != nil {
+		t.Fatal(err)
+	}
+	if !samePolicyContext(state, &reread) {
+		t.Fatal("a reread policy state is not the same context")
+	}
+	reread.Ledger[0].ArmID = "other"
+	if samePolicyContext(state, &reread) {
+		t.Fatal("a ledger entry from another arm is the same context")
+	}
+}
