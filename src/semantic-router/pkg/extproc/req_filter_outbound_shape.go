@@ -27,7 +27,7 @@ import (
 // Every key is recorded, so an unmodeled parameter appears (as a digest key if
 // it is unknown) rather than being silently absent.
 func outboundShape(body []byte) map[string]interface{} {
-	var top map[string]json.RawMessage
+	var top map[string]bodySlice
 	if json.Unmarshal(body, &top) != nil || top == nil {
 		return nil
 	}
@@ -91,7 +91,7 @@ var outboundEnumPaths = enumSet("reasoning_effort", "verbosity", "service_tier",
 
 // shapeKeyOrder puts known keys first, then the rest, each sorted, so unknown
 // keys cannot crowd a known parameter out of the bounded record.
-func shapeKeyOrder(object map[string]json.RawMessage) []string {
+func shapeKeyOrder(object map[string]bodySlice) []string {
 	keys := make([]string, 0, len(object))
 	for key := range object {
 		keys = append(keys, key)
@@ -112,24 +112,43 @@ func shapeKey(key string) string {
 	return outboundDigest(key)
 }
 
-func contentShape(raw json.RawMessage) interface{} {
-	var list []json.RawMessage
-	if json.Unmarshal(raw, &list) == nil && list != nil {
-		return map[string]interface{}{"count": len(list)}
-	}
-	var text string
-	if json.Unmarshal(raw, &text) == nil {
-		return map[string]interface{}{"length": len(text)}
+// contentShape counts a content member without copying it: an array's
+// elements are skipped in place, a string is measured in encoded bytes.
+func contentShape(raw bodySlice) interface{} {
+	switch jsonKind(raw) {
+	case "array":
+		var list []skippedValue
+		if json.Unmarshal(raw, &list) == nil {
+			return map[string]interface{}{"count": len(list)}
+		}
+	case "string":
+		return map[string]interface{}{"bytes": len(raw)}
 	}
 	return map[string]interface{}{"type": jsonKind(raw)}
 }
+
+// bodySlice is a JSON value as a subslice of the body being shaped, never a
+// copy: encoding/json hands UnmarshalJSON a slice of the input, and the pass
+// runs synchronously over a body nothing mutates, so a large content member
+// (inline media) costs no allocation here.
+type bodySlice []byte
+
+func (value *bodySlice) UnmarshalJSON(raw []byte) error {
+	*value = raw
+	return nil
+}
+
+// skippedValue consumes one JSON value without retaining it.
+type skippedValue struct{}
+
+func (*skippedValue) UnmarshalJSON([]byte) error { return nil }
 
 // describe shapes one value; owner is the key that holds it and path the
 // complete parameter path to it. A string or number is verbatim only at a
 // complete known path (outboundEnumPaths, outboundNumericPaths); anywhere
 // else -- a carried extension, a known leaf under another parent -- it is
 // digested.
-func (shaper *outboundShaper) describe(raw json.RawMessage, depth int, owner, path string) interface{} {
+func (shaper *outboundShaper) describe(raw bodySlice, depth int, owner, path string) interface{} {
 	if shaper.remaining <= 0 {
 		return "over_budget"
 	}
@@ -159,7 +178,7 @@ func (shaper *outboundShaper) describe(raw json.RawMessage, depth int, owner, pa
 	case "array":
 		return shaper.array(raw, depth, owner, path)
 	case "object":
-		var object map[string]json.RawMessage
+		var object map[string]bodySlice
 		if json.Unmarshal(raw, &object) != nil {
 			return "object"
 		}
@@ -207,8 +226,8 @@ func shapeString(text, owner string) interface{} {
 // (bounded): strings under the string rule, objects described like any
 // object one level deeper, so an array of parameter objects (context edits,
 // hosted tools' options) keeps its members.
-func (shaper *outboundShaper) array(raw json.RawMessage, depth int, owner, path string) interface{} {
-	var list []json.RawMessage
+func (shaper *outboundShaper) array(raw bodySlice, depth int, owner, path string) interface{} {
+	var list []bodySlice
 	if json.Unmarshal(raw, &list) != nil {
 		return "array"
 	}
@@ -240,7 +259,7 @@ func (shaper *outboundShaper) array(raw json.RawMessage, depth int, owner, path 
 	return shape
 }
 
-func jsonKind(raw json.RawMessage) string {
+func jsonKind(raw []byte) string {
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) == 0 {
 		return "null"

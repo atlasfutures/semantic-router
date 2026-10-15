@@ -3,6 +3,7 @@ package extproc
 import (
 	"encoding/json"
 	"fmt"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -51,7 +52,7 @@ func TestOutboundShapeCarriesNoContent(t *testing.T) {
 		t.Fatalf("content reached outbound_params: %s", encoded)
 	}
 	// Content members are counts or lengths only, never digests.
-	if strings.Contains(string(encoded), `"messages":{"count":1}`) == false || !strings.Contains(string(encoded), `"system":{"length":18}`) {
+	if strings.Contains(string(encoded), `"messages":{"count":1}`) == false || !strings.Contains(string(encoded), `"system":{"bytes":20}`) {
 		t.Fatalf("content members are not counted: %s", encoded)
 	}
 }
@@ -99,5 +100,24 @@ func TestOutboundShapeIsBounded(t *testing.T) {
 	encoded, _ := json.Marshal(outboundShape([]byte(`{` + strings.Join(members, ",") + `}`)))
 	if len(encoded) > 64*1024 {
 		t.Fatalf("shape is %d bytes", len(encoded))
+	}
+}
+
+// Shaping a body with large inline media does not copy the media.
+func TestOutboundShapeDoesNotCopyContent(t *testing.T) {
+	media := strings.Repeat("A", 8<<20)
+	body := []byte(`{"model":"m","max_tokens":10,"messages":[{"role":"user","content":[{"type":"image","source":{"type":"base64","data":"` +
+		media + `"}}]}],"system":"` + media + `"}`)
+	outboundShape(body) // warm up
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	shape := outboundShape(body)
+	runtime.ReadMemStats(&after)
+	if allocated := after.TotalAlloc - before.TotalAlloc; allocated > 4<<20 {
+		t.Fatalf("shaping a %d-byte body allocated %d bytes", len(body), allocated)
+	}
+	if fmt.Sprint(shape["messages"]) != "map[count:1]" {
+		t.Fatalf("messages = %v", shape["messages"])
 	}
 }
