@@ -31,6 +31,10 @@ func recordDispatchedReasoningControls(ctx *RequestContext, body []byte) {
 			Effort    string `json:"effort"`
 			MaxTokens *int64 `json:"max_tokens"`
 		} `json:"reasoning"`
+		// Messages carries its effort in output_config (pathfinder #2655).
+		OutputConfig struct {
+			Effort string `json:"effort"`
+		} `json:"output_config"`
 	}
 	if json.Unmarshal(body, &wire) != nil {
 		return
@@ -42,5 +46,10 @@ func recordDispatchedReasoningControls(ctx *RequestContext, body []byte) {
 	if ctx.DispatchedReasoningEffort == "" {
 		ctx.DispatchedReasoningEffort = wire.ChatTemplateKwargs.ReasoningEffort
 	}
+	if ctx.DispatchedReasoningEffort == "" {
+		ctx.DispatchedReasoningEffort = wire.OutputConfig.Effort
+	}
+	// The record publishes it: a value outside the effort enum is a digest.
+	ctx.DispatchedReasoningEffort = knownOrDigest(ctx.DispatchedReasoningEffort, knownEfforts)
 	ctx.DispatchedReasoningBound = wire.Reasoning.MaxTokens
 }

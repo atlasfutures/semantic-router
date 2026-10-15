@@ -411,6 +411,7 @@ func (r *OpenAIRouter) finalizeProviderDispatchResponse(
 		metrics.RecordRequestError(dispatch.logicalModel, "provider_adapter_error")
 		return nil, status.Errorf(codes.Internal, "adapt provider request: %v", err)
 	}
+	ctx.DispatchedOutbound = readDispatchedOutboundParams(body, dispatch)
 	r.auditRaylineARCUpstream(body, ctx)
 	common := response.GetRequestBody().GetResponse()
 	if common == nil {
