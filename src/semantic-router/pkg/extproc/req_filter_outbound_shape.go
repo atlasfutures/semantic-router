@@ -18,8 +18,8 @@ import (
 //     value, otherwise as its sha256 prefix and length;
 //   - a key is recorded verbatim only when it is a known request parameter,
 //     otherwise as a digest, so a client-chosen key cannot publish a value;
-//   - arrays are a count, an element type and, for strings or typed objects,
-//     their distinct values or types under the same string rule;
+//   - arrays are a count, an element kind and their distinct element shapes
+//     under these same rules;
 //   - objects are recursed to outboundShapeDepth, then only their key count;
 //   - every object and array value list is bounded, and the whole pass stops
 //     recording values after outboundShapeBudget of them.
@@ -54,7 +54,7 @@ type outboundShaper struct {
 }
 
 const (
-	outboundShapeDepth    = 3
+	outboundShapeDepth    = 5
 	outboundShapeKeyLimit = 48
 	outboundShapeBudget   = 256
 )
@@ -119,7 +119,7 @@ func (shaper *outboundShaper) describe(raw json.RawMessage, depth int) interface
 		_ = json.Unmarshal(raw, &text)
 		return shapeString(text)
 	case "array":
-		return shaper.array(raw)
+		return shaper.array(raw, depth)
 	case "object":
 		var object map[string]json.RawMessage
 		if json.Unmarshal(raw, &object) != nil {
@@ -154,9 +154,11 @@ func shapeString(text string) interface{} {
 	return map[string]interface{}{"sha256": outboundDigest(text), "length": len(text)}
 }
 
-// arrayShape is the count, the element kind and, for strings or objects with
-// a type member, their distinct values (bounded, under the string rule).
-func (shaper *outboundShaper) array(raw json.RawMessage) interface{} {
+// array is the count, the element kind and the distinct element shapes
+// (bounded): strings under the string rule, objects described like any
+// object one level deeper, so an array of parameter objects (context edits,
+// hosted tools' options) keeps its members.
+func (shaper *outboundShaper) array(raw json.RawMessage, depth int) interface{} {
 	var list []json.RawMessage
 	if json.Unmarshal(raw, &list) != nil {
 		return "array"
@@ -172,31 +174,20 @@ func (shaper *outboundShaper) array(raw json.RawMessage) interface{} {
 		if jsonKind(element) != kind {
 			kind = "mixed"
 		}
-		var text string
-		if json.Unmarshal(element, &text) != nil {
-			var typed struct {
-				Type string `json:"type"`
-			}
-			if json.Unmarshal(element, &typed) != nil || typed.Type == "" {
-				continue
-			}
-			text = typed.Type
-		}
-		if seen[text] {
-			continue
-		}
-		seen[text] = true
 		if len(values) == outboundListLimit || shaper.remaining <= 0 {
 			values = append(values, "+more")
 			break
 		}
-		shaper.remaining--
-		values = append(values, shapeString(text))
+		value := shaper.describe(element, depth+1)
+		encoded, _ := json.Marshal(value)
+		if seen[string(encoded)] {
+			continue
+		}
+		seen[string(encoded)] = true
+		values = append(values, value)
 	}
 	shape["element"] = kind
-	if len(values) > 0 {
-		shape["values"] = values
-	}
+	shape["values"] = values
 	return shape
 }
 
@@ -258,7 +249,7 @@ var outboundKnownValues = enumSet(
 	"reasoning.encrypted_content", "file_search_call.results", "web_search_call.results",
 	"web_search_call.action.sources", "message.input_image.image_url", "computer_call_output.output.image_url",
 	"code_interpreter_call.outputs", "message.output_text.logprobs",
-	"clear_tool_uses_20250919", "clear_thinking_20251015",
+	"clear_tool_uses_20250919", "clear_thinking_20251015", "all", "thinking_turns",
 	"web_search", "file_search", "code_interpreter", "computer_use_preview", "image_generation", "mcp",
 	"local_shell", "apply_patch",
 )

@@ -10,7 +10,7 @@ import (
 // A parameter no named field models still reaches the record: a known key
 // spelled out with its enum value, an unknown key and its string as digests.
 func TestOutboundShapeRecordsAnUnmodeledParameter(t *testing.T) {
-	body := `{"model":"m","service_tier":"flex","future_knob":"turbo","context_management":{"edits":[{"type":"clear_tool_uses_20250919"}]},` +
+	body := `{"model":"m","service_tier":"flex","future_knob":"turbo","context_management":{"edits":[{"type":"clear_tool_uses_20250919"},{"type":"clear_thinking_20251015","keep":"all"}]},` +
 		`"thinking":{"type":"adaptive","budget_tokens":2048}}`
 	shape := readDispatchedOutboundParams([]byte(body), nil).Shape
 	if shape["service_tier"] != "flex" {
@@ -21,7 +21,7 @@ func TestOutboundShapeRecordsAnUnmodeledParameter(t *testing.T) {
 		t.Errorf("an unknown parameter is not recorded as a digest: %v", shape)
 	}
 	edits := shape["context_management"].(map[string]interface{})["edits"].(map[string]interface{})
-	if edits["count"] != 1 || fmt.Sprint(edits["values"]) != "[clear_tool_uses_20250919]" {
+	if edits["count"] != 2 || fmt.Sprint(edits["values"]) != "[map[type:clear_tool_uses_20250919] map[keep:all type:clear_thinking_20251015]]" {
 		t.Errorf("context_management.edits = %v", edits)
 	}
 	thinking := shape["thinking"].(map[string]interface{})
