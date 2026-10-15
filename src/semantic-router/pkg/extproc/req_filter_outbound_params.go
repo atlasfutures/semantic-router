@@ -1,7 +1,10 @@
 package extproc
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -42,6 +45,10 @@ type dispatchedOutboundParams struct {
 	ReasoningSummary string
 	// TaskBudget is Messages' output_config.task_budget when it is a number.
 	TaskBudget *int64
+	// PreviousResponseID and Conversation say whether a Responses body
+	// references provider-held context; the ids themselves are not recorded.
+	PreviousResponseID bool
+	Conversation       bool
 
 	OutputConfigEffort    string
 	ReasoningObjectEffort string
@@ -106,7 +113,9 @@ func readDispatchedOutboundParams(body []byte, dispatch *providerDispatch) *disp
 		Text struct {
 			Format outputFormatObject `json:"format"`
 		} `json:"text"`
-		PromptCacheRetention *string `json:"prompt_cache_retention"`
+		PromptCacheRetention *string         `json:"prompt_cache_retention"`
+		PreviousResponseID   *string         `json:"previous_response_id"`
+		Conversation         json.RawMessage `json:"conversation"`
 		Reasoning            struct {
 			Effort    string          `json:"effort"`
 			MaxTokens *int64          `json:"max_tokens"`
@@ -155,6 +164,7 @@ func readDispatchedOutboundParams(body []byte, dispatch *providerDispatch) *disp
 		// dispatch, and any other member it carries stays off the record.
 		var provider config.OpenRouterProviderPreferences
 		if json.Unmarshal(wire.Provider, &provider) == nil {
+			redactProviderPreferences(&provider)
 			params.ProviderOnly = provider.Only
 			if known, err := json.Marshal(provider); err == nil && string(known) != "{}" {
 				params.ProviderPreferences = string(known)
@@ -182,6 +192,8 @@ func readDispatchedOutboundParams(body []byte, dispatch *providerDispatch) *disp
 			params.ReasoningSummary = summary
 		}
 	}
+	params.PreviousResponseID = wire.PreviousResponseID != nil && *wire.PreviousResponseID != ""
+	params.Conversation = len(wire.Conversation) > 0 && string(wire.Conversation) != "null" && string(wire.Conversation) != `""`
 	var taskBudget int64
 	if json.Unmarshal(wire.OutputConfig.TaskBudget, &taskBudget) == nil && string(wire.OutputConfig.TaskBudget) != "null" {
 		params.TaskBudget = &taskBudget
@@ -223,6 +235,31 @@ func readDispatchedOutboundParams(body []byte, dispatch *providerDispatch) *disp
 	params.PromptCacheKey = wire.PromptCacheKey != nil && *wire.PromptCacheKey != ""
 	params.CacheControlMarkers, params.CachePolicies = wire.cacheLocations.markers()
 	return params
+}
+
+// providerSlug is the shape of an OpenRouter provider slug, with an optional
+// variant (deepinfra/fp8). A value outside it (a hostname, a credential pasted
+// into a pin) is recorded only as a digest.
+var providerSlug = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]{0,31}(/[A-Za-z0-9][A-Za-z0-9-]{0,31})?$`)
+
+// redactProviderPreferences keeps the provider lists' slugs and the
+// data_collection enum readable and replaces any other value: a same-format
+// dispatch carries the client's own provider object, whose strings are not
+// validated.
+func redactProviderPreferences(provider *config.OpenRouterProviderPreferences) {
+	redact := func(values []string) []string {
+		for i, value := range values {
+			if !providerSlug.MatchString(value) {
+				sum := sha256.Sum256([]byte(value))
+				values[i] = "sha256:" + hex.EncodeToString(sum[:6])
+			}
+		}
+		return values
+	}
+	provider.Order, provider.Only, provider.Ignore = redact(provider.Order), redact(provider.Only), redact(provider.Ignore)
+	if provider.DataCollection != "" && provider.DataCollection != "allow" && provider.DataCollection != "deny" {
+		provider.DataCollection = "other"
+	}
 }
 
 // toolChoiceObject is tool_choice in either form: a scalar mode ("auto",
@@ -414,6 +451,12 @@ func appendOutboundParamFields(record map[string]interface{}, params *dispatched
 	}
 	if params.ReasoningSummary != "" {
 		record["outbound_reasoning_summary"] = params.ReasoningSummary
+	}
+	if params.PreviousResponseID {
+		record["outbound_previous_response_id"] = true
+	}
+	if params.Conversation {
+		record["outbound_conversation"] = true
 	}
 	if params.TaskBudget != nil {
 		record["outbound_task_budget"] = *params.TaskBudget

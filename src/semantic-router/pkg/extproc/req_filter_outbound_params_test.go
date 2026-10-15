@@ -164,6 +164,44 @@ func TestOutboundParamsReadSummaryTaskBudgetAndEviction(t *testing.T) {
 	}
 }
 
+// A Responses body that references provider-held context says so without
+// recording the ids.
+func TestOutboundParamsRecordProviderContextPresence(t *testing.T) {
+	record := map[string]interface{}{}
+	appendOutboundParamFields(record, readDispatchedOutboundParams([]byte(`{"model":"m","previous_response_id":"`+outboundSecret+`","conversation":{"id":"`+outboundSecret+`"}}`), nil))
+	if record["outbound_previous_response_id"] != true || record["outbound_conversation"] != true {
+		t.Fatalf("record = %v", record)
+	}
+	record = map[string]interface{}{}
+	appendOutboundParamFields(record, readDispatchedOutboundParams([]byte(`{"model":"m","conversation":"conv_1"}`), nil))
+	if _, present := record["outbound_previous_response_id"]; present || record["outbound_conversation"] != true {
+		t.Fatalf("record = %v", record)
+	}
+	if encoded, _ := json.Marshal(record); strings.Contains(string(encoded), "conv_1") {
+		t.Fatalf("an id reached the record: %s", encoded)
+	}
+}
+
+// A client's provider object reaches the record with its slugs readable and
+// any other value (a hostname, a pasted key) only as a digest.
+func TestOutboundParamsRedactUnslugProviderValues(t *testing.T) {
+	body := `{"model":"m","provider":{"order":["deepinfra/fp8","Anthropic"],"only":["` + outboundSecret + `.internal.example"],` +
+		`"ignore":["sk-or-v1-` + outboundSecret + `-0123456789abcdef0123456789"],"data_collection":"` + outboundSecret + `"}}`
+	record := map[string]interface{}{}
+	appendOutboundParamFields(record, readDispatchedOutboundParams([]byte(body), nil))
+	encoded, _ := json.Marshal(record)
+	if strings.Contains(string(encoded), outboundSecret) {
+		t.Fatalf("a provider value reached the record: %s", encoded)
+	}
+	preferences, _ := record["outbound_provider_preferences"].(string)
+	if !strings.Contains(preferences, `"order":["deepinfra/fp8","Anthropic"]`) || !strings.Contains(preferences, `"data_collection":"other"`) {
+		t.Fatalf("outbound_provider_preferences = %s", preferences)
+	}
+	if only, _ := record["outbound_provider_only"].([]string); len(only) != 1 || !strings.HasPrefix(only[0], "sha256:") {
+		t.Fatalf("outbound_provider_only = %v", record["outbound_provider_only"])
+	}
+}
+
 // A Chat body names its top-level reasoning budget and its chat-template
 // reasoning controls.
 func TestOutboundParamsReadAChatBody(t *testing.T) {
