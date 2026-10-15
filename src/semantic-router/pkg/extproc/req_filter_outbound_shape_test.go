@@ -56,6 +56,25 @@ func TestOutboundShapeCarriesNoContent(t *testing.T) {
 	}
 }
 
+// An enum word is verbatim only under its own parameter, free-form maps are
+// opaque, and repeated array elements do not spend the pass's budget.
+func TestOutboundShapeScopesEnumsToTheirParameter(t *testing.T) {
+	body := `{"model":"m","metadata":{"endpoint":"mcp"},"prediction":{"type":"content","content":"high"},` +
+		`"user":"high","include":[` + strings.Repeat(`"reasoning.encrypted_content",`, 400) + `"reasoning.encrypted_content"],` +
+		`"temperature":0.2,"reasoning":{"effort":"high","summary":"high"}}`
+	shape := outboundShape([]byte(body))
+	encoded, _ := json.Marshal(shape)
+	if strings.Contains(string(encoded), `"mcp"`) || strings.Count(string(encoded), `"high"`) != 1 {
+		t.Fatalf("an enum word was published outside its parameter: %s", encoded)
+	}
+	if shape["temperature"] != 0.2 {
+		t.Fatalf("a repeated include spent the budget: %s", encoded)
+	}
+	if fmt.Sprint(shape["metadata"]) != "map[keys:1]" {
+		t.Fatalf("metadata = %v", shape["metadata"])
+	}
+}
+
 // A client-sized body yields a bounded shape.
 func TestOutboundShapeIsBounded(t *testing.T) {
 	members := make([]string, 0, 500)

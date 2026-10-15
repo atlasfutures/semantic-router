@@ -43,7 +43,7 @@ func outboundShape(body []byte) map[string]interface{} {
 			shape[key] = contentShape(value)
 			continue
 		}
-		shape[shapeKey(key)] = shaper.describe(value, 1)
+		shape[shapeKey(key)] = shaper.describe(value, 1, key)
 	}
 	return shape
 }
@@ -61,7 +61,11 @@ const (
 
 // outboundContentKeys hold content: counted, never read.
 var outboundContentKeys = enumSet("messages", "input", "instructions", "system", "prompt", "contents", "tools",
-	"functions", "documents", "suffix")
+	"functions", "documents", "suffix", "content", "prediction")
+
+// outboundOpaqueKeys are free-form client maps: only their key count is
+// recorded, since a member name or value there is the client's own data.
+var outboundOpaqueKeys = enumSet("metadata", "logit_bias", "user", "safety_identifier")
 
 // shapeKeyOrder puts known keys first, then the rest, each sorted, so unknown
 // keys cannot crowd a known parameter out of the bounded record.
@@ -98,7 +102,9 @@ func contentShape(raw json.RawMessage) interface{} {
 	return map[string]interface{}{"type": jsonKind(raw)}
 }
 
-func (shaper *outboundShaper) describe(raw json.RawMessage, depth int) interface{} {
+// describe shapes one value; owner is the key that holds it, which decides
+// which enum values a string may be recorded as.
+func (shaper *outboundShaper) describe(raw json.RawMessage, depth int, owner string) interface{} {
 	if shaper.remaining <= 0 {
 		return "over_budget"
 	}
@@ -117,15 +123,15 @@ func (shaper *outboundShaper) describe(raw json.RawMessage, depth int) interface
 	case "string":
 		var text string
 		_ = json.Unmarshal(raw, &text)
-		return shapeString(text)
+		return shapeString(text, owner)
 	case "array":
-		return shaper.array(raw, depth)
+		return shaper.array(raw, depth, owner)
 	case "object":
 		var object map[string]json.RawMessage
 		if json.Unmarshal(raw, &object) != nil {
 			return "object"
 		}
-		if depth >= outboundShapeDepth {
+		if depth >= outboundShapeDepth || outboundOpaqueKeys[owner] {
 			return map[string]interface{}{"keys": len(object)}
 		}
 		shape := map[string]interface{}{}
@@ -138,17 +144,17 @@ func (shaper *outboundShaper) describe(raw json.RawMessage, depth int) interface
 				shape[key] = contentShape(object[key])
 				continue
 			}
-			shape[shapeKey(key)] = shaper.describe(object[key], depth+1)
+			shape[shapeKey(key)] = shaper.describe(object[key], depth+1, key)
 		}
 		return shape
 	}
 	return "unknown"
 }
 
-// shapeString is a known enum value verbatim, anything else as a digest and
-// its length.
-func shapeString(text string) interface{} {
-	if outboundKnownValues[text] {
+// shapeString is a value its owning parameter defines verbatim, anything else
+// (including another parameter's enum value) as a digest and its length.
+func shapeString(text, owner string) interface{} {
+	if outboundKeyValues[owner][text] {
 		return text
 	}
 	return map[string]interface{}{"sha256": outboundDigest(text), "length": len(text)}
@@ -158,7 +164,7 @@ func shapeString(text string) interface{} {
 // (bounded): strings under the string rule, objects described like any
 // object one level deeper, so an array of parameter objects (context edits,
 // hosted tools' options) keeps its members.
-func (shaper *outboundShaper) array(raw json.RawMessage, depth int) interface{} {
+func (shaper *outboundShaper) array(raw json.RawMessage, depth int, owner string) interface{} {
 	var list []json.RawMessage
 	if json.Unmarshal(raw, &list) != nil {
 		return "array"
@@ -174,17 +180,17 @@ func (shaper *outboundShaper) array(raw json.RawMessage, depth int) interface{} 
 		if jsonKind(element) != kind {
 			kind = "mixed"
 		}
+		// Duplicates are dropped before they are described, so a repeated
+		// element cannot spend the pass's budget.
+		if seen[string(bytes.TrimSpace(element))] {
+			continue
+		}
+		seen[string(bytes.TrimSpace(element))] = true
 		if len(values) == outboundListLimit || shaper.remaining <= 0 {
 			values = append(values, "+more")
 			break
 		}
-		value := shaper.describe(element, depth+1)
-		encoded, _ := json.Marshal(value)
-		if seen[string(encoded)] {
-			continue
-		}
-		seen[string(encoded)] = true
-		values = append(values, value)
+		values = append(values, shaper.describe(element, depth+1, owner))
 	}
 	shape["element"] = kind
 	shape["values"] = values
@@ -238,18 +244,32 @@ var outboundKnownKeys = enumSet(
 	"medium_effort", "high_effort", "max_tokens_per_turn",
 )
 
-// outboundKnownValues are enum values those parameters define. A string
-// outside them is digested.
-var outboundKnownValues = enumSet(
-	"none", "minimal", "low", "medium", "high", "xhigh", "max",
-	"enabled", "disabled", "adaptive", "auto", "summarized", "omitted", "concise", "detailed",
-	"text", "json_object", "json_schema", "required", "any", "tool", "function", "allowed_tools", "custom",
-	"ephemeral", "5m", "1h", "in_memory", "24h", "allow", "deny", "default", "flex", "priority", "scale",
-	"price", "throughput", "latency", "audio", "image", "input_tokens", "tool_uses",
-	"reasoning.encrypted_content", "file_search_call.results", "web_search_call.results",
-	"web_search_call.action.sources", "message.input_image.image_url", "computer_call_output.output.image_url",
-	"code_interpreter_call.outputs", "message.output_text.logprobs",
-	"clear_tool_uses_20250919", "clear_thinking_20251015", "all", "thinking_turns",
-	"web_search", "file_search", "code_interpreter", "computer_use_preview", "image_generation", "mcp",
-	"local_shell", "apply_patch",
-)
+// outboundKeyValues are the enum values each parameter defines, keyed by the
+// parameter's name. A string is recorded verbatim only under its own
+// parameter; the same word under any other key is digested.
+var outboundKeyValues = map[string]map[string]bool{
+	"effort":           enumSet("none", "minimal", "low", "medium", "high", "xhigh", "max"),
+	"reasoning_effort": enumSet("none", "minimal", "low", "medium", "high", "xhigh", "max"),
+	"verbosity":        enumSet("low", "medium", "high"),
+	"summary":          enumSet("auto", "concise", "detailed", "none"),
+	"generate_summary": enumSet("auto", "concise", "detailed", "none"),
+	"display":          enumSet("summarized", "omitted"),
+	"thinking_mode":    enumSet("enabled", "disabled", "adaptive", "auto"),
+	"type": enumSet("enabled", "disabled", "adaptive", "auto", "text", "json_object", "json_schema", "none",
+		"required", "any", "tool", "function", "allowed_tools", "custom", "ephemeral",
+		"clear_tool_uses_20250919", "clear_thinking_20251015", "input_tokens", "tool_uses", "thinking_turns",
+		"web_search", "web_search_preview", "file_search", "code_interpreter", "computer_use_preview",
+		"image_generation", "mcp", "local_shell", "apply_patch"),
+	"tool_choice":            enumSet("auto", "none", "required", "any"),
+	"keep":                   enumSet("all"),
+	"ttl":                    enumSet("5m", "1h"),
+	"prompt_cache_retention": enumSet("in_memory", "24h"),
+	"truncation":             enumSet("auto", "disabled"),
+	"service_tier":           enumSet("auto", "default", "flex", "priority", "scale"),
+	"data_collection":        enumSet("allow", "deny"),
+	"sort":                   enumSet("price", "throughput", "latency"),
+	"modalities":             enumSet("text", "audio", "image"),
+	"include": enumSet("reasoning.encrypted_content", "file_search_call.results", "web_search_call.results",
+		"web_search_call.action.sources", "message.input_image.image_url", "computer_call_output.output.image_url",
+		"code_interpreter_call.outputs", "message.output_text.logprobs"),
+}
