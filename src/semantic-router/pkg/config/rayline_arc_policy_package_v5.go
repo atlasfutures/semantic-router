@@ -88,6 +88,16 @@ func (cfg *RaylineARCPolicyServiceConfig) PackageV5Action(actionID string) (Rayl
 	return action, ok
 }
 
+// PackageTwoStage reports whether the package is two-stage: its manifest
+// carries pathfinder's stage_one part, so the policy service chooses the
+// model at the package's own stage-one boundaries and holds it between them
+// (pathfinder arc_serving_contract.md, "Stage one"). A package without a
+// manifest is not known to be two-stage.
+func (cfg *RaylineARCPolicyServiceConfig) PackageTwoStage() bool {
+	pkg, err := cfg.loadPackageV5()
+	return err == nil && pkg.manifest.StageOne != nil
+}
+
 // PackageV5RegistryDiffers reports whether the manifest's
 // thinking_controls_sha256 names another registry artifact than VSR's.
 func (cfg *RaylineARCPolicyServiceConfig) PackageV5RegistryDiffers() bool {
