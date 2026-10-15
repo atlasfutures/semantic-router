@@ -163,6 +163,27 @@ func TestRoutingPriceRatesKeyByModelNotBillingModel(t *testing.T) {
 	}
 }
 
+// An entry that omits a leg is not forwarded: the service keeps the package
+// rate for an omitted leg's arms but fills a null one, so writing the
+// omission as null would price those arms partly live.
+func TestRoutingPriceEntryWithAnOmittedLegIsNotForwarded(t *testing.T) {
+	body := `{"schema": "arc-routing-prices.v1", "store_version": "17", "as_of": "2026-10-14T16:00:00Z",
+		"currency": "USD", "unit": "usd_per_million_tokens", "models": [
+		{"model": "a/complete", "input": 1, "cache_read": null, "cache_write": null, "output": 2},
+		{"model": "a/partial", "input": 1, "cache_read": 0.1, "cache_write": 1.25}]}`
+	feed, err := DecodeRoutingPriceFeed([]byte(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rates := feed.RequestPrices().Rates
+	if _, ok := rates["a/complete"]; !ok {
+		t.Fatalf("an entry with null legs was dropped: %v", rates)
+	}
+	if _, ok := rates["a/partial"]; ok || len(rates) != 1 {
+		t.Fatalf("an entry with an omitted leg was forwarded: %v", rates)
+	}
+}
+
 // A request without live prices carries no routing_prices key at all, so it
 // stays byte-for-byte what the service accepted before.
 func TestPolicyDecisionRequestOmitsAbsentRoutingPrices(t *testing.T) {
@@ -204,6 +225,9 @@ func TestDecodeRoutingPriceFeedRefusesWhatItCannotForward(t *testing.T) {
 		// time.Parse accepts these two; the policy service refuses them.
 		"a comma fraction":     {`"as_of": "2026-10-14T16:00:00Z"`, `"as_of": "2026-10-14T16:00:00,5Z"`},
 		"a ten-digit fraction": {`"as_of": "2026-10-14T16:00:00Z"`, `"as_of": "2026-10-14T16:00:00.1234567891Z"`},
+		"year zero":            {`"as_of": "2026-10-14T16:00:00Z"`, `"as_of": "0000-10-14T16:00:00Z"`},
+		"a 24-hour offset":     {`"as_of": "2026-10-14T16:00:00Z"`, `"as_of": "2026-10-14T16:00:00+24:00"`},
+		"a 60-minute offset":   {`"as_of": "2026-10-14T16:00:00Z"`, `"as_of": "2026-10-14T16:00:00+23:60"`},
 		"a duplicate model":    {`"z-ai/glm-4.6"`, `"anthropic/claude-sonnet-4.5"`},
 		"an empty model id":    {`"z-ai/glm-4.6"`, `""`},
 		"a malformed expiry":   {`"valid_until": "2026-10-14T17:00:00Z"`, `"valid_until": "soon"`},

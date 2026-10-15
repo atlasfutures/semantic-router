@@ -66,6 +66,11 @@ type RoutingPriceFeedModel struct {
 	ValidFrom  *string  `json:"valid_from"`
 	ValidUntil *string  `json:"valid_until"`
 	Source     *string  `json:"source"`
+	// legsPresent is whether the entry wrote all four legs, null or not.
+	// The service fills a null leg from the package but takes an omitted
+	// one as a malformed entry, so the request must not turn one into the
+	// other.
+	legsPresent bool
 }
 
 // RoutingPriceFeed is the price feed's response.
@@ -136,8 +141,21 @@ func DecodeRoutingPriceFeed(body []byte) (*RoutingPriceFeed, error) {
 	if len(feed.Models) > maxRoutingPriceModels {
 		return nil, fmt.Errorf("routing price feed lists %d models", len(feed.Models))
 	}
+	var legs struct {
+		Models []map[string]json.RawMessage `json:"models"`
+	}
+	if err := json.Unmarshal(body, &legs); err != nil {
+		return nil, err
+	}
 	seen := make(map[string]bool, len(feed.Models))
-	for _, model := range feed.Models {
+	for index := range feed.Models {
+		model := &feed.Models[index]
+		model.legsPresent = true
+		for _, leg := range RoutingPriceLegs {
+			if _, ok := legs.Models[index][leg]; !ok {
+				model.legsPresent = false
+			}
+		}
 		if model.Model == "" || len(model.Model) > maxRoutingPriceModelIDBytes {
 			return nil, errors.New("routing price feed model id is empty or too long")
 		}
@@ -155,10 +173,16 @@ func DecodeRoutingPriceFeed(body []byte) (*RoutingPriceFeed, error) {
 }
 
 // RequestPrices is the feed as the decision request's routing_prices: every
-// model's rates, keyed by its id, values as served.
+// model's rates, keyed by its id, values as served. A model whose entry
+// omits a leg is left out, so its arms keep their package rates, as the
+// service treats an entry with an omitted leg; written as null, the leg
+// would instead be filled from the package beside the entry's live legs.
 func (feed *RoutingPriceFeed) RequestPrices() *PolicyRoutingPrices {
 	rates := make(map[string]PolicyRoutingRate, len(feed.Models))
 	for _, model := range feed.Models {
+		if !model.legsPresent {
+			continue
+		}
 		rates[model.Model] = PolicyRoutingRate{
 			Input: model.Input, CacheRead: model.CacheRead, CacheWrite: model.CacheWrite,
 			Output: model.Output, ValidFrom: model.ValidFrom, ValidUntil: model.ValidUntil, Source: model.Source,
@@ -172,15 +196,17 @@ func (feed *RoutingPriceFeed) RequestPrices() *PolicyRoutingPrices {
 // routingPriceTimestampPattern is the policy service's RFC 3339 form
 // (service.py _RFC3339): time.Parse alone also accepts a comma before the
 // fraction and more than nine fraction digits, which the service refuses as
-// an invalid request.
+// an invalid request. The service's datetime also refuses year 0000 and an
+// offset of 24 hours or 60 minutes, which time.Parse accepts.
 var routingPriceTimestampPattern = regexp.MustCompile(
-	`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?(Z|[+-]\d{2}:\d{2})$`)
+	`^(\d{4})-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?(Z|[+-](\d{2}):(\d{2}))$`)
 
 func validRoutingPriceTimestamp(value string) error {
 	if len(value) > maxRoutingPriceTimestampBytes {
 		return errors.New("timestamp too long")
 	}
-	if !routingPriceTimestampPattern.MatchString(value) {
+	match := routingPriceTimestampPattern.FindStringSubmatch(value)
+	if match == nil || match[1] == "0000" || (match[4] != "" && (match[4] >= "24" || match[5] >= "60")) {
 		return fmt.Errorf("timestamp %q is not RFC 3339 with an offset", value)
 	}
 	_, err := time.Parse(time.RFC3339Nano, value)

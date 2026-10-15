@@ -271,7 +271,9 @@ maps them to arms, fills a null leg from the package, and falls back per arm.
   served. It never maps them to arms. The feed is decoded strictly: a wrong
   schema, currency or unit, an empty `store_version`, a duplicate model, or an
   `as_of` or `valid_until` that is not RFC 3339 with an offset rejects the
-  whole response, and the last good copy stays in use.
+  whole response, and the last good copy stays in use. A model entry that
+  omits a leg (rather than writing it `null`) is not forwarded, so its arms
+  keep their package rates, as the service treats such an entry.
 - **Auth.** `auth: google_id_token` sends an identity token minted by the
   metadata server for `audience`, the feed's own service URL; `url` must be
   on that host, since a fronting domain does not match the audience the feed
