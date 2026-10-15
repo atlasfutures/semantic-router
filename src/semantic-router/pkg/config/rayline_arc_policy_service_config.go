@@ -100,14 +100,12 @@ type RaylineARCPolicyServiceConfig struct {
 	// serves exactly what the policy chose and a refusal stays a failure, as
 	// in collection.
 	Fallback *RaylineARCPolicyFallbackConfig `yaml:"fallback,omitempty"`
-	// DerivedHoldModel is the model a two-stage package's cold-turn refusal
-	// (stage_one_held_unknown) is held on when no session record names one:
-	// the last source of a derived hold. A package_manifest names its own
-	// (decision.fallback_action_id), so this serves only a package without
-	// one, and only when the policy service's package listing names no bound
-	// fallback_model (pathfinder#3677). It must be a model the bindings
-	// dispatch: a binding's declared model, or the worker of bindings that
-	// declare none.
+	// DerivedHoldModel is retired and refused when set. It named the model a
+	// two-stage package's cold-turn refusal (stage_one_held_unknown) was held
+	// on when no session record named one, a model the policy never chose. A
+	// turn the policy will not decide now fails as undecidable. The key is
+	// still read so that a cell that sets it fails to load with that reason
+	// rather than serving without it.
 	DerivedHoldModel string `yaml:"derived_hold_model,omitempty"`
 	// RoutingPrices attaches live per-model rates from the routing price
 	// feed to every decision request. Absent (the default), the service
@@ -653,24 +651,11 @@ func validateRaylineARCPolicyMessagesMode(cfg *RouterConfig, binding RaylineARCP
 	return fmt.Errorf("worker %q dispatches Messages, where this action needs %s thinking, and its reasoning family declares %v", binding.Worker, mode, family.Modes)
 }
 
-// validateRaylineARCDerivedHoldModel refuses a derived_hold_model beside a
-// package manifest, which names its own fallback, and one no binding
-// dispatches.
+// validateRaylineARCDerivedHoldModel refuses any derived_hold_model: no
+// configured model serves a turn the policy did not decide.
 func validateRaylineARCDerivedHoldModel(cfg *RaylineARCPolicyServiceConfig) error {
 	if cfg.DerivedHoldModel == "" {
 		return nil
 	}
-	if cfg.IsPackageV5() {
-		return fmt.Errorf("derived_hold_model serves packages without a package_manifest; a manifest names its own fallback")
-	}
-	for _, binding := range cfg.Bindings {
-		model := binding.Model
-		if model == "" {
-			model = binding.Worker
-		}
-		if model == cfg.DerivedHoldModel {
-			return nil
-		}
-	}
-	return fmt.Errorf("derived_hold_model %q is not a model the bindings dispatch", cfg.DerivedHoldModel)
+	return fmt.Errorf("derived_hold_model is retired: a turn the policy will not decide fails as undecidable, and no configured model serves it; remove the key")
 }

@@ -311,10 +311,12 @@ const (
 	// named no session; resending cannot succeed), "request_shape" (the
 	// request carries something the routing decision cannot represent;
 	// resending it unchanged cannot succeed either, and no backend was
-	// called, so it is not an upstream outage) or "unavailable" (anything
-	// else). The first three ride a 429 or 503; "missing_session" and
-	// "request_shape" ride a 400. Emitted only on those refusals, never with
-	// an internal class.
+	// called, so it is not an upstream outage), "undecidable" (the policy
+	// would not decide the turn and no model is served in its place;
+	// resending it unchanged cannot succeed, and no backend was called) or
+	// "unavailable" (anything else). The first three ride a 429 or 503;
+	// "missing_session" and "request_shape" ride a 400; "undecidable" rides a
+	// 422. Emitted only on those refusals, never with an internal class.
 	//
 	// The values are stated here, in
 	// extproc/rayline_arc_selection_response.go where they are defined, and in

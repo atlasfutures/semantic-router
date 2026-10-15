@@ -494,11 +494,8 @@ type PolicyTurnSignals struct {
 
 // PolicySubagentSignal is how a subagent's request was keyed, and its link to
 // the conversation that spawned it. The link is logged for analysis and
-// accounting, and routes in one place only: when the gateway's turn-signal
-// headers are trusted, ParentEpisodeIDHash names the session whose last
-// served model is the second source of a derived hold, read after a
-// two-stage package's stage_one_held_unknown refusal
-// (extproc rayline_arc_derived_hold.go).
+// accounting and never routes: it does not select, hold or narrow the
+// subagent's actions (pathfinder ADR 0117; TestDerivedHoldNeverUsesTheParentSession).
 type PolicySubagentSignal struct {
 	// KeySource is how the gateway chose the subagent's episode: "agent"
 	// (the harness's agent id), "role", "task", or "unknown" when the

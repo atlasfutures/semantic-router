@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/routerruntime"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
 
@@ -257,4 +258,34 @@ func selectionFailureClassOf(t *testing.T, err error) string {
 		t.Fatalf("error %v is not a selection failure", err)
 	}
 	return failure.class
+}
+
+// A turn the policy would not decide is answered as undecidable on every
+// entrypoint: a 422 with its own public class, a turn class of its own that
+// counts against no backend, and the decision-only surfaces' undecidable
+// error -- never a served default and never a 503 that invites a retry.
+func TestUndecidableIsA422AndNeverUnavailable(t *testing.T) {
+	class := arcFailurePolicyUndecidable
+	if selectionFailureIsContended(class) || selectionFailureIsCallerError(class) {
+		t.Fatalf("%q is classed as contention or a missing session", class)
+	}
+	if got := publicSelectionFailureClass(class); got != selectionFailureUndecidable {
+		t.Fatalf("published %q, want %q", got, selectionFailureUndecidable)
+	}
+	if got := selectionTurnFailureClass(class); got != turnFailureUndecidable || turnFailureIsBackendError(got) {
+		t.Fatalf("turn class = %q, want %q and not a backend error", got, turnFailureUndecidable)
+	}
+	ctx := &RequestContext{}
+	response := (&OpenAIRouter{}).authoritativeSelectionFailureResponse(
+		&modelSelectionFailure{algorithm: configRaylineARC, class: class}, ctx,
+	)
+	if got := int(response.GetImmediateResponse().GetStatus().GetCode()); got != 422 {
+		t.Fatalf("status = %d, want 422", got)
+	}
+	if ctx.ImmediateProtocolError == nil || ctx.ImmediateProtocolError.Code != selectionFailureUndecidable {
+		t.Fatalf("protocol error = %+v, want code %q", ctx.ImmediateProtocolError, selectionFailureUndecidable)
+	}
+	if err := selectionFailureError(&raylineARCSelectionFailure{class: class}); !errors.Is(err, routerruntime.ErrRouteDecisionUndecidable) {
+		t.Fatalf("the decision-only error %v is not undecidable", err)
+	}
 }

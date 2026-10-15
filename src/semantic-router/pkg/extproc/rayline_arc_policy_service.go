@@ -79,18 +79,6 @@ type policyServiceScorer struct {
 	// episodeMode is the decide request's episode_mode: empty (strict) or
 	// relaxed.
 	episodeMode string
-	// fallbackModel is the model of the package manifest's fallback action,
-	// or, for a package without a manifest, the configured
-	// derived_hold_model; fallbackSource says which. Empty when neither.
-	// holdFallback ranks it with listedFallback.
-	fallbackModel  string
-	fallbackSource string
-	// listedFallback is the fallback_model the service's package listing
-	// names for this package (pathfinder#3677), as the last readiness probe
-	// verified it and only when the bindings dispatch it; nil when it names
-	// none. Atomic because a readiness re-probe may refresh it while turns
-	// read it.
-	listedFallback atomic.Pointer[string]
 	// sideStrictUntil (unix nanoseconds) is how long a strict cell sends its
 	// side calls strict after the service last showed it cannot serve them
 	// relaxed; zero or past means relaxed.
@@ -193,11 +181,6 @@ func newPolicyServiceScorer(
 		}
 		scorer.bindings[binding.ActionID] = policyBinding{arm: index[binding.Worker], level: level, model: model}
 		scorer.actionOrder = append(scorer.actionOrder, binding.ActionID)
-	}
-	if fallback := policy.PackageFallbackActionID(); fallback != "" {
-		scorer.fallbackModel, scorer.fallbackSource = scorer.actionModel(fallback), derivedHoldPackageFallback
-	} else if policy.DerivedHoldModel != "" {
-		scorer.fallbackModel, scorer.fallbackSource = policy.DerivedHoldModel, derivedHoldConfigured
 	}
 	return scorer
 }
@@ -337,11 +320,11 @@ func createRaylineARCPolicySelector(
 	}
 	scorer := armed.scorer.(*policyServiceScorer)
 	probe := func(ctx context.Context) error {
-		loaded, err := client.LoadedPackage(ctx, policy.PackageAlias, policy.PackageSHA256)
-		if err != nil {
+		// The listing's fallback pair, when a service still states one, is
+		// not read: no model serves a turn the policy did not decide.
+		if _, err := client.LoadedPackage(ctx, policy.PackageAlias, policy.PackageSHA256); err != nil {
 			return err
 		}
-		scorer.recordListedFallback(loaded.FallbackActionID, loaded.FallbackModel)
 		if scorer.episodeMode == raylinearc.PolicyEpisodeModeRelaxed {
 			return probeRelaxedPolicyDecide(ctx, client, scorer)
 		}
@@ -558,9 +541,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		held = offeredHeld
 	}
 	logRaylineARCPolicyTurn(arcContext.EpisodeIDHash, signals, transition, state.TurnIndex, turn, held >= 0, retained)
-	// Every model excluded leaves nothing to serve, and the turn fails. The
-	// package's fallback action is one of these same actions, so it is never
-	// left when its peers are not.
+	// Every model excluded leaves nothing to serve, and the turn fails.
 	if len(available) == 0 {
 		logRaylineARCEmptyOffer(arcContext, scorer, emptyOffer{
 			stage: "offer", held: held, retained: retained, sideCall: sideCall, fallback: fallback,
@@ -618,12 +599,14 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	}
 	// A two-stage package refuses a mid-conversation turn it would decide
 	// cold. With no model held, the turn is asked once more with the offer
-	// narrowed to a derived model (rayline_arc_derived_hold.go); a second
-	// refusal fails the turn as the first would have.
+	// narrowed to the model this conversation's own decisions last served
+	// (rayline_arc_derived_hold.go). With no such record, or on a second
+	// refusal, the turn is undecidable and fails: no fallback model serves it.
 	var cold *raylinearc.PolicyServiceError
-	derivedOffer := false
+	derivedOffer, derivedSource := false, ""
 	if held < 0 && errors.As(err, &cold) && cold.Class == raylinearc.PolicyStageOneHeldUnknownClass {
 		if derived, found := derivedHoldOffer(scorer, arcContext, available); found {
+			derivedSource = derived.source
 			logRaylineARCDerivedHold(arcContext, derived)
 			// The held model this turn excludes leaves nothing to offer: the
 			// turn fails as any empty offer does, never retried empty.
@@ -640,6 +623,15 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 			request.Selection.AvailableActionIDs = derived.offer
 			response, err = decidePolicyThroughBusy(ctx, armed.policy, request, scorer.busyWait, admit)
 		}
+	}
+	// Any refusal to decide that stands -- a cold turn no record holds, or the
+	// policy finding no supported selection, the held action unavailable and
+	// so on -- fails the turn as undecidable. The service no longer serves its
+	// package's fallback action in their place.
+	if errors.As(err, &cold) && (cold.Class == raylinearc.PolicyStageOneHeldUnknownClass ||
+		cold.Class == raylinearc.PolicySelectionRefusedClass) {
+		logRaylineARCUndecidable(arcContext, raylinearc.PolicyRefusalReason(cold.Detail), derivedSource, held >= 0, sideCall)
+		return nil, arcSelectionFailure(arcFailurePolicyUndecidable)
 	}
 	var shed *policyAdmissionError
 	if errors.As(err, &shed) {
@@ -817,51 +809,6 @@ func policyMaskedArms(
 		}
 	}
 	return masked
-}
-
-// recordListedFallback keeps the listing's fallback pair when it agrees with
-// the cell: its action, resolved through the bindings, serves its model. It
-// forgets any earlier one otherwise, and when the listing names none, so the
-// hold falls through to derived_hold_model.
-//   - An action the cell binds to another model is an inconsistent pair:
-//     logged (rayline_arc_listed_fallback_mismatch) and not used.
-//   - An action the cell does not bind is the package's own fallback, which
-//     this cell does not serve: logged (rayline_arc_listed_fallback_unbound)
-//     and not used, even when another action of the listed model is bound,
-//     as a derived_hold_model outside the bindings is refused at startup.
-func (scorer *policyServiceScorer) recordListedFallback(actionID, model string) {
-	scorer.listedFallback.Store(nil)
-	if model == "" {
-		return
-	}
-	fields := map[string]interface{}{
-		"package_alias":      scorer.alias,
-		"fallback_action_id": actionID,
-		"fallback_model":     model,
-	}
-	if _, bound := scorer.bindings[actionID]; !bound {
-		logging.ComponentErrorEvent("extproc", "rayline_arc_listed_fallback_unbound", fields)
-		return
-	}
-	if served := scorer.actionModel(actionID); served != model {
-		fields["bound_model"] = served
-		logging.ComponentErrorEvent("extproc", "rayline_arc_listed_fallback_mismatch", fields)
-		return
-	}
-	scorer.listedFallback.Store(&model)
-}
-
-// holdFallback is the last source of a derived hold: the package manifest's
-// fallback action's model, else the listing's fallback_model, else the
-// configured derived_hold_model, with the source that named it.
-func (scorer *policyServiceScorer) holdFallback() (model, source string) {
-	if scorer.fallbackSource == derivedHoldPackageFallback {
-		return scorer.fallbackModel, scorer.fallbackSource
-	}
-	if listed := scorer.listedFallback.Load(); listed != nil {
-		return *listed, derivedHoldListedFallback
-	}
-	return scorer.fallbackModel, scorer.fallbackSource
 }
 
 // actionModel is the trained model an action serves: its binding's declared
