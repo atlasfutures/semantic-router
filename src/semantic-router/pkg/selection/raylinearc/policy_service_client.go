@@ -61,7 +61,8 @@ type PolicyServiceError struct {
 	Class  string
 	Status int
 	// Detail is the refusal's detail for the classes a caller acts on
-	// (context_exceeds_encoder_capacity: token_count and max_tokens); nil
+	// (context_exceeds_encoder_capacity: token_count and max_tokens;
+	// selection_refused and stage_one_held_unknown: a bounded reason); nil
 	// otherwise, so no free-form service text travels further.
 	Detail map[string]any
 }
@@ -121,6 +122,33 @@ const PolicyRelaxedUnsupportedClass = "relaxed_unsupported"
 // (selection_refused with detail.reason stage_one_held_unknown). A caller
 // that names that model by narrowing the offer to it is served.
 const PolicyStageOneHeldUnknownClass = "stage_one_held_unknown"
+
+// PolicySelectionRefusedClass is the policy's refusal to decide a turn
+// (selection_refused) for any reason other than stage_one_held_unknown.
+const PolicySelectionRefusedClass = "selection_refused"
+
+// policyRefusalReasons are the selection_refused reasons the service states
+// (pathfinder deploy/arc-policy-service/service.py). A reason outside the set
+// is logged as "other", so no free-form service text becomes a log value.
+var policyRefusalReasons = map[string]bool{
+	"stage_one_held_unknown":         true,
+	"stage_one_model_unavailable":    true,
+	"no_supported_selection":         true,
+	"held_action_unavailable":        true,
+	"reference_unavailable":          true,
+	"attribution_out_of_catalog":     true,
+	"action_not_in_catalog":          true,
+	"operating_point_not_adjustable": true,
+}
+
+// PolicyRefusalReason is a selection refusal's bounded reason.
+func PolicyRefusalReason(detail map[string]any) string {
+	reason, _ := detail["reason"].(string)
+	if policyRefusalReasons[reason] {
+		return reason
+	}
+	return "other"
+}
 
 func policyFailureClass(failure PolicyErrorResponse) string {
 	if failure.Error == "selection_refused" {
@@ -256,8 +284,11 @@ func (client *PolicyServiceClient) do(
 		var failure PolicyErrorResponse
 		if json.Unmarshal(body, &failure) == nil && failure.Error != "" {
 			refusal := &PolicyServiceError{Class: policyFailureClass(failure), Status: response.StatusCode}
-			if refusal.Class == PolicyCapacityRefusalClass {
+			switch refusal.Class {
+			case PolicyCapacityRefusalClass:
 				refusal.Detail = capacityRefusalDetail(failure.Detail)
+			case PolicySelectionRefusedClass, PolicyStageOneHeldUnknownClass:
+				refusal.Detail = map[string]any{"reason": PolicyRefusalReason(failure.Detail)}
 			}
 			return nil, refusal
 		}

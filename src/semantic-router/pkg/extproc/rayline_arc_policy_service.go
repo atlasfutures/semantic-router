@@ -619,8 +619,13 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 			response, err = decidePolicyThroughBusy(ctx, armed.policy, request, scorer.busyWait, admit)
 		}
 	}
-	if errors.As(err, &cold) && cold.Class == raylinearc.PolicyStageOneHeldUnknownClass {
-		logRaylineARCUndecidable(arcContext, raylinearc.PolicyStageOneHeldUnknownClass, derivedSource, held >= 0, sideCall)
+	// Any refusal to decide that stands -- a cold turn no record holds, or the
+	// policy finding no supported selection, the held action unavailable and
+	// so on -- fails the turn as undecidable. The service no longer serves its
+	// package's fallback action in their place.
+	if errors.As(err, &cold) && (cold.Class == raylinearc.PolicyStageOneHeldUnknownClass ||
+		cold.Class == raylinearc.PolicySelectionRefusedClass) {
+		logRaylineARCUndecidable(arcContext, raylinearc.PolicyRefusalReason(cold.Detail), derivedSource, held >= 0, sideCall)
 		return nil, arcSelectionFailure(arcFailurePolicyUndecidable)
 	}
 	var shed *policyAdmissionError
