@@ -201,8 +201,10 @@ func TestRoutingPriceFeedWithHigherTierDecodes(t *testing.T) {
 	// The echo of a request whose feed left a package's model out names
 	// only the sent feed; a decision on it is recorded, not refused.
 	store, asOf := "42", "2026-10-15T12:34:56.789Z"
-	used := &PolicyRoutingPricesUsed{Mode: RoutingPricesModeLive, StoreVersion: &store, AsOf: &asOf,
-		FallbackArms: []string{"anthropic/claude-opus-5@low"}}
+	used := &PolicyRoutingPricesUsed{
+		Mode: RoutingPricesModeLive, StoreVersion: &store, AsOf: &asOf,
+		FallbackArms: []string{"anthropic/claude-opus-5@low"},
+	}
 	if err := used.validate(); err != nil {
 		t.Fatalf("an echo with a fallback arm for a model the feed left out: %v", err)
 	}
