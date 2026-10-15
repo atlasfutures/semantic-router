@@ -117,6 +117,19 @@ func TestV5TurnRecordsItsOutboundParams(t *testing.T) {
 	}
 }
 
+// A Chat body names its top-level reasoning budget and its chat-template
+// reasoning controls.
+func TestOutboundParamsReadAChatBody(t *testing.T) {
+	body := `{"model":"qwen/qwen3.8-27b","messages":[],"reasoning_budget_tokens":4096,` +
+		`"chat_template_kwargs":{"reasoning_effort":"low","enable_thinking":true}}`
+	record := map[string]interface{}{}
+	appendOutboundParamFields(record, readDispatchedOutboundParams([]byte(body), nil))
+	if record["outbound_reasoning_budget_tokens"] != int64(4096) || record["outbound_template_effort"] != "low" ||
+		record["outbound_template_enable_thinking"] != true {
+		t.Fatalf("record = %v", record)
+	}
+}
+
 // The record's reasoning_effort reads a Messages body's output_config.effort,
 // so a Messages turn no longer logs an empty dispatched effort.
 func TestDispatchedReasoningEffortReadsOutputConfig(t *testing.T) {

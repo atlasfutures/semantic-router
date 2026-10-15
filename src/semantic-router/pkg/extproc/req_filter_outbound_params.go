@@ -24,6 +24,11 @@ type dispatchedOutboundParams struct {
 	ThinkingType          string
 	ThinkingBudgetTokens  *int64
 	ReasoningMaxTokens    *int64
+	// ReasoningBudgetTokens is Chat's top-level reasoning_budget_tokens; the
+	// two template fields are vLLM's chat_template_kwargs controls.
+	ReasoningBudgetTokens  *int64
+	TemplateEffort         string
+	TemplateEnableThinking *bool
 
 	MaxTokens         *int64
 	Temperature       *float64
@@ -66,8 +71,13 @@ func readDispatchedOutboundParams(body []byte, dispatch *providerDispatch) *disp
 			Effort    string `json:"effort"`
 			MaxTokens *int64 `json:"max_tokens"`
 		} `json:"reasoning"`
-		ReasoningEffort string `json:"reasoning_effort"`
-		Thinking        struct {
+		ReasoningEffort       string `json:"reasoning_effort"`
+		ReasoningBudgetTokens *int64 `json:"reasoning_budget_tokens"`
+		ChatTemplateKwargs    struct {
+			ReasoningEffort string `json:"reasoning_effort"`
+			EnableThinking  *bool  `json:"enable_thinking"`
+		} `json:"chat_template_kwargs"`
+		Thinking struct {
 			Type         string `json:"type"`
 			BudgetTokens *int64 `json:"budget_tokens"`
 		} `json:"thinking"`
@@ -100,6 +110,9 @@ func readDispatchedOutboundParams(body []byte, dispatch *providerDispatch) *disp
 	params.TopLevelEffort = wire.ReasoningEffort
 	params.ThinkingType = wire.Thinking.Type
 	params.ThinkingBudgetTokens = wire.Thinking.BudgetTokens
+	params.ReasoningBudgetTokens = wire.ReasoningBudgetTokens
+	params.TemplateEffort = wire.ChatTemplateKwargs.ReasoningEffort
+	params.TemplateEnableThinking = wire.ChatTemplateKwargs.EnableThinking
 	params.MaxTokens = wire.MaxTokens
 	if params.MaxTokens == nil {
 		params.MaxTokens = wire.MaxCompletionTokens
@@ -195,6 +208,7 @@ func appendOutboundParamFields(record map[string]interface{}, params *dispatched
 		"outbound_reasoning_effort":     params.ReasoningObjectEffort,
 		"outbound_top_level_effort":     params.TopLevelEffort,
 		"outbound_thinking_type":        params.ThinkingType,
+		"outbound_template_effort":      params.TemplateEffort,
 	}
 	for key, value := range optionalString {
 		if value != "" {
@@ -206,6 +220,12 @@ func appendOutboundParamFields(record map[string]interface{}, params *dispatched
 	}
 	if params.ReasoningMaxTokens != nil {
 		record["outbound_reasoning_max_tokens"] = *params.ReasoningMaxTokens
+	}
+	if params.ReasoningBudgetTokens != nil {
+		record["outbound_reasoning_budget_tokens"] = *params.ReasoningBudgetTokens
+	}
+	if params.TemplateEnableThinking != nil {
+		record["outbound_template_enable_thinking"] = *params.TemplateEnableThinking
 	}
 	if params.MaxTokens != nil {
 		record["outbound_max_tokens"] = *params.MaxTokens
