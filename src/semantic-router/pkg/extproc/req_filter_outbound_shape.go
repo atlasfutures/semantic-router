@@ -43,7 +43,7 @@ func outboundShape(body []byte) map[string]interface{} {
 			shape[key] = contentShape(value)
 			continue
 		}
-		shape[shapeKey(key)] = shaper.describe(value, 1, key)
+		shape[shapeKey(key)] = shaper.describe(value, 1, key, outboundKnownKeys[key])
 	}
 	return shape
 }
@@ -111,8 +111,10 @@ func contentShape(raw json.RawMessage) interface{} {
 }
 
 // describe shapes one value; owner is the key that holds it, which decides
-// which enum values a string may be recorded as.
-func (shaper *outboundShaper) describe(raw json.RawMessage, depth int, owner string) interface{} {
+// which enum values a string may be recorded as, and known says every key on
+// the path to it is a known parameter. Under an unknown ancestor (a carried
+// extension) every string and number is digested, whatever its leaf name.
+func (shaper *outboundShaper) describe(raw json.RawMessage, depth int, owner string, known bool) interface{} {
 	if shaper.remaining <= 0 {
 		return "over_budget"
 	}
@@ -128,16 +130,19 @@ func (shaper *outboundShaper) describe(raw json.RawMessage, depth int, owner str
 		// unmodeled id), so it is digested like a string.
 		literal := string(bytes.TrimSpace(raw))
 		number, err := strconv.ParseFloat(literal, 64)
-		if err != nil || !outboundNumericKeys[owner] {
+		if err != nil || !known || !outboundNumericKeys[owner] {
 			return map[string]interface{}{"sha256": outboundDigest(literal), "length": len(literal)}
 		}
 		return number
 	case "string":
 		var text string
 		_ = json.Unmarshal(raw, &text)
+		if !known {
+			owner = ""
+		}
 		return shapeString(text, owner)
 	case "array":
-		return shaper.array(raw, depth, owner)
+		return shaper.array(raw, depth, owner, known)
 	case "object":
 		var object map[string]json.RawMessage
 		if json.Unmarshal(raw, &object) != nil {
@@ -157,7 +162,7 @@ func (shaper *outboundShaper) describe(raw json.RawMessage, depth int, owner str
 				shape[key] = contentShape(object[key])
 				continue
 			}
-			shape[shapeKey(key)] = shaper.describe(object[key], depth+1, key)
+			shape[shapeKey(key)] = shaper.describe(object[key], depth+1, key, known && outboundKnownKeys[key])
 		}
 		return shape
 	}
@@ -177,7 +182,7 @@ func shapeString(text, owner string) interface{} {
 // (bounded): strings under the string rule, objects described like any
 // object one level deeper, so an array of parameter objects (context edits,
 // hosted tools' options) keeps its members.
-func (shaper *outboundShaper) array(raw json.RawMessage, depth int, owner string) interface{} {
+func (shaper *outboundShaper) array(raw json.RawMessage, depth int, owner string, known bool) interface{} {
 	var list []json.RawMessage
 	if json.Unmarshal(raw, &list) != nil {
 		return "array"
@@ -203,7 +208,7 @@ func (shaper *outboundShaper) array(raw json.RawMessage, depth int, owner string
 			values = append(values, "+more")
 			break
 		}
-		values = append(values, shaper.describe(element, depth+1, owner))
+		values = append(values, shaper.describe(element, depth+1, owner, known))
 	}
 	shape["element"] = kind
 	shape["values"] = values
