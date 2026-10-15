@@ -163,6 +163,51 @@ func TestRoutingPriceRatesKeyByModelNotBillingModel(t *testing.T) {
 	}
 }
 
+// The feed's shape since memex-desktop#7372: each model carries higher_tier,
+// its long-prompt tier rates or null for a flat-rate model, and as_of is the
+// read's commit time in whole milliseconds. higher_tier is not part of the
+// request's rates (the contract's rate has no tier; the service falls back
+// an arm that carries a long-context tier), so it is accepted and dropped,
+// and a model the feed leaves out is simply absent: its arms keep their
+// package rates in the service, which is no error here.
+func TestRoutingPriceFeedWithHigherTierDecodes(t *testing.T) {
+	body := `{"schema": "arc-routing-prices.v1", "store_version": "42", "as_of": "2026-10-15T12:34:56.789Z",
+		"currency": "USD", "unit": "usd_per_million_tokens", "models": [
+		{"model": "google/gemini-3-pro", "input": 2, "cache_read": 0.2, "cache_write": null, "output": 12,
+		 "valid_from": "2026-10-01T00:00:00.000Z", "valid_until": null, "source": "openrouter:google",
+		 "billing_model": "gemini-3-pro",
+		 "higher_tier": {"input": 4, "cache_read": 0.4, "cache_write": null, "output": 18}},
+		{"model": "z-ai/glm-4.6", "input": 0.6, "cache_read": 0.11, "cache_write": null, "output": 2.2,
+		 "valid_from": "2026-10-01T00:00:00.000Z", "valid_until": null, "source": "openrouter:z-ai",
+		 "higher_tier": null}]}`
+	feed, err := DecodeRoutingPriceFeed([]byte(body))
+	if err != nil {
+		t.Fatalf("a feed with higher_tier was refused: %v", err)
+	}
+	prices := feed.RequestPrices()
+	if prices.AsOf != "2026-10-15T12:34:56.789Z" || prices.StoreVersion != "42" || len(prices.Rates) != 2 {
+		t.Fatalf("request prices: as_of %q, store_version %q, %d rates", prices.AsOf, prices.StoreVersion, len(prices.Rates))
+	}
+	if rate := prices.Rates["google/gemini-3-pro"]; rate.Input == nil || *rate.Input != 2 || rate.Output == nil || *rate.Output != 12 {
+		t.Fatalf("tiered model forwarded at %+v, want its base rates", rate)
+	}
+	encoded, err := json.Marshal(prices)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(encoded, []byte("higher_tier")) {
+		t.Fatalf("higher_tier forwarded: %s", encoded)
+	}
+	// The echo of a request whose feed left a package's model out names
+	// only the sent feed; a decision on it is recorded, not refused.
+	store, asOf := "42", "2026-10-15T12:34:56.789Z"
+	used := &PolicyRoutingPricesUsed{Mode: RoutingPricesModeLive, StoreVersion: &store, AsOf: &asOf,
+		FallbackArms: []string{"anthropic/claude-opus-5@low"}}
+	if err := used.validate(); err != nil {
+		t.Fatalf("an echo with a fallback arm for a model the feed left out: %v", err)
+	}
+}
+
 // An entry that omits a leg is not forwarded: the service keeps the package
 // rate for an omitted leg's arms but fills a null one, so writing the
 // omission as null would price those arms partly live.
