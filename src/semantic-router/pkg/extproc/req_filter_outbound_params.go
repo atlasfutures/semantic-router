@@ -1,11 +1,11 @@
 package extproc
 
 import (
-	"bytes"
 	"encoding/json"
 	"sort"
 	"strings"
 
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 )
 
@@ -29,6 +29,13 @@ type dispatchedOutboundParams struct {
 	ToolChoiceName      string
 	// StopSequences is how many stop sequences were sent, never their text.
 	StopSequences *int64
+	// OutputFormat is the structured-output type (json_schema, json_object,
+	// text) and OutputFormatStrict its strict flag; the schema is not read.
+	OutputFormat       string
+	OutputFormatStrict *bool
+	// PromptCacheRetention is the retention enum, "other" for any value the
+	// router does not know.
+	PromptCacheRetention string
 
 	OutputConfigEffort    string
 	ReasoningObjectEffort string
@@ -79,9 +86,20 @@ func readDispatchedOutboundParams(body []byte, dispatch *providerDispatch) *disp
 	var wire struct {
 		Model        string `json:"model"`
 		OutputConfig struct {
-			Effort string `json:"effort"`
+			Effort string             `json:"effort"`
+			Format outputFormatObject `json:"format"`
 		} `json:"output_config"`
-		Reasoning struct {
+		ResponseFormat struct {
+			outputFormatObject
+			JSONSchema struct {
+				Strict *bool `json:"strict"`
+			} `json:"json_schema"`
+		} `json:"response_format"`
+		Text struct {
+			Format outputFormatObject `json:"format"`
+		} `json:"text"`
+		PromptCacheRetention *string `json:"prompt_cache_retention"`
+		Reasoning            struct {
 			Effort    string `json:"effort"`
 			MaxTokens *int64 `json:"max_tokens"`
 		} `json:"reasoning"`
@@ -122,15 +140,28 @@ func readDispatchedOutboundParams(body []byte, dispatch *providerDispatch) *disp
 	}
 	params.Model = wire.Model
 	if len(wire.Provider) > 0 && wire.Provider[0] == '{' {
-		var provider struct {
-			Only []string `json:"only"`
-		}
+		// Only the routing fields the router knows are recorded: a client's
+		// own provider object reaches the wire unmodeled on a same-format
+		// dispatch, and any other member it carries stays off the record.
+		var provider config.OpenRouterProviderPreferences
 		if json.Unmarshal(wire.Provider, &provider) == nil {
 			params.ProviderOnly = provider.Only
+			if known, err := json.Marshal(provider); err == nil && string(known) != "{}" {
+				params.ProviderPreferences = string(known)
+			}
 		}
-		var compact bytes.Buffer
-		if json.Compact(&compact, wire.Provider) == nil {
-			params.ProviderPreferences = compact.String()
+	}
+	params.OutputFormat, params.OutputFormatStrict = wire.OutputConfig.Format.Type, wire.OutputConfig.Format.Strict
+	if params.OutputFormat == "" {
+		params.OutputFormat, params.OutputFormatStrict = wire.ResponseFormat.Type, wire.ResponseFormat.JSONSchema.Strict
+	}
+	if params.OutputFormat == "" {
+		params.OutputFormat, params.OutputFormatStrict = wire.Text.Format.Type, wire.Text.Format.Strict
+	}
+	if wire.PromptCacheRetention != nil {
+		params.PromptCacheRetention = "other"
+		if known := *wire.PromptCacheRetention; known == "in_memory" || known == "24h" {
+			params.PromptCacheRetention = known
 		}
 	}
 	params.ToolChoice, params.ToolChoiceName = wire.ToolChoice.Mode, wire.ToolChoice.Name
@@ -209,6 +240,13 @@ func (choice *toolChoiceObject) UnmarshalJSON(raw []byte) error {
 	}
 	choice.DisableParallelToolUse = object.DisableParallelToolUse
 	return nil
+}
+
+// outputFormatObject is a structured-output format's type and strict flag;
+// its schema is never read.
+type outputFormatObject struct {
+	Type   string `json:"type"`
+	Strict *bool  `json:"strict"`
 }
 
 // stopSequences counts stop or stop_sequences: a string is one sequence.
@@ -335,6 +373,15 @@ func appendOutboundParamFields(record map[string]interface{}, params *dispatched
 	}
 	if params.StopSequences != nil {
 		record["outbound_stop_sequences"] = *params.StopSequences
+	}
+	if params.OutputFormat != "" {
+		record["outbound_output_format"] = params.OutputFormat
+	}
+	if params.OutputFormatStrict != nil {
+		record["outbound_output_format_strict"] = *params.OutputFormatStrict
+	}
+	if params.PromptCacheRetention != "" {
+		record["outbound_prompt_cache_retention"] = params.PromptCacheRetention
 	}
 	optionalString := map[string]string{
 		"outbound_output_config_effort": params.OutputConfigEffort,

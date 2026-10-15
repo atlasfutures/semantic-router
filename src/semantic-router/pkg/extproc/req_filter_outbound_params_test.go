@@ -25,8 +25,8 @@ func TestOutboundParamsReadAMessagesBody(t *testing.T) {
 		`"tools":[{"name":"Bash","description":"` + outboundSecret + `","input_schema":{"properties":{"cache_control":{"type":"string"}}}},` +
 		`{"name":"Edit","input_schema":{},"cache_control":{"type":"ephemeral"}}],` +
 		`"top_p":0.9,"top_k":40,"seed":7,"frequency_penalty":0.1,"presence_penalty":0.2,"n":1,"tool_choice":{"type":"tool","name":"Bash","disable_parallel_tool_use":true},"stop_sequences":["` + outboundSecret + `","x"],` +
-		`"thinking":{"type":"enabled","budget_tokens":4096},"output_config":{"effort":"high"},` +
-		`"provider":{"only":["anthropic"],"order":["anthropic"],"allow_fallbacks":false}}`
+		`"thinking":{"type":"enabled","budget_tokens":4096},"output_config":{"effort":"high","format":{"type":"json_schema","schema":{"title":"` + outboundSecret + `"}}},` +
+		`"provider":{"only":["anthropic"],"order":["anthropic"],"allow_fallbacks":false,"api_key":"` + outboundSecret + `"}}`
 	dispatch := &providerDispatch{
 		targetFormat: llmprotocol.AnthropicMessagesV1, backendName: "openrouter",
 		profile: &config.ProviderProfile{Type: "openai", BaseURL: "https://openrouter.ai/api/v1"},
@@ -56,7 +56,8 @@ func TestOutboundParamsReadAMessagesBody(t *testing.T) {
 		"outbound_tool_choice":            "tool",
 		"outbound_tool_choice_name":       "Bash",
 		"outbound_stop_sequences":         int64(2),
-		"outbound_provider_preferences":   `{"only":["anthropic"],"order":["anthropic"],"allow_fallbacks":false}`,
+		"outbound_provider_preferences":   `{"order":["anthropic"],"allow_fallbacks":false,"only":["anthropic"]}`,
+		"outbound_output_format":          "json_schema",
 		"outbound_prompt_cache_key":       false,
 	}
 	for key, value := range want {
@@ -88,13 +89,16 @@ func TestOutboundParamsReadAMessagesBody(t *testing.T) {
 // prompt cache key; parameters it omits stay off the record.
 func TestOutboundParamsReadAResponsesBody(t *testing.T) {
 	body := `{"model":"openai/gpt-6.1-sol","input":[],"reasoning":{"effort":"medium","max_tokens":2048},` +
-		`"max_output_tokens":8000,"prompt_cache_key":"episode-1"}`
+		`"max_output_tokens":8000,"prompt_cache_key":"episode-1","prompt_cache_retention":"24h",` +
+		`"text":{"format":{"type":"json_schema","strict":true,"schema":{"title":"SECRET"}}}}`
 	dispatch := &providerDispatch{targetFormat: llmprotocol.OpenAIResponsesV1, profile: &config.ProviderProfile{Type: "openai"}}
 	record := map[string]interface{}{}
 	appendOutboundParamFields(record, readDispatchedOutboundParams([]byte(body), dispatch))
 	if record["outbound_reasoning_effort"] != "medium" || record["outbound_reasoning_max_tokens"] != int64(2048) ||
 		record["outbound_max_tokens"] != int64(8000) || record["outbound_prompt_cache_key"] != true ||
-		record["outbound_provider"] != "openai" || record["outbound_tool_count"] != 0 {
+		record["outbound_provider"] != "openai" || record["outbound_tool_count"] != 0 ||
+		record["outbound_prompt_cache_retention"] != "24h" || record["outbound_output_format"] != "json_schema" ||
+		record["outbound_output_format_strict"] != true {
 		t.Fatalf("record = %v", record)
 	}
 	for _, absent := range []string{"outbound_temperature", "outbound_stream", "outbound_output_config_effort", "outbound_thinking_type",
