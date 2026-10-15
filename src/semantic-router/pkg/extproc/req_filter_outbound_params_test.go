@@ -24,7 +24,7 @@ func TestOutboundParamsReadAMessagesBody(t *testing.T) {
 		// A schema property named cache_control is data, not a directive.
 		`"tools":[{"name":"Bash","description":"` + outboundSecret + `","input_schema":{"properties":{"cache_control":{"type":"string"}}}},` +
 		`{"name":"Edit","input_schema":{},"cache_control":{"type":"ephemeral"}}],` +
-		`"top_p":0.9,"top_k":40,"seed":7,"frequency_penalty":0.1,"presence_penalty":0.2,"n":1,"tool_choice":{"type":"auto","disable_parallel_tool_use":true},` +
+		`"top_p":0.9,"top_k":40,"seed":7,"frequency_penalty":0.1,"presence_penalty":0.2,"n":1,"tool_choice":{"type":"tool","name":"Bash","disable_parallel_tool_use":true},"stop_sequences":["` + outboundSecret + `","x"],` +
 		`"thinking":{"type":"enabled","budget_tokens":4096},"output_config":{"effort":"high"},` +
 		`"provider":{"only":["anthropic"],"order":["anthropic"],"allow_fallbacks":false}}`
 	dispatch := &providerDispatch{
@@ -53,6 +53,10 @@ func TestOutboundParamsReadAMessagesBody(t *testing.T) {
 		"outbound_presence_penalty":       0.2,
 		"outbound_n":                      int64(1),
 		"outbound_parallel_tool_calls":    false,
+		"outbound_tool_choice":            "tool",
+		"outbound_tool_choice_name":       "Bash",
+		"outbound_stop_sequences":         int64(2),
+		"outbound_provider_preferences":   `{"only":["anthropic"],"order":["anthropic"],"allow_fallbacks":false}`,
 		"outbound_prompt_cache_key":       false,
 	}
 	for key, value := range want {
@@ -140,6 +144,9 @@ func TestOutboundParamsReadAScalarToolChoice(t *testing.T) {
 	body := `{"model":"openai/gpt-6.1-sol","tool_choice":"auto","tools":[{"type":"function"}],"parallel_tool_calls":true,"max_tokens":10}`
 	record := map[string]interface{}{}
 	appendOutboundParamFields(record, readDispatchedOutboundParams([]byte(body), nil))
+	if record["outbound_tool_choice"] != "auto" {
+		t.Errorf("outbound_tool_choice = %v, want auto", record["outbound_tool_choice"])
+	}
 	if record["outbound_model"] != "openai/gpt-6.1-sol" || record["outbound_tool_count"] != 1 ||
 		record["outbound_parallel_tool_calls"] != true || record["outbound_max_tokens"] != int64(10) {
 		t.Fatalf("record = %v", record)

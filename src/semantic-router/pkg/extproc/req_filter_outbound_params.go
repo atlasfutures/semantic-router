@@ -1,9 +1,12 @@
 package extproc
 
 import (
+	"bytes"
 	"encoding/json"
 	"sort"
 	"strings"
+
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 )
 
 // dispatchedOutboundParams are the request parameters the provider-bound body
@@ -18,6 +21,14 @@ type dispatchedOutboundParams struct {
 	// ProviderOnly is OpenRouter's provider.only pin, beside the order the
 	// record already names.
 	ProviderOnly []string
+	// ProviderPreferences is the whole provider object, compact: every
+	// routing constraint (allow_fallbacks, ignore, require_parameters,
+	// data_collection, max_price, ...) that decides the eligible endpoints.
+	ProviderPreferences string
+	ToolChoice          string
+	ToolChoiceName      string
+	// StopSequences is how many stop sequences were sent, never their text.
+	StopSequences *int64
 
 	OutputConfigEffort    string
 	ReasoningObjectEffort string
@@ -99,16 +110,36 @@ func readDispatchedOutboundParams(body []byte, dispatch *providerDispatch) *disp
 		ToolChoice     toolChoiceObject `json:"tool_choice"`
 		Stream         *bool            `json:"stream"`
 		PromptCacheKey *string          `json:"prompt_cache_key"`
-		Provider       struct {
-			Only []string `json:"only"`
-		} `json:"provider"`
+		Stop           *stopSequences   `json:"stop"`
+		StopSequences  *stopSequences   `json:"stop_sequences"`
+		// Provider is OpenRouter's routing object: configuration (pins,
+		// fallbacks, price caps, data policy), never content.
+		Provider json.RawMessage `json:"provider"`
 		cacheLocations
 	}
 	if json.Unmarshal(body, &wire) != nil {
 		return params
 	}
 	params.Model = wire.Model
-	params.ProviderOnly = wire.Provider.Only
+	if len(wire.Provider) > 0 && wire.Provider[0] == '{' {
+		var provider struct {
+			Only []string `json:"only"`
+		}
+		if json.Unmarshal(wire.Provider, &provider) == nil {
+			params.ProviderOnly = provider.Only
+		}
+		var compact bytes.Buffer
+		if json.Compact(&compact, wire.Provider) == nil {
+			params.ProviderPreferences = compact.String()
+		}
+	}
+	params.ToolChoice, params.ToolChoiceName = wire.ToolChoice.Mode, wire.ToolChoice.Name
+	switch {
+	case wire.Stop != nil:
+		params.StopSequences = llmprotocol.Int64(int64(*wire.Stop))
+	case wire.StopSequences != nil:
+		params.StopSequences = llmprotocol.Int64(int64(*wire.StopSequences))
+	}
 	params.OutputConfigEffort = wire.OutputConfig.Effort
 	params.ReasoningObjectEffort = wire.Reasoning.Effort
 	params.ReasoningMaxTokens = wire.Reasoning.MaxTokens
@@ -140,25 +171,61 @@ func readDispatchedOutboundParams(body []byte, dispatch *providerDispatch) *disp
 	return params
 }
 
-// toolChoiceObject is tool_choice's object form; its scalar form ("auto",
-// "none", "required") carries no parallel flag and decodes to nothing rather
-// than failing the whole read.
+// toolChoiceObject is tool_choice in either form: a scalar mode ("auto",
+// "none", "required") or an object whose type is the mode and which may name
+// one tool (Messages {type, name}, Chat {type, function: {name}}) and carry
+// Messages' inverted parallel flag. A tool name is an id, not content.
 type toolChoiceObject struct {
+	Mode                   string
+	Name                   string
 	DisableParallelToolUse *bool
 }
 
 func (choice *toolChoiceObject) UnmarshalJSON(raw []byte) error {
 	*choice = toolChoiceObject{}
-	if len(raw) == 0 || raw[0] != '{' {
+	if len(raw) == 0 {
+		return nil
+	}
+	if raw[0] == '"' {
+		return json.Unmarshal(raw, &choice.Mode)
+	}
+	if raw[0] != '{' {
 		return nil
 	}
 	var object struct {
-		DisableParallelToolUse *bool `json:"disable_parallel_tool_use"`
+		Type                   string `json:"type"`
+		Name                   string `json:"name"`
+		DisableParallelToolUse *bool  `json:"disable_parallel_tool_use"`
+		Function               struct {
+			Name string `json:"name"`
+		} `json:"function"`
 	}
 	if err := json.Unmarshal(raw, &object); err != nil {
 		return err
 	}
+	choice.Mode, choice.Name = object.Type, object.Name
+	if choice.Name == "" {
+		choice.Name = object.Function.Name
+	}
 	choice.DisableParallelToolUse = object.DisableParallelToolUse
+	return nil
+}
+
+// stopSequences counts stop or stop_sequences: a string is one sequence.
+type stopSequences int
+
+func (count *stopSequences) UnmarshalJSON(raw []byte) error {
+	*count = 0
+	switch {
+	case len(raw) > 0 && raw[0] == '"':
+		*count = 1
+	case len(raw) > 0 && raw[0] == '[':
+		var list []json.RawMessage
+		if err := json.Unmarshal(raw, &list); err != nil {
+			return err
+		}
+		*count = stopSequences(len(list))
+	}
 	return nil
 }
 
@@ -256,6 +323,18 @@ func appendOutboundParamFields(record map[string]interface{}, params *dispatched
 	record["outbound_backend"] = params.Backend
 	if len(params.ProviderOnly) > 0 {
 		record["outbound_provider_only"] = params.ProviderOnly
+	}
+	if params.ProviderPreferences != "" {
+		record["outbound_provider_preferences"] = params.ProviderPreferences
+	}
+	if params.ToolChoice != "" {
+		record["outbound_tool_choice"] = params.ToolChoice
+	}
+	if params.ToolChoiceName != "" {
+		record["outbound_tool_choice_name"] = params.ToolChoiceName
+	}
+	if params.StopSequences != nil {
+		record["outbound_stop_sequences"] = *params.StopSequences
 	}
 	optionalString := map[string]string{
 		"outbound_output_config_effort": params.OutputConfigEffort,
