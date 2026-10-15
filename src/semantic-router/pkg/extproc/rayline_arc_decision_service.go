@@ -757,8 +757,13 @@ func (r *OpenAIRouter) decisionOnlyRoutingTarget(
 // plain error and reads as 503, because waiting will not fix it.
 func selectionFailureError(err error) error {
 	var failure *raylineARCSelectionFailure
-	if errors.As(err, &failure) && failure.contended() {
-		return fmt.Errorf("%w: %w", routerruntime.ErrRouteDecisionContended, err)
+	if errors.As(err, &failure) {
+		if failure.contended() {
+			return fmt.Errorf("%w: %w", routerruntime.ErrRouteDecisionContended, err)
+		}
+		if failure.class == arcFailurePolicyUndecidable {
+			return fmt.Errorf("%w: %w", routerruntime.ErrRouteDecisionUndecidable, err)
+		}
 	}
 	return err
 }

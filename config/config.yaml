@@ -1981,13 +1981,10 @@ recipes:
                 # it serves (a v5 action's model, e.g. claude-opus-5); a binding
                 # whose worker declares another is refused. v5 and v6 only.
                 trained_models: {}
-                # derived_hold_model is the model a two-stage package's
-                # refused cold turn (stage_one_held_unknown) is held on when no
-                # session record names one, for a package without a
-                # package_manifest whose packages listing names no
-                # fallback_model (the listing's, when bound, comes first). A
-                # manifest names its own, and this is refused beside one. It
-                # must be a model the bindings dispatch.
+                # derived_hold_model is retired: any value is refused at load.
+                # A two-stage package's refused cold turn with no session
+                # record fails as undecidable (422) and no configured model
+                # serves it.
                 derived_hold_model: ""
                 # fallback serves around a failed arm (ADR 0120). With
                 # enabled, a model that refused a turn is excluded for the

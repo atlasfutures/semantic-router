@@ -466,8 +466,9 @@ type PolicyLoadedPackage struct {
 	Verification PolicyVerification `json:"verification,omitempty"`
 	// FallbackActionID and FallbackModel are the package manifest's
 	// decision.fallback_action_id and that action's model, stated as a pair
-	// or not at all (pathfinder#3677). A package served without a manifest
-	// names its fallback only here.
+	// or not at all (pathfinder#3677). They are decoded so a listing that
+	// states them still validates, and never read: no fallback model serves
+	// a turn the policy did not decide.
 	FallbackActionID string `json:"fallback_action_id,omitempty"`
 	FallbackModel    string `json:"fallback_model,omitempty"`
 }

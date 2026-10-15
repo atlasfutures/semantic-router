@@ -169,7 +169,7 @@ func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 		// (rayline_arc_derived_hold.go).
 		if algorithm.RaylineARC.PolicyService != nil && result.PolicyCallKind != raylinearc.PolicyCallSide &&
 			(state == nil || state.PreviousArm == nil) {
-			result.ServedModels = r.raylineARCServedModels(reqCtx, result.EpisodeIDHash, signalHeaders)
+			result.ServedModels = r.raylineARCServedModels(reqCtx, result.EpisodeIDHash)
 		}
 		// A policy-service turn records its ledger entry, so it commits only
 		// once the client has the whole reply. Artifact-mode turns commit at

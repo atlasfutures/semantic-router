@@ -58,6 +58,10 @@ const (
 	selectionFailureNotReady = "not_ready"
 	// The request named no session: retrying the same request cannot succeed.
 	selectionFailureMissingSession = "missing_session"
+	// The policy would not decide this turn and nothing of this
+	// conversation's own decisions could hold it, so no model serves it:
+	// resending it unchanged cannot succeed, and no backend was called.
+	selectionFailureUndecidable = "undecidable"
 	// Anything else: waiting is not known to help.
 	selectionFailureUnavailable = "unavailable"
 )
@@ -77,6 +81,8 @@ func publicSelectionFailureClass(class string) string {
 		return selectionFailureNotReady
 	case arcFailureMissingEpisodeID:
 		return selectionFailureMissingSession
+	case arcFailurePolicyUndecidable:
+		return selectionFailureUndecidable
 	default:
 		return selectionFailureUnavailable
 	}
@@ -121,6 +127,28 @@ func (r *OpenAIRouter) missingEpisodeHeaderResponse(
 	return r.createErrorResponse(http.StatusBadRequest, message)
 }
 
+// undecidableMessage says the router could not decide the turn, without naming
+// the component or the package.
+const undecidableMessage = "The router could not decide a model for this turn, and serves none in its place."
+
+// undecidableResponse refuses a turn the policy would not decide. It is a 422,
+// not a 503: no backend was called and the router is healthy, and the same
+// request is refused identically every time, so a 503 would both read as an
+// outage and invite a retry that cannot succeed.
+func (r *OpenAIRouter) undecidableResponse(
+	ctx *RequestContext,
+) *ext_proc.ProcessingResponse {
+	if ctx != nil {
+		ctx.ImmediateProtocolError = llmprotocol.NewError(
+			llmprotocol.ErrorInvalidRequest,
+			selectionFailureUndecidable,
+			undecidableMessage,
+			nil,
+		)
+	}
+	return r.createErrorResponse(http.StatusUnprocessableEntity, undecidableMessage)
+}
+
 // authoritativeSelectionFailureResponse maps a fail-closed selector's bounded
 // failure onto the admission contract. It answers nil for every other error so
 // the caller keeps its existing classification.
@@ -136,6 +164,8 @@ func (r *OpenAIRouter) authoritativeSelectionFailureResponse(
 	recordTurnFailure(ctx, selectionTurnFailureClass(failure.class), false)
 	var response *ext_proc.ProcessingResponse
 	switch {
+	case failure.class == arcFailurePolicyUndecidable:
+		response = r.undecidableResponse(ctx)
 	case selectionFailureIsCallerError(failure.class):
 		// The bounded class is already counted where it is constructed, which
 		// is the one place that sees both entrypoints. Counting it again here

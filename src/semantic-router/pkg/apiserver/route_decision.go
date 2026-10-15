@@ -154,6 +154,14 @@ func (s *ClassificationAPIServer) handleRouteDecision(w http.ResponseWriter, r *
 			)
 			return
 		}
+		if errors.Is(err, routerruntime.ErrRouteDecisionUndecidable) {
+			s.writeRouteDecisionError(
+				w,
+				http.StatusUnprocessableEntity,
+				"route decision undecidable: the router could not decide a model for this turn",
+			)
+			return
+		}
 		s.writeRouteDecisionError(w, http.StatusServiceUnavailable, "route decision failed")
 		return
 	}

@@ -42,6 +42,9 @@ const (
 	// refinements of "unavailable".
 	turnFailurePackageNotLoaded  = "package_not_loaded"
 	turnFailureNoAvailableAction = "no_available_action"
+	// The policy would not decide the turn and no model was served in its
+	// place: no arm was dialled. It rides the header's undecidable class.
+	turnFailureUndecidable = selectionFailureUndecidable
 )
 
 // recordTurnFailure classes this turn's failure on its llm_usage line, logs
@@ -180,6 +183,8 @@ func selectionTurnFailureClass(internal string) string {
 		return turnFailurePackageNotLoaded
 	case "policy_no_available_action", "policy_unbound_action", "policy_catalog_unbound", "policy_action_not_offered":
 		return turnFailureNoAvailableAction
+	case arcFailurePolicyUndecidable:
+		return turnFailureUndecidable
 	default:
 		return publicSelectionFailureClass(internal)
 	}

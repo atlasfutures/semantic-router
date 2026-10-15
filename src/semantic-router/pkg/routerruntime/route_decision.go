@@ -224,3 +224,9 @@ var ErrRouteDecisionContended = errors.New("route decision contended")
 // reporting it as unavailability would blame a healthy router for a request
 // that will never succeed.
 var ErrRouteDecisionInvalidBody = errors.New("route decision request is invalid")
+
+// ErrRouteDecisionUndecidable marks a consult the policy would not decide and
+// that no record of the conversation's own decisions could hold. No model is
+// chosen in its place, and the same request is refused identically every
+// time, so an adapter answers 422 rather than 503.
+var ErrRouteDecisionUndecidable = errors.New("route decision undecidable")

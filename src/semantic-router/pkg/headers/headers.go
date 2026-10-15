@@ -308,8 +308,11 @@ const (
 	// react: "session_busy" (another request holds this session; wait for it,
 	// do not resend), "capacity" (back off), "not_ready" (a decision
 	// dependency is starting; retry once warm), "missing_session" (the request
-	// named no session; resending cannot succeed) or "unavailable" (anything
-	// else). Emitted only on those refusals, never with an internal class.
+	// named no session; resending cannot succeed), "undecidable" (the policy
+	// would not decide the turn and no model is served in its place;
+	// resending it unchanged cannot succeed, and no backend was called; a
+	// 422) or "unavailable" (anything else). Emitted only on those refusals,
+	// never with an internal class.
 	VSRFailureClass = "x-vsr-failure-class"
 
 	// VSRProtocolWarnings carries a structured, comma-separated list
