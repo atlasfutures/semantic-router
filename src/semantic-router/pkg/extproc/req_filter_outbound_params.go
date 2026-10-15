@@ -22,6 +22,9 @@ type dispatchedOutboundParams struct {
 	Protocol string
 	Provider string
 	Backend  string
+	// Shape is the generic record of every parameter the body carries
+	// (outboundShape); the named fields below are aliases of its members.
+	Shape map[string]interface{}
 	// ProviderOnly is OpenRouter's provider.only pin, beside the order the
 	// record already names.
 	ProviderOnly []string
@@ -177,6 +180,7 @@ func readDispatchedOutboundParams(body []byte, dispatch *providerDispatch) *disp
 		Provider json.RawMessage `json:"provider"`
 		cacheLocations
 	}
+	params.Shape = outboundShape(body)
 	if json.Unmarshal(body, &wire) != nil {
 		return params
 	}
@@ -622,6 +626,9 @@ func (locations cacheLocations) markers() (int, []string) {
 		names = append(names, name)
 	}
 	sort.Strings(names)
+	if len(names) > outboundListLimit {
+		names = append(names[:outboundListLimit:outboundListLimit], "+"+strconv.Itoa(len(names)-outboundListLimit)+" more")
+	}
 	return count, names
 }
 
@@ -631,6 +638,9 @@ func (locations cacheLocations) markers() (int, []string) {
 func appendOutboundParamFields(record map[string]interface{}, params *dispatchedOutboundParams) {
 	if params == nil {
 		return
+	}
+	if len(params.Shape) > 0 {
+		record["outbound_params"] = params.Shape
 	}
 	record["outbound_model"] = params.Model
 	record["outbound_protocol"] = params.Protocol
