@@ -73,7 +73,7 @@ var outboundOpaqueKeys = enumSet("metadata", "logit_bias", "user", "safety_ident
 var outboundNumericKeys = enumSet("max_tokens", "max_completion_tokens", "max_output_tokens", "temperature", "top_p",
 	"top_k", "min_p", "seed", "n", "frequency_penalty", "presence_penalty", "repetition_penalty", "top_logprobs",
 	"reasoning_budget_tokens", "budget_tokens", "task_budget", "max_tool_calls", "value", "clear_at_least",
-	"max_price", "prompt", "completion", "request", "image", "max_tokens_per_turn")
+	"max_price", "completion", "request", "image", "max_tokens_per_turn", "prompt")
 
 // shapeKeyOrder puts known keys first, then the rest, each sorted, so unknown
 // keys cannot crowd a known parameter out of the bounded record.
@@ -250,7 +250,7 @@ var outboundKnownKeys = enumSet(
 	"evict_on_complete", "context_management", "edits", "trigger", "keep", "clear_at_least", "exclude_tools",
 	"clear_tool_inputs", "container", "mcp_servers", "betas",
 	// OpenRouter provider routing
-	"provider", "order", "only", "ignore", "allow_fallbacks", "require_parameters", "data_collection", "max_price",
+	"provider", "prompt", "order", "only", "ignore", "allow_fallbacks", "require_parameters", "data_collection", "max_price",
 	"completion", "request", "image", "quantizations", "sort", "zdr", "enforce_distillable_text",
 	// vLLM chat template and catalog reasoning switches
 	"chat_template_kwargs", "enable_thinking", "thinking_mode", "reasoning_strength", "low_effort",
