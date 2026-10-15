@@ -780,6 +780,9 @@ func selectionFailureError(err error) error {
 			return fmt.Errorf("%w: %w: %w",
 				routerruntime.ErrRouteDecisionInvalidBody, errRaylineRoutesRequestShape, err)
 		}
+		if failure.class == arcFailurePolicyUndecidable {
+			return fmt.Errorf("%w: %w", routerruntime.ErrRouteDecisionUndecidable, err)
+		}
 	}
 	return err
 }

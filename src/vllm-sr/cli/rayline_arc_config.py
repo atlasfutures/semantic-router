@@ -349,10 +349,9 @@ class RaylineARCPolicyServiceConfig(BaseModel):
     # Mirrors RaylineARCPolicyServiceConfig.Fallback (ADR 0120): off for
     # evaluation cells.
     fallback: RaylineARCPolicyFallbackConfig | None = None
-    # Mirrors DerivedHoldModel in the Go loader: the model a two-stage
-    # package's refused cold turn is held on when no session record names
-    # one, for a package without a package_manifest. The Go loader checks it
-    # against the bindings and refuses it beside a manifest.
+    # Mirrors DerivedHoldModel in the Go loader, which is retired: the Go
+    # loader refuses any value, since a turn the policy will not decide fails
+    # as undecidable rather than being held on a configured model.
     derived_hold_model: str = ""
 
 

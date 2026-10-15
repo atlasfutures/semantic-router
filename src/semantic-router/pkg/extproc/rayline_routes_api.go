@@ -370,6 +370,11 @@ func (r *OpenAIRouter) raylineRoutesFailure(
 		}
 		return r.createRaylineRoutesError(ctx, 400, "invalid_request_error", detail)
 	}
+	// A turn the policy would not decide is answered as the ExtProc path
+	// answers it: 422 undecidable, never a default model.
+	if errors.Is(err, routerruntime.ErrRouteDecisionUndecidable) {
+		return r.createRaylineRoutesError(ctx, 422, "invalid_request_error", undecidableMessage)
+	}
 	// A lookup that ran out of time is reported as exactly that. Folding it
 	// into the 503 would tell the caller this router is unhealthy when the
 	// honest answer is that it did not answer in the budget they are entitled

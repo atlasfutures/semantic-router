@@ -379,32 +379,27 @@ evicted, or a subagent is handed its parent's history. The package refuses it
 with 422 `selection_refused`, reason `stage_one_held_unknown`. VSR answers
 only that refusal: it asks once more, with the offer narrowed to one model's
 actions. That is the contract's caller hold, since every offered arm then
-belongs to one model. A second refusal fails the turn with 503, as before.
+belongs to one model. A second refusal fails the turn as undecidable.
 Single-stage packages never refuse this way, so their decisions are
 unchanged.
 
-The held model is, in order:
+The held model is the model that last served this episode (the selected
+action's model, not its worker, which may serve several), which the episode
+store keeps for seven days, written by each committed policy turn's own
+episode commit, so records follow the commits' order. It continues a decision
+the policy already made for this conversation, and it is the only source.
 
-1. the model that last served this episode (the selected action's model, not
-   its worker, which may serve several), which the episode store keeps
-   for seven days, written by each committed policy turn's own episode
-   commit, so records follow the commits' order;
-2. the model that last served its parent session, named by the trusted
-   `x-rayline-parent-session` header;
-3. the model of the package manifest's `fallback_action_id`;
-4. for a package served without a `package_manifest` (a v4 package from the
-   store), the `fallback_model` the policy service's package listing names
-   for it (pathfinder#3677), as the readiness probe last verified it. The
-   pair must agree with the cell: its `fallback_action_id` must be a bound
-   action, and that action's model must be `fallback_model`. A pair whose
-   action this cell doesn't bind (`rayline_arc_listed_fallback_unbound`), or
-   binds to another model (`rayline_arc_listed_fallback_mismatch`), is logged
-   and skipped;
-5. else the cell's `derived_hold_model`. It must be a model the bindings
-   dispatch, and it's refused beside a manifest.
+There is no fallback model. The parent session's model never holds a subagent
+(ADR 0117), and the package manifest's `fallback_action_id`, the listing's
+`fallback_model` and a cell's `derived_hold_model` are no longer read; a cell
+that sets `derived_hold_model` is refused at load. With no record that names a
+model the cell binds, or when the narrowed retry is refused too, the turn is
+undecidable: it fails 422 with `x-vsr-failure-class: undecidable` and logs
+`rayline_arc_undecidable` with `reason: stage_one_held_unknown` and the
+`derived_source` it retried on (empty when none). No model is served in its
+place.
 
-The first source that names a model the cell binds decides the hold. Its
-offer is every action of that model, at every level. Exclusions still apply.
+A held model's offer is every action of that model, at every level. Exclusions still apply.
 If this turn excludes the held model (vision, capability, an operator's
 disable, a fallback exclusion), nothing is offered, and the turn fails as
 `policy_no_available_action` without a second call.
@@ -412,14 +407,12 @@ disable, a fallback exclusion), nothing is offered, and the turn fails as
 VSR writes every record, and the gateway owns the episode keys. Nothing in
 the request body is read, so a client cannot choose the held model. Each
 derived hold logs `rayline_arc_derived_hold` with its source
-(`session_record`, `parent_session`, `package_fallback`, `listed_fallback`
-for the listing's `fallback_model`, or `configured_fallback` for a cell's
-`derived_hold_model`) and model.
+(`session_record`) and model.
 
 The packages listing (`rayline.arc.policy-packages.v1`) may state
 `fallback_action_id` (a sha256 hex action id) and `fallback_model` on a
 package, always together and never `null`. A listing that states only one,
-or either as `null`, is refused as a decode error.
+or either as `null`, is refused as a decode error. A valid pair is not used.
 
 ## Fallback
 
