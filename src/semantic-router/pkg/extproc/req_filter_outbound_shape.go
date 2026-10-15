@@ -43,7 +43,7 @@ func outboundShape(body []byte) map[string]interface{} {
 			shape[key] = contentShape(value)
 			continue
 		}
-		shape[shapeKey(key)] = shaper.describe(value, 1, key, outboundKnownKeys[key])
+		shape[shapeKey(key)] = shaper.describe(value, 1, key, key)
 	}
 	return shape
 }
@@ -68,12 +68,26 @@ var outboundContentKeys = enumSet("messages", "input", "instructions", "system",
 var outboundOpaqueKeys = enumSet("metadata", "logit_bias", "user", "safety_identifier", "schema", "input_schema",
 	"parameters")
 
-// outboundNumericKeys are the request parameters whose numbers are recorded
-// as values.
-var outboundNumericKeys = enumSet("max_tokens", "max_completion_tokens", "max_output_tokens", "temperature", "top_p",
-	"top_k", "min_p", "seed", "n", "frequency_penalty", "presence_penalty", "repetition_penalty", "top_logprobs",
-	"reasoning_budget_tokens", "budget_tokens", "task_budget", "max_tool_calls", "value", "clear_at_least",
-	"max_price", "completion", "request", "image", "max_tokens_per_turn", "prompt")
+// outboundNumericPaths are the complete parameter paths whose numbers are
+// recorded as values ("[]" is an array element). A number anywhere else,
+// including a known leaf name under another parent, is digested.
+var outboundNumericPaths = enumSet("max_tokens", "max_completion_tokens", "max_output_tokens", "temperature",
+	"top_p", "top_k", "min_p", "seed", "n", "frequency_penalty", "presence_penalty", "repetition_penalty",
+	"top_logprobs", "reasoning_budget_tokens", "max_tool_calls", "thinking.budget_tokens", "reasoning.max_tokens",
+	"output_config.task_budget", "provider.max_price.prompt", "provider.max_price.completion",
+	"provider.max_price.request", "provider.max_price.image", "context_management.edits[].trigger.value",
+	"context_management.edits[].keep.value", "context_management.edits[].clear_at_least.value")
+
+// outboundEnumPaths are the complete parameter paths whose strings are
+// recorded verbatim when outboundKeyValues defines them for the leaf.
+var outboundEnumPaths = enumSet("reasoning_effort", "verbosity", "service_tier", "truncation",
+	"prompt_cache_retention", "tool_choice", "include[]", "modalities[]", "reasoning.effort", "reasoning.summary",
+	"reasoning.generate_summary", "output_config.effort", "output_config.format.type", "text.format.type",
+	"text.verbosity", "response_format.type", "thinking.type", "thinking.display", "tool_choice.type",
+	"cache_control.type", "cache_control.ttl", "provider.data_collection", "provider.sort",
+	"context_management.edits[].type", "context_management.edits[].keep", "context_management.edits[].trigger.type",
+	"context_management.edits[].keep.type", "context_management.edits[].clear_at_least.type",
+	"chat_template_kwargs.reasoning_effort", "chat_template_kwargs.thinking_mode")
 
 // shapeKeyOrder puts known keys first, then the rest, each sorted, so unknown
 // keys cannot crowd a known parameter out of the bounded record.
@@ -110,11 +124,12 @@ func contentShape(raw json.RawMessage) interface{} {
 	return map[string]interface{}{"type": jsonKind(raw)}
 }
 
-// describe shapes one value; owner is the key that holds it, which decides
-// which enum values a string may be recorded as, and known says every key on
-// the path to it is a known parameter. Under an unknown ancestor (a carried
-// extension) every string and number is digested, whatever its leaf name.
-func (shaper *outboundShaper) describe(raw json.RawMessage, depth int, owner string, known bool) interface{} {
+// describe shapes one value; owner is the key that holds it and path the
+// complete parameter path to it. A string or number is verbatim only at a
+// complete known path (outboundEnumPaths, outboundNumericPaths); anywhere
+// else -- a carried extension, a known leaf under another parent -- it is
+// digested.
+func (shaper *outboundShaper) describe(raw json.RawMessage, depth int, owner, path string) interface{} {
 	if shaper.remaining <= 0 {
 		return "over_budget"
 	}
@@ -130,19 +145,19 @@ func (shaper *outboundShaper) describe(raw json.RawMessage, depth int, owner str
 		// unmodeled id), so it is digested like a string.
 		literal := string(bytes.TrimSpace(raw))
 		number, err := strconv.ParseFloat(literal, 64)
-		if err != nil || !known || !outboundNumericKeys[owner] {
+		if err != nil || !outboundNumericPaths[path] {
 			return map[string]interface{}{"sha256": outboundDigest(literal), "length": len(literal)}
 		}
 		return number
 	case "string":
 		var text string
 		_ = json.Unmarshal(raw, &text)
-		if !known {
+		if !outboundEnumPaths[path] {
 			owner = ""
 		}
 		return shapeString(text, owner)
 	case "array":
-		return shaper.array(raw, depth, owner, known)
+		return shaper.array(raw, depth, owner, path)
 	case "object":
 		var object map[string]json.RawMessage
 		if json.Unmarshal(raw, &object) != nil {
@@ -162,7 +177,7 @@ func (shaper *outboundShaper) describe(raw json.RawMessage, depth int, owner str
 				shape[key] = contentShape(object[key])
 				continue
 			}
-			shape[shapeKey(key)] = shaper.describe(object[key], depth+1, key, known && outboundKnownKeys[key])
+			shape[shapeKey(key)] = shaper.describe(object[key], depth+1, key, path+"."+key)
 		}
 		return shape
 	}
@@ -182,7 +197,7 @@ func shapeString(text, owner string) interface{} {
 // (bounded): strings under the string rule, objects described like any
 // object one level deeper, so an array of parameter objects (context edits,
 // hosted tools' options) keeps its members.
-func (shaper *outboundShaper) array(raw json.RawMessage, depth int, owner string, known bool) interface{} {
+func (shaper *outboundShaper) array(raw json.RawMessage, depth int, owner, path string) interface{} {
 	var list []json.RawMessage
 	if json.Unmarshal(raw, &list) != nil {
 		return "array"
@@ -208,7 +223,7 @@ func (shaper *outboundShaper) array(raw json.RawMessage, depth int, owner string
 			values = append(values, "+more")
 			break
 		}
-		values = append(values, shaper.describe(element, depth+1, owner, known))
+		values = append(values, shaper.describe(element, depth+1, owner, path+"[]"))
 	}
 	shape["element"] = kind
 	shape["values"] = values

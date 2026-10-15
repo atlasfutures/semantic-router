@@ -79,11 +79,12 @@ func TestOutboundShapeScopesEnumsToTheirParameter(t *testing.T) {
 func TestOutboundShapeDigestsNumbersOutsideNumericParameters(t *testing.T) {
 	body := `{"model":"m","temperature":0.5,"api_key":123456789,"provider":{"max_price":{"prompt":1.5}},` +
 		`"diagnostics":{"value":123456789,"effort":"high","type":"mcp","context_management":{"value":123456789}},` +
+		`"output_config":{"max_price":{"prompt":123456789},"effort":"low"},` +
 		`"response_format":{"type":"json_schema","json_schema":{"schema":{"const":987654321}}}}`
 	shape := outboundShape([]byte(body))
 	encoded, _ := json.Marshal(shape)
 	if strings.Contains(string(encoded), "123456789") || strings.Contains(string(encoded), `"high"`) || strings.Contains(string(encoded), `"mcp"`) || strings.Contains(string(encoded), "987654321") || shape["temperature"] != 0.5 ||
-		!strings.Contains(string(encoded), `"max_price":{"prompt":1.5}`) {
+		!strings.Contains(string(encoded), `"max_price":{"prompt":1.5}`) || !strings.Contains(string(encoded), `"effort":"low"`) {
 		t.Fatalf("shape = %s", encoded)
 	}
 }
