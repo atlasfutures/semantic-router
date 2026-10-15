@@ -45,6 +45,9 @@ func TestUpstreamFailureClass(t *testing.T) {
 		{400, failure("data_inspection_failed", "Input data may contain inappropriate content."), turnFailureRefusal},
 		{400, failure("invalid_request_error", "temperature must be at most 2"), turnFailureUpstreamError},
 		{401, failure("authentication_error", "invalid key"), turnFailureUpstreamError},
+		// OpenRouter's moderation rejection, as captured on an Opus turn (2026-10-15).
+		{403, failure("permission_error", `anthropic/claude-opus-5.5-20260921 requires moderation on Anthropic. Your input was flagged for "violence/graphic". No credits were charged.`), turnFailureRefusal},
+		{403, failure("permission_error", "key is not allowed to use this model"), turnFailureUpstreamError},
 	}
 	for _, test := range cases {
 		if got := upstreamFailureClass(test.status, test.err); got != test.want {
