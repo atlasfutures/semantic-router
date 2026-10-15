@@ -69,7 +69,7 @@ It is the client side the new scorer will use.
 | #88 E2 | The response is the decision, not per-block rows. Block features stay in the service |
 | #90 R2 | A thin client scorer behind `raylineARCScorer` replaces the Go head port. The v3 Go head keeps working until it is retired |
 | #91 R3 | The ledger feeds `attribution` on every call |
-| #93 | The schedule narrows `available_action_ids` or sets `held_action_id`, as pathfinder's learned session does |
+| #93 | The schedule narrows `available_action_ids` or sets `held_action_id`, as pathfinder's learned session does. A two-stage package is the exception: its service holds the model, and VSR does not (#265) |
 | #97 | Shadow runs through the `shadow` field: one encode, several packages |
 
 ## Provider bindings
@@ -191,6 +191,17 @@ the proxy arms. The policy service owns and applies it; VSR carries it opaque.
 Absent is a single-stage package. When present it must be a JSON object, and
 startup refuses an explicit `null` or any other JSON value (#229,
 memex-desktop#7291).
+
+The one thing VSR reads from it is that it is there. A two-stage package's
+service chooses the model at the package's own stage-one boundaries (a session
+or subagent start, a compaction, a typed user message) and holds it between
+them from the request's attribution and its episode memory. So when a v5 or v6
+manifest states `stage_one`, `model_schedule` holds nothing on a main turn:
+every main turn is offered every model, with no `held_action_id`, and keeps
+the arm it decided for a retry, as a schedule boundary does. A side call is
+still held. Holding by turn count there would hide the typed user message from
+the service, which then never decides at it (#265). A single-stage package,
+or one served without a manifest (v4), keeps the turn-count hold.
 
 A v6 package requires every bound arm's model card to state `vision`
 explicitly, `true` or `false`, and startup refuses one that doesn't, naming
