@@ -320,13 +320,17 @@ var (
 // so a large client object cannot make each routing line large.
 const outboundListLimit = 16
 
-// templateKey is the shape a chat_template_kwargs key is recorded verbatim in.
-var templateKey = regexp.MustCompile(`^[a-z][a-z0-9_]{0,31}$`)
+// knownTemplateSwitches are the chat_template_kwargs keys the model catalog's
+// reasoning families define (parameter, activation_parameter, effort_flags);
+// any other key is recorded as a digest, whatever its shape.
+var knownTemplateSwitches = enumSet("enable_thinking", "thinking", "thinking_mode", "reasoning_effort",
+	"reasoning_strength", "effort", "low_effort", "medium_effort", "high_effort")
 
 // templateKwargs reads chat_template_kwargs: the two named reasoning
 // controls, and Switches, the scalar members as compact JSON. A bool or
-// number is kept, a string only as a known effort (else a digest), a key
-// outside templateKey as a digest; objects and arrays are left out, and at
+// number (as a float64, so its size is bounded) is kept, a string only as a
+// known effort or thinking mode (else a digest), a key outside
+// knownTemplateSwitches as a digest; objects and arrays are left out, and at
 // most outboundListLimit members (by sorted key) are kept.
 type templateKwargs struct {
 	ReasoningEffort string
@@ -350,7 +354,7 @@ func (kwargs *templateKwargs) UnmarshalJSON(raw []byte) error {
 		value := members[key]
 		var text string
 		var flag bool
-		var number json.Number
+		var number float64
 		var recorded interface{}
 		switch {
 		case string(value) == "null":
@@ -361,7 +365,10 @@ func (kwargs *templateKwargs) UnmarshalJSON(raw []byte) error {
 				kwargs.EnableThinking = &flag
 			}
 		case json.Unmarshal(value, &text) == nil:
-			recorded = knownOrDigest(text, knownEfforts)
+			recorded = text
+			if !knownEfforts[text] && !knownThinkingTypes[text] {
+				recorded = outboundDigest(text)
+			}
 			if key == "reasoning_effort" {
 				kwargs.ReasoningEffort = text
 			}
@@ -373,7 +380,7 @@ func (kwargs *templateKwargs) UnmarshalJSON(raw []byte) error {
 		if len(switches) >= outboundListLimit {
 			continue
 		}
-		if !templateKey.MatchString(key) {
+		if !knownTemplateSwitches[key] {
 			key = outboundDigest(key)
 		}
 		switches[key] = recorded
