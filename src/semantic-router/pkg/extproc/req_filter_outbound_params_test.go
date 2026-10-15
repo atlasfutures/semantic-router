@@ -55,7 +55,7 @@ func TestOutboundParamsReadAMessagesBody(t *testing.T) {
 		"outbound_n":                      int64(1),
 		"outbound_parallel_tool_calls":    false,
 		"outbound_tool_choice":            "tool",
-		"outbound_tool_choice_name":       "Bash",
+		"outbound_tool_choice_name":       outboundDigest("Bash"),
 		"outbound_stop_sequences":         int64(2),
 		"outbound_provider_preferences":   `{"order":["anthropic"],"allow_fallbacks":false,"only":["anthropic"]}`,
 		"outbound_output_format":          "json_schema",
@@ -209,6 +209,35 @@ func TestOutboundParamsRedactUnslugProviderValues(t *testing.T) {
 	}
 }
 
+// Every enum-shaped string a client writes is recorded verbatim only when the
+// protocols define it; anything else is a digest.
+func TestOutboundParamsDigestUnknownEnumValues(t *testing.T) {
+	body := `{"model":"m","reasoning_effort":"` + outboundSecret + `","reasoning":{"effort":"` + outboundSecret + `"},` +
+		`"output_config":{"effort":"` + outboundSecret + `","format":{"type":"` + outboundSecret + `"}},` +
+		`"thinking":{"type":"` + outboundSecret + `","display":"` + outboundSecret + `"},` +
+		`"chat_template_kwargs":{"reasoning_effort":"` + outboundSecret + `"},` +
+		`"tool_choice":{"type":"` + outboundSecret + `","name":"` + outboundSecret + `"},` +
+		`"messages":[{"role":"user","content":[{"type":"text","text":"x","cache_control":` +
+		`{"type":"` + outboundSecret + `","ttl":"` + outboundSecret + `","scope":"` + outboundSecret + `"}}]}]}`
+	record := map[string]interface{}{}
+	appendOutboundParamFields(record, readDispatchedOutboundParams([]byte(body), nil))
+	encoded, _ := json.Marshal(record)
+	if strings.Contains(string(encoded), outboundSecret) {
+		t.Fatalf("a client string reached the record: %s", encoded)
+	}
+	digest := outboundDigest(outboundSecret)
+	for _, key := range []string{"outbound_top_level_effort", "outbound_reasoning_effort", "outbound_output_config_effort",
+		"outbound_output_format", "outbound_thinking_type", "outbound_thinking_display", "outbound_template_effort",
+		"outbound_tool_choice", "outbound_tool_choice_name"} {
+		if record[key] != digest {
+			t.Errorf("%s = %v, want the digest", key, record[key])
+		}
+	}
+	if policies, _ := record["outbound_cache_control_policies"].([]string); len(policies) != 1 || policies[0] != digest+"/"+digest+"/"+digest {
+		t.Errorf("outbound_cache_control_policies = %v", record["outbound_cache_control_policies"])
+	}
+}
+
 // A Chat body names its top-level reasoning budget and its chat-template
 // reasoning controls.
 func TestOutboundParamsReadAChatBody(t *testing.T) {
@@ -244,5 +273,9 @@ func TestDispatchedReasoningEffortReadsOutputConfig(t *testing.T) {
 	recordDispatchedReasoningControls(ctx, []byte(`{"model":"m","output_config":{"effort":"high"},"messages":[]}`))
 	if ctx.DispatchedReasoningEffort != "high" {
 		t.Fatalf("dispatched effort = %q, want high", ctx.DispatchedReasoningEffort)
+	}
+	recordDispatchedReasoningControls(ctx, []byte(`{"model":"m","output_config":{"effort":"`+outboundSecret+`"},"messages":[]}`))
+	if ctx.DispatchedReasoningEffort != outboundDigest(outboundSecret) {
+		t.Fatalf("dispatched effort = %q, want the digest", ctx.DispatchedReasoningEffort)
 	}
 }

@@ -49,5 +49,7 @@ func recordDispatchedReasoningControls(ctx *RequestContext, body []byte) {
 	if ctx.DispatchedReasoningEffort == "" {
 		ctx.DispatchedReasoningEffort = wire.OutputConfig.Effort
 	}
+	// The record publishes it: a value outside the effort enum is a digest.
+	ctx.DispatchedReasoningEffort = knownOrDigest(ctx.DispatchedReasoningEffort, knownEfforts)
 	ctx.DispatchedReasoningBound = wire.Reasoning.MaxTokens
 }

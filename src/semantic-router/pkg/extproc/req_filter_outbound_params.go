@@ -204,22 +204,28 @@ func readDispatchedOutboundParams(body []byte, dispatch *providerDispatch) *disp
 	if json.Unmarshal(wire.OutputConfig.TaskBudget, &taskBudget) == nil && string(wire.OutputConfig.TaskBudget) != "null" {
 		params.TaskBudget = &taskBudget
 	}
-	params.ToolChoice, params.ToolChoiceName = wire.ToolChoice.Mode, wire.ToolChoice.Name
+	// A forced tool's name is the client's declaration: recorded only as a
+	// digest, so turns forcing the same tool still correlate.
+	params.ToolChoice = knownOrDigest(wire.ToolChoice.Mode, knownToolChoices)
+	if wire.ToolChoice.Name != "" {
+		params.ToolChoiceName = outboundDigest(wire.ToolChoice.Name)
+	}
 	switch {
 	case wire.Stop != nil:
 		params.StopSequences = llmprotocol.Int64(int64(*wire.Stop))
 	case wire.StopSequences != nil:
 		params.StopSequences = llmprotocol.Int64(int64(*wire.StopSequences))
 	}
-	params.OutputConfigEffort = wire.OutputConfig.Effort
-	params.ReasoningObjectEffort = wire.Reasoning.Effort
+	params.OutputFormat = knownOrDigest(params.OutputFormat, knownOutputFormats)
+	params.OutputConfigEffort = knownOrDigest(wire.OutputConfig.Effort, knownEfforts)
+	params.ReasoningObjectEffort = knownOrDigest(wire.Reasoning.Effort, knownEfforts)
 	params.ReasoningMaxTokens = wire.Reasoning.MaxTokens
-	params.TopLevelEffort = wire.ReasoningEffort
-	params.ThinkingType = wire.Thinking.Type
-	params.ThinkingDisplay = wire.Thinking.Display
+	params.TopLevelEffort = knownOrDigest(wire.ReasoningEffort, knownEfforts)
+	params.ThinkingType = knownOrDigest(wire.Thinking.Type, knownThinkingTypes)
+	params.ThinkingDisplay = knownOrDigest(wire.Thinking.Display, knownThinkingDisplay)
 	params.ThinkingBudgetTokens = wire.Thinking.BudgetTokens
 	params.ReasoningBudgetTokens = wire.ReasoningBudgetTokens
-	params.TemplateEffort = wire.ChatTemplateKwargs.ReasoningEffort
+	params.TemplateEffort = knownOrDigest(wire.ChatTemplateKwargs.ReasoningEffort, knownEfforts)
 	params.TemplateEnableThinking = wire.ChatTemplateKwargs.EnableThinking
 	params.MaxTokens = wire.MaxTokens
 	if params.MaxTokens == nil {
@@ -248,6 +254,44 @@ func readDispatchedOutboundParams(body []byte, dispatch *providerDispatch) *disp
 // into a pin) is recorded only as a digest.
 var providerSlug = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]{0,31}(/[A-Za-z0-9][A-Za-z0-9-]{0,31})?$`)
 
+// outboundDigest stands in for a client-controlled value the record must not
+// publish: equal values still correlate, the value itself never appears.
+func outboundDigest(value string) string {
+	sum := sha256.Sum256([]byte(value))
+	return "sha256:" + hex.EncodeToString(sum[:6])
+}
+
+// knownOrDigest keeps a value the protocols define and digests any other, so a
+// client string in an enum's place (prompt text, a key, a hostname) is never
+// published. An empty value stays empty.
+func knownOrDigest(value string, known map[string]bool) string {
+	if value == "" || known[value] {
+		return value
+	}
+	return outboundDigest(value)
+}
+
+func enumSet(values ...string) map[string]bool {
+	set := make(map[string]bool, len(values))
+	for _, value := range values {
+		set[value] = true
+	}
+	return set
+}
+
+// The enums the record names verbatim. Each string field below is written by
+// a client on a same-format dispatch and is not validated to these values.
+var (
+	knownEfforts         = enumSet("none", "minimal", "low", "medium", "high", "xhigh", "max")
+	knownThinkingTypes   = enumSet("enabled", "disabled", "adaptive", "auto")
+	knownThinkingDisplay = enumSet("summarized", "omitted")
+	knownOutputFormats   = enumSet("text", "json_object", "json_schema")
+	knownToolChoices     = enumSet("auto", "none", "required", "any", "tool", "function", "allowed_tools", "custom")
+	knownCacheTypes      = enumSet("ephemeral")
+	knownCacheTTLs       = enumSet("5m", "1h")
+	knownCacheScopes     = enumSet()
+)
+
 // maxPriceKinds are the price kinds OpenRouter's max_price accepts; any other
 // key is recorded as a digest.
 var maxPriceKinds = map[string]bool{"prompt": true, "completion": true, "request": true, "image": true}
@@ -257,10 +301,7 @@ var maxPriceKinds = map[string]bool{"prompt": true, "completion": true, "request
 // dispatch carries the client's own provider object, whose strings are not
 // validated.
 func redactProviderPreferences(provider *config.OpenRouterProviderPreferences) {
-	digest := func(value string) string {
-		sum := sha256.Sum256([]byte(value))
-		return "sha256:" + hex.EncodeToString(sum[:6])
-	}
+	digest := outboundDigest
 	redact := func(values []string) []string {
 		for i, value := range values {
 			if !providerSlug.MatchString(value) {
@@ -406,7 +447,8 @@ func (locations cacheLocations) markers() (int, []string) {
 			Evict *bool  `json:"evict_on_complete"`
 		}
 		if json.Unmarshal(raw, &directive) == nil {
-			policy := directive.Type + "/" + directive.TTL + "/" + directive.Scope
+			policy := knownOrDigest(directive.Type, knownCacheTypes) + "/" + knownOrDigest(directive.TTL, knownCacheTTLs) +
+				"/" + knownOrDigest(directive.Scope, knownCacheScopes)
 			if directive.Evict != nil {
 				policy += "/evict_on_complete=" + strconv.FormatBool(*directive.Evict)
 			}
