@@ -3,6 +3,7 @@ package extproc
 import (
 	"encoding/json"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
@@ -36,6 +37,11 @@ type dispatchedOutboundParams struct {
 	// PromptCacheRetention is the retention enum, "other" for any value the
 	// router does not know.
 	PromptCacheRetention string
+	// ReasoningSummary is Responses' reasoning.summary enum, "other" for any
+	// value the router does not know.
+	ReasoningSummary string
+	// TaskBudget is Messages' output_config.task_budget when it is a number.
+	TaskBudget *int64
 
 	OutputConfigEffort    string
 	ReasoningObjectEffort string
@@ -87,8 +93,9 @@ func readDispatchedOutboundParams(body []byte, dispatch *providerDispatch) *disp
 	var wire struct {
 		Model        string `json:"model"`
 		OutputConfig struct {
-			Effort string             `json:"effort"`
-			Format outputFormatObject `json:"format"`
+			Effort     string             `json:"effort"`
+			Format     outputFormatObject `json:"format"`
+			TaskBudget json.RawMessage    `json:"task_budget"`
 		} `json:"output_config"`
 		ResponseFormat struct {
 			outputFormatObject
@@ -101,8 +108,9 @@ func readDispatchedOutboundParams(body []byte, dispatch *providerDispatch) *disp
 		} `json:"text"`
 		PromptCacheRetention *string `json:"prompt_cache_retention"`
 		Reasoning            struct {
-			Effort    string `json:"effort"`
-			MaxTokens *int64 `json:"max_tokens"`
+			Effort    string          `json:"effort"`
+			MaxTokens *int64          `json:"max_tokens"`
+			Summary   json.RawMessage `json:"summary"`
 		} `json:"reasoning"`
 		ReasoningEffort       string `json:"reasoning_effort"`
 		ReasoningBudgetTokens *int64 `json:"reasoning_budget_tokens"`
@@ -165,6 +173,18 @@ func readDispatchedOutboundParams(body []byte, dispatch *providerDispatch) *disp
 		if known := *wire.PromptCacheRetention; known == "in_memory" || known == "24h" {
 			params.PromptCacheRetention = known
 		}
+	}
+	if len(wire.Reasoning.Summary) > 0 && string(wire.Reasoning.Summary) != "null" {
+		params.ReasoningSummary = "other"
+		var summary string
+		if json.Unmarshal(wire.Reasoning.Summary, &summary) == nil &&
+			(summary == "auto" || summary == "concise" || summary == "detailed" || summary == "none") {
+			params.ReasoningSummary = summary
+		}
+	}
+	var taskBudget int64
+	if json.Unmarshal(wire.OutputConfig.TaskBudget, &taskBudget) == nil && string(wire.OutputConfig.TaskBudget) != "null" {
+		params.TaskBudget = &taskBudget
 	}
 	params.ToolChoice, params.ToolChoiceName = wire.ToolChoice.Mode, wire.ToolChoice.Name
 	switch {
@@ -309,7 +329,8 @@ func (blocks *cacheBlocks) UnmarshalJSON(raw []byte) error {
 }
 
 // markers counts the directives and names their distinct policies, each as
-// type/ttl/scope with an empty member left empty (provider default).
+// type/ttl/scope with an empty member left empty (provider default), plus
+// /evict_on_complete=<bool> when the directive carries that member.
 func (locations cacheLocations) markers() (int, []string) {
 	count := 0
 	policies := map[string]bool{}
@@ -322,9 +343,14 @@ func (locations cacheLocations) markers() (int, []string) {
 			Type  string `json:"type"`
 			TTL   string `json:"ttl"`
 			Scope string `json:"scope"`
+			Evict *bool  `json:"evict_on_complete"`
 		}
 		if json.Unmarshal(raw, &directive) == nil {
-			policies[directive.Type+"/"+directive.TTL+"/"+directive.Scope] = true
+			policy := directive.Type + "/" + directive.TTL + "/" + directive.Scope
+			if directive.Evict != nil {
+				policy += "/evict_on_complete=" + strconv.FormatBool(*directive.Evict)
+			}
+			policies[policy] = true
 		}
 	}
 	var blocks func(list cacheBlocks)
@@ -385,6 +411,12 @@ func appendOutboundParamFields(record map[string]interface{}, params *dispatched
 	}
 	if params.PromptCacheRetention != "" {
 		record["outbound_prompt_cache_retention"] = params.PromptCacheRetention
+	}
+	if params.ReasoningSummary != "" {
+		record["outbound_reasoning_summary"] = params.ReasoningSummary
+	}
+	if params.TaskBudget != nil {
+		record["outbound_task_budget"] = *params.TaskBudget
 	}
 	optionalString := map[string]string{
 		"outbound_output_config_effort": params.OutputConfigEffort,

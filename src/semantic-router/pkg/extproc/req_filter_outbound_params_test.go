@@ -130,6 +130,40 @@ func TestV5TurnRecordsItsOutboundParams(t *testing.T) {
 	}
 }
 
+// Responses reasoning.summary is recorded as a known enum or "other", never
+// its raw text; Messages task_budget as a number; and a cache directive's
+// evict_on_complete as part of its policy.
+func TestOutboundParamsReadSummaryTaskBudgetAndEviction(t *testing.T) {
+	for raw, want := range map[string]interface{}{`"auto"`: "auto", `"detailed"`: "detailed", `"` + outboundSecret + `"`: "other", `7`: "other"} {
+		record := map[string]interface{}{}
+		appendOutboundParamFields(record, readDispatchedOutboundParams([]byte(`{"model":"m","reasoning":{"effort":"low","summary":`+raw+`}}`), nil))
+		if record["outbound_reasoning_summary"] != want || record["outbound_reasoning_effort"] != "low" {
+			t.Errorf("summary %s: record = %v", raw, record)
+		}
+	}
+	record := map[string]interface{}{}
+	appendOutboundParamFields(record, readDispatchedOutboundParams([]byte(`{"model":"m","reasoning":{"effort":"low"}}`), nil))
+	if _, present := record["outbound_reasoning_summary"]; present {
+		t.Errorf("summary set on a body that does not carry it: %v", record)
+	}
+	body := `{"model":"m","output_config":{"effort":"high","task_budget":2048},"messages":[{"role":"user","content":[` +
+		`{"type":"text","text":"x","cache_control":{"type":"ephemeral","evict_on_complete":true}},` +
+		`{"type":"text","text":"y","cache_control":{"type":"ephemeral"}}]}]}`
+	record = map[string]interface{}{}
+	appendOutboundParamFields(record, readDispatchedOutboundParams([]byte(body), nil))
+	if record["outbound_task_budget"] != int64(2048) || record["outbound_output_config_effort"] != "high" {
+		t.Errorf("record = %v", record)
+	}
+	if policies, _ := record["outbound_cache_control_policies"].([]string); fmt.Sprint(policies) != "[ephemeral// ephemeral///evict_on_complete=true]" {
+		t.Errorf("outbound_cache_control_policies = %v", record["outbound_cache_control_policies"])
+	}
+	record = map[string]interface{}{}
+	appendOutboundParamFields(record, readDispatchedOutboundParams([]byte(`{"model":"m","output_config":{"task_budget":{"total":1}}}`), nil))
+	if _, present := record["outbound_task_budget"]; present || record["outbound_model"] != "m" {
+		t.Errorf("a non-numeric task_budget: record = %v", record)
+	}
+}
+
 // A Chat body names its top-level reasoning budget and its chat-template
 // reasoning controls.
 func TestOutboundParamsReadAChatBody(t *testing.T) {
