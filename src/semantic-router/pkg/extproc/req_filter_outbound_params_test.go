@@ -238,6 +238,19 @@ func TestOutboundParamsDigestUnknownEnumValues(t *testing.T) {
 	}
 }
 
+// Truncation, stream options and per-tool strictness reach the record.
+func TestOutboundParamsReadTruncationStreamOptionsAndStrictTools(t *testing.T) {
+	body := `{"model":"m","truncation":"auto","stream":true,"stream_options":{"include_usage":true,"include_obfuscation":false},` +
+		`"tools":[{"type":"function","function":{"name":"a","strict":true}},{"type":"function","name":"b","strict":true},{"name":"c"}]}`
+	record := map[string]interface{}{}
+	appendOutboundParamFields(record, readDispatchedOutboundParams([]byte(body), nil))
+	if record["outbound_truncation"] != "auto" || record["outbound_stream_include_usage"] != true ||
+		record["outbound_stream_include_obfuscation"] != false || record["outbound_strict_tool_count"] != 2 ||
+		record["outbound_tool_count"] != 3 {
+		t.Fatalf("record = %v", record)
+	}
+}
+
 // A Chat body names its top-level reasoning budget and its chat-template
 // reasoning controls.
 func TestOutboundParamsReadAChatBody(t *testing.T) {

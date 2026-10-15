@@ -52,6 +52,14 @@ type dispatchedOutboundParams struct {
 	// Store and AutoStore are Chat/Responses' provider-side storage flags.
 	Store     *bool
 	AutoStore *bool
+	// Truncation is Responses' context truncation mode.
+	Truncation string
+	// StreamIncludeUsage and StreamIncludeObfuscation are stream_options.
+	StreamIncludeUsage       *bool
+	StreamIncludeObfuscation *bool
+	// StrictToolCount is how many tools ask for strict schema adherence
+	// (tool.strict, or Chat's tool.function.strict).
+	StrictToolCount int
 
 	OutputConfigEffort    string
 	ReasoningObjectEffort string
@@ -120,8 +128,13 @@ func readDispatchedOutboundParams(body []byte, dispatch *providerDispatch) *disp
 		PreviousResponseID   *string         `json:"previous_response_id"`
 		Conversation         json.RawMessage `json:"conversation"`
 		Store                *bool           `json:"store"`
-		AutoStore            *bool           `json:"auto_store"`
-		Reasoning            struct {
+		Truncation           string          `json:"truncation"`
+		StreamOptions        struct {
+			IncludeUsage       *bool `json:"include_usage"`
+			IncludeObfuscation *bool `json:"include_obfuscation"`
+		} `json:"stream_options"`
+		AutoStore *bool `json:"auto_store"`
+		Reasoning struct {
 			Effort    string          `json:"effort"`
 			MaxTokens *int64          `json:"max_tokens"`
 			Summary   json.RawMessage `json:"summary"`
@@ -200,6 +213,14 @@ func readDispatchedOutboundParams(body []byte, dispatch *providerDispatch) *disp
 	params.PreviousResponseID = wire.PreviousResponseID != nil && *wire.PreviousResponseID != ""
 	params.Conversation = len(wire.Conversation) > 0 && string(wire.Conversation) != "null" && string(wire.Conversation) != `""`
 	params.Store, params.AutoStore = wire.Store, wire.AutoStore
+	params.Truncation = knownOrDigest(wire.Truncation, knownTruncations)
+	params.StreamIncludeUsage = wire.StreamOptions.IncludeUsage
+	params.StreamIncludeObfuscation = wire.StreamOptions.IncludeObfuscation
+	for _, tool := range wire.Tools {
+		if string(tool.Strict) == "true" || string(tool.Function.Strict) == "true" {
+			params.StrictToolCount++
+		}
+	}
 	var taskBudget int64
 	if json.Unmarshal(wire.OutputConfig.TaskBudget, &taskBudget) == nil && string(wire.OutputConfig.TaskBudget) != "null" {
 		params.TaskBudget = &taskBudget
@@ -290,6 +311,7 @@ var (
 	knownCacheTypes      = enumSet("ephemeral")
 	knownCacheTTLs       = enumSet("5m", "1h")
 	knownCacheScopes     = enumSet()
+	knownTruncations     = enumSet("auto", "disabled")
 )
 
 // maxPriceKinds are the price kinds OpenRouter's max_price accepts; any other
@@ -410,6 +432,12 @@ type cacheLocations struct {
 type cacheMarked struct {
 	CacheControl json.RawMessage `json:"cache_control"`
 	Content      cacheBlocks     `json:"content"`
+	// Strict is a tool's strict flag (Chat nests it under function); raw so
+	// an unexpected shape cannot fail the decode.
+	Strict   json.RawMessage `json:"strict"`
+	Function struct {
+		Strict json.RawMessage `json:"strict"`
+	} `json:"function"`
 }
 
 // cacheBlocks is a content or system member: a block list, whose blocks may
@@ -529,6 +557,16 @@ func appendOutboundParamFields(record map[string]interface{}, params *dispatched
 	if params.AutoStore != nil {
 		record["outbound_auto_store"] = *params.AutoStore
 	}
+	if params.Truncation != "" {
+		record["outbound_truncation"] = params.Truncation
+	}
+	if params.StreamIncludeUsage != nil {
+		record["outbound_stream_include_usage"] = *params.StreamIncludeUsage
+	}
+	if params.StreamIncludeObfuscation != nil {
+		record["outbound_stream_include_obfuscation"] = *params.StreamIncludeObfuscation
+	}
+	record["outbound_strict_tool_count"] = params.StrictToolCount
 	if params.TaskBudget != nil {
 		record["outbound_task_budget"] = *params.TaskBudget
 	}
