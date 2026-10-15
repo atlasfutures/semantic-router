@@ -534,3 +534,26 @@ func TestDerivedHoldIgnoresTheListedFallback(t *testing.T) {
 		t.Fatalf("decide calls = %d, want one", len(calls))
 	}
 }
+
+// A held turn the policy refuses for another reason -- here the service finding
+// no supported selection, where it used to serve its package's fallback action
+// -- is undecidable too: 422, and the reason is logged.
+func TestSelectionRefusedIsUndecidable(t *testing.T) {
+	logs := captureLogs(t)
+	router, fake := v5Router(t, "openai")
+	fake.failWith = "selection_refused"
+	fake.failDetail = map[string]any{"reason": "no_supported_selection"}
+	before := undecidableFailures()
+	_, _, refusal := heldTurnResponse(t, router, "episode-unsupported",
+		`{"model":"auto","max_tokens":1024,"messages":[{"role":"user","content":"hi"}]}`)
+	if refusal == nil || int(refusal.GetStatus().GetCode()) != 422 ||
+		immediateHeader(refusal, "x-vsr-failure-class") != "undecidable" {
+		t.Fatalf("refusal %v, want 422 undecidable", refusal.GetStatus())
+	}
+	if undecidableFailures()-before != 1 {
+		t.Fatal("the turn did not fail as policy_undecidable")
+	}
+	if fields := findLogEvent(t, logs, "rayline_arc_undecidable"); fields["reason"] != "no_supported_selection" {
+		t.Fatalf("rayline_arc_undecidable reason = %v, want no_supported_selection", fields["reason"])
+	}
+}
