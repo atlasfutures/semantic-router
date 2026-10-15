@@ -39,8 +39,8 @@ type RaylineARCSelectionContext struct {
 	// not a degraded completion.
 	ImageBearing bool
 	// ServedModels are the models that last served this conversation as
-	// the episode store remembers them past the episode (its own record,
-	// then its parent session's), read only when the episode holds no
+	// the episode store remembers them past the episode (its own record
+	// only; a parent session never holds it), read only when the episode holds no
 	// previous arm. They name a held model for a two-stage policy package's
 	// stage_one_held_unknown refusal; nil otherwise.
 	ServedModels []RaylineARCServedModel
@@ -195,7 +195,7 @@ type RaylineARCTrace struct {
 }
 
 // RaylineARCServedModel is one remembered serving model and where the
-// record came from: "session_record" or "parent_session".
+// record came from: "session_record".
 type RaylineARCServedModel struct {
 	Source string
 	Model  string
