@@ -48,6 +48,9 @@ const (
 	// request rather than by waiting. It rides the header's request_shape
 	// class unchanged (rayline_arc_selection_response.go).
 	turnFailureRequestShape = selectionFailureRequestShape
+	// The policy would not decide the turn and no model was served in its
+	// place: no arm was dialled. It rides the header's undecidable class.
+	turnFailureUndecidable = selectionFailureUndecidable
 )
 
 // recordTurnFailure classes this turn's failure on its llm_usage line, logs
@@ -99,14 +102,17 @@ func recordTurnFailureDetail(ctx *RequestContext, class, detail string, contentS
 
 // upstreamFailureClass classes a provider's error by its status and what it
 // said. A moderation rejection reported as an error (Alibaba's
-// data_inspection_failed) is a refusal like any other.
+// data_inspection_failed, or OpenRouter's 403 "<model> requires moderation
+// on <provider>. Your input was flagged for ...") is a refusal like any
+// other.
 func upstreamFailureClass(status int, protocolError *llmprotocol.ProtocolError) string {
 	said := ""
 	if protocolError != nil {
 		said = strings.ToLower(protocolError.Code + " " + protocolError.Message)
 	}
 	switch {
-	case strings.Contains(said, "data_inspection_failed"):
+	case strings.Contains(said, "data_inspection_failed"),
+		status == http.StatusForbidden && strings.Contains(said, "requires moderation") && strings.Contains(said, "flagged for"):
 		return turnFailureRefusal
 	case status == http.StatusTooManyRequests:
 		return turnFailureRateLimited
@@ -186,6 +192,8 @@ func selectionTurnFailureClass(internal string) string {
 		return turnFailurePackageNotLoaded
 	case "policy_no_available_action", "policy_unbound_action", "policy_catalog_unbound", "policy_action_not_offered":
 		return turnFailureNoAvailableAction
+	case arcFailurePolicyUndecidable:
+		return turnFailureUndecidable
 	default:
 		return publicSelectionFailureClass(internal)
 	}

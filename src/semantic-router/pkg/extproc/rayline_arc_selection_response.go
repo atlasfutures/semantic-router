@@ -65,6 +65,10 @@ const (
 	// A decision service cannot represent something this request carries:
 	// resending it unchanged cannot succeed either, and no arm was involved.
 	selectionFailureRequestShape = "request_shape"
+	// The policy would not decide this turn and nothing of this
+	// conversation's own decisions could hold it, so no model serves it:
+	// resending it unchanged cannot succeed, and no backend was called.
+	selectionFailureUndecidable = "undecidable"
 	// Anything else: waiting is not known to help.
 	selectionFailureUnavailable = "unavailable"
 )
@@ -105,6 +109,8 @@ func publicSelectionFailureClass(class string) string {
 		return selectionFailureNotReady
 	case arcFailureMissingEpisodeID:
 		return selectionFailureMissingSession
+	case arcFailurePolicyUndecidable:
+		return selectionFailureUndecidable
 	default:
 		if selectionShapeRefusalClasses[class] {
 			return selectionFailureRequestShape
@@ -159,6 +165,28 @@ func (r *OpenAIRouter) missingEpisodeHeaderResponse(
 // deliberately free of private component names.
 const requestShapeRefusalMessage = "This request carries a member the routing decision cannot represent."
 
+// undecidableMessage says the router could not decide the turn, without naming
+// the component or the package.
+const undecidableMessage = "The router could not decide a model for this turn, and serves none in its place."
+
+// undecidableResponse refuses a turn the policy would not decide. It is a 422,
+// not a 503: no backend was called and the router is healthy, and the same
+// request is refused identically every time, so a 503 would both read as an
+// outage and invite a retry that cannot succeed.
+func (r *OpenAIRouter) undecidableResponse(
+	ctx *RequestContext,
+) *ext_proc.ProcessingResponse {
+	if ctx != nil {
+		ctx.ImmediateProtocolError = llmprotocol.NewError(
+			llmprotocol.ErrorInvalidRequest,
+			selectionFailureUndecidable,
+			undecidableMessage,
+			nil,
+		)
+	}
+	return r.createErrorResponse(http.StatusUnprocessableEntity, undecidableMessage)
+}
+
 // requestShapeRefusalResponse refuses a request a decision service could not
 // represent. It is a 400 and not a 503 for the reason the status is read: no
 // arm was dialled, so no model service was unavailable, and a 503 both blames
@@ -197,6 +225,8 @@ func (r *OpenAIRouter) authoritativeSelectionFailureResponse(
 	switch {
 	case selectionShapeRefusalClasses[failure.class]:
 		response = r.requestShapeRefusalResponse(ctx)
+	case failure.class == arcFailurePolicyUndecidable:
+		response = r.undecidableResponse(ctx)
 	case selectionFailureIsCallerError(failure.class):
 		// The bounded class is already counted where it is constructed, which
 		// is the one place that sees both entrypoints. Counting it again here

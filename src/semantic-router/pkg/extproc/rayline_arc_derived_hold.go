@@ -2,7 +2,6 @@ package extproc
 
 import (
 	"context"
-	"strings"
 	"time"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
@@ -21,30 +20,27 @@ import (
 // the offer narrowed to a derived model. Single-stage packages never refuse
 // this way, so their decisions are untouched.
 //
-// The model is derived from, in order:
-//   - the model that last served this episode, which the store keeps past
-//     the episode's idle TTL (raylinearc.ServedModelStore);
-//   - the model that last served its parent session, named by the trusted
-//     x-rayline-parent-session header;
-//   - the package's declared fallback action's model; for a package served
-//     without a manifest, the fallback_model the service's package listing
-//     names (when its fallback_action_id is bound to that model here), else
-//     the cell's configured derived_hold_model.
+// The model is the one that last served this episode, which the store keeps
+// past the episode's idle TTL (raylinearc.ServedModelStore): it continues a
+// decision the policy already made for this conversation. Nothing else names
+// a model. A parent session's model does not (ADR 0117: the parent link is
+// metadata and never holds a subagent's actions), and neither does a package,
+// listed or configured fallback model, which the policy never chose. With no
+// record, the turn is undecidable and fails (rayline_arc_undecidable).
 //
 // The router writes every record and the gateway owns the episode keys, so
 // a client cannot choose the held model. Nothing in the request body is read.
 
 // servedModelReadTimeout bounds the store reads a turn without episode
-// memory makes; a slow store leaves the derivation to the package fallback.
+// memory makes; a slow store leaves the turn without a record, so it fails as
+// undecidable.
 const servedModelReadTimeout = 500 * time.Millisecond
 
-// raylineARCServedModels reads the remembered serving models of an episode
-// with no previous arm: its own record, then its parent session's when the
-// gateway's turn-signal headers are trusted.
+// raylineARCServedModels reads the remembered serving model of an episode
+// with no previous arm: its own record only.
 func (r *OpenAIRouter) raylineARCServedModels(
 	reqCtx *RequestContext,
 	episodeIDHash string,
-	signalHeaders map[string]string,
 ) []selection.RaylineARCServedModel {
 	store, ok := r.raylineARCEpisodeStoreFor(reqCtx).(raylinearc.ServedModelStore)
 	if !ok {
@@ -55,15 +51,12 @@ func (r *OpenAIRouter) raylineARCServedModels(
 		parent = context.Background()
 	}
 	keys := []servedModelKey{{source: derivedHoldSessionRecord, episodeIDHash: episodeIDHash}}
-	if session := strings.TrimSpace(signalHeaders[raylineARCParentSessionHeader]); session != "" {
-		keys = append(keys, servedModelKey{source: derivedHoldParentSession, episodeIDHash: raylinearc.HashEpisodeID(session)})
-	}
 	return readServedModels(parent, store, keys)
 }
 
 // readServedModels reads each key's record, within servedModelReadTimeout
 // in all: a slow or stalled store costs the turn at most that, and leaves the
-// derivation to the package fallback.
+// turn without a record.
 // servedModelKey is one episode whose record a turn reads, and the source it
 // stands for.
 type servedModelKey struct {
@@ -111,7 +104,7 @@ type derivedHold struct {
 // operator's disable, a fallback exclusion) is not swapped for another, so
 // its offer is empty and the turn fails rather than retrying
 // (pathfinder arc_serving_contract.md, exclusions). ok is false when no
-// source names a model.
+// record names a model: the turn is then undecidable.
 func derivedHoldOffer(
 	scorer *policyServiceScorer,
 	arcContext *selection.RaylineARCSelectionContext,
@@ -122,9 +115,6 @@ func derivedHoldOffer(
 			hold, ok = derivedHold{source: served.Source, model: model}, true
 			break
 		}
-	}
-	if model, source := scorer.holdFallback(); !ok && model != "" {
-		hold, ok = derivedHold{source: source, model: model}, true
 	}
 	if !ok {
 		return derivedHold{}, false
@@ -137,19 +127,10 @@ func derivedHoldOffer(
 	return hold, true
 }
 
-// The sources a derived hold names, as rayline_arc_derived_hold logs them, so
-// a readout can tell a derived hold from a schedule's.
-const (
-	derivedHoldSessionRecord   = "session_record"
-	derivedHoldParentSession   = "parent_session"
-	derivedHoldPackageFallback = "package_fallback"
-	// derivedHoldListedFallback is the fallback_model the service's package
-	// listing names, for a package without a manifest (pathfinder#3677).
-	derivedHoldListedFallback = "listed_fallback"
-	// derivedHoldConfigured is the configured derived_hold_model, for a
-	// package without a manifest.
-	derivedHoldConfigured = "configured_fallback"
-)
+// derivedHoldSessionRecord is the one source a derived hold names, as
+// rayline_arc_derived_hold logs it, so a readout can tell a derived hold from
+// a schedule's: the model this episode's own policy decisions served.
+const derivedHoldSessionRecord = "session_record"
 
 func logRaylineARCDerivedHold(arcContext *selection.RaylineARCSelectionContext, hold derivedHold) {
 	logging.ComponentEvent("extproc", "rayline_arc_derived_hold", map[string]interface{}{
@@ -185,4 +166,30 @@ func (scorer *policyServiceScorer) servedModelOf(recorded string) string {
 		}
 	}
 	return ""
+}
+
+// arcFailurePolicyUndecidable is the selection failure of a turn the policy
+// would not decide and no record of this conversation's own decisions could
+// hold: the router serves nothing in its place. It answers 422 with the
+// public class "undecidable" (rayline_arc_selection_response.go).
+const arcFailurePolicyUndecidable = "policy_undecidable"
+
+// logRaylineARCUndecidable records why a turn failed undecided: the policy's
+// refusal reason, the record a hold was retried on (empty when none named a
+// model), and whether a model was already held when the policy refused.
+func logRaylineARCUndecidable(
+	arcContext *selection.RaylineARCSelectionContext,
+	reason string,
+	derivedSource string,
+	held bool,
+	sideCall bool,
+) {
+	logging.ComponentErrorEvent("extproc", "rayline_arc_undecidable", map[string]interface{}{
+		"request_id":      arcContext.RequestID,
+		"episode_id_hash": arcContext.EpisodeIDHash,
+		"reason":          reason,
+		"derived_source":  derivedSource,
+		"held":            held,
+		"side_call":       sideCall,
+	})
 }

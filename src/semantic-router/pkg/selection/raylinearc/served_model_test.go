@@ -148,10 +148,13 @@ func TestPolicyServiceClassifiesStageOneHeldUnknown(t *testing.T) {
 	for _, tc := range []struct {
 		detail map[string]any
 		want   string
+		reason string
 	}{
-		{map[string]any{"reason": "stage_one_held_unknown"}, PolicyStageOneHeldUnknownClass},
-		{map[string]any{"reason": "no_supported_selection"}, "selection_refused"},
-		{map[string]any{}, "selection_refused"},
+		{map[string]any{"reason": "stage_one_held_unknown"}, PolicyStageOneHeldUnknownClass, "stage_one_held_unknown"},
+		{map[string]any{"reason": "no_supported_selection"}, "selection_refused", "no_supported_selection"},
+		// Free-form service text never becomes a log value.
+		{map[string]any{"reason": "the model said no"}, "selection_refused", "other"},
+		{map[string]any{}, "selection_refused", "other"},
 	} {
 		server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 			writer.WriteHeader(http.StatusUnprocessableEntity)
@@ -163,6 +166,9 @@ func TestPolicyServiceClassifiesStageOneHeldUnknown(t *testing.T) {
 		var failure *PolicyServiceError
 		if !errors.As(err, &failure) || failure.Class != tc.want {
 			t.Fatalf("detail %v: err = %v, want class %s", tc.detail, err, tc.want)
+		}
+		if got := PolicyRefusalReason(failure.Detail); got != tc.reason {
+			t.Fatalf("detail %v: reason %q, want %q", tc.detail, got, tc.reason)
 		}
 	}
 }

@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -16,8 +15,8 @@ import (
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 	"github.com/prometheus/client_golang/prometheus/testutil"
+	"go.uber.org/zap/zaptest/observer"
 
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/metrics"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
@@ -69,6 +68,17 @@ func heldTurnStatus(t *testing.T, router *OpenAIRouter, episode, client string, 
 // goes on to commit the turn.
 func heldTurn(t *testing.T, router *OpenAIRouter, episode, client string, extra ...*core.HeaderValue) (model string, status int, ctx *RequestContext) {
 	t.Helper()
+	model, ctx, immediate := heldTurnResponse(t, router, episode, client, extra...)
+	if immediate != nil {
+		return "", int(immediate.GetStatus().GetCode()), ctx
+	}
+	return model, 200, ctx
+}
+
+// heldTurnResponse runs one Messages body through the request phase and
+// returns the provider-bound model, or the immediate refusal.
+func heldTurnResponse(t *testing.T, router *OpenAIRouter, episode, client string, extra ...*core.HeaderValue) (model string, ctx *RequestContext, refusal *ext_proc.ImmediateResponse) {
+	t.Helper()
 	ctx = &RequestContext{
 		Headers: map[string]string{}, RequestID: fmt.Sprintf("hold-%s-%d", episode, time.Now().UnixNano()),
 		StartTime: time.Now(), TraceContext: context.Background(),
@@ -92,7 +102,7 @@ func heldTurn(t *testing.T, router *OpenAIRouter, episode, client string, extra 
 		t.Fatalf("request body: %v", err)
 	}
 	if immediate := response.GetImmediateResponse(); immediate != nil {
-		return "", int(immediate.GetStatus().GetCode()), ctx
+		return "", ctx, immediate
 	}
 	var body struct {
 		Model string `json:"model"`
@@ -100,7 +110,59 @@ func heldTurn(t *testing.T, router *OpenAIRouter, episode, client string, extra 
 	if err := json.Unmarshal(response.GetRequestBody().GetResponse().GetBodyMutation().GetBody(), &body); err != nil {
 		t.Fatal(err)
 	}
-	return body.Model, 200, ctx
+	return body.Model, ctx, nil
+}
+
+// immediateHeader is a header an immediate refusal carries, or "".
+func immediateHeader(refusal *ext_proc.ImmediateResponse, key string) string {
+	for _, header := range refusal.GetHeaders().GetSetHeaders() {
+		if header.GetHeader().GetKey() == key {
+			if value := header.GetHeader().GetValue(); value != "" {
+				return value
+			}
+			return string(header.GetHeader().GetRawValue())
+		}
+	}
+	return ""
+}
+
+// assertUndecidable checks a turn failed as undecidable: a 422 with the
+// public class, the policy_undecidable selection failure, and a
+// rayline_arc_undecidable line naming the policy's refusal and the record a
+// hold was retried on (derivedSource, "" when none).
+func assertUndecidable(t *testing.T, refusal *ext_proc.ImmediateResponse, logs *observer.ObservedLogs, failuresBefore float64, derivedSource string) {
+	t.Helper()
+	if refusal == nil {
+		t.Fatal("the turn was served; want it refused as undecidable")
+	}
+	if code := refusal.GetStatus().GetCode(); int(code) != 422 {
+		t.Fatalf("status %d, want 422", code)
+	}
+	if class := immediateHeader(refusal, "x-vsr-failure-class"); class != "undecidable" {
+		t.Fatalf("x-vsr-failure-class = %q, want undecidable", class)
+	}
+	if undecidableFailures()-failuresBefore != 1 {
+		t.Fatal("the turn did not fail as policy_undecidable")
+	}
+	fields := findLogEvent(t, logs, "rayline_arc_undecidable")
+	if fields["reason"] != "stage_one_held_unknown" || fields["derived_source"] != derivedSource {
+		t.Fatalf("rayline_arc_undecidable reason=%v derived_source=%v, want stage_one_held_unknown and %q",
+			fields["reason"], fields["derived_source"], derivedSource)
+	}
+}
+
+func undecidableFailures() float64 {
+	return testutil.ToFloat64(metrics.RaylineARCSelectionFailures.WithLabelValues("policy_undecidable"))
+}
+
+// noLogEvent fails when event was logged.
+func noLogEvent(t *testing.T, logs *observer.ObservedLogs, event string) {
+	t.Helper()
+	for _, entry := range logs.All() {
+		if name, _ := entry.ContextMap()["event"].(string); name == event {
+			t.Fatalf("%s was logged: %v", event, entry.ContextMap())
+		}
+	}
 }
 
 func servedStore(t *testing.T, router *OpenAIRouter) raylinearc.ServedModelStore {
@@ -209,18 +271,23 @@ func TestDerivedHoldHoldsTheServedModelOfAWorkerWithTwo(t *testing.T) {
 	}
 }
 
-// With no record, the hold is the package's declared fallback action's model.
-func TestDerivedHoldFallsBackToThePackageFallback(t *testing.T) {
+// With no record of this episode's own decisions, a turn the two-stage policy
+// refuses is undecidable: it fails 422, and the package's declared fallback
+// action (Opus here) never serves it.
+func TestDerivedHoldWithoutARecordIsUndecidable(t *testing.T) {
+	logs := captureLogs(t)
 	router, fake := v5Router(t, "openai")
 	fake.refuseCold = refuseColdTwoStage
 	fake.chooseWith(chooseFirstOffered)
-	model, status := heldTurnStatus(t, router, "episode-unknown", resumedHistory)
-	if status != 200 || model != "anthropic/claude-opus-5" {
-		t.Fatalf("dispatched %q (status %d), want the package fallback's Opus", model, status)
+	before := undecidableFailures()
+	model, _, refusal := heldTurnResponse(t, router, "episode-unknown", resumedHistory)
+	if model != "" {
+		t.Fatalf("dispatched %q, want no model", model)
 	}
-	calls := fake.received()
-	if len(calls) != 2 || !slices.Equal(calls[1].Selection.AvailableActionIDs, []string{v5OpusAction}) {
-		t.Fatalf("decide calls = %d, retry offer %v", len(calls), calls[len(calls)-1].Selection.AvailableActionIDs)
+	assertUndecidable(t, refusal, logs, before, "")
+	noLogEvent(t, logs, "rayline_arc_derived_hold")
+	if calls := fake.received(); len(calls) != 1 {
+		t.Fatalf("decide calls = %d, want the one refused call and no retry", len(calls))
 	}
 }
 
@@ -240,24 +307,27 @@ func TestDerivedHoldLeavesSingleStagePackagesAlone(t *testing.T) {
 	}
 }
 
-// A refusal of the held retry fails the turn as before: one retry, then the
-// selection failure's 503.
+// A refusal of the held retry fails the turn as undecidable: one retry on
+// the recorded model, then 422.
 func TestDerivedHoldRetriesOnce(t *testing.T) {
+	logs := captureLogs(t)
 	router, fake := v5Router(t, "openai")
+	seedServed(t, router, "episode-refused", "glm")
 	fake.refuseCold = func(raylinearc.PolicyDecisionRequest) bool { return true }
 	fake.chooseWith(chooseFirstOffered)
-	_, status := heldTurnStatus(t, router, "episode-refused", resumedHistory)
-	if status != 503 {
-		t.Fatalf("status %d, want 503", status)
-	}
+	before := undecidableFailures()
+	_, _, refusal := heldTurnResponse(t, router, "episode-refused", resumedHistory)
+	assertUndecidable(t, refusal, logs, before, "session_record")
 	if calls := fake.received(); len(calls) != 2 {
 		t.Fatalf("decide calls = %d, want the first and one retry", len(calls))
 	}
 }
 
-// A subagent handed its parent's history, with the gateway's turn-signal
-// headers trusted, is held on the model that last served the parent session.
-func TestDerivedHoldUsesTheParentSession(t *testing.T) {
+// A subagent handed its parent's history is its own episode (ADR 0117): the
+// model that last served the parent never holds it, even with the gateway's
+// turn-signal headers trusted. With no record of its own, it is undecidable.
+func TestDerivedHoldNeverUsesTheParentSession(t *testing.T) {
+	logs := captureLogs(t)
 	router, fake := v5RouterWith(t, "openai", func(config string) string {
 		return strings.Replace(config, "            allow_experimental_controls: true\n",
 			"            allow_experimental_controls: true\n            trust_turn_signal_headers: true\n", 1)
@@ -265,15 +335,13 @@ func TestDerivedHoldUsesTheParentSession(t *testing.T) {
 	seedServed(t, router, "episode-parent", "glm")
 	fake.refuseCold = refuseColdTwoStage
 	fake.chooseWith(chooseFirstOffered)
-	model, status := heldTurnStatus(t, router, "episode-subagent", resumedHistory,
+	before := undecidableFailures()
+	_, _, refusal := heldTurnResponse(t, router, "episode-subagent", resumedHistory,
 		&core.HeaderValue{Key: "x-rayline-parent-session", Value: "episode-parent"},
 		&core.HeaderValue{Key: "x-rayline-agent-key-source", Value: "agent"})
-	if status != 200 || model != "z-ai/glm-5.3-flash" {
-		t.Fatalf("dispatched %q (status %d), want the parent's GLM", model, status)
-	}
-	calls := fake.received()
-	if len(calls) != 2 || !slices.Equal(calls[1].Selection.AvailableActionIDs, []string{v5GLMNone, v5GLMUp}) {
-		t.Fatalf("decide calls = %d, retry offer %v", len(calls), calls[len(calls)-1].Selection.AvailableActionIDs)
+	assertUndecidable(t, refusal, logs, before, "")
+	if calls := fake.received(); len(calls) != 1 {
+		t.Fatalf("decide calls = %d, want one", len(calls))
 	}
 }
 
@@ -393,11 +461,11 @@ func (stalledServedStore) LastServedModel(ctx context.Context, _ string) (string
 }
 
 // A stalled store costs a turn's served-worker read at most
-// servedModelReadTimeout, after which the derivation falls to the package.
+// servedModelReadTimeout, after which the turn has no record.
 func TestServedModelReadIsBounded(t *testing.T) {
 	keys := []servedModelKey{
 		{source: derivedHoldSessionRecord, episodeIDHash: raylinearc.HashEpisodeID("a")},
-		{source: derivedHoldParentSession, episodeIDHash: raylinearc.HashEpisodeID("b")},
+		{source: derivedHoldSessionRecord, episodeIDHash: raylinearc.HashEpisodeID("b")},
 	}
 	started := time.Now()
 	served := readServedModels(context.Background(), stalledServedStore{}, keys)
@@ -407,18 +475,11 @@ func TestServedModelReadIsBounded(t *testing.T) {
 }
 
 // v4ColdRouter is the relaxed policy cell serving a v4 package (bindings
-// declare their dispatch, no package_manifest), with derivedHold as its
-// derived_hold_model when set, behind a two-stage service that refuses a
-// cold turn whose offer spans more than one model.
-func v4ColdRouter(t *testing.T, derivedHold string) (*OpenAIRouter, *fakePolicyService, map[string]config.RaylineARCPolicyBinding) {
-	t.Helper()
-	return v4ColdRouterListing(t, derivedHold, "", "")
-}
-
-// v4ColdRouterListing is v4ColdRouter behind a service whose packages
-// listing names listedActionID and listedModel as the package's fallback pair
-// (none when listedModel is empty).
-func v4ColdRouterListing(t *testing.T, derivedHold, listedActionID, listedModel string) (*OpenAIRouter, *fakePolicyService, map[string]config.RaylineARCPolicyBinding) {
+// declare their dispatch, no package_manifest) behind a two-stage service that
+// refuses a cold turn whose offer spans more than one model, and whose
+// packages listing names listedActionID and listedModel as the package's
+// fallback pair (none when listedModel is empty).
+func v4ColdRouter(t *testing.T, listedActionID, listedModel string) (*OpenAIRouter, *fakePolicyService) {
 	t.Helper()
 	t.Setenv("POLICY_E2E_PROVIDER_KEY", "public-e2e-provider-key")
 	actions := relaxedPolicyActions()
@@ -426,22 +487,7 @@ func v4ColdRouterListing(t *testing.T, derivedHold, listedActionID, listedModel 
 	if listedModel != "" {
 		fake.listFallback(listedActionID, listedModel)
 	}
-	path := writeConsistentPolicyConfig(t, fake.URL(), "strict")
-	if derivedHold != "" {
-		raw, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		const anchor = "            bindings:\n"
-		if !strings.Contains(string(raw), anchor) {
-			t.Fatal("the policy config no longer carries its bindings anchor")
-		}
-		edited := strings.Replace(string(raw), anchor, "            derived_hold_model: "+derivedHold+"\n"+anchor, 1)
-		if err := os.WriteFile(path, []byte(edited), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	router, err := NewOpenAIRouter(path)
+	router, err := NewOpenAIRouter(writeConsistentPolicyConfig(t, fake.URL(), "strict"))
 	if err != nil {
 		t.Fatalf("build router: %v", err)
 	}
@@ -458,104 +504,56 @@ func v4ColdRouterListing(t *testing.T, derivedHold, listedActionID, listedModel 
 		return len(offered) > 1 && len(request.Attribution) == 0
 	}
 	fake.chooseWith(chooseFirstOffered)
-	return router, fake, actions
+	return router, fake
 }
 
-// A v4 package has no manifest, and when the service's package listing names
-// no fallback either, a cold turn with no record is held on the cell's
-// configured derived_hold_model.
-func TestDerivedHoldUsesTheConfiguredModelForAManifestlessPackage(t *testing.T) {
-	router, fake, actions := v4ColdRouter(t, "off-trained")
-	model, status := heldTurnStatus(t, router, "episode-v4-cold", resumedHistory)
-	if status != 200 || model != "vendor/off" {
-		t.Fatalf("dispatched %q (status %d), want the configured off-trained", model, status)
-	}
-	calls := fake.received()
-	if len(calls) != 2 || !slices.Equal(calls[1].Selection.AvailableActionIDs, []string{actions["off"].ActionID}) {
-		t.Fatalf("decide calls = %d, retry offer %v", len(calls), calls[len(calls)-1].Selection.AvailableActionIDs)
-	}
-}
-
-// Without it, a manifest-less package has no fallback: the refusal stands.
-func TestDerivedHoldWithoutAFallbackLeavesTheRefusal(t *testing.T) {
-	router, fake, _ := v4ColdRouter(t, "")
-	if _, status := heldTurnStatus(t, router, "episode-v4-none", resumedHistory); status != 503 {
-		t.Fatalf("status %d, want 503", status)
-	}
+// A manifest-less package with no record is undecidable like any other: the
+// refusal fails the turn 422 after the one call.
+func TestDerivedHoldManifestlessWithoutARecordIsUndecidable(t *testing.T) {
+	logs := captureLogs(t)
+	router, fake := v4ColdRouter(t, "", "")
+	before := undecidableFailures()
+	_, _, refusal := heldTurnResponse(t, router, "episode-v4-none", resumedHistory)
+	assertUndecidable(t, refusal, logs, before, "")
 	if calls := fake.received(); len(calls) != 1 {
 		t.Fatalf("decide calls = %d, want one", len(calls))
 	}
 }
 
-// A v4 package from the store has no manifest, but a service from
-// pathfinder#3677 on names its fallback in the packages listing: with no
-// derived_hold_model configured, a cold turn with no record is held on it.
-func TestDerivedHoldUsesTheListedFallbackForAManifestlessPackage(t *testing.T) {
-	router, fake, actions := v4ColdRouterListing(t, "", relaxedPolicyActions()["off"].ActionID, "off-trained")
-	model, status := heldTurnStatus(t, router, "episode-v4-listed", resumedHistory)
-	if status != 200 || model != "vendor/off" {
-		t.Fatalf("dispatched %q (status %d), want the listed off-trained", model, status)
-	}
-	calls := fake.received()
-	if len(calls) != 2 || !slices.Equal(calls[1].Selection.AvailableActionIDs, []string{actions["off"].ActionID}) {
-		t.Fatalf("decide calls = %d, retry offer %v", len(calls), calls[len(calls)-1].Selection.AvailableActionIDs)
-	}
-}
-
-// The listing is the service's statement of the package it serves, so it
-// ranks above the cell's configured derived_hold_model.
-func TestDerivedHoldPrefersTheListedFallbackToTheConfiguredModel(t *testing.T) {
-	router, fake, actions := v4ColdRouterListing(t, "off-trained", relaxedPolicyActions()["claude"].ActionID, "claude-opus-5")
-	if _, status := heldTurnStatus(t, router, "episode-v4-listed-first", resumedHistory); status != 200 {
-		t.Fatalf("status %d, want 200", status)
-	}
-	calls := fake.received()
-	want := []string{actions["claude"].ActionID, actions["claude-off"].ActionID}
-	got := slices.Clone(calls[len(calls)-1].Selection.AvailableActionIDs)
-	slices.Sort(got)
-	slices.Sort(want)
-	if len(calls) != 2 || !slices.Equal(got, want) {
-		t.Fatalf("decide calls = %d, retry offer %v, want claude-opus-5's %v", len(calls), got, want)
-	}
-}
-
-// A listed fallback the bindings do not dispatch cannot hold a turn: it is
-// skipped, and the configured derived_hold_model holds it instead.
-func TestDerivedHoldSkipsAnUnboundListedFallback(t *testing.T) {
-	router, fake, actions := v4ColdRouterListing(t, "off-trained", strings.Repeat("a", 64), "anthropic/claude-opus-5")
-	model, status := heldTurnStatus(t, router, "episode-v4-listed-unbound", resumedHistory)
-	if status != 200 || model != "vendor/off" {
-		t.Fatalf("dispatched %q (status %d), want the configured off-trained", model, status)
-	}
-	calls := fake.received()
-	if len(calls) != 2 || !slices.Equal(calls[1].Selection.AvailableActionIDs, []string{actions["off"].ActionID}) {
-		t.Fatalf("decide calls = %d, retry offer %v", len(calls), calls[len(calls)-1].Selection.AvailableActionIDs)
-	}
-}
-
-// The listed pair must agree with the cell: the fallback action, resolved
-// through the bindings, must be the listed model. A pair whose action the
-// cell binds to another model is not used, so with no derived_hold_model the
-// refusal stands.
-func TestDerivedHoldRefusesAMismatchedListedPair(t *testing.T) {
-	router, fake, _ := v4ColdRouterListing(t, "", relaxedPolicyActions()["claude"].ActionID, "off-trained")
-	if _, status := heldTurnStatus(t, router, "episode-v4-listed-mismatch", resumedHistory); status != 503 {
-		t.Fatalf("status %d, want 503: a mismatched listed pair held the turn", status)
-	}
+// A service whose packages listing names a fallback pair (pathfinder#3677)
+// still never holds a cold turn on it: the listing is decoded and ignored,
+// so the turn is undecidable even when the cell binds the listed action.
+func TestDerivedHoldIgnoresTheListedFallback(t *testing.T) {
+	logs := captureLogs(t)
+	router, fake := v4ColdRouter(t, relaxedPolicyActions()["off"].ActionID, "off-trained")
+	before := undecidableFailures()
+	_, _, refusal := heldTurnResponse(t, router, "episode-v4-listed", resumedHistory)
+	assertUndecidable(t, refusal, logs, before, "")
+	noLogEvent(t, logs, "rayline_arc_derived_hold")
 	if calls := fake.received(); len(calls) != 1 {
 		t.Fatalf("decide calls = %d, want one", len(calls))
 	}
 }
 
-// A listed fallback action this cell does not bind is the package's own
-// fallback, which the cell does not serve: the pair is skipped even when its
-// model is bound.
-func TestDerivedHoldSkipsAListedPairWhoseActionIsUnbound(t *testing.T) {
-	router, fake, _ := v4ColdRouterListing(t, "", strings.Repeat("a", 64), "off-trained")
-	if _, status := heldTurnStatus(t, router, "episode-v4-listed-unbound-action", resumedHistory); status != 503 {
-		t.Fatalf("status %d, want 503: an unbound listed action held the turn", status)
+// A held turn the policy refuses for another reason -- here the service finding
+// no supported selection, where it used to serve its package's fallback action
+// -- is undecidable too: 422, and the reason is logged.
+func TestSelectionRefusedIsUndecidable(t *testing.T) {
+	logs := captureLogs(t)
+	router, fake := v5Router(t, "openai")
+	fake.failWith = "selection_refused"
+	fake.failDetail = map[string]any{"reason": "no_supported_selection"}
+	before := undecidableFailures()
+	_, _, refusal := heldTurnResponse(t, router, "episode-unsupported",
+		`{"model":"auto","max_tokens":1024,"messages":[{"role":"user","content":"hi"}]}`)
+	if refusal == nil || int(refusal.GetStatus().GetCode()) != 422 ||
+		immediateHeader(refusal, "x-vsr-failure-class") != "undecidable" {
+		t.Fatalf("refusal %v, want 422 undecidable", refusal.GetStatus())
 	}
-	if calls := fake.received(); len(calls) != 1 {
-		t.Fatalf("decide calls = %d, want one", len(calls))
+	if undecidableFailures()-before != 1 {
+		t.Fatal("the turn did not fail as policy_undecidable")
+	}
+	if fields := findLogEvent(t, logs, "rayline_arc_undecidable"); fields["reason"] != "no_supported_selection" {
+		t.Fatalf("rayline_arc_undecidable reason = %v, want no_supported_selection", fields["reason"])
 	}
 }

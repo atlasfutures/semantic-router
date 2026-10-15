@@ -420,6 +420,28 @@ func TestRouteDecisionReportsAnUnreadableRequestAsTheCallersError(t *testing.T) 
 	}
 }
 
+// A turn the policy would not decide answers 422 on this surface too, as on
+// ExtProc and /v1/routes: no worker is published in its place, and nothing
+// invites a retry that is refused identically every time.
+func TestRouteDecisionReportsAnUndecidableTurnAs422(t *testing.T) {
+	server := routeDecisionTestServer(&fakeRouteDecisionRuntime{
+		err: fmt.Errorf("%w: Rayline ARC selection failed (class=policy_undecidable)",
+			routerruntime.ErrRouteDecisionUndecidable),
+	})
+
+	recorder, decoded := postRouteDecision(t, server, routeDecisionTestBody, nil)
+
+	if recorder.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422 (body=%s)", recorder.Code, recorder.Body.String())
+	}
+	if retryAfter := recorder.Header().Get("Retry-After"); retryAfter != "" {
+		t.Fatalf("an undecidable turn invited a retry: Retry-After=%q", retryAfter)
+	}
+	if _, present := decoded["selected_worker"]; present {
+		t.Fatalf("an undecidable consult still published a worker: %#v", decoded["selected_worker"])
+	}
+}
+
 // Every other failure keeps its 503: the caller cannot fix it by waiting, so
 // inviting a retry would turn one broken consult into a retry storm.
 func TestRouteDecisionKeepsUnavailableForNonContendedFailures(t *testing.T) {
