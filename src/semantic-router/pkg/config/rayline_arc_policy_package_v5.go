@@ -21,6 +21,7 @@ import (
 	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -96,6 +97,40 @@ func (cfg *RaylineARCPolicyServiceConfig) PackageV5Action(actionID string) (Rayl
 func (cfg *RaylineARCPolicyServiceConfig) PackageTwoStage() bool {
 	pkg, err := cfg.loadPackageV5()
 	return err == nil && pkg.manifest.StageOne != nil
+}
+
+// PackageStageOneByModel reports whether the package's stage one chooses a
+// model, not a model at an effort: every offered stage-one candidate states
+// no effort (pathfinder arc_policy_contract StageOneCandidate). Any action of a
+// model then names the same held candidate, so VSR may attest the model that
+// last served an episode by any of its actions (memex-desktop #7417). False
+// when the manifest does not load or does not say.
+func (cfg *RaylineARCPolicyServiceConfig) PackageStageOneByModel() bool {
+	pkg, err := cfg.loadPackageV5()
+	return err == nil && stageOneByModel(pkg.manifest.StageOne)
+}
+
+// stageOneByModel reads a manifest's stage_one part: true exactly when it
+// offers candidates and every one names a model with no effort.
+func stageOneByModel(raw json.RawMessage) bool {
+	if raw == nil {
+		return false
+	}
+	var part struct {
+		Offered []struct {
+			Model  string  `json:"model"`
+			Effort *string `json:"effort"`
+		} `json:"offered"`
+	}
+	if json.Unmarshal(raw, &part) != nil || len(part.Offered) == 0 {
+		return false
+	}
+	for _, candidate := range part.Offered {
+		if candidate.Model == "" || candidate.Effort != nil {
+			return false
+		}
+	}
+	return true
 }
 
 // PackageV5RegistryDiffers reports whether the manifest's
