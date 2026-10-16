@@ -77,9 +77,11 @@ type responsesUsageWire struct {
 	providerUsageCostWire
 }
 
+// responsesInputUsageDetails keeps each cache leg's presence: a leg the
+// upstream did not send is unknown, never a reported 0.
 type responsesInputUsageDetails struct {
-	CachedTokens     int64 `json:"cached_tokens"`
-	CacheWriteTokens int64 `json:"cache_write_tokens"`
+	CachedTokens     *int64 `json:"cached_tokens"`
+	CacheWriteTokens *int64 `json:"cache_write_tokens"`
 }
 
 type responsesOutputUsageDetails struct {
@@ -428,11 +430,6 @@ func responsesContentFieldPresent(raw json.RawMessage, field string) bool {
 }
 
 func decodeResponsesUsage(wire responsesUsageWire) llmprotocol.Usage {
-	cached, cacheWrite := int64(0), int64(0)
-	if wire.InputTokensDetails != nil {
-		cached = wire.InputTokensDetails.CachedTokens
-		cacheWrite = wire.InputTokensDetails.CacheWriteTokens
-	}
 	reasoning := int64(0)
 	if wire.OutputTokensDetails != nil {
 		reasoning = wire.OutputTokensDetails.ReasoningTokens
@@ -444,12 +441,9 @@ func decodeResponsesUsage(wire responsesUsageWire) llmprotocol.Usage {
 		InputTotal: authoritative(wire.InputTokens), OutputTotal: authoritative(wire.OutputTokens), Total: authoritative(wire.TotalTokens),
 		ProviderCost: wire.providerUsageCostWire.decode(),
 	}
-	if cached >= 0 && cacheWrite >= 0 && wire.InputTokens >= cached && cacheWrite <= wire.InputTokens-cached {
-		usage.InputCacheRead = authoritative(cached)
-		usage.InputCacheWrite = authoritative(cacheWrite)
-		usage.InputUncached = derived(wire.InputTokens - cached - cacheWrite)
-	} else {
-		reportUnreconciledUsage("usage.input_tokens_details")
+	if wire.InputTokensDetails != nil {
+		decodeInputCacheLegs(&usage, wire.InputTokens, wire.InputTokensDetails.CachedTokens,
+			wire.InputTokensDetails.CacheWriteTokens, "usage.input_tokens_details")
 	}
 	if reasoning >= 0 && reasoning <= wire.OutputTokens {
 		usage.OutputReasoning = authoritative(reasoning)
@@ -623,8 +617,9 @@ func encodeResponsesUsage(usage llmprotocol.Usage) *responsesUsageWire {
 		InputTokens:  tokenValue(usage.InputTotal),
 		OutputTokens: tokenValue(usage.OutputTotal),
 		TotalTokens:  tokenValue(usage.Total),
+		// The encoded bytes are as before: both legs always, an unknown one as 0.
 		InputTokensDetails: &responsesInputUsageDetails{
-			CachedTokens: tokenValue(usage.InputCacheRead), CacheWriteTokens: tokenValue(usage.InputCacheWrite),
+			CachedTokens: int64Pointer(tokenValue(usage.InputCacheRead)), CacheWriteTokens: int64Pointer(tokenValue(usage.InputCacheWrite)),
 		},
 		OutputTokensDetails: &responsesOutputUsageDetails{ReasoningTokens: tokenValue(usage.OutputReasoning)},
 	}
