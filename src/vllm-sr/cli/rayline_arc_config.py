@@ -377,6 +377,9 @@ class RaylineARCPolicyServiceConfig(BaseModel):
     # x-rayline-agent-key-source, x-rayline-parent-session,
     # x-rayline-parent-agent) only when a gateway sets or strips every one.
     trust_turn_signal_headers: bool = False
+    # Mirrors CacheContext in the Go loader: send cache_context on each
+    # decide; only for a policy service at or after pathfinder 204d287ec4.
+    cache_context: bool = False
     # Per bound worker, the trained model it serves (v5 only).
     trained_models: dict[str, str] = Field(default_factory=dict)
     # Mirrors RaylineARCPolicyServiceConfig.Fallback (ADR 0120): off for

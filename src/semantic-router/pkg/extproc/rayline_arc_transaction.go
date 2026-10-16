@@ -71,6 +71,14 @@ type raylineARCEpisodeTransaction struct {
 	// record, with the turn, which worker issued each block.
 	dispatchWorker  string
 	opaqueReasoning []string
+	// call is the cache evidence of this turn's policy-service call: the
+	// action it served, the TTL its dispatched body stated and the
+	// provider's usage. It is recorded on the served arm's warmth with the
+	// turn, and only when the action is known.
+	call raylinearc.CallCache
+	// callCompleted is set once the provider's response to this turn was
+	// read; a turn without one (a decision-only consult) records no call.
+	callCompleted bool
 	// upstreamPrefix is this turn's body shape, committed only with the turn.
 	upstreamPrefix *raylinearc.UpstreamPrefix
 	// controlPlacement is the thinking-control placer this turn advanced,
@@ -288,6 +296,7 @@ func stageRaylineARCPolicySelection(ctx *RequestContext, trace *selection.Raylin
 			served = worker
 		}
 		transaction.markServedModel(served)
+		transaction.call.ActionID = trace.PolicyActionID
 	}
 	if trace.PolicyBoundary == nil {
 		return
@@ -585,12 +594,27 @@ func (transaction *raylineARCEpisodeTransaction) nextState() (*raylinearc.Episod
 	// The commit itself records the served model, ordered with it
 	// (raylinearc.ServedModelStore).
 	nextState.ServedModel = transaction.servedModel
+	// The arm's last completed call outlives a commit that made none (a
+	// decision-only consult): Commit replaces the arm's warmth.
+	var previousCall *raylinearc.CallCache
+	if arm := transaction.selectedArm; arm >= 0 && arm < len(nextState.Warmth) && nextState.Warmth[arm] != nil {
+		previousCall = nextState.Warmth[arm].Call
+	}
+	now := time.Now().UTC()
 	if err := nextState.Commit(
 		transaction.selectedArm,
 		transaction.serializedTokens,
-		time.Now().UTC(),
+		now,
 	); err != nil {
 		return nil, err
+	}
+	nextState.Warmth[transaction.selectedArm].Call = previousCall
+	if transaction.call.ActionID != "" && transaction.callCompleted {
+		call := transaction.call
+		if call.CompletedAt.IsZero() || call.CompletedAt.After(now) {
+			call.CompletedAt = now
+		}
+		nextState.Warmth[transaction.selectedArm].Call = &call
 	}
 	return nextState, nil
 }
@@ -751,6 +775,40 @@ func boundedARCEpisodeFailure(err error) string {
 	default:
 		return "store"
 	}
+}
+
+// stageWireCacheTTL records the cache TTL the dispatched body stated.
+func (transaction *raylineARCEpisodeTransaction) stageWireCacheTTL(seconds int, source string) {
+	if transaction == nil {
+		return
+	}
+	transaction.call.TTLSeconds, transaction.call.TTLSource = seconds, source
+}
+
+// stageCallUsage records the provider-reported prompt and cache legs of the
+// turn's response. A count the provider did not report, or one the Router
+// estimated, stays unknown.
+func (transaction *raylineARCEpisodeTransaction) stageCallUsage(usage responseUsageMetrics) {
+	if transaction == nil {
+		return
+	}
+	// The response is complete when its usage is read, before the reply is
+	// sent and the turn committed.
+	transaction.callCompleted = true
+	transaction.call.CompletedAt = time.Now().UTC()
+	transaction.call.PromptTokens, transaction.call.CacheReadTokens, transaction.call.CacheWriteTokens = nil, nil, nil
+	if usage.invalid || usage.estimated {
+		return
+	}
+	known := func(value int, reported bool) *int {
+		if !reported {
+			return nil
+		}
+		return &value
+	}
+	transaction.call.PromptTokens = known(usage.promptTokens, usage.promptTokensReported)
+	transaction.call.CacheReadTokens = known(usage.cachedPromptTokens, usage.cachedPromptTokensReported)
+	transaction.call.CacheWriteTokens = known(usage.cacheWriteTokens, usage.cacheWriteTokensReported)
 }
 
 func cloneARCState(

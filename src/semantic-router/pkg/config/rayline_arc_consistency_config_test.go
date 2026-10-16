@@ -3,6 +3,8 @@ package config
 import (
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 // consistency is a per-cell choice: strict (or omitted) serializes turns
@@ -58,5 +60,24 @@ func TestRaylineARCRelaxedRefusesRetainedEncoderSessions(t *testing.T) {
 	if err := validateRaylineARCAlgorithmConfig(arc); err == nil ||
 		!strings.Contains(err.Error(), "not served with the resumable_causal_mean encoder capability") {
 		t.Fatalf("relaxed with retained sessions error = %v", err)
+	}
+}
+
+// cache_context is off unless a cell sets it, and reads as a YAML bool.
+func TestRaylineARCPolicyServiceCacheContextSwitch(t *testing.T) {
+	var policy RaylineARCPolicyServiceConfig
+	if err := yaml.Unmarshal([]byte("package_alias: a\n"), &policy); err != nil || policy.CacheContext {
+		t.Fatalf("absent cache_context = %v, %v; want off", policy.CacheContext, err)
+	}
+	if err := yaml.Unmarshal([]byte("cache_context: true\n"), &policy); err != nil || !policy.CacheContext {
+		t.Fatalf("cache_context: true = %v, %v", policy.CacheContext, err)
+	}
+	if err := yaml.Unmarshal([]byte("cache_context: sometimes\n"), &policy); err == nil {
+		t.Fatal("a non-bool cache_context was accepted")
+	}
+	_, decision := policyDispatchFixture()
+	decision.Algorithm.RaylineARC.PolicyService.CacheContext = true
+	if err := validateRaylineARCAlgorithmConfig(decision.Algorithm.RaylineARC); err != nil {
+		t.Fatalf("a cell with cache_context refused: %v", err)
 	}
 }

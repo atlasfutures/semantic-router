@@ -89,6 +89,12 @@ type RaylineARCPolicyServiceConfig struct {
 	// Off, they are ignored and the harness literals in the body decide.
 	// Either way none is forwarded upstream.
 	TrustTurnSignalHeaders bool `yaml:"trust_turn_signal_headers,omitempty"`
+	// CacheContext sends each decide the episode's recent calls and their
+	// prompt caches (the request's cache_context). Set it only for a policy
+	// service built at or after pathfinder 204d287ec4: an older one refuses
+	// the member, and so every turn. Off, the request is as before; the
+	// evidence is recorded either way.
+	CacheContext bool `yaml:"cache_context,omitempty"`
 	// TrainedModels declares, per bound worker, the trained model it serves:
 	// the name a v5 action's model states (e.g. claude-opus-5). Trained names
 	// are decoupled from providers, so the pairing is declared, never

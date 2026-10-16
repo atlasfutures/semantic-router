@@ -255,6 +255,7 @@ type policyDecisionEnvelope struct {
 	Shadow        []PolicyPackageRef   `json:"shadow"`
 	EpisodeMode   string               `json:"episode_mode,omitempty"`
 	RoutingPrices *PolicyRoutingPrices `json:"routing_prices,omitempty"`
+	CacheContext  *PolicyCacheContext  `json:"cache_context,omitempty"`
 }
 
 // EncodePolicyDecisionRequest is the decide body: every field as json.Marshal
@@ -320,6 +321,9 @@ type PolicyDecisionRequest struct {
 	// rather than null so a request without it is byte-identical to one
 	// from before live prices.
 	RoutingPrices *PolicyRoutingPrices `json:"routing_prices,omitempty"`
+	// CacheContext is each recently served action's last call and its
+	// prompt cache (BuildPolicyCacheContext); nil omits it.
+	CacheContext *PolicyCacheContext `json:"cache_context,omitempty"`
 }
 
 // PolicyEpisodeModeRelaxed is the decide request's episode_mode for a relaxed
