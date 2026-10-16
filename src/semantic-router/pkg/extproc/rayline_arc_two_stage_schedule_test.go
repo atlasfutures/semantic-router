@@ -38,6 +38,7 @@ import (
 func asTwoStage(fixture *policySelectorFixture) {
 	scorer := newPolicyServiceScorer(&config.RouterConfig{}, fixture.decision)
 	scorer.twoStage = true
+	scorer.attestable = true // a model-unit stage one, as 0.6.3's
 	fixture.selector.arm(&raylineARCArmedComponents{
 		scorer:    scorer,
 		admission: raylinearc.NewAdmissionGate(0),
@@ -216,9 +217,12 @@ func TestTwoStageColdMidConversationTurnTakesTheDerivedHold(t *testing.T) {
 			}
 			continue
 		}
-		if len(calls) != 2 || len(calls[0].Selection.AvailableActionIDs) != 3 ||
-			!slices.Equal(calls[1].Selection.AvailableActionIDs, []string{bindings[2].ActionID}) {
-			t.Fatalf("two-stage: %d calls, offers %v; want the full offer refused, then the derived model", len(calls), offersOf(calls))
+		// A package that predates attested_held_action_id refuses the attested
+		// full offer too, and the turn is then held on the derived model.
+		if len(calls) != 3 || len(calls[0].Selection.AvailableActionIDs) != 3 ||
+			calls[1].Selection.AttestedHeldActionID == nil || len(calls[1].Selection.AvailableActionIDs) != 3 ||
+			!slices.Equal(calls[2].Selection.AvailableActionIDs, []string{bindings[2].ActionID}) {
+			t.Fatalf("two-stage: %d calls, offers %v; want the full offer refused, attested, then the derived model", len(calls), offersOf(calls))
 		}
 		if result.RaylineARC.PolicyActionID != bindings[2].ActionID {
 			t.Fatalf("two-stage: served %s, want the derived model's action", result.RaylineARC.PolicyActionID)
@@ -296,5 +300,84 @@ func TestPolicyScorerReadsTwoStageFromTheManifest(t *testing.T) {
 		if scorer := newPolicyServiceScorer(&config.RouterConfig{}, decision); scorer.twoStage != stageOne {
 			t.Fatalf("stage_one=%v: scorer.twoStage = %v", stageOne, scorer.twoStage)
 		}
+	}
+}
+
+// A package that reads attested_held_action_id (pathfinder c0dce29a) decides a
+// cold typed user turn itself: the re-ask keeps every action offered with the
+// session record's model attested, and the service's choice is served -- here
+// another model -- rather than VSR narrowing the offer (memex-desktop #7417).
+func TestTwoStageColdTypedTurnIsDecidedWithTheServedModelAttested(t *testing.T) {
+	fixture := newPolicySelectorFixture(t, config.RaylineARCModelScheduleTaskTurnCompaction)
+	asTwoStage(fixture)
+	bindings := fixture.decision.Algorithm.RaylineARC.PolicyService.Bindings
+	fixture.fake.refuseCold = func(request raylinearc.PolicyDecisionRequest) bool {
+		return request.Selection.AttestedHeldActionID == nil && len(request.Attribution) == 0
+	}
+	fixture.fake.chooseWith(func(request raylinearc.PolicyDecisionRequest) string {
+		return request.Selection.AvailableActionIDs[0] // a user-message decision that switches
+	})
+	state, _ := raylinearc.NewEpisodeState(2)
+	held := 0
+	state.PreviousArm, state.TurnIndex = &held, 2
+	state.Policy = &raylinearc.PolicyEpisodeState{PrefixDigest: raylinearc.MessagesDigest(nil, 0)}
+	result, err := fixture.selectWith(t, state, typedFollowUp(t), func(arc *selection.RaylineARCSelectionContext) {
+		arc.ServedModels = []selection.RaylineARCServedModel{{Source: derivedHoldSessionRecord, Model: "vendor/off"}}
+	})
+	if err != nil {
+		t.Fatalf("select: %v", err)
+	}
+	calls := fixture.fake.received()
+	if len(calls) != 2 || len(calls[1].Selection.AvailableActionIDs) != 3 ||
+		calls[1].Selection.AttestedHeldActionID == nil || *calls[1].Selection.AttestedHeldActionID != bindings[2].ActionID {
+		t.Fatalf("%d calls, offers %v; want the refusal, then the full offer with the served model attested", len(calls), offersOf(calls))
+	}
+	if calls[0].Selection.AttestedHeldActionID != nil {
+		t.Fatal("the first ask attested a model; only the re-ask after held_unknown does")
+	}
+	if result.RaylineARC.PolicyActionID != calls[1].Selection.AvailableActionIDs[0] {
+		t.Fatalf("served %s, want the service's decision", result.RaylineARC.PolicyActionID)
+	}
+}
+
+// Any refusal of the attested re-ask -- here invalid_request from a service
+// that rejects the field -- falls through to the narrowed re-ask: the
+// attested ask never serves worse than the old hold (SwiftWolf's #272 review).
+func TestTwoStageAttestedAskRefusedForAnyReasonFallsBackToTheNarrowedHold(t *testing.T) {
+	fixture := newPolicySelectorFixture(t, config.RaylineARCModelScheduleTaskTurnCompaction)
+	asTwoStage(fixture)
+	bindings := fixture.decision.Algorithm.RaylineARC.PolicyService.Bindings
+	model := map[string]string{}
+	for _, binding := range bindings {
+		model[binding.ActionID] = binding.Model
+	}
+	fixture.fake.rejectAttested = true
+	fixture.fake.refuseCold = func(request raylinearc.PolicyDecisionRequest) bool {
+		models := map[string]bool{}
+		for _, action := range request.Selection.AvailableActionIDs {
+			models[model[action]] = true
+		}
+		return len(models) > 1 && len(request.Attribution) == 0
+	}
+	fixture.fake.chooseWith(func(request raylinearc.PolicyDecisionRequest) string {
+		return request.Selection.AvailableActionIDs[0]
+	})
+	state, _ := raylinearc.NewEpisodeState(2)
+	held := 0
+	state.PreviousArm, state.TurnIndex = &held, 2
+	state.Policy = &raylinearc.PolicyEpisodeState{PrefixDigest: raylinearc.MessagesDigest(nil, 0)}
+	result, err := fixture.selectWith(t, state, typedFollowUp(t), func(arc *selection.RaylineARCSelectionContext) {
+		arc.ServedModels = []selection.RaylineARCServedModel{{Source: derivedHoldSessionRecord, Model: "vendor/off"}}
+	})
+	if err != nil {
+		t.Fatalf("select: %v", err)
+	}
+	calls := fixture.fake.received()
+	if len(calls) != 3 || calls[1].Selection.AttestedHeldActionID == nil || calls[2].Selection.AttestedHeldActionID != nil ||
+		!slices.Equal(calls[2].Selection.AvailableActionIDs, []string{bindings[2].ActionID}) {
+		t.Fatalf("%d calls, offers %v; want refused, attested (rejected), then narrowed to the derived model", len(calls), offersOf(calls))
+	}
+	if result.RaylineARC.PolicyActionID != bindings[2].ActionID {
+		t.Fatalf("served %s, want the derived model's action", result.RaylineARC.PolicyActionID)
 	}
 }

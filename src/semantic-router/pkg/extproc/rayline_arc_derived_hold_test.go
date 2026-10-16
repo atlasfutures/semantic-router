@@ -211,6 +211,11 @@ func TestDerivedHoldUsesTheLastServedModel(t *testing.T) {
 			if len(calls) != 2 || !slices.Equal(calls[1].Selection.AvailableActionIDs, []string{v5GLMNone, v5GLMUp}) {
 				t.Fatalf("decide calls = %d, retry offer %v", len(calls), calls[len(calls)-1].Selection.AvailableActionIDs)
 			}
+			// a package whose manifest does not declare a model-unit stage one
+			// is never attested: its retry is the narrowed hold, as before
+			if calls[1].Selection.AttestedHeldActionID != nil {
+				t.Fatal("a package without a model-unit stage one was attested")
+			}
 		})
 	}
 }
