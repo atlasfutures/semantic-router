@@ -594,15 +594,24 @@ func (transaction *raylineARCEpisodeTransaction) nextState() (*raylinearc.Episod
 	// The commit itself records the served model, ordered with it
 	// (raylinearc.ServedModelStore).
 	nextState.ServedModel = transaction.servedModel
+	// The arm's last completed call outlives a commit that made none (a
+	// decision-only consult): Commit replaces the arm's warmth.
+	var previousCall *raylinearc.CallCache
+	if arm := transaction.selectedArm; arm >= 0 && arm < len(nextState.Warmth) && nextState.Warmth[arm] != nil {
+		previousCall = nextState.Warmth[arm].Call
+	}
+	now := time.Now().UTC()
 	if err := nextState.Commit(
 		transaction.selectedArm,
 		transaction.serializedTokens,
-		time.Now().UTC(),
+		now,
 	); err != nil {
 		return nil, err
 	}
+	nextState.Warmth[transaction.selectedArm].Call = previousCall
 	if transaction.call.ActionID != "" && transaction.callCompleted {
 		call := transaction.call
+		call.CompletedAt = now
 		nextState.Warmth[transaction.selectedArm].Call = &call
 	}
 	return nextState, nil

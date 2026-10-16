@@ -44,6 +44,10 @@ const (
 type CallCache struct {
 	// ActionID is the policy-service action the call served.
 	ActionID string
+	// CompletedAt is when the call's response was complete. It is the
+	// call's own, not the warmth's LastUsed, which a decision-only consult
+	// also advances.
+	CompletedAt time.Time
 	// TTLSeconds and TTLSource are the cache_control TTL the call sent on the
 	// wire; 0 and "" when it stated none.
 	TTLSeconds int
@@ -74,7 +78,8 @@ type PolicyActionCache struct {
 }
 
 // BuildPolicyCacheContext is the cache_context for a decide at now: one
-// entry per arm whose last call completed within CacheContextWindow and
+// entry per arm whose last call completed (CallCache.CompletedAt) within
+// CacheContextWindow and
 // recorded the action it served, most recent first, at most
 // MaxCacheContextActions. armOf maps an action id to the arm the package
 // binds it to; an entry whose action the package does not bind to that arm
@@ -91,7 +96,7 @@ func BuildPolicyCacheContext(
 	}
 	candidates := make([]candidate, 0, len(warmth))
 	for arm, value := range warmth {
-		if value == nil || value.Call == nil || value.LastUsed.IsZero() || !lowerHex64(value.Call.ActionID) {
+		if value == nil || value.Call == nil || value.Call.CompletedAt.IsZero() || !lowerHex64(value.Call.ActionID) {
 			continue
 		}
 		if armOf == nil {
@@ -100,13 +105,13 @@ func BuildPolicyCacheContext(
 		if bound, ok := armOf(value.Call.ActionID); !ok || bound != arm {
 			continue
 		}
-		if now.Sub(value.LastUsed) > CacheContextWindow {
+		if now.Sub(value.Call.CompletedAt) > CacheContextWindow {
 			continue
 		}
 		candidates = append(candidates, candidate{arm: arm, warmth: value})
 	}
 	sort.SliceStable(candidates, func(i, j int) bool {
-		return candidates[i].warmth.LastUsed.After(candidates[j].warmth.LastUsed)
+		return candidates[i].warmth.Call.CompletedAt.After(candidates[j].warmth.Call.CompletedAt)
 	})
 	context := &PolicyCacheContext{Actions: make([]PolicyActionCache, 0, min(len(candidates), MaxCacheContextActions))}
 	seen := make(map[string]bool, len(candidates))
@@ -119,7 +124,7 @@ func BuildPolicyCacheContext(
 			continue
 		}
 		seen[call.ActionID] = true
-		context.Actions = append(context.Actions, actionCacheEntry(call, now.Sub(candidate.warmth.LastUsed)))
+		context.Actions = append(context.Actions, actionCacheEntry(call, now.Sub(call.CompletedAt)))
 	}
 	return context
 }

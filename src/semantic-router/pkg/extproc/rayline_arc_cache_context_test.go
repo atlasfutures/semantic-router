@@ -18,11 +18,11 @@ func TestPolicyDecideCarriesTheEpisodeCacheContext(t *testing.T) {
 	prompt, read := 1000, 900
 	state, _ := raylinearc.NewEpisodeState(2)
 	state.Warmth[0] = &raylinearc.WorkerWarmth{LastUsed: now.Add(-30 * time.Second), LastInputTokens: 700, Call: &raylinearc.CallCache{
-		ActionID: bindings[1].ActionID, TTLSeconds: 300, TTLSource: "anthropic cache_control ephemeral 5m",
+		ActionID: bindings[1].ActionID, CompletedAt: now.Add(-30 * time.Second), TTLSeconds: 300, TTLSource: "anthropic cache_control ephemeral 5m",
 		PromptTokens: &prompt, CacheReadTokens: &read,
 	}}
 	state.Warmth[1] = &raylinearc.WorkerWarmth{LastUsed: now.Add(-2 * time.Hour), LastInputTokens: 700, Call: &raylinearc.CallCache{
-		ActionID: bindings[2].ActionID,
+		ActionID: bindings[2].ActionID, CompletedAt: now.Add(-2 * time.Hour),
 	}}
 
 	if _, err := fixture.selectOn(t, state, policyTestRequest(t, map[string]any{"role": "user", "content": "go"})); err != nil {
@@ -62,7 +62,7 @@ func TestPolicyDecideRetryRefreshesTheCacheContext(t *testing.T) {
 	bindings := fixture.decision.Algorithm.RaylineARC.PolicyService.Bindings
 	start := time.Now().UTC().Add(-time.Minute)
 	state, _ := raylinearc.NewEpisodeState(2)
-	state.Warmth[0] = &raylinearc.WorkerWarmth{LastUsed: start, Call: &raylinearc.CallCache{ActionID: bindings[0].ActionID}}
+	state.Warmth[0] = &raylinearc.WorkerWarmth{LastUsed: start, Call: &raylinearc.CallCache{ActionID: bindings[0].ActionID, CompletedAt: start}}
 	if _, err := fixture.selectOn(t, state, policyTestRequest(t, map[string]any{"role": "user", "content": "go"})); err != nil {
 		t.Fatalf("select: %v", err)
 	}
@@ -142,7 +142,7 @@ func TestPolicyTurnCommitRecordsTheCall(t *testing.T) {
 	}
 
 	// A turn whose provider response was never read (a decision-only
-	// consult) records no call.
+	// consult) records no call of its own...
 	transaction = newTransaction()
 	transaction.call.ActionID = action
 	transaction.stageWireCacheTTL(300, "anthropic cache_control ephemeral 5m")
@@ -152,6 +152,19 @@ func TestPolicyTurnCommitRecordsTheCall(t *testing.T) {
 	}
 	if next.Warmth[1].Call != nil {
 		t.Fatalf("a turn with no completed call recorded %+v", next.Warmth[1].Call)
+	}
+	// ...and keeps the arm's last completed call, dated by its completion.
+	completed := time.Now().UTC().Add(-time.Minute)
+	earlier := &raylinearc.CallCache{ActionID: action, CompletedAt: completed, TTLSeconds: 300, TTLSource: "anthropic cache_control ephemeral 5m"}
+	transaction = newTransaction()
+	transaction.state.Warmth[1] = &raylinearc.WorkerWarmth{LastUsed: completed, Call: earlier}
+	transaction.call.ActionID = action
+	next, err = transaction.nextState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next.Warmth[1].Call != earlier || !next.Warmth[1].LastUsed.After(completed) {
+		t.Fatalf("a decision-only commit left call %+v, warmth %v", next.Warmth[1].Call, next.Warmth[1].LastUsed)
 	}
 
 	// No action (a turn outside policy mode) records no call.

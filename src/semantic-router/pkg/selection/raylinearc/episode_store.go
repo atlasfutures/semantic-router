@@ -451,6 +451,7 @@ type episodeWarmthWire struct {
 // record from before it reads as unknown.
 type episodeCallWire struct {
 	ActionID         string `json:"action_id"`
+	CompletedUnixMS  int64  `json:"completed_unix_ms"`
 	TTLSeconds       int    `json:"ttl_s,omitempty"`
 	TTLSource        string `json:"ttl_source,omitempty"`
 	PromptTokens     *int   `json:"prompt_tokens,omitempty"`
@@ -586,7 +587,7 @@ func marshalEpisodeState(
 		}
 		if call := warmth.Call; call != nil {
 			wire.Warmth[index].Call = &episodeCallWire{
-				ActionID: call.ActionID, TTLSeconds: call.TTLSeconds, TTLSource: call.TTLSource,
+				ActionID: call.ActionID, CompletedUnixMS: call.CompletedAt.UTC().UnixMilli(), TTLSeconds: call.TTLSeconds, TTLSource: call.TTLSource,
 				PromptTokens: call.PromptTokens, CacheReadTokens: call.CacheReadTokens, CacheWriteTokens: call.CacheWriteTokens,
 			}
 		}
@@ -746,7 +747,7 @@ func episodeStateFromWire(
 		}
 		if call := warmth.Call; call != nil {
 			state.Warmth[index].Call = &CallCache{
-				ActionID: call.ActionID, TTLSeconds: call.TTLSeconds, TTLSource: call.TTLSource,
+				ActionID: call.ActionID, CompletedAt: time.UnixMilli(call.CompletedUnixMS).UTC(), TTLSeconds: call.TTLSeconds, TTLSource: call.TTLSource,
 				PromptTokens: call.PromptTokens, CacheReadTokens: call.CacheReadTokens, CacheWriteTokens: call.CacheWriteTokens,
 			}
 		}

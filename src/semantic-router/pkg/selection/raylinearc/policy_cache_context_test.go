@@ -35,7 +35,8 @@ func identityArms(actionID string) (int, bool) {
 
 func servedWarmth(arm int, ago time.Duration, call CallCache) *WorkerWarmth {
 	call.ActionID = actionIDFor(arm)
-	return &WorkerWarmth{LastUsed: cacheContextNow.Add(-ago), LastInputTokens: 900, Call: &call}
+	call.CompletedAt = cacheContextNow.Add(-ago)
+	return &WorkerWarmth{LastUsed: call.CompletedAt, LastInputTokens: 900, Call: &call}
 }
 
 func encodeCacheContext(t *testing.T, context *PolicyCacheContext) map[string]interface{} {
@@ -405,13 +406,13 @@ func TestEpisodeRecordKeepsTheCallEvidence(t *testing.T) {
 		t.Fatal(err)
 	}
 	state.Warmth[0].Call = &CallCache{
-		ActionID: actionIDFor(0), TTLSeconds: 3600, TTLSource: wireTTLSourceEphemeral1h,
+		ActionID: actionIDFor(0), CompletedAt: cacheContextNow.Add(-time.Minute), TTLSeconds: 3600, TTLSource: wireTTLSourceEphemeral1h,
 		PromptTokens: intPtr(1800), CacheReadTokens: intPtr(0), CacheWriteTokens: nil,
 	}
 	if err := state.Commit(1, 500, cacheContextNow.Add(-time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	state.Warmth[1].Call = &CallCache{ActionID: actionIDFor(1)}
+	state.Warmth[1].Call = &CallCache{ActionID: actionIDFor(1), CompletedAt: cacheContextNow.Add(-time.Second)}
 	payload, err := marshalEpisodeState(state, 3, cacheContextNow)
 	if err != nil {
 		t.Fatal(err)
