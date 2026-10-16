@@ -82,6 +82,7 @@ func (r *OpenAIRouter) reportNonStreamingUsage(
 	completionLatency time.Duration,
 	usage responseUsageMetrics,
 ) {
+	ctx.RaylineARCTransaction.stageCallUsage(usage)
 	if usage.invalid {
 		// Nothing was counted, so every count is unreported and the usage
 		// record writes null for it. What the upstream charged still stands.

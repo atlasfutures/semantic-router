@@ -436,8 +436,20 @@ var thinkingPlacementCodes = map[thinkinglever.Placement]string{
 }
 
 type episodeWarmthWire struct {
-	LastUsedUnixMS  int64 `json:"last_used_unix_ms"`
-	LastInputTokens int   `json:"last_input_tokens"`
+	LastUsedUnixMS  int64            `json:"last_used_unix_ms"`
+	LastInputTokens int              `json:"last_input_tokens"`
+	Call            *episodeCallWire `json:"call,omitempty"`
+}
+
+// episodeCallWire is CallCache. Every member is omitted when unknown, so a
+// record from before it reads as unknown.
+type episodeCallWire struct {
+	ActionID         string `json:"action_id"`
+	TTLSeconds       int    `json:"ttl_s,omitempty"`
+	TTLSource        string `json:"ttl_source,omitempty"`
+	PromptTokens     *int   `json:"prompt_tokens,omitempty"`
+	CacheReadTokens  *int   `json:"cache_read_tokens,omitempty"`
+	CacheWriteTokens *int   `json:"cache_write_tokens,omitempty"`
 }
 
 func newEpisodeOwnerToken() (string, error) {
@@ -563,6 +575,12 @@ func marshalEpisodeState(
 			LastUsedUnixMS:  warmth.LastUsed.UTC().UnixMilli(),
 			LastInputTokens: warmth.LastInputTokens,
 		}
+		if call := warmth.Call; call != nil {
+			wire.Warmth[index].Call = &episodeCallWire{
+				ActionID: call.ActionID, TTLSeconds: call.TTLSeconds, TTLSource: call.TTLSource,
+				PromptTokens: call.PromptTokens, CacheReadTokens: call.CacheReadTokens, CacheWriteTokens: call.CacheWriteTokens,
+			}
+		}
 	}
 	payload, err := json.Marshal(wire)
 	if err != nil {
@@ -685,6 +703,12 @@ func episodeStateFromWire(
 		state.Warmth[index] = &WorkerWarmth{
 			LastUsed:        time.UnixMilli(warmth.LastUsedUnixMS).UTC(),
 			LastInputTokens: warmth.LastInputTokens,
+		}
+		if call := warmth.Call; call != nil {
+			state.Warmth[index].Call = &CallCache{
+				ActionID: call.ActionID, TTLSeconds: call.TTLSeconds, TTLSource: call.TTLSource,
+				PromptTokens: call.PromptTokens, CacheReadTokens: call.CacheReadTokens, CacheWriteTokens: call.CacheWriteTokens,
+			}
 		}
 	}
 	return state

@@ -36,6 +36,9 @@ const (
 type WorkerWarmth struct {
 	LastUsed        time.Time
 	LastInputTokens int
+	// Call is the cache evidence of the arm's last policy-service call; nil
+	// when it was not recorded (another mode, or a record older than it).
+	Call *CallCache
 }
 
 type EpisodeState struct {

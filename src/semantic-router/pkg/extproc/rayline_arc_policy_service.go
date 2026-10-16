@@ -589,6 +589,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		request.EpisodeMode = scorer.sideCallEpisodeMode(selector.now())
 	}
 	pricesStatus := attachRoutingPrices(armed.prices, &request)
+	request.CacheContext = raylinearc.BuildPolicyCacheContext(state.Warmth, selector.now(), scorer.actionArm)
 	// Admission is checked after the episode lease and before each service
 	// call, as the artifact mode checks it before encoding: a shed request
 	// answers 429 and never occupies the service. A slot is held for one
@@ -893,6 +894,12 @@ func (scorer *policyServiceScorer) cellOutWorkers(cellOut map[int]string) []map[
 		}
 	}
 	return routes
+}
+
+// actionArm is the worker the package binds actionID to.
+func (scorer *policyServiceScorer) actionArm(actionID string) (int, bool) {
+	binding, ok := scorer.bindings[actionID]
+	return binding.arm, ok
 }
 
 // armModel is the trained model a worker serves, read from its bindings.

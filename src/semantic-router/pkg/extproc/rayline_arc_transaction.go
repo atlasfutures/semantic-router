@@ -71,6 +71,11 @@ type raylineARCEpisodeTransaction struct {
 	// record, with the turn, which worker issued each block.
 	dispatchWorker  string
 	opaqueReasoning []string
+	// call is the cache evidence of this turn's policy-service call: the
+	// action it served, the TTL its dispatched body stated and the
+	// provider's usage. It is recorded on the served arm's warmth with the
+	// turn, and only when the action is known.
+	call raylinearc.CallCache
 	// upstreamPrefix is this turn's body shape, committed only with the turn.
 	upstreamPrefix *raylinearc.UpstreamPrefix
 	// controlPlacement is the thinking-control placer this turn advanced,
@@ -288,6 +293,7 @@ func stageRaylineARCPolicySelection(ctx *RequestContext, trace *selection.Raylin
 			served = worker
 		}
 		transaction.markServedModel(served)
+		transaction.call.ActionID = trace.PolicyActionID
 	}
 	if trace.PolicyBoundary == nil {
 		return
@@ -592,6 +598,10 @@ func (transaction *raylineARCEpisodeTransaction) nextState() (*raylinearc.Episod
 	); err != nil {
 		return nil, err
 	}
+	if transaction.call.ActionID != "" {
+		call := transaction.call
+		nextState.Warmth[transaction.selectedArm].Call = &call
+	}
 	return nextState, nil
 }
 
@@ -751,6 +761,36 @@ func boundedARCEpisodeFailure(err error) string {
 	default:
 		return "store"
 	}
+}
+
+// stageWireCacheTTL records the cache TTL the dispatched body stated.
+func (transaction *raylineARCEpisodeTransaction) stageWireCacheTTL(seconds int, source string) {
+	if transaction == nil {
+		return
+	}
+	transaction.call.TTLSeconds, transaction.call.TTLSource = seconds, source
+}
+
+// stageCallUsage records the provider-reported prompt and cache legs of the
+// turn's response. A count the provider did not report, or one the Router
+// estimated, stays unknown.
+func (transaction *raylineARCEpisodeTransaction) stageCallUsage(usage responseUsageMetrics) {
+	if transaction == nil {
+		return
+	}
+	transaction.call.PromptTokens, transaction.call.CacheReadTokens, transaction.call.CacheWriteTokens = nil, nil, nil
+	if usage.invalid || usage.estimated {
+		return
+	}
+	known := func(value int, reported bool) *int {
+		if !reported {
+			return nil
+		}
+		return &value
+	}
+	transaction.call.PromptTokens = known(usage.promptTokens, usage.promptTokensReported)
+	transaction.call.CacheReadTokens = known(usage.cachedPromptTokens, usage.cachedPromptTokensReported)
+	transaction.call.CacheWriteTokens = known(usage.cacheWriteTokens, usage.cacheWriteTokensReported)
 }
 
 func cloneARCState(
