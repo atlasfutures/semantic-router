@@ -109,6 +109,9 @@ func assertReferenceRaylineARCCoverage(t testingT, root map[string]interface{}) 
 	assertMapCoversStructFields(t, mustMapAt(t, artifact, "episode"), reflect.TypeOf(RaylineARCEpisodeConfig{}), "routing.decisions[].algorithm.rayline_arc.episode")
 	assertMapCoversStructFields(t, mustMapAt(t, artifact, "episode", "redis"), reflect.TypeOf(RaylineARCRedisConfig{}), "routing.decisions[].algorithm.rayline_arc.episode.redis")
 	assertMapCoversStructFields(t, mustMapAt(t, policy, "policy_service"), reflect.TypeOf(RaylineARCPolicyServiceConfig{}), "recipes[].routing.decisions[].algorithm.rayline_arc.policy_service")
+	assertMapCoversStructFields(t, mustMapAt(t, policy, "policy_service", "routing_prices"), reflect.TypeOf(RaylineARCRoutingPricesConfig{}), "recipes[].routing.decisions[].algorithm.rayline_arc.policy_service.routing_prices",
+		// credential_env belongs to auth bearer; the example uses google_id_token, which refuses it.
+		"credential_env")
 	assertSliceUnionCoversStructFields(t, mustMapAt(t, policy, "policy_service")["bindings"], reflect.TypeOf(RaylineARCPolicyBinding{}), "recipes[].routing.decisions[].algorithm.rayline_arc.policy_service.bindings")
 }
 

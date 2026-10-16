@@ -2007,6 +2007,28 @@ recipes:
                 fallback:
                   enabled: false
                   cell_exclusion_seconds: 0
+                # routing_prices (off when absent) attaches live per-model
+                # rates from a price feed to every decision request. A
+                # background fetch refreshes them refresh_ahead_seconds before
+                # ttl_seconds runs out; stale rates are sent up to
+                # max_age_seconds, then none, and the service scores with the
+                # package's prices. Enable it only once the policy service
+                # accepts routing_prices: an older service refuses the request.
+                # auth google_id_token sends a Google identity token minted by
+                # the metadata server for audience, as the runtime service
+                # account, which the feed must allowlist. audience is the
+                # feed's Cloud Run URL, and url must be on that same host: a
+                # Cloudflare or custom-domain front does not match the audience
+                # the feed checks. auth bearer instead sends the static token
+                # named by credential_env (credential_env: <ENV_NAME>).
+                routing_prices:
+                  url: https://routerproxy-example-uc.a.run.app/arc/routing-prices
+                  auth: google_id_token
+                  audience: https://routerproxy-example-uc.a.run.app
+                  ttl_seconds: 300
+                  refresh_ahead_seconds: 60
+                  max_age_seconds: 3600
+                  fetch_timeout_ms: 2000
                 # Each binding maps a package action to a worker. model, effort
                 # and reasoning_max_tokens declare what the action dispatches,
                 # as the package's catalog states it: model is the trained

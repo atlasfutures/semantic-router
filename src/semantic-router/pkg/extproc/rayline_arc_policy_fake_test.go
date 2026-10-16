@@ -38,7 +38,9 @@ type fakePolicyService struct {
 	// the packages listing names (pathfinder#3677); empty lists none.
 	listedFallbackActionID, listedFallbackModel string
 	// bodies are the decide request bodies as received, in order.
-	bodies   [][]byte
+	bodies [][]byte
+	// echo, when set, answers routing_prices_used.
+	echo     func(raylinearc.PolicyDecisionRequest) *raylinearc.PolicyRoutingPricesUsed
 	failWith string
 	// failDetail is the detail failWith answers with ({} when nil).
 	failDetail map[string]any
@@ -255,6 +257,9 @@ func (fake *fakePolicyService) decision(request raylinearc.PolicyDecisionRequest
 	}
 	nullRevision, ignoreEpisodeMode := fake.nullRevision, fake.ignoreEpisodeMode
 	response.PackageVerification = fake.verification
+	if fake.echo != nil {
+		response.RoutingPricesUsed = fake.echo(request)
+	}
 	fake.mu.Unlock()
 	response.Shadow = []raylinearc.PolicyShadowResult{}
 	available := make(map[string]bool, len(request.Selection.AvailableActionIDs))

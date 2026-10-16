@@ -1,0 +1,112 @@
+{
+  "schema_version": "rayline.arc-policy-package.v4",
+  "package_id": "8ab7bd3365a1d006667df2402b704197a807d381ddd9d77962c8cab68c592db2",
+  "serving_policy": {
+    "schema_version": "pathfinder.serving-policy.v1",
+    "policy_id": "f0203b98f859dced93cb2e0bb6b7d4acdf2fd00aef2d1a5d42215cc138874912",
+    "files": {
+      "policy.json": "89b73d7f849510a59cfe8dd9380ebf6e7ace4f72f7414f58721e8c1d8bd95819",
+      "candidate.pt": "9dcd07af41b3973eada83718ae0a7abac67f52fd78c7292b009d119719391a10",
+      "evidence.json": "b137e6fcdce72f43c2c56700149cfa056756a931d3d99d3dc82204081fb48f61"
+    }
+  },
+  "head": {
+    "file": "head.pt2",
+    "sha256": "975d15975eae32e09d39ab8156edcb08b0849f404a7ba4c364f1748340f0ba26",
+    "format": "torch.export",
+    "torch_version": "2.9.0",
+    "dynamic_dimensions": [
+      "blocks"
+    ]
+  },
+  "encoding_profile": {
+    "serializer": "arc-role-blocks-v1",
+    "projection": "pathfinder.input-projection.v1",
+    "tool_definitions": "include_recorded",
+    "encoder_model": "Qwen/Qwen3.5-0.8B",
+    "encoder_revision": "2fc06364715b967f1860aea9cf38778875588b17",
+    "dtype": "bfloat16",
+    "max_tokens": 262144,
+    "readout": "final_layer_block_last_token",
+    "dimension": 1024
+  },
+  "inference_package": {
+    "name": "rayline-router",
+    "source_digest": "d70a42423cc21804b8234c3ff8cb3d1a04817c0690dd1920f39e724a9d091ced"
+  },
+  "decision": {
+    "mode": "factored",
+    "selection": "supported_utility_or_reference_v1",
+    "horizon": "policy_continuation",
+    "cost_weight": 0.3,
+    "fallback_action_id": "569bf3701d341b1945954bf38e0686b23e404ab2a857983402706a40b2a0fad9",
+    "reference_action_ids": {
+      "opus": "569bf3701d341b1945954bf38e0686b23e404ab2a857983402706a40b2a0fad9"
+    },
+    "operating_bounds": {
+      "cost_weight": [
+        0.0,
+        1.0
+      ],
+      "max_quality_drop": null,
+      "quality_margin": null
+    },
+    "model_schedule": "task_turn_compaction_v1"
+  },
+  "actions": [
+    {
+      "action_id": "b779e919d4709c8bc766f1cc7b4228ed1cd8a5d1f230acfb2453e4f37df6e1f1",
+      "model": "z-ai/glm-5.3-flash",
+      "effort": "none",
+      "reasoning_max_tokens": null,
+      "level": "none",
+      "steering_suffix": "",
+      "trained_arm_ids": [
+        "4951fcf2b0d2c10050e8d69681e8deda04f2e3a7b5c3e8b2945bf291be9b9279"
+      ]
+    },
+    {
+      "action_id": "be83da527f7beb71e86f23fdcac94c8365ba49df2ae09050ba7e74958c6b1f90",
+      "model": "z-ai/glm-5.3-flash",
+      "effort": "none",
+      "reasoning_max_tokens": null,
+      "level": "up",
+      "steering_suffix": "Until the next steering instruction, reason more thoroughly before acting.",
+      "trained_arm_ids": [
+        "5e3f0015ba42b3d5b7cf75c47e678f9c7e2003ef8dbff89d7fd2881ac3d658cd"
+      ]
+    },
+    {
+      "action_id": "569bf3701d341b1945954bf38e0686b23e404ab2a857983402706a40b2a0fad9",
+      "model": "anthropic/claude-opus-5",
+      "effort": "medium",
+      "reasoning_max_tokens": null,
+      "level": null,
+      "steering_suffix": "",
+      "trained_arm_ids": [
+        "45cf59bbaf4ad832a4090d601b4ecb0ad0ce366750e9a58f96f123f5f9e85009"
+      ]
+    }
+  ],
+  "pricing": {
+    "scenario_id": "openrouter-example-20260928",
+    "pricing_identity": "fe81f9390ffe3dc8daa4888a7dc430ce4a41f164281d15449a24840a70b5f2c2",
+    "live_prices_affect_decisions": true
+  },
+  "calibration": null,
+  "goldens": {
+    "file": "goldens.jsonl",
+    "sha256": "532a32f73d888288722914d941783b51cf6bd2a0fb3549d672203bb7bbabd473",
+    "cases": 200,
+    "required_selection_parity": 1.0,
+    "score_tolerance": 0.0001
+  },
+  "provenance": {
+    "registry_id": "example-registry-id",
+    "hf_repo": "rayline-ai/router-artifacts",
+    "hf_path": "arc/example/fold0",
+    "hf_revision": "0000000000000000000000000000000000000000",
+    "dataset_id": "example-dataset",
+    "fold": 0
+  }
+}

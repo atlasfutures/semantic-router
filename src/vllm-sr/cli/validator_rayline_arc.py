@@ -280,22 +280,14 @@ def _validate_policy_service(name, policy) -> list[ValidationError]:
     """Mirror the Go loader's connection checks for the policy-service mode."""
     prefix = f"decisions.{name}.algorithm.rayline_arc.policy_service"
     errors: list[ValidationError] = []
-    parsed = urlparse(policy.base_url.strip())
-    if (
-        parsed.scheme not in ("http", "https")
-        or not parsed.netloc
-        or parsed.username
-        or parsed.password
-        or parsed.query
-        or parsed.fragment
-        or _byte_length(policy.base_url) > _MAX_BOUNDED_STRING_BYTES
-    ):
+    if not _valid_service_url(policy.base_url):
         errors.append(
             ValidationError(
                 "base_url must be an absolute HTTP(S) URL without credentials, a query, or a fragment",
                 field=f"{prefix}.base_url",
             )
         )
+    errors.extend(_routing_prices_errors(prefix, policy.routing_prices))
     errors.extend(
         _modal_pair_errors(prefix, policy.modal_key_env, policy.modal_secret_env)
     )
@@ -345,6 +337,51 @@ def _validate_policy_service(name, policy) -> list[ValidationError]:
                         field=f"{prefix}.fallback",
                     )
                 )
+    return errors
+
+
+def _valid_service_url(raw: str) -> bool:
+    """Mirror validateRaylineARCBaseURL: an absolute HTTP(S) URL without
+    credentials, a query, or a fragment, within the bounded string length."""
+    parsed = urlparse(raw.strip())
+    return not (
+        parsed.scheme not in ("http", "https")
+        or not parsed.netloc
+        or parsed.username
+        or parsed.password
+        or parsed.query
+        or parsed.fragment
+        or _byte_length(raw) > _MAX_BOUNDED_STRING_BYTES
+    )
+
+
+def _routing_prices_errors(prefix, prices) -> list[ValidationError]:
+    """Mirror validateRaylineARCRoutingPricesConfig's URL and credential checks."""
+    if prices is None:
+        return []
+    prefix = f"{prefix}.routing_prices"
+    errors: list[ValidationError] = []
+    if not _valid_service_url(prices.url):
+        errors.append(
+            ValidationError(
+                "url must be an absolute HTTP(S) URL without credentials, a query, or a fragment",
+                field=f"{prefix}.url",
+            )
+        )
+    if prices.audience and not _valid_service_url(prices.audience):
+        errors.append(
+            ValidationError(
+                "audience must be an absolute HTTP(S) URL without credentials, a query, or a fragment",
+                field=f"{prefix}.audience",
+            )
+        )
+    if prices.credential_env and not _ENV_NAME.fullmatch(prices.credential_env):
+        errors.append(
+            ValidationError(
+                "credential_env must name a valid environment variable",
+                field=f"{prefix}.credential_env",
+            )
+        )
     return errors
 
 

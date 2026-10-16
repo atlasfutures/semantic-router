@@ -40,6 +40,8 @@ const (
 	PolicyDecisionRequestSchema  = "rayline.arc.policy-decision-request.v1"
 	PolicyDecisionResponseSchema = "rayline.arc.policy-decision-response.v1"
 	PolicyPackagesSchema         = "rayline.arc.policy-packages.v1"
+
+	policyDecisionModeFactored = "factored"
 )
 
 type PolicyPackageRef struct {
@@ -234,17 +236,18 @@ func UnescapeHTMLEscapes(value []byte) []byte {
 // EncodePolicyDecisionRequest writes itself: encoding/json compacts whatever
 // a MarshalJSON returns, so the client's bytes cannot pass through it intact.
 type policyDecisionEnvelope struct {
-	SchemaVersion string              `json:"schema_version"`
-	Package       PolicyPackageRef    `json:"package"`
-	EpisodeIDHash string              `json:"episode_id_hash"`
-	ContextEpoch  string              `json:"context_epoch"`
-	RequestFormat string              `json:"request_format"`
-	Request       PolicyClientRequest `json:"-"`
-	Attribution   []PolicyAttribution `json:"attribution"`
-	Selection     PolicySelection     `json:"selection"`
-	Evaluation    *PolicyEvaluation   `json:"evaluation"`
-	Shadow        []PolicyPackageRef  `json:"shadow"`
-	EpisodeMode   string              `json:"episode_mode,omitempty"`
+	SchemaVersion string               `json:"schema_version"`
+	Package       PolicyPackageRef     `json:"package"`
+	EpisodeIDHash string               `json:"episode_id_hash"`
+	ContextEpoch  string               `json:"context_epoch"`
+	RequestFormat string               `json:"request_format"`
+	Request       PolicyClientRequest  `json:"-"`
+	Attribution   []PolicyAttribution  `json:"attribution"`
+	Selection     PolicySelection      `json:"selection"`
+	Evaluation    *PolicyEvaluation    `json:"evaluation"`
+	Shadow        []PolicyPackageRef   `json:"shadow"`
+	EpisodeMode   string               `json:"episode_mode,omitempty"`
+	RoutingPrices *PolicyRoutingPrices `json:"routing_prices,omitempty"`
 }
 
 // EncodePolicyDecisionRequest is the decide body: every field as json.Marshal
@@ -305,6 +308,11 @@ type PolicyDecisionRequest struct {
 	// served. Strict is the field's absence, the form every caller sent
 	// before it existed (pathfinder#3068).
 	EpisodeMode string `json:"episode_mode,omitempty"`
+	// RoutingPrices are live per-model rates from the routing price feed.
+	// Absent, the service scores with the package's prices; it is omitted
+	// rather than null so a request without it is byte-identical to one
+	// from before live prices.
+	RoutingPrices *PolicyRoutingPrices `json:"routing_prices,omitempty"`
 }
 
 // PolicyEpisodeModeRelaxed is the decide request's episode_mode for a relaxed
@@ -442,6 +450,9 @@ type PolicyDecisionResponse struct {
 	Shadow                   []PolicyShadowResult `json:"shadow"`
 	QualityParityEstablished bool                 `json:"quality_parity_established"`
 	PackageVerification      PolicyVerification   `json:"package_verification,omitempty"`
+	// RoutingPricesUsed echoes which prices scored the decision; the service
+	// sends it exactly when the request carried routing_prices.
+	RoutingPricesUsed *PolicyRoutingPricesUsed `json:"routing_prices_used,omitempty"`
 }
 
 type PolicyErrorResponse struct {
@@ -628,6 +639,17 @@ func (common *PolicyPackageCommon) checkProfileMembers(conversation string) erro
 	return nil
 }
 
+// checkLivePrices allows live_prices_affect_decisions only on a factored
+// package, in every manifest version: only a factored package ranks
+// price-free heads against priced usage, so only one can score the
+// request's routing_prices (Pathfinder's contract does the same).
+func (common *PolicyPackageCommon) checkLivePrices() error {
+	if common.Pricing.LivePricesAffectDecisions && common.Decision.Mode != policyDecisionModeFactored {
+		return fmt.Errorf("policy package live_prices_affect_decisions on a %q package", common.Decision.Mode)
+	}
+	return nil
+}
+
 // PolicyPackageCommon is every manifest section v4 and v5 share; v5 differs
 // only in its actions and thinking_controls_sha256.
 type PolicyPackageCommon struct {
@@ -701,9 +723,13 @@ type PolicyPackageCommon struct {
 		ModelSchedule      *string              `json:"model_schedule"`
 	} `json:"decision"`
 	Pricing struct {
-		ScenarioID                string `json:"scenario_id"`
-		PricingIdentity           string `json:"pricing_identity"`
-		LivePricesAffectDecisions bool   `json:"live_prices_affect_decisions"`
+		ScenarioID      string `json:"scenario_id"`
+		PricingIdentity string `json:"pricing_identity"`
+		// LivePricesAffectDecisions is the package's capability to score
+		// the request's routing_prices; live rates reach a decision only
+		// through the request. Either value is accepted: the router sends
+		// the same request, and the service's echo says what it used.
+		LivePricesAffectDecisions bool `json:"live_prices_affect_decisions"`
 	} `json:"pricing"`
 	Calibration json.RawMessage `json:"calibration"`
 	Goldens     *struct {
@@ -755,6 +781,9 @@ func DecodePolicyDecisionResponse(body []byte) (*PolicyDecisionResponse, error) 
 		return nil, fmt.Errorf("policy decision schema %q", response.SchemaVersion)
 	}
 	if err := requireOneSelected(response.Decision, response.Actions); err != nil {
+		return nil, err
+	}
+	if err := response.RoutingPricesUsed.validate(); err != nil {
 		return nil, err
 	}
 	for _, shadow := range response.Shadow {
@@ -821,8 +850,8 @@ func DecodePolicyPackageManifest(body []byte) (*PolicyPackageManifest, error) {
 	if manifest.SchemaVersion != PolicyPackageSchema {
 		return nil, fmt.Errorf("policy package schema %q", manifest.SchemaVersion)
 	}
-	if manifest.Pricing.LivePricesAffectDecisions {
-		return nil, fmt.Errorf("policy package lets live prices affect decisions")
+	if err := manifest.checkLivePrices(); err != nil {
+		return nil, err
 	}
 	if err := manifest.checkConversation(); err != nil {
 		return nil, err
@@ -846,8 +875,8 @@ func DecodePolicyPackageManifestV5(body []byte) (*PolicyPackageManifestV5, error
 	if manifest.SchemaVersion != PolicyPackageSchemaV5 {
 		return nil, fmt.Errorf("policy package schema %q", manifest.SchemaVersion)
 	}
-	if manifest.Pricing.LivePricesAffectDecisions {
-		return nil, fmt.Errorf("policy package lets live prices affect decisions")
+	if err := manifest.checkLivePrices(); err != nil {
+		return nil, err
 	}
 	if err := manifest.checkConversation(); err != nil {
 		return nil, err

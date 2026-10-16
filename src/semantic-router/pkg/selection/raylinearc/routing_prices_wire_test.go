@@ -1,0 +1,466 @@
+/*
+Copyright 2025 vLLM Semantic Router.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package raylinearc
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"reflect"
+	"strings"
+	"testing"
+)
+
+// testdata/routing_prices mirrors the live-prices contract's JSON examples
+// (feed, request routing_prices, response routing_prices_used, manifest
+// capability) on top of the pathfinder v1 fixtures.
+const routingPriceFixtures = "testdata/routing_prices"
+
+func readRoutingPriceFixture(t *testing.T, name string) []byte {
+	t.Helper()
+	body, err := os.ReadFile(filepath.Join(routingPriceFixtures, name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return body
+}
+
+func requireSameJSON(t *testing.T, name string, want []byte, got []byte) {
+	t.Helper()
+	var wantValue, gotValue any
+	if err := json.Unmarshal(want, &wantValue); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(got, &gotValue); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(wantValue, gotValue) {
+		t.Errorf("%s differs:\nwant %s\ngot  %s", name, want, got)
+	}
+}
+
+func TestRoutingPriceFixturesRoundTripStrictly(t *testing.T) {
+	cases := map[string]any{
+		"decision_request.v1.json":          &PolicyDecisionRequest{},
+		"decision_response_live.v1.json":    &PolicyDecisionResponse{},
+		"decision_response_package.v1.json": &PolicyDecisionResponse{},
+		// Pathfinder's golden fixtures, copied verbatim from its
+		// tests/fixtures/arc_policy_service (branch arc-live-prices).
+		"pathfinder_decision_response_routing_prices.v1.json": &PolicyDecisionResponse{},
+		"pathfinder_package_manifest.v4.live_prices.json":     &PolicyPackageManifest{},
+		"pathfinder_package_manifest.v5.live_prices.json":     &PolicyPackageManifestV5{},
+	}
+	for name, target := range cases {
+		body := readRoutingPriceFixture(t, name)
+		if err := decodeStrict(body, target); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		encoded, err := json.Marshal(target)
+		if err != nil {
+			t.Fatal(err)
+		}
+		requireSameJSON(t, name, body, encoded)
+	}
+}
+
+// Pathfinder's golden request's routing_prices round-trips strictly through
+// the router's type, so the router writes exactly the members the service
+// reads. The rest of that request is a relaxed-mode request (episode_mode),
+// which this router does not send, so only routing_prices is compared.
+func TestPathfinderGoldenRoutingPricesRoundTripStrictly(t *testing.T) {
+	var request map[string]json.RawMessage
+	if err := json.Unmarshal(readRoutingPriceFixture(t, "pathfinder_decision_request_routing_prices.v1.json"), &request); err != nil {
+		t.Fatal(err)
+	}
+	var prices PolicyRoutingPrices
+	if err := decodeStrict(request["routing_prices"], &prices); err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(prices)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requireSameJSON(t, "golden routing_prices", request["routing_prices"], encoded)
+}
+
+// The whole golden request decodes strictly and EncodePolicyDecisionRequest,
+// the decide body the client sends, writes it back: routing_prices travels
+// in the envelope beside episode_mode.
+func TestPathfinderGoldenRequestEncodesAsTheDecideBody(t *testing.T) {
+	body := readRoutingPriceFixture(t, "pathfinder_decision_request_routing_prices.v1.json")
+	var request PolicyDecisionRequest
+	if err := decodeStrict(body, &request); err != nil {
+		t.Fatal(err)
+	}
+	if request.RoutingPrices == nil || request.EpisodeMode != PolicyEpisodeModeRelaxed {
+		t.Fatalf("decoded %+v", request)
+	}
+	encoded, err := EncodePolicyDecisionRequest(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requireSameJSON(t, "golden decide body", body, encoded)
+}
+
+// The feed's models become the request's rates as they are: keyed by model
+// id, the four legs, validity window and source unchanged, nulls kept.
+func TestRoutingPriceFeedBecomesTheRequestRates(t *testing.T) {
+	feed, err := DecodeRoutingPriceFeed(readRoutingPriceFixture(t, "feed.v1.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var request map[string]json.RawMessage
+	if err = json.Unmarshal(readRoutingPriceFixture(t, "decision_request.v1.json"), &request); err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(feed.RequestPrices())
+	if err != nil {
+		t.Fatal(err)
+	}
+	requireSameJSON(t, "routing_prices", request["routing_prices"], encoded)
+}
+
+// Rates are keyed by the feed's model, the OpenRouter slug the package's arms
+// name, even when the entry also carries a billing_model, which is not
+// forwarded: keying by the billing-card id would match no arm. store_version
+// is opaque, so the feed's integer-as-string passes through unchanged.
+func TestRoutingPriceRatesKeyByModelNotBillingModel(t *testing.T) {
+	body := `{"schema": "arc-routing-prices.v1", "store_version": "17", "as_of": "2026-10-14T16:00:00.000Z",
+		"currency": "USD", "unit": "usd_per_million_tokens", "models": [
+		{"model": "anthropic/claude-opus-5", "billing_model": "claude-opus-5", "input": 5, "cache_read": 0.5,
+		 "cache_write": 6.25, "output": 25, "valid_from": "2026-10-14T00:00:00.000Z", "valid_until": null,
+		 "source": "openrouter:anthropic"}]}`
+	feed, err := DecodeRoutingPriceFeed([]byte(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	prices := feed.RequestPrices()
+	if _, ok := prices.Rates["anthropic/claude-opus-5"]; !ok || len(prices.Rates) != 1 || prices.StoreVersion != "17" {
+		t.Fatalf("rates keyed %v, store_version %q", prices.Rates, prices.StoreVersion)
+	}
+	encoded, err := json.Marshal(prices)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(encoded, []byte("billing_model")) || bytes.Contains(encoded, []byte(`"claude-opus-5"`)) {
+		t.Fatalf("billing model forwarded: %s", encoded)
+	}
+}
+
+// The feed's shape since memex-desktop#7372: each model carries higher_tier,
+// its long-prompt tier rates or null for a flat-rate model, and as_of is the
+// read's commit time in whole milliseconds. higher_tier is not part of the
+// request's rates (the contract's rate has no tier; the service falls back
+// an arm that carries a long-context tier), so it is accepted and dropped,
+// and a model the feed leaves out is simply absent: its arms keep their
+// package rates in the service, which is no error here.
+func TestRoutingPriceFeedWithHigherTierDecodes(t *testing.T) {
+	body := `{"schema": "arc-routing-prices.v1", "store_version": "42", "as_of": "2026-10-15T12:34:56.789Z",
+		"currency": "USD", "unit": "usd_per_million_tokens", "models": [
+		{"model": "google/gemini-3-pro", "input": 2, "cache_read": 0.2, "cache_write": null, "output": 12,
+		 "valid_from": "2026-10-01T00:00:00.000Z", "valid_until": null, "source": "openrouter:google",
+		 "billing_model": "gemini-3-pro",
+		 "higher_tier": {"input": 4, "cache_read": 0.4, "cache_write": null, "output": 18}},
+		{"model": "z-ai/glm-4.6", "input": 0.6, "cache_read": 0.11, "cache_write": null, "output": 2.2,
+		 "valid_from": "2026-10-01T00:00:00.000Z", "valid_until": null, "source": "openrouter:z-ai",
+		 "higher_tier": null}]}`
+	feed, err := DecodeRoutingPriceFeed([]byte(body))
+	if err != nil {
+		t.Fatalf("a feed with higher_tier was refused: %v", err)
+	}
+	prices := feed.RequestPrices()
+	if prices.AsOf != "2026-10-15T12:34:56.789Z" || prices.StoreVersion != "42" || len(prices.Rates) != 2 {
+		t.Fatalf("request prices: as_of %q, store_version %q, %d rates", prices.AsOf, prices.StoreVersion, len(prices.Rates))
+	}
+	if rate := prices.Rates["google/gemini-3-pro"]; rate.Input == nil || *rate.Input != 2 || rate.Output == nil || *rate.Output != 12 {
+		t.Fatalf("tiered model forwarded at %+v, want its base rates", rate)
+	}
+	encoded, err := json.Marshal(prices)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(encoded, []byte("higher_tier")) {
+		t.Fatalf("higher_tier forwarded: %s", encoded)
+	}
+	// The echo of a request whose feed left a package's model out names
+	// only the sent feed; a decision on it is recorded, not refused.
+	store, asOf := "42", "2026-10-15T12:34:56.789Z"
+	used := &PolicyRoutingPricesUsed{
+		Mode: RoutingPricesModeLive, StoreVersion: &store, AsOf: &asOf,
+		FallbackArms: []string{"anthropic/claude-opus-5@low"},
+	}
+	if err := used.validate(); err != nil {
+		t.Fatalf("an echo with a fallback arm for a model the feed left out: %v", err)
+	}
+}
+
+// An entry that omits a leg is not forwarded: the service keeps the package
+// rate for an omitted leg's arms but fills a null one, so writing the
+// omission as null would price those arms partly live.
+func TestRoutingPriceEntryWithAnOmittedLegIsNotForwarded(t *testing.T) {
+	body := `{"schema": "arc-routing-prices.v1", "store_version": "17", "as_of": "2026-10-14T16:00:00Z",
+		"currency": "USD", "unit": "usd_per_million_tokens", "models": [
+		{"model": "a/complete", "input": 1, "cache_read": null, "cache_write": null, "output": 2},
+		{"model": "a/partial", "input": 1, "cache_read": 0.1, "cache_write": 1.25}]}`
+	feed, err := DecodeRoutingPriceFeed([]byte(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rates := feed.RequestPrices().Rates
+	if _, ok := rates["a/complete"]; !ok {
+		t.Fatalf("an entry with null legs was dropped: %v", rates)
+	}
+	if _, ok := rates["a/partial"]; ok || len(rates) != 1 {
+		t.Fatalf("an entry with an omitted leg was forwarded: %v", rates)
+	}
+}
+
+// A request without live prices carries no routing_prices key at all, so it
+// stays byte-for-byte what the service accepted before.
+func TestPolicyDecisionRequestOmitsAbsentRoutingPrices(t *testing.T) {
+	var request PolicyDecisionRequest
+	if err := decodeStrict(readPolicyFixture(t, "decision_request.v1.json"), &request); err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(encoded, []byte("routing_prices")) {
+		t.Fatalf("request without prices encodes routing_prices: %s", encoded)
+	}
+	request.RoutingPrices = &PolicyRoutingPrices{
+		Schema: RoutingPricesSchema, StoreVersion: "v1", AsOf: "2026-10-14T16:00:00Z",
+		Rates: map[string]PolicyRoutingRate{"m": {}},
+	}
+	encoded, err = json.Marshal(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(encoded, []byte(`"routing_prices":{"schema":"arc-routing-prices.v1","store_version":"v1","as_of":"2026-10-14T16:00:00Z","rates":{"m":{"input":null,"cache_read":null,"cache_write":null,"output":null,"valid_from":null,"valid_until":null,"source":null}}}`)) {
+		t.Fatalf("request with prices encodes %s", encoded)
+	}
+}
+
+func TestDecodeRoutingPriceFeedRefusesWhatItCannotForward(t *testing.T) {
+	body := string(readRoutingPriceFixture(t, "feed.v1.json"))
+	if _, err := DecodeRoutingPriceFeed([]byte(strings.Replace(body, `"currency"`, `"surprise": 1, "currency"`, 1))); err != nil {
+		t.Fatalf("a feed with an added field was refused: %v", err)
+	}
+	cases := map[string][2]string{
+		"another schema":    {`"arc-routing-prices.v1"`, `"arc-routing-prices.v2"`},
+		"another unit":      {`"usd_per_million_tokens"`, `"usd_per_token"`},
+		"another currency":  {`"USD"`, `"EUR"`},
+		"no store version":  {`"v000000000042"`, `""`},
+		"a malformed as_of": {`"as_of": "2026-10-14T16:00:00Z"`, `"as_of": "yesterday"`},
+		// time.Parse accepts these two; the policy service refuses them.
+		"a comma fraction":     {`"as_of": "2026-10-14T16:00:00Z"`, `"as_of": "2026-10-14T16:00:00,5Z"`},
+		"a ten-digit fraction": {`"as_of": "2026-10-14T16:00:00Z"`, `"as_of": "2026-10-14T16:00:00.1234567891Z"`},
+		"year zero":            {`"as_of": "2026-10-14T16:00:00Z"`, `"as_of": "0000-10-14T16:00:00Z"`},
+		"a 24-hour offset":     {`"as_of": "2026-10-14T16:00:00Z"`, `"as_of": "2026-10-14T16:00:00+24:00"`},
+		"a 60-minute offset":   {`"as_of": "2026-10-14T16:00:00Z"`, `"as_of": "2026-10-14T16:00:00+23:60"`},
+		"a duplicate model":    {`"z-ai/glm-4.6"`, `"anthropic/claude-sonnet-4.5"`},
+		"an empty model id":    {`"z-ai/glm-4.6"`, `""`},
+		"a malformed expiry":   {`"valid_until": "2026-10-14T17:00:00Z"`, `"valid_until": "soon"`},
+		"a non-numeric rate":   {`"input": 3.0`, `"input": "3.0"`},
+		"a truncated payload":  {`]`, ``},
+	}
+	for name, edit := range cases {
+		changed := strings.Replace(body, edit[0], edit[1], 1)
+		if changed == body {
+			t.Fatalf("%s: fixture no longer contains %s", name, edit[0])
+		}
+		if _, err := DecodeRoutingPriceFeed([]byte(changed)); err == nil {
+			t.Errorf("a feed with %s was accepted", name)
+		}
+	}
+}
+
+func TestDecodePolicyDecisionResponseReadsTheRoutingPriceEcho(t *testing.T) {
+	old, err := DecodePolicyDecisionResponse(readPolicyFixture(t, "decision_response.v1.json"))
+	if err != nil || old.RoutingPricesUsed != nil {
+		t.Fatalf("pre-live-prices response: %+v, %v", old, err)
+	}
+	live, err := DecodePolicyDecisionResponse(readRoutingPriceFixture(t, "decision_response_live.v1.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if used := live.RoutingPricesUsed; used == nil || used.Mode != RoutingPricesModeLive ||
+		*used.StoreVersion != "v000000000042" || len(used.FallbackArms) != 1 {
+		t.Fatalf("live echo decoded as %+v", live.RoutingPricesUsed)
+	}
+	golden, err := DecodePolicyDecisionResponse(readRoutingPriceFixture(t, "pathfinder_decision_response_routing_prices.v1.json"))
+	if err != nil || golden.RoutingPricesUsed == nil || *golden.RoutingPricesUsed.StoreVersion != "rps-000000000017" ||
+		!reflect.DeepEqual(golden.RoutingPricesUsed.FilledLegs, map[string][]string{"z-ai/glm-5.3-flash": {"cache_write"}}) {
+		t.Fatalf("pathfinder golden echo: %+v, %v", golden.RoutingPricesUsed, err)
+	}
+	// Every leg in the contract's order, and an empty list, decode.
+	allLegs := strings.Replace(string(readRoutingPriceFixture(t, "decision_response_live.v1.json")),
+		`["cache_read", "cache_write"]`, `["input", "cache_read", "cache_write", "output"], "anthropic/claude-sonnet-4.5": []`, 1)
+	if _, err = DecodePolicyDecisionResponse([]byte(allLegs)); err != nil {
+		t.Fatalf("every leg in order was refused: %v", err)
+	}
+	// A service from before per-leg fill omits filled_legs: nothing filled.
+	var withoutFill map[string]any
+	if err = json.Unmarshal(readRoutingPriceFixture(t, "decision_response_live.v1.json"), &withoutFill); err != nil {
+		t.Fatal(err)
+	}
+	delete(withoutFill["routing_prices_used"].(map[string]any), "filled_legs")
+	older, _ := json.Marshal(withoutFill)
+	decodedOlder, err := DecodePolicyDecisionResponse(older)
+	if err != nil || decodedOlder.RoutingPricesUsed.FilledLegs == nil || len(decodedOlder.RoutingPricesUsed.FilledLegs) != 0 {
+		t.Fatalf("an echo without filled_legs: %+v, %v", decodedOlder, err)
+	}
+	pkg, err := DecodePolicyDecisionResponse(readRoutingPriceFixture(t, "decision_response_package.v1.json"))
+	if err != nil || pkg.RoutingPricesUsed == nil || pkg.RoutingPricesUsed.Mode != RoutingPricesModePackage {
+		t.Fatalf("package echo: %+v, %v", pkg, err)
+	}
+	pkgBody := string(readRoutingPriceFixture(t, "decision_response_package.v1.json"))
+	for _, field := range []string{`"store_version": "v000000000042"`, `"as_of": "2026-10-14T16:00:00Z"`} {
+		name := strings.SplitN(field, ":", 2)[0]
+		changed := strings.Replace(pkgBody, field, name+": null", 1)
+		if changed == pkgBody {
+			t.Fatalf("package fixture no longer contains %s", field)
+		}
+		if _, err := DecodePolicyDecisionResponse([]byte(changed)); err == nil {
+			t.Errorf("a package echo with a null %s was accepted", name)
+		}
+	}
+
+	body := string(readRoutingPriceFixture(t, "decision_response_live.v1.json"))
+	cases := map[string][2]string{
+		"an unknown mode":          {`"mode": "live"`, `"mode": "snapshot"`},
+		"a digest that is no hash": {`"digest": "3b4c`, `"digest": "XYZ`},
+		"a live echo, no version":  {`"store_version": "v000000000042"`, `"store_version": null`},
+		"a live echo, no as_of":    {`"as_of": "2026-10-14T16:00:00Z"`, `"as_of": null`},
+		"an unknown echo field":    {`"fallback_arms"`, `"surprise": 1, "fallback_arms"`},
+		"an empty fallback arm":    {`"fallback_arms": [`, `"fallback_arms": ["", `},
+		"an unknown filled leg":    {`["cache_read", "cache_write"]`, `["cache_read", "cache_miss"]`},
+		"filled legs out of order": {`["cache_read", "cache_write"]`, `["cache_write", "cache_read"]`},
+		"a repeated filled leg":    {`["cache_read", "cache_write"]`, `["cache_read", "cache_read"]`},
+		"an empty filled model":    {`"z-ai/glm-4.6": [`, `"": [`},
+		"a filled leg not a list":  {`["cache_read", "cache_write"]`, `"cache_read"`},
+	}
+	for name, edit := range cases {
+		changed := strings.Replace(body, edit[0], edit[1], 1)
+		if changed == body {
+			t.Fatalf("%s: fixture no longer contains %s", name, edit[0])
+		}
+		if _, err := DecodePolicyDecisionResponse([]byte(changed)); err == nil {
+			t.Errorf("a response with %s was accepted", name)
+		}
+	}
+}
+
+// A large package can fall back on over a thousand arms when the feed covers
+// few of their models; the service lists them all. The echo decodes, and
+// the ledger audit keeps the first few and the true count.
+func TestRoutingPriceEchoWithManyFallbackArmsDecodes(t *testing.T) {
+	var response map[string]any
+	if err := json.Unmarshal(readRoutingPriceFixture(t, "decision_response_live.v1.json"), &response); err != nil {
+		t.Fatal(err)
+	}
+	arms := make([]any, 1300)
+	for index := range arms {
+		arms[index] = fmt.Sprintf("%064x", index)
+	}
+	response["routing_prices_used"].(map[string]any)["fallback_arms"] = arms
+	body, err := json.Marshal(response)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := DecodePolicyDecisionResponse(body)
+	if err != nil {
+		t.Fatalf("an echo with 1300 fallback arms was refused: %v", err)
+	}
+	if len(decoded.RoutingPricesUsed.FallbackArms) != 1300 {
+		t.Fatalf("decoded %d fallback arms", len(decoded.RoutingPricesUsed.FallbackArms))
+	}
+	audit := NewPolicyPriceAudit(strings.Repeat("a", 64), decoded.RoutingPricesUsed, nil)
+	if err := audit.validate(); err != nil || audit.FallbackArmCount != 1300 ||
+		len(audit.FallbackArms) != maxPolicyAuditFallbackArms || audit.FallbackArms[0] != arms[0] {
+		t.Fatalf("audit %+v: %v", audit, err)
+	}
+}
+
+// live_prices_affect_decisions is itself the capability: Pathfinder's v4
+// live-prices manifest decodes with it recognized, a package-priced one
+// decodes with it off, and only a factored package may set it.
+func TestDecodePolicyPackageManifestRecognizesTheLivePricesCapability(t *testing.T) {
+	if manifest, err := DecodePolicyPackageManifest(readPolicyFixture(t, "package_manifest.v4.json")); err != nil ||
+		manifest.Pricing.LivePricesAffectDecisions {
+		t.Fatalf("package-priced manifest: %v", err)
+	}
+	body := readRoutingPriceFixture(t, "pathfinder_package_manifest.v4.live_prices.json")
+	manifest, err := DecodePolicyPackageManifest(body)
+	if err != nil || !manifest.Pricing.LivePricesAffectDecisions || manifest.Decision.Mode != "factored" {
+		t.Fatalf("live-priced manifest: %v", err)
+	}
+	learned := bytes.Replace(body, []byte(`"mode": "factored"`), []byte(`"mode": "learned"`), 1)
+	if bytes.Equal(learned, body) {
+		t.Fatal("fixture no longer names its decision mode")
+	}
+	if _, err = DecodePolicyPackageManifest(learned); err == nil {
+		t.Fatal("a learned package claiming live prices affect its decisions was accepted")
+	}
+	learnedOff := bytes.Replace(learned, []byte(`"live_prices_affect_decisions": true`), []byte(`"live_prices_affect_decisions": false`), 1)
+	if _, err = DecodePolicyPackageManifest(learnedOff); err != nil {
+		t.Fatalf("a learned package without live prices was refused: %v", err)
+	}
+	extra := bytes.Replace(body, []byte(`"live_prices_affect_decisions": true`),
+		[]byte(`"live_prices_affect_decisions": true, "external_routing_prices": true`), 1)
+	if _, err = DecodePolicyPackageManifest(extra); err == nil {
+		t.Fatal("a manifest naming external_routing_prices was accepted")
+	}
+}
+
+// Every manifest version VSR decodes takes the capability on a factored
+// package and refuses it on any other: Pathfinder's v5 live-prices manifest,
+// and the v6 fixture with the flag set.
+func TestLivePricesCapabilityHoldsAcrossManifestVersions(t *testing.T) {
+	v5 := readRoutingPriceFixture(t, "pathfinder_package_manifest.v5.live_prices.json")
+	manifest, err := DecodePolicyPackageManifestV5(v5)
+	if err != nil || !manifest.Pricing.LivePricesAffectDecisions || manifest.Decision.Mode != "factored" {
+		t.Fatalf("v5 live-priced manifest: %v", err)
+	}
+	if _, err = DecodePolicyPackageManifestV5OrLater(v5); err != nil {
+		t.Fatalf("v5-or-later refused the v5 live-priced manifest: %v", err)
+	}
+	learned := bytes.Replace(v5, []byte(`"mode": "factored"`), []byte(`"mode": "learned"`), 1)
+	if bytes.Equal(learned, v5) {
+		t.Fatal("v5 fixture no longer names its decision mode")
+	}
+	if _, err = DecodePolicyPackageManifestV5(learned); err == nil {
+		t.Fatal("a learned v5 package claiming live prices was accepted")
+	}
+	learnedOff := bytes.Replace(learned, []byte(`"live_prices_affect_decisions": true`), []byte(`"live_prices_affect_decisions": false`), 1)
+	if _, err = DecodePolicyPackageManifestV5(learnedOff); err != nil {
+		t.Fatalf("a learned v5 package without live prices was refused: %v", err)
+	}
+
+	v6 := manifestMap(t, policyV6Fixture)
+	v6["pricing"].(map[string]any)["live_prices_affect_decisions"] = true
+	if _, err = DecodePolicyPackageManifestV6(encodeManifest(t, v6)); err != nil {
+		t.Fatalf("a factored v6 package with live prices was refused: %v", err)
+	}
+	v6["decision"].(map[string]any)["mode"] = "learned"
+	if _, err = DecodePolicyPackageManifestV6(encodeManifest(t, v6)); err == nil {
+		t.Fatal("a learned v6 package claiming live prices was accepted")
+	}
+}

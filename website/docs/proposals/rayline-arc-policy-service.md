@@ -56,7 +56,9 @@ proposed ADR 0107):
 - `GET /v1/rayline/arc/policy/packages`: loaded packages by alias and hash.
   VSR refuses an alias that isn't loaded or whose hash differs from its config.
 - Policy package `rayline.arc-policy-package.v4`: it replaces the v3 manifest
-  and carries its prices. Live prices never change a decision.
+  and carries its prices. Live prices change a decision only on a package
+  whose manifest sets `pricing.live_prices_affect_decisions` (see "Live
+  routing prices"); every other package scores its own prices.
 
 `testdata/policy_service/` holds byte-identical copies of pathfinder's wire
 fixtures, with `SHA256SUMS`. `policy_service_wire.go` decodes them strictly.
@@ -254,6 +256,50 @@ that VSR compares as opaque strings. `action_id` is the one VSR recomputes, from
 a binding's declared dispatch.
 
 Every service error fails closed.
+
+## Live routing prices
+
+`policy_service.routing_prices` (off when absent) attaches live per-model
+rates to every decide request as `routing_prices`, so an eligible package
+(factored, with `pricing.live_prices_affect_decisions`) scores current
+provider prices instead of its exported ones. Pathfinder's
+`arc_serving_contract.md` ("Live routing prices") defines how the service
+maps them to arms, fills a null leg from the package, and falls back per arm.
+
+- **Feed.** VSR reads `GET <url>` (schema `arc-routing-prices.v1`, USD per
+  million tokens, keyed by OpenRouter model id) and forwards the rates as
+  served. It never maps them to arms. The feed is decoded strictly: a wrong
+  schema, currency or unit, an empty `store_version`, a duplicate model, or an
+  `as_of` or `valid_until` that is not RFC 3339 with an offset rejects the
+  whole response, and the last good copy stays in use. A model entry that
+  omits a leg (rather than writing it `null`) is not forwarded, so its arms
+  keep their package rates, as the service treats such an entry.
+- **Auth.** `auth: google_id_token` sends an identity token minted by the
+  metadata server for `audience`, the feed's own service URL; `url` must be
+  on that host, since a fronting domain does not match the audience the feed
+  checks. `auth: bearer` (or empty) sends the static token named by
+  `credential_env`; if that variable is unset, live prices stay off.
+- **Cache.** A background fetch refreshes the copy `refresh_ahead_seconds`
+  before `ttl_seconds` runs out. A request reads it as `fresh`, `stale` (past
+  the TTL, sent anyway) or `expired` (past `max_age_seconds`, not sent), or
+  `absent` before the first good fetch. Without rates the service scores the
+  package's prices, as before.
+- **Echo.** The service answers `routing_prices_used` exactly when the
+  request carried `routing_prices`. VSR fails the turn closed when the echo
+  is missing (`policy_prices_unechoed`), present for a request that sent
+  none (`policy_prices_unsent`), or names another `store_version`, `as_of`,
+  or a filled model the request did not send (`policy_prices_mismatch`).
+- **Audit.** Each main-turn ledger entry keeps the package hash, the mode,
+  the feed identity, the rates digest, the first few fallback arms and filled
+  models with their counts, and the selected action's predicted cost. The
+  selection log carries the same and the cache status. Prometheus counts
+  fetches by class, lookups by status, and decisions by mode.
+
+Rollout: enable `routing_prices` only after the policy service accepts the
+field (an older service refuses the request), and load a package re-exported
+with `live_prices_affect_decisions` for the prices to change decisions. An
+ineligible package still echoes `mode: package`, so the audit can be
+verified before any decision moves.
 
 ## Request formats
 

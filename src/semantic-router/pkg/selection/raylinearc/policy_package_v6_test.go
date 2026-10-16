@@ -211,8 +211,9 @@ func TestPolicyPackageProfilesDoNotCrossSchemas(t *testing.T) {
 // every other schema.
 func TestDecodePolicyPackageManifestV6SharesV5Checks(t *testing.T) {
 	for name, edit := range map[string]func(manifest map[string]any){
-		"live prices": func(m map[string]any) {
+		"live prices on a learned package": func(m map[string]any) {
 			m["pricing"].(map[string]any)["live_prices_affect_decisions"] = true
+			m["decision"].(map[string]any)["mode"] = "learned"
 		},
 		"no actions": func(m map[string]any) { m["actions"] = []any{} },
 		"repeated action": func(m map[string]any) {

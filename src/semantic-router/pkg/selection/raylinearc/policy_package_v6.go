@@ -58,9 +58,10 @@ type policyVision struct {
 }
 
 // DecodePolicyPackageManifestV6 decodes a v6 manifest into v5's shape. It
-// refuses unknown fields at every level, another schema, live prices, a
-// profile that is not the canonical_v2 image profile, and any action v5
-// would refuse. Bindings, readiness and dispatch are then exactly v5's.
+// refuses unknown fields at every level, another schema, live prices on a
+// package that is not factored, a profile that is not the canonical_v2 image
+// profile, and any action v5 would refuse. Bindings, readiness and dispatch
+// are then exactly v5's.
 func DecodePolicyPackageManifestV6(body []byte) (*PolicyPackageManifestV5, error) {
 	var manifest PolicyPackageManifestV5
 	if err := decodeStrict(body, &manifest); err != nil {
@@ -69,8 +70,8 @@ func DecodePolicyPackageManifestV6(body []byte) (*PolicyPackageManifestV5, error
 	if manifest.SchemaVersion != PolicyPackageSchemaV6 {
 		return nil, fmt.Errorf("policy package schema %q", manifest.SchemaVersion)
 	}
-	if manifest.Pricing.LivePricesAffectDecisions {
-		return nil, fmt.Errorf("policy package lets live prices affect decisions")
+	if err := manifest.checkLivePrices(); err != nil {
+		return nil, err
 	}
 	if err := manifest.checkImageProfile(); err != nil {
 		return nil, err

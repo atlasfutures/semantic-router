@@ -18,6 +18,7 @@ from cli.rayline_arc_config import (
     RaylineARCEpisodeConfig,
     RaylineARCPolicyFallbackConfig,
     RaylineARCRoutesAPIConfig,
+    RaylineARCRoutingPricesConfig,
 )
 from cli.validator_rayline_arc import (
     _effective_auto_model_names,
@@ -571,3 +572,71 @@ def test_rayline_arc_accepts_readiness_wait_within_its_bound():
         RaylineARCAlgorithmConfig.model_validate(
             {**base, "readiness_wait_seconds": 301}
         )
+
+
+def test_rayline_arc_cli_mirrors_policy_routing_prices():
+    assert _policy_service_decision().algorithm.rayline_arc.policy_service.routing_prices is None
+    prices = {
+        "url": "https://router-proxy.internal/arc/routing-prices",
+        "credential_env": "RAYLINE_ARC_ROUTING_PRICES_TOKEN",
+        "ttl_seconds": 300,
+        "refresh_ahead_seconds": 60,
+        "max_age_seconds": 3600,
+        "fetch_timeout_ms": 2000,
+    }
+    assert RaylineARCRoutingPricesConfig.model_validate(prices).ttl_seconds == 300
+    for field, value in (
+        ("refresh_ahead_seconds", 300),
+        ("max_age_seconds", 299),
+        ("fetch_timeout_ms", 30001),
+        ("surprise", 1),
+        ("auth", "oauth"),
+        ("audience", "https://feed.example"),
+    ):
+        with pytest.raises(ValidationError):
+            RaylineARCRoutingPricesConfig.model_validate({**prices, field: value})
+
+    id_token = {
+        **{k: v for k, v in prices.items() if k != "credential_env"},
+        "auth": "google_id_token",
+        "audience": "https://routerproxy-abc123-uc.a.run.app",
+    }
+    assert RaylineARCRoutingPricesConfig.model_validate(id_token).auth == "google_id_token"
+    for changed in (
+        {"audience": ""},
+        {"credential_env": "RAYLINE_ARC_ROUTING_PRICES_TOKEN"},
+    ):
+        with pytest.raises(ValidationError):
+            RaylineARCRoutingPricesConfig.model_validate({**id_token, **changed})
+
+
+def test_rayline_arc_cli_checks_routing_prices_urls():
+    prices = {
+        "url": "https://feed.example/arc/routing-prices",
+        "credential_env": "RAYLINE_ARC_ROUTING_PRICES_TOKEN",
+        "ttl_seconds": 300,
+        "max_age_seconds": 3600,
+        "fetch_timeout_ms": 2000,
+    }
+    decision = _policy_service_decision()
+    policy = decision.algorithm.rayline_arc.policy_service
+    policy.routing_prices = RaylineARCRoutingPricesConfig.model_validate(prices)
+    assert _validate_rayline_arc_decision(decision) == []
+    for changed, field in (
+        ({"url": "not-a-url"}, "routing_prices.url"),
+        ({"url": "https://feed.example/p?x=1"}, "routing_prices.url"),
+        ({"credential_env": "1BAD-NAME"}, "routing_prices.credential_env"),
+        (
+            {
+                "credential_env": "",
+                "auth": "google_id_token",
+                "audience": "feed.example",
+            },
+            "routing_prices.audience",
+        ),
+    ):
+        policy.routing_prices = RaylineARCRoutingPricesConfig.model_validate(
+            {**prices, **changed}
+        )
+        errors = _validate_rayline_arc_decision(decision)
+        assert any(error.field.endswith(field) for error in errors), (field, errors)
