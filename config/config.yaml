@@ -1990,6 +1990,10 @@ recipes:
                 # side calls and compactions.
                 # None is forwarded upstream.
                 trust_turn_signal_headers: false
+                # cache_context sends each decide the episode's recent calls
+                # and their prompt caches. Only for a policy service built at
+                # or after pathfinder 204d287ec4, which refuses it otherwise.
+                cache_context: false
                 # trained_models declares, per bound worker, the trained model
                 # it serves (a v5 action's model, e.g. claude-opus-5); a binding
                 # whose worker declares another is refused. v5 and v6 only.

@@ -89,6 +89,8 @@ type policyServiceScorer struct {
 	// episodeMode is the decide request's episode_mode: empty (strict) or
 	// relaxed.
 	episodeMode string
+	// cacheContext sends the episode's cache evidence on each decide.
+	cacheContext bool
 	// sideStrictUntil (unix nanoseconds) is how long a strict cell sends its
 	// side calls strict after the service last showed it cannot serve them
 	// relaxed; zero or past means relaxed.
@@ -166,6 +168,8 @@ func newPolicyServiceScorer(
 		alias:      policy.PackageAlias,
 		sha256:     policy.PackageSHA256,
 		bindings:   make(map[string]policyBinding, len(policy.Bindings)),
+		// Off, the decide request carries no cache_context, as before it.
+		cacheContext: policy.CacheContext,
 	}
 	if decision.Algorithm.RaylineARC.Episode.RelaxedConsistency() {
 		scorer.episodeMode = raylinearc.PolicyEpisodeModeRelaxed
@@ -592,6 +596,9 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	// The episode's cache evidence is read at each call, so a retry's gaps
 	// are as of that call, on the wall clock the commit dates warmth by.
 	withCacheContext := func(request *raylinearc.PolicyDecisionRequest) {
+		if !scorer.cacheContext {
+			return
+		}
 		request.CacheContext = raylinearc.BuildPolicyCacheContext(state.Warmth, time.Now().UTC(), scorer.actionArm)
 	}
 	// Admission is checked after the episode lease and before each service

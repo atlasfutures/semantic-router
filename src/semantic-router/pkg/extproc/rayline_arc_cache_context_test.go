@@ -1,17 +1,57 @@
 package extproc
 
 import (
+	"bytes"
 	"encoding/json"
 	"testing"
 	"time"
 
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
+
+// sendingCacheContext turns the cell's cache_context switch on.
+func sendingCacheContext(fixture *policySelectorFixture) *policySelectorFixture {
+	fixture.decision.Algorithm.RaylineARC.PolicyService.CacheContext = true
+	armed := *fixture.selector.armed.Load()
+	armed.scorer = newPolicyServiceScorer(&config.RouterConfig{}, fixture.decision)
+	fixture.selector.arm(&armed)
+	return fixture
+}
+
+// Off (the default), the decide body has no cache_context member at all, as
+// a service before the field requires; on, it has one. The evidence the
+// commit records is the same either way.
+func TestPolicyDecideSendsCacheContextOnlyWhenTheCellOptsIn(t *testing.T) {
+	for _, on := range []bool{false, true} {
+		fixture := newPolicySelectorFixture(t, "")
+		if on {
+			sendingCacheContext(fixture)
+		}
+		bindings := fixture.decision.Algorithm.RaylineARC.PolicyService.Bindings
+		fixture.fake.chooseWith(func(raylinearc.PolicyDecisionRequest) string { return bindings[0].ActionID })
+		state, _ := raylinearc.NewEpisodeState(2)
+		state.Warmth[0] = &raylinearc.WorkerWarmth{LastUsed: time.Now().UTC(), Call: &raylinearc.CallCache{
+			ActionID: bindings[0].ActionID, CompletedAt: time.Now().UTC(),
+		}}
+		if _, err := fixture.selectOn(t, state, policyTestRequest(t, map[string]any{"role": "user", "content": "go"})); err != nil {
+			t.Fatalf("select: %v", err)
+		}
+		var body map[string]json.RawMessage
+		if err := json.Unmarshal(fixture.fake.receivedBodies()[0], &body); err != nil {
+			t.Fatal(err)
+		}
+		member, present := body["cache_context"]
+		if present != on || on && !bytes.Contains(member, []byte(bindings[0].ActionID)) {
+			t.Fatalf("switch %v: cache_context present=%v %s", on, present, member)
+		}
+	}
+}
 
 // The decide request carries each recently served action's last call, read
 // from the episode's warmth; an arm served over an hour ago is left out.
 func TestPolicyDecideCarriesTheEpisodeCacheContext(t *testing.T) {
-	fixture := newPolicySelectorFixture(t, "")
+	fixture := sendingCacheContext(newPolicySelectorFixture(t, ""))
 	bindings := fixture.decision.Algorithm.RaylineARC.PolicyService.Bindings
 	fixture.fake.chooseWith(func(raylinearc.PolicyDecisionRequest) string { return bindings[1].ActionID })
 	now := time.Now().UTC()
@@ -57,7 +97,7 @@ func TestPolicyDecideCarriesTheEpisodeCacheContext(t *testing.T) {
 // A session_busy retry reads the episode again, so each call's gaps are as
 // of that call.
 func TestPolicyDecideRetryRefreshesTheCacheContext(t *testing.T) {
-	fixture := busyFixture(t)
+	fixture := sendingCacheContext(busyFixture(t))
 	fixture.fake.failFirstCalls("session_busy", 2)
 	bindings := fixture.decision.Algorithm.RaylineARC.PolicyService.Bindings
 	start := time.Now().UTC().Add(-time.Minute)
@@ -82,7 +122,7 @@ func TestPolicyDecideRetryRefreshesTheCacheContext(t *testing.T) {
 
 // A first turn sends an empty list: the field is on every decide.
 func TestPolicyDecideSendsAnEmptyCacheContextOnAFreshEpisode(t *testing.T) {
-	fixture := newPolicySelectorFixture(t, "")
+	fixture := sendingCacheContext(newPolicySelectorFixture(t, ""))
 	bindings := fixture.decision.Algorithm.RaylineARC.PolicyService.Bindings
 	fixture.fake.chooseWith(func(raylinearc.PolicyDecisionRequest) string { return bindings[0].ActionID })
 	state, _ := raylinearc.NewEpisodeState(2)

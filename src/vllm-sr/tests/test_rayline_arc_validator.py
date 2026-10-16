@@ -382,6 +382,22 @@ def test_rayline_arc_cli_accepts_a_policy_service_decision():
     assert _validate_rayline_arc_decision(_policy_service_decision()) == []
 
 
+def test_rayline_arc_cli_mirrors_the_cache_context_switch():
+    # Off unless a cell opts in, as in the Go loader; a non-bool is refused.
+    decision = _policy_service_decision()
+    assert decision.algorithm.rayline_arc.policy_service.cache_context is False
+    policy = decision.algorithm.rayline_arc.policy_service.model_dump()
+    policy["cache_context"] = True
+    assert RaylineARCAlgorithmConfig.model_validate(
+        {**decision.algorithm.rayline_arc.model_dump(), "policy_service": policy}
+    ).policy_service.cache_context
+    policy["cache_context"] = "sometimes"
+    with pytest.raises(ValidationError):
+        RaylineARCAlgorithmConfig.model_validate(
+            {**decision.algorithm.rayline_arc.model_dump(), "policy_service": policy}
+        )
+
+
 def test_rayline_arc_cli_refuses_a_policy_mode_close_header():
     errors = _validate_rayline_arc_decision(
         _policy_service_decision(close_header="x-rayline-episode-close")
