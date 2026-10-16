@@ -163,6 +163,99 @@ func TestRoutingPriceRatesKeyByModelNotBillingModel(t *testing.T) {
 	}
 }
 
+// A model the feed lists at two endpoints (a standard endpoint and its flex
+// twin, memex-desktop#7457) is keyed per endpoint, "<model>@<endpoint_tag>";
+// a model at one endpoint keeps its bare id, tagged or not, so today's
+// packages and services read it as before.
+func TestRoutingPriceRatesKeyAModelAtSeveralEndpointsByEndpoint(t *testing.T) {
+	body := `{"schema": "arc-routing-prices.v1", "store_version": "18", "as_of": "2026-10-16T12:00:00.000Z",
+		"currency": "USD", "unit": "usd_per_million_tokens", "models": [
+		{"model": "openai/gpt-luna", "endpoint_tag": "openai", "billing_model": "gpt-luna", "input": 3,
+		 "cache_read": 0.3, "cache_write": 0, "output": 15, "valid_from": "2026-10-16T00:00:00.000Z",
+		 "valid_until": null, "source": "openrouter:openai", "higher_tier": null},
+		{"model": "openai/gpt-luna", "endpoint_tag": "openai/flex", "billing_model": "gpt-luna-flex", "input": 1.5,
+		 "cache_read": 0.15, "cache_write": 0, "output": 7.5, "valid_from": "2026-10-16T00:00:00.000Z",
+		 "valid_until": null, "source": "openrouter:openai/flex", "higher_tier": null},
+		{"model": "anthropic/claude-opus-5", "endpoint_tag": "anthropic", "billing_model": "claude-opus-5",
+		 "input": 5, "cache_read": 0.5, "cache_write": 6.25, "output": 25, "valid_from": "2026-10-16T00:00:00.000Z",
+		 "valid_until": null, "source": "openrouter:anthropic", "higher_tier": null},
+		{"model": "z-ai/glm-4.6", "input": 0.6, "cache_read": null, "cache_write": null, "output": 2.2}]}`
+	feed, err := DecodeRoutingPriceFeed([]byte(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rates := feed.RequestPrices().Rates
+	want := map[string]float64{
+		"openai/gpt-luna@openai": 3, "openai/gpt-luna@openai/flex": 1.5,
+		"anthropic/claude-opus-5": 5, "z-ai/glm-4.6": 0.6,
+	}
+	if len(rates) != len(want) {
+		t.Fatalf("rates keyed %v, want %v", rates, want)
+	}
+	for key, input := range want {
+		if rate, ok := rates[key]; !ok || rate.Input == nil || *rate.Input != input {
+			t.Fatalf("rate %q = %+v, want input %v", key, rate, input)
+		}
+	}
+	if RoutingPriceRateKey("openai/gpt-luna", "openai/flex") != "openai/gpt-luna@openai/flex" {
+		t.Fatal("tagged rate key form changed")
+	}
+	encoded, err := json.Marshal(feed.RequestPrices())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(encoded, []byte("endpoint_tag")) {
+		t.Fatalf("endpoint_tag forwarded beside the key: %s", encoded)
+	}
+	// The service echoes filled legs by the key it read.
+	store, asOf := "18", "2026-10-16T12:00:00.000Z"
+	used := &PolicyRoutingPricesUsed{
+		Mode: RoutingPricesModeLive, StoreVersion: &store, AsOf: &asOf, FallbackArms: []string{},
+		FilledLegs: map[string][]string{
+			RoutingPriceRateKey(strings.Repeat("m", maxRoutingPriceModelIDBytes), strings.Repeat("t", maxRoutingPriceEndpointTagBytes)): {"cache_write"},
+		},
+	}
+	if err := used.validate(); err != nil {
+		t.Fatalf("an echo filling the longest tagged key: %v", err)
+	}
+	used.FilledLegs = map[string][]string{strings.Repeat("m", MaxRoutingPriceRateKeyBytes+1): {"cache_write"}}
+	if err := used.validate(); err == nil {
+		t.Fatal("an echo filling an over-long key was accepted")
+	}
+}
+
+// One endpoint listed twice, an untagged entry beside a tagged one of the
+// same model, an empty tag, and a model id holding the key separator would
+// each make a rate key ambiguous, so the feed is refused.
+func TestDecodeRoutingPriceFeedRefusesAmbiguousEndpoints(t *testing.T) {
+	entry := func(model string, tag string) string {
+		tagField := ""
+		if tag != "-" {
+			tagField = fmt.Sprintf(`"endpoint_tag": %q, `, tag)
+		}
+		return fmt.Sprintf(`{"model": %q, %s"input": 1, "cache_read": 0.1, "cache_write": 1, "output": 2}`, model, tagField)
+	}
+	feed := func(entries ...string) []byte {
+		return []byte(`{"schema": "arc-routing-prices.v1", "store_version": "18", "as_of": "2026-10-16T12:00:00Z",
+			"currency": "USD", "unit": "usd_per_million_tokens", "models": [` + strings.Join(entries, ",") + `]}`)
+	}
+	if _, err := DecodeRoutingPriceFeed(feed(entry("a/m", "x"), entry("a/m", "x/flex"), entry("b/m", "-"))); err != nil {
+		t.Fatalf("a model at two endpoints was refused: %v", err)
+	}
+	for name, body := range map[string][]byte{
+		"one endpoint twice":            feed(entry("a/m", "x"), entry("a/m", "x")),
+		"an untagged model twice":       feed(entry("a/m", "-"), entry("a/m", "-")),
+		"an untagged and a tagged one":  feed(entry("a/m", "-"), entry("a/m", "x/flex")),
+		"an empty endpoint tag":         feed(entry("a/m", "")),
+		"an over-long endpoint tag":     feed(entry("a/m", strings.Repeat("t", maxRoutingPriceEndpointTagBytes+1))),
+		"a model id with the separator": feed(entry("a/m@x", "-")),
+	} {
+		if _, err := DecodeRoutingPriceFeed(body); err == nil {
+			t.Errorf("a feed with %s was accepted", name)
+		}
+	}
+}
+
 // The feed's shape since memex-desktop#7372: each model carries higher_tier,
 // its long-prompt tier rates or null for a flat-rate model, and as_of is the
 // read's commit time in whole milliseconds. higher_tier is not part of the

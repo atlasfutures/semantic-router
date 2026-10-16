@@ -19,14 +19,15 @@ package raylinearc
 // Wire types for ARC live routing prices: the price feed this router reads,
 // the routing_prices it attaches to a policy decision request, and the
 // routing_prices_used echo the service answers with. The feed's per-model
-// rates are forwarded as they are, keyed by provider model id; this router
-// never maps them to trained arms, which is the service's job.
+// rates are forwarded as they are, keyed by rate key (RoutingPriceRateKey);
+// this router never maps them to trained arms, which is the service's job.
 
 import (
 	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
+	"strings"
 	"time"
 )
 
@@ -43,10 +44,17 @@ const (
 	maxRoutingPriceStoreVersionBytes = 256
 	maxRoutingPriceTimestampBytes    = 64
 	maxRoutingPriceModelIDBytes      = 256
-	// MaxRoutingPriceModelIDBytes is the longest model id the feed and the
-	// echo may name.
-	MaxRoutingPriceModelIDBytes = maxRoutingPriceModelIDBytes
-	maxRoutingPriceModels       = 4096
+	maxRoutingPriceEndpointTagBytes  = 128
+	// MaxRoutingPriceRateKeyBytes is the longest rate key the request and
+	// the echo may name: a model id, or a model id and endpoint tag joined
+	// by RoutingPriceEndpointSeparator.
+	MaxRoutingPriceRateKeyBytes = maxRoutingPriceModelIDBytes + len(RoutingPriceEndpointSeparator) +
+		maxRoutingPriceEndpointTagBytes
+	maxRoutingPriceModels = 4096
+	// RoutingPriceEndpointSeparator joins a model id and an endpoint tag in
+	// a tagged rate key. No OpenRouter id contains it, and the feed may not
+	// name one that does, so a tagged key never equals a model id.
+	RoutingPriceEndpointSeparator = "@"
 	// maxRoutingPriceFallbackArms is only a safety bound: the service lists
 	// every arm that fell back, unbounded, and a package can price over a
 	// thousand arms, most of which fall back when the feed covers few of
@@ -55,17 +63,21 @@ const (
 	maxRoutingPriceFallbackArms = 65_536
 )
 
-// RoutingPriceFeedModel is one model's effective rates at the feed's as_of,
-// in USD per million tokens. A leg the source does not know is null.
+// RoutingPriceFeedModel is one model endpoint's effective rates at the
+// feed's as_of, in USD per million tokens. A leg the source does not know is
+// null. An entry is one (model, endpoint_tag): the OpenRouter id and the
+// OpenRouter endpoint the rates are read at, null from a feed that predates
+// the tag (memex-desktop#7457).
 type RoutingPriceFeedModel struct {
-	Model      string   `json:"model"`
-	Input      *float64 `json:"input"`
-	CacheRead  *float64 `json:"cache_read"`
-	CacheWrite *float64 `json:"cache_write"`
-	Output     *float64 `json:"output"`
-	ValidFrom  *string  `json:"valid_from"`
-	ValidUntil *string  `json:"valid_until"`
-	Source     *string  `json:"source"`
+	Model       string   `json:"model"`
+	EndpointTag *string  `json:"endpoint_tag"`
+	Input       *float64 `json:"input"`
+	CacheRead   *float64 `json:"cache_read"`
+	CacheWrite  *float64 `json:"cache_write"`
+	Output      *float64 `json:"output"`
+	ValidFrom   *string  `json:"valid_from"`
+	ValidUntil  *string  `json:"valid_until"`
+	Source      *string  `json:"source"`
 	// legsPresent is whether the entry wrote all four legs, null or not.
 	// The service fills a null leg from the package but takes an omitted
 	// one as a malformed entry, so the request must not turn one into the
@@ -159,31 +171,76 @@ func DecodeRoutingPriceFeed(body []byte) (*RoutingPriceFeed, error) {
 		if model.Model == "" || len(model.Model) > maxRoutingPriceModelIDBytes {
 			return nil, errors.New("routing price feed model id is empty or too long")
 		}
-		if seen[model.Model] {
-			return nil, fmt.Errorf("routing price feed lists model %q twice", model.Model)
+		if strings.Contains(model.Model, RoutingPriceEndpointSeparator) {
+			return nil, fmt.Errorf("routing price feed model id %q contains %q", model.Model, RoutingPriceEndpointSeparator)
 		}
-		seen[model.Model] = true
+		if model.EndpointTag != nil && (*model.EndpointTag == "" || len(*model.EndpointTag) > maxRoutingPriceEndpointTagBytes) {
+			return nil, errors.New("routing price feed endpoint_tag is empty or too long")
+		}
+		endpoint := model.Model + RoutingPriceEndpointSeparator
+		if model.EndpointTag != nil {
+			endpoint += *model.EndpointTag
+		}
+		if seen[endpoint] {
+			return nil, fmt.Errorf("routing price feed lists model %q at one endpoint twice", model.Model)
+		}
+		seen[endpoint] = true
 		if model.ValidUntil != nil {
 			if err := validRoutingPriceTimestamp(*model.ValidUntil); err != nil {
 				return nil, fmt.Errorf("routing price feed valid_until: %w", err)
 			}
 		}
 	}
+	// A model the feed lists at several endpoints is keyed by endpoint, so
+	// every one of its entries must name its endpoint.
+	endpoints := feed.endpointCounts()
+	for _, model := range feed.Models {
+		if endpoints[model.Model] > 1 && model.EndpointTag == nil {
+			return nil, fmt.Errorf("routing price feed lists model %q at several endpoints, one untagged", model.Model)
+		}
+	}
 	return &feed, nil
 }
 
+func (feed *RoutingPriceFeed) endpointCounts() map[string]int {
+	counts := make(map[string]int, len(feed.Models))
+	for _, model := range feed.Models {
+		counts[model.Model]++
+	}
+	return counts
+}
+
+// RoutingPriceRateKey is the rate key of a model at an endpoint: the model
+// id for a model the feed lists at one endpoint, which is every model a
+// feed from before endpoint tags lists, and "<model>@<endpoint_tag>" for
+// each endpoint of a model it lists at several (a standard endpoint and its
+// flex twin). The policy service looks an arm up by its worker's endpoint
+// key first and its model id second (docs/arc_serving_contract.md).
+func RoutingPriceRateKey(model string, endpointTag string) string {
+	return model + RoutingPriceEndpointSeparator + endpointTag
+}
+
 // RequestPrices is the feed as the decision request's routing_prices: every
-// model's rates, keyed by its id, values as served. A model whose entry
-// omits a leg is left out, so its arms keep their package rates, as the
-// service treats an entry with an omitted leg; written as null, the leg
-// would instead be filled from the package beside the entry's live legs.
+// entry's rates, keyed by its rate key (RoutingPriceRateKey), values as
+// served. An entry that omits a leg is left out, so its arms keep their
+// package rates, as the service treats an entry with an omitted leg;
+// written as null, the leg would instead be filled from the package beside
+// the entry's live legs.
 func (feed *RoutingPriceFeed) RequestPrices() *PolicyRoutingPrices {
 	rates := make(map[string]PolicyRoutingRate, len(feed.Models))
+	endpoints := feed.endpointCounts()
 	for _, model := range feed.Models {
 		if !model.legsPresent {
 			continue
 		}
-		rates[model.Model] = PolicyRoutingRate{
+		key := model.Model
+		if endpoints[model.Model] > 1 {
+			if model.EndpointTag == nil {
+				continue // DecodeRoutingPriceFeed refuses such a feed
+			}
+			key = RoutingPriceRateKey(model.Model, *model.EndpointTag)
+		}
+		rates[key] = PolicyRoutingRate{
 			Input: model.Input, CacheRead: model.CacheRead, CacheWrite: model.CacheWrite,
 			Output: model.Output, ValidFrom: model.ValidFrom, ValidUntil: model.ValidUntil, Source: model.Source,
 		}
@@ -255,8 +312,8 @@ func (used *PolicyRoutingPricesUsed) validate() error {
 		return errors.New("routing_prices_used fills too many models")
 	}
 	for model, legs := range used.FilledLegs {
-		if model == "" || len(model) > maxRoutingPriceModelIDBytes {
-			return errors.New("routing_prices_used filled model id is empty or too long")
+		if model == "" || len(model) > MaxRoutingPriceRateKeyBytes {
+			return errors.New("routing_prices_used filled rate key is empty or too long")
 		}
 		if err := validRoutingPriceLegs(legs); err != nil {
 			return fmt.Errorf("routing_prices_used filled_legs: %w", err)

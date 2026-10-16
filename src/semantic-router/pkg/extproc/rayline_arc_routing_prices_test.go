@@ -351,3 +351,28 @@ func TestRoutingPriceCacheConfiguredForGoogleIDToken(t *testing.T) {
 		t.Fatalf("Authorization = %q", got)
 	}
 }
+
+// The echo's filled_legs names request rate keys, tagged ones included
+// (memex-desktop#7457): a tagged key the request sent is true of it, the
+// same model at an endpoint it did not send is not.
+func TestRoutingPriceEchoChecksFilledLegsByRateKey(t *testing.T) {
+	version, asOf := "18", "2026-10-16T12:00:00Z"
+	sent := &raylinearc.PolicyRoutingPrices{
+		Schema: raylinearc.RoutingPricesSchema, StoreVersion: version, AsOf: asOf,
+		Rates: map[string]raylinearc.PolicyRoutingRate{"openai/gpt-luna@openai": {}, "openai/gpt-luna@openai/flex": {}},
+	}
+	echo := func(key string) *raylinearc.PolicyRoutingPricesUsed {
+		return &raylinearc.PolicyRoutingPricesUsed{
+			Mode: raylinearc.RoutingPricesModeLive, StoreVersion: &version, AsOf: &asOf,
+			FilledLegs: map[string][]string{key: {"cache_write"}},
+		}
+	}
+	if got := routingPriceEchoMismatch(sent, echo("openai/gpt-luna@openai/flex")); got != "" {
+		t.Fatalf("a filled tagged key the request sent: %q", got)
+	}
+	for _, key := range []string{"openai/gpt-luna", "openai/gpt-luna@other"} {
+		if got := routingPriceEchoMismatch(sent, echo(key)); got != arcFailurePolicyPricesMismatch {
+			t.Fatalf("filled %q, which the request did not send: %q", key, got)
+		}
+	}
+}
