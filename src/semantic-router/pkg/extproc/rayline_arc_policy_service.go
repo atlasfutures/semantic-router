@@ -62,6 +62,11 @@ type policyBinding struct {
 // before any encode.
 type policyServiceScorer struct {
 	schedule string
+	// twoStage is a package whose service chooses the model itself, at the
+	// package's stage-one boundaries, and holds it between them (its
+	// manifest carries stage_one). The schedule then holds nothing on a main
+	// turn: every main turn is offered every model and may change it.
+	twoStage bool
 	// busyWait bounds how long a decision retries the service's
 	// session_busy (the episode's acquire timeout).
 	busyWait    time.Duration
@@ -150,6 +155,7 @@ func newPolicyServiceScorer(
 	scorer := &policyServiceScorer{
 		fallback: policy.FallbackEnabled(),
 		schedule: policy.ModelSchedule,
+		twoStage: policy.PackageTwoStage(),
 		busyWait: time.Duration(decision.Algorithm.RaylineARC.Episode.AcquireTimeoutSeconds) * time.Second,
 		alias:    policy.PackageAlias,
 		sha256:   policy.PackageSHA256,
@@ -456,8 +462,16 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	turn, attribution, transition := raylinearc.PolicyTurn(state.Policy, messages, roles, state.TurnIndex, signals)
 	sideCall := signals.CallKind == raylinearc.PolicyCallSide
 	scheduled := scorer.schedule != "" && !sideCall
-	atBoundary := scheduled &&
-		raylinearc.ModelChangeAllowed(state.TurnIndex, turn.EpochStartTurn, turn.CompactionCount)
+	// A two-stage package's service owns the model choice: it decides at the
+	// package's stage-one boundaries, a typed user message among them, which
+	// the turn-count schedule cannot see, and holds the model between them
+	// from the request's attribution and its episode memory (pathfinder
+	// arc_serving_contract.md, "Stage one"). Holding here would hide those
+	// boundaries from it (semantic-router#265), so every main turn is offered
+	// every model, as at a schedule boundary, and keeps the arm it decided
+	// for a retry as a boundary does. A side call is held either way.
+	atBoundary := scheduled && (scorer.twoStage ||
+		raylinearc.ModelChangeAllowed(state.TurnIndex, turn.EpochStartTurn, turn.CompactionCount))
 	retainedArm, retained := -1, false
 	if atBoundary {
 		retainedArm, retained = state.PolicyBoundary.RetainedArm(messages, state.TurnIndex, turn)

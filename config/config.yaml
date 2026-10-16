@@ -1956,6 +1956,9 @@ recipes:
                 package_sha256: "0000000000000000000000000000000000000000000000000000000000000000"
                 # model_schedule: task_turn_compaction_v1 holds the model
                 # between schedule boundaries and lets only its level vary.
+                # A two-stage package (its package_manifest states stage_one)
+                # is not held on main turns: its service holds the model and
+                # decides at the package's own stage-one boundaries.
                 model_schedule: ""
                 # dispatch_effort: provider_default sends actions without their
                 # declared effort; budgets, the steer and thinking-off still

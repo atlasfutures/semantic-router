@@ -55,7 +55,9 @@ type RaylineARCPolicyServiceConfig struct {
 	Bindings []RaylineARCPolicyBinding `yaml:"bindings"`
 	// ModelSchedule names the package's model-switch schedule, which VSR
 	// enforces: between boundaries the model is held and only its level
-	// varies. Empty lets every turn choose any action.
+	// varies. Empty lets every turn choose any action. A two-stage package
+	// (PackageTwoStage) is held by its service instead, at its own stage-one
+	// boundaries, so VSR holds none of its main turns.
 	ModelSchedule string `yaml:"model_schedule,omitempty"`
 	// DispatchEffort chooses what reasoning an action's dispatch carries:
 	// "declared" (the default) sends the effort and budget the binding
