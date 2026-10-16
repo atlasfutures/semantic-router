@@ -141,6 +141,18 @@ func logRaylineARCDerivedHold(arcContext *selection.RaylineARCSelectionContext, 
 	})
 }
 
+// logRaylineARCAttestedHold records a turn the service decided or held with the
+// served model attested (memex-desktop #7417): every action stayed offered,
+// so a typed user turn after a lost replica is decided, not held by VSR.
+func logRaylineARCAttestedHold(arcContext *selection.RaylineARCSelectionContext, hold derivedHold, attested string) {
+	logging.ComponentEvent("extproc", "rayline_arc_attested_hold", map[string]interface{}{
+		"episode_id_hash": arcContext.EpisodeIDHash,
+		"source":          hold.source,
+		"model":           hold.model,
+		"attested_action": attested,
+	})
+}
+
 // markServedModel stages the model a policy-service main turn dispatches --
 // the selected action's model, not its worker, which may serve several;
 // the turn's episode commit records it.

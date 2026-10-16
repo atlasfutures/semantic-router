@@ -632,10 +632,23 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 				})
 				return nil, arcSelectionFailure("policy_no_available_action")
 			}
-			available = derived.offer
-			derivedOffer = true
-			request.Selection.AvailableActionIDs = derived.offer
+			// First the full offer with the served model attested: a package
+			// that reads it decides a typed user turn (or holds the model)
+			// with that model held (memex-desktop #7417). A package that
+			// predates the field refuses held_unknown again, and the turn is
+			// then asked as before, narrowed to the served model.
+			attested := derived.offer[0]
+			request.Selection.AttestedHeldActionID = &attested
 			response, err = decidePolicyThroughBusy(ctx, armed.policy, request, scorer.busyWait, admit)
+			request.Selection.AttestedHeldActionID = nil
+			if errors.As(err, &cold) && cold.Class == raylinearc.PolicyStageOneHeldUnknownClass {
+				available = derived.offer
+				derivedOffer = true
+				request.Selection.AvailableActionIDs = derived.offer
+				response, err = decidePolicyThroughBusy(ctx, armed.policy, request, scorer.busyWait, admit)
+			} else if err == nil {
+				logRaylineARCAttestedHold(arcContext, derived, attested)
+			}
 		}
 	}
 	// Any refusal to decide that stands -- a cold turn no record holds, or the
