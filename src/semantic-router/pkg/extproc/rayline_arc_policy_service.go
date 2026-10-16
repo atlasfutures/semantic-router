@@ -89,6 +89,8 @@ type policyServiceScorer struct {
 	// episodeMode is the decide request's episode_mode: empty (strict) or
 	// relaxed.
 	episodeMode string
+	// cacheContext sends the episode's cache evidence on each decide.
+	cacheContext bool
 	// sideStrictUntil (unix nanoseconds) is how long a strict cell sends its
 	// side calls strict after the service last showed it cannot serve them
 	// relaxed; zero or past means relaxed.
@@ -166,6 +168,8 @@ func newPolicyServiceScorer(
 		alias:      policy.PackageAlias,
 		sha256:     policy.PackageSHA256,
 		bindings:   make(map[string]policyBinding, len(policy.Bindings)),
+		// Off, the decide request carries no cache_context, as before it.
+		cacheContext: policy.CacheContext,
 	}
 	if decision.Algorithm.RaylineARC.Episode.RelaxedConsistency() {
 		scorer.episodeMode = raylinearc.PolicyEpisodeModeRelaxed
@@ -589,6 +593,14 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		request.EpisodeMode = scorer.sideCallEpisodeMode(selector.now())
 	}
 	pricesStatus := attachRoutingPrices(armed.prices, &request)
+	// The episode's cache evidence is read at each call, so a retry's gaps
+	// are as of that call, on the wall clock the commit dates warmth by.
+	withCacheContext := func(request *raylinearc.PolicyDecisionRequest) {
+		if !scorer.cacheContext {
+			return
+		}
+		request.CacheContext = raylinearc.BuildPolicyCacheContext(state.Warmth, time.Now().UTC(), scorer.actionArm)
+	}
 	// Admission is checked after the episode lease and before each service
 	// call, as the artifact mode checks it before encoding: a shed request
 	// answers 429 and never occupies the service. A slot is held for one
@@ -606,7 +618,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		}, nil
 	}
 	started := selector.now()
-	response, err := decidePolicyThroughBusy(ctx, armed.policy, request, scorer.busyWait, admit)
+	response, err := decidePolicyThroughBusy(ctx, armed.policy, request, scorer.busyWait, admit, withCacheContext)
 	// A strict cell's relaxed side call that the service refused as
 	// unsupported is decided strict instead, as it was before side calls
 	// went relaxed.
@@ -615,7 +627,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		refused.Class == raylinearc.PolicyRelaxedUnsupportedClass {
 		scorer.sideCallsRelaxedUnsupported(selector.now(), "refused")
 		request.EpisodeMode = scorer.episodeMode
-		response, err = decidePolicyThroughBusy(ctx, armed.policy, request, scorer.busyWait, admit)
+		response, err = decidePolicyThroughBusy(ctx, armed.policy, request, scorer.busyWait, admit, withCacheContext)
 	}
 	// A two-stage package refuses a mid-conversation turn it would decide
 	// cold. With no model held, the turn is asked once more with the offer
@@ -649,7 +661,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 			attested := derived.offer[0]
 			if scorer.attestable {
 				request.Selection.AttestedHeldActionID = &attested
-				response, err = decidePolicyThroughBusy(ctx, armed.policy, request, scorer.busyWait, admit)
+				response, err = decidePolicyThroughBusy(ctx, armed.policy, request, scorer.busyWait, admit, withCacheContext)
 				request.Selection.AttestedHeldActionID = nil
 			}
 			// Any refusal of the attested ask -- held_unknown from a package
@@ -660,7 +672,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 				available = derived.offer
 				derivedOffer = true
 				request.Selection.AvailableActionIDs = derived.offer
-				response, err = decidePolicyThroughBusy(ctx, armed.policy, request, scorer.busyWait, admit)
+				response, err = decidePolicyThroughBusy(ctx, armed.policy, request, scorer.busyWait, admit, withCacheContext)
 			} else {
 				logRaylineARCAttestedHold(arcContext, derived, attested, response.Decision.SelectedActionID)
 			}
@@ -895,6 +907,12 @@ func (scorer *policyServiceScorer) cellOutWorkers(cellOut map[int]string) []map[
 	return routes
 }
 
+// actionArm is the worker the package binds actionID to.
+func (scorer *policyServiceScorer) actionArm(actionID string) (int, bool) {
+	binding, ok := scorer.bindings[actionID]
+	return binding.arm, ok
+}
+
 // armModel is the trained model a worker serves, read from its bindings.
 func (scorer *policyServiceScorer) armModel(arm int) string {
 	for _, actionID := range scorer.actionOrder {
@@ -975,6 +993,7 @@ func decidePolicyThroughBusy(
 	request raylinearc.PolicyDecisionRequest,
 	wait time.Duration,
 	admit func() (func(), error),
+	prepare func(*raylinearc.PolicyDecisionRequest),
 ) (*raylinearc.PolicyDecisionResponse, error) {
 	deadline := time.Now().Add(wait)
 	backoff := policyBusyRetryFirst
@@ -982,6 +1001,9 @@ func decidePolicyThroughBusy(
 		release, admitErr := admit()
 		if admitErr != nil {
 			return nil, &policyAdmissionError{err: admitErr}
+		}
+		if prepare != nil {
+			prepare(&request)
 		}
 		response, err := client.Decide(ctx, request)
 		release()

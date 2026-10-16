@@ -56,6 +56,12 @@ const (
 	// either, so every other episode keeps its v3, v4 or v5 bytes, and an
 	// older router refuses a v6 record by its schema.
 	episodeStateSchemaV6 = "rayline.arc.episode-state.v6"
+	// episodeStateSchemaV7 adds the cache evidence of an arm's last
+	// policy-service call (WorkerWarmth.Call) and keeps v6's bounds. It is
+	// written only for a record whose warmth carries one, whatever else it
+	// carries, so every other episode keeps its earlier bytes and an older
+	// router refuses a v7 record by its schema.
+	episodeStateSchemaV7 = "rayline.arc.episode-state.v7"
 	maxFutureClockSkew   = 5 * time.Minute
 	episodeOwnerBytes    = 24
 	maxEpisodeStateBytes = 64 * 1024
@@ -276,7 +282,7 @@ func controlPlacementsToWire(placements []ControlPlacement) []episodeControlWire
 
 // episodeStateSizeLimit is the most bytes a record of schema may take.
 func episodeStateSizeLimit(schema string) int {
-	if schema == episodeStateSchemaV6 {
+	if schema == episodeStateSchemaV6 || schema == episodeStateSchemaV7 {
 		return maxEpisodeStateBytesV6
 	}
 	return maxEpisodeStateBytes
@@ -436,8 +442,21 @@ var thinkingPlacementCodes = map[thinkinglever.Placement]string{
 }
 
 type episodeWarmthWire struct {
-	LastUsedUnixMS  int64 `json:"last_used_unix_ms"`
-	LastInputTokens int   `json:"last_input_tokens"`
+	LastUsedUnixMS  int64            `json:"last_used_unix_ms"`
+	LastInputTokens int              `json:"last_input_tokens"`
+	Call            *episodeCallWire `json:"call,omitempty"`
+}
+
+// episodeCallWire is CallCache. Every member is omitted when unknown, so a
+// record from before it reads as unknown.
+type episodeCallWire struct {
+	ActionID         string `json:"action_id"`
+	CompletedUnixMS  int64  `json:"completed_unix_ms"`
+	TTLSeconds       int    `json:"ttl_s,omitempty"`
+	TTLSource        string `json:"ttl_source,omitempty"`
+	PromptTokens     *int   `json:"prompt_tokens,omitempty"`
+	CacheReadTokens  *int   `json:"cache_read_tokens,omitempty"`
+	CacheWriteTokens *int   `json:"cache_write_tokens,omitempty"`
 }
 
 func newEpisodeOwnerToken() (string, error) {
@@ -551,6 +570,9 @@ func marshalEpisodeState(
 	if exceedsLegacyBounds(wire) {
 		wire.SchemaVersion = episodeStateSchemaV6
 	}
+	if warmthCarriesCalls(state.Warmth) {
+		wire.SchemaVersion = episodeStateSchemaV7
+	}
 	owner := state.EncoderOwner
 	visited := append([]string{}, state.EncoderVisitedOwners...)
 	wire.EncoderOwner = &owner
@@ -562,6 +584,12 @@ func marshalEpisodeState(
 		wire.Warmth[index] = &episodeWarmthWire{
 			LastUsedUnixMS:  warmth.LastUsed.UTC().UnixMilli(),
 			LastInputTokens: warmth.LastInputTokens,
+		}
+		if call := warmth.Call; call != nil {
+			wire.Warmth[index].Call = &episodeCallWire{
+				ActionID: call.ActionID, CompletedUnixMS: call.CompletedAt.UTC().UnixMilli(), TTLSeconds: call.TTLSeconds, TTLSource: call.TTLSource,
+				PromptTokens: call.PromptTokens, CacheReadTokens: call.CacheReadTokens, CacheWriteTokens: call.CacheWriteTokens,
+			}
 		}
 	}
 	payload, err := json.Marshal(wire)
@@ -613,6 +641,15 @@ func unmarshalEpisodeState(
 func decodeEpisodeStateAffinity(
 	wire episodeStateWire,
 ) (string, []string, error) {
+	// v7 is exactly the record whose warmth carries a call, whatever else
+	// it carries; it may hold anything v3 to v6 do.
+	v7 := warmthWireCarriesCalls(wire.Warmth)
+	if v7 != (wire.SchemaVersion == episodeStateSchemaV7) {
+		return "", nil, errors.New("ARC episode state contract mismatch")
+	}
+	if v7 {
+		return decodeEpisodeOwner(wire)
+	}
 	if (wire.Thinking != nil || len(wire.Upstream) > 0 || wire.Policy != nil || len(wire.Controls) > 0 ||
 		len(wire.ReasoningIssuers) > 0 || wire.PolicyBoundary != nil || len(wire.ReasoningProvenance) > 0) !=
 		(wire.SchemaVersion == episodeStateSchema || wire.SchemaVersion == episodeStateSchemaV4 ||
@@ -642,15 +679,37 @@ func decodeEpisodeStateAffinity(
 		}
 		return "", nil, nil
 	case episodeStateSchemaV2, episodeStateSchema, episodeStateSchemaV4, episodeStateSchemaV5, episodeStateSchemaV6:
-		if wire.EncoderOwner == nil || wire.EncoderVisitedOwners == nil ||
-			*wire.EncoderVisitedOwners == nil {
-			return "", nil, errors.New("ARC episode state contract mismatch")
-		}
-		return *wire.EncoderOwner,
-			append([]string(nil), (*wire.EncoderVisitedOwners)...), nil
+		return decodeEpisodeOwner(wire)
 	default:
 		return "", nil, errors.New("ARC episode state contract mismatch")
 	}
+}
+
+func decodeEpisodeOwner(wire episodeStateWire) (string, []string, error) {
+	if wire.EncoderOwner == nil || wire.EncoderVisitedOwners == nil ||
+		*wire.EncoderVisitedOwners == nil {
+		return "", nil, errors.New("ARC episode state contract mismatch")
+	}
+	return *wire.EncoderOwner,
+		append([]string(nil), (*wire.EncoderVisitedOwners)...), nil
+}
+
+func warmthCarriesCalls(warmth []*WorkerWarmth) bool {
+	for _, value := range warmth {
+		if value != nil && value.Call != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func warmthWireCarriesCalls(warmth []*episodeWarmthWire) bool {
+	for _, value := range warmth {
+		if value != nil && value.Call != nil {
+			return true
+		}
+	}
+	return false
 }
 
 func episodeStateFromWire(
@@ -685,6 +744,12 @@ func episodeStateFromWire(
 		state.Warmth[index] = &WorkerWarmth{
 			LastUsed:        time.UnixMilli(warmth.LastUsedUnixMS).UTC(),
 			LastInputTokens: warmth.LastInputTokens,
+		}
+		if call := warmth.Call; call != nil {
+			state.Warmth[index].Call = &CallCache{
+				ActionID: call.ActionID, CompletedAt: time.UnixMilli(call.CompletedUnixMS).UTC(), TTLSeconds: call.TTLSeconds, TTLSource: call.TTLSource,
+				PromptTokens: call.PromptTokens, CacheReadTokens: call.CacheReadTokens, CacheWriteTokens: call.CacheWriteTokens,
+			}
 		}
 	}
 	return state

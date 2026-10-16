@@ -52,6 +52,7 @@ func (r *OpenAIRouter) auditRaylineARCUpstream(body []byte, ctx *RequestContext)
 	if ctx == nil || ctx.RaylineARCDispatch == nil || ctx.RaylineARCTransaction == nil {
 		return
 	}
+	stageRaylineARCWireCacheTTL(r, body, ctx)
 	decision := ctx.VSRSelectedDecision
 	if decision == nil || decision.Algorithm == nil || decision.Algorithm.RaylineARC == nil ||
 		!decision.Algorithm.RaylineARC.UpstreamAudit.Enabled {
@@ -138,4 +139,19 @@ func appendRaylineARCUpstreamFields(record map[string]interface{}, ctx *RequestC
 		record["upstream_extends_previous"] = *audit.Extends
 		record["upstream_prefix_messages"] = audit.PrefixMessages
 	}
+}
+
+// stageRaylineARCWireCacheTTL records the prompt-cache TTL the dispatched body
+// states for a policy-service turn's cache_context. Only an Anthropic model's
+// cache follows cache_control; any other's TTL is unstated.
+func stageRaylineARCWireCacheTTL(r *OpenAIRouter, body []byte, ctx *RequestContext) {
+	transaction := ctx.RaylineARCTransaction
+	if !transaction.commitOnCompletion {
+		return
+	}
+	if r.armFamily(ctx.RaylineARCDispatch.ID) != anthropicFamily {
+		transaction.stageWireCacheTTL(0, "")
+		return
+	}
+	transaction.stageWireCacheTTL(raylinearc.WireCacheTTL(body))
 }
