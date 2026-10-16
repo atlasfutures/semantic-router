@@ -652,13 +652,17 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 				response, err = decidePolicyThroughBusy(ctx, armed.policy, request, scorer.busyWait, admit)
 				request.Selection.AttestedHeldActionID = nil
 			}
-			if !scorer.attestable || errors.As(err, &cold) && cold.Class == raylinearc.PolicyStageOneHeldUnknownClass {
+			// Any refusal of the attested ask -- held_unknown from a package
+			// that predates the field, or any other error -- is asked again
+			// narrowed, as before: the attested ask may only add a decision,
+			// never serve worse than the old hold.
+			if !scorer.attestable || err != nil {
 				available = derived.offer
 				derivedOffer = true
 				request.Selection.AvailableActionIDs = derived.offer
 				response, err = decidePolicyThroughBusy(ctx, armed.policy, request, scorer.busyWait, admit)
-			} else if err == nil {
-				logRaylineARCAttestedHold(arcContext, derived, attested)
+			} else {
+				logRaylineARCAttestedHold(arcContext, derived, attested, response.Decision.SelectedActionID)
 			}
 		}
 	}
