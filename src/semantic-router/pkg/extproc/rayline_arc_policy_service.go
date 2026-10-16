@@ -67,6 +67,11 @@ type policyServiceScorer struct {
 	// manifest carries stage_one). The schedule then holds nothing on a main
 	// turn: every main turn is offered every model and may change it.
 	twoStage bool
+	// attestable is a two-stage package whose stage one chooses a model, not
+	// a model at an effort (PackageStageOneByModel): any action of the served
+	// model names its held candidate, so a lost replica's turn is re-asked
+	// with that model attested. A model-effort package is re-asked narrowed.
+	attestable bool
 	// busyWait bounds how long a decision retries the service's
 	// session_busy (the episode's acquire timeout).
 	busyWait    time.Duration
@@ -153,13 +158,14 @@ func newPolicyServiceScorer(
 	policy := decision.Algorithm.RaylineARC.PolicyService
 	generation := strconv.FormatUint(raylineARCScorerGeneration.Add(1), 10)
 	scorer := &policyServiceScorer{
-		fallback: policy.FallbackEnabled(),
-		schedule: policy.ModelSchedule,
-		twoStage: policy.PackageTwoStage(),
-		busyWait: time.Duration(decision.Algorithm.RaylineARC.Episode.AcquireTimeoutSeconds) * time.Second,
-		alias:    policy.PackageAlias,
-		sha256:   policy.PackageSHA256,
-		bindings: make(map[string]policyBinding, len(policy.Bindings)),
+		fallback:   policy.FallbackEnabled(),
+		schedule:   policy.ModelSchedule,
+		twoStage:   policy.PackageTwoStage(),
+		attestable: policy.PackageTwoStage() && policy.PackageStageOneByModel(),
+		busyWait:   time.Duration(decision.Algorithm.RaylineARC.Episode.AcquireTimeoutSeconds) * time.Second,
+		alias:      policy.PackageAlias,
+		sha256:     policy.PackageSHA256,
+		bindings:   make(map[string]policyBinding, len(policy.Bindings)),
 	}
 	if decision.Algorithm.RaylineARC.Episode.RelaxedConsistency() {
 		scorer.episodeMode = raylinearc.PolicyEpisodeModeRelaxed
@@ -632,11 +638,16 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 			// with that model held (memex-desktop #7417). A package that
 			// predates the field refuses held_unknown again, and the turn is
 			// then asked as before, narrowed to the served model.
+			// Only a model-unit stage one: there any action of the model names
+			// the held candidate, while a model-effort one would read another
+			// effort as the held candidate and switch effort off a boundary.
 			attested := derived.offer[0]
-			request.Selection.AttestedHeldActionID = &attested
-			response, err = decidePolicyThroughBusy(ctx, armed.policy, request, scorer.busyWait, admit)
-			request.Selection.AttestedHeldActionID = nil
-			if errors.As(err, &cold) && cold.Class == raylinearc.PolicyStageOneHeldUnknownClass {
+			if scorer.attestable {
+				request.Selection.AttestedHeldActionID = &attested
+				response, err = decidePolicyThroughBusy(ctx, armed.policy, request, scorer.busyWait, admit)
+				request.Selection.AttestedHeldActionID = nil
+			}
+			if !scorer.attestable || errors.As(err, &cold) && cold.Class == raylinearc.PolicyStageOneHeldUnknownClass {
 				available = derived.offer
 				derivedOffer = true
 				request.Selection.AvailableActionIDs = derived.offer

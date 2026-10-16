@@ -38,6 +38,7 @@ import (
 func asTwoStage(fixture *policySelectorFixture) {
 	scorer := newPolicyServiceScorer(&config.RouterConfig{}, fixture.decision)
 	scorer.twoStage = true
+	scorer.attestable = true // a model-unit stage one, as 0.6.3's
 	fixture.selector.arm(&raylineARCArmedComponents{
 		scorer:    scorer,
 		admission: raylinearc.NewAdmissionGate(0),
