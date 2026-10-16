@@ -67,6 +67,13 @@ type PolicySelection struct {
 	Reference           *string              `json:"reference"`
 	OperatingPoint      PolicyOperatingPoint `json:"operating_point"`
 	PreferenceDimension string               `json:"preference_dimension"`
+	// AttestedHeldActionID names, by one of its actions, the model this
+	// episode's own record says last served it (pathfinder
+	// arc_serving_contract.md, "Stage one", memex-desktop #7417). It is sent
+	// only on the re-ask after a stage_one_held_unknown refusal, with every
+	// action still offered, so the service decides a typed user turn or holds
+	// the model rather than VSR narrowing the offer. Omitted otherwise.
+	AttestedHeldActionID *string `json:"attested_held_action_id,omitempty"`
 }
 
 type PolicyEvaluation struct {

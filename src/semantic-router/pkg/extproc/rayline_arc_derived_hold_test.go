@@ -208,7 +208,10 @@ func TestDerivedHoldUsesTheLastServedModel(t *testing.T) {
 				t.Fatalf("dispatched %q (status %d), want the held GLM", model, status)
 			}
 			calls := fake.received()[before:]
-			if len(calls) != 2 || !slices.Equal(calls[1].Selection.AvailableActionIDs, []string{v5GLMNone, v5GLMUp}) {
+			// refused, then the full offer with the served model attested (this
+			// fake predates the field and refuses again), then narrowed
+			if len(calls) != 3 || calls[1].Selection.AttestedHeldActionID == nil || len(calls[1].Selection.AvailableActionIDs) != 3 ||
+				!slices.Equal(calls[2].Selection.AvailableActionIDs, []string{v5GLMNone, v5GLMUp}) {
 				t.Fatalf("decide calls = %d, retry offer %v", len(calls), calls[len(calls)-1].Selection.AvailableActionIDs)
 			}
 		})
@@ -266,7 +269,8 @@ func TestDerivedHoldHoldsTheServedModelOfAWorkerWithTwo(t *testing.T) {
 		t.Fatalf("status %d", status)
 	}
 	calls := fake.received()[before:]
-	if len(calls) != 2 || !slices.Equal(calls[1].Selection.AvailableActionIDs, []string{second}) {
+	if len(calls) != 3 || calls[1].Selection.AttestedHeldActionID == nil || *calls[1].Selection.AttestedHeldActionID != second ||
+		!slices.Equal(calls[2].Selection.AvailableActionIDs, []string{second}) {
 		t.Fatalf("decide calls = %d, retry offer %v; want only the served model's action", len(calls), calls[len(calls)-1].Selection.AvailableActionIDs)
 	}
 }
@@ -307,8 +311,8 @@ func TestDerivedHoldLeavesSingleStagePackagesAlone(t *testing.T) {
 	}
 }
 
-// A refusal of the held retry fails the turn as undecidable: one retry on
-// the recorded model, then 422.
+// A refusal of the held retry fails the turn as undecidable: the attested
+// retry on the full offer, then one narrowed to the recorded model, then 422.
 func TestDerivedHoldRetriesOnce(t *testing.T) {
 	logs := captureLogs(t)
 	router, fake := v5Router(t, "openai")
@@ -318,8 +322,8 @@ func TestDerivedHoldRetriesOnce(t *testing.T) {
 	before := undecidableFailures()
 	_, _, refusal := heldTurnResponse(t, router, "episode-refused", resumedHistory)
 	assertUndecidable(t, refusal, logs, before, "session_record")
-	if calls := fake.received(); len(calls) != 2 {
-		t.Fatalf("decide calls = %d, want the first and one retry", len(calls))
+	if calls := fake.received(); len(calls) != 3 {
+		t.Fatalf("decide calls = %d, want the first, the attested retry and the narrowed one", len(calls))
 	}
 }
 
