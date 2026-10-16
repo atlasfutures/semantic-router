@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"math/big"
 	"math/rand"
 	"os"
 	"path/filepath"
@@ -140,13 +141,14 @@ func validCacheContext(body []byte) string {
 			}
 		}
 		if prompt := counts["prompt_tokens"]; prompt != nil {
-			var legs int64
+			// Python's ints do not overflow; big.Int stands in for them.
+			legs := new(big.Int)
 			for _, name := range []string{"cache_read_tokens", "cache_write_tokens"} {
 				if leg := counts[name]; leg != nil {
-					legs += *leg
+					legs.Add(legs, big.NewInt(*leg))
 				}
 			}
-			if legs > *prompt {
+			if legs.Cmp(big.NewInt(*prompt)) > 0 {
 				return "cache legs exceed the prompt"
 			}
 		}
@@ -218,6 +220,14 @@ func TestCacheContextUnknownIsNullNeverZero(t *testing.T) {
 		"one leg exceeds the prompt": {
 			call: CallCache{PromptTokens: intPtr(100), CacheWriteTokens: intPtr(101)},
 			want: map[string]interface{}{"prompt_tokens": 100.0, "cache_read_tokens": nil, "cache_write_tokens": nil},
+		},
+		"legs that overflow": {
+			call: CallCache{PromptTokens: intPtr(100), CacheReadTokens: intPtr(math.MaxInt), CacheWriteTokens: intPtr(math.MaxInt)},
+			want: map[string]interface{}{"prompt_tokens": 100.0, "cache_read_tokens": nil, "cache_write_tokens": nil},
+		},
+		"legs exactly the prompt": {
+			call: CallCache{PromptTokens: intPtr(100), CacheReadTokens: intPtr(60), CacheWriteTokens: intPtr(40)},
+			want: map[string]interface{}{"prompt_tokens": 100.0, "cache_read_tokens": 60.0, "cache_write_tokens": 40.0},
 		},
 		"legs without a prompt": {
 			call: CallCache{CacheReadTokens: intPtr(80), CacheWriteTokens: intPtr(30)},
@@ -324,6 +334,8 @@ func TestCacheContextIsAlwaysValid(t *testing.T) {
 			return nil
 		case 1:
 			return intPtr(-random.Intn(100))
+		case 2:
+			return intPtr([]int{math.MaxInt, math.MaxInt - 1, 1 << 62}[random.Intn(3)])
 		default:
 			return intPtr(random.Intn(5000))
 		}
@@ -355,18 +367,22 @@ func TestWireCacheTTLReadsWhatTheBodyStates(t *testing.T) {
 		seconds int
 		source  string
 	}{
-		"none":            {`{"messages":[{"role":"user","content":"hi"}]}`, 0, ""},
-		"ephemeral":       {`{"system":[{"type":"text","text":"s","cache_control":{"type":"ephemeral"}}],"messages":[]}`, 300, wireTTLSourceEphemeral5m},
-		"explicit 5m":     {`{"messages":[{"role":"user","content":[{"type":"text","text":"x","cache_control":{"type":"ephemeral","ttl":"5m"}}]}]}`, 300, wireTTLSourceEphemeral5m},
-		"1h":              {`{"tools":[{"name":"Bash","cache_control":{"type":"ephemeral","ttl":"1h"}}],"messages":[]}`, 3600, wireTTLSourceEphemeral1h},
-		"top level 1h":    {`{"cache_control":{"type":"ephemeral","ttl":"1h"},"messages":[]}`, 3600, wireTTLSourceEphemeral1h},
-		"1h then 5m":      {`{"system":[{"type":"text","text":"s","cache_control":{"type":"ephemeral","ttl":"1h"}}],"messages":[{"role":"user","content":[{"type":"text","text":"x","cache_control":{"type":"ephemeral"}}]}]}`, 300, wireTTLSourceEphemeral5m},
-		"chat parts":      {`{"messages":[{"role":"user","content":[{"type":"text","text":"x","cache_control":{"type":"ephemeral","ttl":"1h"}}]}]}`, 3600, wireTTLSourceEphemeral1h},
-		"unknown ttl":     {`{"messages":[{"role":"user","content":[{"type":"text","text":"x","cache_control":{"type":"ephemeral","ttl":"24h"}}]}]}`, 0, ""},
-		"unknown type":    {`{"messages":[{"role":"user","content":[{"type":"text","text":"x","cache_control":{"type":"persistent"}}]}]}`, 0, ""},
-		"in a tool input": {`{"messages":[{"role":"assistant","content":[{"type":"tool_use","id":"t","name":"x","input":{"cache_control":{"type":"ephemeral","ttl":"1h"}}}]}]}`, 0, ""},
-		"in text":         {`{"messages":[{"role":"user","content":"\"cache_control\": {\"type\":\"ephemeral\"}"}]}`, 0, ""},
-		"not json":        {`{"cache_control":`, 0, ""},
+		"none":             {`{"messages":[{"role":"user","content":"hi"}]}`, 0, ""},
+		"ephemeral":        {`{"system":[{"type":"text","text":"s","cache_control":{"type":"ephemeral"}}],"messages":[]}`, 300, wireTTLSourceEphemeral5m},
+		"explicit 5m":      {`{"messages":[{"role":"user","content":[{"type":"text","text":"x","cache_control":{"type":"ephemeral","ttl":"5m"}}]}]}`, 300, wireTTLSourceEphemeral5m},
+		"1h":               {`{"tools":[{"name":"Bash","cache_control":{"type":"ephemeral","ttl":"1h"}}],"messages":[]}`, 3600, wireTTLSourceEphemeral1h},
+		"top level 1h":     {`{"cache_control":{"type":"ephemeral","ttl":"1h"},"messages":[]}`, 3600, wireTTLSourceEphemeral1h},
+		"1h then 5m":       {`{"system":[{"type":"text","text":"s","cache_control":{"type":"ephemeral","ttl":"1h"}}],"messages":[{"role":"user","content":[{"type":"text","text":"x","cache_control":{"type":"ephemeral"}}]}]}`, 300, wireTTLSourceEphemeral5m},
+		"chat parts":       {`{"messages":[{"role":"user","content":[{"type":"text","text":"x","cache_control":{"type":"ephemeral","ttl":"1h"}}]}]}`, 3600, wireTTLSourceEphemeral1h},
+		"unknown ttl":      {`{"messages":[{"role":"user","content":[{"type":"text","text":"x","cache_control":{"type":"ephemeral","ttl":"24h"}}]}]}`, 0, ""},
+		"unknown type":     {`{"messages":[{"role":"user","content":[{"type":"text","text":"x","cache_control":{"type":"persistent"}}]}]}`, 0, ""},
+		"in a tool schema": {`{"tools":[{"name":"x","input_schema":{"type":"object","default":{"cache_control":{"type":"ephemeral","ttl":"1h"}}}}],"messages":[]}`, 0, ""},
+		"chat tool schema": {`{"tools":[{"type":"function","function":{"name":"x","parameters":{"properties":{"cache_control":{"type":"ephemeral"}}}}}],"messages":[]}`, 0, ""},
+		"chat tool":        {`{"tools":[{"type":"function","function":{"name":"x"},"cache_control":{"type":"ephemeral","ttl":"1h"}}],"messages":[]}`, 3600, wireTTLSourceEphemeral1h},
+		"tool result":      {`{"messages":[{"role":"user","content":[{"type":"tool_result","tool_use_id":"t","content":[{"type":"text","text":"r","cache_control":{"type":"ephemeral","ttl":"1h"}}]}]}]}`, 3600, wireTTLSourceEphemeral1h},
+		"in a tool input":  {`{"messages":[{"role":"assistant","content":[{"type":"tool_use","id":"t","name":"x","input":{"cache_control":{"type":"ephemeral","ttl":"1h"}}}]}]}`, 0, ""},
+		"in text":          {`{"messages":[{"role":"user","content":"\"cache_control\": {\"type\":\"ephemeral\"}"}]}`, 0, ""},
+		"not json":         {`{"cache_control":`, 0, ""},
 	}
 	for name, test := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -400,6 +416,10 @@ func TestEpisodeRecordKeepsTheCallEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// An older router refuses the record by its schema.
+	if !bytes.Contains(payload, []byte(`"schema_version":"`+episodeStateSchemaV7+`"`)) {
+		t.Fatalf("a record carrying calls is not %s: %s", episodeStateSchemaV7, payload)
+	}
 	restored, _, err := unmarshalEpisodeState(payload, 3, cacheContextNow)
 	if err != nil {
 		t.Fatal(err)
@@ -416,7 +436,8 @@ func TestEpisodeRecordKeepsTheCallEvidence(t *testing.T) {
 		t.Fatalf("arm 1's unknowns must be null: %s", got)
 	}
 
-	// The same record as a router before this change wrote it.
+	// The same record as a router before this change wrote it: no call, and
+	// its earlier schema.
 	var old map[string]interface{}
 	if err := json.Unmarshal(payload, &old); err != nil {
 		t.Fatal(err)
@@ -426,6 +447,7 @@ func TestEpisodeRecordKeepsTheCallEvidence(t *testing.T) {
 			delete(warmth.(map[string]interface{}), "call")
 		}
 	}
+	old["schema_version"] = episodeStateSchemaV2
 	oldPayload, _ := json.Marshal(old)
 	oldState, _, err := unmarshalEpisodeState(oldPayload, 3, cacheContextNow)
 	if err != nil {
@@ -475,5 +497,34 @@ func TestPolicyDecisionRequestOmitsAbsentCacheContext(t *testing.T) {
 	}
 	if bytes.Contains(encoded, []byte("cache_context")) {
 		t.Fatalf("absent cache_context was written: %s", encoded)
+	}
+}
+
+// v7 is exactly the record whose warmth carries a call: one without calls
+// keeps its earlier schema, and a mislabelled record is refused.
+func TestEpisodeStateV7IsExactlyTheRecordWithCalls(t *testing.T) {
+	state, _ := NewEpisodeState(2)
+	if err := state.Commit(0, 10, cacheContextNow.Add(-time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	plain, err := marshalEpisodeState(state, 1, cacheContextNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(plain, []byte(episodeStateSchemaV7)) {
+		t.Fatalf("a record without calls was written as v7: %s", plain)
+	}
+	relabelled := bytes.Replace(plain, []byte(episodeStateSchemaV2), []byte(episodeStateSchemaV7), 1)
+	if _, _, err := unmarshalEpisodeState(relabelled, 2, cacheContextNow); err == nil {
+		t.Fatal("a v7 record without calls was accepted")
+	}
+	state.Warmth[0].Call = &CallCache{ActionID: actionIDFor(0)}
+	withCalls, err := marshalEpisodeState(state, 1, cacheContextNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	downgraded := bytes.Replace(withCalls, []byte(episodeStateSchemaV7), []byte(episodeStateSchemaV2), 1)
+	if _, _, err := unmarshalEpisodeState(downgraded, 2, cacheContextNow); err == nil {
+		t.Fatal("a v2 record carrying calls was accepted")
 	}
 }

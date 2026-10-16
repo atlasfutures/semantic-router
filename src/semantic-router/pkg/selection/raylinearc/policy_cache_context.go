@@ -139,15 +139,19 @@ func actionCacheEntry(call *CallCache, gap time.Duration) PolicyActionCache {
 	entry.CacheWriteTokens = knownCount(call.CacheWriteTokens)
 	// Known legs that exceed the prompt are not the prompt's parts; the
 	// prompt is kept and the legs are unknown.
-	if entry.PromptTokens != nil {
-		legs := 0
+	if prompt := entry.PromptTokens; prompt != nil {
+		// Each known leg is checked against what the prompt has left, so
+		// the sum never overflows.
+		remaining := *prompt
 		for _, leg := range []*int{entry.CacheReadTokens, entry.CacheWriteTokens} {
-			if leg != nil {
-				legs += *leg
+			if leg == nil {
+				continue
 			}
-		}
-		if legs > *entry.PromptTokens {
-			entry.CacheReadTokens, entry.CacheWriteTokens = nil, nil
+			if *leg > remaining {
+				entry.CacheReadTokens, entry.CacheWriteTokens = nil, nil
+				break
+			}
+			remaining -= *leg
 		}
 	}
 	return entry
@@ -168,58 +172,103 @@ func lowerHex64(value string) bool {
 // WireCacheTTL reads the prompt-cache TTL a dispatched body states: the
 // shortest cache_control TTL on it (Anthropic orders a longer TTL before a
 // shorter one, so the last breakpoint's prefix expires first), with its
-// source. A body with no cache_control, or one whose TTL is not Anthropic's
-// 5m or 1h, states none: 0 and "".
+// source. Only the places a request carries a breakpoint are read: the top
+// level, system blocks, tools, message content blocks and the blocks inside
+// a tool result; a tool's schema or a tool call's input is the request's
+// data, not a directive. A body with no cache_control there, or one whose
+// TTL is not Anthropic's 5m or 1h, states none: 0 and "".
 func WireCacheTTL(body []byte) (int, string) {
 	if !bytes.Contains(body, []byte(`"cache_control"`)) {
 		return 0, ""
 	}
-	var root interface{}
-	if json.Unmarshal(body, &root) != nil {
+	var wire struct {
+		CacheControl json.RawMessage   `json:"cache_control"`
+		System       json.RawMessage   `json:"system"`
+		Tools        []wireCacheHolder `json:"tools"`
+		Messages     []struct {
+			Content json.RawMessage `json:"content"`
+		} `json:"messages"`
+	}
+	if json.Unmarshal(body, &wire) != nil {
 		return 0, ""
 	}
-	shortest, unknown := 0, false
-	var walk func(value interface{})
-	walk = func(value interface{}) {
-		switch typed := value.(type) {
-		case map[string]interface{}:
-			for key, member := range typed {
-				if key == "cache_control" {
-					if directive, ok := member.(map[string]interface{}); ok && directive["type"] == "ephemeral" {
-						seconds := 0
-						switch ttl, stated := directive["ttl"]; {
-						case !stated || ttl == nil || ttl == "5m":
-							seconds = wireTTLEphemeral5mSeconds
-						case ttl == "1h":
-							seconds = wireTTLEphemeral1hSeconds
-						default:
-							unknown = true
-						}
-						if seconds > 0 && (shortest == 0 || seconds < shortest) {
-							shortest = seconds
-						}
-					}
-					continue
-				}
-				// A tool call's input is the model's own JSON, not the request's.
-				if _, object := member.(map[string]interface{}); object && key == "input" {
-					continue
-				}
-				walk(member)
-			}
-		case []interface{}:
-			for _, member := range typed {
-				walk(member)
-			}
+	directives := []json.RawMessage{wire.CacheControl}
+	for _, tool := range wire.Tools {
+		directives = append(directives, tool.CacheControl)
+	}
+	directives = append(directives, blockDirectives(wire.System)...)
+	for _, message := range wire.Messages {
+		directives = append(directives, blockDirectives(message.Content)...)
+	}
+	shortest := 0
+	for _, raw := range directives {
+		seconds, ok := directiveTTL(raw)
+		if !ok {
+			return 0, ""
+		}
+		if seconds > 0 && (shortest == 0 || seconds < shortest) {
+			shortest = seconds
 		}
 	}
-	walk(root)
-	switch {
-	case unknown || shortest == 0:
+	switch shortest {
+	case 0:
 		return 0, ""
-	case shortest == wireTTLEphemeral1hSeconds:
+	case wireTTLEphemeral1hSeconds:
 		return shortest, wireTTLSourceEphemeral1h
 	default:
 		return shortest, wireTTLSourceEphemeral5m
+	}
+}
+
+type wireCacheHolder struct {
+	CacheControl json.RawMessage `json:"cache_control"`
+}
+
+// blockDirectives are the cache_control members of a content array's blocks
+// and of the blocks inside a tool result; a string content has none.
+func blockDirectives(content json.RawMessage) []json.RawMessage {
+	var blocks []struct {
+		CacheControl json.RawMessage `json:"cache_control"`
+		Type         string          `json:"type"`
+		Content      json.RawMessage `json:"content"`
+	}
+	if json.Unmarshal(content, &blocks) != nil {
+		return nil
+	}
+	var directives []json.RawMessage
+	for _, block := range blocks {
+		directives = append(directives, block.CacheControl)
+		if block.Type == "tool_result" {
+			directives = append(directives, blockDirectives(block.Content)...)
+		}
+	}
+	return directives
+}
+
+// directiveTTL is one cache_control's TTL in seconds: 0 when there is none
+// (absent, null, or not an ephemeral directive), and not ok when its TTL is
+// one the Router does not know.
+func directiveTTL(raw json.RawMessage) (int, bool) {
+	var directive struct {
+		Type string           `json:"type"`
+		TTL  *json.RawMessage `json:"ttl"`
+	}
+	if len(raw) == 0 || json.Unmarshal(raw, &directive) != nil || directive.Type != "ephemeral" {
+		return 0, true
+	}
+	if directive.TTL == nil || string(*directive.TTL) == "null" {
+		return wireTTLEphemeral5mSeconds, true
+	}
+	var ttl string
+	if json.Unmarshal(*directive.TTL, &ttl) != nil {
+		return 0, false
+	}
+	switch ttl {
+	case "5m":
+		return wireTTLEphemeral5mSeconds, true
+	case "1h":
+		return wireTTLEphemeral1hSeconds, true
+	default:
+		return 0, false
 	}
 }

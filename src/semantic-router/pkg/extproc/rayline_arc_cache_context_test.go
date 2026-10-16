@@ -14,8 +14,7 @@ func TestPolicyDecideCarriesTheEpisodeCacheContext(t *testing.T) {
 	fixture := newPolicySelectorFixture(t, "")
 	bindings := fixture.decision.Algorithm.RaylineARC.PolicyService.Bindings
 	fixture.fake.chooseWith(func(raylinearc.PolicyDecisionRequest) string { return bindings[1].ActionID })
-	now := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
-	fixture.selector.now = func() time.Time { return now }
+	now := time.Now().UTC()
 	prompt, read := 1000, 900
 	state, _ := raylinearc.NewEpisodeState(2)
 	state.Warmth[0] = &raylinearc.WorkerWarmth{LastUsed: now.Add(-30 * time.Second), LastInputTokens: 700, Call: &raylinearc.CallCache{
@@ -30,14 +29,54 @@ func TestPolicyDecideCarriesTheEpisodeCacheContext(t *testing.T) {
 		t.Fatalf("select: %v", err)
 	}
 	sent := fixture.fake.received()[0].CacheContext
-	if sent == nil {
-		t.Fatal("the decide request carried no cache_context")
+	if sent == nil || len(sent.Actions) != 1 || sent.Actions[0].GapS == nil {
+		t.Fatalf("cache_context = %+v", sent)
 	}
+	// The gap is measured on the wall clock at the call.
+	gap := *sent.Actions[0].GapS
+	if gap < 30 || gap > 35 {
+		t.Fatalf("gap_s = %v, want about 30", gap)
+	}
+	gapJSON, _ := json.Marshal(gap)
 	encoded, _ := json.Marshal(sent)
-	want := `{"actions":[{"action_id":"` + bindings[1].ActionID + `","gap_s":30,"ttl_s":300,` +
+	want := `{"actions":[{"action_id":"` + bindings[1].ActionID + `","gap_s":` + string(gapJSON) + `,"ttl_s":300,` +
 		`"ttl_source":"anthropic cache_control ephemeral 5m","prompt_tokens":1000,"cache_read_tokens":900,"cache_write_tokens":null}]}`
 	if string(encoded) != want {
 		t.Fatalf("cache_context\n got %s\nwant %s", encoded, want)
+	}
+	// On the wire, an unknown member is null, not omitted.
+	var body map[string]json.RawMessage
+	if err := json.Unmarshal(fixture.fake.receivedBodies()[0], &body); err != nil {
+		t.Fatal(err)
+	}
+	if string(body["cache_context"]) != want {
+		t.Fatalf("decide body cache_context\n got %s\nwant %s", body["cache_context"], want)
+	}
+}
+
+// A session_busy retry reads the episode again, so each call's gaps are as
+// of that call.
+func TestPolicyDecideRetryRefreshesTheCacheContext(t *testing.T) {
+	fixture := busyFixture(t)
+	fixture.fake.failFirstCalls("session_busy", 2)
+	bindings := fixture.decision.Algorithm.RaylineARC.PolicyService.Bindings
+	start := time.Now().UTC().Add(-time.Minute)
+	state, _ := raylinearc.NewEpisodeState(2)
+	state.Warmth[0] = &raylinearc.WorkerWarmth{LastUsed: start, Call: &raylinearc.CallCache{ActionID: bindings[0].ActionID}}
+	if _, err := fixture.selectOn(t, state, policyTestRequest(t, map[string]any{"role": "user", "content": "go"})); err != nil {
+		t.Fatalf("select: %v", err)
+	}
+	sent := fixture.fake.received()
+	if len(sent) != 3 {
+		t.Fatalf("%d decide calls, want 3", len(sent))
+	}
+	previous := -1.0
+	for index, request := range sent {
+		gap := *request.CacheContext.Actions[0].GapS
+		if gap <= previous {
+			t.Fatalf("call %d gap %v, not after the previous call's %v", index, gap, previous)
+		}
+		previous = gap
 	}
 }
 
@@ -100,6 +139,19 @@ func TestPolicyTurnCommitRecordsTheCall(t *testing.T) {
 		if call := next.Warmth[1].Call; call.PromptTokens != nil || call.CacheReadTokens != nil || call.CacheWriteTokens != nil {
 			t.Fatalf("%s usage recorded %+v", name, call)
 		}
+	}
+
+	// A turn whose provider response was never read (a decision-only
+	// consult) records no call.
+	transaction = newTransaction()
+	transaction.call.ActionID = action
+	transaction.stageWireCacheTTL(300, "anthropic cache_control ephemeral 5m")
+	next, err = transaction.nextState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next.Warmth[1].Call != nil {
+		t.Fatalf("a turn with no completed call recorded %+v", next.Warmth[1].Call)
 	}
 
 	// No action (a turn outside policy mode) records no call.

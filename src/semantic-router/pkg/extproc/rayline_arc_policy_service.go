@@ -589,7 +589,11 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		request.EpisodeMode = scorer.sideCallEpisodeMode(selector.now())
 	}
 	pricesStatus := attachRoutingPrices(armed.prices, &request)
-	request.CacheContext = raylinearc.BuildPolicyCacheContext(state.Warmth, selector.now(), scorer.actionArm)
+	// The episode's cache evidence is read at each call, so a retry's gaps
+	// are as of that call, on the wall clock the commit dates warmth by.
+	withCacheContext := func(request *raylinearc.PolicyDecisionRequest) {
+		request.CacheContext = raylinearc.BuildPolicyCacheContext(state.Warmth, time.Now().UTC(), scorer.actionArm)
+	}
 	// Admission is checked after the episode lease and before each service
 	// call, as the artifact mode checks it before encoding: a shed request
 	// answers 429 and never occupies the service. A slot is held for one
@@ -607,7 +611,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		}, nil
 	}
 	started := selector.now()
-	response, err := decidePolicyThroughBusy(ctx, armed.policy, request, scorer.busyWait, admit)
+	response, err := decidePolicyThroughBusy(ctx, armed.policy, request, scorer.busyWait, admit, withCacheContext)
 	// A strict cell's relaxed side call that the service refused as
 	// unsupported is decided strict instead, as it was before side calls
 	// went relaxed.
@@ -616,7 +620,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		refused.Class == raylinearc.PolicyRelaxedUnsupportedClass {
 		scorer.sideCallsRelaxedUnsupported(selector.now(), "refused")
 		request.EpisodeMode = scorer.episodeMode
-		response, err = decidePolicyThroughBusy(ctx, armed.policy, request, scorer.busyWait, admit)
+		response, err = decidePolicyThroughBusy(ctx, armed.policy, request, scorer.busyWait, admit, withCacheContext)
 	}
 	// A two-stage package refuses a mid-conversation turn it would decide
 	// cold. With no model held, the turn is asked once more with the offer
@@ -650,7 +654,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 			attested := derived.offer[0]
 			if scorer.attestable {
 				request.Selection.AttestedHeldActionID = &attested
-				response, err = decidePolicyThroughBusy(ctx, armed.policy, request, scorer.busyWait, admit)
+				response, err = decidePolicyThroughBusy(ctx, armed.policy, request, scorer.busyWait, admit, withCacheContext)
 				request.Selection.AttestedHeldActionID = nil
 			}
 			// Any refusal of the attested ask -- held_unknown from a package
@@ -661,7 +665,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 				available = derived.offer
 				derivedOffer = true
 				request.Selection.AvailableActionIDs = derived.offer
-				response, err = decidePolicyThroughBusy(ctx, armed.policy, request, scorer.busyWait, admit)
+				response, err = decidePolicyThroughBusy(ctx, armed.policy, request, scorer.busyWait, admit, withCacheContext)
 			} else {
 				logRaylineARCAttestedHold(arcContext, derived, attested, response.Decision.SelectedActionID)
 			}
@@ -982,6 +986,7 @@ func decidePolicyThroughBusy(
 	request raylinearc.PolicyDecisionRequest,
 	wait time.Duration,
 	admit func() (func(), error),
+	prepare func(*raylinearc.PolicyDecisionRequest),
 ) (*raylinearc.PolicyDecisionResponse, error) {
 	deadline := time.Now().Add(wait)
 	backoff := policyBusyRetryFirst
@@ -989,6 +994,9 @@ func decidePolicyThroughBusy(
 		release, admitErr := admit()
 		if admitErr != nil {
 			return nil, &policyAdmissionError{err: admitErr}
+		}
+		if prepare != nil {
+			prepare(&request)
 		}
 		response, err := client.Decide(ctx, request)
 		release()

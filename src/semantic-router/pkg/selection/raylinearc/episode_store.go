@@ -56,6 +56,12 @@ const (
 	// either, so every other episode keeps its v3, v4 or v5 bytes, and an
 	// older router refuses a v6 record by its schema.
 	episodeStateSchemaV6 = "rayline.arc.episode-state.v6"
+	// episodeStateSchemaV7 adds the cache evidence of an arm's last
+	// policy-service call (WorkerWarmth.Call) and keeps v6's bounds. It is
+	// written only for a record whose warmth carries one, whatever else it
+	// carries, so every other episode keeps its earlier bytes and an older
+	// router refuses a v7 record by its schema.
+	episodeStateSchemaV7 = "rayline.arc.episode-state.v7"
 	maxFutureClockSkew   = 5 * time.Minute
 	episodeOwnerBytes    = 24
 	maxEpisodeStateBytes = 64 * 1024
@@ -276,7 +282,7 @@ func controlPlacementsToWire(placements []ControlPlacement) []episodeControlWire
 
 // episodeStateSizeLimit is the most bytes a record of schema may take.
 func episodeStateSizeLimit(schema string) int {
-	if schema == episodeStateSchemaV6 {
+	if schema == episodeStateSchemaV6 || schema == episodeStateSchemaV7 {
 		return maxEpisodeStateBytesV6
 	}
 	return maxEpisodeStateBytes
@@ -563,6 +569,9 @@ func marshalEpisodeState(
 	if exceedsLegacyBounds(wire) {
 		wire.SchemaVersion = episodeStateSchemaV6
 	}
+	if warmthCarriesCalls(state.Warmth) {
+		wire.SchemaVersion = episodeStateSchemaV7
+	}
 	owner := state.EncoderOwner
 	visited := append([]string{}, state.EncoderVisitedOwners...)
 	wire.EncoderOwner = &owner
@@ -631,6 +640,15 @@ func unmarshalEpisodeState(
 func decodeEpisodeStateAffinity(
 	wire episodeStateWire,
 ) (string, []string, error) {
+	// v7 is exactly the record whose warmth carries a call, whatever else
+	// it carries; it may hold anything v3 to v6 do.
+	v7 := warmthWireCarriesCalls(wire.Warmth)
+	if v7 != (wire.SchemaVersion == episodeStateSchemaV7) {
+		return "", nil, errors.New("ARC episode state contract mismatch")
+	}
+	if v7 {
+		return decodeEpisodeOwner(wire)
+	}
 	if (wire.Thinking != nil || len(wire.Upstream) > 0 || wire.Policy != nil || len(wire.Controls) > 0 ||
 		len(wire.ReasoningIssuers) > 0 || wire.PolicyBoundary != nil || len(wire.ReasoningProvenance) > 0) !=
 		(wire.SchemaVersion == episodeStateSchema || wire.SchemaVersion == episodeStateSchemaV4 ||
@@ -660,15 +678,37 @@ func decodeEpisodeStateAffinity(
 		}
 		return "", nil, nil
 	case episodeStateSchemaV2, episodeStateSchema, episodeStateSchemaV4, episodeStateSchemaV5, episodeStateSchemaV6:
-		if wire.EncoderOwner == nil || wire.EncoderVisitedOwners == nil ||
-			*wire.EncoderVisitedOwners == nil {
-			return "", nil, errors.New("ARC episode state contract mismatch")
-		}
-		return *wire.EncoderOwner,
-			append([]string(nil), (*wire.EncoderVisitedOwners)...), nil
+		return decodeEpisodeOwner(wire)
 	default:
 		return "", nil, errors.New("ARC episode state contract mismatch")
 	}
+}
+
+func decodeEpisodeOwner(wire episodeStateWire) (string, []string, error) {
+	if wire.EncoderOwner == nil || wire.EncoderVisitedOwners == nil ||
+		*wire.EncoderVisitedOwners == nil {
+		return "", nil, errors.New("ARC episode state contract mismatch")
+	}
+	return *wire.EncoderOwner,
+		append([]string(nil), (*wire.EncoderVisitedOwners)...), nil
+}
+
+func warmthCarriesCalls(warmth []*WorkerWarmth) bool {
+	for _, value := range warmth {
+		if value != nil && value.Call != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func warmthWireCarriesCalls(warmth []*episodeWarmthWire) bool {
+	for _, value := range warmth {
+		if value != nil && value.Call != nil {
+			return true
+		}
+	}
+	return false
 }
 
 func episodeStateFromWire(

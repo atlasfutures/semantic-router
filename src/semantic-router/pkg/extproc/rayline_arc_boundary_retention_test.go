@@ -372,7 +372,7 @@ func TestPolicyBusyRetryReleasesAdmissionBetweenAttempts(t *testing.T) {
 	client := raylinearc.NewPolicyServiceClient(raylinearc.PolicyServiceConfig{BaseURL: fixture.fake.URL(), TotalTimeout: 5 * time.Second})
 	request := raylinearc.PolicyDecisionRequest{SchemaVersion: raylinearc.PolicyDecisionRequestSchema}
 	request.Selection.AvailableActionIDs = policyTestActionIDs(fixture.decision.Algorithm.RaylineARC.PolicyService.Bindings)
-	if _, err := decidePolicyThroughBusy(context.Background(), client, request, time.Second, admit); err != nil {
+	if _, err := decidePolicyThroughBusy(context.Background(), client, request, time.Second, admit, nil); err != nil {
 		t.Fatalf("a busy decision that cleared was refused: %v", err)
 	}
 	if admits != 3 || heldAtAdmit != 0 || gate.Inflight() != 0 {

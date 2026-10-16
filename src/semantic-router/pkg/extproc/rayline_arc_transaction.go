@@ -76,6 +76,9 @@ type raylineARCEpisodeTransaction struct {
 	// provider's usage. It is recorded on the served arm's warmth with the
 	// turn, and only when the action is known.
 	call raylinearc.CallCache
+	// callCompleted is set once the provider's response to this turn was
+	// read; a turn without one (a decision-only consult) records no call.
+	callCompleted bool
 	// upstreamPrefix is this turn's body shape, committed only with the turn.
 	upstreamPrefix *raylinearc.UpstreamPrefix
 	// controlPlacement is the thinking-control placer this turn advanced,
@@ -598,7 +601,7 @@ func (transaction *raylineARCEpisodeTransaction) nextState() (*raylinearc.Episod
 	); err != nil {
 		return nil, err
 	}
-	if transaction.call.ActionID != "" {
+	if transaction.call.ActionID != "" && transaction.callCompleted {
 		call := transaction.call
 		nextState.Warmth[transaction.selectedArm].Call = &call
 	}
@@ -778,6 +781,7 @@ func (transaction *raylineARCEpisodeTransaction) stageCallUsage(usage responseUs
 	if transaction == nil {
 		return
 	}
+	transaction.callCompleted = true
 	transaction.call.PromptTokens, transaction.call.CacheReadTokens, transaction.call.CacheWriteTokens = nil, nil, nil
 	if usage.invalid || usage.estimated {
 		return
