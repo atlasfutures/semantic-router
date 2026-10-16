@@ -115,6 +115,10 @@ func TestPolicyTurnCommitRecordsTheCall(t *testing.T) {
 		t.Fatal(err)
 	}
 	call := next.Warmth[1].Call
+	// Dated when the response's usage was read, not at the later commit.
+	if call == nil || !call.CompletedAt.Equal(transaction.call.CompletedAt) || call.CompletedAt.After(next.Warmth[1].LastUsed) {
+		t.Fatalf("completion %v, staged %v, committed %v", call, transaction.call.CompletedAt, next.Warmth[1].LastUsed)
+	}
 	if call == nil || call.ActionID != action || call.TTLSeconds != 3600 || *call.PromptTokens != 1200 ||
 		call.CacheReadTokens == nil || *call.CacheReadTokens != 0 || call.CacheWriteTokens != nil {
 		t.Fatalf("recorded call = %+v", call)

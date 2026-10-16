@@ -611,7 +611,9 @@ func (transaction *raylineARCEpisodeTransaction) nextState() (*raylinearc.Episod
 	nextState.Warmth[transaction.selectedArm].Call = previousCall
 	if transaction.call.ActionID != "" && transaction.callCompleted {
 		call := transaction.call
-		call.CompletedAt = now
+		if call.CompletedAt.IsZero() || call.CompletedAt.After(now) {
+			call.CompletedAt = now
+		}
 		nextState.Warmth[transaction.selectedArm].Call = &call
 	}
 	return nextState, nil
@@ -790,7 +792,10 @@ func (transaction *raylineARCEpisodeTransaction) stageCallUsage(usage responseUs
 	if transaction == nil {
 		return
 	}
+	// The response is complete when its usage is read, before the reply is
+	// sent and the turn committed.
 	transaction.callCompleted = true
+	transaction.call.CompletedAt = time.Now().UTC()
 	transaction.call.PromptTokens, transaction.call.CacheReadTokens, transaction.call.CacheWriteTokens = nil, nil, nil
 	if usage.invalid || usage.estimated {
 		return
