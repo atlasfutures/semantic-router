@@ -529,3 +529,76 @@ func TestEpisodeStateV7IsExactlyTheRecordWithCalls(t *testing.T) {
 		t.Fatal("a v2 record carrying calls was accepted")
 	}
 }
+
+// Each entry carries the epoch its call was made in: one from before a
+// compaction keeps its older epoch, so the service reads it as another
+// context; one with no recorded epoch omits the member.
+func TestCacheContextCarriesEachCallsContextEpoch(t *testing.T) {
+	before := servedWarmth(0, 10*time.Minute, CallCache{ContextEpoch: "0"})
+	current := servedWarmth(1, time.Minute, CallCache{ContextEpoch: "1"})
+	unknown := servedWarmth(2, 2*time.Minute, CallCache{})
+	context := BuildPolicyCacheContext([]*WorkerWarmth{before, current, unknown}, cacheContextNow, identityArms)
+	decoded := encodeCacheContext(t, context)
+	entries := decoded["actions"].([]interface{})
+	want := []interface{}{"1", nil, "0"}
+	for index, raw := range entries {
+		entry := raw.(map[string]interface{})
+		epoch, present := entry["context_epoch"]
+		if want[index] == nil {
+			if present {
+				t.Fatalf("entry %d: unknown epoch sent as %v", index, epoch)
+			}
+			if len(entry) != 7 {
+				t.Fatalf("entry %d members %v", index, entry)
+			}
+			continue
+		}
+		if epoch != want[index] || len(entry) != 8 {
+			t.Fatalf("entry %d: context_epoch %v, want %v (%v)", index, epoch, want[index], entry)
+		}
+	}
+}
+
+// A call's epoch survives the record, written as v8; a v7 record (calls,
+// no epochs) still reads, and each schema is exactly its record.
+func TestEpisodeRecordKeepsTheCallsEpoch(t *testing.T) {
+	state, _ := NewEpisodeState(2)
+	if err := state.Commit(0, 10, cacheContextNow.Add(-time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	state.Warmth[0].Call = &CallCache{ActionID: actionIDFor(0), CompletedAt: cacheContextNow.Add(-time.Second)}
+	v7, err := marshalEpisodeState(state, 1, cacheContextNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(v7, []byte(episodeStateSchemaV7)) {
+		t.Fatalf("calls without epochs are not v7: %s", v7)
+	}
+	if _, _, err := unmarshalEpisodeState(v7, 2, cacheContextNow); err != nil {
+		t.Fatalf("a v7 record was refused: %v", err)
+	}
+	state.Warmth[0].Call = &CallCache{ActionID: actionIDFor(0), CompletedAt: cacheContextNow.Add(-time.Second), ContextEpoch: "2"}
+	v8, err := marshalEpisodeState(state, 1, cacheContextNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(v8, []byte(episodeStateSchemaV8)) {
+		t.Fatalf("a call with an epoch is not v8: %s", v8)
+	}
+	restored, _, err := unmarshalEpisodeState(v8, 2, cacheContextNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.Warmth[0].Call.ContextEpoch != "2" {
+		t.Fatalf("restored epoch %q", restored.Warmth[0].Call.ContextEpoch)
+	}
+	for name, payload := range map[string][]byte{
+		"v8 labelled v7":      bytes.Replace(v8, []byte(episodeStateSchemaV8), []byte(episodeStateSchemaV7), 1),
+		"v7 labelled v8":      bytes.Replace(v7, []byte(episodeStateSchemaV7), []byte(episodeStateSchemaV8), 1),
+		"v8 labelled earlier": bytes.Replace(v8, []byte(episodeStateSchemaV8), []byte(episodeStateSchemaV2), 1),
+	} {
+		if _, _, err := unmarshalEpisodeState(payload, 2, cacheContextNow); err == nil {
+			t.Fatalf("%s was accepted", name)
+		}
+	}
+}

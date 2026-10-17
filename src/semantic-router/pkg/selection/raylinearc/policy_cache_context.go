@@ -48,6 +48,9 @@ type CallCache struct {
 	// call's own, not the warmth's LastUsed, which a decision-only consult
 	// also advances.
 	CompletedAt time.Time
+	// ContextEpoch is the episode's context epoch the call was made in (the
+	// decide request's context_epoch); "" when unknown.
+	ContextEpoch string
 	// TTLSeconds and TTLSource are the cache_control TTL the call sent on the
 	// wire; 0 and "" when it stated none.
 	TTLSeconds int
@@ -68,13 +71,16 @@ type PolicyCacheContext struct {
 // PolicyActionCache is one action's last call. Every member but ActionID is
 // null when unknown, never 0.
 type PolicyActionCache struct {
-	ActionID         string   `json:"action_id"`
-	GapS             *float64 `json:"gap_s"`
-	TTLS             *float64 `json:"ttl_s"`
-	TTLSource        *string  `json:"ttl_source"`
-	PromptTokens     *int     `json:"prompt_tokens"`
-	CacheReadTokens  *int     `json:"cache_read_tokens"`
-	CacheWriteTokens *int     `json:"cache_write_tokens"`
+	ActionID  string   `json:"action_id"`
+	GapS      *float64 `json:"gap_s"`
+	TTLS      *float64 `json:"ttl_s"`
+	TTLSource *string  `json:"ttl_source"`
+	// ContextEpoch is omitted when unknown, as pathfinder's fixture does; the
+	// service reads an entry without one as from another epoch.
+	ContextEpoch     *string `json:"context_epoch,omitempty"`
+	PromptTokens     *int    `json:"prompt_tokens"`
+	CacheReadTokens  *int    `json:"cache_read_tokens"`
+	CacheWriteTokens *int    `json:"cache_write_tokens"`
 }
 
 // BuildPolicyCacheContext is the cache_context for a decide at now: one
@@ -138,6 +144,10 @@ func actionCacheEntry(call *CallCache, gap time.Duration) PolicyActionCache {
 	if call.TTLSeconds > 0 && call.TTLSource != "" {
 		ttl, source := float64(call.TTLSeconds), call.TTLSource
 		entry.TTLS, entry.TTLSource = &ttl, &source
+	}
+	if call.ContextEpoch != "" {
+		epoch := call.ContextEpoch
+		entry.ContextEpoch = &epoch
 	}
 	entry.PromptTokens = knownCount(call.PromptTokens)
 	entry.CacheReadTokens = knownCount(call.CacheReadTokens)
