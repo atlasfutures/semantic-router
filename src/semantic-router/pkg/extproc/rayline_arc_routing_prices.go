@@ -182,7 +182,7 @@ func addPolicyPriceAuditFields(fields map[string]interface{}, trace *selection.R
 	}
 	fields["routing_prices_fallback_arms"] = arms
 	fields["routing_prices_fallback_arm_count"] = len(used.FallbackArms)
-	filled, filledCount := raylinearc.BoundedFilledLegs(used.FilledLegs, maxLoggedFilledModels, raylinearc.MaxRoutingPriceModelIDBytes)
+	filled, filledCount := raylinearc.BoundedFilledLegs(used.FilledLegs, maxLoggedFilledModels, raylinearc.MaxRoutingPriceRateKeyBytes)
 	if filled == nil {
 		filled = map[string][]string{}
 	}

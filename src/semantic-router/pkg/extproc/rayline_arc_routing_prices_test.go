@@ -52,12 +52,14 @@ func (clock *routingPriceClock) advance(by time.Duration) {
 	clock.now = clock.now.Add(by)
 }
 
-// newRoutingPriceFeed serves the contract's feed fixture.
-func newRoutingPriceFeed(t *testing.T) *httptest.Server {
+// newRoutingPriceFeed serves body, by default the contract's feed fixture.
+func newRoutingPriceFeed(t *testing.T, body []byte) *httptest.Server {
 	t.Helper()
-	body, err := os.ReadFile("../selection/raylinearc/testdata/routing_prices/feed.v1.json")
-	if err != nil {
-		t.Fatal(err)
+	if body == nil {
+		var err error
+		if body, err = os.ReadFile("../selection/raylinearc/testdata/routing_prices/feed.v1.json"); err != nil {
+			t.Fatal(err)
+		}
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		_, _ = writer.Write(body)
@@ -70,9 +72,15 @@ func newRoutingPriceFeed(t *testing.T) *httptest.Server {
 // fake feed, on a clock the test controls.
 func (fixture *policySelectorFixture) withRoutingPrices(t *testing.T, fetch bool) *routingPriceClock {
 	t.Helper()
+	return fixture.withRoutingPriceFeed(t, fetch, nil)
+}
+
+// withRoutingPriceFeed is withRoutingPrices on a feed serving body.
+func (fixture *policySelectorFixture) withRoutingPriceFeed(t *testing.T, fetch bool, body []byte) *routingPriceClock {
+	t.Helper()
 	clock := &routingPriceClock{now: time.Date(2026, 10, 14, 16, 0, 0, 0, time.UTC)}
 	cache := raylinearc.NewRoutingPriceCache(raylinearc.RoutingPriceCacheConfig{
-		URL: newRoutingPriceFeed(t).URL, TTL: time.Minute, RefreshAhead: 10 * time.Second,
+		URL: newRoutingPriceFeed(t, body).URL, TTL: time.Minute, RefreshAhead: 10 * time.Second,
 		MaxAge: 10 * time.Minute, FetchTimeout: time.Second, Now: clock.Now,
 	})
 	if fetch {
@@ -153,6 +161,62 @@ func TestPolicySelectorSendsLivePricesAndAuditsTheEcho(t *testing.T) {
 	result, err = fixture.selectOn(t, state, policyTestRequest(t, map[string]any{"role": "user", "content": "go"}))
 	if err != nil || result.RaylineARC.RoutingPricesStatus != "stale" || fixture.fake.received()[1].RoutingPrices == nil {
 		t.Fatalf("stale select: %v, status %q", err, result.RaylineARC.RoutingPricesStatus)
+	}
+}
+
+// A fetched feed listing one model at a standard and a flex endpoint
+// (memex-desktop#7457) reaches the policy service with both tagged keys and a
+// single-endpoint model's bare key, and an echo filling a tagged key is
+// recorded in the ledger and the selection log.
+func TestPolicySelectorSendsEndpointKeyedRatesAndAuditsTheEcho(t *testing.T) {
+	feed := []byte(`{"schema": "arc-routing-prices.v1", "store_version": "18", "as_of": "2026-10-14T16:00:00Z",
+		"currency": "USD", "unit": "usd_per_million_tokens", "models": [
+		{"model": "openai/gpt-luna", "endpoint_tag": "openai", "input": 3, "cache_read": 0.3, "cache_write": 0,
+		 "output": 15, "valid_from": "2026-10-14T00:00:00Z", "valid_until": null, "source": "openrouter:openai"},
+		{"model": "openai/gpt-luna", "endpoint_tag": "openai/flex", "input": 1.5, "cache_read": null,
+		 "cache_write": 0, "output": 7.5, "valid_from": "2026-10-14T00:00:00Z", "valid_until": null,
+		 "source": "openrouter:openai/flex"},
+		{"model": "z-ai/glm-4.6", "endpoint_tag": "z-ai", "input": 0.6, "cache_read": 0.11, "cache_write": 0,
+		 "output": 2.2, "valid_from": "2026-10-14T00:00:00Z", "valid_until": null, "source": "openrouter:z-ai"}]}`)
+	fixture := newPolicySelectorFixture(t, "")
+	bindings := fixture.decision.Algorithm.RaylineARC.PolicyService.Bindings
+	fixture.fake.chooseWith(func(raylinearc.PolicyDecisionRequest) string { return bindings[0].ActionID })
+	digest := strings.Repeat("d", 64)
+	fixture.fake.echo = func(request raylinearc.PolicyDecisionRequest) *raylinearc.PolicyRoutingPricesUsed {
+		version, asOf := request.RoutingPrices.StoreVersion, request.RoutingPrices.AsOf
+		return &raylinearc.PolicyRoutingPricesUsed{
+			Mode: raylinearc.RoutingPricesModeLive, StoreVersion: &version, AsOf: &asOf, Digest: &digest,
+			FallbackArms: []string{}, FilledLegs: map[string][]string{"openai/gpt-luna@openai/flex": {"cache_read"}},
+		}
+	}
+	fixture.withRoutingPriceFeed(t, true, feed)
+	state, _ := raylinearc.NewEpisodeState(2)
+
+	result, err := fixture.selectOn(t, state, policyTestRequest(t, map[string]any{"role": "user", "content": "go"}))
+	if err != nil {
+		t.Fatalf("select: %v", err)
+	}
+	sent := fixture.fake.received()[0].RoutingPrices
+	if sent == nil || sent.StoreVersion != "18" || len(sent.Rates) != 3 {
+		t.Fatalf("routing_prices sent = %+v", sent)
+	}
+	for key, input := range map[string]float64{
+		"openai/gpt-luna@openai": 3, "openai/gpt-luna@openai/flex": 1.5, "z-ai/glm-4.6": 0.6,
+	} {
+		if rate, ok := sent.Rates[key]; !ok || *rate.Input != input {
+			t.Fatalf("rate %q sent as %+v, want input %v (rates %v)", key, rate, input, sent.Rates)
+		}
+	}
+	ledger := result.RaylineARC.PolicyNextState.Ledger
+	audit := ledger[len(ledger)-1].Prices
+	if audit == nil || audit.Mode != raylinearc.RoutingPricesModeLive || audit.FilledModelCount != 1 ||
+		!slices.Equal(audit.FilledLegs["openai/gpt-luna@openai/flex"], []string{"cache_read"}) {
+		t.Fatalf("ledger audit = %+v", audit)
+	}
+	fields := map[string]interface{}{}
+	addPolicyPriceAuditFields(fields, result.RaylineARC)
+	if legs := fields["routing_prices_filled_legs"].(map[string][]string)["openai/gpt-luna@openai/flex"]; len(legs) != 1 {
+		t.Fatalf("selection log audit = %v", fields)
 	}
 }
 
@@ -349,5 +413,30 @@ func TestRoutingPriceCacheConfiguredForGoogleIDToken(t *testing.T) {
 	}
 	if got, _ := sent.Load().(string); got != "Bearer "+token {
 		t.Fatalf("Authorization = %q", got)
+	}
+}
+
+// The echo's filled_legs names request rate keys, tagged ones included
+// (memex-desktop#7457): a tagged key the request sent is true of it, the
+// same model at an endpoint it did not send is not.
+func TestRoutingPriceEchoChecksFilledLegsByRateKey(t *testing.T) {
+	version, asOf := "18", "2026-10-16T12:00:00Z"
+	sent := &raylinearc.PolicyRoutingPrices{
+		Schema: raylinearc.RoutingPricesSchema, StoreVersion: version, AsOf: asOf,
+		Rates: map[string]raylinearc.PolicyRoutingRate{"openai/gpt-luna@openai": {}, "openai/gpt-luna@openai/flex": {}},
+	}
+	echo := func(key string) *raylinearc.PolicyRoutingPricesUsed {
+		return &raylinearc.PolicyRoutingPricesUsed{
+			Mode: raylinearc.RoutingPricesModeLive, StoreVersion: &version, AsOf: &asOf,
+			FilledLegs: map[string][]string{key: {"cache_write"}},
+		}
+	}
+	if got := routingPriceEchoMismatch(sent, echo("openai/gpt-luna@openai/flex")); got != "" {
+		t.Fatalf("a filled tagged key the request sent: %q", got)
+	}
+	for _, key := range []string{"openai/gpt-luna", "openai/gpt-luna@other"} {
+		if got := routingPriceEchoMismatch(sent, echo(key)); got != arcFailurePolicyPricesMismatch {
+			t.Fatalf("filled %q, which the request did not send: %q", key, got)
+		}
 	}
 }

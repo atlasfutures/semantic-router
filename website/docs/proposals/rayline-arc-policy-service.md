@@ -278,11 +278,19 @@ provider prices instead of its exported ones. Pathfinder's
 maps them to arms, fills a null leg from the package, and falls back per arm.
 
 - **Feed.** VSR reads `GET <url>` (schema `arc-routing-prices.v1`, USD per
-  million tokens, keyed by OpenRouter model id) and forwards the rates as
-  served. It never maps them to arms. The feed is decoded strictly: a wrong
-  schema, currency or unit, an empty `store_version`, a duplicate model, or an
-  `as_of` or `valid_until` that is not RFC 3339 with an offset rejects the
-  whole response, and the last good copy stays in use. A model entry that
+  million tokens, one entry per `(model, endpoint_tag)`: the OpenRouter id
+  and the OpenRouter endpoint the price is read at) and forwards the rates as
+  served. It never maps them to arms. A model the feed lists at one endpoint
+  is keyed by its bare OpenRouter id, as before endpoint tags; each endpoint
+  of a model it lists at several (a standard endpoint and its flex twin) is
+  keyed `<model>@<endpoint_tag>`. The feed is decoded strictly: a wrong
+  schema, currency or unit, an empty `store_version`, one endpoint listed
+  twice, a model at several endpoints with an untagged entry, an empty
+  `endpoint_tag`, a model id containing `@`, or an `as_of` or `valid_until`
+  that is not RFC 3339 with an offset rejects the whole response, and the
+  last good copy stays in use. A VSR from before endpoint keys rejects a feed
+  listing one model twice, so this version must serve before the pricing
+  card prices a model at two endpoints. A model entry that
   omits a leg (rather than writing it `null`) is not forwarded, so its arms
   keep their package rates, as the service treats such an entry.
 - **Auth.** `auth: google_id_token` sends an identity token minted by the
@@ -299,7 +307,7 @@ maps them to arms, fills a null leg from the package, and falls back per arm.
   request carried `routing_prices`. VSR fails the turn closed when the echo
   is missing (`policy_prices_unechoed`), present for a request that sent
   none (`policy_prices_unsent`), or names another `store_version`, `as_of`,
-  or a filled model the request did not send (`policy_prices_mismatch`).
+  or a filled rate key the request did not send (`policy_prices_mismatch`).
 - **Audit.** Each main-turn ledger entry keeps the package hash, the mode,
   the feed identity, the rates digest, the first few fallback arms and filled
   models with their counts, and the selected action's predicted cost. The
