@@ -62,6 +62,10 @@ const (
 	// carries, so every other episode keeps its earlier bytes and an older
 	// router refuses a v7 record by its schema.
 	episodeStateSchemaV7 = "rayline.arc.episode-state.v7"
+	// episodeStateSchemaV8 adds a call's context epoch to v7. It is written
+	// only for a record whose warmth carries a call with one, so a v7 reader
+	// refuses it by its schema rather than by a field it does not know.
+	episodeStateSchemaV8 = "rayline.arc.episode-state.v8"
 	maxFutureClockSkew   = 5 * time.Minute
 	episodeOwnerBytes    = 24
 	maxEpisodeStateBytes = 64 * 1024
@@ -282,7 +286,7 @@ func controlPlacementsToWire(placements []ControlPlacement) []episodeControlWire
 
 // episodeStateSizeLimit is the most bytes a record of schema may take.
 func episodeStateSizeLimit(schema string) int {
-	if schema == episodeStateSchemaV6 || schema == episodeStateSchemaV7 {
+	if schema == episodeStateSchemaV6 || schema == episodeStateSchemaV7 || schema == episodeStateSchemaV8 {
 		return maxEpisodeStateBytesV6
 	}
 	return maxEpisodeStateBytes
@@ -452,6 +456,7 @@ type episodeWarmthWire struct {
 type episodeCallWire struct {
 	ActionID         string `json:"action_id"`
 	CompletedUnixMS  int64  `json:"completed_unix_ms"`
+	ContextEpoch     string `json:"context_epoch,omitempty"`
 	TTLSeconds       int    `json:"ttl_s,omitempty"`
 	TTLSource        string `json:"ttl_source,omitempty"`
 	PromptTokens     *int   `json:"prompt_tokens,omitempty"`
@@ -570,7 +575,9 @@ func marshalEpisodeState(
 	if exceedsLegacyBounds(wire) {
 		wire.SchemaVersion = episodeStateSchemaV6
 	}
-	if warmthCarriesCalls(state.Warmth) {
+	if calls, epochs := warmthCarriesCalls(state.Warmth); epochs {
+		wire.SchemaVersion = episodeStateSchemaV8
+	} else if calls {
 		wire.SchemaVersion = episodeStateSchemaV7
 	}
 	owner := state.EncoderOwner
@@ -587,7 +594,7 @@ func marshalEpisodeState(
 		}
 		if call := warmth.Call; call != nil {
 			wire.Warmth[index].Call = &episodeCallWire{
-				ActionID: call.ActionID, CompletedUnixMS: call.CompletedAt.UTC().UnixMilli(), TTLSeconds: call.TTLSeconds, TTLSource: call.TTLSource,
+				ActionID: call.ActionID, CompletedUnixMS: call.CompletedAt.UTC().UnixMilli(), ContextEpoch: call.ContextEpoch, TTLSeconds: call.TTLSeconds, TTLSource: call.TTLSource,
 				PromptTokens: call.PromptTokens, CacheReadTokens: call.CacheReadTokens, CacheWriteTokens: call.CacheWriteTokens,
 			}
 		}
@@ -641,13 +648,15 @@ func unmarshalEpisodeState(
 func decodeEpisodeStateAffinity(
 	wire episodeStateWire,
 ) (string, []string, error) {
-	// v7 is exactly the record whose warmth carries a call, whatever else
-	// it carries; it may hold anything v3 to v6 do.
-	v7 := warmthWireCarriesCalls(wire.Warmth)
-	if v7 != (wire.SchemaVersion == episodeStateSchemaV7) {
+	// v8 is exactly the record whose warmth carries a call with a context
+	// epoch, and v7 one whose calls carry none, whatever else either
+	// carries; both may hold anything v3 to v6 do.
+	calls, epochs := warmthWireCarriesCalls(wire.Warmth)
+	if epochs != (wire.SchemaVersion == episodeStateSchemaV8) ||
+		(calls && !epochs) != (wire.SchemaVersion == episodeStateSchemaV7) {
 		return "", nil, errors.New("ARC episode state contract mismatch")
 	}
-	if v7 {
+	if calls {
 		return decodeEpisodeOwner(wire)
 	}
 	if (wire.Thinking != nil || len(wire.Upstream) > 0 || wire.Policy != nil || len(wire.Controls) > 0 ||
@@ -694,22 +703,26 @@ func decodeEpisodeOwner(wire episodeStateWire) (string, []string, error) {
 		append([]string(nil), (*wire.EncoderVisitedOwners)...), nil
 }
 
-func warmthCarriesCalls(warmth []*WorkerWarmth) bool {
+// warmthCarriesCalls reports whether any arm holds a call, and whether any
+// call holds a context epoch.
+func warmthCarriesCalls(warmth []*WorkerWarmth) (calls, epochs bool) {
 	for _, value := range warmth {
 		if value != nil && value.Call != nil {
-			return true
+			calls = true
+			epochs = epochs || value.Call.ContextEpoch != ""
 		}
 	}
-	return false
+	return calls, epochs
 }
 
-func warmthWireCarriesCalls(warmth []*episodeWarmthWire) bool {
+func warmthWireCarriesCalls(warmth []*episodeWarmthWire) (calls, epochs bool) {
 	for _, value := range warmth {
 		if value != nil && value.Call != nil {
-			return true
+			calls = true
+			epochs = epochs || value.Call.ContextEpoch != ""
 		}
 	}
-	return false
+	return calls, epochs
 }
 
 func episodeStateFromWire(
@@ -747,7 +760,7 @@ func episodeStateFromWire(
 		}
 		if call := warmth.Call; call != nil {
 			state.Warmth[index].Call = &CallCache{
-				ActionID: call.ActionID, CompletedAt: time.UnixMilli(call.CompletedUnixMS).UTC(), TTLSeconds: call.TTLSeconds, TTLSource: call.TTLSource,
+				ActionID: call.ActionID, CompletedAt: time.UnixMilli(call.CompletedUnixMS).UTC(), ContextEpoch: call.ContextEpoch, TTLSeconds: call.TTLSeconds, TTLSource: call.TTLSource,
 				PromptTokens: call.PromptTokens, CacheReadTokens: call.CacheReadTokens, CacheWriteTokens: call.CacheWriteTokens,
 			}
 		}

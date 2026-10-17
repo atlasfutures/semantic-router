@@ -297,6 +297,11 @@ func stageRaylineARCPolicySelection(ctx *RequestContext, trace *selection.Raylin
 		}
 		transaction.markServedModel(served)
 		transaction.call.ActionID = trace.PolicyActionID
+		// The epoch the decide was asked in, which the turn commits.
+		transaction.call.ContextEpoch = ""
+		if trace.PolicyNextState != nil {
+			transaction.call.ContextEpoch = trace.PolicyNextState.ContextEpoch()
+		}
 	}
 	if trace.PolicyBoundary == nil {
 		return

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
 
@@ -241,5 +242,29 @@ func TestPolicyTurnStagesTheWireTTLOfAnAnthropicDispatch(t *testing.T) {
 	})
 	if transaction.call.TTLSeconds != 0 {
 		t.Fatalf("an artifact-mode turn staged %d", transaction.call.TTLSeconds)
+	}
+}
+
+// A policy turn records the epoch its decide was asked in; a side call
+// records no call at all.
+func TestPolicySelectionStagesTheCallsContextEpoch(t *testing.T) {
+	action := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	for _, sideCall := range []bool{false, true} {
+		state, _ := raylinearc.NewEpisodeState(2)
+		transaction := &raylineARCEpisodeTransaction{state: state}
+		ctx := &RequestContext{RaylineARCTransaction: transaction}
+		stageRaylineARCPolicySelection(ctx, &selection.RaylineARCTrace{
+			PolicyActionID: action, PolicySideCall: sideCall,
+			PolicyNextState: &raylinearc.PolicyEpisodeState{Epoch: 3},
+		}, "think")
+		if sideCall {
+			if transaction.call.ActionID != "" || transaction.call.ContextEpoch != "" {
+				t.Fatalf("a side call staged %+v", transaction.call)
+			}
+			continue
+		}
+		if transaction.call.ActionID != action || transaction.call.ContextEpoch != "3" {
+			t.Fatalf("staged %+v, want the action in epoch 3", transaction.call)
+		}
 	}
 }
