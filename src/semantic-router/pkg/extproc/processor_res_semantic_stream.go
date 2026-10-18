@@ -91,8 +91,15 @@ func (r *OpenAIRouter) handleSemanticStreamingResponseBody(
 	// Checked after this chunk's content was observed, so a chunk that
 	// carries content is never cut for the silence before it.
 	silent := !overran && !endOfStream && r.streamSilenceExceeded(ctx)
-	cut := overran || silent
+	// A body the Router read itself that ended in a read error is cut there,
+	// even when its last frame looked final.
+	readCut := !overran && endOfStream && ctx.UpstreamBodyCut != nil
+	cut := overran || silent || readCut
 	if cut || endOfStream {
+		if readCut {
+			buffers.recordError(ctx, ctx.UpstreamBodyCut, true)
+			r.attachTruncatedStreamUsage(ctx)
+		}
 		if overran {
 			r.logResponseStreamTruncation(ctx)
 			buffers.recordError(ctx, r.truncatedStreamError(), true)

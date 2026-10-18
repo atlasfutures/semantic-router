@@ -17,6 +17,8 @@ import (
 	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 	typev3 "github.com/envoyproxy/go-control-plane/envoy/type/v3"
 
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/metrics"
 )
@@ -50,21 +52,19 @@ import (
 // turn's events therefore arrive together once the re-send has finished.
 //
 // Envoy waits for the reply to the response-header message only as long as
-// its ext_proc message_timeout, so the whole re-send has to fit inside it. The
-// cell templates set that timeout from the listener's timeout, so the re-send
-// is bounded by the shortest listener timeout less a margin.
+// its ext_proc message_timeout, so the whole re-send has to fit inside it.
+// The Router cannot read that timeout, so the budget is stated:
+// global.router.response_stream.resend_budget_sec, 55 s by default (the 60 s
+// the repository's Gateway API manifests ship, less a margin). A budget too
+// short to be worth a call is not spent: the refusal then takes the ordinary
+// path, settled as unknown like any provider error.
 
 const (
 	flexResendAttempt  = "flex_attempt"
 	flexResendStandard = "standard_resend"
-	// flexResendDefaultWindow stands for the listener timeout when none is
-	// configured: the static Envoy templates' message_timeout (300s).
-	flexResendDefaultWindow = 300 * time.Second
-	// flexResendMargin is left for the pipeline to settle the re-send and
-	// answer before Envoy gives up on the message.
-	flexResendMargin = 5 * time.Second
-	// flexResendMinBudget keeps a misconfigured short window from turning
-	// every re-send into an immediate timeout.
+	// flexResendDefaultBudget is the budget when none is configured.
+	flexResendDefaultBudget = 55 * time.Second
+	// flexResendMinBudget is the least budget a re-send is attempted with.
 	flexResendMinBudget = 5 * time.Second
 	// flexResendMaxBody bounds the re-send's body when the cell sets no
 	// response-body limit of its own.
@@ -76,15 +76,17 @@ const (
 var flexResendHTTPClient = &http.Client{}
 
 // flexResendPlan is the re-send staged when a discount-endpoint arm is
-// dispatched: the request its twin would be sent, built while the dispatch is
-// known, so the response phase only has to decide whether to send it.
+// dispatched. Staging checks only what the config decides (the twin resolves
+// to the same model on the same wire); the twin's body and credential are
+// built only when a refusal triggers the re-send, so a served turn pays for
+// nothing but keeping the dispatched body.
 type flexResendPlan struct {
-	flexModel string
-	twinModel string
-	url       string
-	headers   http.Header
-	body      []byte
-	twinOrder []string
+	flexModel    string
+	twinModel    string
+	twinDispatch *providerDispatch
+	twinPin      *config.OpenRouterProviderPreferences
+	// dispatched is the body the refused call was sent.
+	dispatched []byte
 	// trigger is the failure class of the refused call, set once the re-send
 	// is under way; the response pipeline is then settling the twin's call.
 	trigger string
@@ -123,9 +125,9 @@ func (r *OpenAIRouter) stageFlexResend(ctx *RequestContext, dispatch *providerDi
 	ctx.FlexResend = plan
 }
 
-// planFlexResend builds the twin's request, or names why there is none. The
-// twin must be the same provider model on the same wire, both on OpenRouter,
-// where the provider object is what selects the endpoint.
+// planFlexResend stages the re-send, or names why there is none. The twin
+// must be the same provider model on the same wire, both on OpenRouter, where
+// the provider object is what selects the endpoint.
 func (r *OpenAIRouter) planFlexResend(
 	ctx *RequestContext,
 	dispatch *providerDispatch,
@@ -151,35 +153,50 @@ func (r *OpenAIRouter) planFlexResend(
 	if pin == nil {
 		return nil, "twin_unpinned"
 	}
-	twinBody, ok := withProviderObject(body, pin)
+	return &flexResendPlan{
+		flexModel:    dispatch.logicalModel,
+		twinModel:    twin,
+		twinDispatch: twinDispatch,
+		twinPin:      pin,
+		dispatched:   body,
+	}, ""
+}
+
+// flexTwinCall is the request the twin is sent.
+type flexTwinCall struct {
+	url     string
+	headers http.Header
+	body    []byte
+}
+
+// buildFlexTwinRequest builds the twin's request from the refused call's
+// body, or names why it cannot.
+func (r *OpenAIRouter) buildFlexTwinRequest(ctx *RequestContext, plan *flexResendPlan) (*flexTwinCall, string) {
+	twinBody, ok := withProviderObject(plan.dispatched, plan.twinPin)
 	if !ok {
 		// A body without the discount pin was never on the discount endpoint.
 		return nil, "flex_unpinned"
 	}
-	state := &routeHeaderState{profile: twinDispatch.profile}
-	appendProfileHeaders(&state.setHeaders, twinDispatch.profile)
-	if refused := r.appendProviderCredential(state, twin, twinDispatch.backendName, ctx); refused != nil {
+	twin := plan.twinDispatch
+	state := &routeHeaderState{profile: twin.profile}
+	appendProfileHeaders(&state.setHeaders, twin.profile)
+	if refused := r.appendProviderCredential(state, plan.twinModel, twin.backendName, ctx); refused != nil {
 		return nil, "credential_unavailable"
 	}
-	setProviderRequestPath(&state.setHeaders, twinDispatch.profile, twinDispatch.targetFormat)
+	setProviderRequestPath(&state.setHeaders, twin.profile, twin.targetFormat)
 	declareAutoCacheBeta(&state.setHeaders, ctx)
-	target, headers, err := flexResendRequestTarget(twinDispatch, state.setHeaders, ctx)
+	target, headers, err := flexResendRequestTarget(twin, state.setHeaders, ctx)
 	if err != nil {
 		return nil, "twin_address_invalid"
 	}
-	return &flexResendPlan{
-		flexModel: dispatch.logicalModel,
-		twinModel: twin,
-		url:       target,
-		headers:   headers,
-		body:      twinBody,
-		twinOrder: append([]string(nil), pin.Order...),
-	}, ""
+	return &flexTwinCall{url: target, headers: headers, body: twinBody}, ""
 }
 
 // withProviderObject replaces the dispatched body's provider object with the
-// twin's and leaves every other member byte for byte. It reports false for a
-// body that carries no provider object.
+// twin's and keeps every other member's value as dispatched. The body is
+// re-encoded through a map, so member order and escaping follow
+// encoding/json, as the dispatch's own provider-pin encoding already did. It
+// reports false for a body that carries no provider object.
 func withProviderObject(body []byte, pin any) ([]byte, bool) {
 	var members map[string]json.RawMessage
 	if json.Unmarshal(body, &members) != nil {
@@ -284,7 +301,27 @@ func (r *OpenAIRouter) flexResendOnResponseHeaders(
 	if trigger == "" {
 		return nil
 	}
+	received := time.Now()
 	plan := ctx.FlexResend
+	budget, skipped := r.flexResendBudget()
+	if skipped != "" {
+		// Nothing is spent on a re-send that cannot answer in time: the
+		// refusal takes the ordinary path and settles as unknown there.
+		logging.ComponentWarnEvent("extproc", "flex_resend_skipped", map[string]interface{}{
+			"request_id": ctx.RequestID, "flex_model": plan.flexModel,
+			"standard_model": plan.twinModel, "trigger": trigger, "reason": skipped,
+			"budget_ms": budget.Milliseconds(),
+		})
+		return nil
+	}
+	call, unavailable := r.buildFlexTwinRequest(ctx, plan)
+	if call == nil {
+		logging.ComponentWarnEvent("extproc", "flex_resend_unavailable", map[string]interface{}{
+			"request_id": ctx.RequestID, "flex_model": plan.flexModel,
+			"standard_model": plan.twinModel, "reason": unavailable,
+		})
+		return nil
+	}
 	// The refused call: its headers are all it said.
 	outcome := evaluateResponseHeaderOutcome(v, ctx)
 	ctx.UpstreamStatusCode = status
@@ -294,7 +331,7 @@ func (r *OpenAIRouter) flexResendOnResponseHeaders(
 
 	plan.trigger = trigger
 	started := time.Now()
-	result := callFlexTwin(ctx, plan, r.flexResendBodyLimit(), r.flexResendBudget())
+	result := callFlexTwin(ctx, call, r.flexResendBodyLimit(), received.Add(budget))
 	fields := map[string]interface{}{
 		"request_id":          ctx.RequestID,
 		"flex_model":          plan.flexModel,
@@ -303,6 +340,7 @@ func (r *OpenAIRouter) flexResendOnResponseHeaders(
 		"flex_status":         status,
 		"standard_status":     result.status,
 		"standard_latency_ms": time.Since(started).Milliseconds(),
+		"budget_ms":           budget.Milliseconds(),
 	}
 	if result.err != nil {
 		fields["standard_error"] = result.err.Error()
@@ -349,28 +387,29 @@ func (r *OpenAIRouter) flexResendBodyLimit() int64 {
 	return flexResendMaxBody
 }
 
-// flexResendBudget is how long the re-send may take: the shortest listener
-// timeout (the cell's ext_proc message_timeout), less a margin for the
-// pipeline to answer before Envoy gives up on the message.
-func (r *OpenAIRouter) flexResendBudget() time.Duration {
-	window := time.Duration(0)
+// flexResendBudget is how long the re-send may take, measured from the
+// refused call's response headers, or the reason it is not attempted: the
+// operator turned it off, or the budget is too short to be worth a call.
+func (r *OpenAIRouter) flexResendBudget() (time.Duration, string) {
+	budget := flexResendDefaultBudget
 	if r != nil && r.Config != nil {
-		for _, listener := range r.Config.Listeners {
-			timeout, err := time.ParseDuration(strings.TrimSpace(listener.Timeout))
-			if err == nil && timeout > 0 && (window == 0 || timeout < window) {
-				window = timeout
-			}
+		switch seconds := r.Config.FlexResendBudgetSec; {
+		case seconds < 0:
+			return 0, "disabled"
+		case seconds > 0:
+			budget = time.Duration(seconds) * time.Second
 		}
 	}
-	if window == 0 {
-		window = flexResendDefaultWindow
+	if budget < flexResendMinBudget {
+		return budget, "budget_too_short"
 	}
-	return max(window-flexResendMargin, flexResendMinBudget)
+	return budget, ""
 }
 
 // flexTwinResult is what the twin answered, or why it could not be asked.
-// delivered says the twin answered with a status; a body cut short keeps it,
-// so the pipeline settles whatever the twin stated before the cut.
+// delivered says the twin answered with a status. err on a delivered result
+// is a body read that failed after the status: the body is what arrived
+// before it.
 type flexTwinResult struct {
 	status      int
 	contentType string
@@ -379,18 +418,18 @@ type flexTwinResult struct {
 	err         error
 }
 
-func callFlexTwin(ctx *RequestContext, plan *flexResendPlan, limit int64, budget time.Duration) flexTwinResult {
+func callFlexTwin(ctx *RequestContext, call *flexTwinCall, limit int64, deadline time.Time) flexTwinResult {
 	parent := ctx.TraceContext
 	if parent == nil {
 		parent = context.Background()
 	}
-	callCtx, cancel := context.WithTimeout(parent, budget)
+	callCtx, cancel := context.WithDeadline(parent, deadline)
 	defer cancel()
-	request, err := http.NewRequestWithContext(callCtx, http.MethodPost, plan.url, bytes.NewReader(plan.body))
+	request, err := http.NewRequestWithContext(callCtx, http.MethodPost, call.url, bytes.NewReader(call.body))
 	if err != nil {
 		return flexTwinFailure(err)
 	}
-	request.Header = plan.headers.Clone()
+	request.Header = call.headers.Clone()
 	response, err := flexResendHTTPClient.Do(request)
 	if err != nil {
 		return flexTwinFailure(err)
@@ -410,15 +449,42 @@ func callFlexTwin(ctx *RequestContext, plan *flexResendPlan, limit int64, budget
 	}
 }
 
-// flexTwinFailure stands for a re-send that produced no response: a 504 when
-// it ran out of time (the twin may still have charged it), otherwise a 502.
-// The pipeline then classes and settles it as the twin's failure.
+// flexTwinFailure stands for a re-send that produced no usable response: a
+// 504 when it ran out of time (the twin may still have charged it), otherwise
+// a 502. The pipeline then classes and settles it as the twin's failure.
 func flexTwinFailure(err error) flexTwinResult {
 	status := http.StatusBadGateway
 	if errors.Is(err, context.DeadlineExceeded) {
 		status = http.StatusGatewayTimeout
 	}
 	return flexTwinResult{status: status, contentType: "application/json", err: err}
+}
+
+// flexTwinCutError is the in-band error of a re-sent stream whose body read
+// failed: the stream is cut there, and the turn is not committed.
+func flexTwinCutError(err error) *llmprotocol.ProtocolError {
+	return llmprotocol.NewError(llmprotocol.ErrorUpstreamUnavailable, "standard_resend_body_cut",
+		"the standard re-send's response ended before it was complete", err)
+}
+
+// terminalFlexTwinResult settles what a read error leaves of the twin's
+// answer. A stream keeps what it carried, usage frames included, and is cut
+// with an error; any other body cut short is no reply, so it becomes the
+// twin's failure, as does a 2xx that ended in an error before any byte.
+func terminalFlexTwinResult(ctx *RequestContext, result flexTwinResult) flexTwinResult {
+	if !result.delivered || result.err == nil {
+		return result
+	}
+	success := result.status >= 200 && result.status < 300
+	if !success {
+		// An error body cut short is still the twin's error.
+		return result
+	}
+	if len(result.body) > 0 && strings.Contains(strings.ToLower(result.contentType), "text/event-stream") {
+		ctx.UpstreamBodyCut = flexTwinCutError(result.err)
+		return result
+	}
+	return flexTwinFailure(result.err)
 }
 
 // serveFlexTwin runs the twin's response through the ordinary response
@@ -429,6 +495,7 @@ func (r *OpenAIRouter) serveFlexTwin(
 	plan *flexResendPlan,
 	result flexTwinResult,
 ) *ext_proc.ProcessingResponse {
+	result = terminalFlexTwinResult(ctx, result)
 	// The call in flight is now the twin's, priced at its rates and counted
 	// against it. The response body phase releases the count; a reply that
 	// ends before it does releases it here.
@@ -441,7 +508,7 @@ func (r *OpenAIRouter) serveFlexTwin(
 		}
 	}()
 	ctx.RequestModel = plan.twinModel
-	ctx.DispatchedProviderOrder = append([]string(nil), plan.twinOrder...)
+	ctx.DispatchedProviderOrder = append([]string(nil), plan.twinPin.Order...)
 	// Nothing the refused call's hop said describes the twin's call.
 	ctx.UpstreamStatusCode = 0
 	ctx.UpstreamAttemptCount, ctx.UpstreamRetryCount, ctx.UpstreamRetryExhausted = 0, 0, false
@@ -455,8 +522,9 @@ func (r *OpenAIRouter) serveFlexTwin(
 		{Key: upstreamAttemptsHeader, RawValue: []byte("1")},
 	}}
 	// A twin that answered with no body ends at its headers, as a provider
-	// hop's would; a re-send that got no answer goes on to the body phase,
-	// which encodes its failure for the client.
+	// hop's would (an empty 2xx is refused there as upstream_error); a
+	// re-send that got no answer goes on to the body phase, which encodes its
+	// failure for the client.
 	ended := result.delivered && len(result.body) == 0
 	headersResponse, err := r.handleResponseHeaders(&ext_proc.ProcessingRequest_ResponseHeaders{
 		ResponseHeaders: &ext_proc.HttpHeaders{Headers: headerMap, EndOfStream: ended},

@@ -444,15 +444,154 @@ func TestFlexResendToAnUnreachableTwinFailsOnce(t *testing.T) {
 }
 
 // The re-send must answer inside Envoy's ext_proc message_timeout, which the
-// cell templates set from the listener timeout.
-func TestFlexResendBudgetFitsTheShortestListenerTimeout(t *testing.T) {
+// Router cannot read: the budget is stated, 55 s by default (below the 60 s
+// the shipped Gateway API manifests set), and a negative one turns it off.
+func TestFlexResendBudgetIsStatedAndConservative(t *testing.T) {
 	router := flexResendRouter("http://127.0.0.1:1")
-	if budget := router.flexResendBudget(); budget != flexResendDefaultWindow-flexResendMargin {
-		t.Fatalf("budget without a listener timeout = %v", budget)
+	if budget, skipped := router.flexResendBudget(); budget != 55*time.Second || skipped != "" {
+		t.Fatalf("default budget = %v (%q), want 55s", budget, skipped)
 	}
-	router.Config.Listeners = []config.Listener{{Timeout: "1200s"}, {Timeout: "60s"}, {Timeout: "bogus"}}
-	if budget := router.flexResendBudget(); budget != 55*time.Second {
-		t.Fatalf("budget = %v, want the shortest listener timeout less the margin", budget)
+	router.Config.FlexResendBudgetSec = 20
+	if budget, skipped := router.flexResendBudget(); budget != 20*time.Second || skipped != "" {
+		t.Fatalf("configured budget = %v (%q), want 20s", budget, skipped)
+	}
+	router.Config.FlexResendBudgetSec = 2
+	if _, skipped := router.flexResendBudget(); skipped != "budget_too_short" {
+		t.Fatalf("a 2s budget was not skipped: %q", skipped)
+	}
+	router.Config.FlexResendBudgetSec = -1
+	if _, skipped := router.flexResendBudget(); skipped != "disabled" {
+		t.Fatalf("a negative budget did not turn the re-send off: %q", skipped)
+	}
+}
+
+// A budget too short to answer in is not spent: the twin is never dialled,
+// the 429 takes the ordinary path, and it settles there as unknown.
+func TestFlexResendWithTooShortABudgetFallsBackToTheRefusal(t *testing.T) {
+	logs := captureLogs(t)
+	twin := newFlexTwin(t, http.StatusOK, "application/json", flexTwinChatReply)
+	router := flexResendRouter(twin.server.URL)
+	router.Config.FlexResendBudgetSec = 2
+	ctx, _ := routeFlexTurn(t, router, flexResendArm, false)
+
+	if reply := answerHeaders(t, router, ctx, http.StatusTooManyRequests); reply.GetImmediateResponse() != nil {
+		t.Fatalf("a re-send ran on a budget too short for it: %v", reply)
+	}
+	stream := NewMockStream(nil)
+	if err := router.processResponseBody(stream, &ext_proc.ProcessingRequest_ResponseBody{
+		ResponseBody: &ext_proc.HttpBody{Body: []byte(`{"error":{"message":"Rate limit exceeded","code":429}}`), EndOfStream: true},
+	}, ctx); err != nil {
+		t.Fatalf("processResponseBody: %v", err)
+	}
+
+	if calls := twin.calls(); len(calls) != 0 {
+		t.Fatalf("the twin was dialled %d times on a skipped re-send", len(calls))
+	}
+	lines := usageLines(logs)
+	if len(lines) != 1 {
+		t.Fatalf("got %d llm_usage lines, want the refusal's one: %v", len(lines), lines)
+	}
+	assertFields(t, "refused flex call", lines[0], map[string]interface{}{
+		"model": flexResendArm, "failure_class": turnFailureRateLimited,
+		"usage_source": usageSourceUnknown, "pricing": usagePricingNoUsage,
+	})
+	if lines[0]["cost"] != nil {
+		t.Fatalf("the refused call was settled with a cost: %v", lines[0])
+	}
+	findLogEvent(t, logs, "flex_resend_skipped")
+}
+
+// A re-sent stream whose body read fails after its usage frame is cut, not
+// served: the usage it reported is kept, the turn is classed as a failure,
+// and the selection is not committed as a success.
+func TestFlexResendStreamCutAfterUsageIsNotCommitted(t *testing.T) {
+	logs := captureLogs(t)
+	frames := `data: {"id":"gen-4","object":"chat.completion.chunk","created":1,"model":"openai/gpt-luna","provider":"OpenAI",` +
+		`"choices":[{"index":0,"delta":{"role":"assistant","content":"cut on standard"},"finish_reason":null}]}` + "\n\n" +
+		`data: {"id":"gen-4","object":"chat.completion.chunk","created":1,"model":"openai/gpt-luna","provider":"OpenAI",` +
+		`"choices":[{"index":0,"delta":{},"finish_reason":"stop"}],` +
+		`"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15,"cost":0.00004}}` + "\n\n"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hijacker, ok := w.(http.Hijacker)
+		if !ok {
+			t.Error("the test server cannot cut a connection")
+			return
+		}
+		conn, buffered, err := hijacker.Hijack()
+		if err != nil {
+			t.Errorf("hijack: %v", err)
+			return
+		}
+		// A chunked 200 that stops after the usage frame, with no final chunk.
+		_, _ = buffered.WriteString("HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ntransfer-encoding: chunked\r\n\r\n")
+		_, _ = buffered.WriteString(strconv.FormatInt(int64(len(frames)), 16) + "\r\n" + frames + "\r\n")
+		_ = buffered.Flush()
+		_ = conn.Close()
+	}))
+	t.Cleanup(server.Close)
+	router := flexResendRouter(server.URL)
+	ctx, _ := routeFlexTurn(t, router, flexResendArm, true)
+
+	reply := answerHeaders(t, router, ctx, http.StatusTooManyRequests)
+
+	immediate := reply.GetImmediateResponse()
+	if immediate == nil {
+		t.Fatalf("the 429 was not answered: %v", reply)
+	}
+	if !strings.Contains(string(immediate.GetBody()), "error") {
+		t.Fatalf("the cut stream did not end with an error:\n%s", immediate.GetBody())
+	}
+	// An aborted stream is what keeps the turn from committing: the
+	// selection commits only a stream that was not aborted, and the cut
+	// releases it (releaseCutTurn).
+	if ctx.ResponseFailureClass != turnFailureUpstreamError || ctx.ResponseFailureDetail != "standard_resend_body_cut" {
+		t.Fatalf("a cut re-send was classed %q (%q), want upstream_error standard_resend_body_cut",
+			ctx.ResponseFailureClass, ctx.ResponseFailureDetail)
+	}
+	if !ctx.StreamingAborted {
+		t.Fatal("a cut re-send was settled as a complete stream")
+	}
+	lines := usageLines(logs)
+	if len(lines) != 2 {
+		t.Fatalf("got %d llm_usage lines, want 2: %v", len(lines), lines)
+	}
+	assertFields(t, "cut re-send", lines[1], map[string]interface{}{
+		"flex_resend": flexResendStandard, "truncated": true, "provider_reported_cost": 0.00004,
+	})
+	if lines[1]["failure_class"] == nil {
+		t.Fatalf("the cut re-send's line carries no failure class: %v", lines[1])
+	}
+}
+
+// A 200 whose body read fails before any byte is the twin's failure, not a
+// served empty reply.
+func TestFlexResendNonStreamReadErrorIsAFailure(t *testing.T) {
+	logs := captureLogs(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hijacker, _ := w.(http.Hijacker)
+		conn, buffered, err := hijacker.Hijack()
+		if err != nil {
+			t.Errorf("hijack: %v", err)
+			return
+		}
+		_, _ = buffered.WriteString("HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 400\r\n\r\n{\"id\":")
+		_ = buffered.Flush()
+		_ = conn.Close()
+	}))
+	t.Cleanup(server.Close)
+	router := flexResendRouter(server.URL)
+	ctx, _ := routeFlexTurn(t, router, flexResendArm, false)
+
+	immediate := answerHeaders(t, router, ctx, http.StatusTooManyRequests).GetImmediateResponse()
+	if immediate == nil {
+		t.Fatal("the 429 was not answered")
+	}
+	if code := int(immediate.GetStatus().GetCode()); code < 500 {
+		t.Fatalf("a twin body cut short was served with status %d", code)
+	}
+	lines := usageLines(logs)
+	if len(lines) != 2 || lines[1]["failure_class"] == nil {
+		t.Fatalf("the cut re-send was not settled as a failure: %v", lines)
 	}
 }
 
