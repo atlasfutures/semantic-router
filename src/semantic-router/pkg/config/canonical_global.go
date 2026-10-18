@@ -89,6 +89,14 @@ type CanonicalResponseStream struct {
 	// including one that reasons without streaming its reasoning.
 	FirstContentSec int `yaml:"first_content_sec,omitempty"`
 	IdleSec         int `yaml:"idle_sec,omitempty"`
+	// ResendBudgetSec is how long a discount endpoint's standard re-send
+	// (providers.models[].standard_twin) may take. The Router answers the
+	// refused call's response-header message with the re-send's response, and
+	// Envoy waits for that answer only for its ext_proc message_timeout, so
+	// the budget must stay below it. Zero selects 55 s, below the 60 s
+	// message_timeout the repository's Gateway API manifests ship. A negative
+	// value turns the re-send off.
+	ResendBudgetSec int `yaml:"resend_budget_sec,omitempty"`
 }
 
 // CanonicalServiceGlobal groups shared runtime services exposed by the router.
@@ -382,6 +390,7 @@ func applyCanonicalRouterGlobal(cfg *RouterConfig, router CanonicalRouterGlobal)
 	cfg.ResponseBodyTimeoutSec = router.ResponseStream.BodyTimeoutSec
 	cfg.ResponseStreamFirstContentSec = router.ResponseStream.FirstContentSec
 	cfg.ResponseStreamIdleSec = router.ResponseStream.IdleSec
+	cfg.FlexResendBudgetSec = router.ResponseStream.ResendBudgetSec
 	cfg.ThinkingMarkerMint = router.ThinkingMarkers.Mint
 	cfg.SkipProcessing = router.SkipProcessing
 	cfg.ModelSelection = router.ModelSelection
