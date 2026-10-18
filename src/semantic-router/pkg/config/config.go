@@ -248,9 +248,13 @@ type RouterOptions struct {
 	// turn's silence: the wait for its first content after the upstream's
 	// headers, and the gap between content after that. Keepalives are not
 	// content. Zero turns either off.
-	ResponseStreamFirstContentSec int                  `yaml:"response_stream_first_content_sec,omitempty"`
-	ResponseStreamIdleSec         int                  `yaml:"response_stream_idle_sec,omitempty"`
-	SkipProcessing                SkipProcessingConfig `yaml:"skip_processing,omitempty"`
+	ResponseStreamFirstContentSec int `yaml:"response_stream_first_content_sec,omitempty"`
+	ResponseStreamIdleSec         int `yaml:"response_stream_idle_sec,omitempty"`
+	// FlexResendBudgetSec bounds a discount endpoint's standard re-send; see
+	// CanonicalResponseStream.ResendBudgetSec. Zero selects the default; a
+	// negative value turns the re-send off.
+	FlexResendBudgetSec int                  `yaml:"flex_resend_budget_sec,omitempty"`
+	SkipProcessing      SkipProcessingConfig `yaml:"skip_processing,omitempty"`
 	// ThinkingMarkerMint signs thinking a non-Anthropic upstream wrote with a
 	// Router thinking marker on Messages output (semantic-router #191).
 	ThinkingMarkerMint bool `yaml:"thinking_marker_mint,omitempty"`

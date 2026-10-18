@@ -313,6 +313,7 @@ func CanonicalGlobalFromRouterConfig(cfg *RouterConfig) *CanonicalGlobal {
 				BodyTimeoutSec:  cfg.ResponseBodyTimeoutSec,
 				FirstContentSec: cfg.ResponseStreamFirstContentSec,
 				IdleSec:         cfg.ResponseStreamIdleSec,
+				ResendBudgetSec: cfg.FlexResendBudgetSec,
 			},
 			SkipProcessing: cfg.SkipProcessing,
 			ModelSelection: cfg.ModelSelection,
