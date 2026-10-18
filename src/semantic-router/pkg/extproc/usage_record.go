@@ -102,6 +102,10 @@ type llmUsageRecord struct {
 	// named it; ProviderOrder is the route the dispatched body pinned.
 	UpstreamProvider *string  `json:"upstream_provider"`
 	ProviderOrder    []string `json:"provider_order"`
+	// FlexResend marks the two calls of a discount-endpoint turn that was
+	// re-sent on its standard twin: flex_attempt on the refused or timed-out
+	// call, standard_resend on the re-send. Null on every other call.
+	FlexResend *string `json:"flex_resend"`
 
 	// The rate-card price: Cost is cache-aware, from the rates beside it,
 	// which come from the table PricingSnapshot names. Cost is null whenever
@@ -182,6 +186,9 @@ func (r *OpenAIRouter) newLLMUsageRecord(ctx *RequestContext, usage responseUsag
 	}
 	if len(ctx.DispatchedProviderOrder) > 0 {
 		record.ProviderOrder = append([]string(nil), ctx.DispatchedProviderOrder...)
+	}
+	if ctx.FlexResend.served() {
+		record.FlexResend = nonEmpty(flexResendStandard)
 	}
 	stop := responseStopTelemetry(ctx)
 	record.ProviderStopReason = nonEmpty(stop.providerStop)

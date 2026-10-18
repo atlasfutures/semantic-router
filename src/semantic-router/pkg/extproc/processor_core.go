@@ -347,6 +347,15 @@ func (r *OpenAIRouter) processResponseHeaders(
 	v *ext_proc.ProcessingRequest_ResponseHeaders,
 	ctx *RequestContext,
 ) error {
+	// A discount endpoint's refusal is answered by its standard re-send,
+	// which the ordinary pipeline has already settled.
+	if resent := r.flexResendOnResponseHeaders(v, ctx); resent != nil {
+		if err := sendResponse(stream, resent, "response header"); err != nil {
+			return err
+		}
+		runPendingSelectionCompletion(ctx)
+		return nil
+	}
 	response, err := r.handleResponseHeaders(v, ctx)
 	if err != nil {
 		return err

@@ -412,6 +412,7 @@ func (r *OpenAIRouter) finalizeProviderDispatchResponse(
 		return nil, status.Errorf(codes.Internal, "adapt provider request: %v", err)
 	}
 	ctx.DispatchedOutbound = readDispatchedOutboundParams(body, dispatch)
+	r.stageFlexResend(ctx, dispatch, body)
 	r.auditRaylineARCUpstream(body, ctx)
 	common := response.GetRequestBody().GetResponse()
 	if common == nil {

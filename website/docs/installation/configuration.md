@@ -62,6 +62,22 @@ without `allow_fallbacks: false` is a preference rather than a pin: OpenRouter
 may still serve the request from an unlisted provider. See
 [Provider Routing](https://openrouter.ai/docs/features/provider-routing).
 
+A discount endpoint (an OpenRouter flex or contributor pin) can name its
+standard twin with `providers.models[].standard_twin`: another
+`providers.models` entry serving the same provider model at the standard
+endpoint. When a call on the discount endpoint is refused with HTTP 429, or
+times out before any response byte (HTTP 408 or 504), the Router re-sends it
+once on the twin with the same body: the same model and controls, and the
+twin's provider routing. There is no other retry and never another model. The
+re-send must finish inside Envoy's ext_proc message timeout, so it is bounded
+by the shortest `listeners[].timeout` (300s when none is set) less a few
+seconds. The
+loader requires the discount entry to set `provider_preferences.only` and the
+twin to exclude each of those providers (through `ignore`, or by leaving them
+out of its own `only`). The failed attempt and the re-send each write their own
+usage line, marked by `flex_resend`; a failed attempt's usage is never recorded
+as free. Absent the key, nothing is re-sent.
+
 Use [Protocol Compatibility](protocol-compatibility) to choose the model's
 backend `api_format`. Then see
 [Backend Target Compatibility](backend-target-compatibility) before moving its

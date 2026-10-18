@@ -122,6 +122,9 @@ type RequestContext struct {
 	// context recovery answered. The recovered body is re-encoded for the
 	// client, which drops it, so the usage report reads it from here.
 	ContextRecoveryProviderCost *llmprotocol.ProviderCost
+	// FlexResend is the standard re-send staged for a discount-endpoint
+	// dispatch (flex_resend.go); nil for every arm without a standard twin.
+	FlexResend *flexResendPlan
 	// ResponseBodyReplaced records that the Router replaced the upstream's
 	// buffered body before the response pipeline saw it: a context-recovery
 	// follow-up, its fail-open redaction, or a reply cut inside a recovery
