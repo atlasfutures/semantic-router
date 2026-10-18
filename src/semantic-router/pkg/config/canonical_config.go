@@ -173,6 +173,9 @@ func validateCanonicalContract(canonical *CanonicalConfig) error {
 	if err != nil {
 		return err
 	}
+	if err := validateStandardTwins(canonical.Providers.Models); err != nil {
+		return err
+	}
 	if err := validateCanonicalDefaultModel(canonical.Providers, aliases, modelsByName); err != nil {
 		return err
 	}

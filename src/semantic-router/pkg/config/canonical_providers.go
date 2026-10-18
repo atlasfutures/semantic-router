@@ -35,6 +35,12 @@ type CanonicalProviderModel struct {
 	// because which provider serves an arm is an access detail, not a routing
 	// signal.
 	ProviderPreferences *OpenRouterProviderPreferences `yaml:"provider_preferences,omitempty"`
+	// StandardTwin declares this binding a discount endpoint (an OpenRouter
+	// flex or contributor pin) and names its standard twin: the
+	// providers.models entry serving the same model at the standard endpoint.
+	// A call refused here with a 429, or timed out before any response byte,
+	// is re-sent once on the twin. Absent, nothing is re-sent.
+	StandardTwin string `yaml:"standard_twin,omitempty"`
 }
 
 // CanonicalReasoning either references one built-in family or defines the

@@ -162,3 +162,10 @@ def test_provider_preferences_carry_max_price():
         "prompt": 0.5,
         "completion": 1.5,
     }
+
+
+def test_standard_twin_parses_beside_the_discount_pin():
+    raw = _provider_model(only=["openai/flex"], allow_fallbacks=False)
+    raw["providers"]["models"][0]["standard_twin"] = "standard"
+    config = UserConfig(**raw)
+    assert config.providers.models[0].standard_twin == "standard"

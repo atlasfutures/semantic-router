@@ -150,6 +150,39 @@ providers:
     # Catalog-backed models do not need a handwritten routing.modelCards entry.
     - name: built-in-catalog-example
       catalog: vllm-sr/mom-v1-lite
+    # A discount endpoint and its standard twin: one provider model, pinned
+    # once to OpenRouter's openai/flex and once away from it. A 429, or a
+    # timeout before any response byte, on the flex entry is re-sent once on
+    # the twin with the same body and the twin's provider routing.
+    - name: openrouter-flex-reference
+      provider_model_id: openai/reference-model
+      api_format: openai
+      provider_preferences:
+        only:
+          - openai/flex
+        allow_fallbacks: false
+      standard_twin: openrouter-standard-reference
+      backend_refs:
+        - name: openrouter-flex
+          base_url: https://openrouter.ai/api/v1
+          provider: openrouter
+          api_key_env: OPENROUTER_API_KEY
+          weight: 100
+    - name: openrouter-standard-reference
+      provider_model_id: openai/reference-model
+      api_format: openai
+      provider_preferences:
+        order:
+          - openai
+        ignore:
+          - openai/flex
+        allow_fallbacks: false
+      backend_refs:
+        - name: openrouter-standard
+          base_url: https://openrouter.ai/api/v1
+          provider: openrouter
+          api_key_env: OPENROUTER_API_KEY
+          weight: 100
 
 routing:
   strategy: priority

@@ -1837,6 +1837,10 @@ class Model(BaseModel):
     accepted_formats: Optional[List[Literal["openai", "responses", "anthropic"]]] = None
     external_model_ids: Optional[Dict[str, str]] = None
     provider_preferences: Optional[OpenRouterProviderPreferences] = None
+    # Mirrors CanonicalProviderModel.StandardTwin: the providers.models entry a
+    # discount endpoint's 429 or pre-byte timeout is re-sent on, once. The Go
+    # loader validates the pairing.
+    standard_twin: Optional[str] = None
 
     @model_validator(mode="after")
     def validate_accepted_formats(self):
