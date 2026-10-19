@@ -146,7 +146,7 @@ func appendRaylineARCUpstreamFields(record map[string]interface{}, ctx *RequestC
 // cache follows cache_control; any other's TTL is unstated.
 func stageRaylineARCWireCacheTTL(r *OpenAIRouter, body []byte, ctx *RequestContext) {
 	transaction := ctx.RaylineARCTransaction
-	if !transaction.commitOnCompletion {
+	if transaction == nil || !transaction.commitOnCompletion {
 		return
 	}
 	if r.armFamily(ctx.RaylineARCDispatch.ID) != anthropicFamily {
