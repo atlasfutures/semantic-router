@@ -116,6 +116,21 @@ func TestResponsesPreviousIDRefusalIsInvalidBodyOnTheDecisionAPI(t *testing.T) {
 	}
 }
 
+// The sentinel is a tag for errors.Is, and the const is what the caller reads.
+// Nothing should make the sentinel's own text client-visible, so it must not be
+// a second copy of the message: two copies drift, and whoever edits one would
+// have no way to know the other exists.
+func TestStatelessPathSentinelIsNotASecondCopyOfTheMessage(t *testing.T) {
+	if errRaylineRoutesStatelessPath.Error() == statelessPathMessage {
+		t.Fatal("the sentinel duplicates the client-visible message; it is a tag, not a message")
+	}
+	// The remedy is the half a caller acts on, and it belongs to the message
+	// alone. In the sentinel it would read as text meant to be shown.
+	if strings.Contains(errRaylineRoutesStatelessPath.Error(), "Resend") {
+		t.Fatal("the sentinel carries the remedy, which only the message should")
+	}
+}
+
 // A genuine failure to materialize stored history keeps answering 503. It is
 // the router failing at something it undertook, so it must not be reclassified
 // as the caller's fault by the change above.
