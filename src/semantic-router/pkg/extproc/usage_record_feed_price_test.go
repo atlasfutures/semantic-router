@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
@@ -19,6 +20,9 @@ const settlementTestFeed = `{"schema": "arc-routing-prices.v1", "store_version":
 	{"model": "openai/gpt-sol", "endpoint_tag": "openai", "input": 5, "cache_read": 0.5, "cache_write": 0,
 	 "output": 30, "valid_from": "2026-10-14T00:00:00Z", "valid_until": null, "source": "openrouter:openai",
 	 "higher_tier": {"min_prompt_tokens": 272000, "input": 10, "cache_read": 1, "cache_write": 0, "output": 45}},
+	{"model": "anthropic/claude-sonnet", "endpoint_tag": "anthropic", "input": 3, "cache_read": 0.3,
+	 "cache_write": 3.75, "output": 15, "valid_from": null, "valid_until": null,
+	 "higher_tier": {"min_prompt_tokens": 200000, "input": 6, "cache_read": 0.6, "cache_write": 7.5, "output": 22.5}},
 	{"model": "openai/gpt-luna", "endpoint_tag": "openai", "input": 3, "cache_read": 0.3, "cache_write": 0,
 	 "output": 15, "valid_from": null, "valid_until": null, "higher_tier": null},
 	{"model": "openai/gpt-luna", "endpoint_tag": "openai/flex", "input": 1.5, "cache_read": 0.15,
@@ -32,16 +36,19 @@ func settledARCContext(t *testing.T, trace *selection.RaylineARCTrace, body stri
 		RequestID: "rt_feed-000", RequestModel: "priced-model", VSRRaylineARC: trace,
 		DispatchedToOpenRouter: true,
 	}
-	recordDispatchedProviderPin(ctx, []byte(body))
 	ctx.DispatchedOutbound = readDispatchedOutboundParams([]byte(body), nil)
 	return ctx
 }
 
 func settlementUsage(prompt, cached, completion int) responseUsageMetrics {
+	return settlementUsageWithWrites(prompt, cached, 0, completion)
+}
+
+func settlementUsageWithWrites(prompt, cached, written, completion int) responseUsageMetrics {
 	return responseUsageMetrics{
 		promptTokens: prompt, promptTokensReported: true,
 		cachedPromptTokens: cached, cachedPromptTokensReported: true,
-		cacheWriteTokens: 0, cacheWriteTokensReported: true,
+		cacheWriteTokens: written, cacheWriteTokensReported: true,
 		completionTokens: completion, completionTokensReported: true,
 		totalTokens: prompt + completion, totalTokensReported: true,
 	}
@@ -119,6 +126,27 @@ func TestUsageRecordSettlesAnARCCallAtTheLiveRoutingPrice(t *testing.T) {
 		"pricing_prompt_per_1m": 10.0, "pricing_completion_per_1m": 45.0,
 	})
 
+	// Cache writes count toward the tier too, and are billed at its write
+	// leg: 200k in all, 140k written and 50k read, reaches the 200k tier.
+	sonnet := `{"model": "anthropic/claude-sonnet", "provider": {"order": ["anthropic"], "allow_fallbacks": false}}`
+	for _, test := range []struct {
+		prompt, read, written int
+		tier                  string
+		want                  float64
+	}{
+		{199_999, 50_000, 140_000, raylinearc.PriceTierStandard, (9_999*3 + 50_000*0.3 + 140_000*3.75 + 1_000*15) / 1e6},
+		{200_000, 50_000, 140_000, raylinearc.PriceTierHigher, (10_000*6 + 50_000*0.6 + 140_000*7.5 + 1_000*22.5) / 1e6},
+	} {
+		logs = captureLogs(t)
+		router.reportNonStreamingUsage(settledARCContext(t, trace, sonnet), time.Second,
+			settlementUsageWithWrites(test.prompt, test.read, test.written, 1_000))
+		fields = findLogEvent(t, logs, "llm_usage")
+		requireCost(t, fields, test.want)
+		requireFields(t, fields, map[string]interface{}{
+			"pricing_source": usagePricingSourceFeed, "price_tier": test.tier, "pricing_endpoint_tag": "anthropic",
+		})
+	}
+
 	// A base-slug pin admits the standard endpoint and its flex twin: which
 	// served is not certain, so the rate card prices it.
 	logs = captureLogs(t)
@@ -138,6 +166,20 @@ func TestUsageRecordSettlesAnARCCallAtTheLiveRoutingPrice(t *testing.T) {
 	fields = findLogEvent(t, logs, "llm_usage")
 	requireCost(t, fields, (1_000*1.5+100*7.5)/1e6)
 	requireFields(t, fields, map[string]interface{}{"pricing_endpoint_tag": "openai/flex"})
+
+	// Its standard re-send went out on the twin's pin, not the flex body's.
+	logs = captureLogs(t)
+	noFallbacks := false
+	resent := settledARCContext(t, trace, flex)
+	resent.FlexResend = &flexResendPlan{trigger: turnFailureTimeout, twinPin: &config.OpenRouterProviderPreferences{
+		Order: []string{"openai"}, Ignore: []string{"openai/flex"}, AllowFallbacks: &noFallbacks,
+	}}
+	router.reportNonStreamingUsage(resent, time.Second, settlementUsage(1_000, 0, 100))
+	fields = findLogEvent(t, logs, "llm_usage")
+	requireCost(t, fields, (1_000*3+100*15)/1e6)
+	requireFields(t, fields, map[string]interface{}{
+		"pricing_source": usagePricingSourceFeed, "pricing_endpoint_tag": "openai",
+	})
 
 	// A call that stated no usage stays unpriced, whatever the feed says.
 	logs = captureLogs(t)

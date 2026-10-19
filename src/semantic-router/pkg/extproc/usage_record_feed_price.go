@@ -37,12 +37,16 @@ func feedSettlementPrice(ctx *RequestContext, upstreamProvider *string, usage re
 		return nil, usageFeedNotOpenRouter
 	}
 	call := raylinearc.SettlementCall{
-		Pin:          ctx.DispatchedProviderPin,
 		PromptTokens: modelpricing.Normalize(modelPricingUsage(usage)).PromptTokens,
 		Now:          cache.Now(),
 	}
 	if ctx.DispatchedOutbound != nil {
-		call.Model = ctx.DispatchedOutbound.Model
+		call.Model, call.Pin = ctx.DispatchedOutbound.Model, ctx.DispatchedOutbound.ProviderPin
+	}
+	// The standard re-send of a flex call is the same model on the twin's
+	// pin, which replaced the dispatched body's.
+	if ctx.FlexResend.served() {
+		call.Pin = settlementPinFromPreferences(ctx.FlexResend.twinPin)
 	}
 	if upstreamProvider != nil {
 		call.UpstreamProvider = *upstreamProvider
@@ -75,8 +79,8 @@ func recordFeedPrice(record *llmUsageRecord, price *raylinearc.SettlementPrice) 
 	record.PriceTier = nonEmpty(price.Tier)
 }
 
-// settlementPinFromPreferences is a configured pin as settlement reads it,
-// for a call whose pin is known from config rather than read off its body.
+// settlementPinFromPreferences is a provider object as settlement reads it,
+// its lists copied.
 func settlementPinFromPreferences(preferences *config.OpenRouterProviderPreferences) *raylinearc.SettlementPin {
 	if preferences == nil {
 		return nil

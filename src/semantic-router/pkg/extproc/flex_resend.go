@@ -509,7 +509,6 @@ func (r *OpenAIRouter) serveFlexTwin(
 	}()
 	ctx.RequestModel = plan.twinModel
 	ctx.DispatchedProviderOrder = append([]string(nil), plan.twinPin.Order...)
-	ctx.DispatchedProviderPin = settlementPinFromPreferences(plan.twinPin)
 	// Nothing the refused call's hop said describes the twin's call.
 	ctx.UpstreamStatusCode = 0
 	ctx.UpstreamAttemptCount, ctx.UpstreamRetryCount, ctx.UpstreamRetryExhausted = 0, 0, false

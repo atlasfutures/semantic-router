@@ -153,9 +153,6 @@ type RequestContext struct {
 	// DispatchedProviderOrder is the OpenRouter provider order the rendered
 	// upstream body carries, read back the same way and for the same reason.
 	DispatchedProviderOrder []string
-	// DispatchedProviderPin is the whole provider pin read back the same
-	// way: what decides which endpoint a live routing price settles at.
-	DispatchedProviderPin *raylinearc.SettlementPin
 	// DispatchedOutbound is every outbound parameter the routing record names
 	// (model, protocol, provider, reasoning, limits, tools, cache markers),
 	// read back off the final provider body.
