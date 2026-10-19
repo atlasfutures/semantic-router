@@ -293,8 +293,12 @@ func (r *Registry) Admit(model, provider, format string, control Control, allowE
 	}
 	if control.Instruction != nil && control.Instruction.Unit != "" {
 		// ADR 0114: VSR does not implement the configuration_update unit
-		// until it serves a Responses cell.
+		// until it serves a Responses cell; nor the Messages effort item
+		// (ADR 0143, 0147).
 		return nil, refuse("control %s writes a %s unit, which VSR does not implement", prefix12(id), control.Instruction.Unit)
+	}
+	if control.Instruction != nil && !control.Instruction.Implemented() {
+		return nil, refuse("control %s names the %s emit rule, which VSR does not implement", prefix12(id), control.Instruction.Emit)
 	}
 	if control.Instruction != nil && cell.Instruction == AdmissionExperimental && !allowExperimental {
 		return nil, refuse("%s on %sx%s: the instruction is experimental only", model, provider, format)
