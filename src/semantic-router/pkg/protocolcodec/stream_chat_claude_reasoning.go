@@ -1,6 +1,8 @@
 package protocolcodec
 
 import (
+	"strings"
+
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 )
 
@@ -10,9 +12,17 @@ import (
 // as reasoning_content; its signature, which Anthropic sends after the text,
 // becomes one complete reasoning.text item holding the whole text; a
 // redacted_thinking block becomes one reasoning.encrypted item when it
-// completes. One complete item per block means no text is tagged with
-// Anthropic provenance before the signature proves it, and a client that
-// merges fragments by index ends with the array a buffered answer carries.
+// completes.
+//
+// One complete item per block, rather than OpenRouter's text fragment per
+// chunk with the signature last, is deliberate. A fragment would tag the text
+// as Claude's before any signature proved it, and a block that then ended
+// unsigned would leave the client holding an unsigned anthropic-claude-v1
+// item: the request-side filter keeps such an item for a Claude worker over
+// Chat, and Anthropic rejects a thinking block with an empty signature. The
+// text reaches the client incrementally as reasoning_content either way; a
+// client that merges fragments by index ends with the array a buffered answer
+// carries.
 
 // noteReasoningText keeps a thinking block's text so far, for the item its
 // signature will complete.
@@ -21,9 +31,25 @@ func (encoder *chatStreamEncoder) noteReasoningText(key streamContentKey, text s
 		return
 	}
 	if encoder.reasoningText == nil {
-		encoder.reasoningText = map[streamContentKey]string{}
+		encoder.reasoningText = map[streamContentKey]*strings.Builder{}
 	}
-	encoder.reasoningText[key] += text
+	builder := encoder.reasoningText[key]
+	if builder == nil {
+		builder = &strings.Builder{}
+		encoder.reasoningText[key] = builder
+	}
+	builder.WriteString(text)
+}
+
+// takeReasoningText returns a block's text so far and forgets it: the
+// signature that asks for it ends the block.
+func (encoder *chatStreamEncoder) takeReasoningText(key streamContentKey) string {
+	builder := encoder.reasoningText[key]
+	if builder == nil {
+		return ""
+	}
+	delete(encoder.reasoningText, key)
+	return builder.String()
 }
 
 // applyClaudeThinkingSignature writes a thinking block's signature as the
@@ -43,12 +69,13 @@ func (encoder *chatStreamEncoder) applyClaudeThinkingSignature(
 	}
 	if _, reserved := routerSignature(event.Content.Signature); reserved ||
 		event.Content.Reasoning == llmprotocol.ReasoningScopeSummary {
+		encoder.takeReasoningText(key)
 		return appendDiagnostics(nil, llmprotocol.Diagnostics{{
 			Source: encoder.context.Source, Target: encoder.context.Target, Field: "reasoning.signature",
 			Action: llmprotocol.DiagnosticDropped, Reason: responseReasoningSignatureDropped,
 		}}, encoder.policy.Limits.Diagnostics), event.Delta != "", nil
 	}
-	carrier := claudeReasoningDetails(claudeReasoningTextItem(encoder.reasoningText[key], event.Content.Signature, encoder.claudeItems))
+	carrier := claudeReasoningDetails(claudeReasoningTextItem(encoder.takeReasoningText(key), event.Content.Signature, encoder.claudeItems))
 	if carrier == nil {
 		return nil, false, llmprotocol.NewError(llmprotocol.ErrorInternal, "invalid_reasoning_details", "reasoning_details cannot be encoded", nil)
 	}

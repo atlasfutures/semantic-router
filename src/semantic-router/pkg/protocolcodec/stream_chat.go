@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"sort"
+	"strings"
 	"sync"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
@@ -35,11 +36,11 @@ type chatStreamEncoder struct {
 	streamState
 	itemStarted bool
 	toolIndexes map[string]int
-	// reasoningText is each thinking block's text so far, by block. A
-	// Messages arm sends the block's signature after its text, and the
-	// reasoning_details item minted for a Chat client carries both
-	// (chat_claude_reasoning.go).
-	reasoningText map[streamContentKey]string
+	// reasoningText is each thinking block's text so far, by block, until
+	// its signature arrives. A Messages arm sends the signature after the
+	// text, and the reasoning_details item minted for a Chat client carries
+	// both (stream_chat_claude_reasoning.go).
+	reasoningText map[streamContentKey]*strings.Builder
 	// claudeItems is how many anthropic-claude-v1 items this stream has
 	// minted: the next item's index. OpenRouter keys items by index, so each
 	// block takes the next one.

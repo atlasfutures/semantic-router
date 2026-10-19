@@ -301,6 +301,8 @@ func TestPartialClaudeReplayIsDroppedWhole(t *testing.T) {
 		rebuilt                  int
 	}{
 		{"complete", `"Check the tool."`, "[" + signed + "]", 1},
+		{"the array alone, as OpenRouter documents the replay", `null`, "[" + signed + "]", 1},
+		{"the array alone with two blocks", `null`, "[" + signed + `,{"type":"reasoning.text","text":"More.","signature":"sig-2","format":"anthropic-claude-v1","index":1}]`, 2},
 		{"an unsigned item", `"Check the tool.More."`, "[" + signed + `,{"type":"reasoning.text","text":"More.","format":"anthropic-claude-v1","index":1}]`, 0},
 		{"another format", `"Check the tool."`, "[" + signed + `,{"type":"reasoning.encrypted","data":"g","format":"google-gemini-v1","index":1}]`, 0},
 		{"an encrypted item with no data", `"Check the tool."`, "[" + signed + `,{"type":"reasoning.encrypted","format":"anthropic-claude-v1","index":1}]`, 0},

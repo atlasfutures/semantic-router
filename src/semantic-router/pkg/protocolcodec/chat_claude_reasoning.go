@@ -219,8 +219,10 @@ type claudeReasoningItemWire struct {
 // complete Claude replay: an item of another format or type, a reasoning.text
 // item with no signature or one in the Router's namespace, a
 // reasoning.encrypted item with no data, or item texts that are not the
-// message's reasoning text. text is the reasoning text beside the array; a
-// carrier with no text of its own passes "".
+// message's reasoning text. text is the reasoning text beside the array. A
+// client that replays the array alone, as OpenRouter documents, passes "",
+// and the items' own text is then the thinking: the signature covers it, and
+// there is no second copy to disagree with.
 func claudeThinkingBlocks(details json.RawMessage, text string) ([]llmprotocol.Content, bool) {
 	var items []claudeReasoningItemWire
 	if json.Unmarshal(details, &items) != nil || len(items) == 0 {
@@ -254,7 +256,7 @@ func claudeThinkingBlocks(details json.RawMessage, text string) ([]llmprotocol.C
 			return nil, false
 		}
 	}
-	if joined.String() != text {
+	if text != "" && joined.String() != text {
 		return nil, false
 	}
 	return blocks, true
@@ -281,15 +283,19 @@ func ClaudeThinkingFromReasoningDetails(request *llmprotocol.Request) int {
 		return 0
 	}
 	rebuilt := 0
-	messages := make([]llmprotocol.Message, len(request.Messages))
+	var messages []llmprotocol.Message
 	for index, message := range request.Messages {
-		messages[index] = message
 		if message.Role != llmprotocol.RoleAssistant || !holdsReasoningDetails(message) {
 			continue
 		}
 		contents, blocks, ok := claudeThinkingFromMessage(message)
 		if !ok {
 			continue
+		}
+		if messages == nil {
+			// Fresh slices, and only once something is rebuilt: a history
+			// with no reasoning_details costs nothing here.
+			messages = append([]llmprotocol.Message(nil), request.Messages...)
 		}
 		messages[index].Content = contents
 		rebuilt += blocks
