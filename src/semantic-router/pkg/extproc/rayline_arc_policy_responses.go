@@ -16,6 +16,17 @@ var (
 	errPolicyResponsesHistoryUnavailable = errors.New("previous_response_id history is not available on this path")
 )
 
+// arcFailureResponsesPreviousID is the bounded class for a Responses turn that
+// names previous_response_id on the policy path. It is the caller's to fix by
+// resending the conversation's items, so it answers 400 rather than the 503 it
+// used to (memex-desktop#7484).
+//
+// It is deliberately NOT "turns_stored_history", which the projection path
+// already produces from storedHistoryFailure's code when the router fails to
+// materialize history it does hold. That is the router's own breakage and must
+// stay a 503; sharing one class would make either status wrong for the other.
+const arcFailureResponsesPreviousID = "responses_previous_response_id"
+
 // raylineARCPolicyResponsesInput materializes a Responses request for the
 // policy service: the stored history previous_response_id resolves to, then
 // this turn's input, and the instructions.

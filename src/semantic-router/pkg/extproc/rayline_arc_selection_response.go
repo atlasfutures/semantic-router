@@ -69,6 +69,9 @@ const (
 	// conversation's own decisions could hold it, so no model serves it:
 	// resending it unchanged cannot succeed, and no backend was called.
 	selectionFailureUndecidable = "undecidable"
+	// The turn asked to continue a stored conversation on a path that does
+	// not do stateful continuation: resend the items instead of the id.
+	selectionFailureStatelessPath = "stateless_path"
 	// Anything else: waiting is not known to help.
 	selectionFailureUnavailable = "unavailable"
 )
@@ -111,6 +114,8 @@ func publicSelectionFailureClass(class string) string {
 		return selectionFailureMissingSession
 	case arcFailurePolicyUndecidable:
 		return selectionFailureUndecidable
+	case arcFailureResponsesPreviousID:
+		return selectionFailureStatelessPath
 	default:
 		if selectionShapeRefusalClasses[class] {
 			return selectionFailureRequestShape
@@ -125,7 +130,9 @@ func publicSelectionFailureClass(class string) string {
 // retry, so answering 503 sends the caller round a loop that cannot end.
 // Every other class is the router's to answer for.
 func selectionFailureIsCallerError(class string) bool {
-	return class == arcFailureMissingEpisodeID || selectionShapeRefusalClasses[class]
+	return class == arcFailureMissingEpisodeID ||
+		class == arcFailureResponsesPreviousID ||
+		selectionShapeRefusalClasses[class]
 }
 
 // missingEpisodeHeaderMessage names the header the caller left out. The header
@@ -208,6 +215,36 @@ func (r *OpenAIRouter) requestShapeRefusalResponse(
 	return r.createErrorResponse(http.StatusBadRequest, requestShapeRefusalMessage)
 }
 
+// statelessPathMessage tells the caller both halves of what it needs: that
+// this route does not continue a stored conversation, and what to send
+// instead. Naming the remedy is the point of the ticket -- the old 503 said
+// only that something was unavailable, so a client retried the same request,
+// or recreated the conversation, forever (memex-desktop#7484). It names
+// previous_response_id because the caller sent it; it names no component.
+const statelessPathMessage = "This route does not continue a stored conversation: " +
+	"previous_response_id cannot be resolved here. Resend the conversation's items in input."
+
+// statelessPathResponse refuses a Responses turn that names
+// previous_response_id. It is a 400 and not a 503 because nothing was
+// unavailable: no arm was dialled, the router is healthy, and this same
+// request is refused identically every time, so a 503 both reports an outage
+// that did not happen and invites a retry that cannot succeed. A client told
+// 400 with this message can fall back to replaying items, which is what the
+// Codex CLI and our own SDK harness already do.
+func (r *OpenAIRouter) statelessPathResponse(
+	ctx *RequestContext,
+) *ext_proc.ProcessingResponse {
+	if ctx != nil {
+		ctx.ImmediateProtocolError = llmprotocol.NewError(
+			llmprotocol.ErrorInvalidRequest,
+			selectionFailureStatelessPath,
+			statelessPathMessage,
+			nil,
+		)
+	}
+	return r.createErrorResponse(http.StatusBadRequest, statelessPathMessage)
+}
+
 // authoritativeSelectionFailureResponse maps a fail-closed selector's bounded
 // failure onto the admission contract. It answers nil for every other error so
 // the caller keeps its existing classification.
@@ -227,6 +264,8 @@ func (r *OpenAIRouter) authoritativeSelectionFailureResponse(
 		response = r.requestShapeRefusalResponse(ctx)
 	case failure.class == arcFailurePolicyUndecidable:
 		response = r.undecidableResponse(ctx)
+	case failure.class == arcFailureResponsesPreviousID:
+		response = r.statelessPathResponse(ctx)
 	case selectionFailureIsCallerError(failure.class):
 		// The bounded class is already counted where it is constructed, which
 		// is the one place that sees both entrypoints. Counting it again here
