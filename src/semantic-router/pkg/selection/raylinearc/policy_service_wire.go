@@ -524,6 +524,10 @@ type PolicyLoadedPackage struct {
 	// a turn the policy did not decide.
 	FallbackActionID string `json:"fallback_action_id,omitempty"`
 	FallbackModel    string `json:"fallback_model,omitempty"`
+	// AdjustableCostWeight is stated only on a listing asked for
+	// detail=capabilities (pathfinder#5454): the cost weights this package's
+	// model choice honours, or null when it declares none.
+	AdjustableCostWeight PolicyAdjustableCostWeight `json:"adjustable_cost_weight,omitzero"`
 }
 
 // policySHA256Hex is a lowercase sha256 hex digest.
@@ -559,6 +563,9 @@ type PolicyPackagesResponse struct {
 	EngineBuildID    string                 `json:"engine_build_id"`
 	InferencePackage PolicyInferencePackage `json:"inference_package"`
 	Packages         []PolicyLoadedPackage  `json:"packages"`
+	// Capabilities is stated only on a listing asked for
+	// detail=capabilities (pathfinder#5454); absent means none.
+	Capabilities []string `json:"capabilities,omitzero"`
 }
 
 // PolicyCatalogAction is one dispatchable action: model, native effort,
