@@ -296,7 +296,13 @@ var anthropicRequestDispositions = []requestFieldRow{
 		// Chat arm or a Chat client. DeepSeek and MiMo need it back on the
 		// assistant messages of a tool loop and answer 400 without it, so a
 		// Chat target keeps it as reasoning_content. A Messages host rejects
-		// thinking with no signature, so that target drops it.
+		// thinking with no signature, so that target drops it. Claude's own
+		// thinking replayed by a Chat client is not unsigned by the time this
+		// row runs: ClaudeThinkingFromReasoningDetails has read its signature
+		// back out of the anthropic-claude-v1 reasoning_details item the cell
+		// gave the client (atlasfutures/semantic-router#278). Reasoning it
+		// cannot read back whole stays unsigned and is dropped whole here,
+		// which Anthropic accepts; a partial replay it rejects.
 		Path: fieldReasoningUnsigned,
 		Targets: map[llmprotocol.WireFormat]targetDisposition{
 			llmprotocol.AnthropicMessagesV1: {

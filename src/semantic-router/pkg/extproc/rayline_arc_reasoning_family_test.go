@@ -442,3 +442,80 @@ func TestClaudeSignedThinkingReachesClaudeOverChatSigned(t *testing.T) {
 		}
 	}
 }
+
+// End to end, the other direction of TestClaudeSignedThinkingReachesClaudeOverChatSigned:
+// a Chat client replays the anthropic-claude-v1 reasoning_details items the
+// cell gave it for a Messages Claude arm's thinking, and the Messages worker
+// is sent the blocks Anthropic returned, signed thinking and redacted_thinking
+// in item order, with nothing dropped. A replay the cell cannot restore whole
+// is dropped whole instead (atlasfutures/semantic-router#278).
+func TestClaudeReasoningDetailsReachClaudeOverMessagesAsThinking(t *testing.T) {
+	t.Setenv("POLICY_E2E_PROVIDER_KEY", "public-e2e-provider-key")
+	actions := relaxedPolicyActions()
+	fake := newRelaxedPolicyFake(t)
+	claude := actions["claude-off"].ActionID
+	fake.chooseWith(func(raylinearc.PolicyDecisionRequest) string { return claude })
+	router, err := NewOpenAIRouter(writeConsistentPolicyConfig(t, fake.URL(), "strict"))
+	if err != nil {
+		t.Fatalf("build router: %v", err)
+	}
+	awaitPolicySelectorArmed(t, router)
+	assistantBlocks := func(t *testing.T, body map[string]json.RawMessage) []map[string]any {
+		t.Helper()
+		var messages []struct {
+			Role    string           `json:"role"`
+			Content []map[string]any `json:"content"`
+		}
+		if err := json.Unmarshal(body["messages"], &messages); err != nil {
+			t.Fatalf("messages = %s", body["messages"])
+		}
+		for _, message := range messages {
+			if message.Role == "assistant" {
+				return message.Content
+			}
+		}
+		t.Fatalf("the assistant turn was lost: %s", body["messages"])
+		return nil
+	}
+
+	t.Run("a complete replay is restored", func(t *testing.T) {
+		logs := captureLogs(t)
+		body := dispatchPolicyClientRequest(t, router, "episode-claude-restore-1", "/v1/chat/completions", piChatHistory(
+			`"reasoning_content":"claude reasoning",`+
+				`"reasoning_details":[{"type":"reasoning.encrypted","data":"opaque-1","format":"anthropic-claude-v1","index":0},`+
+				`{"type":"reasoning.text","text":"claude reasoning","signature":"claude-signature","format":"anthropic-claude-v1","index":1}]`))
+		blocks := assistantBlocks(t, body)
+		if len(blocks) != 3 || blocks[0]["type"] != "redacted_thinking" || blocks[0]["data"] != "opaque-1" ||
+			blocks[1]["type"] != "thinking" || blocks[1]["thinking"] != "claude reasoning" || blocks[1]["signature"] != "claude-signature" ||
+			blocks[2]["type"] != "tool_use" {
+			t.Fatalf("Claude's thinking was not restored for the Messages worker: %s", body["messages"])
+		}
+		if strings.Contains(string(body["messages"]), "reasoning_details") {
+			t.Fatalf("a Messages worker was sent reasoning_details: %s", body["messages"])
+		}
+		restored := findLogEvent(t, logs, "claude_thinking_restored")
+		if fmt.Sprint(restored["blocks"]) != "2" {
+			t.Fatalf("claude_thinking_restored = %v, want 2 blocks", restored)
+		}
+		for _, entry := range logs.All() {
+			if event := entry.ContextMap()["event"]; event == "reasoning_dropped" || event == "reasoning_signature_stripped" {
+				t.Fatalf("Claude's own thinking was stripped or dropped: %v", entry.ContextMap())
+			}
+		}
+	})
+	t.Run("a partial replay is dropped whole", func(t *testing.T) {
+		logs := captureLogs(t)
+		body := dispatchPolicyClientRequest(t, router, "episode-claude-restore-2", "/v1/chat/completions", piChatHistory(
+			`"reasoning_content":"claude reasoningmore",`+
+				`"reasoning_details":[{"type":"reasoning.text","text":"claude reasoning","signature":"claude-signature","format":"anthropic-claude-v1","index":0},`+
+				`{"type":"reasoning.text","text":"more","format":"anthropic-claude-v1","index":1}]`))
+		blocks := assistantBlocks(t, body)
+		if len(blocks) != 1 || blocks[0]["type"] != "tool_use" {
+			t.Fatalf("a partial replay reached the Messages worker in part: %s", body["messages"])
+		}
+		dropped := findLogEvent(t, logs, "reasoning_dropped")
+		if fmt.Sprint(dropped["unsigned_dropped"]) != "1" {
+			t.Fatalf("reasoning_dropped = %v, want 1 unsigned drop", dropped)
+		}
+	})
+}

@@ -29,11 +29,12 @@ const claudeSignedThinkingStream = "event: message_start\ndata: {\"type\":\"mess
 	"event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":5}}\n\n" +
 	"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
 
-// End to end (atlasfutures/semantic-router#212): a Chat client routed to a
-// Claude arm served only over Messages gets Claude's signed thinking as
-// reasoning_content, without the signature, and a 200 -- buffered and
-// streamed -- instead of a 502 for a capability Chat does not have.
-func TestChatClientOnAMessagesClaudeArmGetsSignedThinkingUnsigned(t *testing.T) {
+// End to end (atlasfutures/semantic-router#212, #278): a Chat client routed
+// to a Claude arm served only over Messages gets Claude's signed thinking as
+// reasoning_content, with the signature beside it as the anthropic-claude-v1
+// reasoning_details item it can replay, and a 200 -- buffered and streamed --
+// instead of a 502 for a capability Chat does not have.
+func TestChatClientOnAMessagesClaudeArmGetsSignedThinkingAsReasoningDetails(t *testing.T) {
 	t.Setenv("POLICY_E2E_PROVIDER_KEY", "public-e2e-provider-key")
 	actions := relaxedPolicyActions()
 	fake := newRelaxedPolicyFake(t)
@@ -92,8 +93,12 @@ func TestChatClientOnAMessagesClaudeArmGetsSignedThinkingUnsigned(t *testing.T) 
 				t.Fatalf("the answer was refused: %d %s", immediate.GetStatus().GetCode(), immediate.GetBody())
 			}
 			client := string(response.GetResponseBody().GetResponse().GetBodyMutation().GetBody())
-			if strings.Contains(client, "EqQBsigclaude") || strings.Contains(client, "signature") {
-				t.Fatalf("a signature reached the Chat client: %s", client)
+			item := `"reasoning_details":[{"format":"anthropic-claude-v1","index":0,"signature":"EqQBsigclaude","text":"Check the tool.","type":"reasoning.text"}]`
+			if !strings.Contains(client, item) {
+				t.Fatalf("the Chat client was not given Claude's signature as a reasoning_details item: %s", client)
+			}
+			if strings.Contains(client, "signature_delta") || strings.Contains(client, "thinking_delta") {
+				t.Fatalf("a Messages event reached the Chat client: %s", client)
 			}
 			if !strings.Contains(client, `"reasoning_content":"Check the tool."`) || !strings.Contains(client, "Done.") {
 				t.Fatalf("the Chat client lost the thinking or the answer: %s", client)

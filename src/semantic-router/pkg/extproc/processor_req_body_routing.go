@@ -70,6 +70,14 @@ func (r *OpenAIRouter) prepareProviderDispatch(
 	if r.signClaudeThinkingForChat(request, dispatch) > 0 {
 		changed = true
 	}
+	if restored := r.restoreClaudeThinkingForMessages(request, dispatch); restored > 0 {
+		changed = true
+		logging.ComponentEvent("extproc", "claude_thinking_restored", map[string]interface{}{
+			"request_id": ctx.RequestID,
+			"model":      logicalModel,
+			"blocks":     restored,
+		})
+	}
 	carry := protocolcodec.CarryReasoningTo(request, dispatch.targetFormat)
 	carry.ForeignDropped = foreignDropped
 	if carry.Changed() {

@@ -220,3 +220,21 @@ func (r *OpenAIRouter) signClaudeThinkingForChat(request *llmprotocol.Request, d
 	}
 	return protocolcodec.SignedThinkingAsReasoningDetails(request)
 }
+
+// restoreClaudeThinkingForMessages rebuilds, for a Claude worker reached over
+// Messages, the thinking a Chat client replays as anthropic-claude-v1
+// reasoning_details items into the signed thinking and redacted_thinking
+// blocks Anthropic returned (protocolcodec.ClaudeThinkingFromReasoningDetails,
+// atlasfutures/semantic-router#278). It is the mirror of
+// signClaudeThinkingForChat: that one carries a Messages client's signed
+// thinking to a Chat Claude arm, this one carries a Chat client's back to a
+// Messages Claude arm. It runs after the foreign drop and before the
+// disposition table, which would otherwise drop the reasoning as unsigned.
+// It returns how many blocks it rebuilt.
+func (r *OpenAIRouter) restoreClaudeThinkingForMessages(request *llmprotocol.Request, dispatch *providerDispatch) int {
+	if request == nil || dispatch == nil || dispatch.targetFormat != llmprotocol.AnthropicMessagesV1 ||
+		r.armFamily(dispatch.logicalModel) != anthropicFamily {
+		return 0
+	}
+	return protocolcodec.ClaudeThinkingFromReasoningDetails(request)
+}

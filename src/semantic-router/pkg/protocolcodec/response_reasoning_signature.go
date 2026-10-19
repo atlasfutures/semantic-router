@@ -6,20 +6,29 @@ import (
 
 // A reasoning signature in a response is provider state: Anthropic signs a
 // thinking block so a client can resend it and the model keeps its thinking.
-// A target contract with no member for one -- Chat Completions -- is sent
-// the thinking text without it (reasoning_content), as the request leg's
-// CarryReasoningTo does for a Chat target (content.thinking.signed). The
-// response is not refused for it: a Chat client on a Messages-only Claude arm
-// would otherwise get a 502 for every signed answer
-// (atlasfutures/semantic-router#212). The drop is reported as a diagnostic.
+// A target contract with no member for one -- Chat Completions -- is given
+// the signature where OpenRouter puts Claude's: an anthropic-claude-v1
+// reasoning_details item beside the reasoning_content text
+// (chat_claude_reasoning.go, atlasfutures/semantic-router#278). Before #278
+// the signature was cleared and the text kept, which Anthropic accepts on
+// replay but answers without Claude's reasoning. The response is not refused
+// either way: a Chat client on a Messages-only Claude arm would otherwise get
+// a 502 for every signed answer (atlasfutures/semantic-router#212).
 //
-// Only what is encoded for the client loses the signature; the neutral
-// response a caller keeps for settlement is left as it was.
+// Any other target without the capability is sent the text without the
+// signature, as the request leg's CarryReasoningTo does (content.thinking.signed),
+// and the drop is reported as a diagnostic. A signature in the Router's
+// namespace is never carried: it is cleared the same way for every target.
+//
+// Only what is encoded for the client changes; the neutral response a caller
+// keeps for settlement is left as it was.
 const responseReasoningSignatureDropped = "the client contract has no member for a reasoning signature; the thinking text is kept"
 
 // responseForTarget returns the response a target's encoder is given: the
 // response itself when the target can carry reasoning signatures or none is
-// present, and otherwise a copy, on fresh slices, without them.
+// present, a Chat target's copy with Claude's thinking carried as
+// reasoning_details, and otherwise a copy, on fresh slices, without the
+// signatures.
 func responseForTarget(
 	response llmprotocol.Response,
 	target llmprotocol.WireFormat,
@@ -28,6 +37,9 @@ func responseForTarget(
 ) (llmprotocol.Response, llmprotocol.Diagnostics) {
 	if capabilities.Supports(llmprotocol.CapabilityReasoningSignature) {
 		return response, nil
+	}
+	if target == llmprotocol.OpenAIChatV1 {
+		return responseWithClaudeReasoningCarriers(response, target, limit)
 	}
 	output, stripped := withoutReasoningSignatures(response.Output)
 	var alternatives [][]llmprotocol.OutputItem

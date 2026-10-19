@@ -205,14 +205,18 @@ func TestAnthropicSignatureDeltaIsPreservedOrExplicitlyRejected(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Chat has no member for the signature: it is dropped and the drop is
-	// reported, not silent (#212).
+	// Chat has no member for the signature: it is carried as the
+	// anthropic-claude-v1 reasoning_details item the client can replay (#278),
+	// and the carry is reported, not silent (#212). The block had no text, as
+	// one has under display "omitted", and the item says so.
 	crossFrames, _, diagnostics, err := cross.Push(payload)
 	if err != nil {
 		t.Fatalf("cross-format signed reasoning: %v", err)
 	}
-	if bytes.Contains(bytes.Join(crossFrames, nil), []byte("signed")) || !hasDroppedSignatureDiagnostic(diagnostics) {
-		t.Fatalf("Chat stream = %s diagnostics=%+v, want the signature dropped and reported", bytes.Join(crossFrames, nil), diagnostics)
+	crossWire := bytes.Join(crossFrames, nil)
+	if !bytes.Contains(crossWire, []byte(`"reasoning_details":[{"format":"anthropic-claude-v1","index":0,"signature":"signed","text":"","type":"reasoning.text"}]`)) ||
+		bytes.Contains(crossWire, []byte("signature_delta")) || !hasSignatureDiagnostic(diagnostics, llmprotocol.DiagnosticApproximated) {
+		t.Fatalf("Chat stream = %s diagnostics=%+v, want the signature carried as a reasoning_details item and reported", crossWire, diagnostics)
 	}
 }
 

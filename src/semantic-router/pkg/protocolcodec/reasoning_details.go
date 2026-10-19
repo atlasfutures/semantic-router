@@ -33,8 +33,11 @@ import (
 // one signed anthropic-claude-v1 item for that thinking block
 // (chatClaudeThinkingSignature), so the client replays Claude's thinking
 // signed instead of unsigned. A Claude worker reached over Chat is sent such
-// thinking back as that same item (SignedThinkingAsReasoningDetails). No other
-// family's blob ever becomes a signature.
+// thinking back as that same item (SignedThinkingAsReasoningDetails). The
+// reverse pair, for a Chat client on a Messages Claude arm, is in
+// chat_claude_reasoning.go: the Chat client is given Claude's thinking as
+// those items, and a Claude worker reached over Messages is sent them back as
+// the blocks they came from. No other family's blob ever becomes a signature.
 //
 // A Responses client has no reasoning_details member. It is given the array
 // as a reasoning item's encrypted_content, minted here (mintReasoningDetails),
@@ -400,19 +403,16 @@ func SignedThinkingAsReasoningDetails(request *llmprotocol.Request) int {
 				content.Reasoning == llmprotocol.ReasoningScopeSummary {
 				continue
 			}
-			details, err := json.Marshal([]map[string]any{{
-				"type": "reasoning.text", "text": content.Text, "signature": content.Signature,
-				"format": responsesAnthropicReasoningFormat, "index": next,
-			}})
+			carrier := claudeReasoningDetails(claudeReasoningTextItem(content.Text, content.Signature, next))
 			next++
-			if err != nil {
+			if carrier == nil {
 				continue
 			}
 			if &messages[index].Content[0] == &message.Content[0] {
 				messages[index].Content = append([]llmprotocol.Content(nil), message.Content...)
 			}
 			content.Signature = ""
-			content.Extensions = reasoningDetailsFields(details)
+			content.Extensions = carrier
 			messages[index].Content[contentIndex] = content
 			rewritten++
 		}

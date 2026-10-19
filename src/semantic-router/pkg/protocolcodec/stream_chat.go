@@ -35,6 +35,15 @@ type chatStreamEncoder struct {
 	streamState
 	itemStarted bool
 	toolIndexes map[string]int
+	// reasoningText is each thinking block's text so far, by block. A
+	// Messages arm sends the block's signature after its text, and the
+	// reasoning_details item minted for a Chat client carries both
+	// (chat_claude_reasoning.go).
+	reasoningText map[streamContentKey]string
+	// claudeItems is how many anthropic-claude-v1 items this stream has
+	// minted: the next item's index. OpenRouter keys items by index, so each
+	// block takes the next one.
+	claudeItems int
 }
 
 func (OpenAIChatCodec) NewDecoder(context llmprotocol.StreamContext, policy llmprotocol.Policy) llmprotocol.StreamDecoder {
@@ -681,8 +690,15 @@ func (encoder *chatStreamEncoder) Push(event llmprotocol.Event) ([][]byte, llmpr
 		return nil, nil, llmprotocol.NewError(llmprotocol.ErrorConflict, "stream_terminal", "stream is already terminal", nil)
 	}
 	// A provider-run web search is not something a Chat choice can show; the
-	// answer that follows it is.
+	// answer that follows it is. A redacted_thinking block is carried as the
+	// reasoning.encrypted item a Chat client can replay, once, when the block
+	// completes.
 	if carriedAnthropicServerBlock(event.Content) != nil {
+		if event.Type == llmprotocol.EventOutputItemCompleted {
+			if data, ok := OpaqueReasoningData(*event.Content); ok {
+				return encoder.encodeClaudeRedactedThinking(event, data)
+			}
+		}
 		return nil, nil, nil
 	}
 	normalized, err := encoder.next(event)
@@ -770,37 +786,101 @@ func (encoder *chatStreamEncoder) applyChatReasoningDelta(
 	event llmprotocol.Event,
 	choice *chatChunkChoiceWire,
 ) (llmprotocol.Diagnostics, bool, error) {
-	diagnostics, err := encoder.reasoningDiagnostics(event)
-	if err != nil {
-		return diagnostics, false, err
+	if event.Content == nil {
+		choice.Delta.Reasoning = &event.Delta
+		return nil, true, nil
 	}
-	if event.Content != nil {
-		if details, _ := reasoningDetailsOf(*event.Content); details != nil {
-			choice.Delta.ReasoningDetails = details
-			if event.Delta == "" {
-				return diagnostics, true, nil
-			}
+	if details, _ := reasoningDetailsOf(*event.Content); details != nil {
+		// A Chat upstream's own items, or a buffered answer's carriers: sent
+		// as they are.
+		choice.Delta.ReasoningDetails = details
+		if event.Delta != "" {
+			choice.Delta.Reasoning = &event.Delta
 		}
-		if event.Delta == "" && event.Content.Signature != "" {
-			// A signature_delta alone: nothing of it is Chat's to send.
+		return nil, true, nil
+	}
+	key := contentKey(event)
+	if event.Content.Reasoning != llmprotocol.ReasoningScopeSummary {
+		encoder.noteReasoningText(key, event.Delta)
+	}
+	if event.Content.Signature == "" {
+		choice.Delta.Reasoning = &event.Delta
+		return nil, true, nil
+	}
+	// The block's signature, which a Messages arm sends after its text. Chat
+	// has no member for it, so the block is carried whole as the
+	// reasoning_details item a Chat client can replay, as a buffered answer's
+	// is (responseForTarget). A signature in the Router's namespace is never
+	// carried: it is dropped and reported, as every signature was before.
+	if _, reserved := routerSignature(event.Content.Signature); reserved ||
+		event.Content.Reasoning == llmprotocol.ReasoningScopeSummary {
+		diagnostics := appendDiagnostics(nil, llmprotocol.Diagnostics{{
+			Source: encoder.context.Source, Target: encoder.context.Target, Field: "reasoning.signature",
+			Action: llmprotocol.DiagnosticDropped, Reason: responseReasoningSignatureDropped,
+		}}, encoder.policy.Limits.Diagnostics)
+		if event.Delta == "" {
 			return diagnostics, false, nil
 		}
+		choice.Delta.Reasoning = &event.Delta
+		return diagnostics, true, nil
 	}
-	choice.Delta.Reasoning = &event.Delta
-	return diagnostics, true, nil
-}
-
-func (encoder *chatStreamEncoder) reasoningDiagnostics(event llmprotocol.Event) (llmprotocol.Diagnostics, error) {
-	if event.Content == nil || event.Content.Signature == "" {
-		return nil, nil
+	carrier := claudeReasoningDetails(claudeReasoningTextItem(encoder.reasoningText[key], event.Content.Signature, encoder.claudeItems))
+	if carrier == nil {
+		return nil, false, llmprotocol.NewError(llmprotocol.ErrorInternal, "invalid_reasoning_details", "reasoning_details cannot be encoded", nil)
 	}
-	// The thinking text streams on as reasoning; the signature, which Chat
-	// has no member for, is dropped and reported, as a buffered answer's is
-	// (responseForTarget).
+	encoder.claudeItems++
+	choice.Delta.ReasoningDetails = carrier.Fields[chatReasoningDetailsMember]
+	if event.Delta != "" {
+		choice.Delta.Reasoning = &event.Delta
+	}
 	return appendDiagnostics(nil, llmprotocol.Diagnostics{{
 		Source: encoder.context.Source, Target: encoder.context.Target, Field: "reasoning.signature",
-		Action: llmprotocol.DiagnosticDropped, Reason: responseReasoningSignatureDropped,
-	}}, encoder.policy.Limits.Diagnostics), nil
+		Action: llmprotocol.DiagnosticApproximated, Reason: chatClaudeReasoningCarried,
+	}}, encoder.policy.Limits.Diagnostics), true, nil
+}
+
+func (encoder *chatStreamEncoder) noteReasoningText(key streamContentKey, text string) {
+	if text == "" {
+		return
+	}
+	if encoder.reasoningText == nil {
+		encoder.reasoningText = map[streamContentKey]string{}
+	}
+	encoder.reasoningText[key] += text
+}
+
+// encodeClaudeRedactedThinking writes a completed redacted_thinking block as
+// the reasoning.encrypted item a Chat client can replay. The block arrives
+// whole, so it is one chunk, and it opens the choice if nothing has yet.
+func (encoder *chatStreamEncoder) encodeClaudeRedactedThinking(
+	event llmprotocol.Event,
+	data string,
+) ([][]byte, llmprotocol.Diagnostics, error) {
+	carrier := claudeReasoningDetails(claudeReasoningEncryptedItem(data, encoder.claudeItems))
+	if carrier == nil {
+		return nil, nil, llmprotocol.NewError(llmprotocol.ErrorInternal, "invalid_reasoning_details", "reasoning_details cannot be encoded", nil)
+	}
+	encoder.claudeItems++
+	chunk := chatChunkWire{ID: event.ResponseID, Object: "chat.completion.chunk", Model: event.Model}
+	if chunk.ID == "" {
+		chunk.ID = encoder.context.ResponseID
+	}
+	if encoder.context.PublicModel != "" {
+		chunk.Model = encoder.context.PublicModel
+	}
+	choice := chatChunkChoiceWire{Index: 0}
+	encoder.startChatItem(&choice)
+	choice.Delta.ReasoningDetails = carrier.Fields[chatReasoningDetailsMember]
+	chunk.Choices = []chatChunkChoiceWire{choice}
+	diagnostics := appendDiagnostics(nil, llmprotocol.Diagnostics{{
+		Source: encoder.context.Source, Target: encoder.context.Target, Field: fieldRedactedThinking,
+		Action: llmprotocol.DiagnosticApproximated, Reason: chatRedactedThinkingCarried,
+	}}, encoder.policy.Limits.Diagnostics)
+	frame, err := encodeChatStreamFrame(encoder.context, chunk)
+	if err != nil {
+		return nil, diagnostics, err
+	}
+	return [][]byte{frame}, diagnostics, nil
 }
 
 func (encoder *chatStreamEncoder) applyToolCallDelta(event llmprotocol.Event, choice *chatChunkChoiceWire) error {

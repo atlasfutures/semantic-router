@@ -12,6 +12,15 @@
               "message": {
                 "content": "done",
                 "reasoning_content": "inspect the evidence",
+                "reasoning_details": [
+                  {
+                    "format": "anthropic-claude-v1",
+                    "index": 0,
+                    "signature": "signed-reasoning",
+                    "text": "inspect the evidence",
+                    "type": "reasoning.text"
+                  }
+                ],
                 "role": "assistant"
               }
             }
@@ -35,7 +44,7 @@
         "diagnostics": [
           {
             "field": "reasoning.signature",
-            "action": "dropped"
+            "action": "approximated"
           }
         ]
       }
