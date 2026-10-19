@@ -45,6 +45,7 @@ func newDecisionsV2Fixture(t *testing.T, v2 *config.RaylineARCDecisionsV2Config)
 func fixtureDecisionsV2() *config.RaylineARCDecisionsV2Config {
 	weight := func(value float64) *float64 { return &value }
 	return &config.RaylineARCDecisionsV2Config{
+		Name:       "keen",
 		CostWeight: weight(1),
 		TierPoints: []config.RaylineARCTierPoint{
 			{Name: "swift", CostWeight: weight(2)}, {Name: "keen", CostWeight: weight(1)}, {Name: "sage", CostWeight: weight(0)},
@@ -80,8 +81,12 @@ func TestPolicyCellWithoutDecisionsV2SendsNoV2Members(t *testing.T) {
 	if _, sent := selection["tier_points"]; sent {
 		t.Fatal("tier_points sent without decisions_v2")
 	}
-	if weight, sent := selection["operating_point"].(map[string]any)["cost_weight"]; !sent || weight != nil {
+	point := selection["operating_point"].(map[string]any)
+	if weight, sent := point["cost_weight"]; !sent || weight != nil {
 		t.Fatalf("cost_weight = %v, want null", weight)
+	}
+	if point["name"] != "default" {
+		t.Fatalf("operating point name %v, want default", point["name"])
 	}
 	if result.RaylineARC.PolicyOperatingPoint != nil || result.RaylineARC.PolicyTierPicks != nil {
 		t.Fatalf("trace recorded %+v / %+v", result.RaylineARC.PolicyOperatingPoint, result.RaylineARC.PolicyTierPicks)
@@ -120,6 +125,9 @@ func TestPolicyCellSendsDecisionsV2MembersAndRecordsTheEcho(t *testing.T) {
 	if gotPoint["cost_weight"] != wantPoint["cost_weight"] {
 		t.Fatalf("cost_weight %v, want the fixture's %v", gotPoint["cost_weight"], wantPoint["cost_weight"])
 	}
+	if gotPoint["name"] != wantPoint["name"] {
+		t.Fatalf("operating point name %v, want the fixture's %v", gotPoint["name"], wantPoint["name"])
+	}
 	// No member beyond the fixture's: the selection keys are the fixture's.
 	for key := range gotSelection {
 		if _, ok := wantSelection[key]; !ok {
@@ -132,7 +140,7 @@ func TestPolicyCellSendsDecisionsV2MembersAndRecordsTheEcho(t *testing.T) {
 		t.Fatalf("served %s, want the decision's %s", result.RaylineARC.PolicyActionID, served)
 	}
 	point := result.RaylineARC.PolicyOperatingPoint
-	if point == nil || point.PointID != "point-1" || point.CostWeight == nil || *point.CostWeight != 1 {
+	if point == nil || point.Name != "keen" || point.PointID != "point-1" || point.CostWeight == nil || *point.CostWeight != 1 {
 		t.Fatalf("operating point %+v", point)
 	}
 	picks := result.RaylineARC.PolicyTierPicks
@@ -142,7 +150,8 @@ func TestPolicyCellSendsDecisionsV2MembersAndRecordsTheEcho(t *testing.T) {
 	fields := map[string]interface{}{}
 	addPolicyDecisionsV2Fields(fields, result.RaylineARC)
 	logged := fields["policy_operating_point"].(map[string]interface{})
-	if logged["point_id"] != "point-1" || logged["cost_weight"] != 1.0 {
+	if logged["point_id"] != "point-1" || logged["cost_weight"] != 1.0 ||
+		logged["name"] != "keen" || logged["requested_name"] != "keen" {
 		t.Fatalf("logged operating point %v", logged)
 	}
 	if _, missing := fields["policy_tier_picks_missing"]; missing {
@@ -150,6 +159,30 @@ func TestPolicyCellSendsDecisionsV2MembersAndRecordsTheEcho(t *testing.T) {
 	}
 	if loggedPicks := fields["policy_tier_picks"].(map[string]interface{}); len(loggedPicks) != 3 {
 		t.Fatalf("logged tier picks %v", loggedPicks)
+	}
+}
+
+// A decisions_v2 cell without a name still sends "default", and its log
+// carries no requested name.
+func TestPolicyCellDecisionsV2WithoutNameSendsDefault(t *testing.T) {
+	v2 := fixtureDecisionsV2()
+	v2.Name = ""
+	fixture := newDecisionsV2Fixture(t, v2)
+	state, _ := raylinearc.NewEpisodeState(2)
+	result, err := fixture.selectOn(t, state, policyTestRequest(t, map[string]any{"role": "user", "content": "go"}))
+	if err != nil {
+		t.Fatalf("select: %v", err)
+	}
+	body := decodeJSONObject(t, fixture.fake.receivedBodies()[0])
+	point := body["selection"].(map[string]any)["operating_point"].(map[string]any)
+	if point["name"] != "default" || point["cost_weight"] != 1.0 {
+		t.Fatalf("operating point %v, want default at V 1", point)
+	}
+	fields := map[string]interface{}{}
+	addPolicyDecisionsV2Fields(fields, result.RaylineARC)
+	logged := fields["policy_operating_point"].(map[string]interface{})
+	if _, ok := logged["requested_name"]; ok || logged["name"] != "default" {
+		t.Fatalf("logged operating point %v", logged)
 	}
 }
 

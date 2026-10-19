@@ -28,6 +28,7 @@ import (
 // (pathfinder#5443), from its decisions_v2 config. A nil one sends none, so
 // the request is v1's.
 type policyDecisionsV2 struct {
+	name           string
 	costWeight     *float64
 	tierPoints     []raylinearc.PolicyTierPoint
 	responseFields []string
@@ -42,6 +43,7 @@ func newPolicyDecisionsV2(cfg *config.RaylineARCDecisionsV2Config) *policyDecisi
 		return nil
 	}
 	members := &policyDecisionsV2{
+		name:           cfg.Name,
 		responseFields: append([]string(nil), cfg.ResponseFields...),
 	}
 	if cfg.CostWeight != nil {
@@ -61,6 +63,9 @@ func newPolicyDecisionsV2(cfg *config.RaylineARCDecisionsV2Config) *policyDecisi
 func (members *policyDecisionsV2) apply(request *raylinearc.PolicyDecisionRequest) {
 	if members == nil {
 		return
+	}
+	if members.name != "" {
+		request.Selection.OperatingPoint.Name = members.name
 	}
 	if members.costWeight != nil {
 		weight := *members.costWeight
@@ -101,6 +106,7 @@ func (members *policyDecisionsV2) record(
 	}
 	point := response.Decision.OperatingPoint
 	trace.PolicyOperatingPoint = &point
+	trace.PolicyOperatingPointName = members.name
 	for _, tier := range members.tierPoints {
 		pick, ok := response.Decision.TierPicks[tier.Name]
 		if !ok {
@@ -131,6 +137,9 @@ func addPolicyDecisionsV2Fields(fields map[string]interface{}, trace *selection.
 	}
 	if weight := trace.PolicyOperatingPoint.CostWeight; weight != nil {
 		point["cost_weight"] = *weight
+	}
+	if trace.PolicyOperatingPointName != "" {
+		point["requested_name"] = trace.PolicyOperatingPointName
 	}
 	fields["policy_operating_point"] = point
 	if len(trace.PolicyTierPicksMissing) > 0 {

@@ -152,6 +152,9 @@ type RaylineARCTrace struct {
 	// with decisions_v2; the tier picks are recorded, never served.
 	PolicyOperatingPoint *raylinearc.PolicyResolvedOperatingPoint
 	PolicyTierPicks      map[string]raylinearc.PolicyTierPick
+	// PolicyOperatingPointName is the decisions_v2 name the cell sent, when
+	// it sets one; the echoed name is a record label and is not checked.
+	PolicyOperatingPointName string
 	// PolicyTierPicksMissing names the configured tier points the response
 	// carried no pick for, so a partial set is never read as complete.
 	PolicyTierPicksMissing []string

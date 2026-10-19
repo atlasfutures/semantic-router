@@ -12,6 +12,7 @@ func TestRaylineARCDecisionsV2ConfigParsesAndValidates(t *testing.T) {
 	var policy RaylineARCPolicyServiceConfig
 	if err := yaml.Unmarshal([]byte(`
 decisions_v2:
+  name: keen
   cost_weight: 1.0
   tier_points:
     - {name: swift, cost_weight: 2.0}
@@ -21,7 +22,7 @@ decisions_v2:
 		t.Fatal(err)
 	}
 	v2 := policy.DecisionsV2
-	if v2 == nil || v2.CostWeight == nil || *v2.CostWeight != 1 || len(v2.TierPoints) != 2 ||
+	if v2 == nil || v2.Name != "keen" || v2.CostWeight == nil || *v2.CostWeight != 1 || len(v2.TierPoints) != 2 ||
 		v2.TierPoints[1].Name != "sage" || v2.TierPoints[1].CostWeight == nil || *v2.TierPoints[1].CostWeight != 0 ||
 		len(v2.ResponseFields) != 2 {
 		t.Fatalf("parsed %+v", v2)
@@ -52,6 +53,10 @@ decisions_v2:
 		cfg  RaylineARCDecisionsV2Config
 		want string
 	}{
+		"uppercase name":       {RaylineARCDecisionsV2Config{Name: "Swift"}, "name"},
+		"name with a space":    {RaylineARCDecisionsV2Config{Name: "sw ift"}, "name"},
+		"name starting digit":  {RaylineARCDecisionsV2Config{Name: "1swift"}, "name"},
+		"33-byte name":         {RaylineARCDecisionsV2Config{Name: "s" + strings.Repeat("x", 32)}, "name"},
 		"negative V":           {RaylineARCDecisionsV2Config{CostWeight: weight(-0.5)}, "cost_weight"},
 		"NaN V":                {RaylineARCDecisionsV2Config{CostWeight: weight(math.NaN())}, "cost_weight"},
 		"infinite V":           {RaylineARCDecisionsV2Config{CostWeight: weight(math.Inf(1))}, "cost_weight"},
@@ -68,6 +73,12 @@ decisions_v2:
 		err := validatePolicyDispatch(cfg, decision)
 		if err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%s: err = %v, want one naming %q", name, err, tc.want)
+		}
+	}
+	for _, name := range []string{"swift", "sage", "a", "tier_2-b", "s" + strings.Repeat("x", 31)} {
+		decision.Algorithm.RaylineARC.PolicyService.DecisionsV2 = &RaylineARCDecisionsV2Config{Name: name}
+		if err := validatePolicyDispatch(cfg, decision); err != nil {
+			t.Fatalf("name %q refused: %v", name, err)
 		}
 	}
 	decision.Algorithm.RaylineARC.PolicyService.DecisionsV2 = &RaylineARCDecisionsV2Config{TierPoints: points(8)}

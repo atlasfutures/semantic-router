@@ -368,13 +368,15 @@ class RaylineARCTierPointConfig(BaseModel):
 class RaylineARCDecisionsV2Config(BaseModel):
     """ARC Decisions API v2 request members (Go RaylineARCDecisionsV2Config).
 
-    Each member is sent only when set: cost_weight is the cell's V, tier_points
+    Each member is sent only when set: name labels the operating point (a
+    record label only), cost_weight is the cell's V, tier_points
     are V presets whose picks are logged, response_fields the opt-in
     per-action blocks.
     """
 
     model_config = ConfigDict(extra="forbid")
 
+    name: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_-]{0,31}$")
     cost_weight: float | None = Field(default=None, ge=0, allow_inf_nan=False)
     tier_points: list[RaylineARCTierPointConfig] = Field(
         default_factory=list, max_length=8

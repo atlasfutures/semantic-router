@@ -19,6 +19,7 @@ package config
 import (
 	"fmt"
 	"math"
+	"regexp"
 )
 
 // RaylineARCDecisionsV2Config is a cell's ARC Decisions API v2 request
@@ -26,6 +27,10 @@ import (
 // not sent, so a cell without the block sends the v1 request byte for byte:
 // the service decodes strictly, and one that predates v2 refuses the members.
 type RaylineARCDecisionsV2Config struct {
+	// Name is sent as selection.operating_point.name in place of "default".
+	// A tier cell names its alias (swift, sage). It is a record label only:
+	// the service does not score by it.
+	Name string `yaml:"name,omitempty"`
 	// CostWeight is the cell's V, sent as selection.operating_point.cost_weight.
 	// The service honours it within the bounds the package declares for the
 	// stage that chooses the model and refuses it otherwise. A tier cell
@@ -57,9 +62,15 @@ const (
 	maxRaylineARCTierPointNameLength = 64
 )
 
+// raylineARCOperatingPointName is a short lowercase identifier.
+var raylineARCOperatingPointName = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}$`)
+
 func validateRaylineARCDecisionsV2Config(cfg *RaylineARCDecisionsV2Config) error {
 	if cfg == nil {
 		return nil
+	}
+	if cfg.Name != "" && !raylineARCOperatingPointName.MatchString(cfg.Name) {
+		return fmt.Errorf("decisions_v2 name must match %s", raylineARCOperatingPointName)
 	}
 	if cfg.CostWeight != nil && !validRaylineARCCostWeight(*cfg.CostWeight) {
 		return fmt.Errorf("decisions_v2 cost_weight must be a finite number >= 0")
