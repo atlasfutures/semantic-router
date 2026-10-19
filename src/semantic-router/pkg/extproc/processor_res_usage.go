@@ -211,7 +211,7 @@ func (r *OpenAIRouter) recordResponseCost(
 	record := r.newLLMUsageRecord(ctx, usage)
 	latencyMillis := completionLatency.Milliseconds()
 	record.CompletionLatencyMS = &latencyMillis
-	r.priceUsageRecord(&record, ctx.RequestModel, usage)
+	r.priceUsageRecord(&record, ctx, ctx.RequestModel, usage)
 	emitLLMUsageRecord(record)
 	return replayUsage
 }

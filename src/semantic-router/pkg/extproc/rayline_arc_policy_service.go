@@ -801,6 +801,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	result.RaylineARC.MaskedArms = policyMaskedArms(scorer, workerIDs, excluded, fallback, turn, offeredRoutes)
 	result.RaylineARC.PolicyPackageSHA256 = scorer.sha256
 	result.RaylineARC.RoutingPricesStatus = pricesStatus
+	result.RaylineARC.SettlementPrices = armed.prices
 	result.RaylineARC.RoutingPricesUsed = response.RoutingPricesUsed
 	result.RaylineARC.PolicyPredictedCostUSD = policySelectedPredictedCost(response)
 	if !sideCall {

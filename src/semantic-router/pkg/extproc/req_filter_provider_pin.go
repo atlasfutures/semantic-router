@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
 
 // providerPreferencesField is OpenRouter's provider-routing instruction: a
@@ -79,14 +80,22 @@ func recordDispatchedProviderPin(ctx *RequestContext, body []byte) {
 		return
 	}
 	ctx.DispatchedProviderOrder = nil
+	ctx.DispatchedProviderPin = nil
 
 	var wire struct {
-		Provider struct {
-			Order []string `json:"order"`
+		Provider *struct {
+			Order          []string `json:"order"`
+			Only           []string `json:"only"`
+			Ignore         []string `json:"ignore"`
+			AllowFallbacks *bool    `json:"allow_fallbacks"`
 		} `json:"provider"`
 	}
-	if json.Unmarshal(body, &wire) != nil {
+	if json.Unmarshal(body, &wire) != nil || wire.Provider == nil {
 		return
 	}
 	ctx.DispatchedProviderOrder = wire.Provider.Order
+	ctx.DispatchedProviderPin = &raylinearc.SettlementPin{
+		Order: wire.Provider.Order, Only: wire.Provider.Only,
+		Ignore: wire.Provider.Ignore, AllowFallbacks: wire.Provider.AllowFallbacks,
+	}
 }

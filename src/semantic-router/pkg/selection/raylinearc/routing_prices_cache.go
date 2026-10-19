@@ -144,6 +144,12 @@ func (cache *RoutingPriceCache) Refresh(ctx context.Context) error {
 	return nil
 }
 
+// Now is the cache's clock, the one its freshness and a settled row's
+// validity window are read on.
+func (cache *RoutingPriceCache) Now() time.Time {
+	return cache.config.Now()
+}
+
 // Settlement returns the feed to settle a call at, or why there is none: no
 // feed yet (feed_absent), or one past max age by its fetch or by its own
 // as_of (feed_expired). A feed a decide request would still be sent is one

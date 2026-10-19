@@ -371,7 +371,7 @@ func (r *OpenAIRouter) settleFlexAttempt(ctx *RequestContext, trigger string, st
 	contentSent := false
 	record.ContentSentBeforeFailure = &contentSent
 	record.FlexResend = nonEmpty(flexResendAttempt)
-	r.priceUsageRecord(&record, ctx.RequestModel, usage)
+	r.priceUsageRecord(&record, ctx, ctx.RequestModel, usage)
 	emitLLMUsageRecord(record)
 	// The discount endpoint failed the call: it counts against it in the
 	// load-balancing window, as any backend error does.
@@ -509,6 +509,7 @@ func (r *OpenAIRouter) serveFlexTwin(
 	}()
 	ctx.RequestModel = plan.twinModel
 	ctx.DispatchedProviderOrder = append([]string(nil), plan.twinPin.Order...)
+	ctx.DispatchedProviderPin = settlementPinFromPreferences(plan.twinPin)
 	// Nothing the refused call's hop said describes the twin's call.
 	ctx.UpstreamStatusCode = 0
 	ctx.UpstreamAttemptCount, ctx.UpstreamRetryCount, ctx.UpstreamRetryExhausted = 0, 0, false
