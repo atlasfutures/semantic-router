@@ -61,11 +61,45 @@ func (r *OpenAIRouter) prepareProviderDispatch(
 	if err != nil {
 		return nil, err
 	}
-	// The disposition table makes reasoning carriable by this target before
-	// the capability gate, which would otherwise refuse it: a block the target
-	// cannot verify is dropped, a signature it cannot verify is stripped. Each
-	// is logged by kind. Before it, a Claude worker loses the reasoning that
-	// is not provably Claude's, while signatures still say whose it is.
+	if r.carryReasoningForDispatch(request, dispatch, ctx, logicalModel) {
+		changed = true
+	}
+	if changed {
+		request.Generation++
+	}
+	if protocolErr := r.rejectDispatchCapabilityMismatch(request, dispatch.targetFormat, ctx); protocolErr != nil {
+		return nil, protocolErr
+	}
+	ctx.TargetFormat = dispatch.targetFormat
+	ctx.SemanticRequest = request
+	logging.ComponentDebugEvent("extproc", "provider_dispatch_prepared", map[string]interface{}{
+		"request_id":  ctx.RequestID,
+		"model":       logicalModel,
+		"backend":     dispatch.backendName,
+		"wire_format": dispatch.targetFormat,
+	})
+	return dispatch, nil
+}
+
+// carryReasoningForDispatch makes a request's reasoning carriable by the
+// dispatch's target and reports whether it changed the request. The
+// disposition table runs before the capability gate, which would otherwise
+// refuse what it carries: a block the target cannot verify is dropped, a
+// signature it cannot verify is stripped. Each is logged by kind. Before it,
+// a Claude worker loses the reasoning that is not provably Claude's, while
+// signatures still say whose it is, and gets its own thinking back in the
+// shape its wire format verifies (signClaudeThinkingForChat,
+// restoreClaudeThinkingForMessages). After it, the episode's issuer ledger
+// drops opaque reasoning another worker issued. Every dispatch path runs this
+// once, so a Claude worker reached through an external gateway sees the same
+// history as one the Router dispatches itself.
+func (r *OpenAIRouter) carryReasoningForDispatch(
+	request *llmprotocol.Request,
+	dispatch *providerDispatch,
+	ctx *RequestContext,
+	logicalModel string,
+) bool {
+	changed := false
 	foreignDropped := r.dropReasoningForeignToClaude(request, dispatch, ctx.SourceFormat)
 	if r.signClaudeThinkingForChat(request, dispatch) > 0 {
 		changed = true
@@ -105,21 +139,7 @@ func (r *OpenAIRouter) prepareProviderDispatch(
 	if r.dropRaylineARCOpaqueReasoningIssuedElsewhere(request, dispatch, ctx) {
 		changed = true
 	}
-	if changed {
-		request.Generation++
-	}
-	if protocolErr := r.rejectDispatchCapabilityMismatch(request, dispatch.targetFormat, ctx); protocolErr != nil {
-		return nil, protocolErr
-	}
-	ctx.TargetFormat = dispatch.targetFormat
-	ctx.SemanticRequest = request
-	logging.ComponentDebugEvent("extproc", "provider_dispatch_prepared", map[string]interface{}{
-		"request_id":  ctx.RequestID,
-		"model":       logicalModel,
-		"backend":     dispatch.backendName,
-		"wire_format": dispatch.targetFormat,
-	})
-	return dispatch, nil
+	return changed
 }
 
 func (r *OpenAIRouter) codecCapabilitiesForFormat(format llmprotocol.WireFormat) (llmprotocol.CapabilitySet, bool) {

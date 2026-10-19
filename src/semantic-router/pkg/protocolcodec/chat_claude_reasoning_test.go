@@ -437,3 +437,51 @@ func TestUncarriableSignaturesAreClearedAndItemsNumberAfterExistingOnes(t *testi
 		t.Fatalf("diagnostics = %+v, want both the cleared and the carried signature reported", result.Diagnostics)
 	}
 }
+
+// A Claude arm served over Chat already streams OpenRouter's own items, and a
+// Chat-sourced block is never signed, so even when the Router says the worker
+// is Claude the encoder mints nothing for a Chat-sourced stream: the upstream's
+// items pass through and its text-only chunks stay reasoning_content alone,
+// never a Claude-tagged item with no signature to come (Codex P2 x2 on #278).
+func TestChatSourcedClaudeStreamIsNotTagged(t *testing.T) {
+	chunk := func(delta string) string {
+		return `data: {"id":"gen-1","object":"chat.completion.chunk","created":1,"model":"anthropic/claude-opus-5","choices":[{"index":0,"delta":` + delta + `,"finish_reason":null}]}` + "\n\n"
+	}
+	chunks := []string{
+		chunk(`{"role":"assistant","content":"","reasoning":"Check "}`),
+		chunk(`{"content":"","reasoning":"the tool.","reasoning_details":[{"type":"reasoning.text","text":"the tool.","format":"anthropic-claude-v1","index":0}]}`),
+		chunk(`{"content":"Done."}`),
+		`data: {"id":"gen-1","object":"chat.completion.chunk","created":1,"model":"anthropic/claude-opus-5","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}` + "\n\ndata: [DONE]\n\n",
+	}
+	stream, err := NewBuiltinEngine().NewStream(llmprotocol.OpenAIChatV1, llmprotocol.OpenAIChatV1, llmprotocol.StreamContext{
+		Context: context.Background(), PublicModel: "public", ProviderModel: "anthropic/claude-opus-5", WorkerFamily: "anthropic",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire strings.Builder
+	for _, c := range chunks {
+		frames, _, _, pushErr := stream.Push([]byte(c))
+		if pushErr != nil {
+			t.Fatal(pushErr)
+		}
+		for _, frame := range frames {
+			wire.Write(frame)
+		}
+	}
+	frames, _, _, err := stream.Finalize(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, frame := range frames {
+		wire.Write(frame)
+	}
+	_, reasoning, fragments := chatStreamReasoningDetails(t, wire.String())
+	if strings.Join(reasoning, "") != "Check the tool." {
+		t.Fatalf("reasoning_content deltas = %q", reasoning)
+	}
+	want := []string{`[{"type":"reasoning.text","text":"the tool.","format":"anthropic-claude-v1","index":0}]`}
+	if fmt.Sprint(fragments) != fmt.Sprint(want) {
+		t.Fatalf("reasoning_details fragments = %v, want only the upstream's own %v", fragments, want)
+	}
+}

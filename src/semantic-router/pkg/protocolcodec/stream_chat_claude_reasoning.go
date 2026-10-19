@@ -10,28 +10,42 @@ import (
 // thinking, streamed from a Messages arm, reaches a Chat client as the
 // reasoning_details items it can replay, in the shape OpenRouter streams them.
 //
-// When the Router has said the worker is Claude (StreamContext.WorkerFamily),
-// each thinking_delta goes out as reasoning_content and, beside it, a
-// reasoning.text fragment tagged anthropic-claude-v1 under the block's item
-// index; the block's signature_delta goes out as the item's last fragment,
-// the signature alone. That is OpenRouter's wire shape for Claude over Chat
-// (testdata/golden/capability/056), so a client that already merges
-// OpenRouter's fragments by index reads this stream unchanged. A
+// When the Router has said the worker is Claude (StreamContext.WorkerFamily)
+// and the stream comes in the Messages format, the one format whose thinking
+// blocks Anthropic signs, each thinking_delta goes out as reasoning_content
+// and, beside it, a reasoning.text fragment tagged anthropic-claude-v1 under
+// the block's item index; the block's signature_delta goes out as the item's
+// last fragment, the signature alone. That is OpenRouter's wire shape for
+// Claude over Chat (testdata/golden/capability/056), so a client that already
+// merges OpenRouter's fragments by index reads this stream unchanged. A
 // redacted_thinking block is one reasoning.encrypted item when it completes.
 //
-// When the worker family is not known to the encoder -- a stream encoded
-// outside the Router's dispatch, or an arm of another family served over the
-// Messages format -- the text streams as reasoning_content alone and the
-// block's item is minted whole when its signature arrives, so nothing is
+// Any other stream is left as it was. A Chat-format Claude arm's stream
+// already carries OpenRouter's own items, which pass through untouched, and
+// its text-only chunks must not be tagged beside them: a fragment minted here
+// would take an index OpenRouter is using. A Responses-format arm's signature
+// arrives with the item, so its block is minted whole when the signature
+// does. And a stream whose worker the encoder was not told about (one encoded
+// outside the Router's dispatch) also waits for the signature, so nothing is
 // tagged as Claude's on the strength of the wire format alone.
 
 // claudeWorkerFamily is the family the Router names for Claude.
 const claudeWorkerFamily = "anthropic"
 
 // streamsClaudeFragments reports whether the encoder knows the worker is
-// Claude and streams its thinking in OpenRouter's fragment shape.
+// Claude and the stream is one Anthropic signs, so its thinking streams in
+// OpenRouter's fragment shape.
 func (encoder *chatStreamEncoder) streamsClaudeFragments() bool {
-	return encoder.context.WorkerFamily == claudeWorkerFamily
+	return encoder.context.WorkerFamily == claudeWorkerFamily &&
+		encoder.context.Source == llmprotocol.AnthropicMessagesV1
+}
+
+// mayStillSign reports whether this stream's source can still send a
+// signature for a thinking block: Messages and Responses decoders put one on
+// the content, a Chat decoder never does (its reasoning_details ride as an
+// extension), so a Chat-sourced block's text is not kept for one.
+func (encoder *chatStreamEncoder) mayStillSign() bool {
+	return encoder.context.Source != llmprotocol.OpenAIChatV1
 }
 
 // claudeItemIndex is the reasoning_details index a thinking block's fragments
@@ -59,7 +73,9 @@ func (encoder *chatStreamEncoder) applyClaudeThinkingText(event llmprotocol.Even
 	}
 	key := contentKey(event)
 	if !encoder.streamsClaudeFragments() {
-		encoder.noteReasoningText(key, event.Delta)
+		if encoder.mayStillSign() {
+			encoder.noteReasoningText(key, event.Delta)
+		}
 		return
 	}
 	if carrier := claudeReasoningDetails(claudeReasoningTextFragment(event.Delta, encoder.claudeItemIndex(key))); carrier != nil {
