@@ -38,6 +38,12 @@ const settlementFeedBody = `{"schema": "arc-routing-prices.v1", "store_version":
 	 "output": 15, "valid_from": null, "valid_until": null, "source": "openrouter:openai", "higher_tier": null},
 	{"model": "openai/gpt-luna", "endpoint_tag": "openai/flex", "input": 1.5, "cache_read": 0.15, "cache_write": 0,
 	 "output": 7.5, "valid_from": null, "valid_until": null, "source": "openrouter:openai/flex", "higher_tier": null},
+	{"model": "deepseek/ds", "endpoint_tag": "deepinfra/fp8", "input": 0.3, "cache_read": 0.03, "cache_write": 0,
+	 "output": 1.2, "valid_from": null, "valid_until": null, "higher_tier": null},
+	{"model": "deepseek/ds", "endpoint_tag": "deepinfra/fp8/flex", "input": 0.15, "cache_read": 0.015,
+	 "cache_write": 0, "output": 0.6, "valid_from": null, "valid_until": null, "higher_tier": null},
+	{"model": "deepseek/ds", "endpoint_tag": "deepinfra/fp8/priority", "input": 0.6, "cache_read": 0.06,
+	 "cache_write": 0, "output": 2.4, "valid_from": null, "valid_until": null, "higher_tier": null},
 	{"model": "moonshotai/kimi", "endpoint_tag": "moonshotai/int4", "input": 0.6, "cache_read": 0.1,
 	 "cache_write": 0, "output": 2.5, "valid_from": null, "valid_until": null, "higher_tier": null},
 	{"model": "moonshotai/kimi", "endpoint_tag": "google-ai-studio", "input": 0.7, "cache_read": 0.12,
@@ -176,9 +182,22 @@ func TestSettlementResolvesTheEndpointFromThePin(t *testing.T) {
 		reason   string
 	}{
 		{name: "only the flex variant", model: "openai/gpt-luna", pin: onlyPin("openai/flex"), tag: "openai/flex"},
+		// Dropping the tier never matches a tier endpoint.
+		{name: "a base slug pin does not admit its tier endpoint", model: "openai/gpt-luna", pin: onlyPin("openai"), tag: "openai"},
+		{name: "a variant pin does not admit its tier endpoints", model: "deepseek/ds", pin: onlyPin("deepinfra/fp8"), tag: "deepinfra/fp8"},
+		{name: "a provider pin admits the variant, not its tiers", model: "deepseek/ds", pin: onlyPin("deepinfra"), tag: "deepinfra/fp8"},
+		{name: "a flex pin is its tier endpoint", model: "deepseek/ds", pin: onlyPin("deepinfra/fp8/flex"), tag: "deepinfra/fp8/flex"},
 		{
-			name: "a base slug pin admits its variants too", model: "openai/gpt-luna", pin: onlyPin("openai"),
-			provider: "OpenAI", reason: SettlementEndpointAmbiguous,
+			name: "a priority pin is its tier endpoint", model: "deepseek/ds", pin: onlyPin("deepinfra/fp8/priority"),
+			tag: "deepinfra/fp8/priority",
+		},
+		{
+			name: "standard and flex pinned, the response names neither apart", model: "deepseek/ds",
+			pin: onlyPin("deepinfra/fp8", "deepinfra/fp8/flex"), provider: "DeepInfra", reason: SettlementEndpointAmbiguous,
+		},
+		{
+			name: "a provider pin admits its variant", model: "moonshotai/kimi", pin: onlyPin("moonshotai"),
+			tag: "moonshotai/int4",
 		},
 		{
 			name: "a base slug pin less its ignored variant", model: "openai/gpt-luna",
@@ -231,9 +250,17 @@ func TestSettlementResolvesTheEndpointFromThePin(t *testing.T) {
 			pin: &SettlementPin{Only: []string{"openai", "azure"}, Ignore: []string{"azure"}}, tag: "openai",
 		},
 		{
-			name: "an ignored base removes its variants", model: "openai/gpt-luna",
-			pin:    &SettlementPin{Only: []string{"openai/flex"}, Ignore: []string{"openai"}},
+			name: "an ignored base removes its variants", model: "moonshotai/kimi",
+			pin:    &SettlementPin{Only: []string{"moonshotai/int4"}, Ignore: []string{"moonshotai"}},
 			reason: SettlementEndpointUnpinned,
+		},
+		{
+			name: "an ignored base leaves its tier endpoint", model: "openai/gpt-luna",
+			pin: &SettlementPin{Only: []string{"openai/flex"}, Ignore: []string{"openai"}}, tag: "openai/flex",
+		},
+		{
+			name: "an ignored tier endpoint leaves its standard sibling", model: "deepseek/ds",
+			pin: &SettlementPin{Only: []string{"deepinfra"}, Ignore: []string{"deepinfra/fp8/flex"}}, tag: "deepinfra/fp8",
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -311,5 +338,38 @@ func TestRoutingPriceCacheSettlementExpiresByFetchAge(t *testing.T) {
 	clock.advance(time.Nanosecond)
 	if settlement, reason := cache.Settlement(); settlement != nil || reason != SettlementFeedExpired {
 		t.Fatalf("fetch past max age: %v %q", settlement, reason)
+	}
+}
+
+// OpenRouter's slug rule: dropping trailing segments matches the shared
+// prefix, but dropping the tier never matches a tier endpoint.
+func TestSlugMatchesFollowsOpenRoutersTierRule(t *testing.T) {
+	for _, test := range []struct {
+		entry, tag string
+		want       bool
+	}{
+		{"deepinfra/fp8", "deepinfra/fp8", true},
+		{"deepinfra/fp8", "deepinfra/fp8/flex", false},
+		{"deepinfra/fp8", "deepinfra/fp8/priority", false},
+		{"deepinfra", "deepinfra/fp8/flex", false},
+		{"deepinfra/fp8/flex", "deepinfra/fp8/flex", true},
+		{"deepinfra/fp8/flex", "deepinfra/fp8/priority", false},
+		{"deepinfra", "deepinfra/fp8", true},
+		{"deepinfra", "deepinfra/turbo", true},
+		{"openai", "openai/flex", false},
+		{"openai", "openai/priority", false},
+		{"openai", "openai/fast", false},
+		{"openai/flex", "openai/flex", true},
+		{"openai/flex", "openai", false},
+		{"google-vertex", "google-vertex/global", true},
+		{"google-vertex", "google-vertex/global/priority", false},
+		{"google-vertex/global", "google-vertex/global/priority", false},
+		{"baseten/fp4", "baseten/fp4/us", true},
+		{"baseten", "baseten/fp4/us/priority", false},
+		{"deepinfra/fp", "deepinfra/fp8", false},
+	} {
+		if got := slugMatches(test.entry, test.tag); got != test.want {
+			t.Errorf("slugMatches(%q, %q) = %v, want %v", test.entry, test.tag, got, test.want)
+		}
 	}
 }

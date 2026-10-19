@@ -236,10 +236,9 @@ func (settlement *RoutingPriceSettlement) Price(call SettlementCall) (Settlement
 
 // resolveSettlementRow picks the row of the endpoint that served the call.
 // The pin must bound the endpoints (only, or order without fallbacks); a
-// pin entry admits its own tag and the tag's variants ("openai" admits
-// "openai/flex"), as OpenRouter matches provider slugs. One entry admitting
-// one row is that row; otherwise the response's provider must name exactly
-// one admitted row.
+// pin entry admits the tags it matches as OpenRouter matches endpoint slugs
+// (see slugMatches). One entry admitting one row is that row; otherwise the
+// response's provider must name exactly one admitted row.
 func resolveSettlementRow(rows []settlementRow, call SettlementCall) (*settlementRow, string) {
 	entries, ignored := call.Pin.admittedEntries()
 	if len(entries) == 0 {
@@ -316,11 +315,39 @@ func uniqueLowerSlugs(slugs []string) []string {
 
 func pinAdmits(entries []string, tag string) bool {
 	for _, entry := range entries {
-		if tag == entry || strings.HasPrefix(tag, entry+"/") {
+		if slugMatches(entry, tag) {
 			return true
 		}
 	}
 	return false
+}
+
+// slugMatches is OpenRouter's endpoint slug rule
+// (https://openrouter.ai/docs/features/provider-routing): a slug is
+// provider[/variant][/region][/tier], and dropping trailing segments matches
+// every endpoint that shares the remaining prefix, except that dropping the
+// tier never matches a tier endpoint. So "deepinfra" matches
+// "deepinfra/fp8", but neither "deepinfra" nor "deepinfra/fp8" matches
+// "deepinfra/fp8/flex", and "openai" does not match "openai/flex"; a tier
+// endpoint is matched only by its full slug.
+func slugMatches(entry, tag string) bool {
+	if tag == entry {
+		return true
+	}
+	return strings.HasPrefix(tag, entry+"/") && !isServiceTierSlug(tag)
+}
+
+// serviceTierSegments are the tier spellings a slug ends in. The docs also
+// list "turbo", but their own example has "deepinfra" match "deepinfra/turbo"
+// as a variant, so "turbo" is read as a variant: a base pin then admits it,
+// and a call it could have served settles only when that is certain.
+var serviceTierSegments = map[string]bool{"flex": true, "priority": true, "fast": true}
+
+// isServiceTierSlug reports whether a lower-cased slug names a tier
+// endpoint: a provider followed by segments, the last of them a tier.
+func isServiceTierSlug(slug string) bool {
+	index := strings.LastIndexByte(slug, '/')
+	return index > 0 && serviceTierSegments[slug[index+1:]]
 }
 
 // providerSlugKey folds a provider's display name ("Google AI Studio") and
