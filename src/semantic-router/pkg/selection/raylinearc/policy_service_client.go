@@ -140,6 +140,10 @@ var policyRefusalReasons = map[string]bool{
 	"attribution_out_of_catalog":     true,
 	"action_not_in_catalog":          true,
 	"operating_point_not_adjustable": true,
+	// Stage-1 exploration guardrails (pathfinder#5436).
+	"exploration_tau_exceeds_ceiling":    true,
+	"exploration_basis_mismatch":         true,
+	"exploration_unsupported_by_package": true,
 }
 
 // PolicyRefusalReason is a selection refusal's bounded reason.
