@@ -187,3 +187,52 @@ func TestServedServiceTierReachesTheResponsesStreamCompletion(t *testing.T) {
 		})
 	}
 }
+
+const servedTierResponsesCreated = "event: response.created\ndata: {\"type\":\"response.created\",\"sequence_number\":0," +
+	"\"response\":{\"id\":\"response_1\",\"model\":\"model\",\"status\":\"in_progress\",\"output\":[]}}\n\n"
+
+// cutResponsesStream pushes payload and finalizes with reason, returning
+// every event the turn produced and the Finalize events alone.
+func cutResponsesStream(t *testing.T, payload string, reason error) ([]llmprotocol.Event, []llmprotocol.Event) {
+	t.Helper()
+	stream, err := NewBuiltinEngine().NewStream(llmprotocol.OpenAIResponsesV1, llmprotocol.OpenAIResponsesV1,
+		llmprotocol.StreamContext{Context: context.Background(), PublicModel: "model"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, events, _, err := stream.Push([]byte(payload))
+	if err != nil {
+		t.Fatalf("push: %v", err)
+	}
+	_, finalEvents, _, _ := stream.Finalize(reason)
+	return append(events, finalEvents...), finalEvents
+}
+
+func TestServedServiceTierSurvivesACutResponsesStream(t *testing.T) {
+	t.Run("tier on in_progress, then the stream ends", func(t *testing.T) {
+		all, _ := cutResponsesStream(t, servedTierResponsesCreated+
+			"event: response.in_progress\ndata: {\"type\":\"response.in_progress\",\"sequence_number\":1,"+
+			"\"response\":{\"id\":\"response_1\",\"model\":\"model\",\"status\":\"in_progress\",\"service_tier\":\"flex\",\"output\":[]}}\n\n", nil)
+		if tier, _ := servedTierOf(all); tier != "flex" {
+			t.Fatalf("cut stream tier = %q, want flex", tier)
+		}
+	})
+	t.Run("tier on a held completion, then a transport cut", func(t *testing.T) {
+		call := `{"type":"function_call","id":"item_1","call_id":"call_1","name":"lookup","arguments":"{}","status":"completed"}`
+		_, final := cutResponsesStream(t, servedTierResponsesCreated+
+			"event: response.output_item.added\ndata: {\"type\":\"response.output_item.added\",\"sequence_number\":1,\"output_index\":0,\"item\":{\"type\":\"function_call\",\"id\":\"item_1\",\"call_id\":\"call_1\",\"name\":\"lookup\",\"arguments\":\"\"}}\n\n"+
+			"event: response.function_call_arguments.done\ndata: {\"type\":\"response.function_call_arguments.done\",\"sequence_number\":2,\"output_index\":0,\"item_id\":\"item_1\",\"name\":\"lookup\",\"arguments\":\"{}\"}\n\n"+
+			"event: response.output_item.done\ndata: {\"type\":\"response.output_item.done\",\"sequence_number\":3,\"output_index\":0,\"item\":"+call+"}\n\n"+
+			"event: response.completed\ndata: {\"type\":\"response.completed\",\"sequence_number\":4,"+
+			"\"response\":{\"id\":\"response_1\",\"model\":\"model\",\"status\":\"completed\",\"service_tier\":\"priority\","+
+			"\"output\":["+call+"],\"usage\":{\"input_tokens\":2,\"output_tokens\":1,\"total_tokens\":3}}}\n\n", context.DeadlineExceeded)
+		for _, event := range final {
+			if event.Type == llmprotocol.EventResponseFailed && event.UpstreamServiceTier != "priority" {
+				t.Fatalf("transport failure tier = %q, want the held completion's priority", event.UpstreamServiceTier)
+			}
+		}
+		if tier, _ := servedTierOf(final); tier != "priority" {
+			t.Fatalf("Finalize events carry tier %q, want priority; events %+v", tier, final)
+		}
+	})
+}

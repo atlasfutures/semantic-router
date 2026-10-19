@@ -128,15 +128,21 @@ func (engine *StreamEngine) transportFailureEvents(
 	reason error,
 ) []llmprotocol.Event {
 	events = suppressSuccessfulTerminal(events)
+	// The held completion is dropped, but the tier it stated was served.
+	var servedTier string
+	if engine.pendingCompletion != nil {
+		servedTier = engine.pendingCompletion.UpstreamServiceTier
+	}
 	engine.pendingCompletion = nil
 	if containsFailedTerminal(events) {
 		return events
 	}
 	return append(events, llmprotocol.Event{
-		Type:       llmprotocol.EventResponseFailed,
-		StopReason: llmprotocol.StopError,
-		Error:      streamFinalizationError(reason, "stream ended before completion"),
-		Failure:    llmprotocol.FailureTransport,
+		Type:                llmprotocol.EventResponseFailed,
+		StopReason:          llmprotocol.StopError,
+		Error:               streamFinalizationError(reason, "stream ended before completion"),
+		Failure:             llmprotocol.FailureTransport,
+		UpstreamServiceTier: servedTier,
 	})
 }
 
