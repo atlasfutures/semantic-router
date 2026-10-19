@@ -2073,6 +2073,24 @@ recipes:
                   refresh_ahead_seconds: 60
                   max_age_seconds: 3600
                   fetch_timeout_ms: 2000
+                # decisions_v2 (off when absent) sends ARC Decisions API v2
+                # request members; each is sent only when set. cost_weight is
+                # this cell's V (selection.operating_point.cost_weight): a tier
+                # cell states its tier's V, and the service refuses a V outside
+                # the bounds its package declares. tier_points (1 to 8,
+                # distinct names) ask for the decision at other V presets too;
+                # the picks are logged, never served. response_fields asks for
+                # each action's price_per_mtok and thinking. Enable it only
+                # once the policy service serves Decisions API v2: an older
+                # one refuses the members, and so every turn.
+                decisions_v2:
+                  cost_weight: 1.0
+                  tier_points:
+                    - name: swift
+                      cost_weight: 2.0
+                    - name: sage
+                      cost_weight: 0.0
+                  response_fields: [price_per_mtok, thinking]
                 # Each binding maps a package action to a worker. model, effort
                 # and reasoning_max_tokens declare what the action dispatches,
                 # as the package's catalog states it: model is the trained
