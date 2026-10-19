@@ -339,6 +339,17 @@ func (r *OpenAIRouter) raylineRoutesContext(ctx *RequestContext) context.Context
 // failed to parse when it parsed fine.
 var errRaylineRoutesRequestShape = errors.New("the routing decision cannot represent this request")
 
+// errRaylineRoutesStatelessPath distinguishes a third cause that reaches this
+// surface as an invalid body: the turn asked to continue a stored conversation
+// by id on a path that does not do stateful continuation. It answers 400 with
+// statelessPathMessage, the same text the ExtProc path returns, so a caller
+// sees one behaviour on both entrypoints (memex-desktop#7484).
+//
+// This is a tag matched by errors.Is, never a message: the text below is not
+// what the caller reads, so it must not be mistaken for a second copy of
+// statelessPathMessage and edited to match it.
+var errRaylineRoutesStatelessPath = errors.New("route does not continue a stored conversation by id")
+
 // wrong on the way.
 func (r *OpenAIRouter) raylineRoutesFailure(
 	ctx *RequestContext,
@@ -367,6 +378,9 @@ func (r *OpenAIRouter) raylineRoutesFailure(
 		detail := "request body could not be read as " + string(wireFormatOf(ctx)) + " messages"
 		if errors.Is(err, errRaylineRoutesRequestShape) {
 			detail = requestShapeRefusalMessage
+		}
+		if errors.Is(err, errRaylineRoutesStatelessPath) {
+			detail = statelessPathMessage
 		}
 		return r.createRaylineRoutesError(ctx, 400, "invalid_request_error", detail)
 	}
