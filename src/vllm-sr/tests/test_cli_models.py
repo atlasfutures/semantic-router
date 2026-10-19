@@ -169,3 +169,13 @@ def test_standard_twin_parses_beside_the_discount_pin():
     raw["providers"]["models"][0]["standard_twin"] = "standard"
     config = UserConfig(**raw)
     assert config.providers.models[0].standard_twin == "standard"
+
+
+def test_service_tier_parses_beside_the_pin_and_refuses_unknown_tiers():
+    raw = _provider_model(only=["openai/flex"], allow_fallbacks=False)
+    raw["providers"]["models"][0]["service_tier"] = "default"
+    config = UserConfig(**raw)
+    assert config.providers.models[0].service_tier == "default"
+    raw["providers"]["models"][0]["service_tier"] = "scale"
+    with pytest.raises(ValueError):
+        UserConfig(**raw)

@@ -439,7 +439,16 @@ func (r *OpenAIRouter) finalizeProviderDispatchResponse(
 		metrics.RecordRequestError(dispatch.logicalModel, "provider_adapter_error")
 		return nil, status.Errorf(codes.Internal, "adapt provider request: %v", err)
 	}
+	// After every adapter path, so no OpenRouter dispatch of a configured arm
+	// (direct model, Looper, Responses) leaves without its tier.
+	body, err = applyServiceTier(body, dispatch, r.Config, ctx)
+	if err != nil {
+		abandonUpstreamSpan(ctx, "provider request could not be adapted")
+		metrics.RecordRequestError(dispatch.logicalModel, "provider_adapter_error")
+		return nil, status.Errorf(codes.Internal, "apply service tier: %v", err)
+	}
 	ctx.DispatchedOutbound = readDispatchedOutboundParams(body, dispatch)
+	ctx.DispatchedServiceTier = dispatchedServiceTier(body)
 	r.stageFlexResend(ctx, dispatch, body)
 	r.auditRaylineARCUpstream(body, ctx)
 	common := response.GetRequestBody().GetResponse()

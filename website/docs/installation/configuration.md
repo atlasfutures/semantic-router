@@ -82,6 +82,14 @@ out of its own `only`). The failed attempt and the re-send each write their own
 usage line, marked by `flex_resend`; a failed attempt's usage is never recorded
 as free. Absent the key, nothing is re-sent.
 
+`providers.models[].service_tier` (`default`, `flex`, `priority`, `fast` or
+`ultrafast`) names the OpenRouter service tier the arm is priced at. On an
+OpenRouter backend the Router sends it as the top-level `service_tier`,
+replacing any tier the client sent; other backends and arms without the key
+are unchanged. A standard re-send carries its twin's tier, not the discount
+entry's. Each usage line records the tier its body requested as
+`requested_service_tier`, beside the served `upstream_service_tier`.
+
 Use [Protocol Compatibility](protocol-compatibility) to choose the model's
 backend `api_format`. Then see
 [Backend Target Compatibility](backend-target-compatibility) before moving its

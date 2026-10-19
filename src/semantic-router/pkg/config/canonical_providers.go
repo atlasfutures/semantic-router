@@ -41,6 +41,11 @@ type CanonicalProviderModel struct {
 	// A call refused here with a 429, or timed out before any response byte,
 	// is re-sent once on the twin. Absent, nothing is re-sent.
 	StandardTwin string `yaml:"standard_twin,omitempty"`
+	// ServiceTier is the OpenRouter service tier this binding is priced at
+	// (default, flex, priority, fast or ultrafast). Set, every OpenRouter
+	// request for the arm carries it as the top-level service_tier, replacing
+	// any tier the client sent. Absent, the request is left as it was.
+	ServiceTier string `yaml:"service_tier,omitempty"`
 }
 
 // CanonicalReasoning either references one built-in family or defines the

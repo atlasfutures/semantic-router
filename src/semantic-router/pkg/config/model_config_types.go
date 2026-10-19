@@ -430,6 +430,9 @@ type ModelParams struct {
 	// StandardTwin names the standard-endpoint twin a discount endpoint's
 	// refused or timed-out call is re-sent on, once; see StandardTwinForModel.
 	StandardTwin string `yaml:"standard_twin,omitempty"`
+	// ServiceTier is the OpenRouter service tier the arm sends; see
+	// ServiceTierForModel.
+	ServiceTier string `yaml:"service_tier,omitempty"`
 }
 
 // EvidenceScore resolves a versioned static model index. Missing, failed, and

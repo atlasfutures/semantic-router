@@ -108,6 +108,11 @@ type llmUsageRecord struct {
 	// the call at (service_tier, or Anthropic's usage.service_tier), in its
 	// spelling; null when the response did not say.
 	UpstreamServiceTier *string `json:"upstream_service_tier"`
+	// RequestedServiceTier is the service_tier the dispatched body carried:
+	// the arm's configured tier (providers.models[].service_tier), which
+	// replaces a client's, or the client's own forwarded; null when the body
+	// carried none.
+	RequestedServiceTier *string `json:"requested_service_tier"`
 	// FlexResend marks the two calls of a discount-endpoint turn that was
 	// re-sent on its standard twin: flex_attempt on the refused or timed-out
 	// call, standard_resend on the re-send. Null on every other call.
@@ -208,6 +213,7 @@ func (r *OpenAIRouter) newLLMUsageRecord(ctx *RequestContext, usage responseUsag
 	if len(ctx.DispatchedProviderOrder) > 0 {
 		record.ProviderOrder = append([]string(nil), ctx.DispatchedProviderOrder...)
 	}
+	record.RequestedServiceTier = nonEmpty(ctx.DispatchedServiceTier)
 	if ctx.FlexResend.served() {
 		record.FlexResend = nonEmpty(flexResendStandard)
 	}

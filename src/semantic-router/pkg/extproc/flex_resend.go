@@ -85,6 +85,14 @@ type flexResendPlan struct {
 	twinModel    string
 	twinDispatch *providerDispatch
 	twinPin      *config.OpenRouterProviderPreferences
+	// twinTier and flexTier are the arms' configured service tiers, and
+	// clientTier the client's own the flex arm replaced; the re-send
+	// carries the twin's (withResendServiceTier). resentTier is the tier the
+	// re-send body carries, for its usage line.
+	twinTier   string
+	flexTier   string
+	clientTier []byte
+	resentTier string
 	// dispatched is the body the refused call was sent.
 	dispatched []byte
 	// trigger is the failure class of the refused call, set once the re-send
@@ -158,6 +166,9 @@ func (r *OpenAIRouter) planFlexResend(
 		twinModel:    twin,
 		twinDispatch: twinDispatch,
 		twinPin:      pin,
+		twinTier:     r.Config.ServiceTierForModel(twin),
+		flexTier:     r.Config.ServiceTierForModel(dispatch.logicalModel),
+		clientTier:   ctx.ClientServiceTier,
 		dispatched:   body,
 	}, ""
 }
@@ -177,6 +188,11 @@ func (r *OpenAIRouter) buildFlexTwinRequest(ctx *RequestContext, plan *flexResen
 		// A body without the discount pin was never on the discount endpoint.
 		return nil, "flex_unpinned"
 	}
+	twinBody, ok = withResendServiceTier(twinBody, plan.twinTier, plan.flexTier, plan.clientTier)
+	if !ok {
+		return nil, "twin_body_invalid"
+	}
+	plan.resentTier = dispatchedServiceTier(twinBody)
 	twin := plan.twinDispatch
 	state := &routeHeaderState{profile: twin.profile}
 	appendProfileHeaders(&state.setHeaders, twin.profile)
@@ -509,6 +525,7 @@ func (r *OpenAIRouter) serveFlexTwin(
 	}()
 	ctx.RequestModel = plan.twinModel
 	ctx.DispatchedProviderOrder = append([]string(nil), plan.twinPin.Order...)
+	ctx.DispatchedServiceTier = plan.resentTier
 	// Nothing the refused call's hop said describes the twin's call.
 	ctx.UpstreamStatusCode = 0
 	ctx.UpstreamAttemptCount, ctx.UpstreamRetryCount, ctx.UpstreamRetryExhausted = 0, 0, false
