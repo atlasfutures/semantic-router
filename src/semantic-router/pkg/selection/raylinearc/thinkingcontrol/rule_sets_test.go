@@ -141,3 +141,38 @@ func TestGemini4ArgonAdmitsItsDefaultBaseOnEveryCell(t *testing.T) {
 		}
 	}
 }
+
+// pathfinder native_bases: gpt-5.6-terra's openrouter x messages cell admits
+// its native default control (628d285537ca) again, beside steer3 at xhigh.
+// Steer3 did not separate at default, so no instruction control rides it.
+func TestGPT56TerraAdmitsItsNativeDefaultBesideSteer3AtXhigh(t *testing.T) {
+	reg, err := Embedded()
+	if err != nil {
+		t.Fatal(err)
+	}
+	const model = "openai/gpt-5.6-terra"
+	native := Control{Native: "default"}
+	if id := native.ID(); id != "628d285537ca7cdb52c4bd3433cea7a1ec36005a14dbc67ffa1c40487d7b8ad0" {
+		t.Fatalf("the native default control is %s", id)
+	}
+	cell, err := reg.Admit(model, "openrouter", FormatMessages, native, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wire, ok := cell.baseWire["default"]; !ok || wire.kind != kindObject || len(wire.members) != 0 {
+		t.Fatalf("the default base must write no wire, got %v", wire)
+	}
+	steers := map[string]int{}
+	for id := range cell.controls {
+		control, _ := reg.Control(id)
+		if control.Instruction != nil {
+			steers[control.Native]++
+		}
+	}
+	if len(steers) != 1 || steers["xhigh"] != 3 {
+		t.Fatalf("steer3 must ride xhigh alone, got %v", steers)
+	}
+	if _, err := reg.Admit(model, "openrouter", FormatMessages, Control{Native: "xhigh"}, false); err != nil {
+		t.Fatalf("the native xhigh control: %v", err)
+	}
+}
