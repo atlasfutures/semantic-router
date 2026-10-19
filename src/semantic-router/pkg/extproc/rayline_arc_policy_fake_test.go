@@ -87,6 +87,12 @@ type fakePolicyService struct {
 	omitTierPick   string
 	tierPickAction string
 	tierPickModel  func(actionID string) string
+	// A decide that carries selection.exploration with tau > 0 gets the
+	// exploration fixture's record, with the request's tau, basis and salt
+	// (pathfinder#5436). explorationHeld answers it as a held turn's record;
+	// omitExploration answers with none.
+	explorationHeld bool
+	omitExploration bool
 }
 
 func newFakePolicyService(t *testing.T, alias, sha256 string, catalog []string) *fakePolicyService {
@@ -279,6 +285,7 @@ func (fake *fakePolicyService) decision(request raylinearc.PolicyDecisionRequest
 	}
 	nullRevision, ignoreEpisodeMode, echoCostWeight, echoNoCostWeight := fake.nullRevision, fake.ignoreEpisodeMode, fake.echoCostWeight, fake.echoNoCostWeight
 	omitTierPick, tierPickAction, tierPickModel := fake.omitTierPick, fake.tierPickAction, fake.tierPickModel
+	explorationHeld, omitExploration := fake.explorationHeld, fake.omitExploration
 	response.PackageVerification = fake.verification
 	if fake.echo != nil {
 		response.RoutingPricesUsed = fake.echo(request)
@@ -330,12 +337,34 @@ func (fake *fakePolicyService) decision(request raylinearc.PolicyDecisionRequest
 			}
 		}
 	}
+	if explore := request.Selection.Exploration; explore != nil && explore.Tau > 0 && !omitExploration {
+		response.Decision.StageOne = fake.explorationRecord(*explore, explorationHeld)
+	}
 	// A relaxed call advances no session (pathfinder#3068).
 	if (request.EpisodeMode == raylinearc.PolicyEpisodeModeRelaxed && !ignoreEpisodeMode) || nullRevision {
 		response.Encoding.SessionRevision = nil
 		response.Encoding.SessionAction = "rebuilt"
 	}
 	return response
+}
+
+// explorationRecord is the exploration fixture's record for this request
+// member; a held one has no decision key of its own, only its origin's.
+func (fake *fakePolicyService) explorationRecord(
+	explore raylinearc.PolicyExplorationRequest,
+	held bool,
+) *raylinearc.PolicyDecisionStageOne {
+	var fixture raylinearc.PolicyDecisionResponse
+	fake.readFixture("decision_response_exploration.v1.json", &fixture)
+	record := fixture.Decision.StageOne.Exploration
+	record.Tau, record.RequestedTau, record.Basis, record.Salt = explore.Tau, explore.Tau, explore.Basis, explore.Salt
+	if held {
+		origin := "origin-" + *record.DecisionKey
+		record.Applied, record.Reason, record.Tau, record.U = false, nil, 0, nil
+		record.Propensity, record.Explored, record.Held = 1, false, true
+		record.DecisionKey, record.OriginDecisionKey = nil, &origin
+	}
+	return &raylinearc.PolicyDecisionStageOne{Exploration: record}
 }
 
 func (fake *fakePolicyService) readFixture(name string, target any) {
