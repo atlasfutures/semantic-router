@@ -335,6 +335,45 @@ with `live_prices_affect_decisions` for the prices to change decisions. An
 ineligible package still echoes `mode: package`, so the audit can be
 verified before any decision moves.
 
+## Decisions API v2 request members
+
+`policy_service.decisions_v2` (off when absent) sends a cell's ARC Decisions
+API v2 request members (pathfinder#5443). Each member is sent only when set,
+so a cell without the block sends the v1 request byte for byte.
+
+```yaml
+decisions_v2:
+  cost_weight: 1.0          # selection.operating_point.cost_weight
+  tier_points:              # selection.tier_points: 1 to 8, distinct names
+    - {name: swift, cost_weight: 2.0}
+    - {name: sage, cost_weight: 0.0}
+  response_fields: [price_per_mtok, thinking]
+```
+
+- **V.** `cost_weight` is the cell's own V. Tiers are served one cell per
+  tier, so a tier cell states its tier's V here and one package can serve
+  every tier. The router reads no V from the client request. The service
+  honours a V only within the bounds its package declares for the stage that
+  chooses the model.
+- **Echo.** A cell that sends a V requires the decision's
+  `operating_point.cost_weight` to equal it. Another value, or a null, fails
+  the turn (`policy_operating_point_mismatch`).
+- **Tier picks.** The decision at each tier point is recorded, never served:
+  the selection log carries `policy_tier_picks` (action, arm and model per
+  configured tier, and `policy_tier_picks_missing` for a configured tier the
+  response has no pick for) beside `policy_operating_point` (name,
+  `point_id`, cost weight).
+- **Refusals.** `operating_point_out_of_bounds`,
+  `operating_point_not_adjustable` and `tier_points_unsupported` are the
+  cell's configuration against its package. They fail every turn as
+  `policy_service_decisions_v2_refused`, which is `unavailable` to the caller,
+  neither held nor undecidable, and the failure log names the reason.
+
+Rollout: enable `decisions_v2` only after the policy service serves Decisions
+API v2 (an older one refuses the members, and so every turn), and set a V
+only for a package that declares operating bounds: every package before ARC
+0.7.2 answers `operating_point_not_adjustable`.
+
 ## Request formats
 
 VSR sends the client's request in the format the service projects:
