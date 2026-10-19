@@ -23,6 +23,8 @@ type stubARCSelector struct {
 	arm      int
 	workers  []raylinearc.WorkerManifest
 	err      error
+	// policyAction, when set, reports a policy-service decision.
+	policyAction string
 }
 
 func (s *stubARCSelector) Select(
@@ -40,6 +42,7 @@ func (s *stubARCSelector) Select(
 		RaylineARC: &selection.RaylineARCTrace{
 			SelectedArm:      s.arm,
 			SerializedTokens: 11,
+			PolicyActionID:   s.policyAction,
 		},
 	}, nil
 }
@@ -201,6 +204,24 @@ func TestRouteDecisionRoutesUnsessionedConsultsOnFreshEpisodes(t *testing.T) {
 	}
 	if second.State.PreviousArm != nil {
 		t.Fatalf("fresh episode carried PreviousArm = %v, want nil", *second.State.PreviousArm)
+	}
+}
+
+// An ephemeral lookup prepares no episode transaction, so a policy-service
+// decision has no call to stage its action on; the lookup still answers.
+func TestRouteDecisionAnswersAnEphemeralPolicyLookup(t *testing.T) {
+	selector := &stubARCSelector{arm: 1, workers: decisionServiceWorkers(), policyAction: "action-b"}
+	router := decisionServiceRouter(t, selector)
+
+	decision, err := router.routeDecisionRuntimeState().RouteDecision(
+		context.Background(),
+		routerruntime.RouteDecisionRequest{Body: anthropicBody("hello"), DecisionID: "rt_0e3f", Ephemeral: true},
+	)
+	if err != nil {
+		t.Fatalf("RouteDecision() error = %v, want nil", err)
+	}
+	if decision.SelectedWorker != "worker-b" {
+		t.Fatalf("SelectedWorker = %q, want worker-b", decision.SelectedWorker)
 	}
 }
 
