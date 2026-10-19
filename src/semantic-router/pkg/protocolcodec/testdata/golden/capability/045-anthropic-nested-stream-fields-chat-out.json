@@ -44,6 +44,31 @@
               "data": {
                 "choices": [
                   {
+                    "delta": {
+                      "reasoning_details": [
+                        {
+                          "format": "anthropic-claude-v1",
+                          "index": 0,
+                          "signature": "signed-reasoning",
+                          "text": "inspect",
+                          "type": "reasoning.text"
+                        }
+                      ]
+                    },
+                    "finish_reason": null,
+                    "index": 0
+                  }
+                ],
+                "id": "msg_1",
+                "model": "public-model",
+                "object": "chat.completion.chunk"
+              },
+              "event": ""
+            },
+            {
+              "data": {
+                "choices": [
+                  {
                     "delta": {},
                     "finish_reason": "stop",
                     "index": 0
@@ -64,7 +89,7 @@
         "diagnostics": [
           {
             "field": "reasoning.signature",
-            "action": "dropped"
+            "action": "approximated"
           },
           {
             "field": "stream.delta.container",

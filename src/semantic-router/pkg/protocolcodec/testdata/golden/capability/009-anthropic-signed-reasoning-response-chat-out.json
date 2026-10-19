@@ -8,6 +8,15 @@
         "message": {
           "content": "final answer",
           "reasoning_content": "private reasoning",
+          "reasoning_details": [
+            {
+              "format": "anthropic-claude-v1",
+              "index": 0,
+              "signature": "signed-block",
+              "text": "private reasoning",
+              "type": "reasoning.text"
+            }
+          ],
           "role": "assistant"
         }
       }
@@ -31,7 +40,7 @@
   "diagnostics": [
     {
       "field": "reasoning.signature",
-      "action": "dropped"
+      "action": "approximated"
     }
   ]
 }

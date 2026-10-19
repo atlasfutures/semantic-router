@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"sort"
+	"strings"
 	"sync"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
@@ -35,6 +36,15 @@ type chatStreamEncoder struct {
 	streamState
 	itemStarted bool
 	toolIndexes map[string]int
+	// claudeItems is how many anthropic-claude-v1 items this stream has
+	// minted: the next item's index. OpenRouter keys items by index, so each
+	// block takes the next one. claudeItemIndexes is the index each thinking
+	// block's fragments share; reasoningText is a block's text so far when
+	// the encoder must wait for the signature to mint its item
+	// (stream_chat_claude_reasoning.go).
+	claudeItems       int
+	claudeItemIndexes map[streamContentKey]int
+	reasoningText     map[streamContentKey]*strings.Builder
 }
 
 func (OpenAIChatCodec) NewDecoder(context llmprotocol.StreamContext, policy llmprotocol.Policy) llmprotocol.StreamDecoder {
@@ -680,11 +690,6 @@ func (encoder *chatStreamEncoder) Push(event llmprotocol.Event) ([][]byte, llmpr
 	if encoder.terminal {
 		return nil, nil, llmprotocol.NewError(llmprotocol.ErrorConflict, "stream_terminal", "stream is already terminal", nil)
 	}
-	// A provider-run web search is not something a Chat choice can show; the
-	// answer that follows it is.
-	if carriedAnthropicServerBlock(event.Content) != nil {
-		return nil, nil, nil
-	}
 	normalized, err := encoder.next(event)
 	if err != nil {
 		return nil, nil, err
@@ -692,6 +697,18 @@ func (encoder *chatStreamEncoder) Push(event llmprotocol.Event) ([][]byte, llmpr
 	event = normalized
 	if directChatStreamEvent(event.Type) {
 		return encoder.encodeDirectEvent(event)
+	}
+	// A provider-run web search is not something a Chat choice can show; the
+	// answer that follows it is. A redacted_thinking block is carried as the
+	// reasoning.encrypted item a Chat client can replay, once, when the block
+	// completes (chat_claude_reasoning.go).
+	if carriedAnthropicServerBlock(event.Content) != nil {
+		if event.Type == llmprotocol.EventOutputItemCompleted {
+			if data, ok := OpaqueReasoningData(*event.Content); ok {
+				return encoder.encodeClaudeRedactedThinking(event, data)
+			}
+		}
+		return nil, nil, nil
 	}
 	if event.Type == llmprotocol.EventOutputItemCompleted {
 		return nil, nil, nil
@@ -770,37 +787,24 @@ func (encoder *chatStreamEncoder) applyChatReasoningDelta(
 	event llmprotocol.Event,
 	choice *chatChunkChoiceWire,
 ) (llmprotocol.Diagnostics, bool, error) {
-	diagnostics, err := encoder.reasoningDiagnostics(event)
-	if err != nil {
-		return diagnostics, false, err
-	}
 	if event.Content != nil {
 		if details, _ := reasoningDetailsOf(*event.Content); details != nil {
 			choice.Delta.ReasoningDetails = details
 			if event.Delta == "" {
-				return diagnostics, true, nil
+				return nil, true, nil
 			}
 		}
-		if event.Delta == "" && event.Content.Signature != "" {
-			// A signature_delta alone: nothing of it is Chat's to send.
-			return diagnostics, false, nil
+		if event.Content.Signature != "" {
+			// The block's signature, which a Messages arm sends after the
+			// text: Chat has no member for it, so the block is carried as
+			// the reasoning_details item a Chat client can replay
+			// (stream_chat_claude_reasoning.go).
+			return encoder.applyClaudeThinkingSignature(event, choice)
 		}
+		encoder.applyClaudeThinkingText(event, choice)
 	}
 	choice.Delta.Reasoning = &event.Delta
-	return diagnostics, true, nil
-}
-
-func (encoder *chatStreamEncoder) reasoningDiagnostics(event llmprotocol.Event) (llmprotocol.Diagnostics, error) {
-	if event.Content == nil || event.Content.Signature == "" {
-		return nil, nil
-	}
-	// The thinking text streams on as reasoning; the signature, which Chat
-	// has no member for, is dropped and reported, as a buffered answer's is
-	// (responseForTarget).
-	return appendDiagnostics(nil, llmprotocol.Diagnostics{{
-		Source: encoder.context.Source, Target: encoder.context.Target, Field: "reasoning.signature",
-		Action: llmprotocol.DiagnosticDropped, Reason: responseReasoningSignatureDropped,
-	}}, encoder.policy.Limits.Diagnostics), nil
+	return nil, true, nil
 }
 
 func (encoder *chatStreamEncoder) applyToolCallDelta(event llmprotocol.Event, choice *chatChunkChoiceWire) error {

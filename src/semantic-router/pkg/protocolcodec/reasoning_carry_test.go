@@ -196,6 +196,31 @@ func TestOpaqueReasoningIsFoundAndDropped(t *testing.T) {
 	}
 }
 
+// A turn that loses an opaque block to the issuer ledger loses its thinking
+// with it. Anthropic accepts a turn with every thinking block removed and
+// rejects one with some removed, so the signed block beside a dropped
+// redacted block would turn a safe arm change into a 400
+// (atlasfutures/semantic-router#278, Codex P1). A turn whose opaque blocks
+// all stay keeps its thinking.
+func TestOpaqueDropTakesTheTurnsThinkingWithIt(t *testing.T) {
+	call := llmprotocol.Content{Kind: llmprotocol.ContentToolCall, ToolCall: &llmprotocol.ToolCall{ID: "call_1", Name: "bash"}}
+	signed := llmprotocol.Content{Kind: llmprotocol.ContentReasoning, Text: "think", Signature: "sig", Reasoning: llmprotocol.ReasoningScopeText}
+	request := llmprotocol.Request{Messages: []llmprotocol.Message{
+		{Role: llmprotocol.RoleAssistant, Content: []llmprotocol.Content{signed, redactedBlock("blob-a"), call}},
+		{Role: llmprotocol.RoleAssistant, Content: []llmprotocol.Content{signed, redactedBlock("blob-b"), call}},
+	}}
+	dropped := DropOpaqueReasoning(&request, func(data string) bool { return data == "blob-a" })
+	if dropped != 2 || len(request.Messages) != 2 {
+		t.Fatalf("dropped %d, messages %+v", dropped, request.Messages)
+	}
+	if first := request.Messages[0].Content; len(first) != 1 || first[0].Kind != llmprotocol.ContentToolCall {
+		t.Fatalf("the turn that lost its redacted block kept thinking beside the call: %+v", first)
+	}
+	if second := request.Messages[1].Content; len(second) != 3 || second[0].Signature != "sig" {
+		t.Fatalf("a turn whose opaque block stays lost its thinking: %+v", second)
+	}
+}
+
 func reasoningDetailsContent(text, details string) llmprotocol.Content {
 	return llmprotocol.Content{
 		Kind: llmprotocol.ContentReasoning, Text: text, Reasoning: llmprotocol.ReasoningScopeText,

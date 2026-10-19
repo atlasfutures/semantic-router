@@ -10,8 +10,9 @@ import (
 
 // A Claude arm served over Messages answers with signed thinking. A Chat
 // client has no member for the signature, so the answer reaches it with the
-// thinking text as reasoning_content and without the signature, as a request
-// leg's CarryReasoningTo strips one for a Chat target -- not as a refusal
+// thinking text as reasoning_content and the signature in the
+// anthropic-claude-v1 reasoning_details item OpenRouter would have sent
+// (atlasfutures/semantic-router#278) -- not as a refusal
 // (atlasfutures/semantic-router#212). A Responses client keeps the signature
 // in the reasoning item's OpenRouter members, as before.
 const anthropicSignedThinkingResponse = `{"id":"msg_1","type":"message","role":"assistant","model":"claude-opus-5.5",` +
@@ -25,8 +26,12 @@ func assertSignedThinkingTranslated(t *testing.T, target llmprotocol.WireFormat,
 	}
 	switch target {
 	case llmprotocol.OpenAIChatV1:
-		if strings.Contains(body, "EqQBsigclaude") {
-			t.Fatalf("a signature reached a Chat client: %s", body)
+		if !strings.Contains(body, `"reasoning_details"`) || !strings.Contains(body, `"signature":"EqQBsigclaude"`) ||
+			!strings.Contains(body, `"format":"anthropic-claude-v1"`) {
+			t.Fatalf("a Chat client was not given Claude's signature as a reasoning_details item: %s", body)
+		}
+		if strings.Contains(body, "signature_delta") {
+			t.Fatalf("a Chat client was sent a Messages signature_delta: %s", body)
 		}
 	case llmprotocol.OpenAIResponsesV1:
 		if !strings.Contains(body, "EqQBsigclaude") {

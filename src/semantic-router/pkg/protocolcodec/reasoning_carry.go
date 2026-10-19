@@ -135,8 +135,12 @@ func ResponseOpaqueReasoning(response *llmprotocol.Response) []string {
 }
 
 // DropOpaqueReasoning removes, on fresh slices, every opaque reasoning block
-// drop selects from a request's history, and any message it leaves empty. It
-// returns how many blocks it removed.
+// drop selects from a request's history, and any message it leaves empty. A
+// message that loses an opaque block loses its other reasoning too, thinking
+// and redacted alike: Anthropic accepts an assistant turn with every thinking
+// block removed and rejects one with some removed, so a turn this cannot
+// forward whole is not forwarded in part. Visible text and tool calls are
+// never touched. It returns how many blocks it removed.
 func DropOpaqueReasoning(request *llmprotocol.Request, drop func(data string) bool) int {
 	if request == nil {
 		return 0
@@ -144,15 +148,19 @@ func DropOpaqueReasoning(request *llmprotocol.Request, drop func(data string) bo
 	dropped := 0
 	messages := make([]llmprotocol.Message, 0, len(request.Messages))
 	for _, message := range request.Messages {
+		if !holdsOpaqueReasoning(message, drop) {
+			messages = append(messages, message)
+			continue
+		}
 		contents := make([]llmprotocol.Content, 0, len(message.Content))
 		for _, content := range message.Content {
-			if data, ok := OpaqueReasoningData(content); ok && drop(data) {
+			if content.Kind == llmprotocol.ContentReasoning || redactedThinkingBlock(content) {
 				dropped++
 				continue
 			}
 			contents = append(contents, content)
 		}
-		if len(contents) == 0 && len(message.Content) > 0 {
+		if len(contents) == 0 {
 			continue
 		}
 		message.Content = contents
@@ -162,6 +170,17 @@ func DropOpaqueReasoning(request *llmprotocol.Request, drop func(data string) bo
 		request.Messages = messages
 	}
 	return dropped
+}
+
+// holdsOpaqueReasoning reports whether a message holds an opaque reasoning
+// block that drop selects.
+func holdsOpaqueReasoning(message llmprotocol.Message, drop func(data string) bool) bool {
+	for _, content := range message.Content {
+		if data, ok := OpaqueReasoningData(content); ok && drop(data) {
+			return true
+		}
+	}
+	return false
 }
 
 // reasoningDetailsFormatAnthropic is the format OpenRouter tags Claude's

@@ -122,7 +122,7 @@
         "openai.chat.v1": "carry",
         "openai.responses.v1": "drop"
       },
-      "note": "OpenRouter's structured reasoning, resent on an assistant turn by pi (merged array) and omp (encrypted items only). Carried on the reasoning content; a Chat target gets it back, a Responses client sees it minted as encrypted_content, every other target drops it (cross-family replay: router-infra#95)."
+      "note": "OpenRouter's structured reasoning, resent on an assistant turn by pi (merged array) and omp (encrypted items only). Carried on the reasoning content; a Chat target gets it back, a Responses client sees it minted as encrypted_content, every other target drops it (cross-family replay: router-infra#95). A Messages target drops the array as such, but when every item is Claude's and complete (anthropic-claude-v1, signed reasoning.text, reasoning.encrypted with data, texts matching the reasoning text) the dispatch restores the blocks it came from first, so a Claude worker over Messages is sent its own thinking signed (atlasfutures/semantic-router#278); the cell mints those same items for a Chat client on a Messages Claude arm."
     },
     {
       "path": "prompt_cache_key",

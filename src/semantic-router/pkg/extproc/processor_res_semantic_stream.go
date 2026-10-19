@@ -267,6 +267,7 @@ func (r *OpenAIRouter) ensureSemanticResponseStream(ctx *RequestContext) error {
 		Options:     clientStreamOptions(ctx),
 		PublicModel: ctx.RequestModel, PreviousResponseID: responseObjectPreviousID(ctx),
 		ThinkingMarkerFamily: r.thinkingMarkerFamily(ctx),
+		WorkerFamily:         r.workerFamily(ctx),
 	}
 	var mutation protocolcodec.StreamEventMutation
 	responseID := responseObjectPublicID(ctx)

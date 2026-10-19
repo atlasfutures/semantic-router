@@ -52,6 +52,11 @@ func (r *OpenAIRouter) handleExternalGatewayModelRouting(
 	if err != nil {
 		return nil, err
 	}
+	// The same reasoning carry as a Router-dispatched turn: the gateway owns
+	// the route, the Router still owns what the target can be sent.
+	if r.carryReasoningForDispatch(request, dispatch, ctx, model) {
+		changed = true
+	}
 	if changed {
 		request.Generation++
 	}

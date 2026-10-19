@@ -455,22 +455,25 @@ func TestAnthropicThinkingSignatureSurvivesResponseMutationOrFailsExplicitly(t *
 	assertEncodedAnthropicThinkingSignature(t, content, encoded.Body)
 
 	// Chat has no member for the signature: the thinking text reaches the
-	// client and the signature's drop is reported, not silent (#212).
+	// client as reasoning_content and the signature as the anthropic-claude-v1
+	// reasoning_details item the client can replay (#278); the carry is
+	// reported, not silent (#212).
 	translated, err := engine.TranslateResponse(llmprotocol.AnthropicMessagesV1, llmprotocol.OpenAIChatV1, body, nil)
 	if err != nil {
 		t.Fatalf("cross-protocol thinking signature: %v", err)
 	}
-	if bytes.Contains(translated.Body, []byte("signed-block")) || !bytes.Contains(translated.Body, []byte("private reasoning")) {
-		t.Fatalf("Chat answer = %s, want the thinking text without its signature", translated.Body)
+	if !bytes.Contains(translated.Body, []byte(`"signature":"signed-block"`)) || !bytes.Contains(translated.Body, []byte("private reasoning")) ||
+		!bytes.Contains(translated.Body, []byte(`"format":"anthropic-claude-v1"`)) {
+		t.Fatalf("Chat answer = %s, want the thinking text and its signature as a reasoning_details item", translated.Body)
 	}
-	if !hasDroppedSignatureDiagnostic(translated.Diagnostics) {
-		t.Fatalf("diagnostics = %+v, want the dropped reasoning.signature reported", translated.Diagnostics)
+	if !hasSignatureDiagnostic(translated.Diagnostics, llmprotocol.DiagnosticApproximated) {
+		t.Fatalf("diagnostics = %+v, want the carried reasoning.signature reported", translated.Diagnostics)
 	}
 }
 
-func hasDroppedSignatureDiagnostic(diagnostics llmprotocol.Diagnostics) bool {
+func hasSignatureDiagnostic(diagnostics llmprotocol.Diagnostics, action llmprotocol.DiagnosticAction) bool {
 	for _, diagnostic := range diagnostics {
-		if diagnostic.Field == "reasoning.signature" && diagnostic.Action == llmprotocol.DiagnosticDropped {
+		if diagnostic.Field == "reasoning.signature" && diagnostic.Action == action {
 			return true
 		}
 	}

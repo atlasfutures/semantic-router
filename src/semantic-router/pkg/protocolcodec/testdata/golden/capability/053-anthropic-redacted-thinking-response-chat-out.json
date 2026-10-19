@@ -7,6 +7,14 @@
         "index": 0,
         "message": {
           "content": "final answer",
+          "reasoning_details": [
+            {
+              "data": "encrypted-reasoning",
+              "format": "anthropic-claude-v1",
+              "index": 0,
+              "type": "reasoning.encrypted"
+            }
+          ],
           "role": "assistant"
         }
       }
@@ -26,5 +34,11 @@
       },
       "total_tokens": 7
     }
-  }
+  },
+  "diagnostics": [
+    {
+      "field": "content.redacted_thinking",
+      "action": "approximated"
+    }
+  ]
 }

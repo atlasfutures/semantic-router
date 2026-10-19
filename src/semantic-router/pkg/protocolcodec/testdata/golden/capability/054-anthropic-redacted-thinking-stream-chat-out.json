@@ -24,6 +24,30 @@
           "choices": [
             {
               "delta": {
+                "reasoning_details": [
+                  {
+                    "data": "encrypted-reasoning",
+                    "format": "anthropic-claude-v1",
+                    "index": 0,
+                    "type": "reasoning.encrypted"
+                  }
+                ]
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "id": "msg_1",
+          "model": "public-model",
+          "object": "chat.completion.chunk"
+        },
+        "event": ""
+      },
+      {
+        "data": {
+          "choices": [
+            {
+              "delta": {
                 "content": "final answer"
               },
               "finish_reason": null,
@@ -56,5 +80,11 @@
         "event": ""
       }
     ]
-  }
+  },
+  "diagnostics": [
+    {
+      "field": "content.redacted_thinking",
+      "action": "approximated"
+    }
+  ]
 }
