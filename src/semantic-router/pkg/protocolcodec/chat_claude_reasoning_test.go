@@ -175,11 +175,11 @@ func TestClaudeThinkingRoundTripsThroughAChatClient(t *testing.T) {
 
 // chatStreamReasoningDetails merges the reasoning_details fragments a Chat
 // stream carried, by index, as an OpenRouter client does, and collects the
-// reasoning_content deltas in order.
-func chatStreamReasoningDetails(t *testing.T, wire string) (json.RawMessage, []string) {
+// reasoning_content deltas and the raw fragments in order.
+func chatStreamReasoningDetails(t *testing.T, wire string) (json.RawMessage, []string, []string) {
 	t.Helper()
 	var merged json.RawMessage
-	var reasoning []string
+	var reasoning, fragments []string
 	for _, frame := range strings.Split(wire, "\n\n") {
 		data, found := strings.CutPrefix(strings.TrimSpace(frame), "data: ")
 		if !found || data == "[DONE]" {
@@ -201,6 +201,7 @@ func chatStreamReasoningDetails(t *testing.T, wire string) (json.RawMessage, []s
 				reasoning = append(reasoning, *choice.Delta.Reasoning)
 			}
 			if len(choice.Delta.ReasoningDetails) > 0 {
+				fragments = append(fragments, string(choice.Delta.ReasoningDetails))
 				var err error
 				if merged, err = mergeReasoningDetailsFragment(merged, choice.Delta.ReasoningDetails); err != nil {
 					t.Fatal(err)
@@ -208,13 +209,17 @@ func chatStreamReasoningDetails(t *testing.T, wire string) (json.RawMessage, []s
 			}
 		}
 	}
-	return merged, reasoning
+	return merged, reasoning, fragments
 }
 
 // The live stream from a Messages arm carries each thinking block's signature
-// after its text and a redacted_thinking block whole. A Chat client is given
-// one complete item per block, numbered in order, so a client that merges
-// fragments by index ends with the array a buffered answer carries.
+// after its text and a redacted_thinking block whole. When the Router has said
+// the worker is Claude, a Chat client is given OpenRouter's shape: a tagged
+// text fragment beside each reasoning_content delta and the signature last,
+// so a client that merges fragments by index ends with the array a buffered
+// answer carries and no text is sent twice in one chunk. When the encoder
+// knows only the wire format, it waits for the signature and mints the item
+// whole. Either way the merged array is the same.
 func TestClaudeThinkingStreamsToAChatClientAsReasoningDetails(t *testing.T) {
 	events := []string{
 		`event: message_start` + "\n" + `data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude-opus-5.5","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":3,"output_tokens":1}}}`,
@@ -231,44 +236,66 @@ func TestClaudeThinkingStreamsToAChatClientAsReasoningDetails(t *testing.T) {
 		`event: message_delta` + "\n" + `data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":5}}`,
 		`event: message_stop` + "\n" + `data: {"type":"message_stop"}`,
 	}
-	engine := NewBuiltinEngine()
-	stream, err := engine.NewStream(llmprotocol.AnthropicMessagesV1, llmprotocol.OpenAIChatV1, llmprotocol.StreamContext{
-		Context: context.Background(), PublicModel: "public", ProviderModel: "claude-opus-5.5",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var wire strings.Builder
-	var diagnostics llmprotocol.Diagnostics
-	for _, event := range events {
-		frames, _, pushDiagnostics, pushErr := stream.Push([]byte(event + "\n\n"))
-		if pushErr != nil {
-			t.Fatalf("push: %v", pushErr)
-		}
-		diagnostics = append(diagnostics, pushDiagnostics...)
-		for _, frame := range frames {
-			wire.Write(frame)
-		}
-	}
-	frames, _, _, err := stream.Finalize(nil)
-	if err != nil {
-		t.Fatalf("finalize: %v", err)
-	}
-	for _, frame := range frames {
-		wire.Write(frame)
-	}
-	if strings.Contains(wire.String(), "signature_delta") {
-		t.Fatalf("a Messages signature_delta reached a Chat client: %s", wire.String())
-	}
-	merged, reasoning := chatStreamReasoningDetails(t, wire.String())
 	want := `[{"type":"reasoning.text","text":"Check the tool.","signature":"sig-1","format":"anthropic-claude-v1","index":0},` +
 		`{"type":"reasoning.encrypted","data":"opaque-1","format":"anthropic-claude-v1","index":1}]`
-	assertEqualReasoningJSON(t, "streamed reasoning_details", merged, json.RawMessage(want))
-	if strings.Join(reasoning, "") != "Check the tool." {
-		t.Fatalf("reasoning_content deltas = %q", reasoning)
-	}
-	if !hasSignatureDiagnostic(diagnostics, llmprotocol.DiagnosticApproximated) {
-		t.Fatalf("diagnostics = %+v, want the carried signature reported", diagnostics)
+	engine := NewBuiltinEngine()
+	for _, tc := range []struct {
+		name, family string
+		fragments    []string
+	}{
+		{"the worker is Claude: OpenRouter's fragments", "anthropic", []string{
+			`[{"format":"anthropic-claude-v1","index":0,"text":"Check ","type":"reasoning.text"}]`,
+			`[{"format":"anthropic-claude-v1","index":0,"text":"the tool.","type":"reasoning.text"}]`,
+			`[{"format":"anthropic-claude-v1","index":0,"signature":"sig-1","type":"reasoning.text"}]`,
+			`[{"data":"opaque-1","format":"anthropic-claude-v1","index":1,"type":"reasoning.encrypted"}]`,
+		}},
+		{"the worker is unknown: one item at the signature", "", []string{
+			`[{"format":"anthropic-claude-v1","index":0,"signature":"sig-1","text":"Check the tool.","type":"reasoning.text"}]`,
+			`[{"data":"opaque-1","format":"anthropic-claude-v1","index":1,"type":"reasoning.encrypted"}]`,
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stream, err := engine.NewStream(llmprotocol.AnthropicMessagesV1, llmprotocol.OpenAIChatV1, llmprotocol.StreamContext{
+				Context: context.Background(), PublicModel: "public", ProviderModel: "claude-opus-5.5", WorkerFamily: tc.family,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var wire strings.Builder
+			var diagnostics llmprotocol.Diagnostics
+			for _, event := range events {
+				frames, _, pushDiagnostics, pushErr := stream.Push([]byte(event + "\n\n"))
+				if pushErr != nil {
+					t.Fatalf("push: %v", pushErr)
+				}
+				diagnostics = append(diagnostics, pushDiagnostics...)
+				for _, frame := range frames {
+					wire.Write(frame)
+				}
+			}
+			frames, _, _, err := stream.Finalize(nil)
+			if err != nil {
+				t.Fatalf("finalize: %v", err)
+			}
+			for _, frame := range frames {
+				wire.Write(frame)
+			}
+			out := wire.String()
+			if strings.Contains(out, "signature_delta") {
+				t.Fatalf("a Messages signature_delta reached a Chat client: %s", out)
+			}
+			merged, reasoning, fragments := chatStreamReasoningDetails(t, out)
+			assertEqualReasoningJSON(t, "streamed reasoning_details", merged, json.RawMessage(want))
+			if fmt.Sprint(fragments) != fmt.Sprint(tc.fragments) {
+				t.Fatalf("reasoning_details fragments = %v, want %v", fragments, tc.fragments)
+			}
+			if strings.Join(reasoning, "") != "Check the tool." {
+				t.Fatalf("reasoning_content deltas = %q", reasoning)
+			}
+			if !hasSignatureDiagnostic(diagnostics, llmprotocol.DiagnosticApproximated) {
+				t.Fatalf("diagnostics = %+v, want the carried signature reported", diagnostics)
+			}
+		})
 	}
 
 	// The same answer, buffered and then streamed to the client, carries the
@@ -285,7 +312,7 @@ func TestClaudeThinkingStreamsToAChatClientAsReasoningDetails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("encode stream: %v", err)
 	}
-	buffered, _ := chatStreamReasoningDetails(t, string(body))
+	buffered, _, _ := chatStreamReasoningDetails(t, string(body))
 	assertEqualReasoningJSON(t, "buffered-then-streamed reasoning_details", buffered, json.RawMessage(want))
 }
 

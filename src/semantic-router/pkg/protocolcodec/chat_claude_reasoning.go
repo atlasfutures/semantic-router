@@ -58,6 +58,26 @@ func claudeReasoningTextItem(text, signature string, index int) map[string]any {
 	}
 }
 
+// claudeReasoningTextFragment is one streamed piece of a reasoning.text item,
+// as OpenRouter streams Claude's thinking: the text so far for this chunk,
+// under the item's index, with no signature yet.
+func claudeReasoningTextFragment(text string, index int) map[string]any {
+	return map[string]any{
+		"type": "reasoning.text", "text": text,
+		"format": responsesAnthropicReasoningFormat, "index": index,
+	}
+}
+
+// claudeReasoningSignatureFragment is the last streamed piece of a
+// reasoning.text item, as OpenRouter streams it: the signature alone, under
+// the item's index.
+func claudeReasoningSignatureFragment(signature string, index int) map[string]any {
+	return map[string]any{
+		"type": "reasoning.text", "signature": signature,
+		"format": responsesAnthropicReasoningFormat, "index": index,
+	}
+}
+
 // claudeReasoningEncryptedItem is the reasoning_details item OpenRouter returns
 // for one Claude redacted_thinking block.
 func claudeReasoningEncryptedItem(data string, index int) map[string]any {

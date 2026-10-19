@@ -36,15 +36,15 @@ type chatStreamEncoder struct {
 	streamState
 	itemStarted bool
 	toolIndexes map[string]int
-	// reasoningText is each thinking block's text so far, by block, until
-	// its signature arrives. A Messages arm sends the signature after the
-	// text, and the reasoning_details item minted for a Chat client carries
-	// both (stream_chat_claude_reasoning.go).
-	reasoningText map[streamContentKey]*strings.Builder
 	// claudeItems is how many anthropic-claude-v1 items this stream has
 	// minted: the next item's index. OpenRouter keys items by index, so each
-	// block takes the next one.
-	claudeItems int
+	// block takes the next one. claudeItemIndexes is the index each thinking
+	// block's fragments share; reasoningText is a block's text so far when
+	// the encoder must wait for the signature to mint its item
+	// (stream_chat_claude_reasoning.go).
+	claudeItems       int
+	claudeItemIndexes map[streamContentKey]int
+	reasoningText     map[streamContentKey]*strings.Builder
 }
 
 func (OpenAIChatCodec) NewDecoder(context llmprotocol.StreamContext, policy llmprotocol.Policy) llmprotocol.StreamDecoder {
@@ -801,7 +801,7 @@ func (encoder *chatStreamEncoder) applyChatReasoningDelta(
 			// (stream_chat_claude_reasoning.go).
 			return encoder.applyClaudeThinkingSignature(event, choice)
 		}
-		encoder.noteReasoningText(contentKey(event), event.Delta)
+		encoder.applyClaudeThinkingText(event, choice)
 	}
 	choice.Delta.Reasoning = &event.Delta
 	return nil, true, nil

@@ -82,6 +82,14 @@ type StreamContext struct {
 	// thinking block that would otherwise stop unsigned with a Router
 	// thinking marker of this family (semantic-router #191).
 	ThinkingMarkerFamily string
+	// WorkerFamily, when set, names the model family of the worker that
+	// serves the turn, as the Router resolved it from its configuration
+	// ("anthropic" for Claude). The Chat stream encoder streams a Claude
+	// worker's thinking in OpenRouter's reasoning_details shape, a tagged
+	// fragment per chunk with the signature last; without it the encoder
+	// knows only the wire format and waits for the signature
+	// (semantic-router #278).
+	WorkerFamily string
 }
 
 type StreamDecoder interface {

@@ -93,9 +93,20 @@ func TestChatClientOnAMessagesClaudeArmGetsSignedThinkingAsReasoningDetails(t *t
 				t.Fatalf("the answer was refused: %d %s", immediate.GetStatus().GetCode(), immediate.GetBody())
 			}
 			client := string(response.GetResponseBody().GetResponse().GetBodyMutation().GetBody())
-			item := `"reasoning_details":[{"format":"anthropic-claude-v1","index":0,"signature":"EqQBsigclaude","text":"Check the tool.","type":"reasoning.text"}]`
-			if !strings.Contains(client, item) {
-				t.Fatalf("the Chat client was not given Claude's signature as a reasoning_details item: %s", client)
+			// Buffered: the whole item. Streamed, with the worker known to be
+			// Claude: OpenRouter's fragments, the text beside its delta and
+			// the signature last.
+			items := []string{`"reasoning_details":[{"format":"anthropic-claude-v1","index":0,"signature":"EqQBsigclaude","text":"Check the tool.","type":"reasoning.text"}]`}
+			if tc.name == "streamed" {
+				items = []string{
+					`"reasoning_details":[{"format":"anthropic-claude-v1","index":0,"text":"Check the tool.","type":"reasoning.text"}]`,
+					`"reasoning_details":[{"format":"anthropic-claude-v1","index":0,"signature":"EqQBsigclaude","type":"reasoning.text"}]`,
+				}
+			}
+			for _, item := range items {
+				if !strings.Contains(client, item) {
+					t.Fatalf("the Chat client was not given Claude's signature as a reasoning_details item: want %s in %s", item, client)
+				}
 			}
 			if strings.Contains(client, "signature_delta") || strings.Contains(client, "thinking_delta") {
 				t.Fatalf("a Messages event reached the Chat client: %s", client)

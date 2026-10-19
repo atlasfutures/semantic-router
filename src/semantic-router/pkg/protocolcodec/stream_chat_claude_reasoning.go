@@ -8,28 +8,68 @@ import (
 
 // The Chat stream encoder's half of chat_claude_reasoning.go: Claude's
 // thinking, streamed from a Messages arm, reaches a Chat client as the
-// reasoning_details items it can replay. A thinking block's text streams on
-// as reasoning_content; its signature, which Anthropic sends after the text,
-// becomes one complete reasoning.text item holding the whole text; a
-// redacted_thinking block becomes one reasoning.encrypted item when it
-// completes.
+// reasoning_details items it can replay, in the shape OpenRouter streams them.
 //
-// One complete item per block, rather than OpenRouter's text fragment per
-// chunk with the signature last, is deliberate. A fragment would tag the text
-// as Claude's before any signature proved it, and a block that then ended
-// unsigned would leave the client holding an unsigned anthropic-claude-v1
-// item: the request-side filter keeps such an item for a Claude worker over
-// Chat, and Anthropic rejects a thinking block with an empty signature. The
-// text reaches the client incrementally as reasoning_content either way; a
-// client that merges fragments by index ends with the array a buffered answer
-// carries.
+// When the Router has said the worker is Claude (StreamContext.WorkerFamily),
+// each thinking_delta goes out as reasoning_content and, beside it, a
+// reasoning.text fragment tagged anthropic-claude-v1 under the block's item
+// index; the block's signature_delta goes out as the item's last fragment,
+// the signature alone. That is OpenRouter's wire shape for Claude over Chat
+// (testdata/golden/capability/056), so a client that already merges
+// OpenRouter's fragments by index reads this stream unchanged. A
+// redacted_thinking block is one reasoning.encrypted item when it completes.
+//
+// When the worker family is not known to the encoder -- a stream encoded
+// outside the Router's dispatch, or an arm of another family served over the
+// Messages format -- the text streams as reasoning_content alone and the
+// block's item is minted whole when its signature arrives, so nothing is
+// tagged as Claude's on the strength of the wire format alone.
+
+// claudeWorkerFamily is the family the Router names for Claude.
+const claudeWorkerFamily = "anthropic"
+
+// streamsClaudeFragments reports whether the encoder knows the worker is
+// Claude and streams its thinking in OpenRouter's fragment shape.
+func (encoder *chatStreamEncoder) streamsClaudeFragments() bool {
+	return encoder.context.WorkerFamily == claudeWorkerFamily
+}
+
+// claudeItemIndex is the reasoning_details index a thinking block's fragments
+// share, allotted when the block is first seen.
+func (encoder *chatStreamEncoder) claudeItemIndex(key streamContentKey) int {
+	if index, found := encoder.claudeItemIndexes[key]; found {
+		return index
+	}
+	if encoder.claudeItemIndexes == nil {
+		encoder.claudeItemIndexes = map[streamContentKey]int{}
+	}
+	index := encoder.claudeItems
+	encoder.claudeItems++
+	encoder.claudeItemIndexes[key] = index
+	return index
+}
+
+// applyClaudeThinkingText handles a thinking block's text delta, which has
+// already been written as reasoning_content: for a Claude worker it goes out
+// as a tagged fragment too; otherwise it is kept for the item the signature
+// will complete. A summary is never an item.
+func (encoder *chatStreamEncoder) applyClaudeThinkingText(event llmprotocol.Event, choice *chatChunkChoiceWire) {
+	if event.Content.Reasoning == llmprotocol.ReasoningScopeSummary || event.Delta == "" {
+		return
+	}
+	key := contentKey(event)
+	if !encoder.streamsClaudeFragments() {
+		encoder.noteReasoningText(key, event.Delta)
+		return
+	}
+	if carrier := claudeReasoningDetails(claudeReasoningTextFragment(event.Delta, encoder.claudeItemIndex(key))); carrier != nil {
+		choice.Delta.ReasoningDetails = carrier.Fields[chatReasoningDetailsMember]
+	}
+}
 
 // noteReasoningText keeps a thinking block's text so far, for the item its
 // signature will complete.
 func (encoder *chatStreamEncoder) noteReasoningText(key streamContentKey, text string) {
-	if text == "" {
-		return
-	}
 	if encoder.reasoningText == nil {
 		encoder.reasoningText = map[streamContentKey]*strings.Builder{}
 	}
@@ -52,20 +92,19 @@ func (encoder *chatStreamEncoder) takeReasoningText(key streamContentKey) string
 	return builder.String()
 }
 
-// applyClaudeThinkingSignature writes a thinking block's signature as the
-// reasoning.text item carrying the block's text. A signature in the Router's
-// namespace, or one on a summary, is never carried: it is dropped and
-// reported, as every signature was before #278.
+// applyClaudeThinkingSignature writes a thinking block's signature: for a
+// Claude worker as the item's last fragment, otherwise as the whole item with
+// the block's text. A signature in the Router's namespace, or one on a
+// summary, is never carried: it is dropped and reported, as every signature
+// was before #278.
 func (encoder *chatStreamEncoder) applyClaudeThinkingSignature(
 	event llmprotocol.Event,
 	choice *chatChunkChoiceWire,
 ) (llmprotocol.Diagnostics, bool, error) {
 	key := contentKey(event)
-	if event.Content.Reasoning != llmprotocol.ReasoningScopeSummary {
-		encoder.noteReasoningText(key, event.Delta)
-	}
 	if event.Delta != "" {
 		choice.Delta.Reasoning = &event.Delta
+		encoder.applyClaudeThinkingText(event, choice)
 	}
 	if _, reserved := routerSignature(event.Content.Signature); reserved ||
 		event.Content.Reasoning == llmprotocol.ReasoningScopeSummary {
@@ -75,11 +114,17 @@ func (encoder *chatStreamEncoder) applyClaudeThinkingSignature(
 			Action: llmprotocol.DiagnosticDropped, Reason: responseReasoningSignatureDropped,
 		}}, encoder.policy.Limits.Diagnostics), event.Delta != "", nil
 	}
-	carrier := claudeReasoningDetails(claudeReasoningTextItem(encoder.takeReasoningText(key), event.Content.Signature, encoder.claudeItems))
+	var item map[string]any
+	if encoder.streamsClaudeFragments() {
+		item = claudeReasoningSignatureFragment(event.Content.Signature, encoder.claudeItemIndex(key))
+	} else {
+		item = claudeReasoningTextItem(encoder.takeReasoningText(key), event.Content.Signature, encoder.claudeItems)
+		encoder.claudeItems++
+	}
+	carrier := claudeReasoningDetails(item)
 	if carrier == nil {
 		return nil, false, llmprotocol.NewError(llmprotocol.ErrorInternal, "invalid_reasoning_details", "reasoning_details cannot be encoded", nil)
 	}
-	encoder.claudeItems++
 	choice.Delta.ReasoningDetails = carrier.Fields[chatReasoningDetailsMember]
 	return appendDiagnostics(nil, llmprotocol.Diagnostics{{
 		Source: encoder.context.Source, Target: encoder.context.Target, Field: "reasoning.signature",

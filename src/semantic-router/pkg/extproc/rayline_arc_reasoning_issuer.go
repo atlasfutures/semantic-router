@@ -172,6 +172,25 @@ func (r *OpenAIRouter) opaqueReasoningIssuerFor(dispatch *providerDispatch) stri
 // publisher, or the vendor segment of an anthropic/... provider model id.
 const anthropicFamily = "anthropic"
 
+// workerFamily names the family of the worker serving this turn, for the
+// stream encoder's provenance decisions (llmprotocol.StreamContext.WorkerFamily):
+// the selected worker's, or the requested model's when none was selected. It
+// is empty when neither is known, and the encoder then relies on the wire
+// format alone.
+func (r *OpenAIRouter) workerFamily(ctx *RequestContext) string {
+	if r == nil || ctx == nil {
+		return ""
+	}
+	model := ctx.VSRSelectedModel
+	if model == "" {
+		model = ctx.RequestModel
+	}
+	if model == "" {
+		return ""
+	}
+	return r.armFamily(model)
+}
+
 // dropReasoningForeignToClaude drops, for a Claude worker, the reasoning in
 // the history that is not provably Claude's
 // (protocolcodec.DropReasoningNotFromAnthropic), and returns how many contents
