@@ -371,3 +371,42 @@ func TestRouterMarkerIsNeverCarriedToAChatClient(t *testing.T) {
 		t.Fatalf("diagnostics = %+v, want the dropped marker reported", result.Diagnostics)
 	}
 }
+
+// A signature no item can carry -- on a content that already holds
+// reasoning_details (a signed summary never gets this far: ValidateResponse
+// refuses it) -- is cleared and reported rather than left for the capability
+// gate to refuse, and the items minted for the blocks that can be carried are
+// numbered after the items the choice already holds, so a client merging by
+// index keeps every item (Codex P2 x2 on #278).
+func TestUncarriableSignaturesAreClearedAndItemsNumberAfterExistingOnes(t *testing.T) {
+	engine := NewBuiltinEngine()
+	decoded, err := engine.TranslateResponse(llmprotocol.AnthropicMessagesV1, llmprotocol.AnthropicMessagesV1, []byte(anthropicTurn([]claudeTurnBlock{
+		{Type: "thinking", Thinking: "earlier", Signature: "sig-with-details"},
+		{Type: "thinking", Thinking: "Check the tool.", Signature: "sig-1"},
+		{Type: "text", Text: "Done."},
+	})), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := decoded.Response
+	response.Output = append([]llmprotocol.OutputItem(nil), response.Output...)
+	response.Output[0].Content = append([]llmprotocol.Content(nil), response.Output[0].Content...)
+	// The first block already carries a reasoning_details item beside its
+	// signature, as a content from a Chat upstream would.
+	response.Output[0].Content[0].Extensions = reasoningDetailsFields([]byte(`[{"type":"reasoning.text","text":"earlier","format":"anthropic-claude-v1","index":0}]`))
+	response.Generation++
+	result, err := engine.EncodeResponse(llmprotocol.OpenAIChatV1, response, llmprotocol.Envelope{})
+	if err != nil {
+		t.Fatalf("a Chat encode was refused for a signature no item can carry: %v", err)
+	}
+	body := string(result.Body)
+	if strings.Contains(body, "sig-with-details") {
+		t.Fatalf("an uncarriable signature reached the Chat client: %s", body)
+	}
+	if !strings.Contains(body, `{"format":"anthropic-claude-v1","index":1,"signature":"sig-1","text":"Check the tool.","type":"reasoning.text"}`) {
+		t.Fatalf("the minted item was not numbered after the item the choice already held: %s", body)
+	}
+	if !hasSignatureDiagnostic(result.Diagnostics, llmprotocol.DiagnosticDropped) || !hasSignatureDiagnostic(result.Diagnostics, llmprotocol.DiagnosticApproximated) {
+		t.Fatalf("diagnostics = %+v, want both the cleared and the carried signature reported", result.Diagnostics)
+	}
+}

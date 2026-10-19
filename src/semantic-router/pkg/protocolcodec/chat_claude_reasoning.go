@@ -82,21 +82,28 @@ type claudeReasoningCarry struct {
 	Signed int
 	// Redacted is the number of redacted_thinking blocks carried as items.
 	Redacted int
-	// Refused is the number of signatures in the Router's namespace, which
-	// are never carried: they are cleared, as they were before #278.
+	// Refused is the number of signatures no item can carry -- in the
+	// Router's namespace, on a summary, or beside reasoning_details the
+	// content already holds -- which are cleared, as they were before #278.
 	Refused int
 }
 
 // withClaudeReasoningCarriers returns, on fresh slices where it changes
 // anything, one choice's output with every signed thinking block and every
 // redacted_thinking block rewritten as the reasoning_details item a Chat
-// client can replay. Items are numbered in order across the choice. A
-// reasoning content that already carries reasoning_details is left as it is:
-// it came from a Chat upstream and holds that upstream's items.
+// client can replay. Items are numbered in order across the choice, after any
+// item the choice already carries: the Chat encoder joins a choice's arrays,
+// and a client merges them by index. A signature the carrier cannot hold --
+// one on a summary, on a content that already carries reasoning_details, or
+// in the Router's namespace -- is cleared and reported, as every signature
+// was before #278, so the Chat encoder is never handed one.
 func withClaudeReasoningCarriers(items []llmprotocol.OutputItem) ([]llmprotocol.OutputItem, claudeReasoningCarry) {
 	var carry claudeReasoningCarry
 	var out []llmprotocol.OutputItem
 	next := 0
+	for _, item := range items {
+		next += reasoningDetailsItemCount(llmprotocol.Message{Content: item.Content})
+	}
 	for index, item := range items {
 		var contents []llmprotocol.Content
 		for contentIndex, content := range item.Content {
@@ -135,11 +142,11 @@ func claudeReasoningCarrier(content llmprotocol.Content, next *int, carry *claud
 			Extensions: claudeReasoningDetails(item),
 		}, true
 	}
-	if content.Kind != llmprotocol.ContentReasoning || content.Signature == "" || content.Extensions != nil ||
-		content.Reasoning == llmprotocol.ReasoningScopeSummary {
+	if content.Kind != llmprotocol.ContentReasoning || content.Signature == "" {
 		return content, false
 	}
-	if _, reserved := routerSignature(content.Signature); reserved {
+	if _, reserved := routerSignature(content.Signature); reserved || content.Extensions != nil ||
+		content.Reasoning == llmprotocol.ReasoningScopeSummary {
 		carry.Refused++
 		content.Signature = ""
 		return content, true
