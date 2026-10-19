@@ -87,9 +87,10 @@ type RoutingPriceCache struct {
 	config RoutingPriceCacheConfig
 	http   *http.Client
 
-	mu        sync.RWMutex
-	prices    *PolicyRoutingPrices
-	fetchedAt time.Time
+	mu         sync.RWMutex
+	prices     *PolicyRoutingPrices
+	settlement *RoutingPriceSettlement
+	fetchedAt  time.Time
 }
 
 func NewRoutingPriceCache(config RoutingPriceCacheConfig) *RoutingPriceCache {
@@ -122,7 +123,7 @@ func (cache *RoutingPriceCache) Lookup() (*PolicyRoutingPrices, RoutingPriceStat
 // Refresh fetches the feed once. A failure keeps the cached rates, which
 // stay servable until max age.
 func (cache *RoutingPriceCache) Refresh(ctx context.Context) error {
-	prices, err := cache.fetch(ctx)
+	prices, settlement, err := cache.fetch(ctx)
 	if cache.config.OnFetch != nil {
 		var failure *RoutingPriceFetchError
 		switch {
@@ -138,9 +139,26 @@ func (cache *RoutingPriceCache) Refresh(ctx context.Context) error {
 		return err
 	}
 	cache.mu.Lock()
-	cache.prices, cache.fetchedAt = prices, cache.config.Now()
+	cache.prices, cache.settlement, cache.fetchedAt = prices, settlement, cache.config.Now()
 	cache.mu.Unlock()
 	return nil
+}
+
+// Settlement returns the feed to settle a call at, or why there is none: no
+// feed yet (feed_absent), or one past max age by its fetch or by its own
+// as_of (feed_expired). A feed a decide request would still be sent is one
+// a call may be settled at.
+func (cache *RoutingPriceCache) Settlement() (*RoutingPriceSettlement, string) {
+	cache.mu.RLock()
+	defer cache.mu.RUnlock()
+	if cache.settlement == nil {
+		return nil, SettlementFeedAbsent
+	}
+	now := cache.config.Now()
+	if now.Sub(cache.fetchedAt) >= cache.config.MaxAge || now.Sub(cache.settlement.asOf) >= cache.config.MaxAge {
+		return nil, SettlementFeedExpired
+	}
+	return cache.settlement, ""
 }
 
 // Run refreshes until ctx ends: at once, then RefreshAhead before each TTL
@@ -165,21 +183,21 @@ func (cache *RoutingPriceCache) Run(ctx context.Context) {
 	}
 }
 
-func (cache *RoutingPriceCache) fetch(ctx context.Context) (*PolicyRoutingPrices, error) {
+func (cache *RoutingPriceCache) fetch(ctx context.Context) (*PolicyRoutingPrices, *RoutingPriceSettlement, error) {
 	ctx, cancel := context.WithTimeout(ctx, cache.config.FetchTimeout)
 	defer cancel()
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, cache.config.URL, nil)
 	if err != nil {
-		return nil, &RoutingPriceFetchError{Class: "request"}
+		return nil, nil, &RoutingPriceFetchError{Class: "request"}
 	}
 	request.Header.Set("Accept", "application/json")
 	bearer := cache.config.Credential
 	if cache.config.TokenSource != nil {
 		if bearer, err = cache.config.TokenSource.Token(ctx); err != nil {
 			if errors.Is(err, context.DeadlineExceeded) {
-				return nil, &RoutingPriceFetchError{Class: "timeout"}
+				return nil, nil, &RoutingPriceFetchError{Class: "timeout"}
 			}
-			return nil, &RoutingPriceFetchError{Class: "token"}
+			return nil, nil, &RoutingPriceFetchError{Class: "token"}
 		}
 	}
 	if bearer != "" {
@@ -188,9 +206,9 @@ func (cache *RoutingPriceCache) fetch(ctx context.Context) (*PolicyRoutingPrices
 	response, err := cache.http.Do(request)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
-			return nil, &RoutingPriceFetchError{Class: "timeout"}
+			return nil, nil, &RoutingPriceFetchError{Class: "timeout"}
 		}
-		return nil, &RoutingPriceFetchError{Class: "transport"}
+		return nil, nil, &RoutingPriceFetchError{Class: "transport"}
 	}
 	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusOK {
@@ -198,23 +216,23 @@ func (cache *RoutingPriceCache) fetch(ctx context.Context) (*PolicyRoutingPrices
 			// The next attempt mints afresh rather than resend a refused token.
 			cache.config.TokenSource.Invalidate()
 		}
-		return nil, &RoutingPriceFetchError{Class: routingPriceStatusClass(response.StatusCode), Status: response.StatusCode}
+		return nil, nil, &RoutingPriceFetchError{Class: routingPriceStatusClass(response.StatusCode), Status: response.StatusCode}
 	}
 	body, err := io.ReadAll(io.LimitReader(response.Body, maxRoutingPriceFeedBytes+1))
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
-			return nil, &RoutingPriceFetchError{Class: "timeout"}
+			return nil, nil, &RoutingPriceFetchError{Class: "timeout"}
 		}
-		return nil, &RoutingPriceFetchError{Class: "transport"}
+		return nil, nil, &RoutingPriceFetchError{Class: "transport"}
 	}
 	if len(body) > maxRoutingPriceFeedBytes {
-		return nil, &RoutingPriceFetchError{Class: "decode"}
+		return nil, nil, &RoutingPriceFetchError{Class: "decode"}
 	}
 	feed, err := DecodeRoutingPriceFeed(body)
 	if err != nil {
-		return nil, &RoutingPriceFetchError{Class: "decode"}
+		return nil, nil, &RoutingPriceFetchError{Class: "decode"}
 	}
-	return feed.RequestPrices(), nil
+	return feed.RequestPrices(), newRoutingPriceSettlement(feed, body), nil
 }
 
 // routingPriceStatusClass names the feed's refusals apart, since each needs
