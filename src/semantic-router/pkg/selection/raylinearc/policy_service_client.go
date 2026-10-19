@@ -62,8 +62,8 @@ type PolicyServiceError struct {
 	Status int
 	// Detail is the refusal's detail for the classes a caller acts on
 	// (context_exceeds_encoder_capacity: token_count and max_tokens;
-	// selection_refused and stage_one_held_unknown: a bounded reason;
-	// media_refused: a bounded sub_reason); nil
+	// selection_refused, stage_one_held_unknown and decisions_v2_refused: a
+	// bounded reason; media_refused: a bounded sub_reason); nil
 	// otherwise, so no free-form service text travels further.
 	Detail map[string]any
 }
@@ -192,14 +192,34 @@ func PolicyMediaRefusalSubReason(detail map[string]any) string {
 	return "other"
 }
 
+// PolicyDecisionsV2RefusedClass is the service's refusal of a cell's
+// Decisions API v2 request members (pathfinder#5443): a cost weight outside
+// the package's declared bounds (selection_refused,
+// operating_point_out_of_bounds), a package whose model choice declares no
+// bounds (operating_point_not_adjustable), or tier points on a package that
+// cannot re-score them (unsupported_request, tier_points_unsupported). They
+// are the cell's configuration against its package, not the caller's request
+// and not the policy declining one turn, so every turn of the cell fails the
+// same way: they are neither held nor reported as undecidable.
+const PolicyDecisionsV2RefusedClass = "decisions_v2_refused"
+
+// policyDecisionsV2RefusalReasons maps each Decisions API v2 refusal reason
+// to the error code that carries it.
+var policyDecisionsV2RefusalReasons = map[string]string{
+	"operating_point_out_of_bounds":  "selection_refused",
+	"operating_point_not_adjustable": "selection_refused",
+	"tier_points_unsupported":        "unsupported_request",
+}
+
 func policyFailureClass(failure PolicyErrorResponse) string {
-	if failure.Error == "selection_refused" {
-		if reason, _ := failure.Detail["reason"].(string); reason == PolicyStageOneHeldUnknownClass {
-			return PolicyStageOneHeldUnknownClass
-		}
+	reason, _ := failure.Detail["reason"].(string)
+	if code, ok := policyDecisionsV2RefusalReasons[reason]; ok && code == failure.Error {
+		return PolicyDecisionsV2RefusedClass
+	}
+	if failure.Error == "selection_refused" && reason == PolicyStageOneHeldUnknownClass {
+		return PolicyStageOneHeldUnknownClass
 	}
 	if failure.Error == "unsupported_request" {
-		reason, _ := failure.Detail["reason"].(string)
 		if strings.HasPrefix(reason, "relaxed_") {
 			return PolicyRelaxedUnsupportedClass
 		}
@@ -337,6 +357,8 @@ func (client *PolicyServiceClient) do(
 				refusal.Detail = map[string]any{"reason": PolicyRefusalReason(failure.Detail)}
 			case PolicyMediaRefusedClass:
 				refusal.Detail = map[string]any{"sub_reason": PolicyMediaRefusalSubReason(failure.Detail)}
+			case PolicyDecisionsV2RefusedClass:
+				refusal.Detail = map[string]any{"reason": failure.Detail["reason"]}
 			}
 			return nil, refusal
 		}
