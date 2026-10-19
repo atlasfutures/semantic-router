@@ -153,6 +153,12 @@ type RequestContext struct {
 	// DispatchedProviderOrder is the OpenRouter provider order the rendered
 	// upstream body carries, read back the same way and for the same reason.
 	DispatchedProviderOrder []string
+	// DispatchedServiceTier is the service_tier the rendered upstream body
+	// carries, read back the same way: the arm's configured tier, or the
+	// client's own forwarded. ClientServiceTier is the client's raw value an
+	// arm's configured tier replaced, kept for a standard re-send.
+	DispatchedServiceTier string
+	ClientServiceTier     []byte
 	// DispatchedOutbound is every outbound parameter the routing record names
 	// (model, protocol, provider, reasoning, limits, tools, cache markers),
 	// read back off the final provider body.

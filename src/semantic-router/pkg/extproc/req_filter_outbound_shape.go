@@ -327,7 +327,7 @@ var outboundKeyValues = map[string]map[string]bool{
 	"ttl":                    enumSet("5m", "1h"),
 	"prompt_cache_retention": enumSet("in_memory", "24h"),
 	"truncation":             enumSet("auto", "disabled"),
-	"service_tier":           enumSet("auto", "default", "flex", "priority", "scale"),
+	"service_tier":           enumSet("auto", "default", "flex", "priority", "scale", "fast", "ultrafast"),
 	"data_collection":        enumSet("allow", "deny"),
 	"sort":                   enumSet("price", "throughput", "latency"),
 	"modalities":             enumSet("text", "audio", "image"),

@@ -407,7 +407,7 @@ func TestCacheHitReportsNoProviderCharge(t *testing.T) {
 	}
 	for _, key := range []string{
 		"provider_reported_cost", "provider_reported_upstream_inference_cost",
-		"provider_reported_byok", "provider_reported_currency", "upstream_service_tier",
+		"provider_reported_byok", "provider_reported_currency", "upstream_service_tier", "requested_service_tier",
 	} {
 		if fields[key] != nil {
 			t.Errorf("%s = %v on a cache hit, want null", key, fields[key])
