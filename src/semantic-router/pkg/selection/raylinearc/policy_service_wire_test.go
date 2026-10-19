@@ -59,8 +59,8 @@ func TestPolicyFixturesMatchTheirPinnedDigests(t *testing.T) {
 		}
 		seen++
 	}
-	if seen != 12 {
-		t.Fatalf("SHA256SUMS pins %d fixtures, want 12", seen)
+	if seen != 16 {
+		t.Fatalf("SHA256SUMS pins %d fixtures, want 16", seen)
 	}
 }
 
@@ -80,7 +80,12 @@ func TestPolicyWireTypesRoundTripTheFixtures(t *testing.T) {
 		"decision_request_responses.v1.json":    &PolicyDecisionRequest{},
 		"decision_request_relaxed.v1.json":      &PolicyDecisionRequest{},
 		"decision_response.v1.json":             &PolicyDecisionResponse{},
-		"packages_response.v1.json":             &PolicyPackagesResponse{},
+		// Opt-in response blocks: Decisions API v2 (pathfinder#5443) and
+		// Stage-1 exploration (pathfinder#5436). Their request fixtures are
+		// pinned above but carry request members VSR does not send yet.
+		"decision_response_decisions_v2.v1.json": &PolicyDecisionResponse{},
+		"decision_response_exploration.v1.json":  &PolicyDecisionResponse{},
+		"packages_response.v1.json":              &PolicyPackagesResponse{},
 		// pathfinder#3677 with ARC_LISTING_FALLBACK on: the fallback pair.
 		"packages_response.v1.fallback.json": &PolicyPackagesResponse{},
 		"error_responses.v1.json":            &[]PolicyErrorResponse{},
