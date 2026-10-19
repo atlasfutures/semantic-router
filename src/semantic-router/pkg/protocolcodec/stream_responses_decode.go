@@ -158,6 +158,9 @@ func (decoder *responsesStreamDecoder) applyResponsesCompletion(event *llmprotoc
 		usage := decodeResponsesUsage(*wire.Response.Usage)
 		event.Usage = &usage
 	}
+	if wire.Response != nil {
+		event.UpstreamServiceTier = responsesServedTier(wire.Response.ServiceTier)
+	}
 }
 
 func (decoder *responsesStreamDecoder) hasCompletedToolCall() bool {
@@ -180,6 +183,9 @@ func (decoder *responsesStreamDecoder) applyUnknownResponsesEvent(event *llmprot
 func (decoder *responsesStreamDecoder) emitResponsesEvent(
 	event llmprotocol.Event,
 ) ([]llmprotocol.Event, llmprotocol.Diagnostics, error) {
+	if event.UpstreamServiceTier == "" && event.Type != llmprotocol.EventKeepalive {
+		event.UpstreamServiceTier = decoder.upstreamServiceTier
+	}
 	normalized, err := decoder.next(event)
 	if err != nil {
 		return nil, nil, err
@@ -345,6 +351,13 @@ func (decoder *responsesStreamDecoder) Finalize(reason error) ([]llmprotocol.Eve
 		return events, diagnostics, frameErr
 	}
 	terminalEvents, err := decoder.finalize(reason)
+	// A tier stated on a lifecycle event that emitted nothing still reaches
+	// a cut turn.
+	for index := range terminalEvents {
+		if decoder.upstreamServiceTier != "" && terminalEvents[index].Type != llmprotocol.EventKeepalive {
+			terminalEvents[index].UpstreamServiceTier = decoder.upstreamServiceTier
+		}
+	}
 	events = append(events, terminalEvents...)
 	return events, diagnostics, err
 }

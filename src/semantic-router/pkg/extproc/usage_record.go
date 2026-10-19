@@ -104,6 +104,10 @@ type llmUsageRecord struct {
 	// named it; ProviderOrder is the route the dispatched body pinned.
 	UpstreamProvider *string  `json:"upstream_provider"`
 	ProviderOrder    []string `json:"provider_order"`
+	// UpstreamServiceTier is the service tier the upstream says it served
+	// the call at (service_tier, or Anthropic's usage.service_tier), in its
+	// spelling; null when the response did not say.
+	UpstreamServiceTier *string `json:"upstream_service_tier"`
 	// FlexResend marks the two calls of a discount-endpoint turn that was
 	// re-sent on its standard twin: flex_attempt on the refused or timed-out
 	// call, standard_resend on the re-send. Null on every other call.
@@ -215,11 +219,13 @@ func (r *OpenAIRouter) newLLMUsageRecord(ctx *RequestContext, usage responseUsag
 		record.StopReason = nonEmpty(string(response.StopReason))
 		record.NativeStopReason = nonEmpty(response.SourceStopReason)
 		record.UpstreamProvider = nonEmpty(response.UpstreamProvider)
+		record.UpstreamServiceTier = nonEmpty(response.UpstreamServiceTier)
 		record.ReasoningTokens = response.Usage.OutputReasoning.Value
 	} else if state := ctx.SemanticStreamState; state != nil {
 		// A cut stream has no reconstructed response; what it did say is
 		// on the stream state.
 		record.UpstreamProvider = nonEmpty(state.provider)
+		record.UpstreamServiceTier = nonEmpty(state.serviceTier)
 	}
 	addUsageRecordARCAttribution(&record, ctx)
 	return record

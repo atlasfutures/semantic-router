@@ -589,6 +589,11 @@ type Response struct {
 	// handling and empty completions differ by provider rather than by model.
 	// No codec publishes it to a client.
 	UpstreamProvider string
+	// UpstreamServiceTier is the service tier the upstream says it served
+	// the turn at (OpenAI and OpenRouter's top-level service_tier,
+	// Anthropic's usage.service_tier), in its own spelling. Router
+	// telemetry, like UpstreamProvider; no codec publishes it.
+	UpstreamServiceTier string
 	// ThinkingMarkerFamily, when set, tells the Messages encoder to sign
 	// reasoning that would otherwise reach the client unsigned with a Router
 	// thinking marker of this family (semantic-router #191). It is a Router

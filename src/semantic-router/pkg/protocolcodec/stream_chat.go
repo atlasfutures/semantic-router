@@ -22,6 +22,9 @@ type chatStreamDecoder struct {
 	// attribute a turn it only ever sees as a stream.
 	upstreamProvider string
 	sourceStop       string
+	// upstreamServiceTier is the service_tier a chunk named: the tier the
+	// upstream served the turn at.
+	upstreamServiceTier string
 	// providerStop and stopDetails are the chunk-stated stop telemetry
 	// (native_finish_reason, stop_details); see llmprotocol.StopDetails.
 	providerStop string
@@ -175,6 +178,9 @@ func (decoder *chatStreamDecoder) pushFrame(frame []byte) ([]llmprotocol.Event, 
 		if decoder.upstreamProvider != "" {
 			events[index].UpstreamProvider = decoder.upstreamProvider
 		}
+		if decoder.upstreamServiceTier != "" {
+			events[index].UpstreamServiceTier = decoder.upstreamServiceTier
+		}
 		if decoder.sourceStop != "" {
 			events[index].SourceStopReason = decoder.sourceStop
 		}
@@ -241,6 +247,9 @@ func (decoder *chatStreamDecoder) decodeProviderFrame(frame []byte) ([]llmprotoc
 func (decoder *chatStreamDecoder) observeUpstreamAttribution(chunk chatChunkWire) {
 	if chunk.Provider != nil && *chunk.Provider != "" {
 		decoder.upstreamProvider = *chunk.Provider
+	}
+	if chunk.ServiceTier != nil && *chunk.ServiceTier != "" {
+		decoder.upstreamServiceTier = string(*chunk.ServiceTier)
 	}
 	for _, choice := range chunk.Choices {
 		if choice.FinishReason != nil && *choice.FinishReason != "" {
@@ -682,6 +691,12 @@ func (decoder *chatStreamDecoder) Finalize(reason error) ([]llmprotocol.Event, l
 		return events, diagnostics, frameErr
 	}
 	terminalEvents, err := decoder.finalize(reason)
+	// A tier stated on a chunk that emitted nothing still reaches the turn.
+	for index := range terminalEvents {
+		if decoder.upstreamServiceTier != "" && terminalEvents[index].Type != llmprotocol.EventKeepalive {
+			terminalEvents[index].UpstreamServiceTier = decoder.upstreamServiceTier
+		}
+	}
 	events = append(events, terminalEvents...)
 	return events, diagnostics, err
 }

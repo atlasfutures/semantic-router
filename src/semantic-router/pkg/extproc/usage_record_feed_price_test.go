@@ -147,10 +147,20 @@ func TestUsageRecordSettlesAnARCCallAtTheLiveRoutingPrice(t *testing.T) {
 		})
 	}
 
-	// A base-slug pin admits the standard endpoint and its flex twin: which
+	// A base-slug pin does not admit its flex twin (OpenRouter: dropping the
+	// tier never matches a tier endpoint), so it settles at the standard row.
+	logs = captureLogs(t)
+	base := `{"model": "openai/gpt-luna", "provider": {"only": ["openai"], "allow_fallbacks": false}}`
+	router.reportNonStreamingUsage(settledARCContext(t, trace, base), time.Second, settlementUsage(1_000, 0, 100))
+	fields = findLogEvent(t, logs, "llm_usage")
+	requireFields(t, fields, map[string]interface{}{
+		"pricing_source": usagePricingSourceFeed, "pricing_endpoint_tag": "openai", "pricing_feed_fallback": nil,
+	})
+
+	// A pin naming both the standard endpoint and its flex twin: which
 	// served is not certain, so the rate card prices it.
 	logs = captureLogs(t)
-	ambiguous := `{"model": "openai/gpt-luna", "provider": {"only": ["openai"], "allow_fallbacks": false}}`
+	ambiguous := `{"model": "openai/gpt-luna", "provider": {"only": ["openai", "openai/flex"], "allow_fallbacks": false}}`
 	router.reportNonStreamingUsage(settledARCContext(t, trace, ambiguous), time.Second, settlementUsage(1_000, 0, 100))
 	fields = findLogEvent(t, logs, "llm_usage")
 	requireCost(t, fields, (1_000*3+100*15)/1e6)

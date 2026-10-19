@@ -163,6 +163,7 @@ func appendAnthropicResponseUsage(
 		return
 	}
 	response.Usage = decodeAnthropicUsage(*usage)
+	response.UpstreamServiceTier = usage.ServiceTier
 	appendProviderFieldOmissions(diagnostics, policy, llmprotocol.AnthropicMessagesV1, map[string]bool{
 		"usage.cache_creation": usage.CacheCreation.Ephemeral1hInputTokens != 0 ||
 			usage.CacheCreation.Ephemeral5mInputTokens != 0,

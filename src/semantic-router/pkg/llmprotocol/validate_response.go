@@ -45,6 +45,7 @@ func validateResponseEnvelope(response Response, limits Limits) error {
 	}
 	if exceeds(response.ID, limits.IdentifierBytes) || exceeds(response.ProviderRequestID, limits.IdentifierBytes) ||
 		exceeds(response.UpstreamProvider, limits.IdentifierBytes) ||
+		exceeds(response.UpstreamServiceTier, limits.IdentifierBytes) ||
 		exceeds(response.Model, limits.ModelBytes) || exceeds(response.SourceStopReason, limits.IdentifierBytes) ||
 		exceeds(response.MatchedStopSequence, limits.StopBytes) {
 		return NewError(ErrorUpstreamUnavailable, "response_field_limit", "upstream response identity or model exceeds the configured limit", nil)

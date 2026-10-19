@@ -45,6 +45,9 @@ type anthropicStreamDecoder struct {
 	// upstreamProvider is the provider message_start named (OpenRouter's
 	// extension), stamped on every later event as the Chat decoder does.
 	upstreamProvider string
+	// upstreamServiceTier is message_start's usage.service_tier, stamped
+	// the same way.
+	upstreamServiceTier string
 }
 type anthropicStreamEncoder struct {
 	streamState
@@ -193,15 +196,17 @@ func (decoder *anthropicStreamDecoder) Push(chunk []byte) ([]llmprotocol.Event, 
 	return events, diagnostics, nil
 }
 
-// stampUpstreamProvider names the provider on every event once message_start
-// has: the Router reads it off any event of the turn.
+// stampUpstreamProvider names the provider and the served tier on every
+// event once message_start has: the Router reads them off any event of the
+// turn.
 func (decoder *anthropicStreamDecoder) stampUpstreamProvider(events []llmprotocol.Event) {
-	if decoder.upstreamProvider == "" {
+	if decoder.upstreamProvider == "" && decoder.upstreamServiceTier == "" {
 		return
 	}
 	for index := range events {
 		if events[index].Type != llmprotocol.EventKeepalive {
 			events[index].UpstreamProvider = decoder.upstreamProvider
+			events[index].UpstreamServiceTier = decoder.upstreamServiceTier
 		}
 	}
 }
@@ -320,6 +325,9 @@ func (decoder *anthropicStreamDecoder) decodeAnthropicEvent(
 	case "message_start":
 		if wire.Message != nil && wire.Message.Provider != nil {
 			decoder.upstreamProvider = *wire.Message.Provider
+		}
+		if wire.Message != nil && wire.Message.Usage != nil && wire.Message.Usage.ServiceTier != "" {
+			decoder.upstreamServiceTier = wire.Message.Usage.ServiceTier
 		}
 		event := decodeAnthropicMessageStart(wire)
 		if wire.Message != nil && wire.Message.Usage != nil && anthropicUsageUncommitted(*wire.Message.Usage) {
