@@ -199,6 +199,11 @@ func (p *Placer) check(control *Control) error {
 	if control == nil {
 		return refuse("call %d: no control; absence is not the 'none' level", index)
 	}
+	if control.Instruction != nil && (control.Instruction.Unit == UnitMessagesEffortItem || control.Instruction.Emit != "") {
+		// Rendered as text, either would be the wrong bytes at the wrong
+		// turns; the episode store keeps neither.
+		return refuse("call %d: VSR does not place the effort item unit or the every_turn_v1 emit rule", index)
+	}
 	first := p.state.First
 	if first == nil {
 		first = control
@@ -212,9 +217,9 @@ func (p *Placer) check(control *Control) error {
 }
 
 // sameRules reports whether two instructions name the same rule set: the
-// text rules every instruction carries, plus its unit and in-band system rule.
+// text rules, plus its unit, in-band system rule and emit rule.
 func sameRules(a, b *Instruction) bool {
-	return a.Unit == b.Unit && a.InbandSystem == b.InbandSystem
+	return a.Unit == b.Unit && a.InbandSystem == b.InbandSystem && a.Emit == b.Emit
 }
 
 func sameBudget(a, b *int64) bool {

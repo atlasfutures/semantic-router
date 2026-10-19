@@ -35,11 +35,29 @@ import (
 // instruction in force.
 const InstructionNone = "none"
 
-// Rules are the placement rules every instruction names; the compiled
-// registry refuses any other.
+// Rules are the text rules, which every other rule set extends or overrides.
+// An instruction's rules are exactly one of pathfinder's
+// INSTRUCTION_RULE_SETS (Instruction.rules); the compiled registry refuses
+// any other.
 var Rules = map[string]string{"placement": "turn_tail_v2", "emit": "on_change_v1", "replay": "ledger_v1"}
 
-// UnitConfigurationUpdate is the one instruction unit besides text that a
+// UnitMessagesEffortItem is pathfinder's Messages mid-conversation effort
+// item unit (ADR 0143). Its rule set is the text rules with the unit and
+// placement PlacementAfterNewInput (ADR 0147). VSR reads controls that use
+// it, so that the registry and their ids load, and refuses to admit or place
+// them: it does not implement the unit.
+const UnitMessagesEffortItem = "messages_effort_item_v1"
+
+// PlacementAfterNewInput is the placement the effort item's rule set names
+// in place of turn_tail_v2 (ADR 0147).
+const PlacementAfterNewInput = "after_new_input_v1"
+
+// EmitEveryTurn is pathfinder's every_turn_v1 emit rule: the text rules with
+// a steered level re-written at every governed turn. VSR reads controls that
+// use it and refuses to admit or place them: it does not implement the rule.
+const EmitEveryTurn = "every_turn_v1"
+
+// UnitConfigurationUpdate is an instruction unit besides text that a
 // rule set may name (pathfinder ADR 0114): a Responses configuration_update
 // input item that sets the reasoning effort. VSR reads controls that use it,
 // so that the registry and their ids load, and refuses to admit them: per
@@ -68,11 +86,43 @@ type Instruction struct {
 	Level       string
 	Text        string
 	NeutralText string
-	// Unit is the instruction's unit when it is not text: empty, or
-	// UnitConfigurationUpdate.
+	// Unit is the instruction's unit when it is not text: empty,
+	// UnitConfigurationUpdate or UnitMessagesEffortItem.
 	Unit string
 	// InbandSystem is the in-band system rule: empty, or InbandSystemFold.
 	InbandSystem string
+	// Emit is the emit rule when it is not on_change_v1: empty, or
+	// EmitEveryTurn.
+	Emit string
+}
+
+// rules is the instruction's rule set as its control object spells it.
+func (in *Instruction) rules() map[string]string {
+	rules := make(map[string]string, len(Rules)+1)
+	for key, val := range Rules {
+		rules[key] = val
+	}
+	if in.Unit != "" {
+		rules["unit"] = in.Unit
+	}
+	if in.Unit == UnitMessagesEffortItem {
+		rules["placement"] = PlacementAfterNewInput
+	}
+	if in.InbandSystem != "" {
+		rules["inband_system"] = in.InbandSystem
+	}
+	if in.Emit != "" {
+		rules["emit"] = in.Emit
+	}
+	return rules
+}
+
+// Implemented reports whether VSR places this instruction's rule set: the
+// text rules, alone or with the in-band system fold. The configuration_update
+// unit (ADR 0114), the Messages effort item (ADR 0143, 0147) and the
+// every_turn_v1 emit rule load, and are refused at admission and placement.
+func (in *Instruction) Implemented() bool {
+	return in.Unit == "" && in.Emit == ""
 }
 
 // Error is a control, artifact, admission or placement that cannot be used
@@ -92,14 +142,9 @@ func (c Control) json() *value {
 	instruction := nullValue()
 	if c.Instruction != nil {
 		rules := objectValue()
-		for _, key := range []string{"placement", "emit", "replay"} {
-			rules.set(key, stringValue(Rules[key]))
-		}
-		if c.Instruction.Unit != "" {
-			rules.set("unit", stringValue(c.Instruction.Unit))
-		}
-		if c.Instruction.InbandSystem != "" {
-			rules.set("inband_system", stringValue(c.Instruction.InbandSystem))
+		// jcs sorts members, so the map's order does not reach the id.
+		for key, val := range c.Instruction.rules() {
+			rules.set(key, stringValue(val))
 		}
 		instruction = objectValue(
 			member{"level", stringValue(c.Instruction.Level)},
@@ -190,32 +235,35 @@ func requireControl(v *value, where string) (Control, error) {
 		if rules.kind != kindObject {
 			return Control{}, bad
 		}
-		unit := ""
-		if rules.has("unit") {
-			if got := rules.get("unit"); !got.isString() || got.str != UnitConfigurationUpdate {
+		// The rules are exactly one of pathfinder's INSTRUCTION_RULE_SETS:
+		// the text rules, alone or with one of the configuration_update unit,
+		// the in-band system fold or the every_turn_v1 emit rule; or the
+		// effort item's set, with its own unit and placement.
+		parsed := &Instruction{}
+		if got := rules.get("unit"); got != nil {
+			if !got.isString() || (got.str != UnitConfigurationUpdate && got.str != UnitMessagesEffortItem) {
 				return Control{}, bad
 			}
-			unit = UnitConfigurationUpdate
+			parsed.Unit = got.str
 		}
-		inbandSystem := ""
-		if rules.has("inband_system") {
-			if got := rules.get("inband_system"); !got.isString() || got.str != InbandSystemFold || unit != "" {
+		if got := rules.get("inband_system"); got != nil {
+			if !got.isString() || got.str != InbandSystemFold || parsed.Unit != "" {
 				return Control{}, bad
 			}
-			inbandSystem = InbandSystemFold
+			parsed.InbandSystem = InbandSystemFold
 		}
-		wantMembers := len(Rules)
-		if unit != "" {
-			wantMembers++
+		if got := rules.get("emit"); got != nil && got.isString() && got.str == EmitEveryTurn {
+			if parsed.Unit != "" || parsed.InbandSystem != "" {
+				return Control{}, bad
+			}
+			parsed.Emit = EmitEveryTurn
 		}
-		if inbandSystem != "" {
-			wantMembers++
-		}
-		if len(rules.members) != wantMembers {
+		want := parsed.rules()
+		if len(rules.members) != len(want) {
 			return Control{}, bad
 		}
-		for key, want := range Rules {
-			if got := rules.get(key); !got.isString() || got.str != want {
+		for key, val := range want {
+			if got := rules.get(key); !got.isString() || got.str != val {
 				return Control{}, bad
 			}
 		}
@@ -223,8 +271,9 @@ func requireControl(v *value, where string) (Control, error) {
 			Level:        instruction.get("level").str,
 			Text:         instruction.get("text").str,
 			NeutralText:  instruction.get("neutral_text").str,
-			Unit:         unit,
-			InbandSystem: inbandSystem,
+			Unit:         parsed.Unit,
+			InbandSystem: parsed.InbandSystem,
+			Emit:         parsed.Emit,
 		}
 	default:
 		return Control{}, bad

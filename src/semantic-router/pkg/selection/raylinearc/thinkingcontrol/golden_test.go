@@ -31,7 +31,8 @@ import (
 // The corpora are pathfinder's tests/fixtures/thinking_control_golden,
 // thinking_control_placement and thinking_control_child_marker at f5c9a308b2
 // (pathfinder#3933), mirrored byte for byte; each directory's SHA256SUMS pins
-// the copy, so drift is a diff to review.
+// the copy, so drift is a diff to review. They were last re-mirrored at
+// pathfinder db7399afab, where only registry_pin changed.
 //
 // The golden corpus respects admission: a case whose control its cell
 // refuses records the registry's refusal and no bytes. The placement corpus
