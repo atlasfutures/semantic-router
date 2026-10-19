@@ -82,6 +82,13 @@ func newPolicyExploration(policy *config.RaylineARCPolicyServiceConfig) *policyE
 	}
 }
 
+// mayExplore reports whether any turn of the cell can carry the member: an
+// eval cell, or one whose signal headers are untrusted, excludes every turn
+// in exclusion below, so it never sends one.
+func (exploration *policyExploration) mayExplore() bool {
+	return exploration != nil && !exploration.evalCell && exploration.trusted
+}
+
 // exclusion names why this turn may not explore, or "" when it may. Every
 // fact it reads fails closed: an unknown privacy mode or consent excludes.
 func (exploration *policyExploration) exclusion(headers map[string]string, sideCall bool) string {

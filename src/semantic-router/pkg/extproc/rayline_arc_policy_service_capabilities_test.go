@@ -22,6 +22,8 @@ func TestRaylineARCPolicyServiceRequirementsFollowTheCellsMembers(t *testing.T) 
 	for name, check := range map[string]struct {
 		v2           *config.RaylineARCDecisionsV2Config
 		explore      bool
+		evalCell     bool
+		untrusted    bool
 		capabilities []string
 		weights      []float64
 	}{
@@ -41,6 +43,9 @@ func TestRaylineARCPolicyServiceRequirementsFollowTheCellsMembers(t *testing.T) 
 			weights:      []float64{1, 2, 1, 0},
 		},
 		"exploration only": {explore: true, capabilities: []string{"exploration"}},
+		// Either excludes every turn, so the member is never sent.
+		"exploration on an eval cell":        {explore: true, evalCell: true},
+		"exploration with untrusted headers": {explore: true, untrusted: true},
 		"response fields and exploration": {
 			v2:           &config.RaylineARCDecisionsV2Config{ResponseFields: []string{"thinking"}},
 			explore:      true,
@@ -50,6 +55,7 @@ func TestRaylineARCPolicyServiceRequirementsFollowTheCellsMembers(t *testing.T) 
 		policy := &config.RaylineARCPolicyServiceConfig{DecisionsV2: check.v2}
 		if check.explore {
 			policy.Exploration = fixtureExploration()
+			policy.EvalCell, policy.TrustTurnSignalHeaders = check.evalCell, !check.untrusted
 		}
 		got := raylineARCPolicyServiceRequirements(policy)
 		if !slices.Equal(got.Capabilities, check.capabilities) || !slices.Equal(got.CostWeights, check.weights) {
@@ -69,6 +75,7 @@ func TestPolicyReadinessChecksTheAdvertisedCapabilities(t *testing.T) {
 	for name, check := range map[string]struct {
 		v2         *config.RaylineARCDecisionsV2Config
 		explore    bool
+		evalCell   bool
 		legacy     bool
 		advertised []string
 		bounds     *raylinearc.PolicyAdjustableCostWeight
@@ -83,6 +90,7 @@ func TestPolicyReadinessChecksTheAdvertisedCapabilities(t *testing.T) {
 		"v2 cell, older service":      {v2: fixtureDecisionsV2(), legacy: true, class: raylinearc.PolicyCapabilityUnsupportedClass, capability: "decisions_v2"},
 		"named cell, older service":   {v2: &config.RaylineARCDecisionsV2Config{Name: "keen"}, legacy: true, class: raylinearc.PolicyCapabilityUnsupportedClass, capability: "decisions_v2"},
 		"exploring, older service":    {explore: true, legacy: true, class: raylinearc.PolicyCapabilityUnsupportedClass, capability: "exploration"},
+		"eval cell, older service":    {explore: true, evalCell: true, legacy: true},
 		"tier points not advertised":  {v2: fixtureDecisionsV2(), advertised: []string{"decisions_v2", "response_fields"}, class: raylinearc.PolicyCapabilityUnsupportedClass, capability: "tier_points"},
 		"response fields not offered": {v2: fixtureDecisionsV2(), advertised: []string{"decisions_v2", "tier_points"}, class: raylinearc.PolicyCapabilityUnsupportedClass, capability: "response_fields"},
 		"exploration not advertised":  {explore: true, advertised: []string{"decisions_v2", "tier_points", "response_fields"}, class: raylinearc.PolicyCapabilityUnsupportedClass, capability: "exploration"},
@@ -103,6 +111,7 @@ func TestPolicyReadinessChecksTheAdvertisedCapabilities(t *testing.T) {
 		policy.DecisionsV2 = check.v2
 		if check.explore {
 			policy.Exploration = fixtureExploration()
+			policy.EvalCell, policy.TrustTurnSignalHeaders = check.evalCell, true
 		}
 		fixture.fake.mu.Lock()
 		fixture.fake.legacyListing, fixture.fake.advertised, fixture.fake.bounds = check.legacy, check.advertised, check.bounds

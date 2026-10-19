@@ -85,7 +85,8 @@ func raylineARCProviderDefaultAuth(profile *config.ProviderProfile) bool {
 
 // raylineARCPolicyServiceRequirements is what the cell's opt-in request
 // members need the policy service to advertise (pathfinder#5454): each
-// Decisions API v2 member and exploration its capability, and every cost
+// Decisions API v2 member and an exploration block that any turn can carry
+// its capability, and every cost
 // weight the cell sends a place inside the served package's bounds. A cell
 // with none of them needs nothing, so it still arms against a service that
 // predates the capabilities listing.
@@ -113,7 +114,9 @@ func raylineARCPolicyServiceRequirements(policy *config.RaylineARCPolicyServiceC
 			}
 		}
 	}
-	if policy.Exploration != nil {
+	// A cell that excludes every turn from exploration never sends the
+	// member, so it needs no exploration capability.
+	if newPolicyExploration(policy).mayExplore() {
 		required.Capabilities = append(required.Capabilities, raylinearc.PolicyCapabilityExploration)
 	}
 	return required
