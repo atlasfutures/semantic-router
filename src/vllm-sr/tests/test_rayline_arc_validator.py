@@ -631,6 +631,7 @@ def test_rayline_arc_cli_mirrors_decisions_v2():
     policy = _policy_service_decision().algorithm.rayline_arc.policy_service
     assert policy.decisions_v2 is None
     block = {
+        "name": "keen",
         "cost_weight": 1.0,
         "tier_points": [
             {"name": "swift", "cost_weight": 2.0},
@@ -640,8 +641,17 @@ def test_rayline_arc_cli_mirrors_decisions_v2():
     }
     parsed = RaylineARCDecisionsV2Config.model_validate(block)
     assert parsed.tier_points[1].name == "sage"
+    assert parsed.name == "keen"
+    assert RaylineARCDecisionsV2Config.model_validate({}).name is None
+    for name in ("swift", "sage", "tier_2-b", "s" + "x" * 31):
+        assert RaylineARCDecisionsV2Config.model_validate({"name": name}).name == name
     assert RaylineARCDecisionsV2Config.model_validate({}).cost_weight is None
     for changed in (
+        {"name": "Swift"},
+        {"name": "1swift"},
+        {"name": "sw ift"},
+        {"name": ""},
+        {"name": "s" + "x" * 32},
         {"cost_weight": -0.5},
         {"cost_weight": float("nan")},
         {"tier_points": [{"name": "a", "cost_weight": 1}] * 2},

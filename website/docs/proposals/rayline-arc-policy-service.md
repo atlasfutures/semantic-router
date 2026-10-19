@@ -343,6 +343,7 @@ so a cell without the block sends the v1 request byte for byte.
 
 ```yaml
 decisions_v2:
+  name: keen                # selection.operating_point.name (else "default")
   cost_weight: 1.0          # selection.operating_point.cost_weight
   tier_points:              # selection.tier_points: 1 to 8, distinct names
     - {name: swift, cost_weight: 2.0}
@@ -350,6 +351,11 @@ decisions_v2:
   response_fields: [price_per_mtok, thinking]
 ```
 
+- **Name.** `name` labels the operating point the cell sends in place of
+  `default`: a tier cell names its alias (`swift`, `sage`). It is a record
+  label only and does not change scoring, so the echo check does not compare
+  it. It must match `^[a-z][a-z0-9_-]{0,31}$`, and the selection log keeps it
+  as `policy_operating_point.requested_name`.
 - **V.** `cost_weight` is the cell's own V. Tiers are served one cell per
   tier, so a tier cell states its tier's V here and one package can serve
   every tier. The router reads no V from the client request. The service
@@ -364,7 +370,7 @@ decisions_v2:
   response has no pick for, and `policy_tier_picks_invalid` one whose pick
   names an action the cell does not bind or did not offer, or a model its
   binding does not serve) beside `policy_operating_point` (name,
-  `point_id`, cost weight).
+  `point_id`, cost weight, and the configured `requested_name`).
 - **Refusals.** `operating_point_out_of_bounds`,
   `operating_point_not_adjustable` and `tier_points_unsupported` are the
   cell's configuration against its package. They fail every turn as
