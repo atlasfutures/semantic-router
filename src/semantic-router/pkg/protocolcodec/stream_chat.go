@@ -691,6 +691,12 @@ func (decoder *chatStreamDecoder) Finalize(reason error) ([]llmprotocol.Event, l
 		return events, diagnostics, frameErr
 	}
 	terminalEvents, err := decoder.finalize(reason)
+	// A tier stated on a chunk that emitted nothing still reaches the turn.
+	for index := range terminalEvents {
+		if decoder.upstreamServiceTier != "" && terminalEvents[index].Type != llmprotocol.EventKeepalive {
+			terminalEvents[index].UpstreamServiceTier = decoder.upstreamServiceTier
+		}
+	}
 	events = append(events, terminalEvents...)
 	return events, diagnostics, err
 }

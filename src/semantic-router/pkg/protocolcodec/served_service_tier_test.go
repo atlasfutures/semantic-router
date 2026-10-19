@@ -102,6 +102,29 @@ func TestServedServiceTierReachesTheChatStreamEvents(t *testing.T) {
 	}
 }
 
+// A tier stated once, on a trailing chunk that emits no event of its own,
+// still reaches the completion a cut stream's Finalize produces.
+func TestServedServiceTierStatedOnceReachesACutChatStreamsCompletion(t *testing.T) {
+	head := `data: {"id":"c1","object":"chat.completion.chunk","created":1,"model":"m",`
+	body := head + `"choices":[{"index":0,"delta":{"role":"assistant","content":"hi"},"finish_reason":null}]}` + "\n\n" +
+		head + `"service_tier":"flex","choices":[]}` + "\n\n"
+	stream, err := NewBuiltinEngine().NewStream(llmprotocol.OpenAIChatV1, llmprotocol.OpenAIChatV1, llmprotocol.StreamContext{
+		Context: context.Background(), PublicModel: "public-model", ProviderModel: "provider-model",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, events, _, err := stream.Push([]byte(body))
+	if err != nil {
+		t.Fatalf("push: %v", err)
+	}
+	_, finalEvents, _, _ := stream.Finalize(nil)
+	events = append(events, finalEvents...)
+	if tier, _ := servedTierOf(events); tier != "flex" {
+		t.Fatalf("streamed tier = %q, want flex; events %+v", tier, events)
+	}
+}
+
 func TestServedServiceTierReachesTheMessagesStreamEvents(t *testing.T) {
 	for name, test := range map[string]struct{ usage, want string }{
 		"named":  {`"usage":{"input_tokens":3,"output_tokens":0,"service_tier":"priority"}`, "priority"},
@@ -132,9 +155,10 @@ func TestServedServiceTierReachesTheMessagesStreamEvents(t *testing.T) {
 }
 
 func TestServedServiceTierReachesTheResponsesStreamCompletion(t *testing.T) {
-	for name, test := range map[string]struct{ member, want string }{
-		"named":  {`"service_tier":"flex",`, "flex"},
-		"absent": {"", ""},
+	for name, test := range map[string]struct{ startMember, member, want string }{
+		"named":          {"", `"service_tier":"flex",`, "flex"},
+		"named at start": {`"service_tier":"priority",`, "", "priority"},
+		"absent":         {"", "", ""},
 	} {
 		t.Run(name, func(t *testing.T) {
 			stream, err := NewBuiltinEngine().NewStream(llmprotocol.OpenAIResponsesV1, llmprotocol.OpenAIResponsesV1,
@@ -142,7 +166,7 @@ func TestServedServiceTierReachesTheResponsesStreamCompletion(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			payload := "event: response.created\ndata: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"response_1\",\"model\":\"model\",\"status\":\"in_progress\",\"output\":[]}}\n\n" +
+			payload := "event: response.created\ndata: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"response_1\",\"model\":\"model\",\"status\":\"in_progress\"," + test.startMember + "\"output\":[]}}\n\n" +
 				"event: response.output_item.added\ndata: {\"type\":\"response.output_item.added\",\"sequence_number\":1,\"output_index\":0,\"item\":{\"type\":\"function_call\",\"id\":\"item_1\",\"call_id\":\"call_1\",\"name\":\"lookup\",\"arguments\":\"\"}}\n\n" +
 				"event: response.function_call_arguments.done\ndata: {\"type\":\"response.function_call_arguments.done\",\"sequence_number\":2,\"output_index\":0,\"item_id\":\"item_1\",\"name\":\"lookup\",\"arguments\":\"{}\"}\n\n" +
 				"event: response.output_item.done\ndata: {\"type\":\"response.output_item.done\",\"sequence_number\":3,\"output_index\":0,\"item\":{\"type\":\"function_call\",\"id\":\"item_1\",\"call_id\":\"call_1\",\"name\":\"lookup\",\"arguments\":\"{}\",\"status\":\"completed\"}}\n\n" +

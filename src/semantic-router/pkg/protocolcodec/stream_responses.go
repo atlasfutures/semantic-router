@@ -22,6 +22,9 @@ type responsesStreamDecoder struct {
 	seenLifecycleEvents   map[string]bool
 	wireSequence          uint64
 	wireSequenceSeen      bool
+	// upstreamServiceTier is the service_tier a lifecycle event's response
+	// named: the tier the upstream served the turn at.
+	upstreamServiceTier string
 }
 
 type responsesOutputKind string
@@ -299,6 +302,13 @@ func (decoder *responsesStreamDecoder) decodeResponsesWireFrame(
 	}
 	if err := decoder.validateResponsesEventResource(wire, data); err != nil {
 		return nil, nil, err
+	}
+	// Any lifecycle event's response may state the served tier, a failed
+	// or cut turn's included; later events carry it.
+	if wire.Response != nil {
+		if tier := responsesServedTier(wire.Response.ServiceTier); tier != "" {
+			decoder.upstreamServiceTier = tier
+		}
 	}
 	return decoder.decodeResponsesEvent(wire, frame)
 }

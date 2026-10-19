@@ -183,6 +183,9 @@ func (decoder *responsesStreamDecoder) applyUnknownResponsesEvent(event *llmprot
 func (decoder *responsesStreamDecoder) emitResponsesEvent(
 	event llmprotocol.Event,
 ) ([]llmprotocol.Event, llmprotocol.Diagnostics, error) {
+	if event.UpstreamServiceTier == "" && event.Type != llmprotocol.EventKeepalive {
+		event.UpstreamServiceTier = decoder.upstreamServiceTier
+	}
 	normalized, err := decoder.next(event)
 	if err != nil {
 		return nil, nil, err

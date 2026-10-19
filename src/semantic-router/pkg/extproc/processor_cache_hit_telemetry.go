@@ -53,6 +53,9 @@ func (r *OpenAIRouter) reportCacheHitTelemetry(
 	// and replaying the original charge would count it once per hit.
 	usage.providerCost = llmprotocol.ProviderCost{}
 	record := r.newLLMUsageRecord(ctx, usage)
+	// Nor did any upstream serve it at a tier; the cached body's tier is
+	// the original call's.
+	record.UpstreamServiceTier = nil
 	latencyMillis := lookupLatency.Milliseconds()
 	record.CompletionLatencyMS = &latencyMillis
 	// No upstream was called, so the turn's upstream cost is a known zero;
