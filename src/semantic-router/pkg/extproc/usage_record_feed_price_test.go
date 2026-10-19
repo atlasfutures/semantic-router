@@ -202,6 +202,36 @@ func TestUsageRecordSettlesAnARCCallAtTheLiveRoutingPrice(t *testing.T) {
 	})
 }
 
+// A turn the service refused for encoder capacity, served on the held
+// action, is settled at the feed like any other.
+func TestCapacityHoldCarriesTheRoutingPriceCacheToSettlement(t *testing.T) {
+	fixture := newPolicySelectorFixture(t, "")
+	bindings := fixture.decision.Algorithm.RaylineARC.PolicyService.Bindings
+	digest := strings.Repeat("d", 64)
+	fixture.fake.echo = func(request raylinearc.PolicyDecisionRequest) *raylinearc.PolicyRoutingPricesUsed {
+		version, asOf := request.RoutingPrices.StoreVersion, request.RoutingPrices.AsOf
+		return &raylinearc.PolicyRoutingPricesUsed{
+			Mode: raylinearc.RoutingPricesModeLive, StoreVersion: &version, AsOf: &asOf, Digest: &digest,
+			FallbackArms: []string{}, FilledLegs: map[string][]string{},
+		}
+	}
+	fixture.withRoutingPriceFeed(t, true, []byte(settlementTestFeed))
+	state, _ := raylinearc.NewEpisodeState(2)
+	servedTurn(t, fixture, state, bindings[1].ActionID)
+	fixture.fake.mu.Lock()
+	fixture.fake.failWith = "context_exceeds_encoder_capacity"
+	fixture.fake.failDetail = map[string]any{"token_count": 300000, "max_tokens": 262144}
+	fixture.fake.mu.Unlock()
+
+	result, err := fixture.selectOn(t, state, nextTurn(t))
+	if err != nil || result.RaylineARC.OfferKind != "capacity_hold" {
+		t.Fatalf("capacity hold: %v, offer %q", err, result.RaylineARC.OfferKind)
+	}
+	if result.RaylineARC.SettlementPrices == nil {
+		t.Fatal("a capacity hold dropped the routing price cache")
+	}
+}
+
 // A cell without routing_prices settles exactly as before: the rate card,
 // no fallback reason, no feed identity.
 func TestUsageRecordWithoutTheFeedSettlesAtTheRateCard(t *testing.T) {

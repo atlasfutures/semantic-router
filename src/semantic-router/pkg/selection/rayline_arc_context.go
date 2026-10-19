@@ -153,8 +153,9 @@ type RaylineARCTrace struct {
 	RoutingPricesStatus string
 	RoutingPricesUsed   *raylinearc.PolicyRoutingPricesUsed
 	// SettlementPrices is the routing price cache the call is settled at,
-	// set exactly when RoutingPricesStatus is: the feed then prices the
-	// call's usage record where it can (raylinearc.RoutingPriceSettlement).
+	// set on every policy-service decision of a cell with routing_prices,
+	// a capacity hold included: the feed then prices the call's usage
+	// record where it can (raylinearc.RoutingPriceSettlement).
 	SettlementPrices *raylinearc.RoutingPriceCache
 	// ArtifactID and ArtifactRevision hold SHA256-derived hashes of the
 	// deployment-private artifact identity, never the raw pins.
