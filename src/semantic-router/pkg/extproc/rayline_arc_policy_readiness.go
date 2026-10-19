@@ -1,10 +1,14 @@
 package extproc
 
 import (
+	"context"
+	"errors"
 	"net/url"
 	"strings"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
 
 // raylineARCPolicyDispatchReady is the policy-service mode's share of the
@@ -77,4 +81,71 @@ func raylineARCProviderDefaultAuth(profile *config.ProviderProfile) bool {
 	catalogDefault, err := (&config.ProviderProfile{Type: profile.Type}).ResolveAuth()
 	return err == nil && strings.EqualFold(resolved.Header, catalogDefault.Header) &&
 		resolved.Prefix == catalogDefault.Prefix
+}
+
+// raylineARCPolicyServiceRequirements is what the cell's opt-in request
+// members need the policy service to advertise (pathfinder#5454): each
+// Decisions API v2 member and an exploration block that any turn can carry
+// its capability, and every cost
+// weight the cell sends a place inside the served package's bounds. A cell
+// with none of them needs nothing, so it still arms against a service that
+// predates the capabilities listing.
+func raylineARCPolicyServiceRequirements(policy *config.RaylineARCPolicyServiceConfig) raylinearc.PolicyServiceRequirements {
+	var required raylinearc.PolicyServiceRequirements
+	if policy == nil {
+		return required
+	}
+	if v2 := policy.DecisionsV2; v2 != nil {
+		if v2.Name != "" || v2.CostWeight != nil || len(v2.TierPoints) > 0 || len(v2.ResponseFields) > 0 {
+			required.Capabilities = append(required.Capabilities, raylinearc.PolicyCapabilityDecisionsV2)
+		}
+		if len(v2.TierPoints) > 0 {
+			required.Capabilities = append(required.Capabilities, raylinearc.PolicyCapabilityTierPoints)
+		}
+		if len(v2.ResponseFields) > 0 {
+			required.Capabilities = append(required.Capabilities, raylinearc.PolicyCapabilityResponseFields)
+		}
+		if v2.CostWeight != nil {
+			required.CostWeights = append(required.CostWeights, *v2.CostWeight)
+		}
+		for _, point := range v2.TierPoints {
+			if point.CostWeight != nil {
+				required.CostWeights = append(required.CostWeights, *point.CostWeight)
+			}
+		}
+	}
+	// A cell that excludes every turn from exploration never sends the
+	// member, so it needs no exploration capability.
+	if newPolicyExploration(policy).mayExplore() {
+		required.Capabilities = append(required.Capabilities, raylinearc.PolicyCapabilityExploration)
+	}
+	return required
+}
+
+// requireRaylineARCPolicyServing fails unless the service has loaded the
+// cell's package and serves every request member the cell sends. A service
+// that lacks one leaves the cell not ready, with the missing capability or
+// cost weight logged, rather than arming a cell whose every turn the service
+// would refuse or whose members it would ignore.
+func requireRaylineARCPolicyServing(
+	ctx context.Context,
+	client *raylinearc.PolicyServiceClient,
+	policy *config.RaylineARCPolicyServiceConfig,
+) error {
+	// The listing's fallback pair, when a service still states one, is not
+	// read: no model serves a turn the policy did not decide.
+	listing, loaded, err := client.ServedPackage(ctx, policy.PackageAlias, policy.PackageSHA256)
+	if err != nil {
+		return err
+	}
+	err = raylinearc.CheckPolicyServiceRequirements(listing, loaded, raylineARCPolicyServiceRequirements(policy))
+	var failure *raylinearc.PolicyServiceError
+	if errors.As(err, &failure) {
+		fields := map[string]interface{}{"package_alias": policy.PackageAlias, "class": failure.Class}
+		for key, value := range failure.Detail {
+			fields[key] = value
+		}
+		logging.ComponentErrorEvent("extproc", "rayline_arc_policy_service_unsupported", fields)
+	}
+	return err
 }

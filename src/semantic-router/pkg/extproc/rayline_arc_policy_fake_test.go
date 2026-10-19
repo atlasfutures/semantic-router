@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -59,7 +60,7 @@ type fakePolicyService struct {
 	// refuseAttestedWith, when set, answers every decide that carries
 	// attested_held_action_id with 422 selection_refused and this reason.
 	refuseAttestedWith string
-	requests       []raylinearc.PolicyDecisionRequest
+	requests           []raylinearc.PolicyDecisionRequest
 	// relaxedUnsupported, when set, answers every relaxed decide with 422
 	// unsupported_request and this detail.reason, as a service whose
 	// package cannot serve relaxed calls.
@@ -96,6 +97,16 @@ type fakePolicyService struct {
 	// omitExploration answers with none.
 	explorationHeld bool
 	omitExploration bool
+	// A listing asked for detail=capabilities advertises every capability
+	// and bounds of [0, 1000], as a current service (pathfinder#5454), unless
+	// a test overrides them: legacyListing answers as a service that ignores
+	// the detail, advertised replaces the capabilities, and bounds replaces
+	// the package's adjustable_cost_weight (Stated with nil Bounds is null).
+	legacyListing bool
+	advertised    []string
+	bounds        *raylinearc.PolicyAdjustableCostWeight
+	// listingQueries are the packages listings' queries, in order.
+	listingQueries []url.Values
 }
 
 func newFakePolicyService(t *testing.T, alias, sha256 string, catalog []string) *fakePolicyService {
@@ -153,6 +164,27 @@ func (fake *fakePolicyService) serve(writer http.ResponseWriter, request *http.R
 		if query.Get("alias") != fake.alias || query.Get("package_sha256") != fake.sha256 {
 			listing.Packages = listing.Packages[:0]
 		}
+		fake.mu.Lock()
+		fake.listingQueries = append(fake.listingQueries, query)
+		if query.Get("detail") == "capabilities" && !fake.legacyListing {
+			listing.Capabilities = []string{
+				raylinearc.PolicyCapabilityDecisionsV2, raylinearc.PolicyCapabilityTierPoints,
+				raylinearc.PolicyCapabilityResponseFields, raylinearc.PolicyCapabilityExploration,
+			}
+			if fake.advertised != nil {
+				listing.Capabilities = append([]string{}, fake.advertised...)
+			}
+			bounds := raylinearc.PolicyAdjustableCostWeight{
+				Stated: true, Bounds: &raylinearc.PolicyCostWeightBounds{Min: 0, Max: 1000},
+			}
+			if fake.bounds != nil {
+				bounds = *fake.bounds
+			}
+			for index := range listing.Packages {
+				listing.Packages[index].AdjustableCostWeight = bounds
+			}
+		}
+		fake.mu.Unlock()
 		fake.writeJSON(writer, http.StatusOK, listing)
 	case "/v1/rayline/arc/policy/decide":
 		body, err := io.ReadAll(request.Body)

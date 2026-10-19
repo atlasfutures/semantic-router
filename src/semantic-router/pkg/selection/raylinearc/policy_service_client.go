@@ -263,13 +263,16 @@ func NewPolicyServiceClient(config PolicyServiceConfig) *PolicyServiceClient {
 // Packages reads the service's loaded packages, naming the pin it needs. A
 // store-mode service (one app hot-loading packages from a volume) loads and
 // lists a package only for the pin that names it, and a service that serves
-// a fixed set ignores the query and lists what it has.
+// a fixed set ignores the query and lists what it has. The listing is always
+// asked for detail=capabilities; a service that predates it ignores the
+// parameter and lists no capabilities.
 func (client *PolicyServiceClient) Packages(ctx context.Context, alias, sha256 string) (*PolicyPackagesResponse, error) {
-	path := "/v1/rayline/arc/policy/packages"
+	query := url.Values{"detail": {"capabilities"}}
 	if alias != "" {
-		path += "?" + url.Values{"alias": {alias}, "package_sha256": {sha256}}.Encode()
+		query.Set("alias", alias)
+		query.Set("package_sha256", sha256)
 	}
-	body, err := client.do(ctx, http.MethodGet, path, nil)
+	body, err := client.do(ctx, http.MethodGet, "/v1/rayline/arc/policy/packages?"+query.Encode(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -289,9 +292,19 @@ func (client *PolicyServiceClient) RequirePackage(ctx context.Context, alias, sh
 // LoadedPackage is the listing's entry for exactly this package, once the
 // service has loaded it; it fails as RequirePackage does.
 func (client *PolicyServiceClient) LoadedPackage(ctx context.Context, alias, sha256 string) (*PolicyLoadedPackage, error) {
+	_, loaded, err := client.ServedPackage(ctx, alias, sha256)
+	return loaded, err
+}
+
+// ServedPackage is LoadedPackage with the listing it came from, whose
+// capabilities say which opt-in request members the service serves.
+func (client *PolicyServiceClient) ServedPackage(
+	ctx context.Context,
+	alias, sha256 string,
+) (*PolicyPackagesResponse, *PolicyLoadedPackage, error) {
 	packages, err := client.Packages(ctx, alias, sha256)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	for index := range packages.Packages {
 		loaded := &packages.Packages[index]
@@ -299,14 +312,14 @@ func (client *PolicyServiceClient) LoadedPackage(ctx context.Context, alias, sha
 			continue
 		}
 		if loaded.PackageSHA256 != sha256 {
-			return nil, &PolicyServiceError{Class: "package_hash_mismatch"}
+			return nil, nil, &PolicyServiceError{Class: "package_hash_mismatch"}
 		}
 		if loaded.State != "loaded" {
-			return nil, &PolicyServiceError{Class: "package_not_loaded"}
+			return nil, nil, &PolicyServiceError{Class: "package_not_loaded"}
 		}
-		return loaded, nil
+		return packages, loaded, nil
 	}
-	return nil, &PolicyServiceError{Class: "package_not_loaded"}
+	return nil, nil, &PolicyServiceError{Class: "package_not_loaded"}
 }
 
 // Decide asks the service for one decision.
