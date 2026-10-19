@@ -146,6 +146,12 @@ type RaylineARCTrace struct {
 	// service returned one.
 	PolicyPackageSHA256    string
 	PolicyPredictedCostUSD *float64
+	// PolicyOperatingPoint is the operating point the service decided at, as
+	// it echoed it (point_id names its cost weight), and PolicyTierPicks the
+	// decision at each configured tier point. Both are set only for a cell
+	// with decisions_v2; the tier picks are recorded, never served.
+	PolicyOperatingPoint *raylinearc.PolicyResolvedOperatingPoint
+	PolicyTierPicks      map[string]raylinearc.PolicyTierPick
 	// RoutingPricesStatus is the routing price cache status the request
 	// read (fresh, stale, expired, absent); empty when live prices are not
 	// configured. RoutingPricesUsed is the service's echo, nil when it sent

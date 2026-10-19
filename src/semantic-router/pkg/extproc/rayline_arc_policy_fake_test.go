@@ -2,6 +2,7 @@ package extproc
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -75,6 +76,11 @@ type fakePolicyService struct {
 	inflight    int
 	maxInflight int
 	arrived     chan struct{}
+	// echoCostWeight, when set, echoes this cost weight instead of the one a
+	// decide sent, as a service that decided at another point; echoNoCostWeight
+	// echoes null.
+	echoCostWeight   *float64
+	echoNoCostWeight bool
 }
 
 func newFakePolicyService(t *testing.T, alias, sha256 string, catalog []string) *fakePolicyService {
@@ -265,7 +271,7 @@ func (fake *fakePolicyService) decision(request raylinearc.PolicyDecisionRequest
 	if fake.encodeUnreported {
 		response.TimingMillis.Encode = nil
 	}
-	nullRevision, ignoreEpisodeMode := fake.nullRevision, fake.ignoreEpisodeMode
+	nullRevision, ignoreEpisodeMode, echoCostWeight, echoNoCostWeight := fake.nullRevision, fake.ignoreEpisodeMode, fake.echoCostWeight, fake.echoNoCostWeight
 	response.PackageVerification = fake.verification
 	if fake.echo != nil {
 		response.RoutingPricesUsed = fake.echo(request)
@@ -285,6 +291,28 @@ func (fake *fakePolicyService) decision(request raylinearc.PolicyDecisionRequest
 	}
 	response.Decision.SelectedActionID = selected
 	response.Decision.SelectedArmID = "arm-" + selected[:8]
+	// Decisions API v2 (pathfinder#5443): a sent cost weight is echoed with
+	// its point_id, and each tier point gets a pick. The fake picks the
+	// decision's own action at every tier, and adds one unrequested pick.
+	if weight := request.Selection.OperatingPoint.CostWeight; weight != nil {
+		echoed := *weight
+		if echoCostWeight != nil {
+			echoed = *echoCostWeight
+		}
+		response.Decision.OperatingPoint = raylinearc.PolicyResolvedOperatingPoint{
+			Name: request.Selection.OperatingPoint.Name, PointID: fmt.Sprintf("point-%g", echoed), CostWeight: &echoed,
+		}
+		if echoNoCostWeight {
+			response.Decision.OperatingPoint.CostWeight = nil
+		}
+	}
+	if len(request.Selection.TierPoints) > 0 {
+		pick := raylinearc.PolicyTierPick{SelectedActionID: selected, SelectedArmID: response.Decision.SelectedArmID, Model: "model-" + selected[:8]}
+		response.Decision.TierPicks = map[string]raylinearc.PolicyTierPick{"unrequested": pick}
+		for _, tier := range request.Selection.TierPoints {
+			response.Decision.TierPicks[tier.Name] = pick
+		}
+	}
 	// A relaxed call advances no session (pathfinder#3068).
 	if (request.EpisodeMode == raylinearc.PolicyEpisodeModeRelaxed && !ignoreEpisodeMode) || nullRevision {
 		response.Encoding.SessionRevision = nil
