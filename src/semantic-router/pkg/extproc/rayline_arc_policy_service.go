@@ -343,9 +343,7 @@ func createRaylineARCPolicySelector(
 	}
 	scorer := armed.scorer.(*policyServiceScorer)
 	probe := func(ctx context.Context) error {
-		// The listing's fallback pair, when a service still states one, is
-		// not read: no model serves a turn the policy did not decide.
-		if _, err := client.LoadedPackage(ctx, policy.PackageAlias, policy.PackageSHA256); err != nil {
+		if err := requireRaylineARCPolicyServing(ctx, client, policy); err != nil {
 			return err
 		}
 		if scorer.episodeMode == raylinearc.PolicyEpisodeModeRelaxed {
