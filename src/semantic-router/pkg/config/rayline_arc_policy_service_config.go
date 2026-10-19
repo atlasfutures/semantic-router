@@ -119,6 +119,9 @@ type RaylineARCPolicyServiceConfig struct {
 	// feed to every decision request. Absent (the default), the service
 	// scores with the package's prices.
 	RoutingPrices *RaylineARCRoutingPricesConfig `yaml:"routing_prices,omitempty"`
+	// DecisionsV2 sends the cell's ARC Decisions API v2 request members (V,
+	// tier points, response fields). Absent, the request is v1's.
+	DecisionsV2 *RaylineARCDecisionsV2Config `yaml:"decisions_v2,omitempty"`
 
 	packageV5 *raylineARCPolicyPackageV5
 }
@@ -363,6 +366,9 @@ func validateRaylineARCPolicyServiceConfig(cfg *RaylineARCPolicyServiceConfig) e
 			RaylineARCPolicyDispatchEffortDeclared, RaylineARCPolicyDispatchEffortProviderDefault)
 	}
 	if err := validateRaylineARCRoutingPricesConfig(cfg.RoutingPrices); err != nil {
+		return err
+	}
+	if err := validateRaylineARCDecisionsV2Config(cfg.DecisionsV2); err != nil {
 		return err
 	}
 	if len(cfg.Bindings) == 0 {

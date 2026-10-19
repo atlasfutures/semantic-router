@@ -247,6 +247,7 @@ func observeRaylineARCSelection(
 		fields["worker_provider_model"] = trace.WorkerProviderModel
 		addPolicyDispatchEffortFields(fields, ctx)
 		addPolicyPriceAuditFields(fields, trace)
+		addPolicyDecisionsV2Fields(fields, trace)
 	}
 	if !trace.EncoderLatencyUnknown {
 		fields["encoder_latency_millis"] = trace.EncoderLatency.Milliseconds()

@@ -348,6 +348,51 @@ class RaylineARCRoutingPricesConfig(BaseModel):
         return self
 
 
+class RaylineARCTierPointConfig(BaseModel):
+    """One named V preset (Go RaylineARCTierPoint)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1)
+    cost_weight: float = Field(ge=0, allow_inf_nan=False)
+
+    @field_validator("name")
+    @classmethod
+    def _name_bytes(cls, value: str) -> str:
+        # The Go loader bounds the name in UTF-8 bytes; it becomes a log key.
+        if len(value.encode()) > 64:
+            raise ValueError("tier point name must be at most 64 bytes")
+        return value
+
+
+class RaylineARCDecisionsV2Config(BaseModel):
+    """ARC Decisions API v2 request members (Go RaylineARCDecisionsV2Config).
+
+    Each member is sent only when set: cost_weight is the cell's V, tier_points
+    are V presets whose picks are logged, response_fields the opt-in
+    per-action blocks.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    cost_weight: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    tier_points: list[RaylineARCTierPointConfig] = Field(
+        default_factory=list, max_length=8
+    )
+    response_fields: list[Literal["price_per_mtok", "thinking"]] = Field(
+        default_factory=list
+    )
+
+    @model_validator(mode="after")
+    def _distinct(self):
+        names = [point.name for point in self.tier_points]
+        if len(set(names)) != len(names):
+            raise ValueError("tier_points names must be distinct")
+        if len(set(self.response_fields)) != len(self.response_fields):
+            raise ValueError("response_fields must be distinct")
+        return self
+
+
 class RaylineARCPolicyServiceConfig(BaseModel):
     """The policy-service mode: an external service returns the decision."""
 
@@ -391,6 +436,8 @@ class RaylineARCPolicyServiceConfig(BaseModel):
     derived_hold_model: str = ""
     # Absent: the service scores with the package's prices.
     routing_prices: RaylineARCRoutingPricesConfig | None = None
+    # Absent: the decide request carries no Decisions API v2 member.
+    decisions_v2: RaylineARCDecisionsV2Config | None = None
 
 
 class RaylineARCAlgorithmConfig(BaseModel):

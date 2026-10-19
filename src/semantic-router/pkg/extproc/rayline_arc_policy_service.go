@@ -91,6 +91,9 @@ type policyServiceScorer struct {
 	episodeMode string
 	// cacheContext sends the episode's cache evidence on each decide.
 	cacheContext bool
+	// decisionsV2 is the cell's Decisions API v2 request members; nil sends
+	// none.
+	decisionsV2 *policyDecisionsV2
 	// sideStrictUntil (unix nanoseconds) is how long a strict cell sends its
 	// side calls strict after the service last showed it cannot serve them
 	// relaxed; zero or past means relaxed.
@@ -170,6 +173,7 @@ func newPolicyServiceScorer(
 		bindings:   make(map[string]policyBinding, len(policy.Bindings)),
 		// Off, the decide request carries no cache_context, as before it.
 		cacheContext: policy.CacheContext,
+		decisionsV2:  newPolicyDecisionsV2(policy.DecisionsV2),
 	}
 	if decision.Algorithm.RaylineARC.Episode.RelaxedConsistency() {
 		scorer.episodeMode = raylinearc.PolicyEpisodeModeRelaxed
@@ -592,6 +596,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	if sideCall {
 		request.EpisodeMode = scorer.sideCallEpisodeMode(selector.now())
 	}
+	scorer.decisionsV2.apply(&request)
 	pricesStatus := attachRoutingPrices(armed.prices, &request)
 	// The episode's cache evidence is read at each call, so a retry's gaps
 	// are as of that call, on the wall clock the commit dates warmth by.
@@ -720,6 +725,11 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 			class = "unsupported_request"
 			fields["class"], fields["reason"], fields["sub_reason"] = class, raylinearc.PolicyMediaRefusedClass, failure.Detail["sub_reason"]
 		}
+		// The cell's decisions_v2 against its package: every turn fails so,
+		// so the log names the reason.
+		if class == raylinearc.PolicyDecisionsV2RefusedClass {
+			fields["reason"] = failure.Detail["reason"]
+		}
 		logging.ComponentErrorEvent("extproc", "rayline_arc_policy_service_failed", fields)
 		return nil, arcSelectionFailure("policy_service_" + class)
 	}
@@ -776,6 +786,12 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		})
 		return nil, arcSelectionFailure(class)
 	}
+	if scorer.decisionsV2.operatingPointMismatch(response) {
+		logging.ComponentErrorEvent("extproc", "rayline_arc_policy_service_failed", map[string]interface{}{
+			"class": arcFailurePolicyOperatingPointMismatch, "episode_id_hash": arcContext.EpisodeIDHash,
+		})
+		return nil, arcSelectionFailure(arcFailurePolicyOperatingPointMismatch)
+	}
 	recordRoutingPriceDecision(response.RoutingPricesUsed)
 	decision := policyDecision(scorer, response, binding, workerIDs, excluded)
 	if !validARCDecision(decision, workerIDs) {
@@ -812,6 +828,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	result.RaylineARC.SettlementPrices = armed.prices
 	result.RaylineARC.RoutingPricesUsed = response.RoutingPricesUsed
 	result.RaylineARC.PolicyPredictedCostUSD = policySelectedPredictedCost(response)
+	scorer.decisionsV2.record(result.RaylineARC, response, policyTierPickValid(scorer, available))
 	if !sideCall {
 		// A side call commits no ledger entry, so its price audit is in the
 		// selection log only.

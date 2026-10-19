@@ -76,6 +76,10 @@ type PolicySelection struct {
 	// action still offered, so the service decides a typed user turn or holds
 	// the model rather than VSR narrowing the offer. Omitted otherwise.
 	AttestedHeldActionID *string `json:"attested_held_action_id,omitempty"`
+	// TierPoints are named cost weights the service also decides at
+	// (Decisions API v2, pathfinder#5443); the response's decision.tier_picks
+	// carries each. Omitted when none are configured.
+	TierPoints []PolicyTierPoint `json:"tier_points,omitempty"`
 }
 
 type PolicyEvaluation struct {
@@ -256,6 +260,8 @@ type policyDecisionEnvelope struct {
 	EpisodeMode   string               `json:"episode_mode,omitempty"`
 	RoutingPrices *PolicyRoutingPrices `json:"routing_prices,omitempty"`
 	CacheContext  *PolicyCacheContext  `json:"cache_context,omitempty"`
+	// ResponseFields mirrors PolicyDecisionRequest.ResponseFields.
+	ResponseFields []string `json:"response_fields,omitempty"`
 }
 
 // EncodePolicyDecisionRequest is the decide body: every field as json.Marshal
@@ -324,6 +330,10 @@ type PolicyDecisionRequest struct {
 	// CacheContext is each recently served action's last call and its
 	// prompt cache (BuildPolicyCacheContext); nil omits it.
 	CacheContext *PolicyCacheContext `json:"cache_context,omitempty"`
+	// ResponseFields names the opt-in per-action response blocks
+	// (price_per_mtok, thinking; Decisions API v2). Omitted when none are
+	// configured, so the request is v1's.
+	ResponseFields []string `json:"response_fields,omitempty"`
 }
 
 // PolicyEpisodeModeRelaxed is the decide request's episode_mode for a relaxed
@@ -356,10 +366,13 @@ type PolicyActionScore struct {
 	Thinking     *PolicyActionThinking `json:"thinking,omitempty"`
 }
 
+// PolicyResolvedOperatingPoint is the operating point the decision was taken
+// at. CostWeight is the request's own where it sent one (Decisions API v2),
+// else the recipe's; a null stays nil, so a missing echo is never read as 0.
 type PolicyResolvedOperatingPoint struct {
-	Name       string  `json:"name"`
-	PointID    string  `json:"point_id"`
-	CostWeight float64 `json:"cost_weight"`
+	Name       string   `json:"name"`
+	PointID    string   `json:"point_id"`
+	CostWeight *float64 `json:"cost_weight"`
 }
 
 type PolicyDecision struct {

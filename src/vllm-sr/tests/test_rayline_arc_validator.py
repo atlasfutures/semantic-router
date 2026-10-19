@@ -12,6 +12,7 @@ from cli.rayline_arc_config import (
     _CHECKPOINT_LABEL,
     _MAX_CONFIG_STRING_BYTES,
     RaylineARCAlgorithmConfig,
+    RaylineARCDecisionsV2Config,
     RaylineARCEncoderFailoverConfig,
     RaylineARCEncoderMembershipConfig,
     RaylineARCEncoderReplicaConfig,
@@ -624,6 +625,36 @@ def test_rayline_arc_cli_mirrors_policy_routing_prices():
     ):
         with pytest.raises(ValidationError):
             RaylineARCRoutingPricesConfig.model_validate({**id_token, **changed})
+
+
+def test_rayline_arc_cli_mirrors_decisions_v2():
+    policy = _policy_service_decision().algorithm.rayline_arc.policy_service
+    assert policy.decisions_v2 is None
+    block = {
+        "cost_weight": 1.0,
+        "tier_points": [
+            {"name": "swift", "cost_weight": 2.0},
+            {"name": "sage", "cost_weight": 0},
+        ],
+        "response_fields": ["price_per_mtok", "thinking"],
+    }
+    parsed = RaylineARCDecisionsV2Config.model_validate(block)
+    assert parsed.tier_points[1].name == "sage"
+    assert RaylineARCDecisionsV2Config.model_validate({}).cost_weight is None
+    for changed in (
+        {"cost_weight": -0.5},
+        {"cost_weight": float("nan")},
+        {"tier_points": [{"name": "a", "cost_weight": 1}] * 2},
+        {"tier_points": [{"name": str(i), "cost_weight": 1} for i in range(9)]},
+        {"tier_points": [{"name": "", "cost_weight": 1}]},
+        {"tier_points": [{"name": "é" * 33, "cost_weight": 1}]},
+        {"tier_points": [{"name": "a"}]},
+        {"response_fields": ["predicted_usage"]},
+        {"response_fields": ["thinking", "thinking"]},
+        {"surprise": 1},
+    ):
+        with pytest.raises(ValidationError):
+            RaylineARCDecisionsV2Config.model_validate({**block, **changed})
 
 
 def test_rayline_arc_cli_checks_routing_prices_urls():

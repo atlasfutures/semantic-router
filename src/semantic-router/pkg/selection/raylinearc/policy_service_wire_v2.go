@@ -20,7 +20,10 @@ package raylinearc
 // Decisions API v2 (pathfinder#5443: response_fields, selection.tier_points)
 // and Stage-1 exploration (pathfinder#5436: selection.exploration). A request
 // that omits those members never receives them, so these types only let the
-// strict decoder accept them once a caller sends the members.
+// strict decoder accept them once a caller sends the members. The Decisions
+// API v2 request members (PolicyTierPoint here, response_fields and
+// operating_point.cost_weight on the request) are sent only when a cell's
+// decisions_v2 configures them.
 
 // PolicyPricePerMtok is the USD-per-million-token rates the decision priced
 // an action's arm at. A leg without a rate is null, never 0.
@@ -39,6 +42,14 @@ type PolicyActionThinking struct {
 	BudgetTokens  *int64  `json:"budget_tokens"`
 	SteeringLevel *string `json:"steering_level"`
 	ControlID     *string `json:"control_id"`
+}
+
+// PolicyTierPoint is one selection.tier_points entry: a named cost weight
+// that must lie within the package's declared bounds, as the request's own
+// operating_point.cost_weight must.
+type PolicyTierPoint struct {
+	Name       string  `json:"name"`
+	CostWeight float64 `json:"cost_weight"`
 }
 
 // PolicyTierPick is the decision at one requested tier point, from the same
