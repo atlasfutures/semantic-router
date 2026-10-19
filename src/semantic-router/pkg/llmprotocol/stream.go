@@ -61,7 +61,10 @@ type Event struct {
 	StopDetails        *StopDetails
 	// UpstreamProvider names the upstream that served the turn. It is Router
 	// telemetry and no encoder publishes it.
-	UpstreamProvider    string
+	UpstreamProvider string
+	// UpstreamServiceTier is the service tier the upstream says it served
+	// the turn at, carried from the chunk that states it. Router telemetry.
+	UpstreamServiceTier string
 	MatchedStopSequence string
 	Usage               *Usage
 	Error               *ProtocolError

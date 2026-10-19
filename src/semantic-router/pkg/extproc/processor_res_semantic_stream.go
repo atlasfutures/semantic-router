@@ -36,11 +36,13 @@ type semanticResponseStreamState struct {
 	providerStop string
 	stopDetails  *llmprotocol.StopDetails
 	provider     string
-	usage        llmprotocol.Usage
-	items        map[int]*semanticStreamItem
-	order        []int
-	terminal     bool
-	failed       *llmprotocol.ProtocolError
+	// serviceTier is the tier the upstream said it served the turn at.
+	serviceTier string
+	usage       llmprotocol.Usage
+	items       map[int]*semanticStreamItem
+	order       []int
+	terminal    bool
+	failed      *llmprotocol.ProtocolError
 	// upstreamFailed is the provider's error as it said it, before the
 	// client's copy was made public; the failure is classed by it.
 	upstreamFailed *llmprotocol.ProtocolError
@@ -356,6 +358,9 @@ func (state *semanticResponseStreamState) observe(events []llmprotocol.Event) {
 		if event.UpstreamProvider != "" {
 			state.provider = event.UpstreamProvider
 		}
+		if event.UpstreamServiceTier != "" {
+			state.serviceTier = event.UpstreamServiceTier
+		}
 		switch event.Type {
 		case llmprotocol.EventOutputItemStarted:
 			item := state.item(event.ItemIndex)
@@ -521,7 +526,8 @@ func (state *semanticResponseStreamState) response() (*llmprotocol.Response, err
 		Generation: 1, ID: state.responseID, CreatedAt: time.Now().UTC(),
 		Model: state.model, Output: output, StopReason: state.stop,
 		SourceStopReason: state.sourceStop, UpstreamProvider: state.provider,
-		ProviderStopReason: state.providerStop, StopDetails: state.stopDetails,
+		UpstreamServiceTier: state.serviceTier,
+		ProviderStopReason:  state.providerStop, StopDetails: state.stopDetails,
 		Usage: state.usage,
 	}, nil
 }

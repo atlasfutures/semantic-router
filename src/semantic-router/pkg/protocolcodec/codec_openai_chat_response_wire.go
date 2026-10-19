@@ -72,7 +72,8 @@ func (tier *chatServiceTierWire) UnmarshalJSON(raw []byte) error {
 		return err
 	}
 	switch value {
-	case "auto", "default", "flex", "priority", "scale":
+	// ultrafast is OpenRouter's; the others are OpenAI's.
+	case "auto", "default", "flex", "priority", "scale", "ultrafast":
 		*tier = chatServiceTierWire(value)
 		return nil
 	default:

@@ -148,6 +148,16 @@ func responsesResponseMetadataDiagnostics(wire responsesResponseWire, policy llm
 	return diagnostics
 }
 
+// responsesServedTier is a response's service_tier, the tier the upstream
+// served it at: empty when absent, null or not a string.
+func responsesServedTier(raw json.RawMessage) string {
+	var tier string
+	if len(raw) == 0 || json.Unmarshal(raw, &tier) != nil {
+		return ""
+	}
+	return tier
+}
+
 func decodeResponsesResponseResource(
 	wire responsesResponseWire,
 	policy llmprotocol.Policy,
@@ -157,6 +167,7 @@ func decodeResponsesResponseResource(
 	if wire.CreatedAt > 0 {
 		response.CreatedAt = time.Unix(wire.CreatedAt, 0).UTC()
 	}
+	response.UpstreamServiceTier = responsesServedTier(wire.ServiceTier)
 	if wire.Error != nil {
 		response.Error = &llmprotocol.ProtocolError{Category: decodeProviderErrorCategory(wire.Error.Code), Code: wire.Error.Code, Message: wire.Error.Message}
 		response.StopReason = llmprotocol.StopError

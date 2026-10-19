@@ -158,6 +158,9 @@ func (decoder *responsesStreamDecoder) applyResponsesCompletion(event *llmprotoc
 		usage := decodeResponsesUsage(*wire.Response.Usage)
 		event.Usage = &usage
 	}
+	if wire.Response != nil {
+		event.UpstreamServiceTier = responsesServedTier(wire.Response.ServiceTier)
+	}
 }
 
 func (decoder *responsesStreamDecoder) hasCompletedToolCall() bool {
