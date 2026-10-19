@@ -290,7 +290,15 @@ func (pin *SettlementPin) admittedEntries() ([]string, []string) {
 	default:
 		return nil, nil
 	}
-	return uniqueLowerSlugs(entries), uniqueLowerSlugs(pin.Ignore)
+	ignored := uniqueLowerSlugs(pin.Ignore)
+	// An entry the ignore list removes whole admits nothing.
+	admitted := make([]string, 0, len(entries))
+	for _, entry := range uniqueLowerSlugs(entries) {
+		if !pinAdmits(ignored, entry) {
+			admitted = append(admitted, entry)
+		}
+	}
+	return admitted, ignored
 }
 
 func uniqueLowerSlugs(slugs []string) []string {

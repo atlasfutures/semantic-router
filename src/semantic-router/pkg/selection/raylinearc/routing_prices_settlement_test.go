@@ -226,6 +226,15 @@ func TestSettlementResolvesTheEndpointFromThePin(t *testing.T) {
 			name: "one row, the response names it", model: "openai/gpt-sol",
 			pin: onlyPin("openai", "azure"), provider: "OpenAI", tag: "openai",
 		},
+		{
+			name: "an entry the ignore list removes whole admits nothing", model: "openai/gpt-sol",
+			pin: &SettlementPin{Only: []string{"openai", "azure"}, Ignore: []string{"azure"}}, tag: "openai",
+		},
+		{
+			name: "an ignored base removes its variants", model: "openai/gpt-luna",
+			pin:    &SettlementPin{Only: []string{"openai/flex"}, Ignore: []string{"openai"}},
+			reason: SettlementEndpointUnpinned,
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			price, reason := settlement.Price(SettlementCall{
@@ -283,7 +292,23 @@ func TestRoutingPriceCacheSettlementFollowsMaxAge(t *testing.T) {
 	if settlement, reason := cache.Settlement(); settlement != nil || reason != SettlementFeedExpired {
 		t.Fatalf("as_of past max age: %v %q", settlement, reason)
 	}
-	clock.advance(time.Hour)
+}
+
+// A feed whose as_of is still young expires by its fetch age all the same.
+func TestRoutingPriceCacheSettlementExpiresByFetchAge(t *testing.T) {
+	body := strings.Replace(settlementFeedBody, `"as_of": "2026-10-19T12:00:00.000Z"`, `"as_of": "2026-10-19T12:05:00.000Z"`, 1)
+	feed := newFakePriceFeed(t, []byte(body))
+	clock := &fakeClock{now: time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC)}
+	cache := newTestPriceCache(feed, clock, &fetchLog{})
+	if err := cache.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	clock.advance(10*time.Minute - time.Nanosecond)
+	if settlement, reason := cache.Settlement(); settlement == nil {
+		t.Fatalf("just inside max age: %q", reason)
+	}
+	// Fetched 10m ago, as_of 5m ago.
+	clock.advance(time.Nanosecond)
 	if settlement, reason := cache.Settlement(); settlement != nil || reason != SettlementFeedExpired {
 		t.Fatalf("fetch past max age: %v %q", settlement, reason)
 	}
