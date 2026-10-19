@@ -122,6 +122,14 @@ type RaylineARCPolicyServiceConfig struct {
 	// DecisionsV2 sends the cell's ARC Decisions API v2 request members (V,
 	// tier points, response fields). Absent, the request is v1's.
 	DecisionsV2 *RaylineARCDecisionsV2Config `yaml:"decisions_v2,omitempty"`
+	// Exploration sends the cell's Stage-1 exploration temperature
+	// (selection.exploration) on the turns of eligible users. Absent, every
+	// decision is greedy.
+	Exploration *RaylineARCExplorationConfig `yaml:"exploration,omitempty"`
+	// EvalCell marks an eval or lab cell. Such a cell never sends
+	// exploration, even when it is configured: its decisions must be the
+	// package's greedy ones.
+	EvalCell bool `yaml:"eval_cell,omitempty"`
 
 	packageV5 *raylineARCPolicyPackageV5
 }
@@ -369,6 +377,9 @@ func validateRaylineARCPolicyServiceConfig(cfg *RaylineARCPolicyServiceConfig) e
 		return err
 	}
 	if err := validateRaylineARCDecisionsV2Config(cfg.DecisionsV2); err != nil {
+		return err
+	}
+	if err := validateRaylineARCExplorationConfig(cfg.Exploration, cfg.PackageSHA256); err != nil {
 		return err
 	}
 	if len(cfg.Bindings) == 0 {
