@@ -162,6 +162,15 @@ type RaylineARCTrace struct {
 	// names an action the cell cannot dispatch or did not offer, or a model
 	// its binding does not serve; such a pick is not kept.
 	PolicyTierPicksInvalid []string
+	// PolicyExploration is the service's record of the turn's Stage-1
+	// exploration draw (decision.stage_one.exploration, pathfinder#5436), nil
+	// when the request carried no exploration or the service returned none.
+	// PolicyExplorationSent marks a request that carried it, and
+	// PolicyExplorationExcluded names why an exploration cell's turn did not
+	// (privacy mode, training-data opt-out, an eval cell, ...).
+	PolicyExploration         *raylinearc.PolicyExplorationRecord
+	PolicyExplorationSent     bool
+	PolicyExplorationExcluded string
 	// RoutingPricesStatus is the routing price cache status the request
 	// read (fresh, stale, expired, absent); empty when live prices are not
 	// configured. RoutingPricesUsed is the service's echo, nil when it sent

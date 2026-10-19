@@ -17,7 +17,9 @@ from cli.rayline_arc_config import (
     RaylineARCEncoderMembershipConfig,
     RaylineARCEncoderReplicaConfig,
     RaylineARCEpisodeConfig,
+    RaylineARCExplorationConfig,
     RaylineARCPolicyFallbackConfig,
+    RaylineARCPolicyServiceConfig,
     RaylineARCRoutesAPIConfig,
     RaylineARCRoutingPricesConfig,
 )
@@ -665,6 +667,51 @@ def test_rayline_arc_cli_mirrors_decisions_v2():
     ):
         with pytest.raises(ValidationError):
             RaylineARCDecisionsV2Config.model_validate({**block, **changed})
+
+
+def test_rayline_arc_cli_mirrors_exploration():
+    policy = _policy_service_decision().algorithm.rayline_arc.policy_service
+    assert policy.exploration is None and policy.eval_cell is False
+    block = {
+        "tau": 0.02,
+        "tau_max": 0.05,
+        "basis": {
+            "r": 0.05,
+            "package_sha256": "0" * 64,
+            "readout_pin": "qwen3.8-27b-arc-encoder@depth8",
+        },
+        "salt": "vsr-explore-2026-10",
+    }
+    assert RaylineARCExplorationConfig.model_validate(block).tau == 0.02
+    assert RaylineARCExplorationConfig.model_validate({**block, "tau": 0}).tau == 0
+    for changed in (
+        {"tau": -0.1},
+        {"tau": float("nan")},
+        {"tau": 0.06},
+        {"tau_max": float("inf")},
+        {"basis": {**block["basis"], "r": 1.5}},
+        {"basis": {**block["basis"], "package_sha256": "ABC"}},
+        {"basis": {**block["basis"], "readout_pin": ""}},
+        {"salt": ""},
+        {"salt": "s" * 129},
+        {"surprise": 1},
+    ):
+        with pytest.raises(ValidationError):
+            RaylineARCExplorationConfig.model_validate({**block, **changed})
+    raw = policy.model_dump()
+    RaylineARCPolicyServiceConfig.model_validate(
+        {**raw, "exploration": block, "eval_cell": True}
+    )
+    with pytest.raises(ValidationError):
+        RaylineARCPolicyServiceConfig.model_validate(
+            {
+                **raw,
+                "exploration": {
+                    **block,
+                    "basis": {**block["basis"], "package_sha256": "b" * 64},
+                },
+            }
+        )
 
 
 def test_rayline_arc_cli_checks_routing_prices_urls():

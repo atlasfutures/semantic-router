@@ -114,6 +114,8 @@ func assertReferenceRaylineARCCoverage(t testingT, root map[string]interface{}) 
 		"credential_env")
 	assertMapCoversStructFields(t, mustMapAt(t, policy, "policy_service", "decisions_v2"), reflect.TypeOf(RaylineARCDecisionsV2Config{}), "recipes[].routing.decisions[].algorithm.rayline_arc.policy_service.decisions_v2")
 	assertSliceUnionCoversStructFields(t, mustMapAt(t, policy, "policy_service", "decisions_v2")["tier_points"], reflect.TypeOf(RaylineARCTierPoint{}), "recipes[].routing.decisions[].algorithm.rayline_arc.policy_service.decisions_v2.tier_points")
+	assertMapCoversStructFields(t, mustMapAt(t, policy, "policy_service", "exploration"), reflect.TypeOf(RaylineARCExplorationConfig{}), "recipes[].routing.decisions[].algorithm.rayline_arc.policy_service.exploration")
+	assertMapCoversStructFields(t, mustMapAt(t, policy, "policy_service", "exploration", "basis"), reflect.TypeOf(RaylineARCExplorationBasis{}), "recipes[].routing.decisions[].algorithm.rayline_arc.policy_service.exploration.basis")
 	assertSliceUnionCoversStructFields(t, mustMapAt(t, policy, "policy_service")["bindings"], reflect.TypeOf(RaylineARCPolicyBinding{}), "recipes[].routing.decisions[].algorithm.rayline_arc.policy_service.bindings")
 }
 

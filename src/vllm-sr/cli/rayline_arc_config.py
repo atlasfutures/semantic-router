@@ -395,6 +395,52 @@ class RaylineARCDecisionsV2Config(BaseModel):
         return self
 
 
+class RaylineARCExplorationBasisConfig(BaseModel):
+    """How a tau was calibrated (Go RaylineARCExplorationBasis)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    r: float = Field(ge=0, le=1, allow_inf_nan=False)
+    package_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    readout_pin: str = Field(min_length=1)
+
+    @field_validator("readout_pin")
+    @classmethod
+    def _pin_bytes(cls, value: str) -> str:
+        if len(value.encode()) > 128:
+            raise ValueError("readout_pin must be at most 128 bytes")
+        return value
+
+
+class RaylineARCExplorationConfig(BaseModel):
+    """Stage-1 exploration request member (Go RaylineARCExplorationConfig).
+
+    Sent only for an eligible user (gateway headers x-rayline-privacy-mode:
+    false and x-rayline-training-data: allowed, on a cell that is not an eval
+    cell); 0 <= tau <= tau_max.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    tau: float = Field(ge=0, allow_inf_nan=False)
+    tau_max: float = Field(ge=0, allow_inf_nan=False)
+    basis: RaylineARCExplorationBasisConfig
+    salt: str = Field(min_length=1)
+
+    @field_validator("salt")
+    @classmethod
+    def _salt_bytes(cls, value: str) -> str:
+        if len(value.encode()) > 128:
+            raise ValueError("salt must be at most 128 bytes")
+        return value
+
+    @model_validator(mode="after")
+    def _tau_within_ceiling(self):
+        if self.tau > self.tau_max:
+            raise ValueError("exploration tau must not exceed tau_max")
+        return self
+
+
 class RaylineARCPolicyServiceConfig(BaseModel):
     """The policy-service mode: an external service returns the decision."""
 
@@ -422,7 +468,9 @@ class RaylineARCPolicyServiceConfig(BaseModel):
     # Mirrors TrustTurnSignalHeaders in the Go loader: read the gateway's
     # turn-signal headers (x-rayline-call-kind, x-rayline-compaction,
     # x-rayline-agent-key-source, x-rayline-parent-session,
-    # x-rayline-parent-agent) only when a gateway sets or strips every one.
+    # x-rayline-parent-agent, and the exploration eligibility headers
+    # x-rayline-privacy-mode and x-rayline-training-data) only when a gateway
+    # sets or strips every one.
     trust_turn_signal_headers: bool = False
     # Mirrors CacheContext in the Go loader: send cache_context on each
     # decide; only for a policy service at or after pathfinder 204d287ec4.
@@ -440,6 +488,21 @@ class RaylineARCPolicyServiceConfig(BaseModel):
     routing_prices: RaylineARCRoutingPricesConfig | None = None
     # Absent: the decide request carries no Decisions API v2 member.
     decisions_v2: RaylineARCDecisionsV2Config | None = None
+    # Absent: every decision is greedy. Its basis must be this package's.
+    exploration: RaylineARCExplorationConfig | None = None
+    # An eval or lab cell never sends exploration.
+    eval_cell: bool = False
+
+    @model_validator(mode="after")
+    def _exploration_basis_is_this_package(self):
+        if (
+            self.exploration is not None
+            and self.exploration.basis.package_sha256 != self.package_sha256
+        ):
+            raise ValueError(
+                "exploration basis.package_sha256 must be the cell's package_sha256"
+            )
+        return self
 
 
 class RaylineARCAlgorithmConfig(BaseModel):

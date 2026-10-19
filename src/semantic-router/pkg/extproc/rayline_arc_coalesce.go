@@ -147,7 +147,7 @@ func raylineARCTurnInputs(
 		eligibility = strings.TrimSpace(reqCtx.Headers[lever.EligibilityHeader])
 	}
 	return fmt.Sprintf(
-		"decision=%p|format=%s|close=%t|eligible=%q|fault=%s|credentials=%s|call_kind=%q|compaction=%q|agent_key_source=%q",
+		"decision=%p|format=%s|close=%t|eligible=%q|fault=%s|credentials=%s|call_kind=%q|compaction=%q|agent_key_source=%q|privacy_mode=%q|training_data=%q",
 		arcConfig,
 		reqCtx.SourceFormat,
 		reqCtx.RaylineARCCloseRequested,
@@ -160,6 +160,10 @@ func raylineARCTurnInputs(
 		// own episode or a side call, so two requests that differ in it are
 		// different turns.
 		strings.TrimSpace(reqCtx.Headers[raylineARCAgentKeySourceHeader]),
+		// Exploration eligibility: a privacy-mode or opted-out request must
+		// never inherit an eligible one's explored decision.
+		strings.TrimSpace(reqCtx.Headers[raylineARCPrivacyModeHeader]),
+		strings.TrimSpace(reqCtx.Headers[raylineARCTrainingDataHeader]),
 	)
 }
 

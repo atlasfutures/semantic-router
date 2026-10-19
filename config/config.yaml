@@ -2021,8 +2021,9 @@ recipes:
                 # trust_turn_signal_headers reads the gateway's turn-signal
                 # headers: x-rayline-call-kind, x-rayline-compaction,
                 # x-rayline-agent-key-source, x-rayline-parent-session and
-                # x-rayline-parent-agent. Set it only when a gateway sets or
-                # strips every one of them. The parent headers are logged and
+                # x-rayline-parent-agent, and the exploration eligibility
+                # headers x-rayline-privacy-mode and x-rayline-training-data.
+                # Set it only when a gateway sets or strips every one of them. The parent headers are logged and
                 # never route. Off, harness literals in the body classify
                 # side calls and compactions.
                 # None is forwarded upstream.
@@ -2097,6 +2098,31 @@ recipes:
                     - name: sage
                       cost_weight: 0.0
                   response_fields: [price_per_mtok, thinking]
+                # exploration (off when absent) sends a Stage-1 exploration
+                # temperature (selection.exploration, pathfinder#5436): the
+                # service draws the model at a task, subagent or compaction
+                # boundary from softmax(score / tau) instead of taking the
+                # argmax. tau is the calibrated temperature for basis.r and
+                # must not exceed tau_max (the calibration's tau_max, also the
+                # service's ARC_EXPLORE_TAU_MAX); basis.package_sha256 must be
+                # this cell's package_sha256. It is sent only for an eligible
+                # user: the gateway must send x-rayline-privacy-mode: false
+                # and x-rayline-training-data: allowed, read only with
+                # trust_turn_signal_headers, and eval_cell must be false. Any
+                # other value, or none, is excluded. The service refuses a tau
+                # above its ceiling, another package's basis or a package that
+                # cannot explore, and every turn then fails.
+                exploration:
+                  tau: 0.02
+                  tau_max: 0.05
+                  basis:
+                    r: 0.05
+                    package_sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+                    readout_pin: qwen3.8-27b-arc-encoder@depth8
+                  salt: vsr-explore-2026-10
+                # eval_cell marks an eval or lab cell: it never sends
+                # exploration, so its decisions are the package's greedy ones.
+                eval_cell: false
                 # Each binding maps a package action to a worker. model, effort
                 # and reasoning_max_tokens declare what the action dispatches,
                 # as the package's catalog states it: model is the trained

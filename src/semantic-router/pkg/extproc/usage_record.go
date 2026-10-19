@@ -167,6 +167,15 @@ type llmUsageRecord struct {
 	// level in force is then the one the provider already saw, not the
 	// level the policy drew.
 	ThinkingRefused *string `json:"thinking_refused"`
+	// The Stage-1 exploration record of the call's decision (pathfinder#5436),
+	// all null when the decision carried none: the served action's
+	// propensity, the tau the decision used, whether the draw left greedy,
+	// and the boundary's decision key (on a held turn, the key of the
+	// boundary that chose its model), which joins the call to its draw.
+	RouterPropensity       *float64 `json:"router_propensity"`
+	RouterTau              *float64 `json:"router_tau"`
+	RouterExplored         *bool    `json:"router_explored"`
+	ExplorationDecisionKey *string  `json:"exploration_decision_key"`
 }
 
 // newLLMUsageRecord fills what the request context and the counts say. The
@@ -255,6 +264,9 @@ func addUsageRecordARCAttribution(record *llmUsageRecord, ctx *RequestContext) {
 			decision.Algorithm.RaylineARC.PolicyService != nil {
 			record.PolicyPackageSHA256 = nonEmpty(decision.Algorithm.RaylineARC.PolicyService.PackageSHA256)
 		}
+		explored := policyExplorationUsage(trace)
+		record.RouterPropensity, record.RouterTau = explored.propensity, explored.tau
+		record.RouterExplored, record.ExplorationDecisionKey = explored.explored, explored.decisionKey
 	}
 	if thinking := ctx.RaylineARCThinking; thinking != nil {
 		record.ThinkingLevelInForce = nonEmpty(thinking.LevelInForce)
