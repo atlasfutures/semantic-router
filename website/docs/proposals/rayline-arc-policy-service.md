@@ -376,6 +376,59 @@ API v2 (an older one refuses the members, and so every turn), and set a V
 only for a package that declares operating bounds: every package before ARC
 0.7.2 answers `operating_point_not_adjustable`.
 
+## Stage-1 exploration
+
+`policy_service.exploration` (off when absent) asks the policy service to
+explore the Stage-1 model choice (pathfinder#5436). At a task, subagent or
+compaction boundary, the service then draws the model from
+`softmax(score / tau)` instead of taking the argmax. Effort is still the
+argmax within the drawn model.
+
+```yaml
+exploration:
+  tau: 0.02          # selection.exploration.tau; 0 asks for greedy
+  tau_max: 0.05      # the calibration's tau_max; tau may not exceed it
+  basis:             # how tau was calibrated
+    r: 0.05
+    package_sha256: <this cell's package_sha256>
+    readout_pin: qwen3.8-27b-arc-encoder@depth8
+  salt: vsr-explore-2026-10
+eval_cell: false     # an eval or lab cell never explores
+```
+
+- **Load checks.** The loader refuses a tau outside `[0, tau_max]`, an `r`
+  outside `[0, 1]`, a basis that names another package than the cell's
+  `package_sha256`, and an empty or overlong readout pin or salt. Set
+  `tau_max` to the service's `ARC_EXPLORE_TAU_MAX`.
+- **Eligibility.** The member is sent only on a turn whose user may be
+  explored: not in privacy mode, and not opted out of training-data
+  collection. The router cannot know either fact itself, so the gateway
+  states both: `x-rayline-privacy-mode: false` and
+  `x-rayline-training-data: allowed`. They are read only with
+  `trust_turn_signal_headers` and never forwarded upstream. Each fact fails
+  closed, so an absent, empty or unknown value excludes the turn. An
+  `eval_cell` and a side call are excluded too. The selection log names the
+  reason (`exploration_excluded`: `privacy_mode`, `privacy_mode_unknown`,
+  `training_data_opted_out`, `training_data_unknown`, `eval_cell`,
+  `side_call` or `signal_headers_untrusted`).
+- **Record.** A turn that sent the member logs `exploration_sent` and, when
+  the service returned one, its whole `decision.stage_one.exploration`
+  record as `exploration`. `llm_usage` carries `router_propensity`,
+  `router_tau`, `router_explored` and `exploration_decision_key` (the
+  record's `origin_decision_key` on a held turn). All four are null when the
+  decision carried no record.
+- **Refusals.** `exploration_tau_exceeds_ceiling`,
+  `exploration_basis_mismatch` and `exploration_unsupported_by_package` are
+  the cell's config against its service and package. They fail every
+  eligible turn as `policy_service_exploration_refused`, which is
+  `unavailable` to the caller, neither held nor undecidable, and the failure
+  log names the reason. The turn is not retried greedy, so a misconfigured
+  cell shows up at once.
+
+Rollout: until the gateway sends both eligibility headers, an exploration
+cell explores no turn. Enable the block only for a service and package that
+serve exploration, with the service's ceiling set.
+
 ## Request formats
 
 VSR sends the client's request in the format the service projects:
