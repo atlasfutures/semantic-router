@@ -8,9 +8,11 @@ import (
 	"time"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/modelpricing"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/metrics"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/usagerecords"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
 
 // llmUsageRecordSchema versions the shape below. A consumer reading the
@@ -119,6 +121,20 @@ type llmUsageRecord struct {
 	PricingCacheWritePer1M  *float64 `json:"pricing_cache_write_per_1m"`
 	PricingCompletionPer1M  *float64 `json:"pricing_completion_per_1m"`
 	ProviderReportedCost    *float64 `json:"provider_reported_cost"`
+	// PricingSource is where the rates beside Cost came from: the live
+	// routing price feed, or the cell's configured rate card (the table
+	// PricingSnapshot names). PricingFeedFallback says why a call the feed
+	// could have priced was priced from config, null when the feed priced
+	// it or is not configured. The feed identity and the endpoint and tier
+	// the call was billed at are set when the feed priced it; PriceTier is
+	// standard for config rates and null for an unpriced call.
+	PricingSource           string  `json:"pricing_source"`
+	PricingFeedFallback     *string `json:"pricing_feed_fallback"`
+	PricingFeedStoreVersion *string `json:"pricing_feed_store_version"`
+	PricingFeedAsOf         *string `json:"pricing_feed_as_of"`
+	PricingFeedSHA256       *string `json:"pricing_feed_sha256"`
+	PricingEndpointTag      *string `json:"pricing_endpoint_tag"`
+	PriceTier               *string `json:"price_tier"`
 	// ProviderReportedCurrency is the unit of the reported charge, set only
 	// where the unit is known: OpenRouter states usage.cost in credits of one
 	// US dollar each. A charge from any other upstream has no stated unit,
@@ -153,6 +169,7 @@ func (r *OpenAIRouter) newLLMUsageRecord(ctx *RequestContext, usage responseUsag
 		UsageSource:     responseUsageSource(usage),
 		Pricing:         usagePricingNotConfigured,
 		PricingSnapshot: r.pricingSnapshot(),
+		PricingSource:   usagePricingSourceConfig,
 	}
 	record.PromptTokens = reportedCount(usage.promptTokens, usage.promptTokensReported)
 	record.CachedPromptTokens = reportedCount(usage.cachedPromptTokens, usage.cachedPromptTokensReported)
@@ -258,35 +275,50 @@ func (r *OpenAIRouter) pricingSnapshot() string {
 	return id
 }
 
-// priceUsageRecord prices the call from the rate card, when it can be priced,
-// and records the cost metric.
-func (r *OpenAIRouter) priceUsageRecord(record *llmUsageRecord, model string, usage responseUsageMetrics) {
+// priceUsageRecord prices the call, when it can be priced, and records the
+// cost metric: at the live routing price when the call's ARC decision
+// carried the feed and the feed can name the call's price, otherwise from
+// the rate card.
+func (r *OpenAIRouter) priceUsageRecord(record *llmUsageRecord, ctx *RequestContext, model string, usage responseUsageMetrics) {
 	// A call the provider stated no usage for has nothing to price.
 	if responseUsageSource(usage) == usageSourceUnknown {
 		record.Pricing = usagePricingNoUsage
 		return
 	}
-	if r == nil || r.Config == nil {
-		return
-	}
-	pricing, ok := r.Config.GetFullModelPricing(model)
-	if !ok {
-		return
+	feedPrice, fallback := feedSettlementPrice(ctx, record.UpstreamProvider, usage)
+	record.PricingFeedFallback = nonEmpty(fallback)
+	var rates modelpricing.Rates
+	if feedPrice != nil {
+		rates = feedSettlementRates(feedPrice)
+	} else {
+		if r == nil || r.Config == nil {
+			return
+		}
+		pricing, ok := r.Config.GetFullModelPricing(model)
+		if !ok {
+			return
+		}
+		rates = modelPricingRates(pricing)
 	}
 	if !responseUsageHasPricableBreakdown(usage) {
 		record.Pricing = usagePricingBreakdownUnavailable
 		return
 	}
-	cost := costForResponseUsage(usage, pricing)
-	metrics.RecordModelCost(model, pricing.Currency, cost)
-	cacheWriteRate := effectiveCacheWriteRate(pricing)
+	cost := modelpricing.Cost(modelPricingUsage(usage), rates)
+	metrics.RecordModelCost(model, rates.Currency, cost)
+	cacheWriteRate := rates.EffectiveCacheWritePer1M()
 	record.Pricing = usagePricingPriced
 	record.Cost = &cost
-	record.Currency = nonEmpty(pricing.Currency)
-	record.PricingPromptPer1M = &pricing.PromptPer1M
-	record.PricingCachedInputPer1M = &pricing.CachedInputPer1M
+	record.Currency = nonEmpty(rates.Currency)
+	record.PricingPromptPer1M = &rates.PromptPer1M
+	record.PricingCachedInputPer1M = &rates.CachedInputPer1M
 	record.PricingCacheWritePer1M = &cacheWriteRate
-	record.PricingCompletionPer1M = &pricing.CompletionPer1M
+	record.PricingCompletionPer1M = &rates.CompletionPer1M
+	if feedPrice != nil {
+		recordFeedPrice(record, feedPrice)
+	} else {
+		record.PriceTier = nonEmpty(raylinearc.PriceTierStandard)
+	}
 }
 
 // emitLLMUsageRecord writes the record as the llm_usage log line and, when a

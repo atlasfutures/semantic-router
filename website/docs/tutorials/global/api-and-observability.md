@@ -163,6 +163,16 @@ is always present, and a value nobody stated is `null`, never `0`.
 record can be repriced against exactly the rates it was priced with.
 `request_id` is the caller's `x-request-id`.
 
+`pricing_source` says where the rates came from: `config`, the rate table, or
+`feed`, the ARC live routing price feed (`policy_service.routing_prices`),
+which settles an ARC call when it can name the call's endpoint and the feed is
+within `max_age_seconds`. A feed-priced record names the feed
+(`pricing_feed_store_version`, `pricing_feed_as_of`, `pricing_feed_sha256`),
+the endpoint (`pricing_endpoint_tag`) and the tier (`price_tier`: `standard`,
+or `higher` for a prompt at or past the row's long-context threshold). A call
+the feed could have priced and did not names the reason in
+`pricing_feed_fallback`, such as `endpoint_ambiguous` or `feed_expired`.
+
 The record is always written as the `llm_usage` log line. It can also be
 appended to a Redis stream:
 

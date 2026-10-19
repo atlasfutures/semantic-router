@@ -78,6 +78,11 @@ type RoutingPriceFeedModel struct {
 	ValidFrom   *string  `json:"valid_from"`
 	ValidUntil  *string  `json:"valid_until"`
 	Source      *string  `json:"source"`
+	// HigherTier is the long-prompt tier, null for a flat-rate model. It is
+	// read only to settle a call (routing_prices_settlement.go), never
+	// forwarded, and kept raw so a malformed tier refuses only its own row
+	// at settlement rather than the whole feed.
+	HigherTier json.RawMessage `json:"higher_tier"`
 	// legsPresent is whether the entry wrote all four legs, null or not.
 	// The service fills a null leg from the package but takes an omitted
 	// one as a malformed entry, so the request must not turn one into the

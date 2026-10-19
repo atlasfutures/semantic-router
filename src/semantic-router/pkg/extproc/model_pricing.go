@@ -36,7 +36,3 @@ func modelPricingRates(pricing config.ModelPricing) modelpricing.Rates {
 func costForResponseUsage(usage responseUsageMetrics, pricing config.ModelPricing) float64 {
 	return modelpricing.Cost(modelPricingUsage(usage), modelPricingRates(pricing))
 }
-
-func effectiveCacheWriteRate(pricing config.ModelPricing) float64 {
-	return modelPricingRates(pricing).EffectiveCacheWritePer1M()
-}

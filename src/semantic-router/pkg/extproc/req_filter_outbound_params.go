@@ -11,6 +11,7 @@ import (
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
 
 // dispatchedOutboundParams are the request parameters the provider-bound body
@@ -32,8 +33,11 @@ type dispatchedOutboundParams struct {
 	// routing constraint (allow_fallbacks, ignore, require_parameters,
 	// data_collection, max_price, ...) that decides the eligible endpoints.
 	ProviderPreferences string
-	ToolChoice          string
-	ToolChoiceName      string
+	// ProviderPin is the provider object's endpoint constraints as sent,
+	// unredacted and never logged: what a live routing price settles at.
+	ProviderPin    *raylinearc.SettlementPin
+	ToolChoice     string
+	ToolChoiceName string
 	// StopSequences is how many stop sequences were sent, never their text.
 	StopSequences *int64
 	// OutputFormat is the structured-output type (json_schema, json_object,
@@ -191,6 +195,7 @@ func readDispatchedOutboundParams(body []byte, dispatch *providerDispatch) *disp
 		// dispatch, and any other member it carries stays off the record.
 		var provider config.OpenRouterProviderPreferences
 		if json.Unmarshal(wire.Provider, &provider) == nil {
+			params.ProviderPin = settlementPinFromPreferences(&provider)
 			redactProviderPreferences(&provider)
 			params.ProviderOnly = provider.Only
 			if known, err := json.Marshal(provider); err == nil && string(known) != "{}" {
