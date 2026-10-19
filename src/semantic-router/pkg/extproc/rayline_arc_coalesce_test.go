@@ -359,6 +359,31 @@ func TestCoalescingKeyHoldsNoCredential(t *testing.T) {
 	}
 }
 
+// Requests that differ in exploration eligibility never share a decision: a
+// privacy-mode, opted-out or unstated follower would otherwise inherit an
+// eligible leader's explored model.
+func TestCoalescingKeySeparatesExplorationEligibility(t *testing.T) {
+	config := raylineARCAlgorithmConfigForTest().RaylineARC
+	eligible := coalesceRequestContext(`{"turn":1}`)
+	eligible.Headers[raylineARCPrivacyModeHeader] = "false"
+	eligible.Headers[raylineARCTrainingDataHeader] = "allowed"
+	key := raylineARCTurnInputs(config, eligible, nil)
+	for name, change := range map[string]func(map[string]string){
+		"privacy mode":     func(h map[string]string) { h[raylineARCPrivacyModeHeader] = "true" },
+		"privacy unstated": func(h map[string]string) { delete(h, raylineARCPrivacyModeHeader) },
+		"opted out":        func(h map[string]string) { h[raylineARCTrainingDataHeader] = "opted_out" },
+		"consent unstated": func(h map[string]string) { delete(h, raylineARCTrainingDataHeader) },
+	} {
+		other := coalesceRequestContext(`{"turn":1}`)
+		other.Headers[raylineARCPrivacyModeHeader] = "false"
+		other.Headers[raylineARCTrainingDataHeader] = "allowed"
+		change(other.Headers)
+		if raylineARCTurnInputs(config, other, nil) == key {
+			t.Errorf("%s: shares the eligible request's coalescing identity", name)
+		}
+	}
+}
+
 // Two otherwise identical requests that the gateway keyed differently are
 // different turns: one may be a subagent's own main turn, the other a side
 // call, so neither joins the other's decision.

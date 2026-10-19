@@ -18,6 +18,7 @@ package extproc
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
@@ -175,6 +176,13 @@ func addPolicyExplorationFields(fields map[string]interface{}, trace *selection.
 	}
 }
 
+// policyExplorationRefused reports the service's refusal of the cell's
+// exploration member.
+func policyExplorationRefused(err error) bool {
+	var failure *raylinearc.PolicyServiceError
+	return errors.As(err, &failure) && failure.Class == raylinearc.PolicyExplorationRefusedClass
+}
+
 // explorationUsage is the llm_usage members of a call's exploration record
 // (pathfinder#5436 "For VSR"): all nil when the decision carried none.
 type explorationUsage struct {
@@ -189,7 +197,18 @@ func policyExplorationUsage(trace *selection.RaylineARCTrace) explorationUsage {
 		return explorationUsage{}
 	}
 	record := trace.PolicyExploration
-	propensity, tau, explored := record.Propensity, record.Tau, record.Explored
+	copyFloat := func(value *float64) *float64 {
+		if value == nil {
+			return nil
+		}
+		copied := *value
+		return &copied
+	}
+	var explored *bool
+	if record.Explored != nil {
+		value := *record.Explored
+		explored = &value
+	}
 	// A held turn joins its boundary through the key that chose its model.
 	key := record.DecisionKey
 	if record.Held {
@@ -200,5 +219,7 @@ func policyExplorationUsage(trace *selection.RaylineARCTrace) explorationUsage {
 		copied := *key
 		decisionKey = &copied
 	}
-	return explorationUsage{propensity: &propensity, tau: &tau, explored: &explored, decisionKey: decisionKey}
+	return explorationUsage{
+		propensity: copyFloat(record.Propensity), tau: copyFloat(record.Tau), explored: explored, decisionKey: decisionKey,
+	}
 }

@@ -1,6 +1,7 @@
 package extproc
 
 import (
+	"encoding/json"
 	"os"
 	"reflect"
 	"slices"
@@ -124,7 +125,7 @@ func TestPolicyCellSendsExplorationForAnEligibleUserAndRecordsIt(t *testing.T) {
 	trace := result.RaylineARC
 	record := trace.PolicyExploration
 	if !trace.PolicyExplorationSent || trace.PolicyExplorationExcluded != "" || record == nil ||
-		!record.Applied || record.Propensity != 0.3318122278318338 || !record.Explored {
+		!record.Applied || *record.Propensity != 0.3318122278318338 || !*record.Explored {
 		t.Fatalf("trace sent %v excluded %q record %+v", trace.PolicyExplorationSent, trace.PolicyExplorationExcluded, record)
 	}
 	fields := map[string]interface{}{}
@@ -266,6 +267,48 @@ func TestExplorationHeadersAreTrustedSignalsAndNeverForwarded(t *testing.T) {
 	removed := raylineARCTurnSignalHeadersForRemoval()
 	if !slices.Contains(removed, raylineARCPrivacyModeHeader) || !slices.Contains(removed, raylineARCTrainingDataHeader) {
 		t.Fatalf("headers forwarded upstream: removal list %v", removed)
+	}
+}
+
+// A record whose usage members are null or missing keeps them null on
+// llm_usage: a propensity nobody stated is never 0, and explored never false.
+func TestExplorationUsageKeepsNullRecordFieldsNull(t *testing.T) {
+	for _, body := range []string{
+		`{"tau": null, "propensity": null, "explored": null, "decision_key": null}`,
+		`{}`,
+	} {
+		var record raylinearc.PolicyExplorationRecord
+		if err := json.Unmarshal([]byte(body), &record); err != nil {
+			t.Fatal(err)
+		}
+		assertNoExplorationUsage(t, usageLine(t, &selection.RaylineARCTrace{PolicyExploration: &record}))
+	}
+}
+
+// A two-stage cold turn whose attested re-ask is refused for its exploration
+// member fails on that refusal: it is never asked again narrowed, where a
+// greedy-looking success would hide the cell's misconfiguration.
+func TestAttestedAskRefusedForExplorationIsNotReaskedNarrowed(t *testing.T) {
+	fixture := newExplorationFixture(t, fixtureExploration(), nil)
+	asTwoStage(fixture)
+	fixture.fake.refuseCold = func(request raylinearc.PolicyDecisionRequest) bool {
+		return request.Selection.AttestedHeldActionID == nil && len(request.Attribution) == 0
+	}
+	fixture.fake.refuseAttestedWith = "exploration_basis_mismatch"
+	state, _ := raylinearc.NewEpisodeState(2)
+	held := 0
+	state.PreviousArm, state.TurnIndex = &held, 2
+	state.Policy = &raylinearc.PolicyEpisodeState{PrefixDigest: raylinearc.MessagesDigest(nil, 0)}
+	_, err := fixture.selectWith(t, state, typedFollowUp(t), func(arc *selection.RaylineARCSelectionContext) {
+		arc.ServedModels = []selection.RaylineARCServedModel{{Source: derivedHoldSessionRecord, Model: "vendor/off"}}
+		arc.PolicySignalHeaders = eligibleHeaders()
+	})
+	if class := selectionFailureClassOf(t, err); class != "policy_service_"+raylinearc.PolicyExplorationRefusedClass {
+		t.Fatalf("class %s", class)
+	}
+	calls := fixture.fake.received()
+	if len(calls) != 2 || calls[1].Selection.AttestedHeldActionID == nil || calls[1].Selection.Exploration == nil {
+		t.Fatalf("%d calls, offers %v; want the cold refusal and the attested ask only", len(calls), offersOf(calls))
 	}
 }
 

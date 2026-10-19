@@ -83,9 +83,11 @@ type RaylineARCPolicyServiceConfig struct {
 	// TrustTurnSignalHeaders reads the gateway's turn-signal headers from
 	// the request: x-rayline-call-kind, x-rayline-compaction,
 	// x-rayline-agent-key-source, x-rayline-parent-session and
-	// x-rayline-parent-agent. Set it only when a gateway in front of the
-	// router sets (or strips) every one of them, since a client could
-	// otherwise claim any turn is a side call or its own subagent episode.
+	// x-rayline-parent-agent, and the exploration eligibility headers
+	// x-rayline-privacy-mode and x-rayline-training-data. Set it only when a
+	// gateway in front of the router sets (or strips) every one of them,
+	// since a client could otherwise claim any turn is a side call or its own
+	// subagent episode, or consent to exploration.
 	// Off, they are ignored and the harness literals in the body decide.
 	// Either way none is forwarded upstream.
 	TrustTurnSignalHeaders bool `yaml:"trust_turn_signal_headers,omitempty"`

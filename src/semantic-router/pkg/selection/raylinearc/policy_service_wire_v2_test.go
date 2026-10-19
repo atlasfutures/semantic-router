@@ -57,7 +57,7 @@ func TestDecodePolicyDecisionResponseExploration(t *testing.T) {
 		t.Fatal("no stage-one exploration record")
 	}
 	record := response.Decision.StageOne.Exploration
-	if !record.Applied || record.Reason != nil || record.Tau != 0.02 || record.U == nil || !record.Explored ||
+	if !record.Applied || record.Reason != nil || record.Tau == nil || *record.Tau != 0.02 || record.U == nil || record.Explored == nil || !*record.Explored ||
 		record.Basis.ReadoutPin == "" || record.DecisionKey == nil || record.OriginDecisionKey != nil ||
 		record.Override == nil || *record.Override != "proxy_remap" {
 		t.Fatalf("exploration record %+v", record)
@@ -68,7 +68,7 @@ func TestDecodePolicyDecisionResponseExploration(t *testing.T) {
 	if effort := record.Chosen["effort"]; effort != nil || *record.Chosen["model"] != "glm-5.3-flash" {
 		t.Fatalf("chosen %v", record.Chosen)
 	}
-	if record.Propensity != record.Pi[1] {
+	if record.Propensity == nil || *record.Propensity != record.Pi[1] {
 		t.Fatalf("propensity %v, pi %v", record.Propensity, record.Pi)
 	}
 	if response.Actions[2].PredictedUsage != nil {

@@ -466,7 +466,9 @@ class RaylineARCPolicyServiceConfig(BaseModel):
     # Mirrors TrustTurnSignalHeaders in the Go loader: read the gateway's
     # turn-signal headers (x-rayline-call-kind, x-rayline-compaction,
     # x-rayline-agent-key-source, x-rayline-parent-session,
-    # x-rayline-parent-agent) only when a gateway sets or strips every one.
+    # x-rayline-parent-agent, and the exploration eligibility headers
+    # x-rayline-privacy-mode and x-rayline-training-data) only when a gateway
+    # sets or strips every one.
     trust_turn_signal_headers: bool = False
     # Mirrors CacheContext in the Go loader: send cache_context on each
     # decide; only for a policy service at or after pathfinder 204d287ec4.

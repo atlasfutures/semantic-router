@@ -676,13 +676,14 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 			// Any refusal of the attested ask -- held_unknown from a package
 			// that predates the field, or any other error -- is asked again
 			// narrowed, as before: the attested ask may only add a decision,
-			// never serve worse than the old hold.
-			if !scorer.attestable || err != nil {
+			// never serve worse than the old hold. An exploration refusal is
+			// the cell's config, not the package's age, so it stands.
+			if (!scorer.attestable || err != nil) && !policyExplorationRefused(err) {
 				available = derived.offer
 				derivedOffer = true
 				request.Selection.AvailableActionIDs = derived.offer
 				response, err = decidePolicyThroughBusy(ctx, armed.policy, request, scorer.busyWait, admit, withCacheContext)
-			} else {
+			} else if err == nil {
 				logRaylineARCAttestedHold(arcContext, derived, attested, response.Decision.SelectedActionID)
 			}
 		}

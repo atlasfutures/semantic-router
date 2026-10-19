@@ -524,6 +524,9 @@ a gateway sets instead:
   harness subagent's episode (`episode.id_header`).
 - `x-rayline-parent-session` and `x-rayline-parent-agent`, the episode id and
   agent id of the conversation a subagent was spawned from.
+- `x-rayline-privacy-mode: true | false` and
+  `x-rayline-training-data: allowed | opted_out`, whether a turn may be
+  explored (see "Stage-1 exploration").
 
 A subagent the gateway keyed on its harness agent id (`agent`) is its own
 conversation: a main turn of its own episode, with its own ledger, schedule
@@ -535,8 +538,11 @@ It never routes: it does not select, hold or narrow a subagent's actions
 
 Set the option only when a gateway in front of the router sets these
 headers, or strips them from client requests. Otherwise a client could mark
-its own turns as side calls, which are not counted, or as compactions. With
-the setting off, the headers are ignored. Either way, none of them is
+its own turns as side calls, which are not counted, or as compactions, or
+claim consent to exploration. A gateway that already sets the turn-signal
+headers must also set or strip the two exploration headers before an
+exploration cell is enabled behind it. With the setting off, the headers are
+ignored. Either way, none of them is
 forwarded to a provider.
 
 ## Derived hold for two-stage packages

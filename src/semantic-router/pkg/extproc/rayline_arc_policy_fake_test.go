@@ -56,6 +56,9 @@ type fakePolicyService struct {
 	// attested_held_action_id with 400 invalid_request, as a service that
 	// rejects the field.
 	rejectAttested bool
+	// refuseAttestedWith, when set, answers every decide that carries
+	// attested_held_action_id with 422 selection_refused and this reason.
+	refuseAttestedWith string
 	requests       []raylinearc.PolicyDecisionRequest
 	// relaxedUnsupported, when set, answers every relaxed decide with 422
 	// unsupported_request and this detail.reason, as a service whose
@@ -166,7 +169,7 @@ func (fake *fakePolicyService) serve(writer http.ResponseWriter, request *http.R
 		fake.requests = append(fake.requests, decide)
 		fake.bodies = append(fake.bodies, body)
 		choose, failWith, failDetail, relaxedUnsupported := fake.choose, fake.failWith, fake.failDetail, fake.relaxedUnsupported
-		refuseCold, rejectAttested := fake.refuseCold, fake.rejectAttested
+		refuseCold, rejectAttested, refuseAttestedWith := fake.refuseCold, fake.rejectAttested, fake.refuseAttestedWith
 		if fake.failFirstLeft > 0 {
 			fake.failFirstLeft--
 			failWith = fake.failFirst
@@ -181,6 +184,12 @@ func (fake *fakePolicyService) serve(writer http.ResponseWriter, request *http.R
 		if rejectAttested && decide.Selection.AttestedHeldActionID != nil {
 			fake.writeJSON(writer, http.StatusBadRequest, map[string]any{
 				"error": "invalid_request", "detail": map[string]any{"field": "selection.attested_held_action_id"},
+			})
+			return
+		}
+		if refuseAttestedWith != "" && decide.Selection.AttestedHeldActionID != nil {
+			fake.writeJSON(writer, http.StatusUnprocessableEntity, map[string]any{
+				"error": "selection_refused", "detail": map[string]any{"reason": refuseAttestedWith},
 			})
 			return
 		}
@@ -357,11 +366,13 @@ func (fake *fakePolicyService) explorationRecord(
 	var fixture raylinearc.PolicyDecisionResponse
 	fake.readFixture("decision_response_exploration.v1.json", &fixture)
 	record := fixture.Decision.StageOne.Exploration
-	record.Tau, record.RequestedTau, record.Basis, record.Salt = explore.Tau, explore.Tau, explore.Basis, explore.Salt
+	tau := explore.Tau
+	record.Tau, record.RequestedTau, record.Basis, record.Salt = &tau, explore.Tau, explore.Basis, explore.Salt
 	if held {
 		origin := "origin-" + *record.DecisionKey
-		record.Applied, record.Reason, record.Tau, record.U = false, nil, 0, nil
-		record.Propensity, record.Explored, record.Held = 1, false, true
+		greedy, one, explored := 0.0, 1.0, false
+		record.Applied, record.Reason, record.Tau, record.U = false, nil, &greedy, nil
+		record.Propensity, record.Explored, record.Held = &one, &explored, true
 		record.DecisionKey, record.OriginDecisionKey = nil, &origin
 	}
 	return &raylinearc.PolicyDecisionStageOne{Exploration: record}

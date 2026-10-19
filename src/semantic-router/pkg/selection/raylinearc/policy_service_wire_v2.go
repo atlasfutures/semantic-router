@@ -89,10 +89,12 @@ type PolicyStageOneCandidate map[string]*string
 // PolicyExplorationRecord is what a decision under a requested tau served
 // (pathfinder docs/arc_serving_contract.md, "Exploration"). Offered, Scores
 // and Pi align in catalog order; a null score is an ineligible candidate.
+// Tau, Propensity and Explored feed llm_usage, so a null or missing one stays
+// nil rather than reading as 0 or false.
 type PolicyExplorationRecord struct {
 	Applied           bool                      `json:"applied"`
 	Reason            *string                   `json:"reason"`
-	Tau               float64                   `json:"tau"`
+	Tau               *float64                  `json:"tau"`
 	RequestedTau      float64                   `json:"requested_tau"`
 	Basis             PolicyExplorationBasis    `json:"basis"`
 	Salt              string                    `json:"salt"`
@@ -102,8 +104,8 @@ type PolicyExplorationRecord struct {
 	Pi                []float64                 `json:"pi"`
 	Greedy            PolicyStageOneCandidate   `json:"greedy"`
 	Chosen            PolicyStageOneCandidate   `json:"chosen"`
-	Propensity        float64                   `json:"propensity"`
-	Explored          bool                      `json:"explored"`
+	Propensity        *float64                  `json:"propensity"`
+	Explored          *bool                     `json:"explored"`
 	PackageSHA256     string                    `json:"package_sha256"`
 	DecisionKey       *string                   `json:"decision_key"`
 	Held              bool                      `json:"held"`
