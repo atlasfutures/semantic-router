@@ -23,7 +23,8 @@ package raylinearc
 // strict decoder accept them once a caller sends the members. The Decisions
 // API v2 request members (PolicyTierPoint here, response_fields and
 // operating_point.cost_weight on the request) are sent only when a cell's
-// decisions_v2 configures them.
+// decisions_v2 configures them; selection.exploration only when a cell's
+// exploration does and the turn's user is eligible.
 
 // PolicyPricePerMtok is the USD-per-million-token rates the decision priced
 // an action's arm at. A leg without a rate is null, never 0.
@@ -71,6 +72,14 @@ type PolicyExplorationBasis struct {
 	R             float64 `json:"r"`
 	PackageSHA256 string  `json:"package_sha256"`
 	ReadoutPin    string  `json:"readout_pin"`
+}
+
+// PolicyExplorationRequest is selection.exploration: a Stage-1 temperature,
+// the calibration it came from and the draw's salt.
+type PolicyExplorationRequest struct {
+	Tau   float64                `json:"tau"`
+	Basis PolicyExplorationBasis `json:"basis"`
+	Salt  string                 `json:"salt"`
 }
 
 // PolicyStageOneCandidate is a Stage-1 candidate id ({model, effort}); the

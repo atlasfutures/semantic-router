@@ -62,8 +62,9 @@ type PolicyServiceError struct {
 	Status int
 	// Detail is the refusal's detail for the classes a caller acts on
 	// (context_exceeds_encoder_capacity: token_count and max_tokens;
-	// selection_refused, stage_one_held_unknown and decisions_v2_refused: a
-	// bounded reason; media_refused: a bounded sub_reason); nil
+	// selection_refused, stage_one_held_unknown, decisions_v2_refused and
+	// exploration_refused: a bounded reason; media_refused: a bounded
+	// sub_reason); nil
 	// otherwise, so no free-form service text travels further.
 	Detail map[string]any
 }
@@ -211,10 +212,28 @@ var policyDecisionsV2RefusalReasons = map[string]string{
 	"tier_points_unsupported":        "unsupported_request",
 }
 
+// PolicyExplorationRefusedClass is the service's refusal of a cell's Stage-1
+// exploration member (pathfinder#5436, selection_refused): a tau above the
+// replica's ceiling (exploration_tau_exceeds_ceiling), a tau calibrated on
+// another package (exploration_basis_mismatch), or a package that cannot
+// explore (exploration_unsupported_by_package). Like decisions_v2_refused,
+// they are the cell's configuration against its service and package, so
+// every eligible turn fails the same way: neither held nor undecidable.
+const PolicyExplorationRefusedClass = "exploration_refused"
+
+var policyExplorationRefusalReasons = map[string]bool{
+	"exploration_tau_exceeds_ceiling":    true,
+	"exploration_basis_mismatch":         true,
+	"exploration_unsupported_by_package": true,
+}
+
 func policyFailureClass(failure PolicyErrorResponse) string {
 	reason, _ := failure.Detail["reason"].(string)
 	if code, ok := policyDecisionsV2RefusalReasons[reason]; ok && code == failure.Error {
 		return PolicyDecisionsV2RefusedClass
+	}
+	if failure.Error == "selection_refused" && policyExplorationRefusalReasons[reason] {
+		return PolicyExplorationRefusedClass
 	}
 	if failure.Error == "selection_refused" && reason == PolicyStageOneHeldUnknownClass {
 		return PolicyStageOneHeldUnknownClass
@@ -357,7 +376,7 @@ func (client *PolicyServiceClient) do(
 				refusal.Detail = map[string]any{"reason": PolicyRefusalReason(failure.Detail)}
 			case PolicyMediaRefusedClass:
 				refusal.Detail = map[string]any{"sub_reason": PolicyMediaRefusalSubReason(failure.Detail)}
-			case PolicyDecisionsV2RefusedClass:
+			case PolicyDecisionsV2RefusedClass, PolicyExplorationRefusedClass:
 				refusal.Detail = map[string]any{"reason": failure.Detail["reason"]}
 			}
 			return nil, refusal

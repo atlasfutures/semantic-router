@@ -81,10 +81,11 @@ func TestPolicyWireTypesRoundTripTheFixtures(t *testing.T) {
 		"decision_request_relaxed.v1.json":      &PolicyDecisionRequest{},
 		// Decisions API v2 request members (pathfinder#5443).
 		"decision_request_decisions_v2.v1.json": &PolicyDecisionRequest{},
-		"decision_response.v1.json":             &PolicyDecisionResponse{},
+		// Stage-1 exploration request member (pathfinder#5436).
+		"decision_request_exploration.v1.json": &PolicyDecisionRequest{},
+		"decision_response.v1.json":            &PolicyDecisionResponse{},
 		// Opt-in response blocks: Decisions API v2 (pathfinder#5443) and
-		// Stage-1 exploration (pathfinder#5436). The exploration request
-		// fixture is pinned above but carries a member VSR does not send yet.
+		// Stage-1 exploration (pathfinder#5436).
 		"decision_response_decisions_v2.v1.json": &PolicyDecisionResponse{},
 		"decision_response_exploration.v1.json":  &PolicyDecisionResponse{},
 		"packages_response.v1.json":              &PolicyPackagesResponse{},

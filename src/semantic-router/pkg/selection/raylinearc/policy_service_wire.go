@@ -80,6 +80,10 @@ type PolicySelection struct {
 	// (Decisions API v2, pathfinder#5443); the response's decision.tier_picks
 	// carries each. Omitted when none are configured.
 	TierPoints []PolicyTierPoint `json:"tier_points,omitempty"`
+	// Exploration asks for a Stage-1 exploration draw (pathfinder#5436); the
+	// response's decision.stage_one.exploration records it. Omitted unless
+	// the cell configures it and the turn's user is eligible.
+	Exploration *PolicyExplorationRequest `json:"exploration,omitempty"`
 }
 
 type PolicyEvaluation struct {
