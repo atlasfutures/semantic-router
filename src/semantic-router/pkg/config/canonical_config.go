@@ -276,6 +276,9 @@ func validateCanonicalProviderModel(
 	if err := validateProviderPreferences(model.Name, model.ProviderPreferences); err != nil {
 		return "", err
 	}
+	if err := validateProviderServiceTier(model.Name, model.ServiceTier); err != nil {
+		return "", err
+	}
 	if err := validateCanonicalProviderModelMetadata(model); err != nil {
 		return "", err
 	}

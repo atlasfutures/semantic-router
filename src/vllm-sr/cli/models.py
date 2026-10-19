@@ -1841,6 +1841,11 @@ class Model(BaseModel):
     # discount endpoint's 429 or pre-byte timeout is re-sent on, once. The Go
     # loader validates the pairing.
     standard_twin: Optional[str] = None
+    # Mirrors CanonicalProviderModel.ServiceTier: the OpenRouter service_tier
+    # the arm sends, replacing any tier the client sent.
+    service_tier: Optional[
+        Literal["default", "flex", "priority", "fast", "ultrafast"]
+    ] = None
 
     @model_validator(mode="after")
     def validate_accepted_formats(self):

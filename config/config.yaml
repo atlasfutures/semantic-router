@@ -177,6 +177,10 @@ providers:
         ignore:
           - openai/flex
         allow_fallbacks: false
+      # The OpenRouter service tier this arm is priced at, sent as the
+      # top-level service_tier (it replaces a client's); the re-send above
+      # carries this tier, not the flex entry's.
+      service_tier: default
       backend_refs:
         - name: openrouter-standard
           base_url: https://openrouter.ai/api/v1
