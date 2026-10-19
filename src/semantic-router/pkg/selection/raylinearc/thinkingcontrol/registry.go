@@ -49,7 +49,7 @@ var embeddedArtifact []byte
 
 // EmbeddedSHA256 is the sha256 of the embedded artifact, as pathfinder's
 // golden corpora record it in registry_pin.
-const EmbeddedSHA256 = "2b50b694ecb0352359ef0034ad5607c0375e62b33b65f8de17a1b1d5c2f4d431"
+const EmbeddedSHA256 = "54926e214a360a69459da72fa318b4db9101f47a4beb95712d840790c52f5419"
 
 var (
 	embeddedOnce sync.Once

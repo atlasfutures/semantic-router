@@ -335,7 +335,9 @@ func TestNewModelsAdmitSteeringOnlyOnOpenRouterMessages(t *testing.T) {
 			var steer *Control
 			for id := range cell.controls {
 				control, _ := reg.Control(id)
-				if control.Instruction != nil && control.Instruction.Level == "up" {
+				// The muse cell also lists every_turn_v1 steers, which VSR
+				// refuses outright (rule_sets_test.go).
+				if control.Instruction != nil && control.Instruction.Level == "up" && control.Instruction.Implemented() {
 					steer = &control
 					break
 				}
