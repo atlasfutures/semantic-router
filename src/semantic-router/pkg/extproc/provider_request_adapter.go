@@ -67,10 +67,6 @@ func (r *OpenAIRouter) adaptProviderRequest(
 	if err != nil {
 		return nil, err
 	}
-	body, err = applyServiceTier(body, dispatch, r.Config, ctx)
-	if err != nil {
-		return nil, err
-	}
 	// Read back rather than remember: the record then names the bytes that
 	// travel, whichever mutation put them there.
 	recordDispatchedReasoningControls(ctx, body)
@@ -93,10 +89,6 @@ func (r *OpenAIRouter) adaptMessagesProviderRequest(
 		return nil, err
 	}
 	body, err = applyProviderPreferences(body, dispatch, r.Config)
-	if err != nil {
-		return nil, err
-	}
-	body, err = applyServiceTier(body, dispatch, r.Config, ctx)
 	if err != nil {
 		return nil, err
 	}

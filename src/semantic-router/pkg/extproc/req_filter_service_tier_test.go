@@ -10,6 +10,7 @@ import (
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/utils/entropy"
 )
 
 // withArmServiceTier sets an arm's configured service tier on a test router.
@@ -34,6 +35,26 @@ func TestConfiguredArmSendsItsServiceTierToOpenRouter(t *testing.T) {
 	}
 	if ctx.DispatchedServiceTier != "default" {
 		t.Fatalf("dispatched service tier = %q, want default", ctx.DispatchedServiceTier)
+	}
+}
+
+// A dispatch without a decision (a direct model request, a Looper hop)
+// returns from the provider adapter early; the tier still travels.
+func TestConfiguredArmSendsItsServiceTierWithoutADecision(t *testing.T) {
+	router := providerPinRouter("https://openrouter.ai/api/v1", nil)
+	withArmServiceTier(router, providerPinArm, "default")
+	request := testNeutralRequest("auto", "route this arm")
+	ctx := routingTestContext(llmprotocol.OpenAIChatV1, request)
+
+	response, err := router.handleEntrypointModelRouting(
+		request, "auto", "", entropy.ReasoningDecision{}, providerPinArm, ctx,
+	)
+	if err != nil {
+		t.Fatalf("handleEntrypointModelRouting: %v", err)
+	}
+	raw := response.GetRequestBody().GetResponse().GetBodyMutation().GetBody()
+	if !bytes.Contains(raw, []byte(`"service_tier":"default"`)) {
+		t.Fatalf("the configured tier did not reach the wire without a decision:\n%s", raw)
 	}
 }
 
