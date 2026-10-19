@@ -62,7 +62,8 @@ type PolicyServiceError struct {
 	Status int
 	// Detail is the refusal's detail for the classes a caller acts on
 	// (context_exceeds_encoder_capacity: token_count and max_tokens;
-	// selection_refused and stage_one_held_unknown: a bounded reason); nil
+	// selection_refused and stage_one_held_unknown: a bounded reason;
+	// media_refused: a bounded sub_reason); nil
 	// otherwise, so no free-form service text travels further.
 	Detail map[string]any
 }
@@ -150,6 +151,43 @@ func PolicyRefusalReason(detail map[string]any) string {
 	return "other"
 }
 
+// PolicyMediaRefusedClass is the projection's typed refusal of a content part
+// it cannot read (unsupported_request with detail.reason media_refused,
+// pathfinder#5281). The part stays in the conversation, so every later turn
+// is refused the same way; a caller holds the episode's last served action
+// rather than failing each of them. A service that predates the typed reason
+// answers runtime_refused, which stays unsupported_request.
+const PolicyMediaRefusedClass = "media_refused"
+
+// policyMediaRefusalSubReasons are the media refusal reasons the projection
+// states (pathfinder curation/canonical_media.py RefusalReason). A sub_reason
+// outside the set is logged as "other", so no free-form service text becomes
+// a log value.
+var policyMediaRefusalSubReasons = map[string]bool{
+	"remote_image_unsupported":       true,
+	"file_image_unsupported":         true,
+	"unsupported_image_source":       true,
+	"undecodable_image":              true,
+	"unsupported_image_media_type":   true,
+	"image_aspect_ratio_unsupported": true,
+	"image_too_large":                true,
+	"image_size_unsupported":         true,
+	"image_mode_unsupported":         true,
+	"document_unsupported":           true,
+	"audio_unsupported":              true,
+	"malformed_redacted_thinking":    true,
+	"vision_token_in_text":           true,
+}
+
+// PolicyMediaRefusalSubReason is a media refusal's bounded sub_reason.
+func PolicyMediaRefusalSubReason(detail map[string]any) string {
+	reason, _ := detail["sub_reason"].(string)
+	if policyMediaRefusalSubReasons[reason] {
+		return reason
+	}
+	return "other"
+}
+
 func policyFailureClass(failure PolicyErrorResponse) string {
 	if failure.Error == "selection_refused" {
 		if reason, _ := failure.Detail["reason"].(string); reason == PolicyStageOneHeldUnknownClass {
@@ -157,8 +195,12 @@ func policyFailureClass(failure PolicyErrorResponse) string {
 		}
 	}
 	if failure.Error == "unsupported_request" {
-		if reason, _ := failure.Detail["reason"].(string); strings.HasPrefix(reason, "relaxed_") {
+		reason, _ := failure.Detail["reason"].(string)
+		if strings.HasPrefix(reason, "relaxed_") {
 			return PolicyRelaxedUnsupportedClass
+		}
+		if reason == PolicyMediaRefusedClass {
+			return PolicyMediaRefusedClass
 		}
 	}
 	return PolicyServiceErrorClass(failure.Error)
@@ -289,6 +331,8 @@ func (client *PolicyServiceClient) do(
 				refusal.Detail = capacityRefusalDetail(failure.Detail)
 			case PolicySelectionRefusedClass, PolicyStageOneHeldUnknownClass:
 				refusal.Detail = map[string]any{"reason": PolicyRefusalReason(failure.Detail)}
+			case PolicyMediaRefusedClass:
+				refusal.Detail = map[string]any{"sub_reason": PolicyMediaRefusalSubReason(failure.Detail)}
 			}
 			return nil, refusal
 		}
