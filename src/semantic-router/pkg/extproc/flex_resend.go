@@ -371,7 +371,7 @@ func (r *OpenAIRouter) settleFlexAttempt(ctx *RequestContext, trigger string, st
 	contentSent := false
 	record.ContentSentBeforeFailure = &contentSent
 	record.FlexResend = nonEmpty(flexResendAttempt)
-	r.priceUsageRecord(&record, ctx.RequestModel, usage)
+	r.priceUsageRecord(&record, ctx, ctx.RequestModel, usage)
 	emitLLMUsageRecord(record)
 	// The discount endpoint failed the call: it counts against it in the
 	// load-balancing window, as any backend error does.

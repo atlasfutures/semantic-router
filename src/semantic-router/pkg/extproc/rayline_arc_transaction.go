@@ -284,9 +284,13 @@ func (transaction *raylineARCEpisodeTransaction) markPolicyState(
 
 // stageRaylineARCPolicySelection stages what a policy-service decision
 // commits with the turn and, at a schedule boundary, stores the decision
-// before the request is dispatched.
+// before the request is dispatched. An ephemeral lookup prepares no
+// transaction, so it stages nothing.
 func stageRaylineARCPolicySelection(ctx *RequestContext, trace *selection.RaylineARCTrace, worker string) {
 	transaction := ctx.RaylineARCTransaction
+	if transaction == nil {
+		return
+	}
 	transaction.markPolicyState(trace.PolicyNextState, trace.PolicySideCall)
 	if trace.PolicyActionID != "" && !trace.PolicySideCall {
 		// The action's model, or, for a binding that declares none, its

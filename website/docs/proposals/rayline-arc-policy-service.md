@@ -313,6 +313,21 @@ maps them to arms, fills a null leg from the package, and falls back per arm.
   models with their counts, and the selected action's predicted cost. The
   selection log carries the same and the cache status. Prometheus counts
   fetches by class, lookups by status, and decisions by mode.
+- **Settlement.** The call an ARC decision dispatched is settled at the same
+  feed, while the cache would still send it (within `max_age_seconds`, by its
+  fetch and by its `as_of`). The row is the dispatched OpenRouter model at the
+  endpoint its `provider` pin admits: `only`, or `order` with
+  `allow_fallbacks: false`, less `ignore`, where an entry admits its own tag
+  and that tag's variants (`openai` admits `openai/flex`). A pin naming one
+  endpoint that admits one row settles at it; otherwise the response's
+  `provider` must name exactly one admitted row. A row with a null or
+  negative leg, outside its `valid_from`/`valid_until`, or with a
+  `higher_tier` lacking a positive integer `min_prompt_tokens` or any of its
+  four legs is not used. A prompt (uncached, cache read and cache write
+  together) of `min_prompt_tokens` or more bills every leg of the call at the
+  `higher_tier`. Any call the feed cannot price with certainty settles at the
+  configured rate card and its usage record says why
+  (`pricing_feed_fallback`). Readiness still requires the rate card.
 
 Rollout: enable `routing_prices` only after the policy service accepts the
 field (an older service refuses the request), and load a package re-exported

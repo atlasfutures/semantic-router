@@ -799,5 +799,13 @@ func prepareFailureError(failure string) error {
 		return fmt.Errorf("%w: %w: %w",
 			routerruntime.ErrRouteDecisionInvalidBody, errRaylineRoutesRequestShape, base)
 	}
+	// Both entrypoints must answer this the same way. The adapter reads
+	// sentinels rather than classes, so without one here a turn naming
+	// previous_response_id would be a 400 on the ExtProc path and a 503 on
+	// the decision API -- the inconsistency memex-desktop#7484 is about.
+	if failure == arcFailureResponsesPreviousID {
+		return fmt.Errorf("%w: %w: %w",
+			routerruntime.ErrRouteDecisionInvalidBody, errRaylineRoutesStatelessPath, base)
+	}
 	return base
 }
