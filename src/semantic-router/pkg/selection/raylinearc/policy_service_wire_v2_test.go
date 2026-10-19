@@ -74,6 +74,24 @@ func TestDecodePolicyDecisionResponseExploration(t *testing.T) {
 	if response.Actions[2].PredictedUsage != nil {
 		t.Fatal("a null predicted_usage decoded to a value")
 	}
+
+	// A caller-held greedy record: null greedy, chosen, u and override.
+	held, err := DecodePolicyDecisionResponse(fixtureWith(t, "decision_response_exploration.v1.json", func(body map[string]any) {
+		stageOne := body["decision"].(map[string]any)["stage_one"].(map[string]any)
+		exploration := stageOne["exploration"].(map[string]any)
+		for _, key := range []string{"greedy", "chosen", "u", "override", "decision_key"} {
+			exploration[key] = nil
+		}
+		exploration["reason"] = "caller_held"
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	greedy := held.Decision.StageOne.Exploration
+	if greedy.Greedy != nil || greedy.Chosen != nil || greedy.U != nil || greedy.Override != nil ||
+		greedy.DecisionKey != nil || greedy.Reason == nil || *greedy.Reason != "caller_held" {
+		t.Fatalf("greedy record %+v", greedy)
+	}
 }
 
 // A v1 response carries none of the opt-in blocks.
