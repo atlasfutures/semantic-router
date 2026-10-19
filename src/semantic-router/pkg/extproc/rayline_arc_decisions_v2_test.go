@@ -124,7 +124,7 @@ func TestPolicyCellSendsDecisionsV2MembersAndRecordsTheEcho(t *testing.T) {
 		t.Fatalf("operating point %+v", point)
 	}
 	picks := result.RaylineARC.PolicyTierPicks
-	if len(picks) != 3 || picks["sage"].SelectedActionID != served {
+	if len(picks) != 3 || picks["sage"].SelectedActionID != served || result.RaylineARC.PolicyTierPicksMissing != nil {
 		t.Fatalf("tier picks %+v, want only swift, keen and sage", picks)
 	}
 	fields := map[string]interface{}{}
@@ -132,6 +132,9 @@ func TestPolicyCellSendsDecisionsV2MembersAndRecordsTheEcho(t *testing.T) {
 	logged := fields["policy_operating_point"].(map[string]interface{})
 	if logged["point_id"] != "point-1" || logged["cost_weight"] != 1.0 {
 		t.Fatalf("logged operating point %v", logged)
+	}
+	if _, missing := fields["policy_tier_picks_missing"]; missing {
+		t.Fatalf("complete picks logged as missing: %v", fields)
 	}
 	if loggedPicks := fields["policy_tier_picks"].(map[string]interface{}); len(loggedPicks) != 3 {
 		t.Fatalf("logged tier picks %v", loggedPicks)
@@ -186,5 +189,25 @@ func TestPolicyCellFailsOnDecisionsV2Refusals(t *testing.T) {
 	state, _ := raylinearc.NewEpisodeState(2)
 	if _, err := fixture.selectOn(t, state, policyTestRequest(t, map[string]any{"role": "user", "content": "go"})); err != nil {
 		t.Fatalf("V 0: %v", err)
+	}
+}
+
+// A configured tier the response has no pick for is named as missing, so the
+// logged picks are never read as a complete set; the turn is still served.
+func TestPolicyCellNamesAMissingTierPick(t *testing.T) {
+	fixture := newDecisionsV2Fixture(t, fixtureDecisionsV2())
+	fixture.fake.omitTierPick = "keen"
+	state, _ := raylinearc.NewEpisodeState(2)
+	result, err := fixture.selectOn(t, state, policyTestRequest(t, map[string]any{"role": "user", "content": "go"}))
+	if err != nil {
+		t.Fatalf("select: %v", err)
+	}
+	if len(result.RaylineARC.PolicyTierPicks) != 2 || !reflect.DeepEqual(result.RaylineARC.PolicyTierPicksMissing, []string{"keen"}) {
+		t.Fatalf("picks %+v, missing %v", result.RaylineARC.PolicyTierPicks, result.RaylineARC.PolicyTierPicksMissing)
+	}
+	fields := map[string]interface{}{}
+	addPolicyDecisionsV2Fields(fields, result.RaylineARC)
+	if !reflect.DeepEqual(fields["policy_tier_picks_missing"], []string{"keen"}) {
+		t.Fatalf("logged missing %v", fields["policy_tier_picks_missing"])
 	}
 }

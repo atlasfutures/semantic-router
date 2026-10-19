@@ -85,7 +85,8 @@ func (members *policyDecisionsV2) operatingPointMismatch(response *raylinearc.Po
 // record keeps the resolved operating point and the tier picks on the turn's
 // trace, for its selection log. The picks are recorded only: the turn serves
 // the decision's own action. Only the configured tier names are kept, so no
-// service-chosen key becomes a log key.
+// service-chosen key becomes a log key; a configured tier with no pick is
+// named as missing rather than dropped.
 func (members *policyDecisionsV2) record(trace *selection.RaylineARCTrace, response *raylinearc.PolicyDecisionResponse) {
 	if members == nil {
 		return
@@ -95,6 +96,7 @@ func (members *policyDecisionsV2) record(trace *selection.RaylineARCTrace, respo
 	for _, tier := range members.tierPoints {
 		pick, ok := response.Decision.TierPicks[tier.Name]
 		if !ok {
+			trace.PolicyTierPicksMissing = append(trace.PolicyTierPicksMissing, tier.Name)
 			continue
 		}
 		if trace.PolicyTierPicks == nil {
@@ -119,6 +121,9 @@ func addPolicyDecisionsV2Fields(fields map[string]interface{}, trace *selection.
 		point["cost_weight"] = *weight
 	}
 	fields["policy_operating_point"] = point
+	if len(trace.PolicyTierPicksMissing) > 0 {
+		fields["policy_tier_picks_missing"] = trace.PolicyTierPicksMissing
+	}
 	if len(trace.PolicyTierPicks) == 0 {
 		return
 	}

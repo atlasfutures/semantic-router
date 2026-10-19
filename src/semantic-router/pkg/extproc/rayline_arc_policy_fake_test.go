@@ -81,6 +81,8 @@ type fakePolicyService struct {
 	// echoes null.
 	echoCostWeight   *float64
 	echoNoCostWeight bool
+	// omitTierPick, when set, leaves this tier point without a pick.
+	omitTierPick string
 }
 
 func newFakePolicyService(t *testing.T, alias, sha256 string, catalog []string) *fakePolicyService {
@@ -272,6 +274,7 @@ func (fake *fakePolicyService) decision(request raylinearc.PolicyDecisionRequest
 		response.TimingMillis.Encode = nil
 	}
 	nullRevision, ignoreEpisodeMode, echoCostWeight, echoNoCostWeight := fake.nullRevision, fake.ignoreEpisodeMode, fake.echoCostWeight, fake.echoNoCostWeight
+	omitTierPick := fake.omitTierPick
 	response.PackageVerification = fake.verification
 	if fake.echo != nil {
 		response.RoutingPricesUsed = fake.echo(request)
@@ -310,7 +313,9 @@ func (fake *fakePolicyService) decision(request raylinearc.PolicyDecisionRequest
 		pick := raylinearc.PolicyTierPick{SelectedActionID: selected, SelectedArmID: response.Decision.SelectedArmID, Model: "model-" + selected[:8]}
 		response.Decision.TierPicks = map[string]raylinearc.PolicyTierPick{"unrequested": pick}
 		for _, tier := range request.Selection.TierPoints {
-			response.Decision.TierPicks[tier.Name] = pick
+			if tier.Name != omitTierPick {
+				response.Decision.TierPicks[tier.Name] = pick
+			}
 		}
 	}
 	// A relaxed call advances no session (pathfinder#3068).

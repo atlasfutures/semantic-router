@@ -152,6 +152,9 @@ type RaylineARCTrace struct {
 	// with decisions_v2; the tier picks are recorded, never served.
 	PolicyOperatingPoint *raylinearc.PolicyResolvedOperatingPoint
 	PolicyTierPicks      map[string]raylinearc.PolicyTierPick
+	// PolicyTierPicksMissing names the configured tier points the response
+	// carried no pick for, so a partial set is never read as complete.
+	PolicyTierPicksMissing []string
 	// RoutingPricesStatus is the routing price cache status the request
 	// read (fresh, stale, expired, absent); empty when live prices are not
 	// configured. RoutingPricesUsed is the service's echo, nil when it sent
