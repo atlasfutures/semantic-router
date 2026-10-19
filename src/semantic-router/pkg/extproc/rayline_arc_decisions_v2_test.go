@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -23,8 +24,19 @@ func newDecisionsV2Fixture(t *testing.T, v2 *config.RaylineARCDecisionsV2Config)
 			BaseURL: fixture.fake.URL(), TotalTimeout: 5 * time.Second,
 		}),
 	})
-	actionID := fixture.decision.Algorithm.RaylineARC.PolicyService.Bindings[0].ActionID
+	policy := fixture.decision.Algorithm.RaylineARC.PolicyService
+	actionID := policy.Bindings[0].ActionID
 	fixture.fake.chooseWith(func(raylinearc.PolicyDecisionRequest) string { return actionID })
+	// Each tier pick names its action's bound model, as the service's
+	// catalog does.
+	fixture.fake.tierPickModel = func(picked string) string {
+		for _, binding := range policy.Bindings {
+			if binding.ActionID == picked {
+				return binding.Model
+			}
+		}
+		return ""
+	}
 	return fixture
 }
 
@@ -209,5 +221,39 @@ func TestPolicyCellNamesAMissingTierPick(t *testing.T) {
 	addPolicyDecisionsV2Fields(fields, result.RaylineARC)
 	if !reflect.DeepEqual(fields["policy_tier_picks_missing"], []string{"keen"}) {
 		t.Fatalf("logged missing %v", fields["policy_tier_picks_missing"])
+	}
+}
+
+// A tier pick the cell could not have served -- an action it does not bind or
+// did not offer, or a model its binding does not serve -- is named invalid
+// and not kept; the turn is still served.
+func TestPolicyCellNamesInvalidTierPicks(t *testing.T) {
+	for name, corrupt := range map[string]func(*policySelectorFixture){
+		"unbound action": func(f *policySelectorFixture) { f.fake.tierPickAction = strings.Repeat("f", 64) },
+		"another model": func(f *policySelectorFixture) {
+			f.fake.tierPickModel = func(string) string { return "some-other-model" }
+		},
+	} {
+		fixture := newDecisionsV2Fixture(t, fixtureDecisionsV2())
+		corrupt(fixture)
+		state, _ := raylinearc.NewEpisodeState(2)
+		result, err := fixture.selectOn(t, state, policyTestRequest(t, map[string]any{"role": "user", "content": "go"}))
+		if err != nil {
+			t.Fatalf("%s: select: %v", name, err)
+		}
+		if len(result.RaylineARC.PolicyTierPicks) != 0 ||
+			!reflect.DeepEqual(result.RaylineARC.PolicyTierPicksInvalid, []string{"swift", "keen", "sage"}) {
+			t.Fatalf("%s: picks %+v, invalid %v", name, result.RaylineARC.PolicyTierPicks, result.RaylineARC.PolicyTierPicksInvalid)
+		}
+		fields := map[string]interface{}{}
+		addPolicyDecisionsV2Fields(fields, result.RaylineARC)
+		if _, logged := fields["policy_tier_picks"]; logged || fields["policy_tier_picks_invalid"] == nil {
+			t.Fatalf("%s: logged %v", name, fields)
+		}
+	}
+	// An action the cell binds but did not offer this turn.
+	if policyTierPickValid(&policyServiceScorer{bindings: map[string]policyBinding{"a": {}}}, []string{"b"})(
+		raylinearc.PolicyTierPick{SelectedActionID: "a"}) {
+		t.Fatal("an unoffered tier pick was admitted")
 	}
 }

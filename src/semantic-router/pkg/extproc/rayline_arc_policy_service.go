@@ -828,7 +828,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	result.RaylineARC.SettlementPrices = armed.prices
 	result.RaylineARC.RoutingPricesUsed = response.RoutingPricesUsed
 	result.RaylineARC.PolicyPredictedCostUSD = policySelectedPredictedCost(response)
-	scorer.decisionsV2.record(result.RaylineARC, response)
+	scorer.decisionsV2.record(result.RaylineARC, response, policyTierPickValid(scorer, available))
 	if !sideCall {
 		// A side call commits no ledger entry, so its price audit is in the
 		// selection log only.

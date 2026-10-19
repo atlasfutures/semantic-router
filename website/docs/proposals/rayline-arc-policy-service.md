@@ -360,8 +360,10 @@ decisions_v2:
   the turn (`policy_operating_point_mismatch`).
 - **Tier picks.** The decision at each tier point is recorded, never served:
   the selection log carries `policy_tier_picks` (action, arm and model per
-  configured tier, and `policy_tier_picks_missing` for a configured tier the
-  response has no pick for) beside `policy_operating_point` (name,
+  configured tier; `policy_tier_picks_missing` names a configured tier the
+  response has no pick for, and `policy_tier_picks_invalid` one whose pick
+  names an action the cell does not bind or did not offer, or a model its
+  binding does not serve) beside `policy_operating_point` (name,
   `point_id`, cost weight).
 - **Refusals.** `operating_point_out_of_bounds`,
   `operating_point_not_adjustable` and `tier_points_unsupported` are the

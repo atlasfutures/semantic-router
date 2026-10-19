@@ -81,8 +81,12 @@ type fakePolicyService struct {
 	// echoes null.
 	echoCostWeight   *float64
 	echoNoCostWeight bool
-	// omitTierPick, when set, leaves this tier point without a pick.
-	omitTierPick string
+	// omitTierPick, when set, leaves this tier point without a pick, and
+	// tierPickAction, when set, picks this action at every tier point.
+	// tierPickModel names a pick's model ("model-<action>" when nil).
+	omitTierPick   string
+	tierPickAction string
+	tierPickModel  func(actionID string) string
 }
 
 func newFakePolicyService(t *testing.T, alias, sha256 string, catalog []string) *fakePolicyService {
@@ -274,7 +278,7 @@ func (fake *fakePolicyService) decision(request raylinearc.PolicyDecisionRequest
 		response.TimingMillis.Encode = nil
 	}
 	nullRevision, ignoreEpisodeMode, echoCostWeight, echoNoCostWeight := fake.nullRevision, fake.ignoreEpisodeMode, fake.echoCostWeight, fake.echoNoCostWeight
-	omitTierPick := fake.omitTierPick
+	omitTierPick, tierPickAction, tierPickModel := fake.omitTierPick, fake.tierPickAction, fake.tierPickModel
 	response.PackageVerification = fake.verification
 	if fake.echo != nil {
 		response.RoutingPricesUsed = fake.echo(request)
@@ -310,7 +314,15 @@ func (fake *fakePolicyService) decision(request raylinearc.PolicyDecisionRequest
 		}
 	}
 	if len(request.Selection.TierPoints) > 0 {
-		pick := raylinearc.PolicyTierPick{SelectedActionID: selected, SelectedArmID: response.Decision.SelectedArmID, Model: "model-" + selected[:8]}
+		picked := selected
+		if tierPickAction != "" {
+			picked = tierPickAction
+		}
+		model := "model-" + picked[:8]
+		if tierPickModel != nil {
+			model = tierPickModel(picked)
+		}
+		pick := raylinearc.PolicyTierPick{SelectedActionID: picked, SelectedArmID: "arm-" + picked[:8], Model: model}
 		response.Decision.TierPicks = map[string]raylinearc.PolicyTierPick{"unrequested": pick}
 		for _, tier := range request.Selection.TierPoints {
 			if tier.Name != omitTierPick {

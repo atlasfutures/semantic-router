@@ -17,6 +17,8 @@ limitations under the License.
 package extproc
 
 import (
+	"slices"
+
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
@@ -86,8 +88,14 @@ func (members *policyDecisionsV2) operatingPointMismatch(response *raylinearc.Po
 // trace, for its selection log. The picks are recorded only: the turn serves
 // the decision's own action. Only the configured tier names are kept, so no
 // service-chosen key becomes a log key; a configured tier with no pick is
-// named as missing rather than dropped.
-func (members *policyDecisionsV2) record(trace *selection.RaylineARCTrace, response *raylinearc.PolicyDecisionResponse) {
+// named as missing rather than dropped. A pick valid does not admit (an
+// action this cell cannot dispatch or did not offer, or a model its binding
+// does not serve) is named as invalid and not kept.
+func (members *policyDecisionsV2) record(
+	trace *selection.RaylineARCTrace,
+	response *raylinearc.PolicyDecisionResponse,
+	valid func(raylinearc.PolicyTierPick) bool,
+) {
 	if members == nil {
 		return
 	}
@@ -97,6 +105,10 @@ func (members *policyDecisionsV2) record(trace *selection.RaylineARCTrace, respo
 		pick, ok := response.Decision.TierPicks[tier.Name]
 		if !ok {
 			trace.PolicyTierPicksMissing = append(trace.PolicyTierPicksMissing, tier.Name)
+			continue
+		}
+		if !valid(pick) {
+			trace.PolicyTierPicksInvalid = append(trace.PolicyTierPicksInvalid, tier.Name)
 			continue
 		}
 		if trace.PolicyTierPicks == nil {
@@ -124,6 +136,9 @@ func addPolicyDecisionsV2Fields(fields map[string]interface{}, trace *selection.
 	if len(trace.PolicyTierPicksMissing) > 0 {
 		fields["policy_tier_picks_missing"] = trace.PolicyTierPicksMissing
 	}
+	if len(trace.PolicyTierPicksInvalid) > 0 {
+		fields["policy_tier_picks_invalid"] = trace.PolicyTierPicksInvalid
+	}
 	if len(trace.PolicyTierPicks) == 0 {
 		return
 	}
@@ -136,4 +151,17 @@ func addPolicyDecisionsV2Fields(fields map[string]interface{}, trace *selection.
 		}
 	}
 	fields["policy_tier_picks"] = picks
+}
+
+// policyTierPickValid admits a tier pick whose action this cell binds and
+// offered this turn, and whose model is its binding's where the binding
+// declares one: the checks the decision's own action passes.
+func policyTierPickValid(scorer *policyServiceScorer, available []string) func(raylinearc.PolicyTierPick) bool {
+	return func(pick raylinearc.PolicyTierPick) bool {
+		binding, bound := scorer.bindings[pick.SelectedActionID]
+		if !bound || !slices.Contains(available, pick.SelectedActionID) {
+			return false
+		}
+		return binding.model == "" || binding.model == pick.Model
+	}
 }

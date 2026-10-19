@@ -155,6 +155,10 @@ type RaylineARCTrace struct {
 	// PolicyTierPicksMissing names the configured tier points the response
 	// carried no pick for, so a partial set is never read as complete.
 	PolicyTierPicksMissing []string
+	// PolicyTierPicksInvalid names the configured tier points whose pick
+	// names an action the cell cannot dispatch or did not offer, or a model
+	// its binding does not serve; such a pick is not kept.
+	PolicyTierPicksInvalid []string
 	// RoutingPricesStatus is the routing price cache status the request
 	// read (fresh, stale, expired, absent); empty when live prices are not
 	// configured. RoutingPricesUsed is the service's echo, nil when it sent
