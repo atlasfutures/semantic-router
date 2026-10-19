@@ -698,22 +698,29 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		if errors.As(err, &failure) {
 			class = failure.Class
 			// pathfinder#3329: a context the service's encoder cannot hold
-			// keeps the episode's held action rather than failing the turn.
-			if class == raylinearc.PolicyCapacityRefusalClass {
+			// keeps the episode's held action rather than failing the turn;
+			// so does media the projection cannot read (pathfinder#5281).
+			if offerKind, holds := policyHoldOfferKinds[class]; holds {
 				if held := selector.policyCapacityHold(
 					armed, selCtx, arcContext, state, scorer, failure, turn, messages, sideCall, atBoundary,
 					retained, available, workerIDs, latency,
 				); held != nil {
-					held.RaylineARC.OfferKind = "capacity_hold"
+					held.RaylineARC.OfferKind = offerKind
 					held.RaylineARC.SettlementPrices = armed.prices
 					held.RaylineARC.MaskedArms = policyMaskedArms(scorer, workerIDs, excluded, fallback, turn, offeredRoutes)
 					return held, nil
 				}
 			}
 		}
-		logging.ComponentErrorEvent("extproc", "rayline_arc_policy_service_failed", map[string]interface{}{
-			"class": class, "episode_id_hash": arcContext.EpisodeIDHash,
-		})
+		fields := map[string]interface{}{"class": class, "episode_id_hash": arcContext.EpisodeIDHash}
+		// With nothing to hold, a media refusal fails as the
+		// unsupported_request it is on the wire (request_shape); the log keeps
+		// its bounded sub_reason.
+		if class == raylinearc.PolicyMediaRefusedClass {
+			class = "unsupported_request"
+			fields["class"], fields["reason"], fields["sub_reason"] = class, raylinearc.PolicyMediaRefusedClass, failure.Detail["sub_reason"]
+		}
+		logging.ComponentErrorEvent("extproc", "rayline_arc_policy_service_failed", fields)
 		return nil, arcSelectionFailure("policy_service_" + class)
 	}
 	// A decision is only this package's if the service says it is: a service

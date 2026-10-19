@@ -26,6 +26,15 @@ import (
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
 
+// policyHoldOfferKinds are the policy-service refusals a held action serves
+// through, each with the offer kind its turn records: a context the encoder
+// cannot hold, and media the projection cannot read (pathfinder#5281), which
+// would otherwise fail every later turn of its conversation.
+var policyHoldOfferKinds = map[string]string{
+	raylinearc.PolicyCapacityRefusalClass: "capacity_hold",
+	raylinearc.PolicyMediaRefusedClass:    "media_hold",
+}
+
 // policyCapacityHold is the turn served when the policy service refuses a
 // context its encoder cannot hold (pathfinder#3329, the serving half of
 // pathfinder#3279): the episode keeps the action it last served, as
@@ -104,7 +113,11 @@ func (selector *raylineARCSelector) policyCapacityHold(
 	// A runtime that refuses before counting reports no token count; the
 	// counts are unknown, not zero.
 	result.RaylineARC.TokenCountsUnknown = !tokensKnown
+	media := refusal.Class == raylinearc.PolicyMediaRefusedClass
 	result.Reasoning = "policy-service ARC decision (encoder_capacity_hold)"
+	if media {
+		result.Reasoning = "policy-service ARC decision (media_hold)"
+	}
 	result.RaylineARC.PolicyActionID = held.ActionID
 	result.RaylineARC.PolicyArmID = held.ArmID
 	result.RaylineARC.ThinkingLevel = binding.level
@@ -118,6 +131,13 @@ func (selector *raylineARCSelector) policyCapacityHold(
 	}
 	if atBoundary && !retained {
 		result.RaylineARC.PolicyBoundary = raylinearc.NewPolicyBoundaryDecision(binding.arm, state.TurnIndex, turn, messages)
+	}
+	if media {
+		logging.ComponentEvent("extproc", "rayline_arc_media_hold", map[string]interface{}{
+			"request_id": arcContext.RequestID, "episode_id_hash": arcContext.EpisodeIDHash, "rule": "hold", "action_id": held.ActionID,
+			"sub_reason": refusal.Detail["sub_reason"], "side_call": sideCall,
+		})
+		return result
 	}
 	logging.ComponentEvent("extproc", "rayline_arc_encoder_capacity_hold", map[string]interface{}{
 		"request_id": arcContext.RequestID, "episode_id_hash": arcContext.EpisodeIDHash, "rule": "hold", "action_id": held.ActionID,
