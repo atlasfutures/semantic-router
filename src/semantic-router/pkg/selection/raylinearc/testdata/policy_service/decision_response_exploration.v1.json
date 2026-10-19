@@ -1,0 +1,191 @@
+{
+  "package": {
+    "alias": "rayline/arc-example-fold0",
+    "package_sha256": "81e4a7af2c28c3be9ecbe850888c6773d196d58cad100474cbfb48622af7abe4"
+  },
+  "policy_id": "f0203b98f859dced93cb2e0bb6b7d4acdf2fd00aef2d1a5d42215cc138874912",
+  "decision": {
+    "selected_action_id": "be83da527f7beb71e86f23fdcac94c8365ba49df2ae09050ba7e74958c6b1f90",
+    "selected_arm_id": "5e3f0015ba42b3d5b7cf75c47e678f9c7e2003ef8dbff89d7fd2881ac3d658cd",
+    "reason": "supported_prediction",
+    "operating_point": {
+      "name": "default",
+      "point_id": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "cost_weight": 0.3
+    },
+    "stage_one": {
+      "exploration": {
+        "applied": true,
+        "reason": null,
+        "tau": 0.02,
+        "requested_tau": 0.02,
+        "basis": {
+          "r": 0.05,
+          "package_sha256": "81e4a7af2c28c3be9ecbe850888c6773d196d58cad100474cbfb48622af7abe4",
+          "readout_pin": "qwen3.8-27b-arc-encoder@depth8"
+        },
+        "salt": "vsr-explore-2026-10",
+        "u": 0.8731,
+        "offered": [
+          {
+            "model": "claude-opus-5",
+            "effort": "high"
+          },
+          {
+            "model": "glm-5.3-flash",
+            "effort": null
+          },
+          {
+            "model": "deepseek-flash",
+            "effort": null
+          }
+        ],
+        "scores": [
+          0.412,
+          0.398,
+          null
+        ],
+        "pi": [
+          0.6681877721681662,
+          0.3318122278318338,
+          0.0
+        ],
+        "greedy": {
+          "model": "claude-opus-5",
+          "effort": "high"
+        },
+        "chosen": {
+          "model": "glm-5.3-flash",
+          "effort": null
+        },
+        "propensity": 0.3318122278318338,
+        "explored": true,
+        "package_sha256": "81e4a7af2c28c3be9ecbe850888c6773d196d58cad100474cbfb48622af7abe4",
+        "decision_key": "3b1f0c5a9e7d2846b0a1c3e5f7092a4b6c8d0e2f4a6b8c0d2e4f6a8b0c2d4e6f",
+        "held": false,
+        "origin_decision_key": null,
+        "override": "proxy_remap"
+      }
+    }
+  },
+  "actions": [
+    {
+      "action_id": "b779e919d4709c8bc766f1cc7b4228ed1cd8a5d1f230acfb2453e4f37df6e1f1",
+      "available": true,
+      "supported": true,
+      "selected": false,
+      "score": 0.6088,
+      "predicted_quality": 0.61,
+      "predicted_usage": {
+        "uncached_input": 1200.0,
+        "cache_read": 18000.0,
+        "cache_write": 900.0,
+        "output": 400.0
+      },
+      "predicted_cost_usd": 0.004
+    },
+    {
+      "action_id": "be83da527f7beb71e86f23fdcac94c8365ba49df2ae09050ba7e74958c6b1f90",
+      "available": true,
+      "supported": true,
+      "selected": true,
+      "score": 0.6579,
+      "predicted_quality": 0.66,
+      "predicted_usage": {
+        "uncached_input": 1200.0,
+        "cache_read": 18000.0,
+        "cache_write": 900.0,
+        "output": 2100.0
+      },
+      "predicted_cost_usd": 0.007
+    },
+    {
+      "action_id": "569bf3701d341b1945954bf38e0686b23e404ab2a857983402706a40b2a0fad9",
+      "available": true,
+      "supported": false,
+      "selected": false,
+      "score": 0.74,
+      "predicted_quality": 0.74,
+      "predicted_usage": null,
+      "predicted_cost_usd": null
+    }
+  ],
+  "schema_version": "rayline.arc.policy-decision-response.v1",
+  "pricing": {
+    "scenario_id": "openrouter-example-20260928",
+    "pricing_identity": "fe81f9390ffe3dc8daa4888a7dc430ce4a41f164281d15449a24840a70b5f2c2"
+  },
+  "encoding": {
+    "profile_id": "e7ff0fd3afa2bc64be268e7187172773ddce31e914858bfce3ae85bfd59dc14c",
+    "tokenization_id": "c51e455b41df6c017327e16001dd064b8b6733faeaa69b23d9bd79c8079237d5",
+    "representation_id": "a8ad1f5f2bb3f4c78bf20d8272c6f9caf298e5c73176b5a97bb7d01d0b5e8469",
+    "token_count": 3412,
+    "session_action": "appended",
+    "session_revision": 3,
+    "engine_build_id": "vllm@example"
+  },
+  "timing_ms": {
+    "encode": 41.5,
+    "score": 1.8,
+    "total": 47.2
+  },
+  "shadow": [
+    {
+      "package": {
+        "alias": "rayline/arc-example-fold1",
+        "package_sha256": "cbff17fda21ece1386a8bf32ebdf251933a1481d5f6c021055ad75147335e48c"
+      },
+      "policy_id": "8adb4ba706a9dcc829c6d08cc163498be99de45ef739a39f1f41cac89e429cb3",
+      "decision": {
+        "selected_action_id": "b779e919d4709c8bc766f1cc7b4228ed1cd8a5d1f230acfb2453e4f37df6e1f1",
+        "selected_arm_id": "4951fcf2b0d2c10050e8d69681e8deda04f2e3a7b5c3e8b2945bf291be9b9279",
+        "reason": "supported_prediction",
+        "operating_point": {
+          "name": "default",
+          "point_id": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+          "cost_weight": 0.3
+        }
+      },
+      "actions": [
+        {
+          "action_id": "b779e919d4709c8bc766f1cc7b4228ed1cd8a5d1f230acfb2453e4f37df6e1f1",
+          "available": true,
+          "supported": true,
+          "selected": true,
+          "score": 0.63,
+          "predicted_quality": 0.63,
+          "predicted_usage": null,
+          "predicted_cost_usd": null
+        },
+        {
+          "action_id": "be83da527f7beb71e86f23fdcac94c8365ba49df2ae09050ba7e74958c6b1f90",
+          "available": true,
+          "supported": true,
+          "selected": false,
+          "score": 0.62,
+          "predicted_quality": 0.64,
+          "predicted_usage": null,
+          "predicted_cost_usd": null
+        },
+        {
+          "action_id": "569bf3701d341b1945954bf38e0686b23e404ab2a857983402706a40b2a0fad9",
+          "available": true,
+          "supported": false,
+          "selected": false,
+          "score": 0.5,
+          "predicted_quality": null,
+          "predicted_usage": null,
+          "predicted_cost_usd": null
+        }
+      ]
+    },
+    {
+      "package": {
+        "alias": "rayline/arc-example-fold2",
+        "package_sha256": "6c6e140787fce7558cc445fa19aea3f744a0141192dd267f9ec82118dbecf99a"
+      },
+      "error": "package_not_loaded"
+    }
+  ],
+  "quality_parity_established": false
+}

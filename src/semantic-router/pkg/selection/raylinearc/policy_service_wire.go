@@ -330,11 +330,15 @@ type PolicyDecisionRequest struct {
 // cell.
 const PolicyEpisodeModeRelaxed = "relaxed"
 
+// PolicyPredictedUsage is an action's predicted tokens per billed leg from
+// the stage-two usage head (pathfinder#5443). A leg the head has no fit
+// support for is null, which stays nil here, never 0; the whole object is
+// null when every leg is unknown or the recipe has no usage head.
 type PolicyPredictedUsage struct {
-	UncachedInput float64 `json:"uncached_input"`
-	CacheRead     float64 `json:"cache_read"`
-	CacheWrite    float64 `json:"cache_write"`
-	Output        float64 `json:"output"`
+	UncachedInput *float64 `json:"uncached_input"`
+	CacheRead     *float64 `json:"cache_read"`
+	CacheWrite    *float64 `json:"cache_write"`
+	Output        *float64 `json:"output"`
 }
 
 type PolicyActionScore struct {
@@ -346,6 +350,10 @@ type PolicyActionScore struct {
 	PredictedQuality *float64              `json:"predicted_quality"`
 	PredictedUsage   *PolicyPredictedUsage `json:"predicted_usage"`
 	PredictedCostUSD *float64              `json:"predicted_cost_usd"`
+	// PricePerMtok and Thinking are present only when the request named them
+	// in response_fields (Decisions API v2, pathfinder#5443).
+	PricePerMtok *PolicyPricePerMtok   `json:"price_per_mtok,omitempty"`
+	Thinking     *PolicyActionThinking `json:"thinking,omitempty"`
 }
 
 type PolicyResolvedOperatingPoint struct {
@@ -359,6 +367,12 @@ type PolicyDecision struct {
 	SelectedArmID    string                       `json:"selected_arm_id"`
 	Reason           string                       `json:"reason"`
 	OperatingPoint   PolicyResolvedOperatingPoint `json:"operating_point"`
+	// TierPicks is present only when the request sent selection.tier_points
+	// (Decisions API v2, pathfinder#5443), keyed by tier point name.
+	TierPicks map[string]PolicyTierPick `json:"tier_picks,omitempty"`
+	// StageOne is present only when the request sent selection.exploration
+	// with tau > 0 (pathfinder#5436); the service omits it, never nulls it.
+	StageOne *PolicyDecisionStageOne `json:"stage_one,omitempty"`
 }
 
 type PolicyScoredPackage struct {
