@@ -403,14 +403,17 @@ func TestCandidatesListTheirOpenRouterProviderPin(t *testing.T) {
 	}
 	pinned := cfg.ModelConfig["z-ai/glm-5.2@thinking-off"]
 	noFallbacks := false
+	zdr := true
 	pinned.ProviderPreferences = &config.OpenRouterProviderPreferences{
 		Order: []string{"z-ai"}, Only: []string{"z-ai"}, Ignore: []string{"baidu"}, AllowFallbacks: &noFallbacks,
+		RequireParameters: &zdr, DataCollection: config.ProviderDataCollectionDeny, ZDR: &zdr,
+		MaxPrice: map[string]float64{"prompt": 0.5},
 	}
 	cfg.ModelConfig["z-ai/glm-5.2@thinking-off"] = pinned
 	candidates := candidatesOf(t, marshalListing(t, NewOpenAIModelList(cfg, 123)), "rayline/arc-dev")
 
 	pin, _ := json.Marshal(candidates[0].(map[string]interface{})["provider_pin"])
-	if want := `{"allow_fallbacks":false,"ignore":["baidu"],"only":["z-ai"],"order":["z-ai"],"pinned":true}`; string(pin) != want {
+	if want := `{"allow_fallbacks":false,"data_collection":"deny","ignore":["baidu"],"max_price":{"prompt":0.5},"only":["z-ai"],"order":["z-ai"],"pinned":true,"require_parameters":true,"zdr":true}`; string(pin) != want {
 		t.Fatalf("pinned arm provider_pin = %s, want %s", pin, want)
 	}
 	unpinned, _ := json.Marshal(candidates[1].(map[string]interface{})["provider_pin"])

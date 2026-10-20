@@ -1038,6 +1038,7 @@ func TestRaylineRoutesNamesItsSurface(t *testing.T) {
 		"conv-1",
 		false,
 		llmprotocol.AnthropicMessagesV1,
+		nil,
 	)
 	if consult.Surface != routerruntime.RouteDecisionSurfaceRoutes {
 		t.Fatalf("Surface = %q, want %q", consult.Surface, routerruntime.RouteDecisionSurfaceRoutes)

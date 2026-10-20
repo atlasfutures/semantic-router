@@ -127,6 +127,7 @@ func (s *ClassificationAPIServer) handleRouteDecision(w http.ResponseWriter, r *
 		DecisionID:    decisionID,
 		SessionID:     strings.TrimSpace(r.Header.Get(routeSessionHeader)),
 		ExecutedModel: executedModel,
+		Headers:       routeDecisionHeaders(r.Header),
 	})
 	if err != nil {
 		// Fail closed. The algorithm owns the choice and has no fallback
@@ -337,4 +338,16 @@ func (s *ClassificationAPIServer) logRouteDecision(
 		"worker_model":    decision.WorkerModel,
 		"executed_model":  executedModel,
 	})
+}
+
+// routeDecisionHeaders is the request's headers by lowercase name, first
+// value, as the runtime reads them.
+func routeDecisionHeaders(header http.Header) map[string]string {
+	headers := make(map[string]string, len(header))
+	for name, values := range header {
+		if len(values) > 0 {
+			headers[strings.ToLower(name)] = values[0]
+		}
+	}
+	return headers
 }

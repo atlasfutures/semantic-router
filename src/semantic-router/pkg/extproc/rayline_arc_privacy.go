@@ -3,6 +3,7 @@ package extproc
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"slices"
 	"strings"
 
@@ -139,10 +140,10 @@ func withPrivacyExcludedArms(
 	return combined, nil
 }
 
-// privacyProviderPreferences is the provider object a private turn sends: the
-// arm's pin, or none, with OpenRouter told to use only providers that do not
-// collect the data and not to fall back past them; a zdr turn also asks for
-// zero-data-retention endpoints only. A standard turn's pin is unchanged.
+// privacyProviderPreferences is the provider object a private turn on a pinned
+// arm sends: the arm's pin, with OpenRouter told to use only providers that do
+// not collect the data and not to fall back past them; a zdr turn also asks
+// for zero-data-retention endpoints only. A standard turn's pin is unchanged.
 func privacyProviderPreferences(
 	pin *config.OpenRouterProviderPreferences,
 	mode string,
@@ -150,10 +151,7 @@ func privacyProviderPreferences(
 	if mode == "" {
 		return pin
 	}
-	private := config.OpenRouterProviderPreferences{}
-	if pin != nil {
-		private = *pin
-	}
+	private := *pin
 	noFallbacks := false
 	private.AllowFallbacks = &noFallbacks
 	private.DataCollection = config.ProviderDataCollectionDeny
@@ -162,4 +160,26 @@ func privacyProviderPreferences(
 		private.ZDR = &zdr
 	}
 	return &private
+}
+
+// withPrivacyProviderMembers is the provider object a private turn on an
+// unpinned arm sends: the request's own, or none, with the same data-use
+// members set. Every member the caller stated is kept, since each one only
+// narrows which providers may serve; a caller's zdr is kept on a privacy turn.
+func withPrivacyProviderMembers(existing json.RawMessage, mode string) ([]byte, error) {
+	var provider map[string]json.RawMessage
+	if len(existing) > 0 {
+		if err := json.Unmarshal(existing, &provider); err != nil {
+			return nil, err
+		}
+	}
+	if provider == nil {
+		provider = map[string]json.RawMessage{}
+	}
+	provider["allow_fallbacks"] = json.RawMessage(`false`)
+	provider["data_collection"] = json.RawMessage(`"` + config.ProviderDataCollectionDeny + `"`)
+	if mode == raylineARCPrivacyModeZDR {
+		provider["zdr"] = json.RawMessage(`true`)
+	}
+	return json.Marshal(provider)
 }

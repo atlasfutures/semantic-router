@@ -63,15 +63,15 @@ type RoutingCandidate struct {
 
 // CandidateProviderPin is an OpenRouter arm's provider routing. Pinned is
 // false when the card sets no provider_preferences, so OpenRouter chooses
-// the provider per request; the other members are then absent. A member the
-// card leaves unset is absent too, and OpenRouter's default applies to it
+// the provider per request; the other members are then absent. Otherwise the
+// members are the card's provider_preferences in their wire spelling, every
+// one the dispatch filter sends (order, only, ignore, allow_fallbacks,
+// require_parameters, data_collection, zdr, max_price). A member the card
+// leaves unset is absent, and OpenRouter's default applies to it
 // (allow_fallbacks defaults to true).
 type CandidateProviderPin struct {
-	Pinned         bool     `json:"pinned"`
-	Order          []string `json:"order,omitempty"`
-	Only           []string `json:"only,omitempty"`
-	Ignore         []string `json:"ignore,omitempty"`
-	AllowFallbacks *bool    `json:"allow_fallbacks,omitempty"`
+	Pinned bool `json:"pinned"`
+	*config.OpenRouterProviderPreferences
 }
 
 // CandidateThinking spells the decision's use_reasoning for the arm the way
@@ -249,13 +249,7 @@ func providerPinOf(preferences *config.OpenRouterProviderPreferences) *Candidate
 	if preferences == nil {
 		return &CandidateProviderPin{}
 	}
-	return &CandidateProviderPin{
-		Pinned:         true,
-		Order:          preferences.Order,
-		Only:           preferences.Only,
-		Ignore:         preferences.Ignore,
-		AllowFallbacks: preferences.AllowFallbacks,
-	}
+	return &CandidateProviderPin{Pinned: true, OpenRouterProviderPreferences: preferences}
 }
 
 func thinkingModeOf(modelRef config.ModelRef) string {

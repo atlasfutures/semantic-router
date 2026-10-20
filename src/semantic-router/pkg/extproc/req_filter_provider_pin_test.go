@@ -282,3 +282,24 @@ func TestPrivateTurnPinStaysOffNonOpenRouterBackends(t *testing.T) {
 		t.Fatalf("an OpenRouter-only member reached another backend:\n%s", raw)
 	}
 }
+
+// On an unpinned arm a private turn keeps the provider object the request
+// carries and adds its data mode: each member a caller states only narrows
+// which providers may serve, so dropping one would loosen the request.
+func TestPrivateTurnKeepsTheCallersProviderObjectOnAnUnpinnedArm(t *testing.T) {
+	router := providerPinRouter("https://openrouter.ai/api/v1", nil)
+	dispatch := &providerDispatch{
+		logicalModel: providerPinArm, decisionName: providerPinDecision,
+		targetFormat: llmprotocol.OpenAIChatV1, profile: openRouterProviderProfile(),
+	}
+	body := []byte(`{"model":"m","provider":{"only":["z-ai"],"zdr":true,"allow_fallbacks":true}}`)
+
+	pinned, err := applyProviderPreferences(body, dispatch, router.Config, raylineARCPrivacyModePrivacy)
+	if err != nil {
+		t.Fatalf("applyProviderPreferences: %v", err)
+	}
+	want := `"provider":{"allow_fallbacks":false,"data_collection":"deny","only":["z-ai"],"zdr":true}`
+	if !bytes.Contains(pinned, []byte(want)) {
+		t.Fatalf("the caller's provider constraints were not kept, want %s:\n%s", want, pinned)
+	}
+}
