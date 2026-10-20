@@ -17,7 +17,7 @@ func TestDecodePolicyPackagesResponseWithCapabilities(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(response.Capabilities, []string{"decisions_v2", "tier_points", "response_fields"}) {
+	if !slices.Equal(response.Capabilities, []string{"decisions_v2", "tier_points", "response_fields", "exploration"}) {
 		t.Fatalf("capabilities = %v", response.Capabilities)
 	}
 	if len(response.Packages) != 2 {
@@ -85,6 +85,13 @@ func TestCheckPolicyServiceRequirements(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The same listing from a service that does not offer exploration.
+	unexplored, err := DecodePolicyPackagesResponse(fixtureWith(t, "packages_response_capabilities.v1.json", func(body map[string]any) {
+		body["capabilities"] = []any{"decisions_v2", "tier_points", "response_fields"}
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
 	adjustable, fixed := &listing.Packages[0], &listing.Packages[1]
 	for name, check := range map[string]struct {
 		listing  *PolicyPackagesResponse
@@ -97,7 +104,10 @@ func TestCheckPolicyServiceRequirements(t *testing.T) {
 		"advertised capabilities": {listing, adjustable, PolicyServiceRequirements{
 			Capabilities: []string{"decisions_v2", "tier_points", "response_fields"},
 		}, ""},
-		"exploration not advertised": {listing, adjustable, PolicyServiceRequirements{
+		"exploration advertised": {listing, adjustable, PolicyServiceRequirements{
+			Capabilities: []string{"decisions_v2", "exploration"},
+		}, ""},
+		"exploration not advertised": {unexplored, &unexplored.Packages[0], PolicyServiceRequirements{
 			Capabilities: []string{"decisions_v2", "exploration"},
 		}, PolicyCapabilityUnsupportedClass},
 		"older service, decisions_v2": {older, &older.Packages[0], PolicyServiceRequirements{
@@ -131,7 +141,7 @@ func TestCheckPolicyServiceRequirements(t *testing.T) {
 			t.Errorf("%s: error %v, want class %s", name, checkErr, check.class)
 		}
 	}
-	err = CheckPolicyServiceRequirements(listing, adjustable, PolicyServiceRequirements{Capabilities: []string{"exploration"}})
+	err = CheckPolicyServiceRequirements(unexplored, &unexplored.Packages[0], PolicyServiceRequirements{Capabilities: []string{"exploration"}})
 	var failure *PolicyServiceError
 	if !errors.As(err, &failure) || failure.Detail["capability"] != "exploration" {
 		t.Fatalf("the refusal does not name the capability: %v", err)
@@ -156,7 +166,7 @@ func TestPolicyServiceClientAsksForCapabilities(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(listing.Capabilities) != 3 || loaded.AdjustableCostWeight.Bounds == nil {
+	if len(listing.Capabilities) != 4 || loaded.AdjustableCostWeight.Bounds == nil {
 		t.Fatalf("served package = %+v in %+v", loaded, listing)
 	}
 	if len(queries) != 2 {
