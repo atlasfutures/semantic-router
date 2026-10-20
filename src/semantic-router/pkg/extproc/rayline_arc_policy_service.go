@@ -639,19 +639,26 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	// held candidate and switch effort off a boundary. A held model this turn
 	// excludes has no action to attest or offer, so the ask goes out plain
 	// and a refusal fails below, never retried empty.
+	// derived is the record's model and its offer once one is derived (its
+	// model is empty until then); attestedFirst is the action the first ask
+	// attested, empty when it did not. narrow asks on the derived model's
+	// actions alone, the caller hold.
 	var derived derivedHold
-	derivedOffer, derivedSource, attestedFirst, derivedFound := false, "", "", false
+	derivedOffer, attestedFirst := false, ""
+	narrow := func() {
+		available = derived.offer
+		derivedOffer = true
+		request.Selection.AvailableActionIDs = derived.offer
+	}
 	if held < 0 && scorer.twoStage {
 		if found, ok := derivedHoldOffer(scorer, arcContext, available); ok && len(found.offer) > 0 {
-			derived, derivedFound, derivedSource = found, true, found.source
+			derived = found
 			logRaylineARCDerivedHold(arcContext, derived, "first")
 			if scorer.attestable {
 				attestedFirst = derived.offer[0]
 				request.Selection.AttestedHeldActionID = &attestedFirst
 			} else {
-				available = derived.offer
-				derivedOffer = true
-				request.Selection.AvailableActionIDs = derived.offer
+				narrow()
 			}
 		}
 	}
@@ -682,12 +689,10 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		// a shed admission) is not asked again: the attestation did not cause
 		// it, and the first ask's failure is the turn's.
 		request.Selection.AttestedHeldActionID = nil
-		available = derived.offer
-		derivedOffer = true
-		request.Selection.AvailableActionIDs = derived.offer
+		narrow()
 		logRaylineARCDerivedHold(arcContext, derived, "re-ask")
 		response, err = decidePolicyThroughBusy(ctx, armed.policy, request, scorer.busyWait, admit, withCacheContext)
-	case !derivedFound && held < 0 && errors.As(err, &cold) && cold.Class == raylinearc.PolicyStageOneHeldUnknownClass:
+	case derived.model == "" && held < 0 && errors.As(err, &cold) && cold.Class == raylinearc.PolicyStageOneHeldUnknownClass:
 		// A refusal the first ask did not anticipate: the recorded model is
 		// excluded this turn, or the package's manifest does not say it is
 		// two-stage (an older or manifest-less package), so the record stayed
@@ -696,20 +701,18 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		// retried empty. Otherwise the turn is asked once more narrowed to the
 		// recorded model, as the re-ask always was.
 		if late, ok := derivedHoldOffer(scorer, arcContext, available); ok {
-			derivedSource = late.source
-			if len(late.offer) == 0 {
-				logRaylineARCDerivedHold(arcContext, late, "none")
+			derived = late
+			if len(derived.offer) == 0 {
+				logRaylineARCDerivedHold(arcContext, derived, "none")
 				logRaylineARCEmptyOffer(arcContext, scorer, emptyOffer{
 					stage: "derived_hold", held: held, retained: retained, sideCall: sideCall, fallback: fallback,
 					excluded: excluded, hard: hard, cellOut: loggedRoutes, turn: turn,
-					derivedModel: late.model, derivedSource: late.source,
+					derivedModel: derived.model, derivedSource: derived.source,
 				})
 				return nil, arcSelectionFailure("policy_no_available_action")
 			}
-			logRaylineARCDerivedHold(arcContext, late, "re-ask")
-			available = late.offer
-			derivedOffer = true
-			request.Selection.AvailableActionIDs = late.offer
+			logRaylineARCDerivedHold(arcContext, derived, "re-ask")
+			narrow()
 			response, err = decidePolicyThroughBusy(ctx, armed.policy, request, scorer.busyWait, admit, withCacheContext)
 		}
 	}
@@ -719,7 +722,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	// package's fallback action in their place.
 	if errors.As(err, &cold) && (cold.Class == raylinearc.PolicyStageOneHeldUnknownClass ||
 		cold.Class == raylinearc.PolicySelectionRefusedClass) {
-		logRaylineARCUndecidable(arcContext, raylinearc.PolicyRefusalReason(cold.Detail), derivedSource, held >= 0, sideCall)
+		logRaylineARCUndecidable(arcContext, raylinearc.PolicyRefusalReason(cold.Detail), derived.source, held >= 0, sideCall)
 		return nil, arcSelectionFailure(arcFailurePolicyUndecidable)
 	}
 	var shed *policyAdmissionError
