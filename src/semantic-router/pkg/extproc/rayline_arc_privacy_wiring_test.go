@@ -20,7 +20,7 @@ import (
 // writes -- so a break between header capture, selection and dispatch fails
 // here rather than only in a unit that was handed the mode.
 func privacyWiringTurn(t *testing.T, trusted bool, requestHeaders map[string]string) (
-	*RequestContext, []bool, error, []byte,
+	*RequestContext, []bool, []byte, error,
 ) {
 	t.Helper()
 	router := providerPinRouter("https://openrouter.ai/api/v1", providerPinPreferences())
@@ -61,13 +61,13 @@ func privacyWiringTurn(t *testing.T, trusted bool, requestHeaders map[string]str
 	if err != nil {
 		t.Fatalf("adaptProviderRequest: %v", err)
 	}
-	return requestContext, scorer.excluded, selectErr, body
+	return requestContext, scorer.excluded, body, selectErr
 }
 
 func TestPrivacyHeadersReachSelectionAndDispatch(t *testing.T) {
 	// A trusted zdr request allowing only the pinned arm: the other arm is
 	// masked, and the pinned arm's provider object carries the data mode.
-	requestContext, excluded, err, body := privacyWiringTurn(t, true, map[string]string{
+	requestContext, excluded, body, err := privacyWiringTurn(t, true, map[string]string{
 		raylineARCPrivacyModeHeader:        "zdr",
 		raylineARCPrivacyAllowedArmsHeader: providerPinArm,
 	})
@@ -83,7 +83,7 @@ func TestPrivacyHeadersReachSelectionAndDispatch(t *testing.T) {
 	}
 
 	// The same headers on a cell that does not trust them change nothing.
-	requestContext, excluded, err, body = privacyWiringTurn(t, false, map[string]string{
+	requestContext, excluded, body, err = privacyWiringTurn(t, false, map[string]string{
 		raylineARCPrivacyModeHeader:        "zdr",
 		raylineARCPrivacyAllowedArmsHeader: providerPinArm,
 	})
@@ -95,7 +95,7 @@ func TestPrivacyHeadersReachSelectionAndDispatch(t *testing.T) {
 
 	// A trusted private request that allows no arm of the basket is refused
 	// 422 no_private_arm on the routed path's admission response.
-	_, _, err, _ = privacyWiringTurn(t, true, map[string]string{
+	_, _, _, err = privacyWiringTurn(t, true, map[string]string{
 		raylineARCPrivacyModeHeader:        "privacy",
 		raylineARCPrivacyAllowedArmsHeader: "some-other-arm",
 	})
