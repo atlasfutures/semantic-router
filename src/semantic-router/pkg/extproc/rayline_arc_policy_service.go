@@ -641,14 +641,14 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	// and a refusal fails below, never retried empty.
 	// derived is the record's model and its offer once one is derived (its
 	// model is empty until then); attestedFirst is the action the first ask
-	// attested, empty when it did not. narrow asks on the derived model's
-	// actions alone, the caller hold.
+	// attested, empty when it did not. narrow asks on offer alone, one
+	// model's actions: the caller hold.
 	var derived derivedHold
 	derivedOffer, attestedFirst := false, ""
-	narrow := func() {
-		available = derived.offer
+	narrow := func(offer []string) {
+		available = offer
 		derivedOffer = true
-		request.Selection.AvailableActionIDs = derived.offer
+		request.Selection.AvailableActionIDs = offer
 	}
 	if held < 0 && scorer.twoStage {
 		if found, ok := derivedHoldOffer(scorer, arcContext, available); ok && len(found.offer) > 0 {
@@ -658,7 +658,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 				attestedFirst = derived.offer[0]
 				request.Selection.AttestedHeldActionID = &attestedFirst
 			} else {
-				narrow()
+				narrow(derived.offer)
 			}
 		}
 	}
@@ -689,7 +689,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		// a shed admission) is not asked again: the attestation did not cause
 		// it, and the first ask's failure is the turn's.
 		request.Selection.AttestedHeldActionID = nil
-		narrow()
+		narrow(derived.offer)
 		logRaylineARCDerivedHold(arcContext, derived, "re-ask")
 		response, err = decidePolicyThroughBusy(ctx, armed.policy, request, scorer.busyWait, admit, withCacheContext)
 	case derived.model == "" && held < 0 && errors.As(err, &cold) && cold.Class == raylinearc.PolicyStageOneHeldUnknownClass:
@@ -712,7 +712,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 				return nil, arcSelectionFailure("policy_no_available_action")
 			}
 			logRaylineARCDerivedHold(arcContext, derived, "re-ask")
-			narrow()
+			narrow(derived.offer)
 			response, err = decidePolicyThroughBusy(ctx, armed.policy, request, scorer.busyWait, admit, withCacheContext)
 		}
 	}
