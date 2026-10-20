@@ -171,12 +171,12 @@ func TestTwoStageRetryBetweenScheduleBoundariesKeepsTheDecidedArm(t *testing.T) 
 	_ = retry.RaylineARCTransaction.abort(context.Background(), "test")
 }
 
-// A replica without episode memory: the service refuses a mid-conversation
-// turn whose history it cannot attribute (stage_one_held_unknown). VSR no
-// longer holds that turn, so the refusal reaches it, and the turn is asked
-// once more held on the derived model -- here the model the session record
-// names. Control: a single-stage package holds the turn itself and is never
-// refused.
+// A replica without episode memory: VSR no longer holds a mid-conversation
+// turn whose history the service cannot attribute, so the first ask carries
+// the session record's model attested. A package that predates the field
+// refuses it (stage_one_held_unknown), and the turn is asked once more
+// narrowed to that model. Control: a single-stage package holds the turn
+// itself and is never attested or refused.
 func TestTwoStageColdMidConversationTurnTakesTheDerivedHold(t *testing.T) {
 	for _, twoStage := range []bool{true, false} {
 		fixture := newPolicySelectorFixture(t, config.RaylineARCModelScheduleTaskTurnCompaction)
@@ -218,11 +218,11 @@ func TestTwoStageColdMidConversationTurnTakesTheDerivedHold(t *testing.T) {
 			continue
 		}
 		// A package that predates attested_held_action_id refuses the attested
-		// full offer too, and the turn is then held on the derived model.
-		if len(calls) != 3 || len(calls[0].Selection.AvailableActionIDs) != 3 ||
-			calls[1].Selection.AttestedHeldActionID == nil || len(calls[1].Selection.AvailableActionIDs) != 3 ||
-			!slices.Equal(calls[2].Selection.AvailableActionIDs, []string{bindings[2].ActionID}) {
-			t.Fatalf("two-stage: %d calls, offers %v; want the full offer refused, attested, then the derived model", len(calls), offersOf(calls))
+		// full offer, and the turn is then held on the derived model.
+		if len(calls) != 2 || calls[0].Selection.AttestedHeldActionID == nil || len(calls[0].Selection.AvailableActionIDs) != 3 ||
+			calls[1].Selection.AttestedHeldActionID != nil ||
+			!slices.Equal(calls[1].Selection.AvailableActionIDs, []string{bindings[2].ActionID}) {
+			t.Fatalf("two-stage: %d calls, offers %v; want the full offer attested and refused, then the derived model", len(calls), offersOf(calls))
 		}
 		if result.RaylineARC.PolicyActionID != bindings[2].ActionID {
 			t.Fatalf("two-stage: served %s, want the derived model's action", result.RaylineARC.PolicyActionID)
@@ -304,9 +304,10 @@ func TestPolicyScorerReadsTwoStageFromTheManifest(t *testing.T) {
 }
 
 // A package that reads attested_held_action_id (pathfinder c0dce29a) decides a
-// cold typed user turn itself: the re-ask keeps every action offered with the
-// session record's model attested, and the service's choice is served -- here
-// another model -- rather than VSR narrowing the offer (memex-desktop #7417).
+// cold typed user turn itself: the first ask keeps every action offered with
+// the session record's model attested, and the service's choice is served --
+// here another model -- rather than VSR narrowing the offer (memex-desktop
+// #7417). One call: nothing is refused first.
 func TestTwoStageColdTypedTurnIsDecidedWithTheServedModelAttested(t *testing.T) {
 	fixture := newPolicySelectorFixture(t, config.RaylineARCModelScheduleTaskTurnCompaction)
 	asTwoStage(fixture)
@@ -328,19 +329,16 @@ func TestTwoStageColdTypedTurnIsDecidedWithTheServedModelAttested(t *testing.T) 
 		t.Fatalf("select: %v", err)
 	}
 	calls := fixture.fake.received()
-	if len(calls) != 2 || len(calls[1].Selection.AvailableActionIDs) != 3 ||
-		calls[1].Selection.AttestedHeldActionID == nil || *calls[1].Selection.AttestedHeldActionID != bindings[2].ActionID {
-		t.Fatalf("%d calls, offers %v; want the refusal, then the full offer with the served model attested", len(calls), offersOf(calls))
+	if len(calls) != 1 || len(calls[0].Selection.AvailableActionIDs) != 3 ||
+		calls[0].Selection.AttestedHeldActionID == nil || *calls[0].Selection.AttestedHeldActionID != bindings[2].ActionID {
+		t.Fatalf("%d calls, offers %v; want one ask, the full offer with the served model attested", len(calls), offersOf(calls))
 	}
-	if calls[0].Selection.AttestedHeldActionID != nil {
-		t.Fatal("the first ask attested a model; only the re-ask after held_unknown does")
-	}
-	if result.RaylineARC.PolicyActionID != calls[1].Selection.AvailableActionIDs[0] {
+	if result.RaylineARC.PolicyActionID != calls[0].Selection.AvailableActionIDs[0] {
 		t.Fatalf("served %s, want the service's decision", result.RaylineARC.PolicyActionID)
 	}
 }
 
-// Any refusal of the attested re-ask -- here invalid_request from a service
+// Any refusal of the attested first ask -- here invalid_request from a service
 // that rejects the field -- falls through to the narrowed re-ask: the
 // attested ask never serves worse than the old hold (SwiftWolf's #272 review).
 func TestTwoStageAttestedAskRefusedForAnyReasonFallsBackToTheNarrowedHold(t *testing.T) {
@@ -373,11 +371,35 @@ func TestTwoStageAttestedAskRefusedForAnyReasonFallsBackToTheNarrowedHold(t *tes
 		t.Fatalf("select: %v", err)
 	}
 	calls := fixture.fake.received()
-	if len(calls) != 3 || calls[1].Selection.AttestedHeldActionID == nil || calls[2].Selection.AttestedHeldActionID != nil ||
-		!slices.Equal(calls[2].Selection.AvailableActionIDs, []string{bindings[2].ActionID}) {
-		t.Fatalf("%d calls, offers %v; want refused, attested (rejected), then narrowed to the derived model", len(calls), offersOf(calls))
+	if len(calls) != 2 || calls[0].Selection.AttestedHeldActionID == nil || calls[1].Selection.AttestedHeldActionID != nil ||
+		!slices.Equal(calls[1].Selection.AvailableActionIDs, []string{bindings[2].ActionID}) {
+		t.Fatalf("%d calls, offers %v; want attested (rejected), then narrowed to the derived model", len(calls), offersOf(calls))
 	}
 	if result.RaylineARC.PolicyActionID != bindings[2].ActionID {
 		t.Fatalf("served %s, want the derived model's action", result.RaylineARC.PolicyActionID)
+	}
+}
+
+// An attested first ask the service never answered -- the connection lost
+// mid-call -- is the turn's failure as it stands: it is not asked again
+// narrowed, which on an outage would pay a second timeout for nothing and
+// could force the recorded model after a transient network error.
+func TestTwoStageAttestedFirstAskLostInTransportIsNotReaskedNarrowed(t *testing.T) {
+	fixture := newPolicySelectorFixture(t, config.RaylineARCModelScheduleTaskTurnCompaction)
+	asTwoStage(fixture)
+	fixture.fake.dropAttested = true
+	state, _ := raylinearc.NewEpisodeState(2)
+	held := 0
+	state.PreviousArm, state.TurnIndex = &held, 2
+	state.Policy = &raylinearc.PolicyEpisodeState{PrefixDigest: raylinearc.MessagesDigest(nil, 0)}
+	_, err := fixture.selectWith(t, state, typedFollowUp(t), func(arc *selection.RaylineARCSelectionContext) {
+		arc.ServedModels = []selection.RaylineARCServedModel{{Source: derivedHoldSessionRecord, Model: "vendor/off"}}
+	})
+	if class := selectionFailureClassOf(t, err); class != "policy_service_transport" {
+		t.Fatalf("class %s, want policy_service_transport", class)
+	}
+	calls := fixture.fake.received()
+	if len(calls) != 1 || calls[0].Selection.AttestedHeldActionID == nil {
+		t.Fatalf("%d calls, offers %v; want the one attested ask and no narrowed re-ask", len(calls), offersOf(calls))
 	}
 }

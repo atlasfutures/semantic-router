@@ -285,9 +285,9 @@ func TestExplorationUsageKeepsNullRecordFieldsNull(t *testing.T) {
 	}
 }
 
-// A two-stage cold turn whose attested re-ask is refused for its exploration
-// member fails on that refusal: it is never asked again narrowed, where a
-// greedy-looking success would hide the cell's misconfiguration.
+// A two-stage cold turn whose attested first ask is refused for its
+// exploration member fails on that refusal: it is never asked again narrowed,
+// where a greedy-looking success would hide the cell's misconfiguration.
 func TestAttestedAskRefusedForExplorationIsNotReaskedNarrowed(t *testing.T) {
 	fixture := newExplorationFixture(t, fixtureExploration(), nil)
 	asTwoStage(fixture)
@@ -307,8 +307,8 @@ func TestAttestedAskRefusedForExplorationIsNotReaskedNarrowed(t *testing.T) {
 		t.Fatalf("class %s", class)
 	}
 	calls := fixture.fake.received()
-	if len(calls) != 2 || calls[1].Selection.AttestedHeldActionID == nil || calls[1].Selection.Exploration == nil {
-		t.Fatalf("%d calls, offers %v; want the cold refusal and the attested ask only", len(calls), offersOf(calls))
+	if len(calls) != 1 || calls[0].Selection.AttestedHeldActionID == nil || calls[0].Selection.Exploration == nil {
+		t.Fatalf("%d calls, offers %v; want the attested ask only", len(calls), offersOf(calls))
 	}
 }
 

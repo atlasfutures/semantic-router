@@ -624,6 +624,37 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 			metrics.SetRaylineARCEncoderInflight(armed.admission.Inflight())
 		}, nil
 	}
+	// A two-stage package refuses a mid-conversation turn it would decide
+	// cold: one whose history holds an assistant message its episode never
+	// attributed, with no episode memory. The record of the model this
+	// conversation's own decisions last served (rayline_arc_derived_hold.go)
+	// is read before the first ask, so it rides on the first ask of a package
+	// whose manifest says it is two-stage: attested, with every action still
+	// offered, for a stage one that reads the field and holds or decides with
+	// that model (memex-desktop #7417); narrowed to that model's actions, a
+	// caller hold, for a stage one that is not attestable. A package VSR does
+	// not know to be two-stage keeps the record for the refusal, below.
+	// Only a model-unit stage one is attested: there any action of the model
+	// names the held candidate, while a model-effort one would read another
+	// effort as the held candidate and switch effort off a boundary. A held
+	// model this turn excludes has no action to attest or offer, so the ask
+	// goes out plain and its refusal fails below, never retried empty.
+	var derived derivedHold
+	derivedOffer, derivedSource, attestedFirst, derivedFound := false, "", "", false
+	if held < 0 && scorer.twoStage {
+		if found, ok := derivedHoldOffer(scorer, arcContext, available); ok && len(found.offer) > 0 {
+			derived, derivedFound, derivedSource = found, true, found.source
+			logRaylineARCDerivedHold(arcContext, derived, "first")
+			if scorer.attestable {
+				attestedFirst = derived.offer[0]
+				request.Selection.AttestedHeldActionID = &attestedFirst
+			} else {
+				available = derived.offer
+				derivedOffer = true
+				request.Selection.AvailableActionIDs = derived.offer
+			}
+		}
+	}
 	started := selector.now()
 	response, err := decidePolicyThroughBusy(ctx, armed.policy, request, scorer.busyWait, admit, withCacheContext)
 	// A strict cell's relaxed side call that the service refused as
@@ -636,54 +667,50 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		request.EpisodeMode = scorer.episodeMode
 		response, err = decidePolicyThroughBusy(ctx, armed.policy, request, scorer.busyWait, admit, withCacheContext)
 	}
-	// A two-stage package refuses a mid-conversation turn it would decide
-	// cold. With no model held, the turn is asked once more with the offer
-	// narrowed to the model this conversation's own decisions last served
-	// (rayline_arc_derived_hold.go). With no such record, or on a second
-	// refusal, the turn is undecidable and fails: no fallback model serves it.
 	var cold *raylinearc.PolicyServiceError
-	derivedOffer, derivedSource := false, ""
-	if held < 0 && errors.As(err, &cold) && cold.Class == raylinearc.PolicyStageOneHeldUnknownClass {
-		if derived, found := derivedHoldOffer(scorer, arcContext, available); found {
-			derivedSource = derived.source
-			logRaylineARCDerivedHold(arcContext, derived)
-			// The held model this turn excludes leaves nothing to offer: the
-			// turn fails as any empty offer does, never retried empty.
-			if len(derived.offer) == 0 {
+	switch {
+	case attestedFirst != "" && err == nil:
+		logRaylineARCAttestedHold(arcContext, derived, attestedFirst, response.Decision.SelectedActionID)
+	case attestedFirst != "" && policyServiceAnswered(err) && !policyExplorationRefused(err):
+		// Any refusal the service answers the attested ask with -- held_unknown
+		// from a package that predates the field, invalid_request from one
+		// that rejects it, any other refusal -- is asked once more narrowed to
+		// the served model, as the re-ask always was: the attested ask may
+		// only add a decision, never serve worse than the old hold. An
+		// exploration refusal is the cell's config, not the package's age, so
+		// it stands. A call the service never answered (a transport failure,
+		// a shed admission) is not asked again: the attestation did not cause
+		// it, and the first ask's failure is the turn's.
+		request.Selection.AttestedHeldActionID = nil
+		available = derived.offer
+		derivedOffer = true
+		request.Selection.AvailableActionIDs = derived.offer
+		logRaylineARCDerivedHold(arcContext, derived, "re-ask")
+		response, err = decidePolicyThroughBusy(ctx, armed.policy, request, scorer.busyWait, admit, withCacheContext)
+	case !derivedFound && held < 0 && errors.As(err, &cold) && cold.Class == raylinearc.PolicyStageOneHeldUnknownClass:
+		// A refusal the first ask did not anticipate: the recorded model is
+		// excluded this turn, or the package's manifest does not say it is
+		// two-stage (an older or manifest-less package), so the record stayed
+		// off the first ask. With a record naming a model this turn excludes,
+		// nothing is offered and the turn fails as any empty offer does, never
+		// retried empty. Otherwise the turn is asked once more narrowed to the
+		// recorded model, as the re-ask always was.
+		if late, ok := derivedHoldOffer(scorer, arcContext, available); ok {
+			derivedSource = late.source
+			if len(late.offer) == 0 {
+				logRaylineARCDerivedHold(arcContext, late, "none")
 				logRaylineARCEmptyOffer(arcContext, scorer, emptyOffer{
 					stage: "derived_hold", held: held, retained: retained, sideCall: sideCall, fallback: fallback,
 					excluded: excluded, hard: hard, cellOut: loggedRoutes, turn: turn,
-					derivedModel: derived.model, derivedSource: derived.source,
+					derivedModel: late.model, derivedSource: late.source,
 				})
 				return nil, arcSelectionFailure("policy_no_available_action")
 			}
-			// First the full offer with the served model attested: a package
-			// that reads it decides a typed user turn (or holds the model)
-			// with that model held (memex-desktop #7417). A package that
-			// predates the field refuses held_unknown again, and the turn is
-			// then asked as before, narrowed to the served model.
-			// Only a model-unit stage one: there any action of the model names
-			// the held candidate, while a model-effort one would read another
-			// effort as the held candidate and switch effort off a boundary.
-			attested := derived.offer[0]
-			if scorer.attestable {
-				request.Selection.AttestedHeldActionID = &attested
-				response, err = decidePolicyThroughBusy(ctx, armed.policy, request, scorer.busyWait, admit, withCacheContext)
-				request.Selection.AttestedHeldActionID = nil
-			}
-			// Any refusal of the attested ask -- held_unknown from a package
-			// that predates the field, or any other error -- is asked again
-			// narrowed, as before: the attested ask may only add a decision,
-			// never serve worse than the old hold. An exploration refusal is
-			// the cell's config, not the package's age, so it stands.
-			if (!scorer.attestable || err != nil) && !policyExplorationRefused(err) {
-				available = derived.offer
-				derivedOffer = true
-				request.Selection.AvailableActionIDs = derived.offer
-				response, err = decidePolicyThroughBusy(ctx, armed.policy, request, scorer.busyWait, admit, withCacheContext)
-			} else if err == nil {
-				logRaylineARCAttestedHold(arcContext, derived, attested, response.Decision.SelectedActionID)
-			}
+			logRaylineARCDerivedHold(arcContext, late, "re-ask")
+			available = late.offer
+			derivedOffer = true
+			request.Selection.AvailableActionIDs = late.offer
+			response, err = decidePolicyThroughBusy(ctx, armed.policy, request, scorer.busyWait, admit, withCacheContext)
 		}
 	}
 	// Any refusal to decide that stands -- a cold turn no record holds, or the
