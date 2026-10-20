@@ -214,20 +214,20 @@ if APP_NAME in DEV_RTX_APP_PROFILES:
     MAX_RESIDENT_TOKENS = MAX_SESSIONS * MAX_SERIALIZED_TOKENS
     MAX_CONCURRENT_INPUTS = 64
 # The autoscaler floor, scoped to the app name for the same reason the card
-# and the caps above it are. Only the L4 production app is floored. Its
-# caller, the prod Rayline ARC cell, sets on_error: fail_closed, so a
-# scale-from-zero cold start -- 220.7 s and 226.4 s measured through the cell
-# on 2026-09-02 -- reaches a real user as a 503 on the first turn after an
-# idle gap, not as a slow turn. One warm L4 removes that turn; it costs
-# ~$1.69/hr, ~$40/day. The floor is in source (Chi Lang, 2026-10-20, D-224)
-# because a modal deploy resets an update_autoscaler override to the
-# decorator's value. The standing dev apps scale to zero (Chi Lang,
-# 2026-10-20, D-233): their idle floor cost ~$900/month for occasional dev
-# turns, so a lab session raises a dev floor on demand with update_autoscaler
-# and drops it afterwards. Every other app name deployed from this module also
-# keeps the scale-to-zero default: the default app and every closed run's app.
-# The production RTX apps set their floor in source, below.
-MIN_CONTAINERS = 1 if APP_NAME in PROD_APP_PROFILES else 0
+# and the caps above it are. The L4 production app is no longer floored: it
+# was kept warm in source (Chi Lang, 2026-10-20, D-224) because its caller,
+# the prod Rayline ARC cell, fails closed on a cold encoder. The prod cell
+# moved to revision vsr-data-plane-00006-sfv on 2026-10-20, which runs in
+# policy-service mode and does not call the encoder, so the floor was dropped
+# the same day (Chi Lang, D-245 step 6) and is 0 here too, because a modal
+# deploy resets an update_autoscaler override to the decorator's value. A
+# rollback of the prod cell to 00005 (encoder mode) meets a cold encoder:
+# expect ~3-4 min of 503s on first turns unless the floor is raised with
+# update_autoscaler first. The standing dev apps scale to zero as well (Chi
+# Lang, 2026-10-20, D-233); a lab session raises a dev floor on demand with
+# update_autoscaler and drops it afterwards. Every app name deployed from this
+# module therefore keeps the scale-to-zero default set above. The production
+# RTX apps set their floor in source, below.
 # The prod RTX apps sit outside the frozen chains above so no recorded run's
 # class or caps can move. They are warm by source, not by a deploy-time
 # autoscaler call: the prod cell fails closed, so a cold card reaches a user

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import re
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -25,13 +26,12 @@ GPU_TYPE_CONDITIONAL = (
     "else:\n"
     '    GPU_TYPE = "H100"'
 )
-# The autoscaler floor, frozen the same way and for the same reason. Only the
-# L4 production app is floored: its cell fails closed on a cold encoder, so the
-# first turn after an idle gap is a user-visible 503. The standing dev apps
-# scale to zero (D-233) and are warmed on demand for lab sessions. Every other
-# app -- the default app and every closed run's app -- keeps the scale-to-zero
-# default, so this decision cannot buy idle GPU time for them.
-MIN_CONTAINERS_CONDITIONAL = "MIN_CONTAINERS = 1 if APP_NAME in PROD_APP_PROFILES else 0"
+# The autoscaler floor. Only the prod RTX apps raise it, inside their own
+# override block. The L4 prod app's floor was dropped (D-245): the prod cell
+# now runs in policy-service mode and does not call the encoder. The standing
+# dev apps scale to zero (D-233). Every other app keeps the scale-to-zero
+# default, so no decision here can buy idle GPU time for them.
+MIN_CONTAINERS_ASSIGNMENTS = ["MIN_CONTAINERS = 0", "MIN_CONTAINERS = 1"]
 
 
 def source() -> str:
@@ -352,22 +352,24 @@ def test_session_service_scopes_the_warm_prod_rtx_apps() -> None:
     assert service_source.index(override) < service_source.index("min_containers=MIN_CONTAINERS")
 
 
-def test_only_the_standing_prod_apps_hold_a_warm_container() -> None:
+def test_only_the_prod_rtx_apps_hold_a_warm_container() -> None:
     """The floor is app-scoped, like the card and the caps above it.
 
-    The prod cell's encoder calls fail closed, so a scale-from-zero cold start
-    (measured at 220.7-226.4 s on 2026-09-02) surfaces to the caller as a 503
-    on the first turn after an idle gap. Flooring the prod apps removes it, and
-    flooring them in source keeps the floor across a redeploy. The standing dev
-    apps scale to zero and are warmed on demand for lab sessions (D-233). The
-    decorator must read the module constant, so the conditional above is the
-    only place the floor can move, and no other app name can be widened by
-    editing this one.
+    The module default is 0 and the only raise is the prod RTX override
+    (asserted above). The L4 prod app scales to zero since the prod cell moved
+    to policy-service mode (D-245); the standing dev apps are warmed on demand
+    for lab sessions (D-233). The decorator must read the module constant, so
+    a new floor can only enter as a new assignment, which this test catches.
     """
 
     service_source = source()
 
-    assert MIN_CONTAINERS_CONDITIONAL in service_source
+    assignments = [
+        line.strip()
+        for line in service_source.splitlines()
+        if re.match(r"\s*MIN_CONTAINERS\s*=", line)
+    ]
+    assert assignments == MIN_CONTAINERS_ASSIGNMENTS
 
     module = ast.parse(service_source)
     service = next(
@@ -437,12 +439,13 @@ def test_host_resources_resolve_per_app_name(
 @pytest.mark.parametrize(
     ("app_name", "min_containers"),
     [
-        # Standing prod apps, whose cell fails closed: one warm container.
-        ("rayline-arc-session-encoder-prod", 1),
+        # The prod RTX apps keep their source floor.
         ("rayline-arc-session-encoder-prod-rtx-a", 1),
-        # The standing dev apps (warmed on demand for lab sessions, D-233),
+        # The L4 prod app (policy-service mode does not call it, D-245),
+        # the standing dev apps (warmed on demand for lab sessions, D-233),
         # the default app, every recorded run's app and the dev RTX test apps
         # scale to zero.
+        ("rayline-arc-session-encoder-prod", 0),
         ("rayline-arc-session-encoder-dev", 0),
         ("rayline-arc-session-encoder-dev-d", 0),
         ("rayline-arc-session-encoder", 0),
