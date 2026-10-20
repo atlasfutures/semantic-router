@@ -290,7 +290,7 @@ func (r *OpenAIRouter) handleRaylineRoutesAPI(
 	started := time.Now()
 	decision, err := runtime.RouteDecision(
 		lookupContext,
-		raylineRoutesConsult(body, routeID, episode, ephemeral, wireFormat),
+		raylineRoutesConsult(body, routeID, episode, ephemeral, wireFormat, ctx.Headers),
 	)
 	if err != nil {
 		return r.raylineRoutesFailure(ctx, lookupContext, routeID, err)
@@ -877,6 +877,7 @@ func raylineRoutesConsult(
 	episode string,
 	ephemeral bool,
 	wireFormat llmprotocol.WireFormat,
+	headers map[string]string,
 ) routerruntime.RouteDecisionRequest {
 	return routerruntime.RouteDecisionRequest{
 		Body:       body,
@@ -884,6 +885,7 @@ func raylineRoutesConsult(
 		SessionID:  episode,
 		Ephemeral:  ephemeral,
 		WireFormat: wireFormat,
+		Headers:    headers,
 		// Named, not defaulted. The two consult surfaces share one
 		// RouteDecision method and disambiguate a multi-decision deployment
 		// differently; an unset surface reads as the legacy consult and

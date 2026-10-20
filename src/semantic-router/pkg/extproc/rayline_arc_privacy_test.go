@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/routerruntime"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
@@ -169,5 +170,71 @@ func TestRaylineARCSelectorRefusesNoPrivateArm(t *testing.T) {
 				t.Fatal("the decision-only API would not answer no_private_arm 422")
 			}
 		})
+	}
+}
+
+// The privacy mask is applied after every serviceability mask: a basket no
+// arm of which can serve the turn keeps the class that says why, and one
+// where only a ruled-out arm could serve it says no_private_arm.
+func TestNoPrivateArmNamesThePrivacyIntersection(t *testing.T) {
+	tests := map[string]struct {
+		privacy, disabled []bool
+		want              string
+	}{
+		"the allowed arm is disabled": {[]bool{false, true}, []bool{true, false}, arcFailureNoPrivateArm},
+		"every arm is disabled":       {[]bool{false, true}, []bool{true, true}, "no_enabled_arm"},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			state, err := raylinearc.NewEpisodeState(2)
+			if err != nil {
+				t.Fatal(err)
+			}
+			selector := armedVisionSelector(visionScorer(), visionEncoder())
+			selectionContext := armConstraintContext(state, false, nil, test.disabled)
+			selectionContext.RaylineARC.PrivacyExcludedArms = test.privacy
+
+			_, err = selector.Select(context.Background(), selectionContext)
+			var failure *raylineARCSelectionFailure
+			if !errors.As(err, &failure) || failure.class != test.want {
+				t.Fatalf("Select() error = %v, want class %s", err, test.want)
+			}
+		})
+	}
+}
+
+// A decision-only consult reads the privacy headers as a routed turn does,
+// and no other caller header reaches selection.
+func TestDecisionOnlyConsultCarriesThePrivacyHeaders(t *testing.T) {
+	selector := &stubARCSelector{arm: 0, workers: decisionServiceWorkers()}
+	service := &raylineARCDecisionService{router: decisionServiceRouter(t, selector)}
+	algorithm := decisionServiceConfig().Decisions[0].Algorithm
+
+	requestContext, err := service.decisionOnlyRequestContext(
+		context.Background(),
+		algorithm,
+		routerruntime.RouteDecisionRequest{
+			Body: anthropicBody("hello"), DecisionID: "rt_0a1b", SessionID: "session-1",
+			Headers: map[string]string{
+				raylineARCPrivacyModeHeader:        "privacy",
+				raylineARCPrivacyAllowedArmsHeader: "arm-0",
+				raylineARCCallKindHeader:           "side",
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("decisionOnlyRequestContext() error = %v", err)
+	}
+	if requestContext.Headers[raylineARCPrivacyModeHeader] != "privacy" ||
+		requestContext.Headers[raylineARCPrivacyAllowedArmsHeader] != "arm-0" {
+		t.Fatalf("Headers = %v, want the privacy headers carried", requestContext.Headers)
+	}
+	if _, present := requestContext.Headers[raylineARCCallKindHeader]; present {
+		t.Fatalf("Headers = %v: only the privacy headers may be carried", requestContext.Headers)
+	}
+	consult := raylineRoutesConsult(nil, "rte_1234abcd5678efab", "", true, llmprotocol.AnthropicMessagesV1,
+		map[string]string{raylineARCPrivacyModeHeader: "zdr"})
+	if consult.Headers[raylineARCPrivacyModeHeader] != "zdr" {
+		t.Fatal("/v1/routes does not pass its request headers to the consult")
 	}
 }
