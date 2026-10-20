@@ -6,6 +6,7 @@ import (
 	"time"
 
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
+	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/headers"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
@@ -151,5 +152,29 @@ func TestPrivacyModeHeaderIsTheCellsAlone(t *testing.T) {
 	}
 	if !slices.Contains(requestHeaderPhaseRemovals(), headers.VSRPrivacyMode) {
 		t.Fatal("a client's copy would be forwarded upstream")
+	}
+}
+
+// A response the router passes through untouched -- an unprocessed request,
+// a Looper call -- still has an upstream's x-vsr-privacy-mode stripped.
+func TestPrivacyModeHeaderIsStrippedOnPassThroughResponses(t *testing.T) {
+	t.Parallel()
+	router := &OpenAIRouter{}
+	for name, ctx := range map[string]*RequestContext{
+		"skip processing": {SkipProcessing: true},
+		"looper":          {LooperRequest: true},
+	} {
+		response, err := router.handleResponseHeaders(&ext_proc.ProcessingRequest_ResponseHeaders{
+			ResponseHeaders: &ext_proc.HttpHeaders{Headers: &core.HeaderMap{
+				Headers: []*core.HeaderValue{{Key: ":status", Value: "200"}},
+			}},
+		}, ctx)
+		if err != nil {
+			t.Fatalf("%s: handleResponseHeaders: %v", name, err)
+		}
+		removed := response.GetResponseHeaders().GetResponse().GetHeaderMutation().GetRemoveHeaders()
+		if !slices.Contains(removed, headers.VSRPrivacyMode) {
+			t.Fatalf("%s: an upstream's %s passes through (removed %v)", name, headers.VSRPrivacyMode, removed)
+		}
 	}
 }

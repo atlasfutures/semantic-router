@@ -256,6 +256,13 @@ func (builder *responseHeaderMutationBuilder) mutation() *ext_proc.HeaderMutatio
 	return &ext_proc.HeaderMutation{SetHeaders: builder.setHeaders, RemoveHeaders: builder.removeHeaders}
 }
 
+// privacyModeRemoval strips x-vsr-privacy-mode from a response the router
+// does not otherwise mutate: only the router states it, and no ARC selection
+// stands behind such a response.
+func privacyModeRemoval() *ext_proc.HeaderMutation {
+	return &ext_proc.HeaderMutation{RemoveHeaders: []string{headers.VSRPrivacyMode}}
+}
+
 // addPrivacyMode states the data mode an ARC turn was served under, replacing
 // any copy the upstream sent, and strips the header from every other
 // response: only the router states it.
