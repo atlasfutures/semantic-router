@@ -45,7 +45,7 @@ func TestPrivacyExcludedArmsReadTheGatewayHeaders(t *testing.T) {
 			if mode != test.wantMode {
 				t.Fatalf("mode = %q, want %q", mode, test.wantMode)
 			}
-			if got := privacyExcludedArms(mode, test.headers, privacyTestArms); !reflect.DeepEqual(got, test.want) {
+			if got := privacyExcludedArms(mode, raylineARCPrivacyAllowedArms(mode, test.headers), privacyTestArms); !reflect.DeepEqual(got, test.want) {
 				t.Fatalf("privacyExcludedArms() = %v, want %v", got, test.want)
 			}
 		})
@@ -62,13 +62,13 @@ func TestPrivacyHeadersAreIgnoredWhenUntrusted(t *testing.T) {
 	if mode := raylineARCPrivacyMode(untrusted); mode != "" {
 		t.Fatalf("untrusted mode = %q, want standard", mode)
 	}
-	if got := privacyExcludedArms(raylineARCPrivacyMode(untrusted), untrusted, privacyTestArms); got != nil {
+	if got := privacyExcludedArms(raylineARCPrivacyMode(untrusted), raylineARCPrivacyAllowedArms(raylineARCPrivacyMode(untrusted), untrusted), privacyTestArms); got != nil {
 		t.Fatalf("untrusted mask = %v, want nil", got)
 	}
 	trusted := raylineARCTrustedSignalHeaders(
 		&config.RaylineARCPolicyServiceConfig{TrustTurnSignalHeaders: true}, request,
 	)
-	if got := privacyExcludedArms(raylineARCPrivacyMode(trusted), trusted, privacyTestArms); !reflect.DeepEqual(got, []bool{false, true, true}) {
+	if got := privacyExcludedArms(raylineARCPrivacyMode(trusted), raylineARCPrivacyAllowedArms(raylineARCPrivacyMode(trusted), trusted), privacyTestArms); !reflect.DeepEqual(got, []bool{false, true, true}) {
 		t.Fatalf("trusted mask = %v", got)
 	}
 	if !slices.Contains(raylineARCTurnSignalHeadersForRemoval(), raylineARCPrivacyAllowedArmsHeader) {

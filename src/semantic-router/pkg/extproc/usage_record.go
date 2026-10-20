@@ -104,6 +104,18 @@ type llmUsageRecord struct {
 	// named it; ProviderOrder is the route the dispatched body pinned.
 	UpstreamProvider *string  `json:"upstream_provider"`
 	ProviderOrder    []string `json:"provider_order"`
+	// PrivacyMode is the data mode a Rayline ARC turn was served under
+	// (standard, privacy or zdr), null outside ARC; a private turn also
+	// carries its allowed set's size and digest, never the set
+	// (rayline_arc_privacy.go).
+	PrivacyMode             *string `json:"privacy_mode"`
+	PrivacyAllowedArmsCount *int    `json:"privacy_allowed_arms_count"`
+	PrivacyAllowedArmsHash  *string `json:"privacy_allowed_arms_hash"`
+	// The provider object's data-use members as the dispatched body carried
+	// them, null where it carried none.
+	ProviderDataCollection *string `json:"provider_data_collection"`
+	ProviderZDR            *bool   `json:"provider_zdr"`
+	ProviderAllowFallbacks *bool   `json:"provider_allow_fallbacks"`
 	// UpstreamServiceTier is the service tier the upstream says it served
 	// the call at (service_tier, or Anthropic's usage.service_tier), in its
 	// spelling; null when the response did not say.
@@ -221,6 +233,17 @@ func (r *OpenAIRouter) newLLMUsageRecord(ctx *RequestContext, usage responseUsag
 	}
 	if len(ctx.DispatchedProviderOrder) > 0 {
 		record.ProviderOrder = append([]string(nil), ctx.DispatchedProviderOrder...)
+	}
+	record.ProviderDataCollection = nonEmpty(ctx.DispatchedProviderPrivacy.dataCollection)
+	record.ProviderZDR = ctx.DispatchedProviderPrivacy.zdr
+	record.ProviderAllowFallbacks = ctx.DispatchedProviderPrivacy.allowFallbacks
+	if ctx.VSRRaylineARC != nil {
+		record.PrivacyMode = nonEmpty(privacyModeLabel(ctx.RaylineARCPrivacyMode))
+		if ctx.RaylineARCPrivacyMode != "" {
+			count := len(ctx.RaylineARCPrivacyAllowedArms)
+			record.PrivacyAllowedArmsCount = &count
+			record.PrivacyAllowedArmsHash = nonEmpty(privacyAllowedArmsHash(ctx.RaylineARCPrivacyAllowedArms))
+		}
 	}
 	record.RequestedServiceTier = nonEmpty(ctx.DispatchedServiceTier)
 	if ctx.FlexResend.served() {

@@ -1,6 +1,9 @@
 package extproc
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"slices"
 	"strings"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
@@ -45,24 +48,66 @@ func raylineARCPrivacyMode(signalHeaders map[string]string) string {
 	}
 }
 
+// raylineARCPrivacyAllowedArms reads a private request's allowed set off the
+// trusted signal headers, sorted and deduplicated: nil for a standard
+// request, empty for a private one that names none.
+func raylineARCPrivacyAllowedArms(mode string, signalHeaders map[string]string) []string {
+	if mode == "" {
+		return nil
+	}
+	allowed := []string{}
+	for _, arm := range strings.Split(signalHeaders[raylineARCPrivacyAllowedArmsHeader], ",") {
+		if arm = strings.TrimSpace(arm); arm != "" {
+			allowed = append(allowed, arm)
+		}
+	}
+	slices.Sort(allowed)
+	return slices.Compact(allowed)
+}
+
 // privacyExcludedArms marks, by arm ordinal, the candidates outside a private
 // request's allowed set. It returns nil for a standard request, which leaves
 // selection exactly as it was.
-func privacyExcludedArms(mode string, signalHeaders map[string]string, modelRefs []config.ModelRef) []bool {
+func privacyExcludedArms(mode string, allowed []string, modelRefs []config.ModelRef) []bool {
 	if mode == "" || len(modelRefs) == 0 {
 		return nil
 	}
-	allowed := map[string]bool{}
-	for _, arm := range strings.Split(signalHeaders[raylineARCPrivacyAllowedArmsHeader], ",") {
-		if arm = strings.TrimSpace(arm); arm != "" {
-			allowed[arm] = true
-		}
-	}
 	arms := make([]bool, len(modelRefs))
 	for index, ref := range modelRefs {
-		arms[index] = !allowed[strings.TrimSpace(ref.Model)]
+		arms[index] = !slices.Contains(allowed, strings.TrimSpace(ref.Model))
 	}
 	return arms
+}
+
+// privacyModeLabel is the mode the cell applied, as logged and as
+// x-vsr-privacy-mode states it.
+func privacyModeLabel(mode string) string {
+	if mode == "" {
+		return "standard"
+	}
+	return mode
+}
+
+// privacyAllowedArmsHash is a short stable digest of a sorted allowed set:
+// the set is the gateway's and unbounded in length, so records carry its
+// count and this digest rather than the list. Empty for a standard request.
+func privacyAllowedArmsHash(allowed []string) string {
+	if allowed == nil {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(strings.Join(allowed, "\n")))
+	return hex.EncodeToString(sum[:8])
+}
+
+// addPrivacyFields writes the request's privacy facts into a log record: the
+// applied mode, and for a private request its allowed set's size and digest.
+func addPrivacyFields(fields map[string]interface{}, ctx *RequestContext) {
+	fields["privacy_mode"] = privacyModeLabel(ctx.RaylineARCPrivacyMode)
+	if ctx.RaylineARCPrivacyMode == "" {
+		return
+	}
+	fields["privacy_allowed_arms_count"] = len(ctx.RaylineARCPrivacyAllowedArms)
+	fields["privacy_allowed_arms_hash"] = privacyAllowedArmsHash(ctx.RaylineARCPrivacyAllowedArms)
 }
 
 // withPrivacyExcludedArms folds the privacy constraint into the mask. An arm

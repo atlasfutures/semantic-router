@@ -84,14 +84,33 @@ func recordDispatchedProviderPin(ctx *RequestContext, body []byte) {
 		return
 	}
 	ctx.DispatchedProviderOrder = nil
+	ctx.DispatchedProviderPrivacy = dispatchedProviderPrivacy{}
 
 	var wire struct {
 		Provider struct {
-			Order []string `json:"order"`
+			Order          []string `json:"order"`
+			DataCollection string   `json:"data_collection"`
+			ZDR            *bool    `json:"zdr"`
+			AllowFallbacks *bool    `json:"allow_fallbacks"`
 		} `json:"provider"`
 	}
 	if json.Unmarshal(body, &wire) != nil {
 		return
 	}
 	ctx.DispatchedProviderOrder = wire.Provider.Order
+	ctx.DispatchedProviderPrivacy = dispatchedProviderPrivacy{
+		dataCollection: wire.Provider.DataCollection,
+		zdr:            wire.Provider.ZDR,
+		allowFallbacks: wire.Provider.AllowFallbacks,
+	}
+}
+
+// dispatchedProviderPrivacy is the provider object's data-use members as the
+// rendered upstream body carries them (llm_usage provider_data_collection,
+// provider_zdr, provider_allow_fallbacks): empty and nil where the body sent
+// none.
+type dispatchedProviderPrivacy struct {
+	dataCollection string
+	zdr            *bool
+	allowFallbacks *bool
 }

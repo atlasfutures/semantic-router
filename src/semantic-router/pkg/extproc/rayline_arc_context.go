@@ -184,6 +184,7 @@ func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 	if algorithm.RaylineARC.PolicyService != nil {
 		signalHeaders = raylineARCTrustedSignalHeaders(algorithm.RaylineARC.PolicyService, reqCtx.Headers)
 		reqCtx.RaylineARCPrivacyMode = raylineARCPrivacyMode(signalHeaders)
+		reqCtx.RaylineARCPrivacyAllowedArms = raylineARCPrivacyAllowedArms(reqCtx.RaylineARCPrivacyMode, signalHeaders)
 		result.PolicyCallKind, result.PolicyCallKindSource = raylineARCPolicyCallKindOfBody(
 			signalHeaders, policyRequestFormat(reqCtx.SourceFormat), reqCtx.RaylineARCRawBody, result.EpisodeIDHash,
 		)
@@ -257,7 +258,7 @@ func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 	result.NonVisionArms = r.nonVisionArms(modelRefs)
 	result.OverContextArms = r.overContextArms(modelRefs, result.ContextTokens)
 	result.DisabledArms = r.disabledArms(modelRefs)
-	result.PrivacyExcludedArms = privacyExcludedArms(reqCtx.RaylineARCPrivacyMode, signalHeaders, modelRefs)
+	result.PrivacyExcludedArms = privacyExcludedArms(reqCtx.RaylineARCPrivacyMode, reqCtx.RaylineARCPrivacyAllowedArms, modelRefs)
 	result.RequiredCapabilities = requestRoutingCapabilities(reqCtx)
 	result.IncapableArms = r.incapableArms(modelRefs, result.RequiredCapabilities)
 	result.ToolLoopForeignArms, result.ToolLoopArm, result.ToolLoopFamily = r.toolLoopForeignArms(
