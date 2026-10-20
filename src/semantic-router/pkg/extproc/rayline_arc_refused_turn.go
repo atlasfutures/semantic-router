@@ -144,7 +144,7 @@ func (refusal refusedTurn) apply(state *raylinearc.EpisodeState) (*raylinearc.Ep
 	next := cloneARCState(state)
 	changed := false
 	if boundary := next.PolicyBoundary; boundary != nil && boundary.Arm == refusal.arm &&
-		(refusal.boundary == nil || *boundary == *refusal.boundary) {
+		(refusal.boundary == nil || boundary.Same(refusal.boundary)) {
 		next.PolicyBoundary = nil
 		changed = true
 	}
@@ -154,6 +154,7 @@ func (refusal refusedTurn) apply(state *raylinearc.EpisodeState) (*raylinearc.Ep
 			return next, changed
 		}
 		if policy := base.WithExclusion(refusal.exclude, turnFailureRefusal); policy.Excludes(refusal.exclude) {
+			keepStoredExplorationOrigin(policy, next.Policy)
 			next.Policy, changed = policy, true
 		}
 	}

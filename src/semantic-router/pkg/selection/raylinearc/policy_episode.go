@@ -192,6 +192,11 @@ type PolicyEpisodeState struct {
 	// exactly as long as the context does: a compaction or a prefix break
 	// starts a fresh state, and with it the full offer again.
 	Exclusions []PolicyExclusion `json:"exclusions,omitempty"`
+	// Exploration is a relaxed episode's record of its latest Stage-1
+	// boundary (PolicyExplorationOrigin), nil when it has none. Each turn's
+	// decision restates it (NextPolicyExplorationOrigin): Next drops it, so a
+	// turn that did not restate it leaves none.
+	Exploration *PolicyExplorationOrigin `json:"exploration,omitempty"`
 }
 
 // PolicyExclusion removes every action of a trained model from the offer,
@@ -252,6 +257,12 @@ type PolicyBoundaryDecision struct {
 	CompactionCount int    `json:"compaction_count"`
 	PrefixLen       int    `json:"prefix_len"`
 	PrefixDigest    string `json:"prefix_digest"`
+	// Exploration is the origin a relaxed boundary's decision left, kept
+	// with the boundary so a retry that reuses it can join a held answer to
+	// it. The policy context it was decided in may be one the retry does not
+	// carry: there is none before the episode's first turn, and a prefix
+	// break or a compaction starts a new one.
+	Exploration *PolicyExplorationOrigin `json:"exploration,omitempty"`
 }
 
 func (state *PolicyEpisodeState) Clone() *PolicyEpisodeState {
@@ -264,6 +275,7 @@ func (state *PolicyEpisodeState) Clone() *PolicyEpisodeState {
 	if len(cloned.Exclusions) == 0 {
 		cloned.Exclusions = nil
 	}
+	cloned.Exploration = state.Exploration.Clone()
 	return &cloned
 }
 
@@ -302,6 +314,17 @@ func (boundary *PolicyBoundaryDecision) RetainedArm(
 	return boundary.Arm, true
 }
 
+// Same reports whether other is this very decision, compared by value: a
+// stored copy holds its own exploration origin.
+func (boundary *PolicyBoundaryDecision) Same(other *PolicyBoundaryDecision) bool {
+	if boundary == nil || other == nil {
+		return boundary == other
+	}
+	a, b := *boundary, *other
+	a.Exploration, b.Exploration = nil, nil
+	return a == b && sameExplorationOrigin(boundary.Exploration, other.Exploration)
+}
+
 // Validate refuses a stored boundary decision Next could not have produced.
 func (boundary *PolicyBoundaryDecision) Validate(workerCount int) error {
 	if boundary == nil {
@@ -312,7 +335,7 @@ func (boundary *PolicyBoundaryDecision) Validate(workerCount int) error {
 		!isLowerHex64(boundary.PrefixDigest) {
 		return errors.New("ARC policy episode boundary decision is malformed")
 	}
-	return nil
+	return boundary.Exploration.validate()
 }
 
 // maxPolicyArmIDBytes bounds a trained arm id; pathfinder's are 64 hex.
@@ -364,7 +387,7 @@ func (state *PolicyEpisodeState) Validate() error {
 			return errors.New("ARC policy episode exclusion is malformed")
 		}
 	}
-	return nil
+	return state.Exploration.validate()
 }
 
 func isLowerHex64(value string) bool {
@@ -653,6 +676,7 @@ func (state *PolicyEpisodeState) NextWithPrices(
 	prices *PolicyPriceAudit,
 ) *PolicyEpisodeState {
 	next := state.Clone()
+	next.Exploration = nil
 	next.Ledger = append(next.Ledger, PolicyLedgerEntry{
 		Message: len(messages), ActionID: actionID, ArmID: armID, Prices: prices,
 	})

@@ -94,9 +94,12 @@ type fakePolicyService struct {
 	// A decide that carries selection.exploration with tau > 0 gets the
 	// exploration fixture's record, with the request's tau, basis and salt
 	// (pathfinder#5436). explorationHeld answers it as a held turn's record;
-	// omitExploration answers with none.
-	explorationHeld bool
-	omitExploration bool
+	// omitExploration answers with none. A relaxed held turn's record states
+	// no origin, as the service keeps no memory for it. explorationChosen,
+	// when set, is the record's chosen candidate.
+	explorationHeld   bool
+	omitExploration   bool
+	explorationChosen raylinearc.PolicyStageOneCandidate
 	// A listing asked for detail=capabilities advertises every capability
 	// and bounds of [0, 1000], as a current service (pathfinder#5454), unless
 	// a test overrides them: legacyListing answers as a service that ignores
@@ -326,7 +329,7 @@ func (fake *fakePolicyService) decision(request raylinearc.PolicyDecisionRequest
 	}
 	nullRevision, ignoreEpisodeMode, echoCostWeight, echoNoCostWeight := fake.nullRevision, fake.ignoreEpisodeMode, fake.echoCostWeight, fake.echoNoCostWeight
 	omitTierPick, tierPickAction, tierPickModel := fake.omitTierPick, fake.tierPickAction, fake.tierPickModel
-	explorationHeld, omitExploration := fake.explorationHeld, fake.omitExploration
+	explorationHeld, omitExploration, explorationChosen := fake.explorationHeld, fake.omitExploration, fake.explorationChosen
 	response.PackageVerification = fake.verification
 	if fake.echo != nil {
 		response.RoutingPricesUsed = fake.echo(request)
@@ -379,7 +382,8 @@ func (fake *fakePolicyService) decision(request raylinearc.PolicyDecisionRequest
 		}
 	}
 	if explore := request.Selection.Exploration; explore != nil && explore.Tau > 0 && !omitExploration {
-		response.Decision.StageOne = fake.explorationRecord(*explore, explorationHeld)
+		relaxed := request.EpisodeMode == raylinearc.PolicyEpisodeModeRelaxed && !ignoreEpisodeMode
+		response.Decision.StageOne = fake.explorationRecord(*explore, explorationHeld, relaxed, explorationChosen)
 	}
 	// A relaxed call advances no session (pathfinder#3068).
 	if (request.EpisodeMode == raylinearc.PolicyEpisodeModeRelaxed && !ignoreEpisodeMode) || nullRevision {
@@ -394,6 +398,8 @@ func (fake *fakePolicyService) decision(request raylinearc.PolicyDecisionRequest
 func (fake *fakePolicyService) explorationRecord(
 	explore raylinearc.PolicyExplorationRequest,
 	held bool,
+	relaxed bool,
+	chosen raylinearc.PolicyStageOneCandidate,
 ) *raylinearc.PolicyDecisionStageOne {
 	var fixture raylinearc.PolicyDecisionResponse
 	fake.readFixture("decision_response_exploration.v1.json", &fixture)
@@ -406,6 +412,12 @@ func (fake *fakePolicyService) explorationRecord(
 		record.Applied, record.Reason, record.Tau, record.U = false, nil, &greedy, nil
 		record.Propensity, record.Explored, record.Held = &one, &explored, true
 		record.DecisionKey, record.OriginDecisionKey = nil, &origin
+		if relaxed {
+			record.OriginDecisionKey = nil
+		}
+	}
+	if chosen != nil {
+		record.Chosen = chosen
 	}
 	return &raylinearc.PolicyDecisionStageOne{Exploration: record}
 }

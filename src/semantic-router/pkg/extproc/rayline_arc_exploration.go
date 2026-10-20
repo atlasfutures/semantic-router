@@ -216,10 +216,15 @@ func policyExplorationUsage(trace *selection.RaylineARCTrace) explorationUsage {
 		value := *record.Explored
 		explored = &value
 	}
-	// A held turn joins its boundary through the key that chose its model.
+	// A held turn joins its boundary through the key that chose its model:
+	// the service's origin, or on a relaxed call, which states none, VSR's
+	// own record of the latest boundary.
 	key := record.DecisionKey
 	if record.Held {
 		key = record.OriginDecisionKey
+		if key == nil {
+			key = trace.PolicyExplorationHeldKey
+		}
 	}
 	var decisionKey *string
 	if key != nil {
@@ -228,5 +233,63 @@ func policyExplorationUsage(trace *selection.RaylineARCTrace) explorationUsage {
 	}
 	return explorationUsage{
 		propensity: copyFloat(record.Propensity), tau: copyFloat(record.Tau), explored: explored, decisionKey: decisionKey,
+	}
+}
+
+// recordPolicyExplorationOrigin keeps a relaxed episode's own record of its
+// latest Stage-1 boundary in the state this main turn commits, and on a held
+// turn names that boundary's key for llm_usage (pathfinder#5477, "For VSR").
+// A strict call's origin is the service's, so a strict turn keeps none. A
+// retry that reuses a staged boundary joins through the origin that boundary
+// left (retained), whatever policy context the retry resolved to.
+func recordPolicyExplorationOrigin(
+	trace *selection.RaylineARCTrace,
+	turn *raylinearc.PolicyEpisodeState,
+	retained *raylinearc.PolicyBoundaryDecision,
+	relaxed bool,
+) {
+	if !relaxed || trace.PolicyNextState == nil {
+		return
+	}
+	var previous *raylinearc.PolicyExplorationOrigin
+	if turn != nil {
+		previous = turn.Exploration
+	}
+	if retained != nil && retained.Exploration != nil {
+		previous = retained.Exploration
+	}
+	trace.PolicyExplorationHeldKey = previous.HeldDecisionKey(trace.PolicyExploration)
+	trace.PolicyNextState.Exploration = raylinearc.NextPolicyExplorationOrigin(previous, trace.PolicyExploration)
+}
+
+// stagePolicyExplorationOrigin stores the origin this turn's decision left
+// with its staged boundary. A decided boundary is the episode's latest even
+// when its dispatch then fails, so the older origin it replaced or cleared
+// must not survive the failure for a later held turn to join. The boundary
+// keeps it too: a retry that reuses the boundary may resolve to a policy
+// context that does not carry it (the episode's first turn has none, and a
+// prefix break or a compaction starts a new one).
+func stagePolicyExplorationOrigin(staged *raylinearc.EpisodeState, next *raylinearc.PolicyEpisodeState) {
+	if staged == nil || next == nil {
+		return
+	}
+	if staged.PolicyBoundary != nil {
+		staged.PolicyBoundary.Exploration = next.Exploration.Clone()
+	}
+	if staged.Policy != nil {
+		staged.Policy.Exploration = next.Exploration.Clone()
+	}
+}
+
+// keepStoredExplorationOrigin keeps the stored origin in a refusal's
+// exclusion state: a refusal changes the boundary and the exclusions only,
+// and the context it is recorded in predates the decision's origin.
+func keepStoredExplorationOrigin(policy, stored *raylinearc.PolicyEpisodeState) {
+	if policy == nil {
+		return
+	}
+	policy.Exploration = nil
+	if stored != nil {
+		policy.Exploration = stored.Exploration.Clone()
 	}
 }

@@ -423,6 +423,24 @@ eval_cell: false     # an eval or lab cell never explores
   `router_tau`, `router_explored` and `exploration_decision_key` (the
   record's `origin_decision_key` on a held turn). All four are null when the
   decision carried no record.
+- **Relaxed held turns.** A relaxed call keeps no episode memory, so the
+  service answers a held turn with a null `origin_decision_key`. A relaxed
+  episode therefore records its latest Stage-1 boundary itself: the
+  boundary's `decision_key` and `chosen` candidate, in the policy state.
+  A held turn fills `exploration_decision_key` from that record only when
+  the held candidate is the recorded `chosen`. Any other turn clears it: a
+  decision without an exploration record (exploration off or the turn
+  excluded), a held turn on another candidate, or a turn decided without
+  the service. The record is stored with the decision before dispatch, so a
+  boundary whose call then fails or is refused still retires the older one.
+  The key then stays null, never an older boundary's. The staged boundary
+  keeps its record too, so a retry that reuses it joins a held answer to it
+  even when the retry's policy context never carried the record (the
+  episode's first turn, a prefix break, a compaction). A strict
+  episode keeps no such record; its origin is the service's. An episode
+  holding the record is stored as episode-state v9, whatever else it
+  carries; every other episode keeps its earlier bytes, and a router that
+  predates v9 refuses such a record by its schema.
 - **Refusals.** `exploration_tau_exceeds_ceiling`,
   `exploration_basis_mismatch` and `exploration_unsupported_by_package` are
   the cell's config against its service and package. They fail every
