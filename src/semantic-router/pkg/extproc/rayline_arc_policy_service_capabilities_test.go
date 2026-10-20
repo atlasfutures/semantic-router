@@ -137,6 +137,35 @@ func TestPolicyReadinessChecksTheAdvertisedCapabilities(t *testing.T) {
 	}
 }
 
+// Against pathfinder's pinned capabilities listing (exploration advertised
+// since pathfinder#5436), a cell configured for exploration is ready, alone
+// or beside the v2 members that need no cost weight.
+func TestPolicyReadinessOfAnExplorationCellAgainstThePinnedListing(t *testing.T) {
+	raw, err := os.ReadFile("../selection/raylinearc/testdata/policy_service/packages_response_capabilities.v1.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	listing, err := raylinearc.DecodePolicyPackagesResponse(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, v2 := range map[string]*config.RaylineARCDecisionsV2Config{
+		"exploration only":                nil,
+		"response fields and exploration": {Name: "keen", ResponseFields: []string{"thinking"}},
+	} {
+		policy := &config.RaylineARCPolicyServiceConfig{DecisionsV2: v2, Exploration: fixtureExploration(), TrustTurnSignalHeaders: true}
+		required := raylineARCPolicyServiceRequirements(policy)
+		if !slices.Contains(required.Capabilities, raylinearc.PolicyCapabilityExploration) {
+			t.Fatalf("%s: requirements %v do not ask for exploration", name, required.Capabilities)
+		}
+		for index := range listing.Packages {
+			if err := raylinearc.CheckPolicyServiceRequirements(listing, &listing.Packages[index], required); err != nil {
+				t.Errorf("%s, %s: not ready: %v", name, listing.Packages[index].Alias, err)
+			}
+		}
+	}
+}
+
 // The package checks still come first: a package the service has not loaded
 // is not ready whatever it advertises.
 func TestPolicyReadinessStillRequiresTheLoadedPackage(t *testing.T) {

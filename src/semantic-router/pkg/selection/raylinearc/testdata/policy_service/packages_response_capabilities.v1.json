@@ -33,6 +33,7 @@
   "capabilities": [
     "decisions_v2",
     "tier_points",
-    "response_fields"
+    "response_fields",
+    "exploration"
   ]
 }
