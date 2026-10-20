@@ -1,3 +1,5 @@
+//go:build !windows && cgo
+
 package extproc
 
 import (
@@ -9,6 +11,7 @@ import (
 	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/headers"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
 )
 
@@ -176,5 +179,24 @@ func TestPrivacyModeHeaderIsStrippedOnPassThroughResponses(t *testing.T) {
 		if !slices.Contains(removed, headers.VSRPrivacyMode) {
 			t.Fatalf("%s: an upstream's %s passes through (removed %v)", name, headers.VSRPrivacyMode, removed)
 		}
+	}
+}
+
+// A standard native Responses body is sent as the codec rendered it, and the
+// provider object it carries -- the caller's own -- is still what is recorded.
+func TestStandardResponsesBodyRecordsTheCallersProviderObject(t *testing.T) {
+	router := providerPinRouter("https://openrouter.ai/api/v1", nil)
+	dispatch := &providerDispatch{
+		logicalModel: providerPinArm, decisionName: providerPinDecision,
+		targetFormat: llmprotocol.OpenAIResponsesV1, profile: openRouterProviderProfile(),
+	}
+	ctx := &RequestContext{}
+	body := []byte(`{"model":"m","input":"hi","provider":{"data_collection":"deny","zdr":true}}`)
+	if _, err := router.adaptProviderRequest(body, dispatch, ctx); err != nil {
+		t.Fatalf("adaptProviderRequest: %v", err)
+	}
+	recorded := ctx.DispatchedProviderPrivacy
+	if recorded.dataCollection != "deny" || recorded.zdr == nil || !*recorded.zdr {
+		t.Fatalf("recorded = %+v, want the caller's data_collection and zdr", recorded)
 	}
 }

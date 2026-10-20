@@ -77,18 +77,19 @@ func (r *OpenAIRouter) adaptProviderRequest(
 // applyPrivateProviderPreferences gives a private turn its data-use members on
 // a format that otherwise takes no provider extensions (a native Responses
 // body): the privacy mode is not an extension the format may go without. A
-// standard turn keeps the bytes it sent before.
+// standard turn keeps the bytes it sent before. Either way the provider object
+// the body carries is recorded, a caller's own included.
 func (r *OpenAIRouter) applyPrivateProviderPreferences(
 	body []byte,
 	dispatch *providerDispatch,
 	ctx *RequestContext,
 ) ([]byte, error) {
-	if ctx.RaylineARCPrivacyMode == "" {
-		return body, nil
-	}
-	body, err := applyProviderPreferences(body, dispatch, r.Config, ctx.RaylineARCPrivacyMode)
-	if err != nil {
-		return nil, err
+	if ctx.RaylineARCPrivacyMode != "" {
+		var err error
+		body, err = applyProviderPreferences(body, dispatch, r.Config, ctx.RaylineARCPrivacyMode)
+		if err != nil {
+			return nil, err
+		}
 	}
 	recordDispatchedProviderPin(ctx, body)
 	return body, nil
