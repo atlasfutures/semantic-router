@@ -257,6 +257,12 @@ type PolicyBoundaryDecision struct {
 	CompactionCount int    `json:"compaction_count"`
 	PrefixLen       int    `json:"prefix_len"`
 	PrefixDigest    string `json:"prefix_digest"`
+	// Exploration is the origin a relaxed boundary's decision left, kept
+	// with the boundary so a retry that reuses it can join a held answer to
+	// it. The policy context it was decided in may be one the retry does not
+	// carry: there is none before the episode's first turn, and a prefix
+	// break or a compaction starts a new one.
+	Exploration *PolicyExplorationOrigin `json:"exploration,omitempty"`
 }
 
 func (state *PolicyEpisodeState) Clone() *PolicyEpisodeState {
@@ -318,7 +324,7 @@ func (boundary *PolicyBoundaryDecision) Validate(workerCount int) error {
 		!isLowerHex64(boundary.PrefixDigest) {
 		return errors.New("ARC policy episode boundary decision is malformed")
 	}
-	return nil
+	return boundary.Exploration.validate()
 }
 
 // maxPolicyArmIDBytes bounds a trained arm id; pathfinder's are 64 hex.

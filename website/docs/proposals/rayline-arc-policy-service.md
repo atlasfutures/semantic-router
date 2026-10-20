@@ -433,7 +433,10 @@ eval_cell: false     # an eval or lab cell never explores
   excluded), a held turn on another candidate, or a turn decided without
   the service. The record is stored with the decision before dispatch, so a
   boundary whose call then fails or is refused still retires the older one.
-  The key then stays null, never an older boundary's. A strict
+  The key then stays null, never an older boundary's. The staged boundary
+  keeps its record too, so a retry that reuses it joins a held answer to it
+  even when the retry's policy context never carried the record (the
+  episode's first turn, a prefix break, a compaction). A strict
   episode keeps no such record; its origin is the service's. An episode
   holding the record is stored as episode-state v9, whatever else it
   carries; every other episode keeps its earlier bytes, and a router that

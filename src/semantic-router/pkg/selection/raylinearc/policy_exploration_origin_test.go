@@ -142,6 +142,27 @@ func TestEpisodeRecordKeepsTheExplorationOrigin(t *testing.T) {
 		t.Fatalf("bare v9 refused: %v", err)
 	}
 
+	// A staged boundary's origin alone, before the episode has a policy
+	// context, is v9 too, and it survives the round trip.
+	staged, _ := NewEpisodeState(2)
+	staged.PolicyBoundary = &PolicyBoundaryDecision{
+		Arm: 1, PrefixLen: 1, PrefixDigest: strings.Repeat("a", 64), Exploration: state.Policy.Exploration.Clone(),
+	}
+	stagedV9, err := marshalEpisodeState(staged, 1, now)
+	if err != nil || !bytes.Contains(stagedV9, []byte(episodeStateSchemaV9)) {
+		t.Fatalf("staged boundary origin record %s: %v", stagedV9, err)
+	}
+	restoredStaged, _, err := unmarshalEpisodeState(stagedV9, 2, now)
+	if err != nil || restoredStaged.PolicyBoundary.Exploration == nil ||
+		restoredStaged.PolicyBoundary.Exploration.DecisionKey != "3b1f0c5a" {
+		t.Fatalf("staged boundary origin restored as %+v: %v", restoredStaged, err)
+	}
+	if _, _, err := unmarshalEpisodeState(
+		bytes.Replace(stagedV9, []byte(episodeStateSchemaV9), []byte(episodeStateSchema), 1), 2, now,
+	); err == nil {
+		t.Fatal("a staged boundary origin labelled v3 was accepted")
+	}
+
 	for name, payload := range map[string][]byte{
 		"v9 labelled v8":      bytes.Replace(v9, []byte(episodeStateSchemaV9), []byte(episodeStateSchemaV8), 1),
 		"v8 labelled v9":      bytes.Replace(v8, []byte(episodeStateSchemaV8), []byte(episodeStateSchemaV9), 1),

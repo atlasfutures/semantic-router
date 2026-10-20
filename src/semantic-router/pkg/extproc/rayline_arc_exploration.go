@@ -239,10 +239,13 @@ func policyExplorationUsage(trace *selection.RaylineARCTrace) explorationUsage {
 // recordPolicyExplorationOrigin keeps a relaxed episode's own record of its
 // latest Stage-1 boundary in the state this main turn commits, and on a held
 // turn names that boundary's key for llm_usage (pathfinder#5477, "For VSR").
-// A strict call's origin is the service's, so a strict turn keeps none.
+// A strict call's origin is the service's, so a strict turn keeps none. A
+// retry that reuses a staged boundary joins through the origin that boundary
+// left (retained), whatever policy context the retry resolved to.
 func recordPolicyExplorationOrigin(
 	trace *selection.RaylineARCTrace,
 	turn *raylinearc.PolicyEpisodeState,
+	retained *raylinearc.PolicyBoundaryDecision,
 	relaxed bool,
 ) {
 	if !relaxed || trace.PolicyNextState == nil {
@@ -252,6 +255,9 @@ func recordPolicyExplorationOrigin(
 	if turn != nil {
 		previous = turn.Exploration
 	}
+	if retained != nil && retained.Exploration != nil {
+		previous = retained.Exploration
+	}
 	trace.PolicyExplorationHeldKey = previous.HeldDecisionKey(trace.PolicyExploration)
 	trace.PolicyNextState.Exploration = raylinearc.NextPolicyExplorationOrigin(previous, trace.PolicyExploration)
 }
@@ -259,12 +265,20 @@ func recordPolicyExplorationOrigin(
 // stagePolicyExplorationOrigin stores the origin this turn's decision left
 // with its staged boundary. A decided boundary is the episode's latest even
 // when its dispatch then fails, so the older origin it replaced or cleared
-// must not survive the failure for a later held turn to join.
+// must not survive the failure for a later held turn to join. The boundary
+// keeps it too: a retry that reuses the boundary may resolve to a policy
+// context that does not carry it (the episode's first turn has none, and a
+// prefix break or a compaction starts a new one).
 func stagePolicyExplorationOrigin(staged *raylinearc.EpisodeState, next *raylinearc.PolicyEpisodeState) {
-	if staged == nil || staged.Policy == nil || next == nil {
+	if staged == nil || next == nil {
 		return
 	}
-	staged.Policy.Exploration = next.Exploration.Clone()
+	if staged.PolicyBoundary != nil {
+		staged.PolicyBoundary.Exploration = next.Exploration.Clone()
+	}
+	if staged.Policy != nil {
+		staged.Policy.Exploration = next.Exploration.Clone()
+	}
 }
 
 // keepStoredExplorationOrigin keeps the stored origin in a refusal's

@@ -259,3 +259,72 @@ func TestRecordlessBoundaryThatFailsStillRetiresTheOlderKey(t *testing.T) {
 		})
 	}
 }
+
+// A retry that reuses a failed relaxed boundary joins its held answer to that
+// boundary, even where the retry resolves to a policy context that never
+// carried the boundary's origin: the episode's first turn has no context, and
+// a prefix break starts a new one.
+func TestRetainedBoundaryRetryJoinsTheBoundaryItReuses(t *testing.T) {
+	rewritten := map[string]any{"role": "user", "content": "start over"}
+	for name, failing := range map[string][]map[string]any{
+		"first turn":   {explorationTask},
+		"prefix break": {rewritten},
+	} {
+		t.Run(name, func(t *testing.T) {
+			fixture := relaxedExplorationFixture(t)
+			fixture.decision.Algorithm.RaylineARC.PolicyService.ModelSchedule = config.RaylineARCModelScheduleTaskTurnCompaction
+			asTwoStage(fixture)
+			store, err := raylinearc.NewMemoryEpisodeStore(raylinearc.MemoryEpisodeStoreConfig{MaxEpisodes: 4, IdleTTL: time.Minute})
+			if err != nil {
+				t.Fatal(err)
+			}
+			episode := "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+			attempt := func(messages ...map[string]any) (*RequestContext, *selection.RaylineARCTrace) {
+				t.Helper()
+				state, read, err := store.Snapshot(context.Background(), episode, 2)
+				if err != nil {
+					t.Fatal(err)
+				}
+				result, err := fixture.selectWithHeaders(t, state, policyTestRequest(t, messages...), eligibleHeaders())
+				if err != nil {
+					t.Fatal(err)
+				}
+				ctx := &RequestContext{
+					TraceContext: context.Background(), VSRRaylineARC: result.RaylineARC, VSRSelectedDecision: fixture.decision,
+					RaylineARCTransaction: newRelaxedRaylineARCEpisodeTransaction(store, state, read, episode, false),
+				}
+				ctx.RaylineARCTransaction.markSelection(result.RaylineARC.SelectedArm, 10)
+				stageRaylineARCPolicySelection(ctx, result.RaylineARC, "")
+				return ctx, result.RaylineARC
+			}
+			if name == "prefix break" {
+				first, _ := attempt(explorationTask)
+				if err := first.RaylineARCTransaction.commit(context.Background(), first); err != nil {
+					t.Fatal(err)
+				}
+			}
+			failed, boundary := attempt(failing...)
+			key := boundaryKey(t, boundary)
+			if boundary.PolicyBoundary == nil {
+				t.Fatal("the failing turn decided no boundary")
+			}
+			if err := failed.RaylineARCTransaction.abort(context.Background(), "upstream_status"); err != nil {
+				t.Fatal(err)
+			}
+			fixture.answerExploration(true, false, nil)
+			_, retry := attempt(failing...)
+			if retry.OfferKind != "retained" {
+				t.Fatalf("the retry did not reuse the boundary: offer %q", retry.OfferKind)
+			}
+			if retry.PolicyExplorationHeldKey == nil || *retry.PolicyExplorationHeldKey != key {
+				t.Fatalf("retry filled %v, want the boundary's key %q", retry.PolicyExplorationHeldKey, key)
+			}
+			if usageLine(t, retry)["exploration_decision_key"] != key {
+				t.Fatalf("llm_usage key %v, want %q", usageLine(t, retry)["exploration_decision_key"], key)
+			}
+			if kept := retry.PolicyNextState.Exploration; kept == nil || kept.DecisionKey != key {
+				t.Fatalf("the retry left origin %+v, want the boundary's", kept)
+			}
+		})
+	}
+}

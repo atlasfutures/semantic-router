@@ -66,8 +66,9 @@ const (
 	// only for a record whose warmth carries a call with one, so a v7 reader
 	// refuses it by its schema rather than by a field it does not know.
 	episodeStateSchemaV8 = "rayline.arc.episode-state.v8"
-	// episodeStateSchemaV9 adds the policy state's exploration origin (a
-	// relaxed episode's latest Stage-1 boundary, PolicyExplorationOrigin). It
+	// episodeStateSchemaV9 adds the exploration origin (a relaxed episode's
+	// latest Stage-1 boundary, PolicyExplorationOrigin) to the policy state
+	// and to a staged boundary decision. It
 	// is written only for a record that carries one, whatever else it
 	// carries, so every other episode keeps its earlier bytes and a v8
 	// reader refuses it by its schema rather than by a field it does not know.
@@ -512,6 +513,7 @@ func clonePolicyBoundary(boundary *PolicyBoundaryDecision) *PolicyBoundaryDecisi
 		return nil
 	}
 	cloned := *boundary
+	cloned.Exploration = boundary.Exploration.Clone()
 	return &cloned
 }
 
@@ -587,7 +589,7 @@ func marshalEpisodeState(
 	} else if calls {
 		wire.SchemaVersion = episodeStateSchemaV7
 	}
-	if policyCarriesExplorationOrigin(state.Policy) {
+	if carriesExplorationOrigin(state.Policy, state.PolicyBoundary) {
 		wire.SchemaVersion = episodeStateSchemaV9
 	}
 	owner := state.EncoderOwner
@@ -658,9 +660,10 @@ func unmarshalEpisodeState(
 func decodeEpisodeStateAffinity(
 	wire episodeStateWire,
 ) (string, []string, error) {
-	// v9 is exactly the record whose policy state carries an exploration
-	// origin, whatever else it carries; it may hold anything v3 to v8 do.
-	explored := policyCarriesExplorationOrigin(wire.Policy)
+	// v9 is exactly the record whose policy state or staged boundary carries
+	// an exploration origin, whatever else it carries; it may hold anything
+	// v3 to v8 do.
+	explored := carriesExplorationOrigin(wire.Policy, wire.PolicyBoundary)
 	if explored != (wire.SchemaVersion == episodeStateSchemaV9) {
 		return "", nil, errors.New("ARC episode state contract mismatch")
 	}
@@ -722,8 +725,8 @@ func decodeEpisodeOwner(wire episodeStateWire) (string, []string, error) {
 		append([]string(nil), (*wire.EncoderVisitedOwners)...), nil
 }
 
-func policyCarriesExplorationOrigin(policy *PolicyEpisodeState) bool {
-	return policy != nil && policy.Exploration != nil
+func carriesExplorationOrigin(policy *PolicyEpisodeState, boundary *PolicyBoundaryDecision) bool {
+	return policy != nil && policy.Exploration != nil || boundary != nil && boundary.Exploration != nil
 }
 
 // warmthCarriesCalls reports whether any arm holds a call, and whether any
