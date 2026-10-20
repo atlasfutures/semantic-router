@@ -303,3 +303,32 @@ func TestPrivateTurnKeepsTheCallersProviderObjectOnAnUnpinnedArm(t *testing.T) {
 		t.Fatalf("the caller's provider constraints were not kept, want %s:\n%s", want, pinned)
 	}
 }
+
+// A native Responses body takes no provider extensions on a standard turn,
+// but a private one still carries its data mode: the mode is not optional.
+func TestPrivateTurnCarriesItsDataModeOnANativeResponsesBody(t *testing.T) {
+	router := providerPinRouter("https://openrouter.ai/api/v1", nil)
+	dispatch := &providerDispatch{
+		logicalModel: providerPinArm, decisionName: providerPinDecision,
+		targetFormat: llmprotocol.OpenAIResponsesV1, profile: openRouterProviderProfile(),
+	}
+	body := []byte(`{"model":"m","input":"hi"}`)
+	for mode, want := range map[string]string{
+		"":                       "",
+		raylineARCPrivacyModeZDR: `"provider":{"allow_fallbacks":false,"data_collection":"deny","zdr":true}`,
+	} {
+		adapted, err := router.adaptProviderRequest(body, dispatch, &RequestContext{RaylineARCPrivacyMode: mode})
+		if err != nil {
+			t.Fatalf("adaptProviderRequest(%q): %v", mode, err)
+		}
+		if want == "" {
+			if bytes.Contains(adapted, []byte(`"provider"`)) {
+				t.Fatalf("a standard Responses body gained a provider object:\n%s", adapted)
+			}
+			continue
+		}
+		if !bytes.Contains(adapted, []byte(want)) {
+			t.Fatalf("the private Responses body lacks its data mode, want %s:\n%s", want, adapted)
+		}
+	}
+}
