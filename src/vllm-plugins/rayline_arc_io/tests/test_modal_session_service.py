@@ -26,13 +26,12 @@ GPU_TYPE_CONDITIONAL = (
     '    GPU_TYPE = "H100"'
 )
 # The autoscaler floor, frozen the same way and for the same reason. Only the
-# standing dev app is floored: the dev cell fails closed on a cold encoder, so
-# its first turn after an idle gap is a user-visible 503. Every other app --
-# the default app, every closed run's app, and production -- keeps the
-# scale-to-zero default, so this decision cannot buy idle GPU time for them.
-MIN_CONTAINERS_CONDITIONAL = (
-    "MIN_CONTAINERS = 1 if APP_NAME in DEV_APP_PROFILES else 0"
-)
+# L4 production app is floored: its cell fails closed on a cold encoder, so the
+# first turn after an idle gap is a user-visible 503. The standing dev apps
+# scale to zero (D-233) and are warmed on demand for lab sessions. Every other
+# app -- the default app and every closed run's app -- keeps the scale-to-zero
+# default, so this decision cannot buy idle GPU time for them.
+MIN_CONTAINERS_CONDITIONAL = "MIN_CONTAINERS = 1 if APP_NAME in PROD_APP_PROFILES else 0"
 
 
 def source() -> str:
@@ -353,12 +352,14 @@ def test_session_service_scopes_the_warm_prod_rtx_apps() -> None:
     assert service_source.index(override) < service_source.index("min_containers=MIN_CONTAINERS")
 
 
-def test_only_the_standing_dev_app_holds_a_warm_container() -> None:
+def test_only_the_standing_prod_apps_hold_a_warm_container() -> None:
     """The floor is app-scoped, like the card and the caps above it.
 
-    The dev cell's encoder call fails closed, so a scale-from-zero cold start
+    The prod cell's encoder calls fail closed, so a scale-from-zero cold start
     (measured at 220.7-226.4 s on 2026-09-02) surfaces to the caller as a 503
-    on the first turn after an idle gap. Flooring that one app removes it. The
+    on the first turn after an idle gap. Flooring the prod apps removes it, and
+    flooring them in source keeps the floor across a redeploy. The standing dev
+    apps scale to zero and are warmed on demand for lab sessions (D-233). The
     decorator must read the module constant, so the conditional above is the
     only place the floor can move, and no other app name can be widened by
     editing this one.
@@ -431,6 +432,27 @@ def test_host_resources_resolve_per_app_name(
 
     assert profile["APP_NAME"] == app_name
     assert (profile["CPU_CORES"], profile["MEMORY_MIB"]) == (cpu_cores, memory_mib)
+
+
+@pytest.mark.parametrize(
+    ("app_name", "min_containers"),
+    [
+        # Standing prod apps, whose cell fails closed: one warm container.
+        ("rayline-arc-session-encoder-prod", 1),
+        ("rayline-arc-session-encoder-prod-rtx-a", 1),
+        # The standing dev apps (warmed on demand for lab sessions, D-233),
+        # the default app, every recorded run's app and the dev RTX test apps
+        # scale to zero.
+        ("rayline-arc-session-encoder-dev", 0),
+        ("rayline-arc-session-encoder-dev-d", 0),
+        ("rayline-arc-session-encoder", 0),
+        ("rayline-arc-session-encoder-a", 0),
+        ("rayline-arc-session-encoder-flashinfer-perf035-l4", 0),
+        ("rayline-arc-session-encoder-dev-rtx-a", 0),
+    ],
+)
+def test_warm_floor_resolves_per_app_name(app_name: str, min_containers: int) -> None:
+    assert resolved_profile(app_name)["MIN_CONTAINERS"] == min_containers
 
 
 def test_allowed_app_names_extend_with_every_registered_experiment() -> None:
