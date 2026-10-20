@@ -41,7 +41,7 @@ func (r *OpenAIRouter) adaptProviderRequest(
 		if dispatch.targetFormat != llmprotocol.OpenAIResponsesV1 || family == nil ||
 			transport != modelcatalog.ReasoningTransportChatTemplate {
 			recordDispatchedReasoningControls(ctx, body)
-			return body, nil
+			return r.applyPrivateProviderPreferences(body, dispatch, ctx)
 		}
 	}
 	body, err = r.setReasoningModeToRequestBodyForModelAndProvider(
@@ -70,6 +70,26 @@ func (r *OpenAIRouter) adaptProviderRequest(
 	// Read back rather than remember: the record then names the bytes that
 	// travel, whichever mutation put them there.
 	recordDispatchedReasoningControls(ctx, body)
+	recordDispatchedProviderPin(ctx, body)
+	return body, nil
+}
+
+// applyPrivateProviderPreferences gives a private turn its data-use members on
+// a format that otherwise takes no provider extensions (a native Responses
+// body): the privacy mode is not an extension the format may go without. A
+// standard turn keeps the bytes it sent before.
+func (r *OpenAIRouter) applyPrivateProviderPreferences(
+	body []byte,
+	dispatch *providerDispatch,
+	ctx *RequestContext,
+) ([]byte, error) {
+	if ctx.RaylineARCPrivacyMode == "" {
+		return body, nil
+	}
+	body, err := applyProviderPreferences(body, dispatch, r.Config, ctx.RaylineARCPrivacyMode)
+	if err != nil {
+		return nil, err
+	}
 	recordDispatchedProviderPin(ctx, body)
 	return body, nil
 }
