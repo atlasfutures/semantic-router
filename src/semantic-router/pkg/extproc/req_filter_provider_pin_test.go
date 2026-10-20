@@ -112,7 +112,7 @@ func TestProviderPinSitsBesideTheReasoningObject(t *testing.T) {
 	}
 	reasoned := []byte(`{"model":"` + providerPinArm + `","reasoning":{"max_tokens":1024}}`)
 
-	pinned, err := applyProviderPreferences(reasoned, dispatch, router.Config)
+	pinned, err := applyProviderPreferences(reasoned, dispatch, router.Config, "")
 	if err != nil {
 		t.Fatalf("applyProviderPreferences: %v", err)
 	}
@@ -212,5 +212,73 @@ func TestPinnedArmSendsItsMaxPrice(t *testing.T) {
 	want := `"provider":{"order":["deepinfra","together"],"allow_fallbacks":false,"max_price":{"completion":1.5,"prompt":0.5}}`
 	if !bytes.Contains(raw, []byte(want)) {
 		t.Fatalf("the arm's max_price did not reach the wire:\n%s", raw)
+	}
+}
+
+// A private turn keeps the arm's pin and adds its data mode: OpenRouter may
+// use only providers that do not collect the data, with no fallback past them.
+// A zdr turn also restricts it to zero-data-retention endpoints.
+func TestPrivateTurnAddsItsDataModeToThePin(t *testing.T) {
+	tests := map[string]struct {
+		mode        string
+		preferences *config.OpenRouterProviderPreferences
+		want        string
+	}{
+		"privacy": {
+			raylineARCPrivacyModePrivacy, providerPinPreferences(),
+			`"provider":{"order":["deepinfra","together"],"allow_fallbacks":false,"data_collection":"deny"}`,
+		},
+		"zdr": {
+			raylineARCPrivacyModeZDR, providerPinPreferences(),
+			`"provider":{"order":["deepinfra","together"],"allow_fallbacks":false,"data_collection":"deny","zdr":true}`,
+		},
+		"privacy on an unpinned arm": {
+			raylineARCPrivacyModePrivacy, nil,
+			`"provider":{"allow_fallbacks":false,"data_collection":"deny"}`,
+		},
+		"zdr on an unpinned arm": {
+			raylineARCPrivacyModeZDR, nil,
+			`"provider":{"allow_fallbacks":false,"data_collection":"deny","zdr":true}`,
+		},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			router := providerPinRouter("https://openrouter.ai/api/v1", test.preferences)
+			request := testNeutralRequest("auto", "route this arm")
+			ctx := routingTestContext(llmprotocol.OpenAIChatV1, request)
+			ctx.RaylineARCPrivacyMode = test.mode
+			raw := providerPinRoute(t, router, request, ctx)
+			if !bytes.Contains(raw, []byte(test.want)) {
+				t.Fatalf("the private turn's provider object is wrong, want %s:\n%s", test.want, raw)
+			}
+		})
+	}
+}
+
+// The data mode is added to the turn's pin, never to the arm's card: the next
+// standard turn on the same arm sends the bytes it always did.
+func TestPrivateTurnLeavesTheArmPinUnchanged(t *testing.T) {
+	router := providerPinRouter("https://openrouter.ai/api/v1", providerPinPreferences())
+	request := testNeutralRequest("auto", "route this arm")
+	ctx := routingTestContext(llmprotocol.OpenAIChatV1, request)
+	ctx.RaylineARCPrivacyMode = raylineARCPrivacyModeZDR
+	providerPinRoute(t, router, request, ctx)
+
+	raw := providerPinRouteBytes(t, router)
+	if !bytes.Contains(raw, []byte(providerPinWireBytes)) {
+		t.Fatalf("a standard turn after a private one changed its pin:\n%s", raw)
+	}
+}
+
+// The data mode is OpenRouter's member too: another backend sees no provider
+// object on a private turn either.
+func TestPrivateTurnPinStaysOffNonOpenRouterBackends(t *testing.T) {
+	router := providerPinRouter("http://127.0.0.1:8000/v1", nil)
+	request := testNeutralRequest("auto", "route this arm")
+	ctx := routingTestContext(llmprotocol.OpenAIChatV1, request)
+	ctx.RaylineARCPrivacyMode = raylineARCPrivacyModePrivacy
+	raw := providerPinRoute(t, router, request, ctx)
+	if bytes.Contains(raw, []byte(`"provider"`)) {
+		t.Fatalf("an OpenRouter-only member reached another backend:\n%s", raw)
 	}
 }

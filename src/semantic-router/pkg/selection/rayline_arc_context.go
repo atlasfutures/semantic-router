@@ -53,6 +53,11 @@ type RaylineARCSelectionContext struct {
 	// it holds for every turn until the card changes. Nil when no arm is
 	// marked, which is the unmarked default.
 	DisabledArms []bool
+	// PrivacyExcludedArms marks, by arm ordinal, the candidates outside a
+	// private request's allowed set, as its trusted gateway headers state it
+	// (extproc/rayline_arc_privacy.go). Nil for a standard request, which
+	// leaves selection exactly as it was.
+	PrivacyExcludedArms []bool
 	// ContextTokens is the request's conservative token estimate, the same
 	// number the generic context filter compares a card's window against.
 	// Zero when no estimate was made, which excludes nothing.

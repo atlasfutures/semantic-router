@@ -165,11 +165,13 @@ func (r *OpenAIRouter) planFlexResend(
 		flexModel:    dispatch.logicalModel,
 		twinModel:    twin,
 		twinDispatch: twinDispatch,
-		twinPin:      pin,
-		twinTier:     r.Config.ServiceTierForModel(twin),
-		flexTier:     r.Config.ServiceTierForModel(dispatch.logicalModel),
-		clientTier:   ctx.ClientServiceTier,
-		dispatched:   body,
+		// The twin replaces the provider object, so a private turn's data mode
+		// travels with it.
+		twinPin:    privacyProviderPreferences(pin, ctx.RaylineARCPrivacyMode),
+		twinTier:   r.Config.ServiceTierForModel(twin),
+		flexTier:   r.Config.ServiceTierForModel(dispatch.logicalModel),
+		clientTier: ctx.ClientServiceTier,
+		dispatched: body,
 	}, ""
 }
 

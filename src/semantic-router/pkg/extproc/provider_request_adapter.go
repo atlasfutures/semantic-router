@@ -63,7 +63,7 @@ func (r *OpenAIRouter) adaptProviderRequest(
 	if err != nil {
 		return nil, err
 	}
-	body, err = applyProviderPreferences(body, dispatch, r.Config)
+	body, err = applyProviderPreferences(body, dispatch, r.Config, ctx.RaylineARCPrivacyMode)
 	if err != nil {
 		return nil, err
 	}
@@ -88,7 +88,7 @@ func (r *OpenAIRouter) adaptMessagesProviderRequest(
 	if err != nil {
 		return nil, err
 	}
-	body, err = applyProviderPreferences(body, dispatch, r.Config)
+	body, err = applyProviderPreferences(body, dispatch, r.Config, ctx.RaylineARCPrivacyMode)
 	if err != nil {
 		return nil, err
 	}

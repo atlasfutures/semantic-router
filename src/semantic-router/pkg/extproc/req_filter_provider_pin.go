@@ -26,6 +26,9 @@ const providerPreferencesField = "provider"
 // already chose the arm, and this states how that arm reaches a machine. So the
 // pin is read off the arm's model card and nothing here consults the request.
 //
+// A private turn (rayline_arc_privacy.go) is the one exception: its data mode
+// is added to the pin, or sent alone when the arm pins nothing.
+//
 // Two conditions gate it. The arm must carry the key, because an unpinned arm
 // keeps the bytes it sent before the key existed. And the backend must be
 // OpenRouter, because every other OpenAI-compatible backend would see an
@@ -34,8 +37,9 @@ func applyProviderPreferences(
 	body []byte,
 	dispatch *providerDispatch,
 	routerConfig *config.RouterConfig,
+	privacyMode string,
 ) ([]byte, error) {
-	preferences := providerPreferencesForDispatch(dispatch, routerConfig)
+	preferences := providerPreferencesForDispatch(dispatch, routerConfig, privacyMode)
 	if preferences == nil {
 		return body, nil
 	}
@@ -60,6 +64,7 @@ func applyProviderPreferences(
 func providerPreferencesForDispatch(
 	dispatch *providerDispatch,
 	routerConfig *config.RouterConfig,
+	privacyMode string,
 ) *config.OpenRouterProviderPreferences {
 	if dispatch == nil || routerConfig == nil {
 		return nil
@@ -67,7 +72,7 @@ func providerPreferencesForDispatch(
 	if !providerIsOpenRouter(dispatch.profile) {
 		return nil
 	}
-	return routerConfig.ProviderPreferencesForModel(dispatch.logicalModel)
+	return privacyProviderPreferences(routerConfig.ProviderPreferencesForModel(dispatch.logicalModel), privacyMode)
 }
 
 // recordDispatchedProviderPin names the providers the request actually pinned,
