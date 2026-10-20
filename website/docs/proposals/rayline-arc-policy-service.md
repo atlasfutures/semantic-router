@@ -431,7 +431,9 @@ eval_cell: false     # an eval or lab cell never explores
   the held candidate is the recorded `chosen`. Any other turn clears it: a
   decision without an exploration record (exploration off or the turn
   excluded), a held turn on another candidate, or a turn decided without
-  the service. The key then stays null, never an older boundary's. A strict
+  the service. The record is stored with the decision before dispatch, so a
+  boundary whose call then fails or is refused still retires the older one.
+  The key then stays null, never an older boundary's. A strict
   episode keeps no such record; its origin is the service's. An episode
   holding the record is stored as episode-state v9, whatever else it
   carries; every other episode keeps its earlier bytes, and a router that

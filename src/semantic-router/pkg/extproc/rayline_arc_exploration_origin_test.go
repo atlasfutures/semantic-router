@@ -1,6 +1,7 @@
 package extproc
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -184,5 +185,77 @@ func TestStrictEpisodeKeepsNoExplorationRecord(t *testing.T) {
 	origin := held.PolicyExploration.OriginDecisionKey
 	if origin == nil || held.PolicyExplorationHeldKey != nil || usageLine(t, held)["exploration_decision_key"] != *origin {
 		t.Fatalf("strict held turn: origin %v filled %v", origin, held.PolicyExplorationHeldKey)
+	}
+}
+
+// A later boundary decided without an exploration record retires the older
+// origin even when its turn never commits: its dispatch failed, or the
+// provider refused it (with or without the fallback's exclusion). The next
+// held turn on the older boundary's candidate keeps the key null.
+func TestRecordlessBoundaryThatFailsStillRetiresTheOlderKey(t *testing.T) {
+	for name, outcome := range map[string]struct{ refused, fallback bool }{
+		"upstream failure":          {},
+		"provider refusal":          {refused: true},
+		"refusal with an exclusion": {refused: true, fallback: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			fixture := relaxedExplorationFixture(t)
+			fixture.decision.Algorithm.RaylineARC.PolicyService.ModelSchedule = config.RaylineARCModelScheduleTaskTurnCompaction
+			if outcome.fallback {
+				fixture.decision.Algorithm.RaylineARC.PolicyService.Fallback = &config.RaylineARCPolicyFallbackConfig{Enabled: true}
+			}
+			asTwoStage(fixture)
+			// The refused model is excluded, so the fake serves what is offered.
+			fixture.fake.chooseWith(func(request raylinearc.PolicyDecisionRequest) string {
+				return request.Selection.AvailableActionIDs[0]
+			})
+			store, err := raylinearc.NewMemoryEpisodeStore(raylinearc.MemoryEpisodeStoreConfig{MaxEpisodes: 4, IdleTTL: time.Minute})
+			if err != nil {
+				t.Fatal(err)
+			}
+			episode := "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+			attempt := func(messages ...map[string]any) (*RequestContext, *selection.RaylineARCTrace) {
+				t.Helper()
+				state, read, err := store.Snapshot(context.Background(), episode, 2)
+				if err != nil {
+					t.Fatal(err)
+				}
+				result, err := fixture.selectWithHeaders(t, state, policyTestRequest(t, messages...), eligibleHeaders())
+				if err != nil {
+					t.Fatal(err)
+				}
+				ctx := &RequestContext{
+					TraceContext: context.Background(), VSRRaylineARC: result.RaylineARC, VSRSelectedDecision: fixture.decision,
+					RaylineARCTransaction: newRelaxedRaylineARCEpisodeTransaction(store, state, read, episode, false),
+				}
+				ctx.RaylineARCTransaction.markSelection(result.RaylineARC.SelectedArm, 10)
+				stageRaylineARCPolicySelection(ctx, result.RaylineARC, "")
+				return ctx, result.RaylineARC
+			}
+			first, boundary := attempt(explorationTask)
+			boundaryKey(t, boundary)
+			if err := first.RaylineARCTransaction.commit(context.Background(), first); err != nil {
+				t.Fatal(err)
+			}
+			toolUse := map[string]any{"role": "assistant", "content": []any{map[string]any{"type": "tool_use", "id": "t1", "name": "test", "input": map[string]any{}}}}
+			fixture.answerExploration(false, true, nil)
+			failed, later := attempt(explorationTask, toolUse, map[string]any{"role": "user", "content": "new task"})
+			if later.PolicyBoundary == nil || later.PolicyExploration != nil {
+				t.Fatal("not a recordless later boundary")
+			}
+			if outcome.refused {
+				declineRefusedTurn(failed)
+			}
+			if err := failed.RaylineARCTransaction.abort(context.Background(), "upstream_status"); err != nil {
+				t.Fatal(err)
+			}
+			fixture.answerExploration(true, false, nil)
+			toolResult := map[string]any{"role": "user", "content": []any{map[string]any{"type": "tool_result", "tool_use_id": "t1", "content": "ok"}}}
+			_, held := attempt(explorationTask, toolUse, toolResult)
+			if held.OfferKind == "retained" {
+				t.Fatal("the held turn reused the failed boundary")
+			}
+			assertHeldKeyNull(t, held)
+		})
 	}
 }

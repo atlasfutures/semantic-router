@@ -255,3 +255,27 @@ func recordPolicyExplorationOrigin(
 	trace.PolicyExplorationHeldKey = previous.HeldDecisionKey(trace.PolicyExploration)
 	trace.PolicyNextState.Exploration = raylinearc.NextPolicyExplorationOrigin(previous, trace.PolicyExploration)
 }
+
+// stagePolicyExplorationOrigin stores the origin this turn's decision left
+// with its staged boundary. A decided boundary is the episode's latest even
+// when its dispatch then fails, so the older origin it replaced or cleared
+// must not survive the failure for a later held turn to join.
+func stagePolicyExplorationOrigin(staged *raylinearc.EpisodeState, next *raylinearc.PolicyEpisodeState) {
+	if staged == nil || staged.Policy == nil || next == nil {
+		return
+	}
+	staged.Policy.Exploration = next.Exploration.Clone()
+}
+
+// keepStoredExplorationOrigin keeps the stored origin in a refusal's
+// exclusion state: a refusal changes the boundary and the exclusions only,
+// and the context it is recorded in predates the decision's origin.
+func keepStoredExplorationOrigin(policy, stored *raylinearc.PolicyEpisodeState) {
+	if policy == nil {
+		return
+	}
+	policy.Exploration = nil
+	if stored != nil {
+		policy.Exploration = stored.Exploration.Clone()
+	}
+}

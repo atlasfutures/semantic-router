@@ -154,6 +154,7 @@ func (refusal refusedTurn) apply(state *raylinearc.EpisodeState) (*raylinearc.Ep
 			return next, changed
 		}
 		if policy := base.WithExclusion(refusal.exclude, turnFailureRefusal); policy.Excludes(refusal.exclude) {
+			keepStoredExplorationOrigin(policy, next.Policy)
 			next.Policy, changed = policy, true
 		}
 	}

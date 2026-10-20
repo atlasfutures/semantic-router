@@ -334,6 +334,7 @@ func (transaction *raylineARCEpisodeTransaction) retainPolicyBoundary(
 	}
 	staged := cloneARCState(transaction.state)
 	staged.PolicyBoundary = raylinearc.ClonePolicyBoundary(boundary)
+	stagePolicyExplorationOrigin(staged, transaction.policyNext)
 	if transaction.relaxed {
 		transaction.retainRelaxedPolicyBoundary(ctx, staged)
 		return
