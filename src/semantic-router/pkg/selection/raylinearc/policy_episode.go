@@ -192,6 +192,11 @@ type PolicyEpisodeState struct {
 	// exactly as long as the context does: a compaction or a prefix break
 	// starts a fresh state, and with it the full offer again.
 	Exclusions []PolicyExclusion `json:"exclusions,omitempty"`
+	// Exploration is a relaxed episode's record of its latest Stage-1
+	// boundary (PolicyExplorationOrigin), nil when it has none. Each turn's
+	// decision restates it (NextPolicyExplorationOrigin): Next drops it, so a
+	// turn that did not restate it leaves none.
+	Exploration *PolicyExplorationOrigin `json:"exploration,omitempty"`
 }
 
 // PolicyExclusion removes every action of a trained model from the offer,
@@ -264,6 +269,7 @@ func (state *PolicyEpisodeState) Clone() *PolicyEpisodeState {
 	if len(cloned.Exclusions) == 0 {
 		cloned.Exclusions = nil
 	}
+	cloned.Exploration = state.Exploration.Clone()
 	return &cloned
 }
 
@@ -364,7 +370,7 @@ func (state *PolicyEpisodeState) Validate() error {
 			return errors.New("ARC policy episode exclusion is malformed")
 		}
 	}
-	return nil
+	return state.Exploration.validate()
 }
 
 func isLowerHex64(value string) bool {
@@ -653,6 +659,7 @@ func (state *PolicyEpisodeState) NextWithPrices(
 	prices *PolicyPriceAudit,
 ) *PolicyEpisodeState {
 	next := state.Clone()
+	next.Exploration = nil
 	next.Ledger = append(next.Ledger, PolicyLedgerEntry{
 		Message: len(messages), ActionID: actionID, ArmID: armID, Prices: prices,
 	})
