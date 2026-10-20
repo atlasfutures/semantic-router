@@ -27,8 +27,8 @@ const providerPreferencesField = "provider"
 // pin is read off the arm's model card and nothing here consults the request.
 //
 // A private turn (rayline_arc_privacy.go) is the one exception: its data mode
-// is added to the pin, or, when the arm pins nothing, to the provider object
-// the request already carries, so a constraint the caller stated still holds.
+// is added to the pin, or sent alone when the arm pins nothing, and either way
+// replaces the provider object the request carries.
 //
 // Two conditions gate it. The arm must carry the key, because an unpinned arm
 // keeps the bytes it sent before the key existed. And the backend must be
@@ -48,13 +48,7 @@ func applyProviderPreferences(
 	if err := json.Unmarshal(body, &requestMap); err != nil {
 		return nil, fmt.Errorf("failed to parse request body: %w", err)
 	}
-	var encoded []byte
-	var err error
-	if pin == nil {
-		encoded, err = withPrivacyProviderMembers(requestMap[providerPreferencesField], privacyMode)
-	} else {
-		encoded, err = json.Marshal(privacyProviderPreferences(pin, privacyMode))
-	}
+	encoded, err := json.Marshal(privacyProviderPreferences(pin, privacyMode))
 	if err != nil {
 		return nil, fmt.Errorf("failed to serialize provider preferences: %w", err)
 	}
