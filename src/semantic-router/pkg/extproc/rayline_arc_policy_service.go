@@ -624,21 +624,21 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 			metrics.SetRaylineARCEncoderInflight(armed.admission.Inflight())
 		}, nil
 	}
-	// A two-stage package refuses a mid-conversation turn it would decide
-	// cold: one whose history holds an assistant message its episode never
-	// attributed, with no episode memory. The record of the model this
-	// conversation's own decisions last served (rayline_arc_derived_hold.go)
-	// is read before the first ask, so it rides on the first ask of a package
-	// whose manifest says it is two-stage: attested, with every action still
-	// offered, for a stage one that reads the field and holds or decides with
-	// that model (memex-desktop #7417); narrowed to that model's actions, a
-	// caller hold, for a stage one that is not attestable. A package VSR does
-	// not know to be two-stage keeps the record for the refusal, below.
-	// Only a model-unit stage one is attested: there any action of the model
-	// names the held candidate, while a model-effort one would read another
-	// effort as the held candidate and switch effort off a boundary. A held
-	// model this turn excludes has no action to attest or offer, so the ask
-	// goes out plain and its refusal fails below, never retried empty.
+	// A turn with no episode memory of its model carries VSR's own record of
+	// the model this conversation last served, read before the first ask
+	// (rayline_arc_derived_hold.go), on the first ask of a package whose
+	// manifest says it is two-stage: attested, with every action still
+	// offered, for a stage one that reads the field and holds or decides
+	// with that model (memex-desktop #7417); narrowed to that model's actions,
+	// a caller hold, for a stage one that is not attestable. With no record
+	// the ask goes out plain and the policy decides the turn at a start
+	// (pathfinder ADR 0149). A package VSR does not know to be two-stage
+	// keeps the record for the refusal path below. Only a model-unit stage
+	// one is attested: there any action of the model names the held
+	// candidate, while a model-effort one would read another effort as the
+	// held candidate and switch effort off a boundary. A held model this turn
+	// excludes has no action to attest or offer, so the ask goes out plain
+	// and a refusal fails below, never retried empty.
 	var derived derivedHold
 	derivedOffer, derivedSource, attestedFirst, derivedFound := false, "", "", false
 	if held < 0 && scorer.twoStage {
