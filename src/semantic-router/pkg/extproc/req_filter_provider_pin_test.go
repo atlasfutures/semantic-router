@@ -283,24 +283,29 @@ func TestPrivateTurnPinStaysOffNonOpenRouterBackends(t *testing.T) {
 	}
 }
 
-// On an unpinned arm a private turn keeps the provider object the request
-// carries and adds its data mode: each member a caller states only narrows
-// which providers may serve, so dropping one would loosen the request.
-func TestPrivateTurnKeepsTheCallersProviderObjectOnAnUnpinnedArm(t *testing.T) {
+// On an unpinned arm a private turn replaces the provider object the request
+// carries, as a pinned arm's pin does: a caller's only or order could name a
+// provider whose retention is unstated, which data_collection:"deny" does not
+// rule out, so the cell sends the data-use members alone.
+func TestPrivateTurnReplacesTheCallersProviderObjectOnAnUnpinnedArm(t *testing.T) {
 	router := providerPinRouter("https://openrouter.ai/api/v1", nil)
 	dispatch := &providerDispatch{
 		logicalModel: providerPinArm, decisionName: providerPinDecision,
 		targetFormat: llmprotocol.OpenAIChatV1, profile: openRouterProviderProfile(),
 	}
-	body := []byte(`{"model":"m","provider":{"only":["z-ai"],"zdr":true,"allow_fallbacks":true}}`)
+	body := []byte(`{"model":"m","provider":{"only":["unstated-retention"],"allow_fallbacks":true}}`)
 
-	pinned, err := applyProviderPreferences(body, dispatch, router.Config, raylineARCPrivacyModePrivacy)
+	pinned, err := applyProviderPreferences(body, dispatch, router.Config, raylineARCPrivacyModeZDR)
 	if err != nil {
 		t.Fatalf("applyProviderPreferences: %v", err)
 	}
-	want := `"provider":{"allow_fallbacks":false,"data_collection":"deny","only":["z-ai"],"zdr":true}`
+	want := `"provider":{"allow_fallbacks":false,"data_collection":"deny","zdr":true}`
 	if !bytes.Contains(pinned, []byte(want)) {
-		t.Fatalf("the caller's provider constraints were not kept, want %s:\n%s", want, pinned)
+		t.Fatalf("the caller's provider object was not replaced, want %s:\n%s", want, pinned)
+	}
+	unchanged, err := applyProviderPreferences(body, dispatch, router.Config, "")
+	if err != nil || !bytes.Equal(unchanged, body) {
+		t.Fatalf("a standard turn's provider object changed (err %v):\n%s", err, unchanged)
 	}
 }
 
