@@ -55,9 +55,11 @@ type RoutingCandidate struct {
 	// enforces as a mask. A disabled arm is listed, so the arms keep their
 	// artifact ordinals, and marked.
 	Disabled bool `json:"disabled"`
-	// ProviderPin is the OpenRouter provider object the arm's standard turns
-	// send, the same value the dispatch filter writes. Absent when the arm is
-	// not dispatched through OpenRouter, where no provider object is sent.
+	// ProviderPin is the OpenRouter provider object the dispatch filter writes
+	// for the arm: on a Chat Completions or Messages body, and on every private
+	// turn's body whatever its format, with the data mode added (a standard
+	// turn's native Responses body carries none). Absent when the arm is not
+	// dispatched through OpenRouter, where no provider object is sent.
 	ProviderPin *CandidateProviderPin `json:"provider_pin,omitempty"`
 }
 
