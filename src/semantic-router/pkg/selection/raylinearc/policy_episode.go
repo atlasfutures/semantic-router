@@ -314,6 +314,17 @@ func (boundary *PolicyBoundaryDecision) RetainedArm(
 	return boundary.Arm, true
 }
 
+// Same reports whether other is this very decision, compared by value: a
+// stored copy holds its own exploration origin.
+func (boundary *PolicyBoundaryDecision) Same(other *PolicyBoundaryDecision) bool {
+	if boundary == nil || other == nil {
+		return boundary == other
+	}
+	a, b := *boundary, *other
+	a.Exploration, b.Exploration = nil, nil
+	return a == b && sameExplorationOrigin(boundary.Exploration, other.Exploration)
+}
+
 // Validate refuses a stored boundary decision Next could not have produced.
 func (boundary *PolicyBoundaryDecision) Validate(workerCount int) error {
 	if boundary == nil {

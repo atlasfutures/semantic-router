@@ -144,7 +144,7 @@ func (refusal refusedTurn) apply(state *raylinearc.EpisodeState) (*raylinearc.Ep
 	next := cloneARCState(state)
 	changed := false
 	if boundary := next.PolicyBoundary; boundary != nil && boundary.Arm == refusal.arm &&
-		(refusal.boundary == nil || *boundary == *refusal.boundary) {
+		(refusal.boundary == nil || boundary.Same(refusal.boundary)) {
 		next.PolicyBoundary = nil
 		changed = true
 	}

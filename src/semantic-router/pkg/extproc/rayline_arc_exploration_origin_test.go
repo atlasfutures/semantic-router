@@ -2,6 +2,7 @@ package extproc
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -326,5 +327,33 @@ func TestRetainedBoundaryRetryJoinsTheBoundaryItReuses(t *testing.T) {
 				t.Fatalf("the retry left origin %+v, want the boundary's", kept)
 			}
 		})
+	}
+}
+
+// A coalesced refusal clears the boundary it was dispatched under when the
+// store holds that decision, compared by value: a reread boundary holds its
+// own copy of the exploration origin.
+func TestRefusalClearsAnExploredBoundaryReadBackFromTheStore(t *testing.T) {
+	model := "glm-5.3-flash"
+	state, err := raylinearc.NewEpisodeState(2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	messages := []json.RawMessage{json.RawMessage(`{"role":"user","content":"go"}`)}
+	state.PolicyBoundary = raylinearc.NewPolicyBoundaryDecision(1, 0, &raylinearc.PolicyEpisodeState{}, messages)
+	state.PolicyBoundary.Exploration = &raylinearc.PolicyExplorationOrigin{
+		DecisionKey: "3b1f0c5a", Chosen: raylinearc.PolicyStageOneCandidate{"model": &model},
+	}
+	dispatched := *state.PolicyBoundary
+	reread := cloneARCState(state)
+	if next, changed := (refusedTurn{arm: 1, boundary: &dispatched}).apply(reread); !changed || next.PolicyBoundary != nil {
+		t.Fatalf("the refusal kept the boundary it was dispatched under: %+v", next.PolicyBoundary)
+	}
+	other := dispatched
+	other.Exploration = &raylinearc.PolicyExplorationOrigin{
+		DecisionKey: "4c2a1d6b", Chosen: raylinearc.PolicyStageOneCandidate{"model": &model},
+	}
+	if next, _ := (refusedTurn{arm: 1, boundary: &other}).apply(cloneARCState(state)); next.PolicyBoundary == nil {
+		t.Fatal("the refusal cleared a boundary with another origin")
 	}
 }

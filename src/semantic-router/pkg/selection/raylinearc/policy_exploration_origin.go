@@ -114,6 +114,13 @@ func (origin *PolicyExplorationOrigin) validate() error {
 	return nil
 }
 
+func sameExplorationOrigin(a, b *PolicyExplorationOrigin) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return a.DecisionKey == b.DecisionKey && sameStageOneCandidate(a.Chosen, b.Chosen)
+}
+
 func sameStageOneCandidate(a, b PolicyStageOneCandidate) bool {
 	if len(a) != len(b) {
 		return false
