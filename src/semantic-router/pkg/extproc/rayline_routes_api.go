@@ -385,7 +385,11 @@ func (r *OpenAIRouter) raylineRoutesFailure(
 		return r.createRaylineRoutesError(ctx, 400, "invalid_request_error", detail)
 	}
 	// A turn the policy would not decide is answered as the ExtProc path
-	// answers it: 422 undecidable, never a default model.
+	// answers it: 422 undecidable, never a default model. A private turn
+	// with no allowed arm is the same 422 and says why.
+	if errors.Is(err, routerruntime.ErrRouteDecisionNoPrivateArm) {
+		return r.createRaylineRoutesError(ctx, 422, "invalid_request_error", noPrivateArmMessage)
+	}
 	if errors.Is(err, routerruntime.ErrRouteDecisionUndecidable) {
 		return r.createRaylineRoutesError(ctx, 422, "invalid_request_error", undecidableMessage)
 	}

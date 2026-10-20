@@ -442,6 +442,23 @@ func TestRouteDecisionReportsAnUndecidableTurnAs422(t *testing.T) {
 	}
 }
 
+// A private turn with no allowed arm is the same 422, and says why.
+func TestRouteDecisionReportsNoPrivateArmAs422(t *testing.T) {
+	server := routeDecisionTestServer(&fakeRouteDecisionRuntime{
+		err: fmt.Errorf("%w: %w: Rayline ARC selection failed (class=no_private_arm)",
+			routerruntime.ErrRouteDecisionUndecidable, routerruntime.ErrRouteDecisionNoPrivateArm),
+	})
+
+	recorder, _ := postRouteDecision(t, server, routeDecisionTestBody, nil)
+
+	if recorder.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422 (body=%s)", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "no private arm") {
+		t.Fatalf("body does not say why: %s", recorder.Body.String())
+	}
+}
+
 // Every other failure keeps its 503: the caller cannot fix it by waiting, so
 // inviting a retry would turn one broken consult into a retry storm.
 func TestRouteDecisionKeepsUnavailableForNonContendedFailures(t *testing.T) {
