@@ -575,12 +575,17 @@ A two-stage package will not decide a mid-conversation turn cold. Such a turn
 has an assistant message the episode never attributed and no episode memory
 of its model, as when a conversation resumes after its episode cooled or was
 evicted, or a subagent is handed its parent's history. The package refuses it
-with 422 `selection_refused`, reason `stage_one_held_unknown`. VSR answers
-only that refusal: it asks once more, with the offer narrowed to one model's
-actions. That is the contract's caller hold, since every offered arm then
-belongs to one model. A second refusal fails the turn as undecidable.
-Single-stage packages never refuse this way, so their decisions are
-unchanged.
+with 422 `selection_refused`, reason `stage_one_held_unknown`. VSR reads its
+own record of the model that last served the episode before it asks, and the
+first ask carries it. For a package whose stage one chooses by model, the
+ask keeps every action offered and names the record in
+`selection.attested_held_action_id`, so the package holds that model or
+decides a typed user turn with it held. For any other package, the ask is
+narrowed to that model's actions: the contract's caller hold, since every
+offered arm then belongs to one model. Only an attested ask the package
+refuses (one that predates the field) is asked once more, narrowed. A
+refusal that then stands fails the turn as undecidable. Single-stage
+packages never refuse this way, so their decisions are unchanged.
 
 The held model is the model that last served this episode (the selected
 action's model, not its worker, which may serve several), which the episode
@@ -592,21 +597,22 @@ There is no fallback model. The parent session's model never holds a subagent
 (ADR 0117), and the package manifest's `fallback_action_id`, the listing's
 `fallback_model` and a cell's `derived_hold_model` are no longer read; a cell
 that sets `derived_hold_model` is refused at load. With no record that names a
-model the cell binds, or when the narrowed retry is refused too, the turn is
+model the cell binds, or when the narrowed ask is refused too, the turn is
 undecidable: it fails 422 with `x-vsr-failure-class: undecidable` and logs
 `rayline_arc_undecidable` with `reason: stage_one_held_unknown` and the
-`derived_source` it retried on (empty when none). No model is served in its
+`derived_source` it was held on (empty when none). No model is served in its
 place.
 
 A held model's offer is every action of that model, at every level. Exclusions still apply.
 If this turn excludes the held model (vision, capability, an operator's
-disable, a fallback exclusion), nothing is offered, and the turn fails as
-`policy_no_available_action` without a second call.
+disable, a fallback exclusion), the first ask carries nothing, and the
+refusal fails the turn as `policy_no_available_action` without a second call.
 
 VSR writes every record, and the gateway owns the episode keys. Nothing in
 the request body is read, so a client cannot choose the held model. Each
 derived hold logs `rayline_arc_derived_hold` with its source
-(`session_record`) and model.
+(`session_record`), model, and `ask` (`first`, `re-ask`, or `none` when the
+recorded model is excluded this turn).
 
 The packages listing (`rayline.arc.policy-packages.v1`) may state
 `fallback_action_id` (a sha256 hex action id) and `fallback_model` on a

@@ -180,8 +180,11 @@ func chooseFirstOffered(request raylinearc.PolicyDecisionRequest) string {
 }
 
 // A committed turn records its action's model past the episode, and a
-// resumed conversation whose episode is gone is held on that model when a
-// two-stage package refuses it cold.
+// resumed conversation whose episode is gone is held on that model when the
+// package refuses it cold. This fixture's manifest declares no stage one, so
+// VSR does not know it as two-stage and the record rides on the re-ask, not
+// the first ask (a declared two-stage package is covered in
+// rayline_arc_two_stage_schedule_test.go).
 func TestDerivedHoldUsesTheLastServedModel(t *testing.T) {
 	router, fake := v5Router(t, "openai")
 	v5Turn(t, router, fake, v5GLMUp, "episode-served", `{"model":"auto","max_tokens":1024,"messages":[{"role":"user","content":"hi"}]}`)
@@ -208,8 +211,9 @@ func TestDerivedHoldUsesTheLastServedModel(t *testing.T) {
 				t.Fatalf("dispatched %q (status %d), want the held GLM", model, status)
 			}
 			calls := fake.received()[before:]
-			if len(calls) != 2 || !slices.Equal(calls[1].Selection.AvailableActionIDs, []string{v5GLMNone, v5GLMUp}) {
-				t.Fatalf("decide calls = %d, retry offer %v", len(calls), calls[len(calls)-1].Selection.AvailableActionIDs)
+			if len(calls) != 2 || calls[0].Selection.AttestedHeldActionID != nil || len(calls[0].Selection.AvailableActionIDs) != 3 ||
+				!slices.Equal(calls[1].Selection.AvailableActionIDs, []string{v5GLMNone, v5GLMUp}) {
+				t.Fatalf("decide calls = %d, offers %v; want the plain ask refused, then one narrowed to the recorded model", len(calls), offersOf(calls))
 			}
 			// a package whose manifest does not declare a model-unit stage one
 			// is never attested: its retry is the narrowed hold, as before
@@ -276,9 +280,9 @@ func TestDerivedHoldHoldsTheServedModelOfAWorkerWithTwo(t *testing.T) {
 	}
 }
 
-// With no record of this episode's own decisions, a turn the two-stage policy
-// refuses is undecidable: it fails 422, and the package's declared fallback
-// action (Opus here) never serves it.
+// With no record of this episode's own decisions, the first ask carries
+// nothing, and a turn the two-stage policy refuses is undecidable: it fails
+// 422, and the package's declared fallback action (Opus here) never serves it.
 func TestDerivedHoldWithoutARecordIsUndecidable(t *testing.T) {
 	logs := captureLogs(t)
 	router, fake := v5Router(t, "openai")
@@ -291,8 +295,8 @@ func TestDerivedHoldWithoutARecordIsUndecidable(t *testing.T) {
 	}
 	assertUndecidable(t, refusal, logs, before, "")
 	noLogEvent(t, logs, "rayline_arc_derived_hold")
-	if calls := fake.received(); len(calls) != 1 {
-		t.Fatalf("decide calls = %d, want the one refused call and no retry", len(calls))
+	if calls := fake.received(); len(calls) != 1 || calls[0].Selection.AttestedHeldActionID != nil || len(calls[0].Selection.AvailableActionIDs) != 3 {
+		t.Fatalf("decide calls = %d, want the one plain refused call and no retry", len(calls))
 	}
 }
 
@@ -380,6 +384,11 @@ func TestDerivedHoldOnAnExcludedModelFailsWithoutRetrying(t *testing.T) {
 	calls := fake.received()
 	if len(calls) != 1 || slices.Contains(calls[0].Selection.AvailableActionIDs, v5GLMNone) {
 		t.Fatalf("decide calls = %d (offer %v), want one, without GLM", len(calls), calls[0].Selection.AvailableActionIDs)
+	}
+	// An excluded model has no action to attest or narrow to: the one ask
+	// goes out plain, and its refusal fails the turn.
+	if calls[0].Selection.AttestedHeldActionID != nil {
+		t.Fatal("the recorded model is excluded this turn but was attested")
 	}
 	if failures()-before != 1 {
 		t.Fatal("the turn did not fail as policy_no_available_action")

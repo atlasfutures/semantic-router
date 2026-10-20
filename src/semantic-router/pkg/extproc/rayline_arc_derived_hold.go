@@ -2,6 +2,7 @@ package extproc
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
@@ -9,24 +10,35 @@ import (
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
 
-// A two-stage policy package refuses a mid-conversation turn it would have
-// to decide cold (selection_refused, stage_one_held_unknown): one whose
-// history holds an assistant message the episode never attributed, with no
-// episode memory -- a conversation resumed after its episode cooled or was
-// evicted, or a subagent handed its parent's history. The contract's answer
-// is a caller hold: an offer whose every action belongs to one model, the
-// way the schedule holds one (pathfinder arc_serving_contract.md, "Stage
-// one"). On that refusal, and only then, the turn is asked once more with
-// the offer narrowed to a derived model. Single-stage packages never refuse
-// this way, so their decisions are untouched.
+// A conversation can reach a two-stage policy package with no memory of the
+// model serving it: its history holds assistant messages the episode never
+// attributed, and the episode itself has cooled or been evicted -- a
+// conversation resumed after a pause, or a subagent handed its parent's
+// history. VSR keeps one memory that outlives the episode: the model this
+// conversation's own decisions last served, which the store holds past the
+// episode's idle TTL (raylinearc.ServedModelStore). It continues a decision
+// the policy already made for this conversation.
 //
-// The model is the one that last served this episode, which the store keeps
-// past the episode's idle TTL (raylinearc.ServedModelStore): it continues a
-// decision the policy already made for this conversation. Nothing else names
-// a model. A parent session's model does not (ADR 0117: the parent link is
-// metadata and never holds a subagent's actions), and neither does a package,
-// listed or configured fallback model, which the policy never chose. With no
-// record, the turn is undecidable and fails (rayline_arc_undecidable).
+// VSR reads that record before it asks, and when the package's manifest
+// says it is two-stage the first ask carries it: attested
+// (selection.attested_held_action_id, memex-desktop #7417) with every action
+// still offered, so a stage one that reads the field holds that model or
+// decides a typed user turn against it; or, for a stage one that is not
+// attestable, narrowed to the model's actions, the caller hold the contract
+// describes (pathfinder arc_serving_contract.md, "Stage one"). With no
+// record the first ask goes out plain and the policy decides the turn at a
+// start (pathfinder ADR 0149).
+//
+// The narrowed re-ask remains for the two packages the first ask cannot
+// serve: one that predates the attested field and refuses the attested ask
+// (stage_one_held_unknown), and one VSR does not know to be two-stage, which
+// keeps the record for that refusal. A refusal that stands fails
+// (rayline_arc_undecidable).
+//
+// Nothing else names a model. A parent session's model does not (ADR 0117:
+// the parent link is metadata and never holds a subagent's actions), and
+// neither does a package, listed or configured fallback model, which the
+// policy never chose.
 //
 // The router writes every record and the gateway owns the episode keys, so
 // a client cannot choose the held model. Nothing in the request body is read.
@@ -132,12 +144,17 @@ func derivedHoldOffer(
 // a schedule's: the model this episode's own policy decisions served.
 const derivedHoldSessionRecord = "session_record"
 
-func logRaylineARCDerivedHold(arcContext *selection.RaylineARCSelectionContext, hold derivedHold) {
+// logRaylineARCDerivedHold records the record a turn is held on and which
+// ask carries it: "first" (attested or narrowed before the service is
+// asked), "re-ask" (narrowed after an attested first ask was refused), or
+// "none" (the recorded model is excluded this turn, so no ask carries it).
+func logRaylineARCDerivedHold(arcContext *selection.RaylineARCSelectionContext, hold derivedHold, ask string) {
 	logging.ComponentEvent("extproc", "rayline_arc_derived_hold", map[string]interface{}{
 		"episode_id_hash": arcContext.EpisodeIDHash,
 		"source":          hold.source,
 		"model":           hold.model,
 		"offered":         len(hold.offer),
+		"ask":             ask,
 	})
 }
 
@@ -181,6 +198,23 @@ func (scorer *policyServiceScorer) servedModelOf(recorded string) string {
 		}
 	}
 	return ""
+}
+
+// policyServiceAnswered is whether err is an answer the policy service gave
+// (a refusal, a rejection, a backend failure it reported), as against a call
+// it never answered: the client's timeout and transport classes, and a
+// request it could not build. Only an answered attested ask is asked again
+// narrowed; a lost one is the turn's failure as it stands.
+func policyServiceAnswered(err error) bool {
+	var failure *raylinearc.PolicyServiceError
+	if !errors.As(err, &failure) {
+		return false
+	}
+	switch failure.Class {
+	case "timeout", "transport", "request":
+		return false
+	}
+	return true
 }
 
 // arcFailurePolicyUndecidable is the selection failure of a turn the policy

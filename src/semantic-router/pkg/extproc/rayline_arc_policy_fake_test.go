@@ -57,6 +57,10 @@ type fakePolicyService struct {
 	// attested_held_action_id with 400 invalid_request, as a service that
 	// rejects the field.
 	rejectAttested bool
+	// dropAttested, when set, closes the connection of every decide that
+	// carries attested_held_action_id without answering, as a service lost
+	// mid-call: the client reports the transport class.
+	dropAttested bool
 	// refuseAttestedWith, when set, answers every decide that carries
 	// attested_held_action_id with 422 selection_refused and this reason.
 	refuseAttestedWith string
@@ -205,6 +209,7 @@ func (fake *fakePolicyService) serve(writer http.ResponseWriter, request *http.R
 		fake.bodies = append(fake.bodies, body)
 		choose, failWith, failDetail, relaxedUnsupported := fake.choose, fake.failWith, fake.failDetail, fake.relaxedUnsupported
 		refuseCold, rejectAttested, refuseAttestedWith := fake.refuseCold, fake.rejectAttested, fake.refuseAttestedWith
+		dropAttested := fake.dropAttested
 		if fake.failFirstLeft > 0 {
 			fake.failFirstLeft--
 			failWith = fake.failFirst
@@ -215,6 +220,15 @@ func (fake *fakePolicyService) serve(writer http.ResponseWriter, request *http.R
 				"error": "unsupported_request", "detail": map[string]any{"reason": relaxedUnsupported},
 			})
 			return
+		}
+		if dropAttested && decide.Selection.AttestedHeldActionID != nil {
+			if hijacker, ok := writer.(http.Hijacker); ok {
+				if conn, _, hijackErr := hijacker.Hijack(); hijackErr == nil {
+					_ = conn.Close()
+					return
+				}
+			}
+			panic("fake policy service: connection cannot be dropped")
 		}
 		if rejectAttested && decide.Selection.AttestedHeldActionID != nil {
 			fake.writeJSON(writer, http.StatusBadRequest, map[string]any{
