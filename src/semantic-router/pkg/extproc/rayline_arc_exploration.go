@@ -216,10 +216,15 @@ func policyExplorationUsage(trace *selection.RaylineARCTrace) explorationUsage {
 		value := *record.Explored
 		explored = &value
 	}
-	// A held turn joins its boundary through the key that chose its model.
+	// A held turn joins its boundary through the key that chose its model:
+	// the service's origin, or on a relaxed call, which states none, VSR's
+	// own record of the latest boundary.
 	key := record.DecisionKey
 	if record.Held {
 		key = record.OriginDecisionKey
+		if key == nil {
+			key = trace.PolicyExplorationHeldKey
+		}
 	}
 	var decisionKey *string
 	if key != nil {
@@ -229,4 +234,24 @@ func policyExplorationUsage(trace *selection.RaylineARCTrace) explorationUsage {
 	return explorationUsage{
 		propensity: copyFloat(record.Propensity), tau: copyFloat(record.Tau), explored: explored, decisionKey: decisionKey,
 	}
+}
+
+// recordPolicyExplorationOrigin keeps a relaxed episode's own record of its
+// latest Stage-1 boundary in the state this main turn commits, and on a held
+// turn names that boundary's key for llm_usage (pathfinder#5477, "For VSR").
+// A strict call's origin is the service's, so a strict turn keeps none.
+func recordPolicyExplorationOrigin(
+	trace *selection.RaylineARCTrace,
+	turn *raylinearc.PolicyEpisodeState,
+	relaxed bool,
+) {
+	if !relaxed || trace.PolicyNextState == nil {
+		return
+	}
+	var previous *raylinearc.PolicyExplorationOrigin
+	if turn != nil {
+		previous = turn.Exploration
+	}
+	trace.PolicyExplorationHeldKey = previous.HeldDecisionKey(trace.PolicyExploration)
+	trace.PolicyNextState.Exploration = raylinearc.NextPolicyExplorationOrigin(previous, trace.PolicyExploration)
 }

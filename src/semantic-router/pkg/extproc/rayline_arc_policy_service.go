@@ -842,6 +842,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		result.RaylineARC.PolicyNextState = turn.NextWithPrices(
 			messages, response.Decision.SelectedActionID, response.Decision.SelectedArmID, audit,
 		)
+		recordPolicyExplorationOrigin(result.RaylineARC, turn, servedRelaxed)
 	}
 	if atBoundary && !retained {
 		result.RaylineARC.PolicyBoundary = raylinearc.NewPolicyBoundaryDecision(binding.arm, state.TurnIndex, turn, messages)

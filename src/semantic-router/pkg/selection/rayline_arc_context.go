@@ -171,6 +171,11 @@ type RaylineARCTrace struct {
 	PolicyExploration         *raylinearc.PolicyExplorationRecord
 	PolicyExplorationSent     bool
 	PolicyExplorationExcluded string
+	// PolicyExplorationHeldKey is, on a relaxed held turn the service stated
+	// no origin for, the decision key of the episode's latest Stage-1
+	// boundary from VSR's own record, when the held model is the one that
+	// boundary chose; nil otherwise.
+	PolicyExplorationHeldKey *string
 	// RoutingPricesStatus is the routing price cache status the request
 	// read (fresh, stale, expired, absent); empty when live prices are not
 	// configured. RoutingPricesUsed is the service's echo, nil when it sent
