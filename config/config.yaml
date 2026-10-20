@@ -48,6 +48,8 @@ providers:
           - novita
         require_parameters: true
         data_collection: deny
+        # Zero-data-retention endpoints only.
+        zdr: true
         # The price ceiling the route was vetted and trained under (USD per
         # million prompt/completion tokens, per request, per image).
         max_price:

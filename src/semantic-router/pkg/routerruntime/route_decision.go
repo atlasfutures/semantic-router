@@ -57,6 +57,11 @@ type RouteDecisionRequest struct {
 	// normalizes both without the wire format being guessed from the body
 	// twice, once by the adapter and once by the router.
 	WireFormat llmprotocol.WireFormat
+	// Headers are the request's headers, by lowercase name. The runtime reads
+	// only the gateway's privacy headers from them, and only on a cell that
+	// trusts its gateway's turn-signal headers, so a private consult is
+	// masked as a routed turn is.
+	Headers map[string]string
 }
 
 // RouteDecisionSurface names which endpoint a consult came from.

@@ -360,9 +360,10 @@ func (selector *raylineARCSelector) Select(
 // and is the one constraint that yields: it is lifted rather than refusing a
 // turn.
 //
-// The privacy mask follows the vision one: a private turn none of whose
-// allowed arms takes its image is refused as no_private_arm, which the
-// gateway does not replay, rather than as a 503 it would.
+// The privacy mask is applied last. A basket no arm of which can serve the
+// turn keeps the class that says why; one where only arms the request's
+// privacy mode rules out could serve it is refused as no_private_arm, which
+// the gateway does not replay, rather than as a 503 it would.
 //
 // The two hard constraints are not the same kind of fact. The vision flag answers
 // a question about this turn; the disabled flag is a standing operator verdict
@@ -377,10 +378,6 @@ func hardExcludedArms(
 	if err != nil {
 		return nil, err
 	}
-	excluded, err = withPrivacyExcludedArms(arcContext, armCount, excluded)
-	if err != nil {
-		return nil, err
-	}
 	excluded, err = withIncapableArms(arcContext, armCount, excluded)
 	if err != nil {
 		return nil, err
@@ -389,7 +386,11 @@ func hardExcludedArms(
 	if err != nil {
 		return nil, err
 	}
-	return withDisabledArms(arcContext, armCount, excluded)
+	excluded, err = withDisabledArms(arcContext, armCount, excluded)
+	if err != nil {
+		return nil, err
+	}
+	return withPrivacyExcludedArms(arcContext, armCount, excluded)
 }
 
 // withOverContextArms folds the context-window constraint into the mask. It
