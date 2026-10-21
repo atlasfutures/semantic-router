@@ -62,15 +62,11 @@ func (r *OpenAIRouter) validateRaylineRoutesMethod(
 	return nil
 }
 
-// validateResponseAPICollectionMethod admits POST /v1/responses whether or
-// not the cell keeps a response store. Generation is the codec runtime's and
-// never depends on the store; only retention, previous_response_id and the
-// object endpoints (GET and DELETE /v1/responses/{id}, answered elsewhere) do.
-// It used to answer 404 without a store, which took the whole endpoint down
-// on a cell that merely retains nothing, and meant a storeless cell could
-// never give the 400 stateless_path answer for previous_response_id that the
-// body gate produces (memex-desktop#7484).
 func (r *OpenAIRouter) validateResponseAPICollectionMethod(method string) *ext_proc.ProcessingResponse {
+	if r.ResponseAPIFilter == nil || !r.ResponseAPIFilter.IsEnabled() {
+		return r.createErrorResponse(404, "endpoint not found")
+	}
+
 	return validateAllowedMethod(r, method, "POST")
 }
 

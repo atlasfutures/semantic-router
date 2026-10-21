@@ -96,37 +96,6 @@ func TestValidatePublicGenerationEndpoints(t *testing.T) {
 	}
 }
 
-// A cell that keeps no response store still serves Responses generation.
-// The store is needed only to retain turns and to resolve previous_response_id,
-// and the body gate answers the latter; a 404 here would take the endpoint
-// down on a cell that merely retains nothing, and would hide that answer.
-func TestStorelessCellStillServesResponsesGeneration(t *testing.T) {
-	for name, filter := range map[string]*ResponseAPIFilter{
-		"no filter":            nil,
-		"disabled store":       {},
-		"store failed to open": NewUnavailableResponseAPIFilter(),
-	} {
-		t.Run(name, func(t *testing.T) {
-			router := &OpenAIRouter{ResponseAPIFilter: filter}
-			ctx := &RequestContext{Headers: map[string]string{}}
-			if response := router.validateRequestHeaders("POST", "/v1/responses", ctx); response != nil {
-				t.Fatalf("POST /v1/responses was refused at the header phase: %+v", response)
-			}
-			response := router.validateRequestHeaders("GET", "/v1/responses", ctx)
-			if response == nil || response.GetImmediateResponse().GetStatus().GetCode() != typev3.StatusCode_MethodNotAllowed {
-				t.Fatalf("GET /v1/responses = %+v, want 405", response)
-			}
-			// The object endpoints still need the store.
-			for _, method := range []string{"GET", "DELETE"} {
-				object, err := router.handleResponseAPIRequestHeaders(method, "/v1/responses/resp_missing", &RequestContext{TraceContext: t.Context()})
-				if err != nil || object == nil || object.GetImmediateResponse().GetStatus().GetCode() != typev3.StatusCode_NotFound {
-					t.Fatalf("%s /v1/responses/resp_missing = %+v, %v, want 404", method, object, err)
-				}
-			}
-		})
-	}
-}
-
 func TestResponseObjectPathParsing(t *testing.T) {
 	if got := extractResponseIDFromPath("/v1/responses/resp_123?expand=true"); got != "resp_123" {
 		t.Fatalf("response id = %q", got)

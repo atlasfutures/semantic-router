@@ -27,7 +27,7 @@ support:
 | Client API | Inference endpoint | Buffered | Streaming | Availability |
 | --- | --- | --- | --- | --- |
 | OpenAI Chat Completions | `POST /v1/chat/completions` | Supported | Supported | Available on the public inference listener. |
-| OpenAI Responses | `POST /v1/responses` | Supported | Supported | Stateless generation (the conversation's items in `input`) is always available. `previous_response_id`, retention and the router-owned object operations (`GET` and `DELETE /v1/responses/{id}`) require `global.services.response_api` and its store; without a store a turn naming `previous_response_id` is refused with 400 and `x-vsr-failure-class: stateless_path`. Router-owned object operations are not forwarded to a model backend. |
+| OpenAI Responses | `POST /v1/responses` | Supported | Supported | Requires `global.services.response_api` and its store to be available. Router-owned object operations are not forwarded to a model backend. |
 | Anthropic Messages | `POST /v1/messages` | Supported | Supported | Send the Anthropic request shape and an appropriate `anthropic-version` header. Client authentication remains deployment-specific. |
 
 The public listener also serves `GET /v1/models`. See the

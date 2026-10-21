@@ -6,7 +6,6 @@ import (
 	"errors"
 	"testing"
 
-	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
@@ -239,80 +238,4 @@ func TestResponseObjectStateHTTPStatusFollowsTheCategory(t *testing.T) {
 			}
 		})
 	}
-}
-
-// The whole ExtProc request path, header phase then body phase, on a cell
-// that keeps no store: the header phase used to answer 404 for every POST
-// /v1/responses here, so the body gate's answer was never reachable live. A
-// turn naming previous_response_id now gets the 400 and its class, and a
-// turn that sends its items is admitted.
-func TestStorelessCellAnswersPreviousResponseIDThroughTheRequestPhases(t *testing.T) {
-	router := &OpenAIRouter{Config: &config.RouterConfig{}}
-	headerPhase := func(t *testing.T) *RequestContext {
-		t.Helper()
-		ctx := &RequestContext{Headers: map[string]string{}, RequestID: "storeless", TraceContext: t.Context()}
-		headers := &ext_proc.ProcessingRequest_RequestHeaders{RequestHeaders: &ext_proc.HttpHeaders{
-			Headers: &core.HeaderMap{Headers: []*core.HeaderValue{
-				{Key: ":method", Value: "POST"},
-				{Key: ":path", Value: "/v1/responses"},
-				{Key: "content-type", Value: "application/json"},
-			}},
-		}}
-		response, err := router.handleRequestHeaders(headers, ctx)
-		if err != nil || response.GetImmediateResponse() != nil {
-			t.Fatalf("header phase: err=%v immediate=%+v, want the request admitted", err, response.GetImmediateResponse())
-		}
-		return ctx
-	}
-	run := func(t *testing.T, body string) (*ext_proc.ProcessingResponse, *RequestContext) {
-		t.Helper()
-		ctx := headerPhase(t)
-		response, err := router.handleRequestBody(&ext_proc.ProcessingRequest_RequestBody{
-			RequestBody: &ext_proc.HttpBody{Body: []byte(body), EndOfStream: true},
-		}, ctx)
-		if err != nil {
-			t.Fatalf("body phase: %v", err)
-		}
-		return router.encodeImmediateResponseForClient(response, ctx), ctx
-	}
-
-	t.Run("a turn that sends its items is admitted, and store: true retains nothing", func(t *testing.T) {
-		// store: true is accepted rather than refused: a client that always
-		// sends it (the OpenAI default) must not be turned away by a cell
-		// that merely retains nothing. Nothing is persisted, and the turn
-		// is answered without a store-addressable id to continue from.
-		// The ingress gate is the last phase this bare router can run; the
-		// routing stages after it need a built router and are not at issue.
-		ctx := headerPhase(t)
-		request, immediate := router.prepareProtocolRequest([]byte(`{"model":"model-a","input":"hello","store":true}`), ctx)
-		if immediate != nil || request == nil {
-			t.Fatalf("stateless turn refused: %+v (protocol error %+v)", immediate, ctx.ImmediateProtocolError)
-		}
-		if ctx.ResponseObjectState == nil || !ctx.ResponseObjectState.ShouldStore {
-			t.Fatalf("object state = %+v, want store: true recorded as asked", ctx.ResponseObjectState)
-		}
-		ctx.SemanticResponse = &llmprotocol.Response{ID: ctx.ResponseObjectState.GeneratedResponseID}
-		ctx.UpstreamStatusCode = 200
-		router.persistResponseObject(ctx)
-		if ctx.ResponseObjectState.PersistenceAttempted {
-			t.Fatal("a cell with no store must not attempt persistence")
-		}
-	})
-
-	t.Run("previous_response_id is refused as stateless_path", func(t *testing.T) {
-		response, _ := run(t, storeGateContinuationBody)
-		immediate := response.GetImmediateResponse()
-		if immediate == nil {
-			t.Fatalf("response = %+v, want an immediate refusal", response)
-		}
-		if got := int(immediate.GetStatus().GetCode()); got != 400 {
-			t.Fatalf("status = %d, want 400", got)
-		}
-		if got := immediateHeaderValue(response, selectionFailureHeader); got != selectionFailureStatelessPath {
-			t.Fatalf("%s = %q, want %q", selectionFailureHeader, got, selectionFailureStatelessPath)
-		}
-		if message, _ := immediateErrorBody(t, immediate.GetBody()); message != statelessPathMessage {
-			t.Fatalf("message = %q, want %q", message, statelessPathMessage)
-		}
-	})
 }
