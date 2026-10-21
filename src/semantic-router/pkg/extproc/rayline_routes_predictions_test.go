@@ -46,6 +46,25 @@ func predictionsFixtureDecision(t *testing.T) routerruntime.RouteDecision {
 		Predictions: response.Decision.Predictions, PredictionsApplied: true,
 		PackageSHA256: response.Package.PackageSHA256,
 	}
+	// The alternatives the selector scored, as the contract's answer lists
+	// them with their actions.
+	var answer struct {
+		Body struct {
+			Alternatives []struct {
+				Model, Worker, Provider string
+				Score                   float64
+				ActionID                string `json:"action_id"`
+				ThinkingLevel           string `json:"thinking_level"`
+			} `json:"alternatives"`
+		} `json:"body"`
+	}
+	readJSONFixture(t, "response_predictions.json", &answer)
+	for _, alternative := range answer.Body.Alternatives {
+		decision.Alternatives = append(decision.Alternatives, routerruntime.RouteAlternative{
+			Model: alternative.Model, Worker: alternative.Worker, Provider: alternative.Provider, Score: alternative.Score,
+			ActionID: alternative.ActionID, ThinkingLevel: alternative.ThinkingLevel,
+		})
+	}
 	for _, point := range []raylineRoutesPoint{{"swift", 10}, {"sage", 1 / 4.5}, {"custom", 0.5}} {
 		pick := response.Decision.TierPicks[point.name]
 		decision.Results = append(decision.Results, routerruntime.RouteResult{
@@ -68,7 +87,7 @@ func predictionsRouting(t *testing.T) *raylineRoutesRouting {
 
 func renderRoutesPayload(t *testing.T, routing *raylineRoutesRouting, decision routerruntime.RouteDecision) map[string]any {
 	t.Helper()
-	var payload raylineRoutesResponse
+	payload := raylineRoutesPayload("rte_test", "checkpoint", decision, nil, 0)
 	if err := raylineRoutesAddResults(&payload, routing, decision); err != nil {
 		t.Fatal(err)
 	}
@@ -84,12 +103,13 @@ func renderRoutesPayload(t *testing.T, routing *raylineRoutesRouting, decision r
 }
 
 // assertPredictionFields compares, field for field, the keys the
-// predictions projection owns: candidates, candidates_context, the routing
+// predictions projection owns: candidates, candidates_context, alternatives
+// (their action fields), the routing
 // echo, and each result's model_choice and provenance (present or absent
 // as the fixture has them).
 func assertPredictionFields(t *testing.T, got, want map[string]any) {
 	t.Helper()
-	for _, key := range []string{"candidates", "candidates_context", "routing"} {
+	for _, key := range []string{"candidates", "candidates_context", "routing", "alternatives"} {
 		gotValue, gotPresent := got[key]
 		wantValue, wantPresent := want[key]
 		if gotPresent != wantPresent || !reflect.DeepEqual(gotValue, wantValue) {

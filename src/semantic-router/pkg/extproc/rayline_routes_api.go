@@ -503,7 +503,7 @@ func raylineRoutesPayload(
 		Provider:     decision.Provider,
 		Thinking:     raylineRoutesThinkingOf(decision.Thinking),
 		Checkpoint:   checkpoint,
-		Alternatives: raylineRoutesAlternatives(decision.Alternatives),
+		Alternatives: raylineRoutesAlternatives(decision.Alternatives, decision.PredictionsApplied),
 		Pricing:      raylineRoutesPricingOf(decision.SelectedPricing),
 		Warnings:     append(warnings, decision.Warnings...),
 		Usage: raylineRoutesUsage{
@@ -554,20 +554,26 @@ func raylineRoutesThinkingOf(thinking routerruntime.RouteThinking) raylineRoutes
 	return rendered
 }
 
+// raylineRoutesAlternatives renders the alternatives. Each names its action
+// and thinking level only on an answer that carries predictions
+// (pathfinder#5717): the fields belong to that answer, and every other
+// answer is the one the contract states without them.
 func raylineRoutesAlternatives(
 	alternatives []routerruntime.RouteAlternative,
+	withActions bool,
 ) []raylineRoutesScore {
 	rendered := make([]raylineRoutesScore, 0, len(alternatives))
 	for _, alternative := range alternatives {
-		rendered = append(rendered, raylineRoutesScore{
+		score := raylineRoutesScore{
 			Model:    alternative.Model,
 			Worker:   alternative.Worker,
 			Provider: alternative.Provider,
 			Score:    alternative.Score,
-
-			ActionID:      alternative.ActionID,
-			ThinkingLevel: alternative.ThinkingLevel,
-		})
+		}
+		if withActions {
+			score.ActionID, score.ThinkingLevel = alternative.ActionID, alternative.ThinkingLevel
+		}
+		rendered = append(rendered, score)
 	}
 	return rendered
 }
