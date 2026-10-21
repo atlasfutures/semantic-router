@@ -147,7 +147,7 @@ func raylineARCTurnInputs(
 		eligibility = strings.TrimSpace(reqCtx.Headers[lever.EligibilityHeader])
 	}
 	return fmt.Sprintf(
-		"decision=%p|format=%s|close=%t|eligible=%q|fault=%s|credentials=%s|call_kind=%q|compaction=%q|agent_key_source=%q|privacy_mode=%q|training_data=%q",
+		"decision=%p|format=%s|close=%t|eligible=%q|fault=%s|credentials=%s|call_kind=%q|compaction=%q|agent_key_source=%q|privacy_mode=%q|training_data=%q|route_controls=%q",
 		arcConfig,
 		reqCtx.SourceFormat,
 		reqCtx.RaylineARCCloseRequested,
@@ -164,6 +164,8 @@ func raylineARCTurnInputs(
 		// never inherit an eligible one's explored decision.
 		strings.TrimSpace(reqCtx.Headers[raylineARCPrivacyModeHeader]),
 		strings.TrimSpace(reqCtx.Headers[raylineARCTrainingDataHeader]),
+		// A lookup's result points, prices and exploration.
+		reqCtx.RaylineRoutesControlsKey,
 	)
 }
 

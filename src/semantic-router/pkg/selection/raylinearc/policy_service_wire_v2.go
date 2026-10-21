@@ -65,6 +65,11 @@ type PolicyTierPick struct {
 	SelectedArmID    string               `json:"selected_arm_id"`
 	Model            string               `json:"model"`
 	Thinking         PolicyActionThinking `json:"thinking"`
+	// Exploration is this point's own draw (u = draw(salt, decision_key,
+	// point name), pathfinder#5664), when the service reports one; absent
+	// from a service that explores only the decision itself, and then the
+	// point's temperature is unsupported, never assumed applied.
+	Exploration *PolicyExplorationRecord `json:"exploration,omitempty"`
 }
 
 // PolicyDecisionStageOne is decision.stage_one.
