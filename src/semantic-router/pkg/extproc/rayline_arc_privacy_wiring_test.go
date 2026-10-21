@@ -93,6 +93,13 @@ func TestPrivacyHeadersReachSelectionAndDispatch(t *testing.T) {
 			err, requestContext.RaylineARCPrivacyMode, excluded, body)
 	}
 
+	// A trusting cell serves a request that states no mode as private, so one
+	// that also names no allowed arm is refused rather than served standard.
+	_, _, _, err = privacyWiringTurn(t, true, map[string]string{})
+	if selectionFailureClassOf(t, err) != arcFailureNoPrivateArm {
+		t.Fatalf("an unstated mode on a trusting cell = %v, want no_private_arm", err)
+	}
+
 	// A trusted private request that allows no arm of the basket is refused
 	// 422 no_private_arm on the routed path's admission response.
 	_, _, _, err = privacyWiringTurn(t, true, map[string]string{

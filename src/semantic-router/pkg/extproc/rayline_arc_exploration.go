@@ -36,7 +36,9 @@ import (
 // and never forwarded upstream.
 const (
 	// raylineARCPrivacyModeHeader is "false" for a request outside privacy
-	// mode; "true", any other value or none excludes it.
+	// mode; "true", any other value or none excludes it. The privacy mask
+	// reads it too, and serves a request that does not state it as private
+	// (rayline_arc_privacy.go).
 	raylineARCPrivacyModeHeader = "x-rayline-privacy-mode"
 	// raylineARCTrainingDataHeader is "allowed" when the request's user (and
 	// team) is not opted out of training-data collection; any other value or

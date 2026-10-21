@@ -88,7 +88,9 @@ type RaylineARCPolicyServiceConfig struct {
 	// mask x-rayline-privacy-allowed-arms. Set it only when a gateway in front
 	// of the router sets (or strips) every one of them, since a client could
 	// otherwise claim any turn is a side call or its own subagent episode,
-	// consent to exploration, or widen its own allowed arms.
+	// consent to exploration, or widen its own allowed arms. On, a request
+	// that does not state x-rayline-privacy-mode is served as private (only
+	// "false" is standard), so the gateway states it on every request.
 	// Off, they are ignored and the harness literals in the body decide.
 	// Either way none is forwarded upstream.
 	TrustTurnSignalHeaders bool `yaml:"trust_turn_signal_headers,omitempty"`

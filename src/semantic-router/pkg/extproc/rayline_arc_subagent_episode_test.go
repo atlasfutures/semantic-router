@@ -167,6 +167,9 @@ func subagentTurn(router *OpenAIRouter, episode, agent string) (*RequestContext,
 			{Key: ":path", Value: "/v1/messages"},
 			{Key: "content-type", Value: "application/json"},
 			{Key: "x-rayline-session", Value: episode},
+			// A trusting cell reads an unstated mode as private, so a standard
+			// turn states it, as the gateway does.
+			{Key: raylineARCPrivacyModeHeader, Value: "false"},
 			{Key: raylineARCAgentKeySourceHeader, Value: "agent"},
 			{Key: raylineARCParentSessionHeader, Value: "user-1:conv-1"},
 		}},

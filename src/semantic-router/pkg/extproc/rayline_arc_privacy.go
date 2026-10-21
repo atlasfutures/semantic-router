@@ -18,8 +18,10 @@ import (
 //
 // x-rayline-privacy-mode keeps its exploration meaning (rayline_arc_exploration.go):
 // "false" is a standard request. "privacy" and "zdr" are the two private
-// modes, and any other stated value is read as "privacy", failing closed.
-// An absent or empty header is a standard request, as before the mask.
+// modes, and any other value is read as "privacy", failing closed. That
+// includes an absent or empty header on a cell that trusts its gateway: the
+// gateway states the mode on every request, so a request that does not is
+// served as private rather than standard (memex-desktop#7514).
 const (
 	// raylineARCPrivacyAllowedArmsHeader is the comma-separated arm ids (the
 	// candidates' model names, as the decision lists them) a private request
@@ -36,10 +38,17 @@ const (
 const arcFailureNoPrivateArm = "no_private_arm"
 
 // raylineARCPrivacyMode reads the request's data mode off the trusted signal
-// headers: "" for a standard request, else privacy or zdr.
+// headers: "" for a standard request, else privacy or zdr. A cell that does
+// not trust its gateway reads no header (raylineARCTrustedSignalHeaders
+// returns none), so its requests are standard; a trusted cell reads every
+// one, empty when the request did not state it.
 func raylineARCPrivacyMode(signalHeaders map[string]string) string {
-	switch mode := strings.ToLower(strings.TrimSpace(signalHeaders[raylineARCPrivacyModeHeader])); mode {
-	case "", "false":
+	mode, trusted := signalHeaders[raylineARCPrivacyModeHeader]
+	if !trusted {
+		return ""
+	}
+	switch mode = strings.ToLower(strings.TrimSpace(mode)); mode {
+	case "false":
 		return ""
 	case raylineARCPrivacyModeZDR:
 		return raylineARCPrivacyModeZDR

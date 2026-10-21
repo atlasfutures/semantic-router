@@ -711,7 +711,10 @@ gateway's turn-signal headers, the privacy headers
 (`x-rayline-privacy-mode`, `x-rayline-privacy-allowed-arms`) among them;
 false for an artifact-mode decision, which has no policy service. A gateway
 computes a private request's allowed arms from `provider_pin` and sends the
-privacy headers only to an alias that trusts them. Nothing else about the
+privacy headers only to an alias that trusts them. Such an alias fails closed:
+a request that does not state `x-rayline-privacy-mode` is served as private,
+so the gateway sends `x-rayline-privacy-mode: false` on every standard request
+and a private request without allowed arms is refused `no_private_arm`. Nothing else about the
 decision is published: the gateway derives its document from the candidates and that
 limit, and when the arm set changes the candidates change with it, so there
 is no artifact pin to key on.

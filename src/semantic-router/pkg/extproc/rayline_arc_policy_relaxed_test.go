@@ -170,6 +170,9 @@ func policyTurnStatusWithHeaders(router *OpenAIRouter, episode, content string, 
 			{Key: ":path", Value: "/v1/messages"},
 			{Key: "content-type", Value: "application/json"},
 			{Key: "x-rayline-session", Value: episode},
+			// A trusting cell reads an unstated mode as private, so a standard
+			// turn states it, as the gateway does.
+			{Key: raylineARCPrivacyModeHeader, Value: "false"},
 		}},
 	}}
 	for key, value := range extra {

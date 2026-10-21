@@ -89,6 +89,9 @@ func heldTurnResponse(t *testing.T, router *OpenAIRouter, episode, client string
 			{Key: ":path", Value: "/v1/messages"},
 			{Key: "content-type", Value: "application/json"},
 			{Key: "x-rayline-session", Value: episode},
+			// A trusting cell reads an unstated mode as private, so a standard
+			// turn states it, as the gateway does.
+			{Key: raylineARCPrivacyModeHeader, Value: "false"},
 		}},
 	}}
 	headers.RequestHeaders.Headers.Headers = append(headers.RequestHeaders.Headers.Headers, extra...)

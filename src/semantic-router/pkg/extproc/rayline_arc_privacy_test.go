@@ -241,3 +241,37 @@ func TestDecisionOnlyConsultCarriesThePrivacyHeaders(t *testing.T) {
 		t.Fatal("/v1/routes does not pass its request headers to the consult")
 	}
 }
+
+// On a cell that trusts its gateway the gateway states the mode on every
+// request, so a request that does not is served as private: the fail-closed
+// reading, never standard. "false" is the only standard spelling. A cell that
+// does not trust its gateway reads no header, so its requests stay standard.
+func TestUnstatedPrivacyModeIsPrivateOnATrustingCell(t *testing.T) {
+	t.Parallel()
+	trusting := &config.RaylineARCPolicyServiceConfig{TrustTurnSignalHeaders: true}
+	tests := map[string]struct {
+		policy   *config.RaylineARCPolicyServiceConfig
+		request  map[string]string
+		wantMode string
+		want     []bool
+	}{
+		"trusting, unstated":         {trusting, map[string]string{}, "privacy", []bool{true, true, true}},
+		"trusting, empty":            {trusting, map[string]string{raylineARCPrivacyModeHeader: " "}, "privacy", []bool{true, true, true}},
+		"trusting, unstated, arms":   {trusting, map[string]string{raylineARCPrivacyAllowedArmsHeader: "arm-1"}, "privacy", []bool{true, false, true}},
+		"trusting, false":            {trusting, map[string]string{raylineARCPrivacyModeHeader: "false"}, "", nil},
+		"not trusting, unstated":     {&config.RaylineARCPolicyServiceConfig{}, map[string]string{}, "", nil},
+		"no policy service, privacy": {nil, map[string]string{raylineARCPrivacyModeHeader: "privacy"}, "", nil},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			signals := raylineARCTrustedSignalHeaders(test.policy, test.request)
+			mode := raylineARCPrivacyMode(signals)
+			if mode != test.wantMode {
+				t.Fatalf("mode = %q, want %q", mode, test.wantMode)
+			}
+			if got := privacyExcludedArms(mode, raylineARCPrivacyAllowedArms(mode, signals), privacyTestArms); !reflect.DeepEqual(got, test.want) {
+				t.Fatalf("privacyExcludedArms() = %v, want %v", got, test.want)
+			}
+		})
+	}
+}
