@@ -56,13 +56,13 @@ func TestFoldMidConversationToolChanges(t *testing.T) {
 			want: `{"messages":[{"role":"user","content":"hi"}]}`,
 		},
 		{
-			name:     "a reference re-admits a declared tool",
+			name:     "a reference loads a declared deferred tool",
 			dispatch: openRouter,
 			body: `{"tools":[{"name":"Docs","defer_loading":true}],"messages":[` +
 				`{"role":"system","content":[{"type":"tool_removal","tool":{"type":"tool_reference","name":"Docs"}}]},` +
 				`{"role":"user","content":"hi"},` +
 				`{"role":"system","content":[{"type":"tool_addition","tool":{"type":"tool_reference","name":"Docs"}}]}]}`,
-			want: `{"tools":[{"name":"Docs","defer_loading":true}],"messages":[{"role":"user","content":"hi"}]}`,
+			want: `{"tools":[{"name":"Docs"}],"messages":[{"role":"user","content":"hi"}]}`,
 		},
 		{
 			name: "a body bound for Anthropic itself keeps the blocks",
@@ -89,5 +89,22 @@ func TestFoldMidConversationToolChanges(t *testing.T) {
 				t.Fatalf("got  %s\nwant %s", got, want)
 			}
 		})
+	}
+}
+
+// A model named directly reaches the provider with no decision name; its
+// tool changes are folded all the same.
+func TestAdaptProviderRequestFoldsToolChangesWithoutDecision(t *testing.T) {
+	body := []byte(`{"messages":[{"role":"user","content":"hi"},` +
+		`{"role":"system","content":[{"type":"tool_addition","tool":{"type":"tool_definition","definition":{"name":"Docs"}}}]}]}`)
+	out, err := (&OpenAIRouter{}).adaptProviderRequest(body, &providerDispatch{
+		profile: &config.ProviderProfile{Type: "openrouter"}, targetFormat: llmprotocol.AnthropicMessagesV1,
+	}, &RequestContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"messages":[{"role":"user","content":"hi"}],"tools":[{"name":"Docs"}]}`
+	if got := compactJSON(t, out); !bytes.Equal(got, compactJSON(t, []byte(want))) {
+		t.Fatalf("got  %s\nwant %s", got, want)
 	}
 }

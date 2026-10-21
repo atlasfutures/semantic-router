@@ -85,9 +85,16 @@ func foldMidConversationToolChanges(body []byte, dispatch *providerDispatch) ([]
 						tools = append(tools, json.RawMessage(definition.Raw))
 					}
 				} else if at, ok := toolIndex[block.Get("tool.name").String()]; ok {
-					// A reference names a tool already declared (deferred);
-					// it is in force again if an earlier block removed it.
+					// A reference loads a tool already declared, usually
+					// deferred: it is in force, and no longer deferred.
 					delete(removed, at)
+					if gjson.GetBytes(tools[at], "defer_loading").Exists() {
+						loaded, err := sjson.DeleteBytes(append([]byte(nil), tools[at]...), "defer_loading")
+						if err != nil {
+							return nil, fmt.Errorf("failed to load a referenced tool: %w", err)
+						}
+						tools[at] = loaded
+					}
 				}
 			case toolRemovalBlockType:
 				if at, ok := toolIndex[block.Get("tool.name").String()]; ok {
