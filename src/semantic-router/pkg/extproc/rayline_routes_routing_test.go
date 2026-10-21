@@ -582,3 +582,55 @@ func TestServiceUnknownPriceModelIsTheCallers(t *testing.T) {
 		t.Fatalf("err = %v", mapped)
 	}
 }
+
+// A lookup with routing controls is never held: a capacity or media hold
+// asks the service nothing, so it has no preset, and holding would commit
+// the episode before the lookup failed for want of one. It fails as an
+// unheld turn does, with nothing committed.
+func TestRouteControlsAreNeverHeld(t *testing.T) {
+	for _, class := range []string{raylinearc.PolicyCapacityRefusalClass, raylinearc.PolicyMediaRefusedClass} {
+		t.Run(class, func(t *testing.T) {
+			fixture := routesFixture(t)
+			bindings := fixture.decision.Algorithm.RaylineARC.PolicyService.Bindings
+			state, _ := raylinearc.NewEpisodeState(2)
+			servedTurn(t, fixture, state, bindings[1].ActionID)
+			if class == raylinearc.PolicyMediaRefusedClass {
+				mediaRefusal(fixture, "document_unsupported")
+			} else {
+				fixture.fake.mu.Lock()
+				fixture.fake.failWith = class
+				fixture.fake.mu.Unlock()
+			}
+			_, controls := routesControlsFor(t, fixture, `{"value_usd":1.5}`)
+			result, err := fixture.selectOnWith(t, state, nextTurn(t),
+				func(arcContext *selection.RaylineARCSelectionContext) { arcContext.RouteControls = controls })
+			if err == nil {
+				t.Fatalf("a lookup with routing controls was held: offer %q", result.RaylineARC.OfferKind)
+			}
+			// The same refusal without controls still holds.
+			if held, err := fixture.selectOn(t, state, nextTurn(t)); err != nil || held.RaylineARC.OfferKind == "" {
+				t.Fatalf("an unrouted turn was not held: %v", err)
+			}
+		})
+	}
+}
+
+// A result whose record says the service did not apply T is not shown as
+// applied in the echo: the echo says unsupported and lists temperature.
+func TestRoutesEchoNeverAppliesAnUnappliedTemperature(t *testing.T) {
+	routing, _, _ := readRaylineRoutesRouting([]byte(`{"model":"arc-1.0","messages":[{"role":"user","content":"x"}],"routing":{"temperature":0.7}}`), nil)
+	requested, reason := 0.7, "clamped_to_zero"
+	unapplied := &raylinearc.PolicyExplorationRecord{Applied: false, RequestedTemperature: &requested, Reason: &reason}
+	result := func(name string, weight float64) routerruntime.RouteResult {
+		return routerruntime.RouteResult{Name: name, CostWeight: weight, SelectedWorker: "w", WorkerModel: "m/a", Exploration: unapplied}
+	}
+	var payload raylineRoutesResponse
+	decision := routerruntime.RouteDecision{Results: []routerruntime.RouteResult{result("swift", 10), result("sage", 1/4.5)}}
+	if err := raylineRoutesAddResults(&payload, routing, decision); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Presets.Swift.Temperature.Status != "not_applied" || payload.Routing.Temperature.Status != "unsupported" ||
+		!slices.Equal(payload.Routing.UnappliedKeys, []string{"temperature"}) {
+		t.Fatalf("result %+v echo %+v", payload.Presets.Swift.Temperature, payload.Routing)
+	}
+}

@@ -648,7 +648,10 @@ func raylineRoutesResultOf(result routerruntime.RouteResult, routing *raylineRou
 		return rendered, true
 	}
 	rendered.Temperature = raylineRoutesTemperatureOf(*routing.temperature, result.Exploration)
-	return rendered, rendered.Temperature.Status != "unsupported"
+	// The echo has only applied and unsupported: a result served greedy
+	// although T was asked (not_applied) did not apply it either.
+	status := rendered.Temperature.Status
+	return rendered, status == "applied" || status == "greedy"
 }
 
 // routesValueOf is the V a result was decided at: the preset's own, or the

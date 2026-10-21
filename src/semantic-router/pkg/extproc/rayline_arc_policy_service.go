@@ -753,7 +753,12 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 			// pathfinder#3329: a context the service's encoder cannot hold
 			// keeps the episode's held action rather than failing the turn;
 			// so does media the projection cannot read (pathfinder#5281).
-			if offerKind, holds := policyHoldOfferKinds[class]; holds {
+			// A Decisions lookup with routing controls is not held: a hold
+			// asks the service nothing, so it has no tier pick at any
+			// requested point, and the lookup would commit its episode and
+			// then fail for want of a preset. It fails as an unheld turn
+			// does, before anything commits.
+			if offerKind, holds := policyHoldOfferKinds[class]; holds && routeControls == nil {
 				if held := selector.policyCapacityHold(
 					armed, selCtx, arcContext, state, scorer, failure, turn, messages, sideCall, atBoundary,
 					retained, available, workerIDs, latency,
