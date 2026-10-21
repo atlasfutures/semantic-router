@@ -8,6 +8,7 @@ import (
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 )
 
@@ -35,7 +36,11 @@ const (
 // applied in transcript order, so the tools sent are the ones in force at the
 // final turn. A message left with no content is dropped; a cache breakpoint a
 // dropped block carried moves to the last block its message keeps.
-func foldMidConversationToolChanges(body []byte, dispatch *providerDispatch) ([]byte, error) {
+//
+// A decision whose tools plugin filters tools (mode none or filtered) has
+// already settled which tools travel, so its additions are dropped rather
+// than added: an addition must not bring back a tool the policy removed.
+func foldMidConversationToolChanges(body []byte, dispatch *providerDispatch, ctx *RequestContext) ([]byte, error) {
 	if dispatch == nil || dispatch.targetFormat != llmprotocol.AnthropicMessagesV1 ||
 		!providerIsOpenRouter(dispatch.profile) {
 		return body, nil
@@ -57,6 +62,9 @@ func foldMidConversationToolChanges(body []byte, dispatch *providerDispatch) ([]
 		tools = append(tools, json.RawMessage(tool.Raw))
 	}
 	removed := map[int]bool{}
+	toolsCfg := resolveDecisionToolsConfig(ctx)
+	admitAdditions := toolsCfg == nil || !toolsCfg.Enabled ||
+		toolsCfg.EffectiveMode() == config.ToolsPluginModePassthrough
 
 	changed := false
 	keptMessages := []json.RawMessage{}
@@ -72,6 +80,9 @@ func foldMidConversationToolChanges(body []byte, dispatch *providerDispatch) ([]
 		for _, block := range content.Array() {
 			switch block.Get("type").String() {
 			case toolAdditionBlockType:
+				if !admitAdditions {
+					break
+				}
 				if definition := block.Get("tool.definition"); block.Get("tool.type").String() == "tool_definition" &&
 					definition.IsObject() {
 					name := definition.Get("name").String()

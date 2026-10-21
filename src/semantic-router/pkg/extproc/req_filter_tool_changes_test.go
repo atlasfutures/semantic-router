@@ -81,7 +81,7 @@ func TestFoldMidConversationToolChanges(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			out, err := foldMidConversationToolChanges([]byte(tc.body), tc.dispatch)
+			out, err := foldMidConversationToolChanges([]byte(tc.body), tc.dispatch, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -104,6 +104,32 @@ func TestAdaptProviderRequestFoldsToolChangesWithoutDecision(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := `{"messages":[{"role":"user","content":"hi"}],"tools":[{"name":"Docs"}]}`
+	if got := compactJSON(t, out); !bytes.Equal(got, compactJSON(t, []byte(want))) {
+		t.Fatalf("got  %s\nwant %s", got, want)
+	}
+}
+
+// A decision whose tools plugin settled the tools keeps them settled: an
+// addition is dropped, never added, while a removal still applies.
+func TestFoldMidConversationToolChangesKeepsAToolPolicy(t *testing.T) {
+	payload, err := config.NewStructuredPayload(config.ToolsPluginConfig{Enabled: true, Mode: config.ToolsPluginModeNone})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := &RequestContext{VSRSelectedDecision: &config.Decision{
+		Name:    "no_tools",
+		Plugins: []config.DecisionPlugin{{Type: config.DecisionPluginTools, Configuration: payload}},
+	}}
+	body := []byte(`{"tools":[{"name":"Bash"}],"messages":[{"role":"user","content":"hi"},` +
+		`{"role":"system","content":[{"type":"tool_addition","tool":{"type":"tool_definition","definition":{"name":"Docs"}}},` +
+		`{"type":"tool_removal","tool":{"type":"tool_reference","name":"Bash"}}]}]}`)
+	out, err := foldMidConversationToolChanges(body, &providerDispatch{
+		profile: &config.ProviderProfile{Type: "openrouter"}, targetFormat: llmprotocol.AnthropicMessagesV1,
+	}, ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"messages":[{"role":"user","content":"hi"}]}`
 	if got := compactJSON(t, out); !bytes.Equal(got, compactJSON(t, []byte(want))) {
 		t.Fatalf("got  %s\nwant %s", got, want)
 	}

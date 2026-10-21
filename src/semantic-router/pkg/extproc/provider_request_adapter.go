@@ -21,7 +21,7 @@ func (r *OpenAIRouter) adaptProviderRequest(
 	if dispatch == nil || ctx == nil || dispatch.decisionName == "" {
 		// A model named directly, or an internal hop, carries no decision but
 		// can still reach OpenRouter's Messages API.
-		body, err = foldMidConversationToolChanges(body, dispatch)
+		body, err = foldMidConversationToolChanges(body, dispatch, ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -92,7 +92,7 @@ func (r *OpenAIRouter) adaptMessagesProviderRequest(
 	dispatch *providerDispatch,
 	ctx *RequestContext,
 ) ([]byte, error) {
-	body, err := foldMidConversationToolChanges(body, dispatch)
+	body, err := foldMidConversationToolChanges(body, dispatch, ctx)
 	if err != nil {
 		return nil, err
 	}
