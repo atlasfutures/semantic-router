@@ -166,7 +166,9 @@ func routesRequirements(required *raylinearc.PolicyServiceRequirements, routing 
 	if routing == nil {
 		return
 	}
-	for _, capability := range []string{raylinearc.PolicyCapabilityDecisionsV2, raylinearc.PolicyCapabilityTierPoints} {
+	for _, capability := range []string{
+		raylinearc.PolicyCapabilityDecisionsV2, raylinearc.PolicyCapabilityTierPoints, raylinearc.PolicyCapabilityCallerPrices,
+	} {
 		if !slices.Contains(required.Capabilities, capability) {
 			required.Capabilities = append(required.Capabilities, capability)
 		}

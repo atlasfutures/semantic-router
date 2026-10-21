@@ -731,6 +731,10 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	// policy finding no supported selection, the held action unavailable and
 	// so on -- fails the turn as undecidable. The service no longer serves its
 	// package's fallback action in their place.
+	if errors.As(err, &cold) && cold.Class == raylinearc.PolicySelectionRefusedClass &&
+		raylinearc.PolicyRefusalReason(cold.Detail) == "unknown_price_model" {
+		return nil, arcSelectionFailure(arcFailureRoutesUnknownPriceModel)
+	}
 	if errors.As(err, &cold) && (cold.Class == raylinearc.PolicyStageOneHeldUnknownClass ||
 		cold.Class == raylinearc.PolicySelectionRefusedClass) {
 		logRaylineARCUndecidable(arcContext, raylinearc.PolicyRefusalReason(cold.Detail), derived.source, held >= 0, sideCall)

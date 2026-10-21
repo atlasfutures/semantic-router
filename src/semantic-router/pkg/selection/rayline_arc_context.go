@@ -126,6 +126,9 @@ type RaylineARCRouteControls struct {
 	Prices       *raylinearc.PolicyRoutingPrices
 	PricedModels []string
 	Exclusive    bool
+	// PriceSHA256 is the caller price world's public hash, which the
+	// service's caller-mode echo must restate.
+	PriceSHA256 string
 }
 
 type RaylineARCTrace struct {

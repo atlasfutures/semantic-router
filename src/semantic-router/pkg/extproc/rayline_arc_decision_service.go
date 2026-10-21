@@ -825,6 +825,10 @@ func selectionFailureError(err error) error {
 		if failure.class == arcFailurePolicyUndecidable {
 			return fmt.Errorf("%w: %w", routerruntime.ErrRouteDecisionUndecidable, err)
 		}
+		if failure.class == arcFailureRoutesUnknownPriceModel {
+			return fmt.Errorf("%w: %w: %w",
+				routerruntime.ErrRouteDecisionInvalidBody, errRaylineRoutesUnknownPriceModel, err)
+		}
 		if routesInconsistentClasses[failure.class] {
 			return fmt.Errorf("%w: %w", routerruntime.ErrRouteDecisionInconsistent, err)
 		}
