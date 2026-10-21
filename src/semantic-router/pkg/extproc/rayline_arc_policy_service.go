@@ -830,6 +830,11 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	// The echo is recorded as the decision's price audit, so it must be the
 	// prices this request sent.
 	if class := routingPriceEchoMismatch(request.RoutingPrices, response.RoutingPricesUsed); class != "" {
+		// A lookup's own prices unechoed is the service not applying them:
+		// inconsistent (502), as recordRouteControls classes it.
+		if routeControls != nil && routeControls.Prices != nil {
+			class = arcFailureRoutesPricesNotApplied
+		}
 		logging.ComponentErrorEvent("extproc", "rayline_arc_policy_service_failed", map[string]interface{}{
 			"class": class, "episode_id_hash": arcContext.EpisodeIDHash,
 		})

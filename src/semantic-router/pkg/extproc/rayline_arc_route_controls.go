@@ -146,7 +146,7 @@ func routeExplorationConsistent(record *raylinearc.PolicyExplorationRecord, requ
 	}
 	if record.Applied {
 		return record.Temperature != nil && *record.Temperature > 0 && *record.Temperature <= requested &&
-			record.Propensity != nil && record.Explored != nil
+			record.Propensity != nil && *record.Propensity > 0 && *record.Propensity <= 1 && record.Explored != nil
 	}
 	return record.Reason != nil
 }

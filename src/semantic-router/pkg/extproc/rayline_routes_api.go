@@ -267,23 +267,25 @@ func (r *OpenAIRouter) handleRaylineRoutesAPI(
 	// The public routing controls (pathfinder#5664). A body's routing block
 	// is read, validated and removed before the codec sees the body; on a
 	// cell that does not serve them it is refused rather than ignored.
+	// Presence first: on a cell that does not serve the controls, a body that
+	// carries the block is unavailable whatever the block says.
+	if settings.Routing == nil && raylineRoutesBodyCarriesRouting(body) {
+		return r.createRaylineRoutesCodedError(ctx, &routesContractError{
+			status: 503, errType: "api_error", code: "unavailable",
+			message: "this ARC cell does not serve routing controls",
+		})
+	}
 	routing, body, refusal := readRaylineRoutesRouting(body, r.Config.EffectiveAutoModelNames())
 	if refusal != nil {
 		return r.createRaylineRoutesCodedError(ctx, refusal)
 	}
 	var controls *selection.RaylineARCRouteControls
-	switch {
-	case settings.Routing != nil:
+	if settings.Routing != nil {
 		if unknown := raylineRoutesUnknownPriceModels(routing, r.raylineRoutesDecisionWorkerModels()); len(unknown) > 0 {
 			return r.createRaylineRoutesCodedError(ctx, routesInvalid("unknown_price_model",
 				"routing.prices names a model this ARC release does not offer: "+strings.Join(unknown, ", ")+"."))
 		}
 		controls = raylineRoutesControls(routing, settings.Routing, time.Now())
-	case routing != nil:
-		return r.createRaylineRoutesCodedError(ctx, &routesContractError{
-			status: 503, errType: "api_error", code: "unavailable",
-			message: "this ARC cell does not serve routing controls",
-		})
 	}
 	// The format the body was actually read under, recorded before selection
 	// runs. wireFormatOf reads this when a decode fails, and without the
@@ -1054,4 +1056,15 @@ func (r *OpenAIRouter) createRaylineRoutesError(
 		ctx.ImmediateResponseEncoded = true
 	}
 	return response
+}
+
+// raylineRoutesBodyCarriesRouting reports whether the body names a routing
+// member at all, null included.
+func raylineRoutesBodyCarriesRouting(body []byte) bool {
+	var envelope map[string]json.RawMessage
+	if json.Unmarshal(body, &envelope) != nil {
+		return false
+	}
+	_, present := envelope["routing"]
+	return present
 }

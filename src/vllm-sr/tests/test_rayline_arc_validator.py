@@ -744,3 +744,29 @@ def test_rayline_arc_cli_checks_routing_prices_urls():
         )
         errors = _validate_rayline_arc_decision(decision)
         assert any(error.field.endswith(field) for error in errors), (field, errors)
+
+
+def test_rayline_arc_cli_mirrors_routes_routing():
+    """routes_api.routing (Go RaylineARCRoutesRoutingConfig, semantic-router #304)."""
+    decision = _policy_service_decision()
+    arc = decision.algorithm.rayline_arc
+    raw = arc.model_dump()
+    routed = {**raw, "routes_api": {"enabled": True, "routing": {"exploration_salt": "s"}}}
+    parsed = type(arc).model_validate(routed)
+    assert parsed.routes_api.routing.exploration_salt == "s"
+    assert type(arc).model_validate(
+        {**raw, "routes_api": {"enabled": True, "routing": {}}}
+    ).routes_api.routing.exploration_salt == ""
+    for changed in (
+        {"routes_api": {"enabled": False, "routing": {}}},
+        {"routes_api": {"enabled": True, "routing": {"exploration_salt": "s" * 129}}},
+        {"routes_api": {"enabled": True, "routing": {"surprise": 1}}},
+    ):
+        with pytest.raises(ValidationError):
+            type(arc).model_validate({**raw, **changed})
+    # An artifact cell has no tier points to answer with.
+    artifact = _valid_decision().algorithm.rayline_arc
+    with pytest.raises(ValidationError):
+        type(artifact).model_validate(
+            {**artifact.model_dump(), "routes_api": {"enabled": True, "routing": {}}}
+        )

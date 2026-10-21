@@ -361,6 +361,31 @@ func TestRouteControlsFailClosed(t *testing.T) {
 			}
 		}
 	})
+	t.Run("caller prices unechoed", func(t *testing.T) {
+		fixture := routesFixture(t)
+		fixture.fake.echo = func(raylinearc.PolicyDecisionRequest) *raylinearc.PolicyRoutingPricesUsed { return nil }
+		models := workerModels(fixture)
+		_, controls := routesControlsFor(t, fixture, `{"prices":{"`+models[0]+`":{"input":1,"cache_read":0,"cache_write":0,"output":2}}}`)
+		_, err := selectWithControls(t, fixture, controls)
+		if !errors.Is(selectionFailureError(err), routerruntime.ErrRouteDecisionInconsistent) {
+			t.Fatalf("an unechoed caller price world answered %v, want inconsistent (502)", err)
+		}
+	})
+	t.Run("applied record with an impossible propensity", func(t *testing.T) {
+		requested, propensity, explored, reason := 0.5, 1.5, true, (*string)(nil)
+		record := &raylinearc.PolicyExplorationRecord{
+			Applied: true, Reason: reason, RequestedTemperature: &requested, Temperature: &requested,
+			Propensity: &propensity, Explored: &explored,
+		}
+		if routeExplorationConsistent(record, 0.5) {
+			t.Fatal("a propensity above 1 stood")
+		}
+		zero := 0.0
+		record.Propensity = &zero
+		if routeExplorationConsistent(record, 0.5) {
+			t.Fatal("a propensity of 0 for the served model stood")
+		}
+	})
 	t.Run("record contradicts T", func(t *testing.T) {
 		record := &raylinearc.PolicyExplorationRecord{Applied: true}
 		requested, higher, propensity, explored := 0.5, 0.9, 0.3, true
@@ -502,6 +527,9 @@ func TestRaylineRoutesAnswersRoutingRefusalsWithTheirCodes(t *testing.T) {
 		"tier V":               {served, []byte(`{"model":"arc-sage","messages":[{"role":"user","content":"hi"}],"routing":{"value_usd":1}}`), 400, "invalid_request_error", "tier_value_immutable"},
 		"unknown price model":  {served, body(`{"prices":{"acme/x":{"input":1,"cache_read":0,"cache_write":0,"output":1}}}`), 400, "invalid_request_error", "unknown_price_model"},
 		"cell without routing": {routesRouter(true), body(`{"value_usd":1}`), 503, "api_error", "unavailable"},
+		// Presence decides on such a cell, before any member is read.
+		"cell without routing, invalid block": {routesRouter(true), body(`{"value_usd":9}`), 503, "api_error", "unavailable"},
+		"cell without routing, null block":    {routesRouter(true), body(`null`), 503, "api_error", "unavailable"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			response := tc.router.handleRaylineRoutesAPI(tc.body, routesContext(nil))

@@ -66,6 +66,15 @@ func (service *raylineARCDecisionService) RouteDecision(
 	if err != nil {
 		return routerruntime.RouteDecision{}, err
 	}
+	// A Decisions draw is never trajectory state. A lookup that asks for
+	// exploration (routing.temperature > 0) joins no episode, so its drawn
+	// action never becomes a committed previous arm and no later turn is
+	// attributed to it, whatever routes_api.episode_writes says. It is
+	// training_data: not_allowed by contract.
+	untracked := false
+	if request.Routing != nil && request.Routing.Exploration != nil && !request.Ephemeral {
+		request.Ephemeral, untracked = true, true
+	}
 
 	requestContext, err := service.decisionOnlyRequestContext(ctx, algorithm, request)
 	if err != nil {
@@ -142,6 +151,9 @@ func (service *raylineARCDecisionService) RouteDecision(
 		SelectedPricing: workerPricing(worker),
 		Warnings:        []string{},
 	}
+	if untracked {
+		decisionFacts.Warnings = append(decisionFacts.Warnings, raylineRoutesExplorationUntracked)
+	}
 	trace := selected.result.RaylineARC
 	decisionFacts.ThinkingLevel = trace.ThinkingLevel
 	decisionFacts.PolicyActionID = trace.PolicyActionID
@@ -215,6 +227,11 @@ func routeResults(
 	}
 	return results
 }
+
+// raylineRoutesExplorationUntracked says a lookup that would have joined its
+// conversation's episode did not, because it drew at a caller temperature.
+const raylineRoutesExplorationUntracked = "exploration_untracked: a lookup that draws at routing.temperature joins no " +
+	"episode; a Decisions draw never becomes trajectory state"
 
 // selectedRoute is everything one decision publishes, kept together so the
 // assembly above reads facts rather than re-deriving them.
