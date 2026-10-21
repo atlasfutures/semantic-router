@@ -98,6 +98,10 @@ type RaylineARCSelectionContext struct {
 	// (pathfinder#5664): its result points, caller prices and exploration.
 	// Nil on every routed turn and on a lookup that names none.
 	RouteControls *RaylineARCRouteControls
+	// TurnCostWeight is a generation turn's own cost weight (configurable
+	// ARC's routing.value_usd, 1 / V), sent in place of the cell's; nil
+	// keeps the cell's.
+	TurnCostWeight *float64
 	// PolicyCallKind and PolicyCallKindSource are the request's call kind as
 	// classified before the episode was read; selection serves the request as
 	// that kind. Empty when the request was not classified ahead of selection.

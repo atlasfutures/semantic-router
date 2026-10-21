@@ -327,6 +327,16 @@ const (
 	// changes all three.
 	VSRFailureClass = "x-vsr-failure-class"
 
+	// VSRRoutingApplied and VSRRoutingUnapplied name, comma-separated, the
+	// members of a generation turn's routing block (pathfinder#5664) the
+	// turn applied and did not: value_usd applies whenever the turn was
+	// decided; temperature only when the decision drew at the caller's T
+	// (an eligible turn on a cell that honours it). A gateway echoes an
+	// unapplied member as unsupported, never as applied. Absent without a
+	// routing block.
+	VSRRoutingApplied   = "x-vsr-routing-applied"
+	VSRRoutingUnapplied = "x-vsr-routing-unapplied"
+
 	// VSRProtocolWarnings carries a structured, comma-separated list
 	// of translation observations emitted by the inbound parser during
 	// a lossy translation. Each entry is "severity;reason;field".

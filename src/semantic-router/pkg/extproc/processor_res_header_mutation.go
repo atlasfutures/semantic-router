@@ -302,6 +302,7 @@ func buildResponseHeaderMutation(
 	// model-switch-gate stay) are applied internally regardless of the header,
 	// so demoting the wire header does not change behavior.
 	addFinalDecisionHeaders(builder, ctx)
+	builder.addRaylineGenerationRoutingHeaders(ctx)
 	if debugHeadersRequested(ctx) {
 		addRetentionDirectiveHeaders(builder, ctx)
 		addDecisionDetailHeaders(builder, ctx)
