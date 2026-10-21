@@ -122,6 +122,10 @@ type RequestContext struct {
 	// gateway headers: "" for a standard request, else privacy or zdr. It is
 	// decided once, when the ARC context is built, and the provider pin reads it.
 	RaylineARCPrivacyMode string
+	// RaylineARCPrivacyAllowedArms is a private request's allowed set as its
+	// trusted header states it, sorted and deduplicated; nil for a standard
+	// request. Logged only as a count and a digest.
+	RaylineARCPrivacyAllowedArms []string
 	// ContextRecoveryProviderCost is the charge for both calls of a turn
 	// context recovery answered. The recovered body is re-encoded for the
 	// client, which drops it, so the usage report reads it from here.
@@ -157,6 +161,9 @@ type RequestContext struct {
 	// DispatchedProviderOrder is the OpenRouter provider order the rendered
 	// upstream body carries, read back the same way and for the same reason.
 	DispatchedProviderOrder []string
+	// DispatchedProviderPrivacy is the provider object's data-use members the
+	// rendered upstream body carries, read back the same way.
+	DispatchedProviderPrivacy dispatchedProviderPrivacy
 	// DispatchedServiceTier is the service_tier the rendered upstream body
 	// carries, read back the same way: the arm's configured tier, or the
 	// client's own forwarded. ClientServiceTier is the client's raw value an

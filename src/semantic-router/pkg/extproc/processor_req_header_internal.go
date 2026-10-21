@@ -66,7 +66,9 @@ func buildLooperInternalHeaderRemovalMutation() *ext_proc.HeaderMutation {
 
 // requestHeaderPhaseRemovals are stripped from every request at its headers,
 // including one that opts out of processing: the looper's internal headers
-// and the ARC turn-signal headers, none of which is a provider's to see.
+// the ARC turn-signal headers, none of which is a provider's to see, and
+// x-vsr-privacy-mode, which only the router states.
 func requestHeaderPhaseRemovals() []string {
-	return append(looperInternalHeadersForRemoval(), raylineARCTurnSignalHeadersForRemoval()...)
+	removals := append(looperInternalHeadersForRemoval(), headers.VSRPrivacyMode)
+	return append(removals, raylineARCTurnSignalHeadersForRemoval()...)
 }

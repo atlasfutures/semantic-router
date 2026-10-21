@@ -35,7 +35,7 @@ func (r *OpenAIRouter) handleLooperResponseHeaders(
 	}
 
 	r.updateRouterReplayStatus(ctx, statusCode, false)
-	return buildResponseHeadersContinueResponse(nil, false)
+	return buildResponseHeadersContinueResponse(privacyModeRemoval(), false)
 }
 
 func evaluateResponseHeaderOutcome(

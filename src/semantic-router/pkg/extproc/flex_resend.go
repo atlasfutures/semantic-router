@@ -527,6 +527,11 @@ func (r *OpenAIRouter) serveFlexTwin(
 	}()
 	ctx.RequestModel = plan.twinModel
 	ctx.DispatchedProviderOrder = append([]string(nil), plan.twinPin.Order...)
+	ctx.DispatchedProviderPrivacy = dispatchedProviderPrivacy{
+		dataCollection: plan.twinPin.DataCollection,
+		zdr:            plan.twinPin.ZDR,
+		allowFallbacks: plan.twinPin.AllowFallbacks,
+	}
 	ctx.DispatchedServiceTier = plan.resentTier
 	// Nothing the refused call's hop said describes the twin's call.
 	ctx.UpstreamStatusCode = 0

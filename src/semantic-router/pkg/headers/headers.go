@@ -329,6 +329,14 @@ const (
 	// changes all three.
 	VSRFailureClass = "x-vsr-failure-class"
 
+	// VSRPrivacyMode is the data mode a Rayline ARC turn was served under:
+	// "standard", "privacy" or "zdr", as the cell applied it from its
+	// trusted gateway headers. Set on every upstream response to an ARC turn,
+	// replacing any copy the upstream sent; stripped from every other
+	// response and from every request, so neither a client nor a provider can
+	// set it.
+	VSRPrivacyMode = "x-vsr-privacy-mode"
+
 	// VSRServedModel is the provider model id a Rayline ARC turn was
 	// dispatched to, read back off the final provider body: the model that
 	// served the call as the provider names it (an OpenRouter id on an
