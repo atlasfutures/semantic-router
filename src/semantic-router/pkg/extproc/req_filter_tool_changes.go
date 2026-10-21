@@ -37,9 +37,9 @@ const (
 // final turn. A message left with no content is dropped; a cache breakpoint a
 // dropped block carried moves to the last block its message keeps.
 //
-// A decision whose tools plugin filters tools (mode none or filtered) has
+// A decision that narrows tools (decisionLeavesToolsToClient is false) has
 // already settled which tools travel, so its additions are dropped rather
-// than added: an addition must not bring back a tool the policy removed.
+// than added: an addition must not bring back a tool it removed.
 func foldMidConversationToolChanges(body []byte, dispatch *providerDispatch, ctx *RequestContext) ([]byte, error) {
 	if dispatch == nil || dispatch.targetFormat != llmprotocol.AnthropicMessagesV1 ||
 		!providerIsOpenRouter(dispatch.profile) {
@@ -62,9 +62,7 @@ func foldMidConversationToolChanges(body []byte, dispatch *providerDispatch, ctx
 		tools = append(tools, json.RawMessage(tool.Raw))
 	}
 	removed := map[int]bool{}
-	toolsCfg := resolveDecisionToolsConfig(ctx)
-	admitAdditions := toolsCfg == nil || !toolsCfg.Enabled ||
-		toolsCfg.EffectiveMode() == config.ToolsPluginModePassthrough
+	admitAdditions := decisionLeavesToolsToClient(ctx)
 
 	changed := false
 	keptMessages := []json.RawMessage{}
@@ -174,4 +172,22 @@ func foldMidConversationToolChanges(body []byte, dispatch *providerDispatch, ctx
 		return nil, fmt.Errorf("failed to serialize tools: %w", err)
 	}
 	return sjson.SetRawBytes(out, "tools", encodedTools)
+}
+
+// decisionLeavesToolsToClient reports that the selected decision sends the
+// client's tools as declared: no tools plugin mode that filters them, no
+// semantic selection, and no tool_selection plugin. Only then may a
+// mid-conversation addition join the tools.
+func decisionLeavesToolsToClient(ctx *RequestContext) bool {
+	if ctx == nil || ctx.VSRSelectedDecision == nil {
+		return true
+	}
+	if toolsCfg := resolveDecisionToolsConfig(ctx); toolsCfg != nil && toolsCfg.Enabled &&
+		(toolsCfg.EffectiveMode() != config.ToolsPluginModePassthrough || toolsCfg.SelectionEnabled()) {
+		return false
+	}
+	if selection := ctx.VSRSelectedDecision.GetToolSelectionConfig(); selection != nil && selection.Enabled {
+		return false
+	}
+	return true
 }
