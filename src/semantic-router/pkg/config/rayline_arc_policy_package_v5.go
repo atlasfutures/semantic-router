@@ -133,6 +133,30 @@ func stageOneByModel(raw json.RawMessage) bool {
 	return true
 }
 
+// PackageStageOneOfferedModels lists the models the package's stage one
+// may choose, when it chooses by model (PackageStageOneByModel); nil
+// otherwise. A trained action of a model outside it is never one stage one
+// can pick.
+func (cfg *RaylineARCPolicyServiceConfig) PackageStageOneOfferedModels() []string {
+	pkg, err := cfg.loadPackageV5()
+	if err != nil || !stageOneByModel(pkg.manifest.StageOne) {
+		return nil
+	}
+	var part struct {
+		Offered []struct {
+			Model string `json:"model"`
+		} `json:"offered"`
+	}
+	if json.Unmarshal(pkg.manifest.StageOne, &part) != nil {
+		return nil
+	}
+	models := make([]string, 0, len(part.Offered))
+	for _, candidate := range part.Offered {
+		models = append(models, candidate.Model)
+	}
+	return models
+}
+
 // PackageV5RegistryDiffers reports whether the manifest's
 // thinking_controls_sha256 names another registry artifact than VSR's.
 func (cfg *RaylineARCPolicyServiceConfig) PackageV5RegistryDiffers() bool {

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -420,6 +421,27 @@ func TestRaylineARCPolicyPackageV5TwoStageAtStartup(t *testing.T) {
 		if !accepted && (err == nil || !strings.Contains(err.Error(), "stage_one")) {
 			t.Errorf("stage_one %s: err = %v, want a stage_one refusal", value, err)
 		}
+	}
+}
+
+// A by-model stage one names the models ARC may pick; a model-effort or
+// absent stage one names none.
+func TestRaylineARCPolicyPackageV5StageOneOfferedModels(t *testing.T) {
+	fixture := readPolicyV5Fixture(t)
+	for part, want := range map[string][]string{
+		`{"offered": [{"model": "glm-5.3-flash", "effort": null}, {"model": "kimi-k3", "effort": null}]}`: {"glm-5.3-flash", "kimi-k3"},
+		`{"offered": [{"model": "glm-5.3-flash", "effort": "high"}]}`:                                     nil,
+	} {
+		manifest := bytes.Replace(fixture, []byte("{"), []byte(`{"stage_one": `+part+`,`), 1)
+		_, decision := policyV5Decision(t, manifest)
+		got := decision.Algorithm.RaylineARC.PolicyService.PackageStageOneOfferedModels()
+		if !slices.Equal(got, want) || (want == nil) != (got == nil) {
+			t.Errorf("stage_one %s: offered %v, want %v", part, got, want)
+		}
+	}
+	_, decision := policyV5Decision(t, fixture)
+	if got := decision.Algorithm.RaylineARC.PolicyService.PackageStageOneOfferedModels(); got != nil {
+		t.Errorf("no stage_one: offered %v", got)
 	}
 }
 
