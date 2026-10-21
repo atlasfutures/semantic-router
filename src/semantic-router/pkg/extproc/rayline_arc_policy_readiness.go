@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/url"
+	"slices"
 	"strings"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
@@ -116,8 +117,12 @@ func raylineARCPolicyServiceRequirements(policy *config.RaylineARCPolicyServiceC
 	}
 	// A cell that excludes every turn from exploration never sends the
 	// member, so it needs no exploration capability.
-	if newPolicyExploration(policy).mayExplore() {
-		required.Capabilities = append(required.Capabilities, raylinearc.PolicyCapabilityExploration)
+	if explore := newPolicyExploration(policy); explore.mayExplore() {
+		capability := raylinearc.PolicyCapabilityExploration
+		if explore.temperature {
+			capability = raylinearc.PolicyCapabilityExplorationTemperature
+		}
+		required.Capabilities = append(required.Capabilities, capability)
 	}
 	return required
 }
@@ -131,6 +136,7 @@ func requireRaylineARCPolicyServing(
 	ctx context.Context,
 	client *raylinearc.PolicyServiceClient,
 	policy *config.RaylineARCPolicyServiceConfig,
+	routing *config.RaylineARCRoutesRoutingConfig,
 ) error {
 	// The listing's fallback pair, when a service still states one, is not
 	// read: no model serves a turn the policy did not decide.
@@ -138,7 +144,10 @@ func requireRaylineARCPolicyServing(
 	if err != nil {
 		return err
 	}
-	err = raylinearc.CheckPolicyServiceRequirements(listing, loaded, raylineARCPolicyServiceRequirements(policy))
+	required := raylineARCPolicyServiceRequirements(policy)
+	routesRequirements(&required, routing)
+	generationRoutingRequirements(&required, policy)
+	err = raylinearc.CheckPolicyServiceRequirements(listing, loaded, required)
 	var failure *raylinearc.PolicyServiceError
 	if errors.As(err, &failure) {
 		fields := map[string]interface{}{"package_alias": policy.PackageAlias, "class": failure.Class}
@@ -148,4 +157,41 @@ func requireRaylineARCPolicyServing(
 		logging.ComponentErrorEvent("extproc", "rayline_arc_policy_service_unsupported", fields)
 	}
 	return err
+}
+
+// routesRequirements adds what a cell's Decisions routing controls need: the
+// tier points every lookup asks (swift and sage), cost weights over the
+// whole public V range [0.1, 5] (cost_weight [0.2, 10]) for any custom
+// result, and the temperature shape when the cell seeds lookup draws.
+func routesRequirements(required *raylinearc.PolicyServiceRequirements, routing *config.RaylineARCRoutesRoutingConfig) {
+	if routing == nil {
+		return
+	}
+	for _, capability := range []string{
+		raylinearc.PolicyCapabilityDecisionsV2, raylinearc.PolicyCapabilityTierPoints, raylinearc.PolicyCapabilityCallerPrices,
+	} {
+		if !slices.Contains(required.Capabilities, capability) {
+			required.Capabilities = append(required.Capabilities, capability)
+		}
+	}
+	if routing.ExplorationSalt != "" && !slices.Contains(required.Capabilities, raylinearc.PolicyCapabilityExplorationTemperature) {
+		required.Capabilities = append(required.Capabilities, raylinearc.PolicyCapabilityExplorationTemperature)
+	}
+	required.CostWeights = append(required.CostWeights, 1/routesValueUSDMax, 1/routesValueUSDMin)
+	for _, preset := range routesPresets {
+		required.CostWeights = append(required.CostWeights, 1/preset.valueUSD)
+	}
+}
+
+// generationRoutingRequirements adds what configurable ARC's caller V needs:
+// decisions_v2, and cost weights over the whole public V range [0.1, 5]
+// (cost_weight [0.2, 10]).
+func generationRoutingRequirements(required *raylinearc.PolicyServiceRequirements, policy *config.RaylineARCPolicyServiceConfig) {
+	if policy == nil || policy.GenerationRouting == nil || !policy.GenerationRouting.CallerValue {
+		return
+	}
+	if !slices.Contains(required.Capabilities, raylinearc.PolicyCapabilityDecisionsV2) {
+		required.Capabilities = append(required.Capabilities, raylinearc.PolicyCapabilityDecisionsV2)
+	}
+	required.CostWeights = append(required.CostWeights, 1/routesValueUSDMax, 1/routesValueUSDMin)
 }

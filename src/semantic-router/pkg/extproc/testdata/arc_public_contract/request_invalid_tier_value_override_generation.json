@@ -1,0 +1,21 @@
+{
+  "surface": "generation",
+  "body": {
+    "model": "rayline/arc-sage",
+    "max_tokens": 1024,
+    "messages": [
+      {
+        "role": "user",
+        "content": "Refactor the parser and add tests."
+      }
+    ],
+    "routing": {
+      "value_usd": 1
+    }
+  },
+  "expect": {
+    "status": 400,
+    "type": "invalid_request_error",
+    "code": "tier_value_immutable"
+  }
+}

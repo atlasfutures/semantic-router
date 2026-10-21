@@ -1,0 +1,11 @@
+{
+  "status": 400,
+  "body": {
+    "type": "error",
+    "error": {
+      "type": "invalid_request_error",
+      "message": "routing.prices names a model this ARC release does not offer: acme/unknown-1.",
+      "code": "unknown_price_model"
+    }
+  }
+}

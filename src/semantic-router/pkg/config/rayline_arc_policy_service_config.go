@@ -128,6 +128,17 @@ type RaylineARCPolicyServiceConfig struct {
 	// (selection.exploration) on the turns of eligible users. Absent, every
 	// decision is greedy.
 	Exploration *RaylineARCExplorationConfig `yaml:"exploration,omitempty"`
+	// ExplorationTemperature sends Stage-1 exploration in the temperature
+	// shape (pathfinder#5637) on the hosted turns of eligible users: the
+	// cell's default T, or the gateway's caller T. It replaces Exploration;
+	// a cell configures at most one of the two. Absent, every hosted
+	// decision is greedy.
+	ExplorationTemperature *RaylineARCExplorationTemperatureConfig `yaml:"exploration_temperature,omitempty"`
+	// GenerationRouting reads a generation turn's routing.{value_usd,
+	// temperature} (pathfinder#5664, GenerationRouting) on /v1/messages,
+	// /v1/chat/completions and /v1/responses. Absent, the cell does not read
+	// the block. See RaylineARCGenerationRoutingConfig.
+	GenerationRouting *RaylineARCGenerationRoutingConfig `yaml:"generation_routing,omitempty"`
 	// EvalCell marks an eval or lab cell. Such a cell never sends
 	// exploration, even when it is configured: its decisions must be the
 	// package's greedy ones.
@@ -383,6 +394,15 @@ func validateRaylineARCPolicyServiceConfig(cfg *RaylineARCPolicyServiceConfig) e
 	}
 	if err := validateRaylineARCExplorationConfig(cfg.Exploration, cfg.PackageSHA256); err != nil {
 		return err
+	}
+	if cfg.Exploration != nil && cfg.ExplorationTemperature != nil {
+		return fmt.Errorf("exploration and exploration_temperature are exclusive: the service refuses a request carrying both shapes")
+	}
+	if err := validateRaylineARCExplorationTemperatureConfig(cfg.ExplorationTemperature); err != nil {
+		return err
+	}
+	if routing := cfg.GenerationRouting; routing != nil && routing.CallerValue && cfg.DecisionsV2 != nil && cfg.DecisionsV2.CostWeight != nil {
+		return fmt.Errorf("generation_routing.caller_value serves configurable ARC: a cell pinned to decisions_v2.cost_weight is a tier, whose V the caller cannot move")
 	}
 	if len(cfg.Bindings) == 0 {
 		return fmt.Errorf("bindings are required")
@@ -685,4 +705,26 @@ func validateRaylineARCDerivedHoldModel(cfg *RaylineARCPolicyServiceConfig) erro
 		return nil
 	}
 	return fmt.Errorf("derived_hold_model is retired: a turn the policy will not decide fails as undecidable, and no configured model serves it; remove the key")
+}
+
+// RaylineARCGenerationRoutingConfig turns on a generation turn's routing
+// block. The cell removes the block before anything reads the body, so it
+// never reaches the provider or the encoder.
+//
+// routing.value_usd: on the configurable cell (arc-1.0, CallerValue) the
+// turn is decided at cost_weight = 1 / value_usd, within [0.1, 5] and the
+// package's bounds. On a tier cell (Swift, Sage) the V is fixed: a
+// value_usd equal to the cell's own (1 / decisions_v2.cost_weight) is
+// accepted, and any other is refused as tier_value_immutable.
+//
+// routing.temperature is the hosted caller T: it is sent as
+// exploration_temperature's caller T, only on a turn eligible to explore
+// and only where exploration_temperature sets caller_temperature, and the
+// service clamps it to the cell's cap. Elsewhere it is not applied, and the
+// answer says so (x-vsr-routing-unapplied).
+//
+// routing.prices and routing.exclusive are Decisions members only and are
+// refused (prices_not_supported).
+type RaylineARCGenerationRoutingConfig struct {
+	CallerValue bool `yaml:"caller_value,omitempty"`
 }

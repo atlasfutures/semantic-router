@@ -89,6 +89,7 @@ func (service *raylineARCDecisionService) RouteDecision(
 		decision.ModelRefs,
 		episodeMode,
 	)
+	selectionContext.RaylineARC.RouteControls = request.Routing
 	if failure := selectionContext.RaylineARC.PreparationFailure; failure != "" {
 		// Counted here because this path returns before Select(), whose
 		// failure constructor is where the routed path counts the same
@@ -156,6 +157,10 @@ func (service *raylineARCDecisionService) RouteDecision(
 		CacheReadTokens:    trace.CachedPrefixTokens + trace.RetainedPrefixTokens,
 	}
 	decisionFacts.Baseline = routeBaseline(selected.catalog, selected.reference)
+	if request.Routing != nil {
+		decisionFacts.Results = routeResults(request.Routing, trace, selected.catalog)
+		decisionFacts.Exploration = trace.RouteExploration
+	}
 	// The episode is reported only when the caller joined one. An ephemeral
 	// consult scored against a fresh in-memory episode, so its turn index and
 	// stay flag describe a trajectory that does not exist; reporting them
@@ -174,6 +179,41 @@ func (service *raylineARCDecisionService) RouteDecision(
 		}
 	}
 	return decisionFacts, nil
+}
+
+// routeResults publishes the checked result picks in the order the points
+// were asked, each identified as the selected arm is.
+func routeResults(
+	controls *selection.RaylineARCRouteControls,
+	trace *selection.RaylineARCTrace,
+	catalog raylineARCWorkerProvider,
+) []routerruntime.RouteResult {
+	results := make([]routerruntime.RouteResult, 0, len(controls.Points))
+	for _, point := range controls.Points {
+		picked, ok := trace.RouteResults[point.Name]
+		if !ok {
+			continue
+		}
+		worker, found := catalog.Worker(picked.Arm)
+		if !found {
+			continue
+		}
+		results = append(results, routerruntime.RouteResult{
+			Name:           point.Name,
+			CostWeight:     point.CostWeight,
+			SelectedWorker: worker.ID,
+			WorkerModel:    worker.Model,
+			Provider:       worker.OpenRouterProviderSlug,
+			Thinking: routerruntime.RouteThinking{
+				Mode:         worker.ThinkingMode,
+				BudgetTokens: worker.ReasoningBudgetTokens,
+			},
+			ThinkingLevel:  picked.ThinkingLevel,
+			PolicyActionID: picked.Pick.SelectedActionID,
+			Exploration:    picked.Pick.Exploration,
+		})
+	}
+	return results
 }
 
 // selectedRoute is everything one decision publishes, kept together so the
@@ -637,6 +677,8 @@ func (service *raylineARCDecisionService) decisionOnlyRequestContext(
 		ProtocolEnvelope:     envelope,
 		TraceContext:         ctx,
 		VSRContextTokenCount: service.consultContextTokenCount(&decoded),
+		// The controls live outside the body the key digests.
+		RaylineRoutesControlsKey: raylineRoutesRoutingControlsKey(request.Routing),
 	}, nil
 }
 
@@ -782,6 +824,13 @@ func selectionFailureError(err error) error {
 		}
 		if failure.class == arcFailurePolicyUndecidable {
 			return fmt.Errorf("%w: %w", routerruntime.ErrRouteDecisionUndecidable, err)
+		}
+		if failure.class == arcFailureRoutesUnknownPriceModel {
+			return fmt.Errorf("%w: %w: %w",
+				routerruntime.ErrRouteDecisionInvalidBody, errRaylineRoutesUnknownPriceModel, err)
+		}
+		if routesInconsistentClasses[failure.class] {
+			return fmt.Errorf("%w: %w", routerruntime.ErrRouteDecisionInconsistent, err)
 		}
 	}
 	return err

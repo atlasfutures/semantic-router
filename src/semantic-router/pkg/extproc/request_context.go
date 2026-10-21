@@ -158,7 +158,13 @@ type RequestContext struct {
 	// client's own forwarded. ClientServiceTier is the client's raw value an
 	// arm's configured tier replaced, kept for a standard re-send.
 	DispatchedServiceTier string
-	ClientServiceTier     []byte
+	// RaylineRoutesControlsKey names a /v1/routes lookup's routing controls
+	// in its coalescing key; empty on every routed turn.
+	RaylineRoutesControlsKey string
+	// RaylineGenerationRouting is a generation turn's validated routing
+	// block, removed from the body; nil without one.
+	RaylineGenerationRouting *raylineGenerationRouting
+	ClientServiceTier        []byte
 	// DispatchedOutbound is every outbound parameter the routing record names
 	// (model, protocol, provider, reasoning, limits, tools, cache markers),
 	// read back off the final provider body.

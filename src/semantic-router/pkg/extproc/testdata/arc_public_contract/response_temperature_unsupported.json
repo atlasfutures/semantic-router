@@ -1,0 +1,110 @@
+{
+  "status": 200,
+  "body": {
+    "route_id": "rte_01JBXK7Q3V9M2D8S4N6P0R5T1W",
+    "object": "route",
+    "model": "deepseek/deepseek-v4.1-flash",
+    "worker": "deepseek-flash-siliconflow",
+    "provider": "siliconflow",
+    "thinking": {
+      "mode": "adaptive",
+      "budget_tokens": null
+    },
+    "checkpoint": "arc-0.7.3@61ae11565f40",
+    "alternatives": [
+      {
+        "model": "deepseek/deepseek-v4.1-flash",
+        "worker": "deepseek-flash-siliconflow",
+        "provider": "siliconflow",
+        "score": 0.61
+      },
+      {
+        "model": "anthropic/claude-sonnet-5",
+        "worker": "sonnet-5-anthropic",
+        "provider": "anthropic",
+        "score": 0.58
+      }
+    ],
+    "selected_pricing": {
+      "input_per_mtok": 0.1,
+      "output_per_mtok": 0.4,
+      "cache_read_per_mtok": 0.01,
+      "cache_write_per_mtok": 0
+    },
+    "warnings": [
+      "temperature_unapplied: this cell does not support caller-requested exploration; the route is the greedy decision"
+    ],
+    "usage": {
+      "encoded_input_tokens": 1834,
+      "cache_read_tokens": 0
+    },
+    "latency_ms": 212,
+    "thinking_level": "high",
+    "policy_action_id": "3333333333333333333333333333333333333333333333333333333333333333",
+    "presets": {
+      "swift": {
+        "model": "deepseek/deepseek-v4.1-flash",
+        "worker": "deepseek-flash-siliconflow",
+        "provider": "siliconflow",
+        "thinking": {
+          "mode": "adaptive",
+          "budget_tokens": null
+        },
+        "thinking_level": "high",
+        "policy_action_id": "ce3d1dc3541c631339bb2e4ab4dc67a26588c1192d6a5ce6d3975a9dfb10dd01",
+        "value_usd": 0.1,
+        "cost_weight": 10.0,
+        "prices": {
+          "basis": "catalog",
+          "price_sha256": null
+        },
+        "temperature": {
+          "requested": 0.5,
+          "applied": null,
+          "status": "unsupported",
+          "reason": "cell_does_not_support_exploration",
+          "propensity": null,
+          "explored": null,
+          "pi": null,
+          "decision_key": null
+        }
+      },
+      "sage": {
+        "model": "anthropic/claude-sonnet-5",
+        "worker": "sonnet-5-anthropic",
+        "provider": "anthropic",
+        "thinking": {
+          "mode": "adaptive",
+          "budget_tokens": null
+        },
+        "thinking_level": "medium",
+        "policy_action_id": "d3662381186f551a1728552bde798458f27a0343e36259fcd0853fd94e319e85",
+        "value_usd": 4.5,
+        "cost_weight": 0.2222222222222222,
+        "prices": {
+          "basis": "catalog",
+          "price_sha256": null
+        },
+        "temperature": {
+          "requested": 0.5,
+          "applied": null,
+          "status": "unsupported",
+          "reason": "cell_does_not_support_exploration",
+          "propensity": null,
+          "explored": null,
+          "pi": null,
+          "decision_key": null
+        }
+      }
+    },
+    "routing": {
+      "temperature": {
+        "requested": 0.5,
+        "status": "unsupported"
+      },
+      "unapplied_keys": [
+        "temperature"
+      ]
+    }
+  }
+}
