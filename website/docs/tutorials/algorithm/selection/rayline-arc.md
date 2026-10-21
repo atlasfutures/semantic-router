@@ -627,6 +627,36 @@ a caller of this endpoint is already parsing that envelope from the endpoint
 it would otherwise have called. A contended lookup answers 429, not 503: the
 router is healthy and briefly busy with that session.
 
+### Routing controls: presets, a caller's V, prices and temperature
+
+A policy-service cell with `routes_api.routing` serves the public Decisions
+controls pinned in pathfinder's ARC public contract (pathfinder#5664,
+`docs/contracts/arc-public-api.openapi.yaml`; spellings marked proposed). The
+body may carry a `routing` block beside the inference body:
+
+```json
+{"model": "arc-1.0", "messages": [...],
+ "routing": {"value_usd": 1.5, "temperature": 0.7, "exclusive": true,
+             "prices": {"anthropic/claude-sonnet-5": {"input": 3, "cache_read": 0.3, "cache_write": 3.75, "output": 15}}}}
+```
+
+The cell reads and removes the block before the codec sees the body, and
+refuses an invalid one with the contract's `error.code` (`value_out_of_bounds`,
+`tier_value_immutable`, `price_leg_missing`, `unknown_price_model`, ...). One
+decide asks the policy service at `swift` (V 0.1), `sage` (V 4.5) and, with
+`value_usd`, `custom`, each at `cost_weight = 1 / V` as a tier point, from the
+lookup's one encode. The answer keeps today's top-level route and adds
+`presets.swift`, `presets.sage`, `custom` when `value_usd` was sent, and a
+`routing` echo. Caller prices replace the live feed for that decision, keyed
+by the provider model id the cell dispatches; with `exclusive` only their
+models are offered. A temperature goes out as exploration on the `decisions`
+surface (caller's, never training data, the cell's `exploration_salt`), and a
+result whose draw the service did not report is `unsupported`, never shown as
+applied. A pick missing for a point, prices the service did not apply, or a
+record contradicting the requested temperature answers 502
+`inconsistent_upstream`. Without `routes_api.routing`, a body carrying the
+block answers 503 `unavailable`.
+
 ### Describing the cell as one model
 
 A gateway that fronts this cell as one model needs to say what that model is:

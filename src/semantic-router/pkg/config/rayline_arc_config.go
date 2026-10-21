@@ -273,6 +273,23 @@ type RaylineARCRoutesAPIConfig struct {
 	// reach a caller. Empty publishes the hash alone, which identifies the
 	// checkpoint but tells a reader nothing.
 	CheckpointLabel string `yaml:"checkpoint_label,omitempty"`
+	// Routing serves the public routing controls on a lookup (pathfinder
+	// #5664, Decisions): every answer carries the Swift and Sage preset
+	// results, and a body's routing.{value_usd, temperature, prices,
+	// exclusive} adds the custom result, the caller's exploration and the
+	// caller's price world. Policy-service cells only. Absent, a lookup
+	// whose body carries routing is refused as unavailable.
+	Routing *RaylineARCRoutesRoutingConfig `yaml:"routing,omitempty"`
+}
+
+// RaylineARCRoutesRoutingConfig turns on the Decisions routing controls.
+type RaylineARCRoutesRoutingConfig struct {
+	// ExplorationSalt seeds a lookup's exploration draws. A lookup's
+	// routing.temperature is sent to the policy service only when it is set
+	// (and the service advertises exploration_temperature); empty, every
+	// requested temperature is echoed unsupported. The caller cannot seed
+	// the draw.
+	ExplorationSalt string `yaml:"exploration_salt,omitempty"`
 }
 
 // RaylineARCFaultInjectionConfig is the opt-in for the dev-only fault header.
@@ -420,6 +437,9 @@ func validateRaylineARCAlgorithmConfig(cfg *RaylineARCAlgorithmConfig) error {
 	if err := validateRaylineARCRoutesAPIConfig(cfg.RoutesAPI); err != nil {
 		return fmt.Errorf("routes_api: %w", err)
 	}
+	if cfg.RoutesAPI.Routing != nil {
+		return fmt.Errorf("routes_api: routing is served by a policy-service cell, whose service decides at each result point")
+	}
 	if err := validateRaylineARCThinkingLeverConfig(cfg.ThinkingLever, false); err != nil {
 		return fmt.Errorf("thinking_lever: %w", err)
 	}
@@ -461,6 +481,14 @@ func validateRaylineARCPolicyServiceMode(cfg *RaylineARCAlgorithmConfig) error {
 // anything, and one shorter than a cold encode guarantees a 504 on the first
 // request after a scale-up.
 func validateRaylineARCRoutesAPIConfig(cfg RaylineARCRoutesAPIConfig) error {
+	if routing := cfg.Routing; routing != nil {
+		if !cfg.Enabled {
+			return fmt.Errorf("routing needs the endpoint enabled")
+		}
+		if len(routing.ExplorationSalt) > maxRaylineARCExplorationStringLength {
+			return fmt.Errorf("routing.exploration_salt must be at most %d bytes", maxRaylineARCExplorationStringLength)
+		}
+	}
 	if cfg.DeadlineMS < 0 || cfg.DeadlineMS > maxRaylineARCRoutesDeadlineMS {
 		return fmt.Errorf(
 			"deadline_ms must be between 0 and %d",

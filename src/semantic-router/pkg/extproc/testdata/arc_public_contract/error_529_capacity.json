@@ -1,0 +1,11 @@
+{
+  "status": 529,
+  "body": {
+    "type": "error",
+    "error": {
+      "type": "overloaded_error",
+      "message": "ARC is at capacity. Retry shortly.",
+      "code": "capacity"
+    }
+  }
+}

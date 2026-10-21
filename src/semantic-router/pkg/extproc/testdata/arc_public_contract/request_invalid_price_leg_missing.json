@@ -1,0 +1,27 @@
+{
+  "surface": "decisions",
+  "body": {
+    "model": "arc-1.0",
+    "max_tokens": 1024,
+    "messages": [
+      {
+        "role": "user",
+        "content": "Refactor the parser and add tests."
+      }
+    ],
+    "routing": {
+      "prices": {
+        "m/x": {
+          "input": 3,
+          "cache_read": 0.3,
+          "output": 15
+        }
+      }
+    }
+  },
+  "expect": {
+    "status": 400,
+    "type": "invalid_request_error",
+    "code": "price_leg_missing"
+  }
+}

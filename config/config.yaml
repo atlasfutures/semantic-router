@@ -1739,6 +1739,20 @@ routing:
             # from artifact_revision because that pin is deployment-private.
             # Empty publishes the hash alone.
             checkpoint_label: ""
+            # routing (policy-service cells only; absent here) serves the
+            # public Decisions controls (pathfinder#5664): every answer
+            # carries presets.swift (V 0.1) and presets.sage (V 4.5), and a
+            # body's routing.{value_usd, temperature, prices, exclusive} adds
+            # the custom result at the caller's V, exploration at the caller's
+            # temperature (surface decisions, never training data, seeded by
+            # exploration_salt; empty echoes every temperature unsupported),
+            # and the caller's four-leg prices in place of the live feed's.
+            # The service must advertise decisions_v2 and tier_points (and
+            # exploration_temperature with a salt) and admit cost weights over
+            # [0.2, 10]. Without it, a body that carries routing is refused
+            # 503 unavailable.
+            #   routing:
+            #     exploration_salt: vsr-decisions-2026-10
           # thinking_lever moves a worker's reasoning depth per turn without
           # changing the request-level reasoning fields, which providers key
           # their prompt cache on. The router writes an item the client never
@@ -2098,28 +2112,38 @@ recipes:
                     - name: sage
                       cost_weight: 0.0
                   response_fields: [price_per_mtok, thinking]
-                # exploration (off when absent) sends a Stage-1 exploration
-                # temperature (selection.exploration, pathfinder#5436): the
-                # service draws the model at a task, subagent or compaction
-                # boundary from softmax(score / tau) instead of taking the
-                # argmax. tau is the calibrated temperature for basis.r and
-                # must not exceed tau_max (the calibration's tau_max, also the
-                # service's ARC_EXPLORE_TAU_MAX); basis.package_sha256 must be
-                # this cell's package_sha256. It is sent only for an eligible
-                # user: the gateway must send x-rayline-privacy-mode: false
-                # and x-rayline-training-data: allowed, read only with
+                # exploration_temperature (off when absent) sends hosted
+                # Stage-1 exploration in the temperature shape
+                # (selection.exploration, pathfinder#5637): the service draws
+                # the model at a boundary from softmax(z / T) over the
+                # decision's normalized scores, mixed with its new-model
+                # floor. temperature is the cell's default T (the calibrated
+                # internal default) and must not exceed temperature_max (the
+                # calibration's cap, also the service's
+                # ARC_EXPLORE_T_MAX_HOSTED). With caller_temperature, an
+                # eligible turn's own T (the body's routing.temperature, read
+                # with generation routing) is sent instead (source caller),
+                # and the service clamps it to its cap. calibration is the default's
+                # provenance, logged and never checked. It is sent only for an
+                # eligible user: the gateway must send x-rayline-privacy-mode:
+                # false and x-rayline-training-data: allowed, read only with
                 # trust_turn_signal_headers, and eval_cell must be false. Any
-                # other value, or none, is excluded. The service refuses a tau
-                # above its ceiling, another package's basis or a package that
-                # cannot explore, and every turn then fails.
-                exploration:
-                  tau: 0.02
-                  tau_max: 0.05
-                  basis:
+                # other value, or none (privacy mode, ZDR, opted out), sends no
+                # exploration at all: the turn is greedy and never
+                # floor-sampled. The cell needs a service that advertises the
+                # exploration_temperature capability. The legacy raw-tau shape,
+                # exploration: {tau, tau_max, basis: {r, package_sha256,
+                # readout_pin}, salt} (pathfinder#5436), is still accepted for
+                # one release and is exclusive with this block.
+                exploration_temperature:
+                  temperature: 0.4
+                  temperature_max: 1.5
+                  caller_temperature: true
+                  salt: vsr-explore-2026-10
+                  calibration:
                     r: 0.05
                     package_sha256: "0000000000000000000000000000000000000000000000000000000000000000"
                     readout_pin: qwen3.8-27b-arc-encoder@depth8
-                  salt: vsr-explore-2026-10
                 # eval_cell marks an eval or lab cell: it never sends
                 # exploration, so its decisions are the package's greedy ones.
                 eval_cell: false

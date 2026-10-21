@@ -1,0 +1,11 @@
+{
+  "status": 504,
+  "body": {
+    "type": "error",
+    "error": {
+      "type": "timeout_error",
+      "message": "Route lookup did not complete.",
+      "code": "timeout"
+    }
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "status": 404,
+  "body": {
+    "type": "error",
+    "error": {
+      "type": "not_found_error",
+      "message": "Model not found: arc-swift",
+      "code": "model_not_served"
+    }
+  }
+}
