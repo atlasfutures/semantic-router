@@ -62,6 +62,10 @@ func raylineARCTrustedSignalHeaders(
 	}
 	trusted := map[string]string{}
 	for _, header := range raylineARCTurnSignalHeadersForRemoval() {
+		// The retired caller-temperature header is stripped, never read.
+		if header == raylineARCExplorationTemperatureHeader {
+			continue
+		}
 		trusted[header] = requestHeaders[header]
 	}
 	return trusted
@@ -73,7 +77,8 @@ func raylineARCTurnSignalHeadersForRemoval() []string {
 	return []string{
 		raylineARCCallKindHeader, raylineARCCompactionHeader,
 		raylineARCAgentKeySourceHeader, raylineARCParentSessionHeader, raylineARCParentAgentHeader,
-		raylineARCPrivacyModeHeader, raylineARCTrainingDataHeader, raylineARCPrivacyAllowedArmsHeader,
+		raylineARCPrivacyModeHeader, raylineARCTrainingDataHeader, raylineARCExplorationTemperatureHeader,
+		raylineARCPrivacyAllowedArmsHeader,
 	}
 }
 

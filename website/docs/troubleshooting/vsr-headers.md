@@ -37,6 +37,18 @@ A refusal from a full-duplex response, whose status is already sent as `200`, ca
 
 An inference reply whose `2xx` ends at its headers, with no body, is refused as `502`: an empty reply is not a served one.
 
+## Rayline ARC served identity
+
+A Rayline ARC turn that reached its provider also names what served it, on a `2xx` and on an upstream error alike, so a gateway can bill a configurable ARC turn at the served model's own card:
+
+| Header | Description |
+| ------ | ----------- |
+| `x-vsr-served-model` | The provider model id the turn was dispatched to, read back off the final provider body (an OpenRouter id on an OpenRouter arm), with no arm qualifier. `x-vsr-selected-model` stays the arm's name, which is the policy package's name for it, not a rate-card id. Absent when no provider body was dispatched. |
+| `x-vsr-policy-package` | The sha256 of the policy package that decided the turn, on a policy-service cell. |
+| `x-vsr-policy-cost-weight` | The stage-one cost weight the decision was taken at, as the policy service echoed it, at full precision (V = 1 / cost weight). Absent when the service echoed none. |
+
+The `llm_usage` record carries the first and the last as `served_model` and `policy_cost_weight`, null when unknown.
+
 ## Request headers
 
 | Header | Direction | Description |
