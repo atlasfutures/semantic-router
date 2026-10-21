@@ -770,3 +770,27 @@ def test_rayline_arc_cli_mirrors_routes_routing():
         type(artifact).model_validate(
             {**artifact.model_dump(), "routes_api": {"enabled": True, "routing": {}}}
         )
+
+
+def test_rayline_arc_cli_mirrors_generation_routing():
+    """policy_service.generation_routing (Go RaylineARCGenerationRoutingConfig, #305)."""
+    policy = _policy_service_decision().algorithm.rayline_arc.policy_service
+    assert policy.generation_routing is None
+    raw = policy.model_dump()
+    parsed = RaylineARCPolicyServiceConfig.model_validate(
+        {**raw, "generation_routing": {"caller_value": True}}
+    )
+    assert parsed.generation_routing.caller_value is True
+    tier = {**raw, "decisions_v2": {"name": "sage", "cost_weight": 1 / 4.5}}
+    assert (
+        RaylineARCPolicyServiceConfig.model_validate(
+            {**tier, "generation_routing": {}}
+        ).generation_routing.caller_value
+        is False
+    )
+    for changed in (
+        {**tier, "generation_routing": {"caller_value": True}},
+        {**raw, "generation_routing": {"surprise": 1}},
+    ):
+        with pytest.raises(ValidationError):
+            RaylineARCPolicyServiceConfig.model_validate(changed)

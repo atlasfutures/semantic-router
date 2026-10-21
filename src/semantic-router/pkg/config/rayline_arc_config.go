@@ -798,6 +798,9 @@ func validateRaylineARCDecisionContract(cfg *RouterConfig, decision Decision) er
 	if decision.Algorithm == nil || strings.TrimSpace(decision.Algorithm.Type) != RaylineARCAlgorithmType {
 		return nil
 	}
+	if err := validateRaylineARCGenerationRoutingScope(cfg, decision); err != nil {
+		return err
+	}
 	if decision.Adaptations.EffectiveMode() != DecisionAdaptationModeBypass {
 		return fmt.Errorf(
 			"decision '%s': algorithm.type=%s requires adaptations.mode=%s so Router Learning cannot override the artifact decision",
@@ -892,6 +895,28 @@ func validateRaylineARCSpecializedAlgorithmConfig(decisionName string, algorithm
 	}
 	if err := validateRaylineARCAlgorithmConfig(algorithm.RaylineARC); err != nil {
 		return fmt.Errorf("decision '%s', algorithm.rayline_arc: %w", decisionName, err)
+	}
+	return nil
+}
+
+// validateRaylineARCGenerationRoutingScope refuses generation_routing in a
+// config with named recipes. The block is read and stripped at the body
+// phase, before the request's recipe is resolved, from the default recipe's
+// decisions: in a multi-recipe config a named recipe's block would be
+// ignored and another recipe's turns would inherit the default's. A cell
+// serves one recipe, so it serves the block from its default recipe.
+func validateRaylineARCGenerationRoutingScope(cfg *RouterConfig, decision Decision) error {
+	arc := decision.Algorithm.RaylineARC
+	if cfg == nil || arc == nil || arc.PolicyService == nil || arc.PolicyService.GenerationRouting == nil {
+		return nil
+	}
+	for i := range cfg.Recipes {
+		if cfg.Recipes[i].Name != DefaultRecipeName {
+			return fmt.Errorf(
+				"decision '%s': policy_service.generation_routing is served from a single-recipe cell; this config declares recipe %q",
+				decision.Name, cfg.Recipes[i].Name,
+			)
+		}
 	}
 	return nil
 }

@@ -2157,9 +2157,11 @@ recipes:
                 # eligibility and caller_temperature, clamped by the service.
                 # prices and exclusive are refused (prices_not_supported).
                 # x-vsr-routing-applied / x-vsr-routing-unapplied say what the
-                # turn applied.
-                generation_routing:
-                  caller_value: false
+                # turn applied. It is read before the recipe is resolved, so a
+                # config with named recipes (as this one) refuses it: serve it
+                # from a single-recipe cell, as:
+                #   generation_routing:
+                #     caller_value: false
                 # eval_cell marks an eval or lab cell: it never sends
                 # exploration, so its decisions are the package's greedy ones.
                 eval_cell: false

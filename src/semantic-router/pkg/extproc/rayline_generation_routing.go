@@ -157,10 +157,9 @@ func readRaylineGenerationRouting(
 		}
 		routing.temperature = &value
 	}
-	delete(envelope, "routing")
-	stripped, err := json.Marshal(envelope)
-	if err != nil {
-		return nil, nil, routesInvalid("invalid_body", "The request body must be a JSON object.")
+	stripped, refusal := stripRoutingMember(body)
+	if refusal != nil {
+		return nil, nil, refusal
 	}
 	return routing, stripped, nil
 }
@@ -220,16 +219,25 @@ func raylineGenerationSignalHeaders(
 }
 
 // raylineGenerationRoutingStatus is which routing members the turn applied
-// and which it did not: value_usd always applies on a decided turn (the
-// decision was checked to be taken at it); temperature applies only when
-// the decision carries a caller-sourced exploration record.
+// and which it did not: value_usd applies only when the decision was taken
+// and echoed at the turn's cost weight (a capacity or media hold decides
+// nothing, so it is unapplied there; on a tier cell, which restates its own
+// V, only a decision applies it too); temperature applies only when the
+// decision carries a caller-sourced exploration record.
 func raylineGenerationRoutingStatus(ctx *RequestContext) (applied []string, unapplied []string) {
 	if ctx == nil || ctx.RaylineGenerationRouting == nil || ctx.VSRRaylineARC == nil {
 		return nil, nil
 	}
 	routing := ctx.RaylineGenerationRouting
 	if routing.valueUSD != nil {
-		applied = append(applied, "value_usd")
+		trace := ctx.VSRRaylineARC
+		decided := trace.TurnCostWeightApplied ||
+			(routing.costWeight == nil && trace.PolicyActionID != "" && !raylineARCHoldOfferKind(trace.OfferKind))
+		if decided {
+			applied = append(applied, "value_usd")
+		} else {
+			unapplied = append(unapplied, "value_usd")
+		}
 	}
 	if routing.temperature != nil {
 		if raylineGenerationTemperatureApplied(ctx.VSRRaylineARC) {
@@ -252,4 +260,15 @@ func (builder *responseHeaderMutationBuilder) addRaylineGenerationRoutingHeaders
 	applied, unapplied := raylineGenerationRoutingStatus(ctx)
 	builder.addString(headers.VSRRoutingApplied, strings.Join(applied, ","))
 	builder.addString(headers.VSRRoutingUnapplied, strings.Join(unapplied, ","))
+}
+
+// raylineARCHoldOfferKind reports a turn served by a hold (capacity or media):
+// the policy decided nothing on it.
+func raylineARCHoldOfferKind(kind string) bool {
+	for _, hold := range policyHoldOfferKinds {
+		if kind == hold {
+			return true
+		}
+	}
+	return false
 }
