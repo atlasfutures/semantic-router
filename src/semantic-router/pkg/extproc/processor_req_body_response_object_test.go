@@ -114,16 +114,22 @@ func TestPrepareObjectStateCreatesUniquePublicResponseIdentity(t *testing.T) {
 	}
 }
 
-func TestPrepareObjectStateRejectsUnavailableAndMissingPreviousResponse(t *testing.T) {
+func TestPrepareObjectStateRejectsStorelessMissingAndUnloadablePreviousResponse(t *testing.T) {
 	request := llmprotocol.Request{PreviousResponseID: "resp_missing"}
+	// No store: the id can never resolve here, so it is the caller's to fix.
 	_, err := (&ResponseAPIFilter{}).PrepareObjectState(t.Context(), request, nil)
-	assertResponseObjectStateError(
-		t, err, llmprotocol.ErrorUpstreamUnavailable, "response_history_unavailable",
-	)
+	assertResponseObjectStateError(t, err, llmprotocol.ErrorInvalidRequest, selectionFailureStatelessPath)
 
 	filter := NewResponseAPIFilter(NewMockResponseStore())
 	_, err = filter.PrepareObjectState(t.Context(), request, nil)
 	assertResponseObjectStateError(t, err, llmprotocol.ErrorNotFound, "previous_response_not_found")
+
+	// A store that fails to load history it keeps is the router's own fault.
+	filter = NewResponseAPIFilter(newFailingResponseStore())
+	_, err = filter.PrepareObjectState(t.Context(), request, nil)
+	assertResponseObjectStateError(
+		t, err, llmprotocol.ErrorUpstreamUnavailable, "response_history_unavailable",
+	)
 }
 
 // TestPrepareObjectStateConversationMembershipIsStrictlyExplicit covers the
@@ -194,14 +200,21 @@ func TestPrepareProtocolRequestReturnsTypedPreviousResponseFailures(t *testing.T
 		filter     *ResponseAPIFilter
 		wantStatus typev3.StatusCode
 		wantText   string
+		// wantClass is the x-vsr-failure-class the refusal carries; only the
+		// no-store refusal is classed, since only it is the caller's to fix.
+		wantClass string
 	}{
 		{
-			name: "store unavailable", wantStatus: typev3.StatusCode_ServiceUnavailable,
-			wantText: "retained response history is unavailable",
+			name: "no store", wantStatus: typev3.StatusCode_BadRequest,
+			wantText: statelessPathMessage, wantClass: selectionFailureStatelessPath,
 		},
 		{
 			name: "response missing", filter: NewResponseAPIFilter(NewMockResponseStore()),
 			wantStatus: typev3.StatusCode_NotFound, wantText: "previous response was not found",
+		},
+		{
+			name: "store lookup fails", filter: NewResponseAPIFilter(newFailingResponseStore()),
+			wantStatus: typev3.StatusCode_ServiceUnavailable, wantText: "retained response history is unavailable",
 		},
 	}
 	for _, test := range tests {
@@ -214,6 +227,9 @@ func TestPrepareProtocolRequestReturnsTypedPreviousResponseFailures(t *testing.T
 			}
 			immediate = router.encodeImmediateResponseForClient(immediate, ctx)
 			assertBodyImmediateErrorResponse(t, immediate, test.wantStatus, test.wantText)
+			if got := immediateHeaderValue(immediate, selectionFailureHeader); got != test.wantClass {
+				t.Fatalf("%s = %q, want %q", selectionFailureHeader, got, test.wantClass)
+			}
 		})
 	}
 }

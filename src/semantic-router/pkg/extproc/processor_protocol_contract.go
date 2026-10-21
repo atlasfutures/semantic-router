@@ -132,9 +132,7 @@ func (r *OpenAIRouter) prepareProtocolRequest(
 		if stateErr != nil {
 			var protocolError *llmprotocol.ProtocolError
 			if errors.As(stateErr, &protocolError) {
-				copy := *protocolError
-				ctx.ImmediateProtocolError = &copy
-				return nil, r.createErrorResponse(responseObjectStateHTTPStatus(protocolError), protocolError.Message)
+				return nil, r.responseObjectStateResponse(ctx, protocolError)
 			}
 			return nil, r.createErrorResponse(503, "retained response history is unavailable")
 		}
@@ -144,11 +142,47 @@ func (r *OpenAIRouter) prepareProtocolRequest(
 	return &request, nil
 }
 
-func responseObjectStateHTTPStatus(protocolError *llmprotocol.ProtocolError) int {
-	if protocolError != nil && protocolError.Category == llmprotocol.ErrorNotFound {
-		return 404
+// responseObjectStateResponse answers a Responses object-state refusal. The
+// protocol error is kept on the context so the client re-encode shows its code
+// and message rather than the canned text for the status.
+//
+// A stateless_path refusal also carries x-vsr-failure-class, the way the ARC
+// path's statelessPathResponse does, so a caller reads one answer whichever
+// gate refused it. It is not counted as a selection failure: this gate runs
+// before any decision, so no episode was opened, no policy was consulted and
+// no arm was dialled, and a selection-lifecycle or turn-failure record here
+// would attribute to Rayline ARC a refusal it never saw. The other
+// object-state refusals (404, 503) are not counted either, and this one is
+// answered like them.
+func (r *OpenAIRouter) responseObjectStateResponse(
+	ctx *RequestContext,
+	protocolError *llmprotocol.ProtocolError,
+) *ext_proc.ProcessingResponse {
+	refusal := *protocolError
+	ctx.ImmediateProtocolError = &refusal
+	response := r.createErrorResponse(responseObjectStateHTTPStatus(protocolError), protocolError.Message)
+	if protocolError.Code == selectionFailureStatelessPath {
+		appendImmediateHeader(response, selectionFailureHeader, selectionFailureStatelessPath)
 	}
-	return 503
+	return response
+}
+
+// responseObjectStateHTTPStatus maps an object-state refusal onto its status:
+// 400 for what the caller sent (a previous_response_id this cell can never
+// resolve), 404 for an id the store does not hold, and 503 for everything
+// else, which is the router failing to load history it does keep.
+func responseObjectStateHTTPStatus(protocolError *llmprotocol.ProtocolError) int {
+	if protocolError == nil {
+		return 503
+	}
+	switch protocolError.Category {
+	case llmprotocol.ErrorInvalidRequest:
+		return 400
+	case llmprotocol.ErrorNotFound:
+		return 404
+	default:
+		return 503
+	}
 }
 
 func recordIngressProtocolError(ctx *RequestContext, err error) {

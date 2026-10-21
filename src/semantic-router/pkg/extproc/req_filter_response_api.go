@@ -95,6 +95,14 @@ type ResponseObjectState struct {
 // an already validated neutral request. Stateless POST generation remains
 // available without a store; an explicit previous_response_id fails closed if
 // its history cannot be retrieved.
+//
+// Two refusals look alike and must not share a status. A cell with no
+// response store cannot resolve any previous_response_id, ever: that is the
+// caller's to fix by resending the conversation's items, so it answers 400
+// with the stateless_path class and message the ARC policy path and the
+// decision API already use (memex-desktop#7484). A store that is enabled and
+// then fails to load the history is the router failing at something it
+// undertook, so that stays response_history_unavailable and a 503.
 func (f *ResponseAPIFilter) PrepareObjectState(
 	ctx context.Context,
 	request llmprotocol.Request,
@@ -110,9 +118,9 @@ func (f *ResponseAPIFilter) PrepareObjectState(
 	if request.PreviousResponseID != "" {
 		if f == nil || !f.enabled {
 			return nil, llmprotocol.NewError(
-				llmprotocol.ErrorUpstreamUnavailable,
-				"response_history_unavailable",
-				"retained response history is unavailable",
+				llmprotocol.ErrorInvalidRequest,
+				selectionFailureStatelessPath,
+				statelessPathMessage,
 				nil,
 			)
 		}
