@@ -115,6 +115,11 @@ type raylineRoutesResponse struct {
 	Custom      *raylineRoutesResult      `json:"custom,omitempty"`
 	Routing     *raylineRoutesRoutingEcho `json:"routing,omitempty"`
 	Exploration json.RawMessage           `json:"exploration,omitempty"`
+	// Candidates and CandidatesContext are the offered stage-one table and
+	// its context (pathfinder#5717), present exactly when the request asked
+	// for predictions and the cell applied them: JSON null off a boundary.
+	Candidates        json.RawMessage `json:"candidates,omitempty"`
+	CandidatesContext json.RawMessage `json:"candidates_context,omitempty"`
 }
 
 type raylineRoutesThinking struct {
@@ -133,6 +138,10 @@ type raylineRoutesScore struct {
 	Worker   string  `json:"worker"`
 	Provider string  `json:"provider,omitempty"`
 	Score    float64 `json:"score"`
+	// ActionID and ThinkingLevel are the exact action the arm's score came
+	// from (pathfinder#5717); absent from a cell that does not know it.
+	ActionID      string `json:"action_id,omitempty"`
+	ThinkingLevel string `json:"thinking_level,omitempty"`
 }
 
 type raylineRoutesPricing struct {
@@ -555,6 +564,9 @@ func raylineRoutesAlternatives(
 			Worker:   alternative.Worker,
 			Provider: alternative.Provider,
 			Score:    alternative.Score,
+
+			ActionID:      alternative.ActionID,
+			ThinkingLevel: alternative.ThinkingLevel,
 		})
 	}
 	return rendered

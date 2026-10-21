@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -80,6 +81,12 @@ type raylineRoutesRouting struct {
 	// exclusiveSent tells an explicit false from absence.
 	exclusiveSent bool
 	priceSHA256   string
+	// responseFields is routing.response_fields, nil when not sent.
+	responseFields []string
+}
+
+func (routing *raylineRoutesRouting) wantsPredictions() bool {
+	return routing != nil && slices.Contains(routing.responseFields, "predictions")
 }
 
 func (routing *raylineRoutesRouting) pricedModels() []string {
@@ -163,7 +170,7 @@ func routesReadMembers(
 	var unknown []string
 	for name := range members {
 		switch name {
-		case "value_usd", "temperature", "prices", "exclusive":
+		case "value_usd", "temperature", "prices", "exclusive", "response_fields":
 		default:
 			unknown = append(unknown, name)
 		}
@@ -215,10 +222,40 @@ func routesReadMembers(
 		}
 		routing.exclusive, routing.exclusiveSent = exclusive, true
 	}
+	if raw, ok := members["response_fields"]; ok {
+		fields, failure := routesReadResponseFields(raw)
+		if failure != nil {
+			return failure
+		}
+		routing.responseFields = fields
+	}
 	if routing.prices != nil {
 		routing.priceSHA256 = routesPriceSHA256(routing.prices, routing.exclusive)
 	}
 	return nil
+}
+
+// routesPublicResponseFields are the routing.response_fields values a lookup
+// may ask for (pathfinder#5717).
+var routesPublicResponseFields = map[string]bool{"predictions": true}
+
+// routesReadResponseFields reads routing.response_fields: a non-empty array
+// of distinct known values.
+func routesReadResponseFields(raw json.RawMessage) ([]string, *routesContractError) {
+	invalid := routesInvalid("response_fields_invalid",
+		`routing.response_fields must be a non-empty array of distinct values from ["predictions"].`)
+	var fields []string
+	if json.Unmarshal(raw, &fields) != nil || len(fields) == 0 {
+		return nil, invalid
+	}
+	seen := map[string]bool{}
+	for _, field := range fields {
+		if !routesPublicResponseFields[field] || seen[field] {
+			return nil, invalid
+		}
+		seen[field] = true
+	}
+	return fields, nil
 }
 
 func routesReadPrices(raw json.RawMessage) (map[string][4]float64, *routesContractError) {
@@ -478,6 +515,7 @@ func raylineRoutesControls(
 		controls.Exclusive = routing.exclusive
 		controls.PriceSHA256 = routing.priceSHA256
 	}
+	controls.Predictions = routing.wantsPredictions()
 	return controls
 }
 
@@ -492,7 +530,8 @@ func raylineRoutesRoutingControlsKey(controls *selection.RaylineARCRouteControls
 		Exploration *raylinearc.PolicyExplorationRequest `json:"exploration"`
 		Store       string                               `json:"store"`
 		Exclusive   bool                                 `json:"exclusive"`
-	}{controls.Points, controls.Exploration, routesStoreVersion(controls), controls.Exclusive})
+		Predictions bool                                 `json:"predictions"`
+	}{controls.Points, controls.Exploration, routesStoreVersion(controls), controls.Exclusive, controls.Predictions})
 	if err != nil {
 		return "unencodable"
 	}
@@ -540,6 +579,11 @@ type raylineRoutesResult struct {
 	CostWeight     float64                         `json:"cost_weight"`
 	Prices         raylineRoutesResultPrices       `json:"prices"`
 	Temperature    *raylineRoutesResultTemperature `json:"temperature,omitempty"`
+	// ModelChoice and Provenance are present together exactly when
+	// predictions were asked for and applied: the result's stage-one row
+	// (JSON null off a boundary) and the package and point it came from.
+	ModelChoice json.RawMessage                `json:"model_choice,omitempty"`
+	Provenance  *raylineRoutesResultProvenance `json:"provenance,omitempty"`
 }
 
 type raylineRoutesPresets struct {
@@ -560,10 +604,16 @@ type raylineRoutesPricesEcho struct {
 }
 
 type raylineRoutesRoutingEcho struct {
-	ValueUSD      *raylineRoutesEchoStatus `json:"value_usd,omitempty"`
-	Temperature   *raylineRoutesEchoStatus `json:"temperature,omitempty"`
-	Prices        *raylineRoutesPricesEcho `json:"prices,omitempty"`
-	UnappliedKeys []string                 `json:"unapplied_keys"`
+	ValueUSD       *raylineRoutesEchoStatus `json:"value_usd,omitempty"`
+	Temperature    *raylineRoutesEchoStatus `json:"temperature,omitempty"`
+	Prices         *raylineRoutesPricesEcho `json:"prices,omitempty"`
+	ResponseFields *raylineRoutesFieldsEcho `json:"response_fields,omitempty"`
+	UnappliedKeys  []string                 `json:"unapplied_keys"`
+}
+
+type raylineRoutesFieldsEcho struct {
+	Requested []string `json:"requested"`
+	Status    string   `json:"status"`
 }
 
 // raylineRoutesAddResults writes the presets, the custom result, the routing
@@ -581,6 +631,27 @@ func raylineRoutesAddResults(
 		rendered, supported := raylineRoutesResultOf(result, routing)
 		allSupported = allSupported && supported
 		results[result.Name] = rendered
+	}
+	predictionsApplied := routing.wantsPredictions() && decision.PredictionsApplied
+	if predictionsApplied {
+		picks := make(map[string]*int, len(decision.Results))
+		points := make([]raylineRoutesPoint, 0, len(decision.Results))
+		for _, result := range decision.Results {
+			picks[result.Name] = result.StageOneCandidate
+			points = append(points, raylineRoutesPoint{name: result.Name, costWeight: result.CostWeight})
+		}
+		projection, err := projectRaylineRoutesPredictions(decision.Predictions, decision.PackageSHA256, picks, points)
+		if err != nil {
+			return err
+		}
+		payload.Candidates = marshalRaylineRoutesJSON(projection.Candidates)
+		payload.CandidatesContext = marshalRaylineRoutesJSON(projection.Context)
+		for name, rendered := range results {
+			provenance := projection.Provenance[name]
+			rendered.ModelChoice = marshalRaylineRoutesJSON(projection.Choices[name])
+			rendered.Provenance = &provenance
+			results[name] = rendered
+		}
 	}
 	swift, haveSwift := results["swift"]
 	sage, haveSage := results["sage"]
@@ -613,11 +684,20 @@ func raylineRoutesAddResults(
 			}
 		}
 	}
+	if routing.responseFields != nil {
+		status := "applied"
+		if routing.wantsPredictions() && !predictionsApplied {
+			status = "unsupported"
+			echo.UnappliedKeys = append(echo.UnappliedKeys, "response_fields")
+		}
+		echo.ResponseFields = &raylineRoutesFieldsEcho{Requested: append([]string(nil), routing.responseFields...), Status: status}
+	}
 	if routing.prices != nil {
 		echo.Prices = &raylineRoutesPricesEcho{
 			Status: "applied", PriceSHA256: routing.priceSHA256, Exclusive: routing.exclusive, Models: routing.pricedModels(),
 		}
 	}
+	sort.Strings(echo.UnappliedKeys)
 	payload.Routing = echo
 	return nil
 }

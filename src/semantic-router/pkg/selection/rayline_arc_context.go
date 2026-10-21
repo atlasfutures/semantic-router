@@ -133,6 +133,17 @@ type RaylineARCRouteControls struct {
 	// PriceSHA256 is the caller price world's public hash, which the
 	// service's caller-mode echo must restate.
 	PriceSHA256 string
+	// Predictions asks the service for its stage-one prediction table
+	// (routing.response_fields: predictions, pathfinder#5717), sent only to
+	// a service that advertises the capability.
+	Predictions bool
+}
+
+// RaylineARCArmAction is the action an arm's score comes from: its best
+// available action, and that action's thinking level.
+type RaylineARCArmAction struct {
+	ActionID      string
+	ThinkingLevel string
 }
 
 type RaylineARCTrace struct {
@@ -193,6 +204,14 @@ type RaylineARCTrace struct {
 	// turn's own cost weight (configurable ARC's routing.value_usd). False
 	// on a held turn, which decides nothing.
 	TurnCostWeightApplied bool
+	// RoutePredictionsApplied: route controls asked for predictions and the
+	// service answered them (RoutePredictions, checked against every tier
+	// pick's row). False when the service does not advertise them.
+	RoutePredictionsApplied bool
+	RoutePredictions        *raylinearc.PolicyDecisionPredictions
+	// PolicyArmActions is, per arm, the action its score came from; empty
+	// for an arm the decision did not score.
+	PolicyArmActions []RaylineARCArmAction
 	// PolicyOperatingPoint is the operating point the service decided at, as
 	// it echoed it (point_id names its cost weight), and PolicyTierPicks the
 	// decision at each configured tier point. Both are set only for a cell

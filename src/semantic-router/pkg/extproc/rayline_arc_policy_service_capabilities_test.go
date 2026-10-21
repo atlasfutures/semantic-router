@@ -119,7 +119,7 @@ func TestPolicyReadinessChecksTheAdvertisedCapabilities(t *testing.T) {
 		client := raylinearc.NewPolicyServiceClient(raylinearc.PolicyServiceConfig{
 			BaseURL: fixture.fake.URL(), TotalTimeout: 5 * time.Second,
 		})
-		err := requireRaylineARCPolicyServing(context.Background(), client, policy, nil)
+		err := requireRaylineARCPolicyServing(context.Background(), client, policy, nil, nil)
 		if check.class == "" {
 			if err != nil {
 				t.Errorf("%s: not ready: %v", name, err)
@@ -174,7 +174,7 @@ func TestPolicyReadinessStillRequiresTheLoadedPackage(t *testing.T) {
 	client := raylinearc.NewPolicyServiceClient(raylinearc.PolicyServiceConfig{
 		BaseURL: fixture.fake.URL(), TotalTimeout: 5 * time.Second,
 	})
-	err := requireRaylineARCPolicyServing(context.Background(), client, fixture.decision.Algorithm.RaylineARC.PolicyService, nil)
+	err := requireRaylineARCPolicyServing(context.Background(), client, fixture.decision.Algorithm.RaylineARC.PolicyService, nil, nil)
 	var failure *raylinearc.PolicyServiceError
 	if !errors.As(err, &failure) || failure.Class != "package_not_loaded" {
 		t.Fatalf("readiness = %v, want package_not_loaded", err)

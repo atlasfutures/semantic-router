@@ -94,6 +94,10 @@ type policyServiceScorer struct {
 	// decisionsV2 is the cell's Decisions API v2 request members; nil sends
 	// none.
 	decisionsV2 *policyDecisionsV2
+	// advertised is the service's capability list as its readiness listing
+	// stated it; a request uses an optional capability (predictions) only
+	// when it is here.
+	advertised atomic.Pointer[[]string]
 	// exploration is the cell's Stage-1 exploration member; nil sends none.
 	exploration *policyExploration
 	// sideStrictUntil (unix nanoseconds) is how long a strict cell sends its
@@ -343,7 +347,7 @@ func createRaylineARCPolicySelector(
 	}
 	scorer := armed.scorer.(*policyServiceScorer)
 	probe := func(ctx context.Context) error {
-		if err := requireRaylineARCPolicyServing(ctx, client, policy, arcConfig.RoutesAPI.Routing); err != nil {
+		if err := requireRaylineARCPolicyServing(ctx, client, policy, arcConfig.RoutesAPI.Routing, scorer.setAdvertised); err != nil {
 			return err
 		}
 		if scorer.episodeMode == raylinearc.PolicyEpisodeModeRelaxed {
@@ -617,6 +621,13 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	explorationExcluded := scorer.exploration.apply(&request, arcContext.PolicySignalHeaders, sideCall)
 	pricesStatus := attachRoutingPrices(armed.prices, &request)
 	applyRouteControls(&request, routeControls)
+	predictionsAsked := false
+	if routeControls != nil && routeControls.Predictions && scorer.advertises(raylinearc.PolicyCapabilityPredictions) {
+		predictionsAsked = true
+		if !slices.Contains(request.ResponseFields, raylinearc.PolicyCapabilityPredictions) {
+			request.ResponseFields = append(append([]string(nil), request.ResponseFields...), raylinearc.PolicyCapabilityPredictions)
+		}
+	}
 	// The episode's cache evidence is read at each call, so a retry's gaps
 	// are as of that call, on the wall clock the commit dates warmth by.
 	withCacheContext := func(request *raylinearc.PolicyDecisionRequest) {
@@ -901,7 +912,8 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		cellExploration = &withoutRoute
 	}
 	scorer.exploration.record(result.RaylineARC, cellExploration, response, explorationExcluded)
-	if class := recordRouteControls(result.RaylineARC, scorer, routeControls, response, available); class != "" {
+	result.RaylineARC.PolicyArmActions = policyArmActions(scorer, response, len(workerIDs))
+	if class := recordRouteControls(result.RaylineARC, scorer, routeControls, response, available, predictionsAsked); class != "" {
 		logging.ComponentErrorEvent("extproc", "rayline_arc_policy_service_failed", map[string]interface{}{
 			"class": class, "episode_id_hash": arcContext.EpisodeIDHash,
 		})
@@ -1277,4 +1289,34 @@ func turnOperatingPointMismatch(weight *float64, response *raylinearc.PolicyDeci
 	}
 	echoed := response.Decision.OperatingPoint.CostWeight
 	return echoed == nil || *echoed != *weight
+}
+
+func (scorer *policyServiceScorer) setAdvertised(capabilities []string) {
+	copied := append([]string(nil), capabilities...)
+	scorer.advertised.Store(&copied)
+}
+
+// advertises reports whether the service's readiness listing stated
+// capability; false before any listing.
+func (scorer *policyServiceScorer) advertises(capability string) bool {
+	list := scorer.advertised.Load()
+	return list != nil && slices.Contains(*list, capability)
+}
+
+// policyArmActions is, per arm, the available action whose score the arm's
+// score is (policyDecision keeps each arm's best), with its level.
+func policyArmActions(scorer *policyServiceScorer, response *raylinearc.PolicyDecisionResponse, arms int) []selection.RaylineARCArmAction {
+	actions := make([]selection.RaylineARCArmAction, arms)
+	best := make([]float64, arms)
+	for _, action := range response.Actions {
+		binding, ok := scorer.bindings[action.ActionID]
+		if !ok || !action.Available || binding.arm < 0 || binding.arm >= arms {
+			continue
+		}
+		if actions[binding.arm].ActionID == "" || action.Score > best[binding.arm] {
+			actions[binding.arm] = selection.RaylineARCArmAction{ActionID: action.ActionID, ThinkingLevel: binding.level}
+			best[binding.arm] = action.Score
+		}
+	}
+	return actions
 }

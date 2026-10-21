@@ -138,6 +138,13 @@ type RouteDecision struct {
 	// decision when Routing asked for exploration and the service reported
 	// one; nil otherwise, never a fabricated greedy record.
 	Exploration *raylinearc.PolicyExplorationRecord
+	// Predictions is the service's stage-one prediction table when Routing
+	// asked for predictions and the service answered them
+	// (PredictionsApplied); PackageSHA256 is the deciding package, which
+	// each result's provenance names.
+	Predictions        *raylinearc.PolicyDecisionPredictions
+	PredictionsApplied bool
+	PackageSHA256      string
 }
 
 // RouteResult is the decision at one Routing point.
@@ -152,6 +159,9 @@ type RouteResult struct {
 	PolicyActionID string
 	// Exploration is the point's own draw when the service reported one.
 	Exploration *raylinearc.PolicyExplorationRecord
+	// StageOneCandidate is the point's row of Predictions' stage-one table;
+	// nil off a boundary or without predictions.
+	StageOneCandidate *int
 }
 
 // RouteThinking is the reasoning configuration of the selected arm.
@@ -177,6 +187,10 @@ type RouteAlternative struct {
 	Worker   string
 	Provider string
 	Score    float64
+	// ActionID and ThinkingLevel are the exact action the arm's score came
+	// from, on a policy-service cell; empty elsewhere.
+	ActionID      string
+	ThinkingLevel string
 }
 
 // RoutePricing is a worker's rate card, per million tokens.
