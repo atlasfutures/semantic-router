@@ -210,7 +210,8 @@ type PolicyExplorationRecord struct {
 	Override *string `json:"override"`
 
 	// The temperature shape's record members (pathfinder#5637, "Contract
-	// records"), absent from a legacy record. A record of that shape names
+	// records"; pathfinder#5666 ExplorationRecordV2), absent from a legacy
+	// record. A record of that shape names
 	// no tau, requested_tau or basis. Normalization, PiSoftmax, Floor and
 	// Calibration are kept as sent, for the log; VSR reads only Temperature,
 	// RequestedTemperature and the floor's applied_mass.
@@ -223,6 +224,11 @@ type PolicyExplorationRecord struct {
 	PiSoftmax            json.RawMessage `json:"pi_softmax,omitempty"`
 	Floor                json.RawMessage `json:"floor,omitempty"`
 	Calibration          json.RawMessage `json:"calibration,omitempty"`
+	// Clamped: a hosted caller's requested T was above the deployment's
+	// cap. Result names the Decisions result (tier point) the draw was keyed
+	// by, null otherwise (pathfinder#5666, ExplorationRecordV2).
+	Clamped *bool   `json:"clamped,omitempty"`
+	Result  *string `json:"result,omitempty"`
 }
 
 // FloorApplied reports whether floor mass was in the record's distribution

@@ -456,6 +456,8 @@ func (fake *fakePolicyService) temperatureExplorationRecord(
 	record.RequestedTemperature, record.Temperature = &requested, &applied
 	record.Normalization = json.RawMessage(`{"kind":"sd","spread":1.5}`)
 	record.PiSoftmax = json.RawMessage(`[0.5,0.5]`)
+	clamped := false
+	record.Clamped = &clamped
 	if surface == raylinearc.PolicyExplorationSurfaceHosted {
 		record.Floor = json.RawMessage(`{"models":["m"],"epsilon":0.01,"applied_mass":0.01,"config_digest":"d"}`)
 	}
