@@ -182,11 +182,17 @@ func raylineGenerationTierMessage(fixed float64, known bool) string {
 }
 
 // raylineGenerationRoutingRefusal answers a refused block as a 400 in the
-// client's protocol, with the contract's code.
+// client's protocol, with the contract's code. Chat and Responses carry it as
+// error.code through the protocol encoder. The Messages encoder writes no
+// code, so a Messages refusal is written here, in the Anthropic envelope the
+// contract's ErrorEnvelope extends with error.code, as /v1/routes does.
 func (r *OpenAIRouter) raylineGenerationRoutingRefusal(
 	ctx *RequestContext,
 	refusal *routesContractError,
 ) *ext_proc.ProcessingResponse {
+	if ctx != nil && ctx.SourceFormat == llmprotocol.AnthropicMessagesV1 {
+		return r.createRaylineRoutesCodedError(ctx, refusal)
+	}
 	if ctx != nil {
 		ctx.ImmediateProtocolError = llmprotocol.NewError(llmprotocol.ErrorInvalidRequest, refusal.code, refusal.message, nil)
 	}
