@@ -40,6 +40,33 @@ func (c *RouterConfig) GetProviderProfileForEndpoint(endpointName string) (*Prov
 	return &profile, nil
 }
 
+// IsOpenRouter reports that the profile reaches OpenRouter: by provider id,
+// or by OpenRouter's base URL on a profile declared as OpenAI-compatible.
+// The dispatch filters gate OpenRouter-only body members on it, and the
+// model listing reports an arm's provider pin on it.
+func (profile *ProviderProfile) IsOpenRouter() bool {
+	if profile == nil {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(profile.Type), "openrouter") {
+		return true
+	}
+	return profile.HasOpenRouterHost()
+}
+
+// HasOpenRouterHost reports that the profile's base URL is OpenRouter's.
+func (profile *ProviderProfile) HasOpenRouterHost() bool {
+	if profile == nil || profile.BaseURL == "" {
+		return false
+	}
+	parsed, err := url.Parse(profile.BaseURL)
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(parsed.Hostname())
+	return host == "openrouter.ai" || strings.HasSuffix(host, ".openrouter.ai")
+}
+
 func providerProfileKeys(profiles map[string]ProviderProfile) []string {
 	keys := make([]string, 0, len(profiles))
 	for key := range profiles {

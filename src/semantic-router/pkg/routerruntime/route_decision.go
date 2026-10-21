@@ -235,3 +235,9 @@ var ErrRouteDecisionInvalidBody = errors.New("route decision request is invalid"
 // chosen in its place, and the same request is refused identically every
 // time, so an adapter answers 422 rather than 503.
 var ErrRouteDecisionUndecidable = errors.New("route decision undecidable")
+
+// ErrRouteDecisionNoPrivateArm marks an undecidable consult whose cause is
+// the request's privacy mode: none of the arms it allows can serve the turn.
+// It is always wrapped with ErrRouteDecisionUndecidable, so the status is
+// the same 422; an adapter reads it only to say why.
+var ErrRouteDecisionNoPrivateArm = errors.New("route decision has no private arm")

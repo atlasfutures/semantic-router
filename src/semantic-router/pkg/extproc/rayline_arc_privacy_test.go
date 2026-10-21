@@ -169,6 +169,9 @@ func TestRaylineARCSelectorRefusesNoPrivateArm(t *testing.T) {
 			if !errors.Is(selectionFailureError(err), routerruntime.ErrRouteDecisionUndecidable) {
 				t.Fatal("the decision-only API would not answer no_private_arm 422")
 			}
+			if !errors.Is(selectionFailureError(err), routerruntime.ErrRouteDecisionNoPrivateArm) {
+				t.Fatal("the decision-only API would not say why it refused")
+			}
 		})
 	}
 }

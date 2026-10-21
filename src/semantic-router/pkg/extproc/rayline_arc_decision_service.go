@@ -789,7 +789,11 @@ func selectionFailureError(err error) error {
 		}
 		// A private turn with no allowed arm is refused the same way: no
 		// model is served in its place, and retrying cannot change that.
-		if failure.class == arcFailurePolicyUndecidable || failure.class == arcFailureNoPrivateArm {
+		if failure.class == arcFailureNoPrivateArm {
+			return fmt.Errorf("%w: %w: %w",
+				routerruntime.ErrRouteDecisionUndecidable, routerruntime.ErrRouteDecisionNoPrivateArm, err)
+		}
+		if failure.class == arcFailurePolicyUndecidable {
 			return fmt.Errorf("%w: %w", routerruntime.ErrRouteDecisionUndecidable, err)
 		}
 	}

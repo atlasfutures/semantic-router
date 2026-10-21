@@ -170,6 +170,14 @@ func (s *ClassificationAPIServer) handleRouteDecision(w http.ResponseWriter, r *
 			)
 			return
 		}
+		if errors.Is(err, routerruntime.ErrRouteDecisionNoPrivateArm) {
+			s.writeRouteDecisionError(
+				w,
+				http.StatusUnprocessableEntity,
+				"route decision has no private arm: no model the request's privacy mode allows can serve this turn",
+			)
+			return
+		}
 		if errors.Is(err, routerruntime.ErrRouteDecisionUndecidable) {
 			s.writeRouteDecisionError(
 				w,
