@@ -442,6 +442,21 @@ func TestRouteDecisionReportsAnUndecidableTurnAs422(t *testing.T) {
 	}
 }
 
+// The gateway's privacy headers reach the runtime, which reads them only on
+// a cell that trusts them.
+func TestRouteDecisionPassesTheRequestHeaders(t *testing.T) {
+	runtime := okRouteDecisionRuntime()
+	server := routeDecisionTestServer(runtime)
+
+	postRouteDecision(t, server, routeDecisionTestBody, map[string][]string{
+		"X-Rayline-Privacy-Mode": {"zdr"},
+	})
+
+	if len(runtime.requests) != 1 || runtime.requests[0].Headers["x-rayline-privacy-mode"] != "zdr" {
+		t.Fatalf("requests = %#v, want the privacy header by lowercase name", runtime.requests)
+	}
+}
+
 // Every other failure keeps its 503: the caller cannot fix it by waiting, so
 // inviting a retry would turn one broken consult into a retry storm.
 func TestRouteDecisionKeepsUnavailableForNonContendedFailures(t *testing.T) {

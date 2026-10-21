@@ -26,6 +26,10 @@ const providerPreferencesField = "provider"
 // already chose the arm, and this states how that arm reaches a machine. So the
 // pin is read off the arm's model card and nothing here consults the request.
 //
+// A private turn (rayline_arc_privacy.go) is the one exception: its data mode
+// is added to the pin, or sent alone when the arm pins nothing, and either way
+// replaces the provider object the request carries.
+//
 // Two conditions gate it. The arm must carry the key, because an unpinned arm
 // keeps the bytes it sent before the key existed. And the backend must be
 // OpenRouter, because every other OpenAI-compatible backend would see an
@@ -34,18 +38,19 @@ func applyProviderPreferences(
 	body []byte,
 	dispatch *providerDispatch,
 	routerConfig *config.RouterConfig,
+	privacyMode string,
 ) ([]byte, error) {
-	preferences := providerPreferencesForDispatch(dispatch, routerConfig)
-	if preferences == nil {
+	pin, openRouter := providerPreferencesForDispatch(dispatch, routerConfig)
+	if !openRouter || (pin == nil && privacyMode == "") {
 		return body, nil
-	}
-	encoded, err := json.Marshal(preferences)
-	if err != nil {
-		return nil, fmt.Errorf("failed to serialize provider preferences: %w", err)
 	}
 	var requestMap map[string]json.RawMessage
 	if err := json.Unmarshal(body, &requestMap); err != nil {
 		return nil, fmt.Errorf("failed to parse request body: %w", err)
+	}
+	encoded, err := json.Marshal(privacyProviderPreferences(pin, privacyMode))
+	if err != nil {
+		return nil, fmt.Errorf("failed to serialize provider preferences: %w", err)
 	}
 	requestMap[providerPreferencesField] = encoded
 	mutated, err := json.Marshal(requestMap)
@@ -56,18 +61,17 @@ func applyProviderPreferences(
 }
 
 // providerPreferencesForDispatch answers both gates in one place, so the
-// mutation above reads as a mutation and the policy stays testable on its own.
+// mutation above reads as a mutation and the policy stays testable on its own:
+// whether the dispatch reaches OpenRouter, and the arm's pin, nil when it pins
+// nothing.
 func providerPreferencesForDispatch(
 	dispatch *providerDispatch,
 	routerConfig *config.RouterConfig,
-) *config.OpenRouterProviderPreferences {
-	if dispatch == nil || routerConfig == nil {
-		return nil
+) (*config.OpenRouterProviderPreferences, bool) {
+	if dispatch == nil || routerConfig == nil || !providerIsOpenRouter(dispatch.profile) {
+		return nil, false
 	}
-	if !providerIsOpenRouter(dispatch.profile) {
-		return nil
-	}
-	return routerConfig.ProviderPreferencesForModel(dispatch.logicalModel)
+	return routerConfig.ProviderPreferencesForModel(dispatch.logicalModel), true
 }
 
 // recordDispatchedProviderPin names the providers the request actually pinned,

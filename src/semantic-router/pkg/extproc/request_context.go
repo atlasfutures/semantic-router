@@ -118,6 +118,10 @@ type RequestContext struct {
 	// It is set when preparation fails for want of it, so the refusal can
 	// tell the caller which header to send.
 	RaylineARCEpisodeIDHeader string
+	// RaylineARCPrivacyMode is the request's data mode from the trusted
+	// gateway headers: "" for a standard request, else privacy or zdr. It is
+	// decided once, when the ARC context is built, and the provider pin reads it.
+	RaylineARCPrivacyMode string
 	// ContextRecoveryProviderCost is the charge for both calls of a turn
 	// context recovery answered. The recovered body is re-encoded for the
 	// client, which drops it, so the usage report reads it from here.

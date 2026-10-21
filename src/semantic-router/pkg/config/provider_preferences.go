@@ -41,6 +41,9 @@ type OpenRouterProviderPreferences struct {
 	Ignore            []string `yaml:"ignore,omitempty" json:"ignore,omitempty"`
 	RequireParameters *bool    `yaml:"require_parameters,omitempty" json:"require_parameters,omitempty"`
 	DataCollection    string   `yaml:"data_collection,omitempty" json:"data_collection,omitempty"`
+	// ZDR restricts routing to zero-data-retention endpoints. A pointer for
+	// the reason AllowFallbacks is one.
+	ZDR *bool `yaml:"zdr,omitempty" json:"zdr,omitempty"`
 	// MaxPrice is the price ceiling the route was vetted and trained under
 	// (USD per million prompt or completion tokens, per request, per image):
 	// OpenRouter serves only from providers at or below it, so a pin without
@@ -163,6 +166,7 @@ func copyProviderPreferences(preferences *OpenRouterProviderPreferences) *OpenRo
 		Ignore:            append([]string(nil), preferences.Ignore...),
 		RequireParameters: copyBool(preferences.RequireParameters),
 		DataCollection:    preferences.DataCollection,
+		ZDR:               copyBool(preferences.ZDR),
 	}
 	if len(preferences.MaxPrice) > 0 {
 		copied.MaxPrice = make(map[string]float64, len(preferences.MaxPrice))

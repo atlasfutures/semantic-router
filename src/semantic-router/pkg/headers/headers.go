@@ -314,11 +314,13 @@ const (
 	// called, so it is not an upstream outage), "undecidable" (the policy
 	// would not decide the turn and no model is served in its place;
 	// resending it unchanged cannot succeed, and no backend was called),
-	// "stateless_path" (the turn named previous_response_id on a route that
+	// "no_private_arm" (the request's privacy mode allows none of the arms
+	// that could serve the turn; resending it unchanged cannot succeed, and
+	// no backend was called), "stateless_path" (the turn named previous_response_id on a route that
 	// does not continue a stored conversation; resend the items instead) or
 	// "unavailable" (anything else). The first three ride a 429 or 503;
 	// "missing_session", "request_shape" and "stateless_path" ride a 400;
-	// "undecidable" rides a 422. Emitted only on those refusals, never with
+	// "undecidable" and "no_private_arm" ride a 422. Emitted only on those refusals, never with
 	// an internal class.
 	//
 	// The values are stated here, in
