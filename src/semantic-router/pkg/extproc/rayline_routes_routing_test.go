@@ -85,7 +85,7 @@ func TestRoutesRoutingRefusesEveryInvalidContractFixture(t *testing.T) {
 			continue
 		}
 		t.Run(name, func(t *testing.T) {
-			_, _, refusal := readRaylineRoutesRouting(fixture.Body, "", []string{"rayline/arc-dev"})
+			_, _, refusal := readRaylineRoutesRouting(fixture.Body, []string{"rayline/arc-dev"})
 			if refusal == nil {
 				t.Fatal("accepted")
 			}
@@ -102,12 +102,12 @@ func TestRoutesRoutingRefusesEveryInvalidContractFixture(t *testing.T) {
 		_ = json.Unmarshal(fixture.Body, &body)
 		body["routing"] = map[string]any{}
 		encoded, _ := json.Marshal(body)
-		if _, _, refusal := readRaylineRoutesRouting(encoded, "", []string{"rayline/arc-dev"}); refusal == nil || refusal.code != fixture.Expect.Code {
+		if _, _, refusal := readRaylineRoutesRouting(encoded, []string{"rayline/arc-dev"}); refusal == nil || refusal.code != fixture.Expect.Code {
 			t.Errorf("%s with routing: refusal %+v, want %s", name, refusal, fixture.Expect.Code)
 		}
 	}
 	// The cell's own alias is a model, not an unknown ARC id.
-	if _, _, refusal := readRaylineRoutesRouting([]byte(`{"model":"rayline/arc-dev","messages":[{"role":"user","content":"x"}],"routing":{}}`), "", []string{"rayline/arc-dev"}); refusal != nil {
+	if _, _, refusal := readRaylineRoutesRouting([]byte(`{"model":"rayline/arc-dev","messages":[{"role":"user","content":"x"}],"routing":{}}`), []string{"rayline/arc-dev"}); refusal != nil {
 		t.Fatalf("the cell's alias refused: %+v", refusal)
 	}
 }
@@ -120,7 +120,7 @@ func TestRoutesRoutingReadsEveryValidContractFixture(t *testing.T) {
 	for _, name := range contractFixtures(t, "request_valid_decisions_*.json") {
 		fixture := readContractFixture(t, name)
 		t.Run(name, func(t *testing.T) {
-			routing, stripped, refusal := readRaylineRoutesRouting(fixture.Body, "", nil)
+			routing, stripped, refusal := readRaylineRoutesRouting(fixture.Body, nil)
 			if refusal != nil {
 				t.Fatalf("refused: %+v", refusal)
 			}
@@ -208,23 +208,21 @@ func TestJCSNumber(t *testing.T) {
 	}
 }
 
-// memex-desktop#7531's header stands for routing.temperature when the block
-// states none, and must agree with it when both are sent.
-func TestRoutesTemperatureHeaderCompatibility(t *testing.T) {
+// The body member is the one transport: #7531's retired header is never
+// read, with or without a block.
+func TestRoutesIgnoreTheRetiredTemperatureHeader(t *testing.T) {
+	router := routesRouter(true)
+	router.Config.Decisions[0].Algorithm.RaylineARC.RoutesAPI.Routing = &config.RaylineARCRoutesRoutingConfig{ExplorationSalt: "s"}
+	ctx := routesContext(map[string]string{raylineARCExplorationTemperatureHeader: "-1"})
+	// A header the old transport would have refused (negative T) changes
+	// nothing: the lookup proceeds to selection, which this router lacks.
+	response := router.handleRaylineRoutesAPI([]byte(`{"model":"arc-1.0","messages":[{"role":"user","content":"x"}]}`), ctx)
+	if status, _, code := routesErrorCode(t, response); code == "temperature_invalid" || status == 400 {
+		t.Fatalf("the retired header was read: %d %s", status, code)
+	}
 	plain := []byte(`{"model":"arc-1.0","messages":[{"role":"user","content":"x"}]}`)
-	routing, body, refusal := readRaylineRoutesRouting(plain, "1.5", nil)
-	if refusal != nil || routing == nil || routing.bodySent || *routing.temperature != 1.5 || string(body) != string(plain) {
-		t.Fatalf("header alone: %+v %s %+v", routing, body, refusal)
-	}
-	both := []byte(`{"model":"arc-1.0","messages":[{"role":"user","content":"x"}],"routing":{"temperature":1}}`)
-	if _, _, refusal := readRaylineRoutesRouting(both, "2", nil); refusal == nil || refusal.code != "routing_invalid" {
-		t.Fatalf("disagreeing header and block: %+v", refusal)
-	}
-	if _, _, refusal := readRaylineRoutesRouting(plain, "-1", nil); refusal == nil || refusal.code != "temperature_invalid" {
-		t.Fatalf("negative header: %+v", refusal)
-	}
-	if routing, body, refusal := readRaylineRoutesRouting(plain, "", nil); routing != nil || refusal != nil || string(body) != string(plain) {
-		t.Fatal("a body with neither changed")
+	if routing, body, refusal := readRaylineRoutesRouting(plain, nil); routing != nil || refusal != nil || string(body) != string(plain) {
+		t.Fatal("a body with no block changed")
 	}
 }
 
@@ -237,10 +235,13 @@ func routesFixture(t *testing.T) *policySelectorFixture {
 		if request.RoutingPrices == nil {
 			return nil
 		}
+		// A caller world's store version names its hash.
 		store, asOf, digest := request.RoutingPrices.StoreVersion, request.RoutingPrices.AsOf, strings.Repeat("d", 64)
+		hash, exclusive := strings.TrimPrefix(store, "caller:"), request.RoutingPrices.Exclusive
 		return &raylinearc.PolicyRoutingPricesUsed{
-			Mode: "live", StoreVersion: &store, AsOf: &asOf, Digest: &digest,
+			Mode: "caller", StoreVersion: &store, AsOf: &asOf, Digest: &digest,
 			FallbackArms: []string{}, FilledLegs: map[string][]string{},
+			PricesSHA256: &hash, Exclusive: &exclusive, ExcludedArms: []string{},
 		}
 	}
 	return fixture
@@ -249,7 +250,7 @@ func routesFixture(t *testing.T) *policySelectorFixture {
 func routesControlsFor(t *testing.T, fixture *policySelectorFixture, routingJSON string) (*raylineRoutesRouting, *selection.RaylineARCRouteControls) {
 	t.Helper()
 	body := `{"model":"arc-1.0","messages":[{"role":"user","content":"x"}],"routing":` + routingJSON + `}`
-	routing, _, refusal := readRaylineRoutesRouting([]byte(body), "", nil)
+	routing, _, refusal := readRaylineRoutesRouting([]byte(body), nil)
 	if refusal != nil {
 		t.Fatalf("refused: %+v", refusal)
 	}
@@ -379,7 +380,7 @@ func TestRouteControlsFailClosed(t *testing.T) {
 // reported a draw, and the echo listing what was not applied.
 func TestRoutesAnswerRendersTheContractEnvelope(t *testing.T) {
 	routing, _, _ := readRaylineRoutesRouting([]byte(`{"model":"arc-1.0","messages":[{"role":"user","content":"x"}],"routing":`+
-		`{"value_usd":1.5,"temperature":0.7,"prices":{"m/a":{"input":1,"cache_read":0,"cache_write":0,"output":2}},"exclusive":true}}`), "", nil)
+		`{"value_usd":1.5,"temperature":0.7,"prices":{"m/a":{"input":1,"cache_read":0,"cache_write":0,"output":2}},"exclusive":true}}`), nil)
 	applied, propensity, explored, key := 0.7, 0.375, true, "k"
 	offered := "m/a"
 	record := &raylinearc.PolicyExplorationRecord{
@@ -449,6 +450,7 @@ func TestRoutesRoutingReadinessRequirements(t *testing.T) {
 	routesRequirements(&required, &config.RaylineARCRoutesRoutingConfig{ExplorationSalt: "s"})
 	for _, capability := range []string{
 		raylinearc.PolicyCapabilityDecisionsV2, raylinearc.PolicyCapabilityTierPoints, raylinearc.PolicyCapabilityExplorationTemperature,
+		raylinearc.PolicyCapabilityCallerPrices,
 	} {
 		if !slices.Contains(required.Capabilities, capability) {
 			t.Fatalf("capabilities %v lack %s", required.Capabilities, capability)
@@ -511,5 +513,44 @@ func TestRaylineRoutesAnswersRoutingRefusalsWithTheirCodes(t *testing.T) {
 				t.Fatalf("answered %d %s %s, want %d %s %s", status, errType, errCode, tc.status, tc.errType, tc.errCode)
 			}
 		})
+	}
+}
+
+// A caller's prices go out as routing_prices.basis caller (pathfinder#5668):
+// exactly four legs per model, beside exclusive; the feed's keep their form.
+func TestCallerPricesWireForm(t *testing.T) {
+	legs := func(v float64) *float64 { return &v }
+	caller, err := json.Marshal(raylinearc.PolicyRoutingPrices{
+		Schema: raylinearc.RoutingPricesSchema, StoreVersion: "caller:h", AsOf: "2026-10-21T00:00:00Z",
+		Rates:     map[string]raylinearc.PolicyRoutingRate{"m/a": {Input: legs(1), CacheRead: legs(0), CacheWrite: legs(0), Output: legs(2)}},
+		Basis:     raylinearc.RoutingPricesBasisCaller,
+		Exclusive: true,
+	})
+	if err != nil || string(caller) != `{"schema":"arc-routing-prices.v1","store_version":"caller:h","as_of":"2026-10-21T00:00:00Z",`+
+		`"rates":{"m/a":{"input":1,"cache_read":0,"cache_write":0,"output":2}},"basis":"caller","exclusive":true}` {
+		t.Fatalf("caller form %s %v", caller, err)
+	}
+	var decoded raylinearc.PolicyRoutingPrices
+	if err := json.Unmarshal(caller, &decoded); err != nil || decoded.Basis != "caller" || !decoded.Exclusive {
+		t.Fatalf("decoded %+v %v", decoded, err)
+	}
+	feed, _ := json.Marshal(raylinearc.PolicyRoutingPrices{Schema: "s", StoreVersion: "v", AsOf: "a", Rates: map[string]raylinearc.PolicyRoutingRate{"m": {}}})
+	if strings.Contains(string(feed), "basis") || !strings.Contains(string(feed), `"valid_from":null`) {
+		t.Fatalf("feed form %s", feed)
+	}
+}
+
+// The service's own unknown_price_model refusal is the caller's 400, not an
+// undecidable turn.
+func TestServiceUnknownPriceModelIsTheCallers(t *testing.T) {
+	fixture := routesFixture(t)
+	fixture.fake.refuseCold = func(raylinearc.PolicyDecisionRequest) bool { return true }
+	fixture.fake.coldReason = "unknown_price_model"
+	models := workerModels(fixture)
+	_, controls := routesControlsFor(t, fixture, `{"prices":{"`+models[0]+`":{"input":1,"cache_read":0,"cache_write":0,"output":2}}}`)
+	_, err := selectWithControls(t, fixture, controls)
+	mapped := selectionFailureError(err)
+	if !errors.Is(mapped, routerruntime.ErrRouteDecisionInvalidBody) || !errors.Is(mapped, errRaylineRoutesUnknownPriceModel) {
+		t.Fatalf("err = %v", mapped)
 	}
 }

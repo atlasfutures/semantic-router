@@ -73,8 +73,6 @@ func routesInvalid(code string, message string) *routesContractError {
 // raylineRoutesRouting is a validated routing block. A member the caller did
 // not send is nil, never a default.
 type raylineRoutesRouting struct {
-	// bodySent: the body carried a routing block (not the header alone).
-	bodySent    bool
 	valueUSD    *float64
 	temperature *float64
 	prices      map[string][4]float64
@@ -96,58 +94,42 @@ func (routing *raylineRoutesRouting) pricedModels() []string {
 // readRaylineRoutesRouting reads and removes the body's routing block, in the
 // contract's check order (the model, the block's shape and members, then
 // value_usd, temperature, prices and exclusive), so one invalid body is
-// refused with the same code by every implementation. headerT is
-// memex-desktop#7531's x-rayline-exploration-temperature, read as
-// routing.temperature when the block states none. cellAliases are this
-// cell's own model names (auto_model_names), accepted beside the public ids.
+// refused with the same code by every implementation. The body member is
+// the one transport (memex-desktop#7538): #7531's retired
+// x-rayline-exploration-temperature header is not read. cellAliases are
+// this cell's own model names (auto_model_names), accepted beside the
+// public ids.
 //
-// No block and no header return a nil routing and the body unchanged.
+// No block returns a nil routing and the body unchanged.
 func readRaylineRoutesRouting(
 	body []byte,
-	headerT string,
 	cellAliases []string,
 ) (*raylineRoutesRouting, []byte, *routesContractError) {
-	headerT = strings.TrimSpace(headerT)
 	var envelope map[string]json.RawMessage
 	if err := json.Unmarshal(body, &envelope); err != nil {
 		return nil, nil, routesInvalid("invalid_body", "The request body must be a JSON object.")
 	}
 	raw, sent := envelope["routing"]
-	if !sent && headerT == "" {
+	if !sent {
 		return nil, body, nil
 	}
-	routing := &raylineRoutesRouting{bodySent: sent}
-	if sent {
-		if failure := routesCheckModel(envelope["model"], cellAliases); failure != nil {
-			return nil, nil, failure
-		}
-		var members map[string]json.RawMessage
-		if json.Unmarshal(raw, &members) != nil || members == nil {
-			return nil, nil, routesInvalid("routing_invalid", "routing must be an object.")
-		}
-		if failure := routesReadMembers(routing, members, envelope["model"]); failure != nil {
-			return nil, nil, failure
-		}
-		delete(envelope, "routing")
-		stripped, err := json.Marshal(envelope)
-		if err != nil {
-			return nil, nil, routesInvalid("invalid_body", "The request body must be a JSON object.")
-		}
-		body = stripped
+	if failure := routesCheckModel(envelope["model"], cellAliases); failure != nil {
+		return nil, nil, failure
 	}
-	if headerT != "" {
-		value, ok := parseExplorationTemperature(headerT)
-		if !ok {
-			return nil, nil, routesInvalid("temperature_invalid", "routing.temperature must be a finite number >= 0 "+
-				"(a softmax temperature over normalized scores; 0 is greedy).")
-		}
-		if routing.temperature != nil && *routing.temperature != value {
-			return nil, nil, routesInvalid("routing_invalid",
-				"routing.temperature and x-rayline-exploration-temperature disagree.")
-		}
-		routing.temperature = &value
+	var members map[string]json.RawMessage
+	if json.Unmarshal(raw, &members) != nil || members == nil {
+		return nil, nil, routesInvalid("routing_invalid", "routing must be an object.")
 	}
-	return routing, body, nil
+	routing := &raylineRoutesRouting{}
+	if failure := routesReadMembers(routing, members, envelope["model"]); failure != nil {
+		return nil, nil, failure
+	}
+	delete(envelope, "routing")
+	stripped, err := json.Marshal(envelope)
+	if err != nil {
+		return nil, nil, routesInvalid("invalid_body", "The request body must be a JSON object.")
+	}
+	return routing, stripped, nil
 }
 
 // routesCheckModel refuses a missing model and an ARC-shaped id that is not
@@ -476,21 +458,26 @@ func raylineRoutesControls(
 		}
 	}
 	if routing.prices != nil {
-		source := routesBasisCaller
 		rates := make(map[string]raylinearc.PolicyRoutingRate, len(routing.prices))
 		for model, legs := range routing.prices {
 			rates[model] = raylinearc.PolicyRoutingRate{
-				Input: &legs[0], CacheRead: &legs[1], CacheWrite: &legs[2], Output: &legs[3], Source: &source,
+				Input: &legs[0], CacheRead: &legs[1], CacheWrite: &legs[2], Output: &legs[3],
 			}
 		}
+		// routing_prices.basis caller (pathfinder#5668): one caller price
+		// world for the decision and every tier pick, exactly four legs per
+		// model, never filled from the package.
 		controls.Prices = &raylinearc.PolicyRoutingPrices{
 			Schema:       raylinearc.RoutingPricesSchema,
 			StoreVersion: "caller:" + routing.priceSHA256,
 			AsOf:         now.UTC().Format(time.RFC3339),
 			Rates:        rates,
+			Basis:        raylinearc.RoutingPricesBasisCaller,
+			Exclusive:    routing.exclusive,
 		}
 		controls.PricedModels = routing.pricedModels()
 		controls.Exclusive = routing.exclusive
+		controls.PriceSHA256 = routing.priceSHA256
 	}
 	return controls
 }

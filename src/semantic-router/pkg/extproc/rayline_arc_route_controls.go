@@ -22,6 +22,10 @@ const (
 	// another requested temperature, applies a higher one, or is applied
 	// at 0.
 	arcFailureRoutesExplorationInconsistent = "routes_exploration_inconsistent"
+	// arcFailureRoutesUnknownPriceModel: the service refused a priced model
+	// no arm of its package dispatches (selection_refused,
+	// unknown_price_model): the caller's to fix, a 400.
+	arcFailureRoutesUnknownPriceModel = "routes_unknown_price_model"
 )
 
 var routesInconsistentClasses = map[string]bool{
@@ -111,7 +115,8 @@ func recordRouteControls(
 		if !ok || !valid(pick) {
 			return arcFailureRoutesResultMissing
 		}
-		if pick.Exploration != nil && (requested == nil || !routeExplorationConsistent(pick.Exploration, *requested)) {
+		if pick.Exploration != nil && (requested == nil || !routeExplorationConsistent(pick.Exploration, *requested) ||
+			pick.Exploration.Result != nil && *pick.Exploration.Result != point.Name) {
 			return arcFailureRoutesExplorationInconsistent
 		}
 		binding := scorer.bindings[pick.SelectedActionID]
@@ -122,18 +127,14 @@ func recordRouteControls(
 }
 
 // routeCallerPricesApplied reports whether the decision was scored in the
-// caller's price world: a live echo of these prices, and no priced model's
-// leg filled from the package.
+// caller's price world (pathfinder#5668): a caller-mode echo restating this
+// world's price_sha256 and exclusivity, with nothing filled or fallen back.
 func routeCallerPricesApplied(controls *selection.RaylineARCRouteControls, used *raylinearc.PolicyRoutingPricesUsed) bool {
-	if used == nil || used.Mode != "live" {
+	if used == nil || used.Mode != raylinearc.RoutingPricesModeCaller || used.PricesSHA256 == nil || used.Exclusive == nil {
 		return false
 	}
-	for _, model := range controls.PricedModels {
-		if len(used.FilledLegs[model]) > 0 {
-			return false
-		}
-	}
-	return true
+	return *used.PricesSHA256 == controls.PriceSHA256 && *used.Exclusive == controls.Exclusive &&
+		len(used.FilledLegs) == 0 && len(used.FallbackArms) == 0
 }
 
 // routeExplorationConsistent holds a temperature-shape record to the

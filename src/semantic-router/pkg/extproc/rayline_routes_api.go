@@ -267,11 +267,7 @@ func (r *OpenAIRouter) handleRaylineRoutesAPI(
 	// The public routing controls (pathfinder#5664). A body's routing block
 	// is read, validated and removed before the codec sees the body; on a
 	// cell that does not serve them it is refused rather than ignored.
-	// memex-desktop#7531's temperature header alone keeps its older meaning
-	// there: no exploration, which the gateway echoes as unsupported.
-	routing, body, refusal := readRaylineRoutesRouting(
-		body, raylineRoutesHeader(ctx, raylineARCExplorationTemperatureHeader), r.Config.EffectiveAutoModelNames(),
-	)
+	routing, body, refusal := readRaylineRoutesRouting(body, r.Config.EffectiveAutoModelNames())
 	if refusal != nil {
 		return r.createRaylineRoutesCodedError(ctx, refusal)
 	}
@@ -283,13 +279,11 @@ func (r *OpenAIRouter) handleRaylineRoutesAPI(
 				"routing.prices names a model this ARC release does not offer: "+strings.Join(unknown, ", ")+"."))
 		}
 		controls = raylineRoutesControls(routing, settings.Routing, time.Now())
-	case routing != nil && routing.bodySent:
+	case routing != nil:
 		return r.createRaylineRoutesCodedError(ctx, &routesContractError{
 			status: 503, errType: "api_error", code: "unavailable",
 			message: "this ARC cell does not serve routing controls",
 		})
-	default:
-		routing = nil
 	}
 	// The format the body was actually read under, recorded before selection
 	// runs. wireFormatOf reads this when a decode fails, and without the
@@ -397,6 +391,11 @@ var errRaylineRoutesRequestShape = errors.New("the routing decision cannot repre
 // statelessPathMessage and edited to match it.
 var errRaylineRoutesStatelessPath = errors.New("route does not continue a stored conversation by id")
 
+// errRaylineRoutesUnknownPriceModel tags the service's refusal of a priced
+// model its package does not offer (pathfinder#5668), answered 400
+// unknown_price_model.
+var errRaylineRoutesUnknownPriceModel = errors.New("routing.prices names a model the package does not offer")
+
 // wrong on the way.
 func (r *OpenAIRouter) raylineRoutesFailure(
 	ctx *RequestContext,
@@ -421,6 +420,10 @@ func (r *OpenAIRouter) raylineRoutesFailure(
 	// required field), or a decision service could not represent something the
 	// request carries. The message distinguishes them, because "could not be
 	// read as messages" is wrong for a body that parsed.
+	if invalid && errors.Is(err, errRaylineRoutesUnknownPriceModel) {
+		return r.createRaylineRoutesCodedError(ctx, routesInvalid("unknown_price_model",
+			"routing.prices names a model this ARC release does not offer."))
+	}
 	if invalid {
 		detail := "request body could not be read as " + string(wireFormatOf(ctx)) + " messages"
 		if errors.Is(err, errRaylineRoutesRequestShape) {

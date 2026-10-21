@@ -53,6 +53,8 @@ type fakePolicyService struct {
 	// stage_one_held_unknown for every decide it holds true of, as a
 	// two-stage package does for a turn it would decide cold.
 	refuseCold func(raylinearc.PolicyDecisionRequest) bool
+	// coldReason replaces refuseCold's stage_one_held_unknown reason.
+	coldReason string
 	// rejectAttested, when set, answers every decide that carries
 	// attested_held_action_id with 400 invalid_request, as a service that
 	// rejects the field.
@@ -246,8 +248,12 @@ func (fake *fakePolicyService) serve(writer http.ResponseWriter, request *http.R
 			return
 		}
 		if refuseCold != nil && refuseCold(decide) {
+			reason := "stage_one_held_unknown"
+			if fake.coldReason != "" {
+				reason = fake.coldReason
+			}
 			fake.writeJSON(writer, http.StatusUnprocessableEntity, map[string]any{
-				"error": "selection_refused", "detail": map[string]any{"reason": "stage_one_held_unknown"},
+				"error": "selection_refused", "detail": map[string]any{"reason": reason},
 			})
 			return
 		}
@@ -403,6 +409,8 @@ func (fake *fakePolicyService) decision(request raylinearc.PolicyDecisionRequest
 		if fake.tierPickExploration {
 			for name, pick := range response.Decision.TierPicks {
 				pick.Exploration = fake.temperatureExplorationRecord(*explore).Exploration
+				result := name
+				pick.Exploration.Result = &result
 				response.Decision.TierPicks[name] = pick
 			}
 		}
