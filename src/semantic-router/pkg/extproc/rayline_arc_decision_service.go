@@ -284,6 +284,11 @@ func routeAlternatives(
 		if arm < len(trace.ExcludedArms) && trace.ExcludedArms[arm] {
 			continue
 		}
+		// A model the package's stage one does not offer is not one ARC
+		// can pick: its trained actions are scored, never an alternative.
+		if trace.PolicyArmOffered != nil && (arm >= len(trace.PolicyArmOffered) || !trace.PolicyArmOffered[arm]) {
+			continue
+		}
 		worker, found := catalog.Worker(arm)
 		if !found {
 			continue

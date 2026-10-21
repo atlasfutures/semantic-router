@@ -212,6 +212,10 @@ type RaylineARCTrace struct {
 	// PolicyArmActions is, per arm, the action its score came from; empty
 	// for an arm the decision did not score.
 	PolicyArmActions []RaylineARCArmAction
+	// PolicyArmOffered is, per arm, whether the package's stage one offers
+	// its model; nil when the package states no by-model offer. An arm it
+	// does not offer is never published as an alternative.
+	PolicyArmOffered []bool
 	// PolicyOperatingPoint is the operating point the service decided at, as
 	// it echoed it (point_id names its cost weight), and PolicyTierPicks the
 	// decision at each configured tier point. Both are set only for a cell

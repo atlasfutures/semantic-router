@@ -72,6 +72,9 @@ type policyServiceScorer struct {
 	// model names its held candidate, so a lost replica's turn is re-asked
 	// with that model attested. A model-effort package is re-asked narrowed.
 	attestable bool
+	// armOffered is, per arm, whether the package's stage one offers its
+	// model; nil when the package states no by-model offer.
+	armOffered []bool
 	// busyWait bounds how long a decision retries the service's
 	// session_busy (the episode's acquire timeout).
 	busyWait    time.Duration
@@ -209,6 +212,7 @@ func newPolicyServiceScorer(
 		scorer.bindings[binding.ActionID] = policyBinding{arm: index[binding.Worker], level: level, model: model}
 		scorer.actionOrder = append(scorer.actionOrder, binding.ActionID)
 	}
+	scorer.armOffered = policyArmOffered(policy.PackageStageOneOfferedModels(), scorer.bindings, len(scorer.workers))
 	return scorer
 }
 
@@ -918,6 +922,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	}
 	scorer.exploration.record(result.RaylineARC, cellExploration, response, explorationExcluded)
 	result.RaylineARC.PolicyArmActions = policyArmActions(scorer, response, len(workerIDs))
+	result.RaylineARC.PolicyArmOffered = scorer.armOffered
 	if class := recordRouteControls(result.RaylineARC, scorer, routeControls, response, available, predictionsAsked); class != "" {
 		logging.ComponentErrorEvent("extproc", "rayline_arc_policy_service_failed", map[string]interface{}{
 			"class": class, "episode_id_hash": arcContext.EpisodeIDHash,
@@ -1310,6 +1315,22 @@ func (scorer *policyServiceScorer) advertises(capability string) bool {
 
 // policyArmActions is, per arm, the available action whose score the arm's
 // score is (policyDecision keeps each arm's best), with its level.
+// policyArmOffered marks, per arm, whether any of its actions is of a model
+// the package's stage one offers; nil when the package states no by-model
+// offer, so every arm stands.
+func policyArmOffered(offered []string, bindings map[string]policyBinding, arms int) []bool {
+	if offered == nil {
+		return nil
+	}
+	marks := make([]bool, arms)
+	for _, binding := range bindings {
+		if binding.arm >= 0 && binding.arm < arms && slices.Contains(offered, binding.model) {
+			marks[binding.arm] = true
+		}
+	}
+	return marks
+}
+
 func policyArmActions(scorer *policyServiceScorer, response *raylinearc.PolicyDecisionResponse, arms int) []selection.RaylineARCArmAction {
 	actions := make([]selection.RaylineARCArmAction, arms)
 	best := make([]float64, arms)
