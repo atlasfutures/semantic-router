@@ -120,6 +120,12 @@ const (
 
 	// RedisStoreType is the Redis store backend.
 	RedisStoreType StoreBackendType = "redis"
+
+	// NoneStoreType keeps the Responses surface on and retains nothing: zero
+	// data retention. Stateless generation works and every turn gets a
+	// response id, but nothing can be read back, so previous_response_id is
+	// refused as the caller's error and the object endpoints answer 404.
+	NoneStoreType StoreBackendType = "none"
 )
 
 // MemoryStoreConfig contains configuration for the in-memory store.

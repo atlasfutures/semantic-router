@@ -199,7 +199,10 @@ func createResponseAPIFilter(cfg *config.RouterConfig) *ResponseAPIFilter {
 			"error":                err.Error(),
 			"response_api_enabled": false,
 		})
-		return nil
+		// Not nil: a nil filter is a cell that keeps no store, and it refuses
+		// previous_response_id as the caller's error. This cell meant to keep
+		// one and could not, which is an outage the caller should wait out.
+		return NewUnavailableResponseAPIFilter()
 	}
 
 	logging.ComponentEvent("extproc", "response_api_initialized", map[string]interface{}{

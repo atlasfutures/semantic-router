@@ -317,11 +317,15 @@ const (
 	// "no_private_arm" (the request's privacy mode allows none of the arms
 	// that could serve the turn; resending it unchanged cannot succeed, and
 	// no backend was called), "stateless_path" (the turn named previous_response_id on a route that
-	// does not continue a stored conversation; resend the items instead) or
+	// does not continue a stored conversation, either because its policy
+	// does not do stateful continuation or because the cell retains nothing
+	// (response_api store_backend: none); resend the items instead) or
 	// "unavailable" (anything else). The first three ride a 429 or 503;
 	// "missing_session", "request_shape" and "stateless_path" ride a 400;
 	// "undecidable" and "no_private_arm" ride a 422. Emitted only on those refusals, never with
-	// an internal class.
+	// an internal class. "stateless_path" is also the one value emitted
+	// before any selection runs: the Responses store gate answers it on a
+	// cell that retains nothing, whatever the route's algorithm.
 	//
 	// The values are stated here, in
 	// extproc/rayline_arc_selection_response.go where they are defined, and in
