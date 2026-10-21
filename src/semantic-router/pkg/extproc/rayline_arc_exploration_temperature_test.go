@@ -82,7 +82,7 @@ func TestHostedTurnSendsTheDefaultTemperature(t *testing.T) {
 // caller, no calibration. The service clamps it to the cap. A cell that does
 // not honour caller T sends its default whatever the header says.
 func TestHostedTurnSendsTheCallerTemperatureWhenHonoured(t *testing.T) {
-	headers := withHeader(eligibleHeaders(), raylineARCExplorationTemperatureHeader, "2.5")
+	headers := withHeader(eligibleHeaders(), raylineARCCallerTemperatureSignal, "2.5")
 	got := selectTemperatureTurn(t, newTemperatureFixture(t, fixtureExplorationTemperature(), nil), headers)
 	want := map[string]any{
 		"temperature": 2.5, "salt": "vsr-explore-2026-10", "surface": "hosted", "source": "caller", "training_data": "allowed",
@@ -104,7 +104,7 @@ func TestHostedTurnSendsTheCallerTemperatureWhenHonoured(t *testing.T) {
 // untrusted gateway, an eval cell and a malformed caller T all send no
 // exploration -- not the default, and never the caller's T.
 func TestHostedExplorationFailsClosed(t *testing.T) {
-	caller := withHeader(eligibleHeaders(), raylineARCExplorationTemperatureHeader, "1")
+	caller := withHeader(eligibleHeaders(), raylineARCCallerTemperatureSignal, "1")
 	for name, tc := range map[string]struct {
 		headers map[string]string
 		shape   func(*config.RaylineARCPolicyServiceConfig)
@@ -121,9 +121,9 @@ func TestHostedExplorationFailsClosed(t *testing.T) {
 		"eval cell": {caller, func(policy *config.RaylineARCPolicyServiceConfig) {
 			policy.EvalCell = true
 		}, explorationExcludedEvalCell},
-		"negative caller T": {withHeader(eligibleHeaders(), raylineARCExplorationTemperatureHeader, "-1"), nil, explorationExcludedCallerTemperature},
-		"NaN caller T":      {withHeader(eligibleHeaders(), raylineARCExplorationTemperatureHeader, "NaN"), nil, explorationExcludedCallerTemperature},
-		"word caller T":     {withHeader(eligibleHeaders(), raylineARCExplorationTemperatureHeader, "hot"), nil, explorationExcludedCallerTemperature},
+		"negative caller T": {withHeader(eligibleHeaders(), raylineARCCallerTemperatureSignal, "-1"), nil, explorationExcludedCallerTemperature},
+		"NaN caller T":      {withHeader(eligibleHeaders(), raylineARCCallerTemperatureSignal, "NaN"), nil, explorationExcludedCallerTemperature},
+		"word caller T":     {withHeader(eligibleHeaders(), raylineARCCallerTemperatureSignal, "hot"), nil, explorationExcludedCallerTemperature},
 	} {
 		t.Run(name, func(t *testing.T) {
 			got := selectTemperatureTurn(t, newTemperatureFixture(t, fixtureExplorationTemperature(), tc.shape), tc.headers)
@@ -180,17 +180,22 @@ func TestTemperatureExplorationRequiresItsCapability(t *testing.T) {
 	}
 }
 
-// The caller T is a turn signal: never forwarded upstream, and two requests
-// that differ in it never coalesce.
-func TestCallerTemperatureIsAStrippedTurnSignal(t *testing.T) {
+// The retired caller-temperature header is stripped before the provider and
+// never read: a client cannot set its own T by header, even through a
+// trusted gateway.
+func TestRetiredCallerTemperatureHeaderIsStrippedAndIgnored(t *testing.T) {
 	if !slices.Contains(raylineARCTurnSignalHeadersForRemoval(), raylineARCExplorationTemperatureHeader) {
 		t.Fatal("x-rayline-exploration-temperature is forwarded upstream")
 	}
-	arcConfig := &config.RaylineARCAlgorithmConfig{}
-	first := &RequestContext{Headers: map[string]string{raylineARCExplorationTemperatureHeader: "1"}}
-	second := &RequestContext{Headers: map[string]string{raylineARCExplorationTemperatureHeader: "2"}}
-	if raylineARCTurnInputs(arcConfig, first, nil) == raylineARCTurnInputs(arcConfig, second, nil) {
-		t.Fatal("requests with different caller temperatures coalesce")
+	trusted := raylineARCTrustedSignalHeaders(
+		&config.RaylineARCPolicyServiceConfig{TrustTurnSignalHeaders: true},
+		map[string]string{raylineARCExplorationTemperatureHeader: "1", raylineARCCallerTemperatureSignal: "1"},
+	)
+	if _, read := trusted[raylineARCExplorationTemperatureHeader]; read {
+		t.Fatal("the retired header was read")
+	}
+	if _, read := trusted[raylineARCCallerTemperatureSignal]; read {
+		t.Fatal("a request set the internal caller-temperature signal")
 	}
 }
 

@@ -147,7 +147,7 @@ func raylineARCTurnInputs(
 		eligibility = strings.TrimSpace(reqCtx.Headers[lever.EligibilityHeader])
 	}
 	return fmt.Sprintf(
-		"decision=%p|format=%s|close=%t|eligible=%q|fault=%s|credentials=%s|call_kind=%q|compaction=%q|agent_key_source=%q|privacy_mode=%q|training_data=%q|exploration_temperature=%q",
+		"decision=%p|format=%s|close=%t|eligible=%q|fault=%s|credentials=%s|call_kind=%q|compaction=%q|agent_key_source=%q|privacy_mode=%q|training_data=%q",
 		arcConfig,
 		reqCtx.SourceFormat,
 		reqCtx.RaylineARCCloseRequested,
@@ -164,8 +164,6 @@ func raylineARCTurnInputs(
 		// never inherit an eligible one's explored decision.
 		strings.TrimSpace(reqCtx.Headers[raylineARCPrivacyModeHeader]),
 		strings.TrimSpace(reqCtx.Headers[raylineARCTrainingDataHeader]),
-		// A caller's own temperature draws another distribution.
-		strings.TrimSpace(reqCtx.Headers[raylineARCExplorationTemperatureHeader]),
 	)
 }
 

@@ -111,9 +111,10 @@ type RaylineARCExplorationTemperatureConfig struct {
 	// equal. A default above it is refused at load; a caller's T above it is
 	// sent as stated and clamped by the service, which logs both.
 	TemperatureMax *float64 `yaml:"temperature_max"`
-	// CallerTemperature honours the gateway's x-rayline-exploration-
-	// temperature on an eligible hosted turn (a user who opted in). Off,
-	// the header is ignored and the default is sent.
+	// CallerTemperature honours the end caller's own T on an eligible
+	// hosted turn: the body's routing.temperature, on a cell whose
+	// policy_service reads generation routing (pathfinder#5664). Off, the
+	// default is sent. No request header carries a caller T.
 	CallerTemperature bool `yaml:"caller_temperature,omitempty"`
 	// Salt seeds the service's draw with the boundary's decision key.
 	Salt string `yaml:"salt"`

@@ -42,14 +42,16 @@ const (
 	// team) is not opted out of training-data collection; any other value or
 	// none excludes it.
 	raylineARCTrainingDataHeader = "x-rayline-training-data"
-	// raylineARCExplorationTemperatureHeader is the end caller's own
-	// exploration temperature on a hosted turn (pathfinder#5637,
-	// memex-desktop#7531's header): a T >= 0 the gateway sends only when the
-	// user opted in and privacy mode is off. It is read only with
-	// trust_turn_signal_headers, only on a cell whose
-	// exploration_temperature sets caller_temperature, and only on a turn
-	// that is otherwise eligible; it is never forwarded upstream.
+	// raylineARCExplorationTemperatureHeader is memex-desktop#7531's caller
+	// temperature header, retired: the gateway now states the caller's T as
+	// the body's routing.temperature (pathfinder#5664). The cell never reads
+	// it, and strips it before the provider like every turn signal.
 	raylineARCExplorationTemperatureHeader = "x-rayline-exploration-temperature"
+	// raylineARCCallerTemperatureSignal is the turn signal carrying the end
+	// caller's own hosted T (a body routing.temperature on a turn of a cell
+	// that reads it). It is set by this router alone, never read from a
+	// request header; the hosted rules then decide whether it is sent.
+	raylineARCCallerTemperatureSignal = ":caller-temperature"
 )
 
 // Why an exploration-configured cell sent no exploration on a turn, as
@@ -177,7 +179,7 @@ func (exploration *policyExploration) apply(
 		// Copied, so a turn's caller T never reaches the cell's default.
 		hosted := *exploration.request.Temperature
 		if exploration.callerTemperature {
-			if stated := strings.TrimSpace(headers[raylineARCExplorationTemperatureHeader]); stated != "" {
+			if stated := strings.TrimSpace(headers[raylineARCCallerTemperatureSignal]); stated != "" {
 				callerT, ok := parseExplorationTemperature(stated)
 				if !ok {
 					return explorationExcludedCallerTemperature

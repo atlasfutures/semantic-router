@@ -2107,9 +2107,9 @@ recipes:
                 # internal default) and must not exceed temperature_max (the
                 # calibration's cap, also the service's
                 # ARC_EXPLORE_T_MAX_HOSTED). With caller_temperature, an
-                # eligible turn's gateway-stated x-rayline-exploration-
-                # temperature is sent instead (source caller), and the service
-                # clamps it to its cap. calibration is the default's
+                # eligible turn's own T (the body's routing.temperature, read
+                # with generation routing) is sent instead (source caller),
+                # and the service clamps it to its cap. calibration is the default's
                 # provenance, logged and never checked. It is sent only for an
                 # eligible user: the gateway must send x-rayline-privacy-mode:
                 # false and x-rayline-training-data: allowed, read only with
