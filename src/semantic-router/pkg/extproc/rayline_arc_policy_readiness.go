@@ -116,8 +116,12 @@ func raylineARCPolicyServiceRequirements(policy *config.RaylineARCPolicyServiceC
 	}
 	// A cell that excludes every turn from exploration never sends the
 	// member, so it needs no exploration capability.
-	if newPolicyExploration(policy).mayExplore() {
-		required.Capabilities = append(required.Capabilities, raylinearc.PolicyCapabilityExploration)
+	if explore := newPolicyExploration(policy); explore.mayExplore() {
+		capability := raylinearc.PolicyCapabilityExploration
+		if explore.temperature {
+			capability = raylinearc.PolicyCapabilityExplorationTemperature
+		}
+		required.Capabilities = append(required.Capabilities, capability)
 	}
 	return required
 }

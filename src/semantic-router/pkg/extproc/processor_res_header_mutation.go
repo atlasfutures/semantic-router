@@ -311,6 +311,7 @@ func buildResponseHeaderMutation(
 		// survive the cell's response scrub, while x-vsr-response-path does
 		// not.
 		builder.addString(headers.VSRSelectedModel, ctx.VSRSelectedModel)
+		builder.addRaylineARCServedIdentity(ctx)
 	}
 	if !isSuccessful || ctx.VSRCacheHit {
 		return builder.mutation()
@@ -324,6 +325,7 @@ func buildResponseHeaderMutation(
 	// model-switch-gate stay) are applied internally regardless of the header,
 	// so demoting the wire header does not change behavior.
 	addFinalDecisionHeaders(builder, ctx)
+	builder.addRaylineARCServedIdentity(ctx)
 	if debugHeadersRequested(ctx) {
 		addRetentionDirectiveHeaders(builder, ctx)
 		addDecisionDetailHeaders(builder, ctx)

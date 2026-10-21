@@ -729,6 +729,26 @@ it with `candidate_count`. Declare windows on ARC cards only on a build that
 carries the mask; an earlier build applies the filter and fails every turn
 above the smallest declared window.
 
+### The ARC public ids on a tier cell
+
+The ARC product ids are bare -- `arc-swift`, `arc-sage` and the configurable
+`arc-1.0` -- and the prefixed `rayline/arc-swift`, `rayline/arc-sage` and
+`rayline/arc-1.0` stay accepted aliases. A cell serves one product at its own
+operating point, so its `auto_model_names` lists that product's ids, bare and
+prefixed, beside any internal alias the gateway dispatches under, and nothing
+else:
+
+```yaml
+global:
+  router:
+    auto_model_names: ["rayline/arc-dev", "arc-sage", "rayline/arc-sage"]
+```
+
+Both spellings resolve to the same decision and list the same candidates, and
+another tier's ids are refused like any unknown model: a tier turn is never
+answered by another tier's cell. A deployment whose ingress mirrors the
+allow-list (an Envoy Lua guard, for example) lists the same ids there.
+
 ## Deployment
 
 The public Helm profile is

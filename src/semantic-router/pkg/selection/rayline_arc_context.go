@@ -151,6 +151,10 @@ type RaylineARCTrace struct {
 	// service returned one.
 	PolicyPackageSHA256    string
 	PolicyPredictedCostUSD *float64
+	// PolicyCostWeight is the stage-one cost weight the service echoed for
+	// the decision, on every policy-service cell; nil when it echoed none,
+	// never read as 0.
+	PolicyCostWeight *float64
 	// PolicyOperatingPoint is the operating point the service decided at, as
 	// it echoed it (point_id names its cost weight), and PolicyTierPicks the
 	// decision at each configured tier point. Both are set only for a cell
