@@ -182,6 +182,15 @@ type llmUsageRecord struct {
 	// a legacy tau record and when the decision carried none.
 	RouterTemperature  *float64 `json:"router_temperature"`
 	RouterFloorApplied *bool    `json:"router_floor_applied"`
+
+	// The served identity of an ARC call (x-vsr-served-model and
+	// x-vsr-policy-cost-weight), null outside ARC and when unknown:
+	// ServedModel is the provider model id the call was dispatched to, read
+	// back off the final provider body, which a pass-through bill resolves
+	// its card from; PolicyCostWeight is the stage-one cost weight the
+	// service echoed for the decision.
+	ServedModel      *string  `json:"served_model"`
+	PolicyCostWeight *float64 `json:"policy_cost_weight"`
 }
 
 // newLLMUsageRecord fills what the request context and the counts say. The
@@ -265,6 +274,10 @@ func addUsageRecordARCAttribution(record *llmUsageRecord, ctx *RequestContext) {
 		record.ArtifactRevisionHash = nonEmpty(trace.ArtifactRevision)
 		record.PolicyActionID = nonEmpty(trace.PolicyActionID)
 		record.PolicyArmID = nonEmpty(trace.PolicyArmID)
+		if identity, ok := raylineARCServedIdentityOf(ctx); ok {
+			record.ServedModel = nonEmpty(identity.model)
+			record.PolicyCostWeight = identity.costWeight
+		}
 		if decision := ctx.VSRSelectedDecision; trace.PolicyActionID != "" && decision != nil &&
 			decision.Algorithm != nil && decision.Algorithm.RaylineARC != nil &&
 			decision.Algorithm.RaylineARC.PolicyService != nil {
