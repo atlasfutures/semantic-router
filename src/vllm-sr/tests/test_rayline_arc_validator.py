@@ -18,6 +18,7 @@ from cli.rayline_arc_config import (
     RaylineARCEncoderReplicaConfig,
     RaylineARCEpisodeConfig,
     RaylineARCExplorationConfig,
+    RaylineARCExplorationTemperatureConfig,
     RaylineARCPolicyFallbackConfig,
     RaylineARCPolicyServiceConfig,
     RaylineARCRoutesAPIConfig,
@@ -744,3 +745,48 @@ def test_rayline_arc_cli_checks_routing_prices_urls():
         )
         errors = _validate_rayline_arc_decision(decision)
         assert any(error.field.endswith(field) for error in errors), (field, errors)
+
+
+def test_rayline_arc_cli_mirrors_exploration_temperature():
+    """policy_service.exploration_temperature (Go, semantic-router #303)."""
+    policy = _policy_service_decision().algorithm.rayline_arc.policy_service
+    assert policy.exploration_temperature is None
+    block = {
+        "temperature": 0.4,
+        "temperature_max": 1.5,
+        "caller_temperature": True,
+        "salt": "vsr-explore-2026-10",
+        "calibration": {
+            "r": 0.05,
+            "package_sha256": "a" * 64,
+            "readout_pin": "sha256:" + "b" * 64,
+        },
+    }
+    parsed = RaylineARCExplorationTemperatureConfig.model_validate(block)
+    assert parsed.caller_temperature and parsed.calibration.r == 0.05
+    no_calibration = {k: v for k, v in block.items() if k != "calibration"}
+    assert RaylineARCExplorationTemperatureConfig.model_validate(no_calibration).calibration is None
+    for changed in (
+        {"temperature": -0.1},
+        {"temperature": float("nan")},
+        {"temperature": 1.6},
+        {"temperature_max": float("inf")},
+        {"salt": ""},
+        {"salt": "s" * 129},
+        {"calibration": {**block["calibration"], "r": 1.5}},
+        {"surprise": 1},
+    ):
+        with pytest.raises(ValidationError):
+            RaylineARCExplorationTemperatureConfig.model_validate({**block, **changed})
+    raw = policy.model_dump()
+    RaylineARCPolicyServiceConfig.model_validate({**raw, "exploration_temperature": block})
+    legacy = {
+        "tau": 0.02,
+        "tau_max": 0.05,
+        "basis": {"r": 0.05, "package_sha256": raw["package_sha256"], "readout_pin": "p"},
+        "salt": "s",
+    }
+    with pytest.raises(ValidationError):
+        RaylineARCPolicyServiceConfig.model_validate(
+            {**raw, "exploration_temperature": block, "exploration": legacy}
+        )

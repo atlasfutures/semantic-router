@@ -135,15 +135,18 @@ type policyExplorationTemperatureWire struct {
 	Calibration  *PolicyExplorationBasis `json:"calibration,omitempty"`
 }
 
-// MarshalJSON writes the one shape the request is in.
+// MarshalJSON writes the one shape the request is in, without HTML escaping:
+// the decide body is MarshalUnescaped, and a Marshaler's own bytes are kept
+// as they come, so a salt or pin with '<', '>' or '&' would otherwise reach
+// the service rewritten (the legacy wire, before this method, kept them).
 func (request PolicyExplorationRequest) MarshalJSON() ([]byte, error) {
 	if member := request.Temperature; member != nil {
-		return json.Marshal(policyExplorationTemperatureWire{
+		return MarshalUnescaped(policyExplorationTemperatureWire{
 			Temperature: member.Temperature, Salt: request.Salt, Surface: member.Surface,
 			Source: member.Source, TrainingData: member.TrainingData, Calibration: member.Calibration,
 		})
 	}
-	return json.Marshal(policyExplorationLegacyWire{Tau: request.Tau, Basis: request.Basis, Salt: request.Salt})
+	return MarshalUnescaped(policyExplorationLegacyWire{Tau: request.Tau, Basis: request.Basis, Salt: request.Salt})
 }
 
 // UnmarshalJSON reads either shape, strictly, and refuses one carrying both.
