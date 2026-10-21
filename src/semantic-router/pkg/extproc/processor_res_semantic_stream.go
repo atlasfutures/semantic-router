@@ -721,6 +721,7 @@ func (r *OpenAIRouter) reportSemanticStreamingUsage(
 		return
 	}
 	ctx.RaylineARCTransaction.stageCallUsage(usage)
+	ctx.RaylineARCTransaction.stageProviderCacheTTL(servedUpstreamProvider(ctx))
 	if usage.invalid {
 		// The turn still happened and the upstream may have billed it. It
 		// gets its usage record, with every count it never stated null, so

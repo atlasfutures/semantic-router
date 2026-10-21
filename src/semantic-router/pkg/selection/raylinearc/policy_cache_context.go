@@ -184,6 +184,16 @@ func lowerHex64(value string) bool {
 	return len(value) == 64 && lowerHex(value)
 }
 
+// ProviderPolicyTTLSourcePrefix opens the ttl_source of a TTL taken from a
+// provider's documented cache lifetime rather than read from the wire.
+const ProviderPolicyTTLSourcePrefix = "provider_policy: "
+
+// ProviderPolicyTTLSource is the ttl_source of a documented TTL: the prefix and
+// the documentation it comes from.
+func ProviderPolicyTTLSource(source string) string {
+	return ProviderPolicyTTLSourcePrefix + source
+}
+
 // WireCacheTTL reads the prompt-cache TTL a dispatched body states: the
 // shortest cache_control TTL on it (Anthropic orders a longer TTL before a
 // shorter one, so the last breakpoint's prefix expires first), with its

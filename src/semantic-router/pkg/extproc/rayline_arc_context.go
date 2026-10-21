@@ -215,6 +215,9 @@ func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 		// the response headers, as they always have.
 		if algorithm.RaylineARC.PolicyService != nil && reqCtx.RaylineARCTransaction != nil {
 			reqCtx.RaylineARCTransaction.commitOnCompletion = true
+			if algorithm.RaylineARC.PolicyService.CacheContext {
+				reqCtx.RaylineARCTransaction.cachePolicy = algorithm.RaylineARC.PolicyService
+			}
 		}
 	}
 	turns, imageBearing, err := r.projectRaylineARCTurns(
