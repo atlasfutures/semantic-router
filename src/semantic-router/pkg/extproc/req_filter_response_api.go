@@ -31,7 +31,11 @@ type ResponseAPIFilter struct {
 	// with no store, but a previous_response_id is refused as the router's
 	// outage (503), not as the caller's error: the id may well resolve once
 	// the store is back, so telling the caller to rewrite the request would
-	// be wrong.
+	// be wrong. On the ExtProc path the filter is disabled, so the header
+	// phase answers 404 for the whole surface during the outage, exactly as
+	// the nil filter did before this flag existed; the 503 here is what any
+	// caller that reaches the gate directly gets, and what keeps the outage
+	// from ever being misread as a cell that retains nothing.
 	storeUnavailable bool
 }
 
@@ -45,8 +49,9 @@ func NewResponseAPIFilter(store responsestore.ResponseStore) *ResponseAPIFilter 
 }
 
 // NewUnavailableResponseAPIFilter is the filter for a cell whose configured
-// response store failed to open. It retains nothing and serves no object, and
-// it keeps previous_response_id answering 503 rather than 400.
+// response store failed to open. It is disabled, so the surface stays 404 at
+// the header phase as it was before, it retains nothing and serves no object,
+// and it keeps previous_response_id answering 503 rather than 400.
 func NewUnavailableResponseAPIFilter() *ResponseAPIFilter {
 	return &ResponseAPIFilter{storeUnavailable: true}
 }

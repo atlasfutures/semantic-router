@@ -181,10 +181,12 @@ func TestResponsesStoreGateKeepsTheOtherRefusals(t *testing.T) {
 	}
 }
 
-// A cell that configured a store and could not open it is not a storeless
-// cell. The filter it builds is not nil, keeps retention off, and refuses
-// previous_response_id as the router's outage: the id may resolve once the
-// store is back, so the caller must not be told to rewrite the request.
+// A cell that configured a store and could not open it is not a cell that
+// retains nothing. The filter it builds is not nil, is disabled (so the
+// surface stays 404 at the header phase during the outage, as before), and
+// at the gate refuses previous_response_id as the router's outage: the id
+// may resolve once the store is back, so the caller must not be told to
+// rewrite the request.
 func TestResponsesStoreInitFailureStaysUnavailable(t *testing.T) {
 	filter := createResponseAPIFilter(&config.RouterConfig{
 		ResponseAPI: config.ResponseAPIConfig{Enabled: true, StoreBackend: "no-such-backend"},
@@ -194,6 +196,10 @@ func TestResponsesStoreInitFailureStaysUnavailable(t *testing.T) {
 	}
 	if filter.IsEnabled() {
 		t.Fatal("a store that failed to open must not read as enabled")
+	}
+	if response := (&OpenAIRouter{ResponseAPIFilter: filter}).validateRequestHeaders("POST", "/v1/responses", &RequestContext{Headers: map[string]string{}}); response == nil ||
+		response.GetImmediateResponse().GetStatus().GetCode() != typev3.StatusCode_NotFound {
+		t.Fatalf("POST /v1/responses during the outage = %+v, want the 404 it answered before", response)
 	}
 	router, ctx, request, immediate := storeGateRequest(t, filter, storeGateContinuationBody)
 	if request != nil || immediate == nil {
