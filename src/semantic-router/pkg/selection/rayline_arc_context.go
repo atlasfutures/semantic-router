@@ -189,6 +189,10 @@ type RaylineARCTrace struct {
 	// from PolicyExploration, which feeds llm_usage and the episode's
 	// boundary origin: Decisions draws are never training data.
 	RouteExploration *raylinearc.PolicyExplorationRecord
+	// PolicyCostWeight is the stage-one cost weight the service echoed for
+	// the decision, on every policy-service cell; nil when it echoed none,
+	// never read as 0.
+	PolicyCostWeight *float64
 	// PolicyOperatingPoint is the operating point the service decided at, as
 	// it echoed it (point_id names its cost weight), and PolicyTierPicks the
 	// decision at each configured tier point. Both are set only for a cell

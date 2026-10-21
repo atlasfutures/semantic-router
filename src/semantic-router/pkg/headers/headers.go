@@ -337,6 +337,25 @@ const (
 	VSRRoutingApplied   = "x-vsr-routing-applied"
 	VSRRoutingUnapplied = "x-vsr-routing-unapplied"
 
+	// VSRServedModel is the provider model id a Rayline ARC turn was
+	// dispatched to, read back off the final provider body: the model that
+	// served the call as the provider names it (an OpenRouter id on an
+	// OpenRouter arm), with no arm qualifier. A gateway that bills a
+	// configurable ARC turn at the served model's own card (pass-through)
+	// resolves the card from this id rather than from the arm name. Set on
+	// an ARC turn that reached its provider, success or upstream error
+	// alike; never guessed when no body was dispatched.
+	VSRServedModel = "x-vsr-served-model"
+
+	// VSRPolicyPackage is the sha256 of the Rayline ARC policy package that
+	// decided the turn (its release identity), on a policy-service cell.
+	VSRPolicyPackage = "x-vsr-policy-package"
+
+	// VSRPolicyCostWeight is the stage-one cost weight the decision was
+	// taken at, as the policy service echoed it (V = 1 / cost weight).
+	// Absent when the service echoed none.
+	VSRPolicyCostWeight = "x-vsr-policy-cost-weight"
+
 	// VSRProtocolWarnings carries a structured, comma-separated list
 	// of translation observations emitted by the inbound parser during
 	// a lossy translation. Each entry is "severity;reason;field".

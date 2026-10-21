@@ -883,6 +883,10 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	result.RaylineARC.SettlementPrices = armed.prices
 	result.RaylineARC.RoutingPricesUsed = response.RoutingPricesUsed
 	result.RaylineARC.PolicyPredictedCostUSD = policySelectedPredictedCost(response)
+	if weight := response.Decision.OperatingPoint.CostWeight; weight != nil {
+		echoed := *weight
+		result.RaylineARC.PolicyCostWeight = &echoed
+	}
 	scorer.decisionsV2.record(result.RaylineARC, response, policyTierPickValid(scorer, available))
 	// A lookup's exploration is the caller's, never the cell's: the cell's
 	// record keeps only what the cell itself sent (Decisions draws are
