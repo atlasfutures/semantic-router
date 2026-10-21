@@ -8,6 +8,7 @@ import (
 
 	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/responseapi"
 )
@@ -118,10 +119,11 @@ func TestResponsesStoreGateRefusalMatchesTheARCPathsRefusal(t *testing.T) {
 }
 
 // Only the storeless refusal is reclassified. An id the store does not hold
-// stays a 404, and a store that fails to load history it keeps stays a 503:
-// that one is the router's own breakage, and reading it as the caller's
-// would hide an outage behind a "fix your request".
-func TestResponsesStoreGateKeepsTheEnabledStoreRefusals(t *testing.T) {
+// stays a 404; a store that fails to load history it keeps, or that the cell
+// configured and could not open, stays a 503: those are the router's own
+// breakage, and reading them as the caller's would hide an outage behind a
+// "fix your request".
+func TestResponsesStoreGateKeepsTheConfiguredStoreRefusals(t *testing.T) {
 	for name, test := range map[string]struct {
 		filter     *ResponseAPIFilter
 		wantStatus int
@@ -134,6 +136,10 @@ func TestResponsesStoreGateKeepsTheEnabledStoreRefusals(t *testing.T) {
 		},
 		"lookup fails": {
 			filter: NewResponseAPIFilter(newFailingResponseStore()), wantStatus: 503,
+			wantCode: "response_history_unavailable", wantType: "server_error",
+		},
+		"store failed to open": {
+			filter: NewUnavailableResponseAPIFilter(), wantStatus: 503,
 			wantCode: "response_history_unavailable", wantType: "server_error",
 		},
 	} {
@@ -161,6 +167,39 @@ func TestResponsesStoreGateKeepsTheEnabledStoreRefusals(t *testing.T) {
 				t.Fatalf("error type = %q, want %q", errorType, test.wantType)
 			}
 		})
+	}
+}
+
+// A cell that configured a store and could not open it is not a storeless
+// cell. The filter it builds is not nil, keeps retention off, and refuses
+// previous_response_id as the router's outage: the id may resolve once the
+// store is back, so the caller must not be told to rewrite the request.
+func TestResponsesStoreInitFailureStaysUnavailable(t *testing.T) {
+	filter := createResponseAPIFilter(&config.RouterConfig{
+		ResponseAPI: config.ResponseAPIConfig{Enabled: true, StoreBackend: "no-such-backend"},
+	})
+	if filter == nil {
+		t.Fatal("a configured store that failed to open must not read as no store")
+	}
+	if filter.IsEnabled() {
+		t.Fatal("a store that failed to open must not read as enabled")
+	}
+	router, ctx, request, immediate := storeGateRequest(t, filter, storeGateContinuationBody)
+	if request != nil || immediate == nil {
+		t.Fatalf("request=%+v immediate=%+v, want a refusal", request, immediate)
+	}
+	encoded := router.encodeImmediateResponseForClient(immediate, ctx)
+	if got := int(encoded.GetImmediateResponse().GetStatus().GetCode()); got != 503 {
+		t.Fatalf("status = %d, want 503: this is the router's outage, not the caller's error", got)
+	}
+	if got := immediateHeaderValue(encoded, selectionFailureHeader); got != "" {
+		t.Fatalf("%s = %q, want none", selectionFailureHeader, got)
+	}
+	// Stateless turns still proceed: retention is off, generation is not.
+	_, ctx, request, immediate = storeGateRequest(t, filter, `{"model":"model-a","input":"hello"}`)
+	if immediate != nil || request == nil {
+		t.Fatalf("request=%+v immediate=%+v protocol error=%+v, want admission",
+			request, immediate, ctx.ImmediateProtocolError)
 	}
 }
 

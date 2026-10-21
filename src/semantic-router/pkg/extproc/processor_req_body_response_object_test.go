@@ -124,12 +124,17 @@ func TestPrepareObjectStateRejectsStorelessMissingAndUnloadablePreviousResponse(
 	_, err = filter.PrepareObjectState(t.Context(), request, nil)
 	assertResponseObjectStateError(t, err, llmprotocol.ErrorNotFound, "previous_response_not_found")
 
-	// A store that fails to load history it keeps is the router's own fault.
-	filter = NewResponseAPIFilter(newFailingResponseStore())
-	_, err = filter.PrepareObjectState(t.Context(), request, nil)
-	assertResponseObjectStateError(
-		t, err, llmprotocol.ErrorUpstreamUnavailable, "response_history_unavailable",
-	)
+	// A store that fails to load history it keeps is the router's own fault,
+	// and so is a configured store that failed to open.
+	for _, filter := range []*ResponseAPIFilter{
+		NewResponseAPIFilter(newFailingResponseStore()),
+		NewUnavailableResponseAPIFilter(),
+	} {
+		_, err = filter.PrepareObjectState(t.Context(), request, nil)
+		assertResponseObjectStateError(
+			t, err, llmprotocol.ErrorUpstreamUnavailable, "response_history_unavailable",
+		)
+	}
 }
 
 // TestPrepareObjectStateConversationMembershipIsStrictlyExplicit covers the
@@ -214,6 +219,10 @@ func TestPrepareProtocolRequestReturnsTypedPreviousResponseFailures(t *testing.T
 		},
 		{
 			name: "store lookup fails", filter: NewResponseAPIFilter(newFailingResponseStore()),
+			wantStatus: typev3.StatusCode_ServiceUnavailable, wantText: "retained response history is unavailable",
+		},
+		{
+			name: "store failed to open", filter: NewUnavailableResponseAPIFilter(),
 			wantStatus: typev3.StatusCode_ServiceUnavailable, wantText: "retained response history is unavailable",
 		},
 	}
