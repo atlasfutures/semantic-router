@@ -163,3 +163,23 @@ exploration_temperature:
 		t.Fatalf("both shapes configured: err = %v", err)
 	}
 }
+
+// Configurable ARC takes the caller's V, so it cannot also be pinned to a
+// tier's cost weight.
+func TestRaylineARCGenerationRoutingRefusesACallerValueOnATier(t *testing.T) {
+	cfg, decision := policyDispatchFixture()
+	policyService := decision.Algorithm.RaylineARC.PolicyService
+	policyService.GenerationRouting = &RaylineARCGenerationRoutingConfig{CallerValue: true}
+	if err := validatePolicyDispatch(cfg, decision); err != nil {
+		t.Fatalf("configurable ARC refused: %v", err)
+	}
+	weight := 1 / 4.5
+	policyService.DecisionsV2 = &RaylineARCDecisionsV2Config{CostWeight: &weight}
+	if err := validatePolicyDispatch(cfg, decision); err == nil || !strings.Contains(err.Error(), "generation_routing.caller_value") {
+		t.Fatalf("caller V on a tier: err = %v", err)
+	}
+	policyService.GenerationRouting.CallerValue = false
+	if err := validatePolicyDispatch(cfg, decision); err != nil {
+		t.Fatalf("a tier reading routing refused: %v", err)
+	}
+}

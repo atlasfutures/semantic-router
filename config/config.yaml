@@ -2144,6 +2144,22 @@ recipes:
                     r: 0.05
                     package_sha256: "0000000000000000000000000000000000000000000000000000000000000000"
                     readout_pin: qwen3.8-27b-arc-encoder@depth8
+                # generation_routing (off when absent) reads a generation
+                # turn's routing.{value_usd, temperature} (pathfinder#5664) and
+                # removes it before the codec, the encoder or the provider sees
+                # the body. caller_value marks configurable ARC (arc-1.0): the
+                # turn is decided at cost_weight = 1 / value_usd, value_usd in
+                # [0.1, 5], and the service must admit cost weights over
+                # [0.2, 10]. Without it the cell is a tier: a value_usd equal to
+                # its own V (1 / decisions_v2.cost_weight) is accepted and any
+                # other refused (400 tier_value_immutable). routing.temperature
+                # is the hosted caller T, under exploration_temperature's
+                # eligibility and caller_temperature, clamped by the service.
+                # prices and exclusive are refused (prices_not_supported).
+                # x-vsr-routing-applied / x-vsr-routing-unapplied say what the
+                # turn applied.
+                generation_routing:
+                  caller_value: false
                 # eval_cell marks an eval or lab cell: it never sends
                 # exploration, so its decisions are the package's greedy ones.
                 eval_cell: false
