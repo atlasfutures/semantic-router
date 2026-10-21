@@ -1,0 +1,93 @@
+package extproc
+
+import (
+	"bytes"
+	"testing"
+
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
+)
+
+func TestFoldMidConversationToolChanges(t *testing.T) {
+	openRouter := &providerDispatch{
+		profile: &config.ProviderProfile{Type: "openrouter"}, targetFormat: llmprotocol.AnthropicMessagesV1,
+	}
+	cases := []struct {
+		name     string
+		dispatch *providerDispatch
+		body     string
+		want     string
+	}{
+		{
+			name:     "an addition joins the tools and leaves the transcript",
+			dispatch: openRouter,
+			body: `{"model":"m","tools":[{"name":"Bash"}],"messages":[` +
+				`{"role":"user","content":[{"type":"text","text":"hi"}]},` +
+				`{"role":"system","content":[{"type":"text","text":"note"},` +
+				`{"type":"tool_addition","tool":{"type":"tool_definition","definition":{"name":"Docs"}},"cache_control":{"type":"ephemeral"}}]}]}`,
+			want: `{"model":"m","tools":[{"name":"Bash"},{"name":"Docs"}],"messages":[` +
+				`{"role":"user","content":[{"type":"text","text":"hi"}]},` +
+				`{"role":"system","content":[{"type":"text","text":"note","cache_control":{"type":"ephemeral"}}]}]}`,
+		},
+		{
+			name:     "a removal drops the named tool and an emptied message",
+			dispatch: openRouter,
+			body: `{"tools":[{"name":"Bash"},{"name":"Docs"}],"messages":[` +
+				`{"role":"user","content":"hi"},` +
+				`{"role":"system","content":[{"type":"tool_removal","tool":{"type":"tool_reference","name":"Docs"}}]}]}`,
+			want: `{"tools":[{"name":"Bash"}],"messages":[{"role":"user","content":"hi"}]}`,
+		},
+		{
+			name:     "changes apply in transcript order",
+			dispatch: openRouter,
+			body: `{"messages":[` +
+				`{"role":"system","content":[{"type":"tool_addition","tool":{"type":"tool_definition","definition":{"name":"Docs","v":1}}}]},` +
+				`{"role":"user","content":"a"},` +
+				`{"role":"system","content":[{"type":"tool_removal","tool":{"type":"tool_reference","name":"Docs"}}]},` +
+				`{"role":"user","content":"b"},` +
+				`{"role":"system","content":[{"type":"tool_addition","tool":{"type":"tool_definition","definition":{"name":"Docs","v":2}}}]}]}`,
+			want: `{"messages":[{"role":"user","content":"a"},{"role":"user","content":"b"}],"tools":[{"name":"Docs","v":2}]}`,
+		},
+		{
+			name:     "removing the last tool drops tools",
+			dispatch: openRouter,
+			body: `{"tools":[{"name":"Docs"}],"messages":[{"role":"user","content":"hi"},` +
+				`{"role":"system","content":[{"type":"tool_removal","tool":{"type":"tool_reference","name":"Docs"}}]}]}`,
+			want: `{"messages":[{"role":"user","content":"hi"}]}`,
+		},
+		{
+			name:     "a reference re-admits a declared tool",
+			dispatch: openRouter,
+			body: `{"tools":[{"name":"Docs","defer_loading":true}],"messages":[` +
+				`{"role":"system","content":[{"type":"tool_removal","tool":{"type":"tool_reference","name":"Docs"}}]},` +
+				`{"role":"user","content":"hi"},` +
+				`{"role":"system","content":[{"type":"tool_addition","tool":{"type":"tool_reference","name":"Docs"}}]}]}`,
+			want: `{"tools":[{"name":"Docs","defer_loading":true}],"messages":[{"role":"user","content":"hi"}]}`,
+		},
+		{
+			name: "a body bound for Anthropic itself keeps the blocks",
+			dispatch: &providerDispatch{
+				profile: &config.ProviderProfile{Type: "anthropic"}, targetFormat: llmprotocol.AnthropicMessagesV1,
+			},
+			body: `{"messages":[{"role":"system","content":[{"type":"tool_addition","tool":{"type":"tool_reference","name":"Docs"}}]}]}`,
+			want: `{"messages":[{"role":"system","content":[{"type":"tool_addition","tool":{"type":"tool_reference","name":"Docs"}}]}]}`,
+		},
+		{
+			name:     "a body without tool changes is untouched",
+			dispatch: openRouter,
+			body:     `{"tools":[{"name":"Bash"}],"messages":[{"role":"user","content":[{"type":"text","text":"tool_addition"}]}]}`,
+			want:     `{"tools":[{"name":"Bash"}],"messages":[{"role":"user","content":[{"type":"text","text":"tool_addition"}]}]}`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := foldMidConversationToolChanges([]byte(tc.body), tc.dispatch)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got, want := compactJSON(t, out), compactJSON(t, []byte(tc.want)); !bytes.Equal(got, want) {
+				t.Fatalf("got  %s\nwant %s", got, want)
+			}
+		})
+	}
+}
