@@ -335,7 +335,7 @@ func (r *OpenAIRouter) handleRaylineRoutesAPI(
 	started := time.Now()
 	decision, err := runtime.RouteDecision(
 		lookupContext,
-		raylineRoutesConsultWithControls(body, routeID, episode, ephemeral, wireFormat, controls),
+		raylineRoutesConsultWithControls(body, routeID, episode, ephemeral, wireFormat, controls, ctx.Headers),
 	)
 	if err != nil {
 		return r.raylineRoutesFailure(ctx, lookupContext, routeID, err)
@@ -454,7 +454,11 @@ func (r *OpenAIRouter) raylineRoutesFailure(
 		})
 	}
 	// A turn the policy would not decide is answered as the ExtProc path
-	// answers it: 422 undecidable, never a default model.
+	// answers it: 422 undecidable, never a default model. A private turn
+	// with no allowed arm is the same 422 and says why.
+	if errors.Is(err, routerruntime.ErrRouteDecisionNoPrivateArm) {
+		return r.createRaylineRoutesError(ctx, 422, "invalid_request_error", noPrivateArmMessage)
+	}
 	if errors.Is(err, routerruntime.ErrRouteDecisionUndecidable) {
 		return r.createRaylineRoutesError(ctx, 422, "invalid_request_error", undecidableMessage)
 	}
@@ -949,8 +953,9 @@ func raylineRoutesConsult(
 	episode string,
 	ephemeral bool,
 	wireFormat llmprotocol.WireFormat,
+	headers map[string]string,
 ) routerruntime.RouteDecisionRequest {
-	return raylineRoutesConsultWithControls(body, routeID, episode, ephemeral, wireFormat, nil)
+	return raylineRoutesConsultWithControls(body, routeID, episode, ephemeral, wireFormat, nil, headers)
 }
 
 // raylineRoutesConsultWithControls is the consult with the lookup's routing
@@ -962,6 +967,7 @@ func raylineRoutesConsultWithControls(
 	ephemeral bool,
 	wireFormat llmprotocol.WireFormat,
 	controls *selection.RaylineARCRouteControls,
+	headers map[string]string,
 ) routerruntime.RouteDecisionRequest {
 	return routerruntime.RouteDecisionRequest{
 		Routing:    controls,
@@ -970,6 +976,7 @@ func raylineRoutesConsultWithControls(
 		SessionID:  episode,
 		Ephemeral:  ephemeral,
 		WireFormat: wireFormat,
+		Headers:    headers,
 		// Named, not defaulted. The two consult surfaces share one
 		// RouteDecision method and disambiguate a multi-decision deployment
 		// differently; an unset surface reads as the legacy consult and

@@ -314,12 +314,18 @@ const (
 	// called, so it is not an upstream outage), "undecidable" (the policy
 	// would not decide the turn and no model is served in its place;
 	// resending it unchanged cannot succeed, and no backend was called),
-	// "stateless_path" (the turn named previous_response_id on a route that
-	// does not continue a stored conversation; resend the items instead) or
+	// "no_private_arm" (the request's privacy mode allows none of the arms
+	// that could serve the turn; resending it unchanged cannot succeed, and
+	// no backend was called), "stateless_path" (the turn named previous_response_id on a route that
+	// does not continue a stored conversation, either because its policy
+	// does not do stateful continuation or because the cell retains nothing
+	// (response_api store_backend: none); resend the items instead) or
 	// "unavailable" (anything else). The first three ride a 429 or 503;
 	// "missing_session", "request_shape" and "stateless_path" ride a 400;
-	// "undecidable" rides a 422. Emitted only on those refusals, never with
-	// an internal class.
+	// "undecidable" and "no_private_arm" ride a 422. Emitted only on those refusals, never with
+	// an internal class. "stateless_path" is also the one value emitted
+	// before any selection runs: the Responses store gate answers it on a
+	// cell that retains nothing, whatever the route's algorithm.
 	//
 	// The values are stated here, in
 	// extproc/rayline_arc_selection_response.go where they are defined, and in
@@ -336,6 +342,33 @@ const (
 	// routing block.
 	VSRRoutingApplied   = "x-vsr-routing-applied"
 	VSRRoutingUnapplied = "x-vsr-routing-unapplied"
+
+	// VSRPrivacyMode is the data mode a Rayline ARC turn was served under:
+	// "standard", "privacy" or "zdr", as the cell applied it from its
+	// trusted gateway headers. Set on every upstream response to an ARC turn,
+	// replacing any copy the upstream sent; stripped from every other
+	// response and from every request, so neither a client nor a provider can
+	// set it.
+	VSRPrivacyMode = "x-vsr-privacy-mode"
+
+	// VSRServedModel is the provider model id a Rayline ARC turn was
+	// dispatched to, read back off the final provider body: the model that
+	// served the call as the provider names it (an OpenRouter id on an
+	// OpenRouter arm), with no arm qualifier. A gateway that bills a
+	// configurable ARC turn at the served model's own card (pass-through)
+	// resolves the card from this id rather than from the arm name. Set on
+	// an ARC turn that reached its provider, success or upstream error
+	// alike; never guessed when no body was dispatched.
+	VSRServedModel = "x-vsr-served-model"
+
+	// VSRPolicyPackage is the sha256 of the Rayline ARC policy package that
+	// decided the turn (its release identity), on a policy-service cell.
+	VSRPolicyPackage = "x-vsr-policy-package"
+
+	// VSRPolicyCostWeight is the stage-one cost weight the decision was
+	// taken at, as the policy service echoed it (V = 1 / cost weight).
+	// Absent when the service echoed none.
+	VSRPolicyCostWeight = "x-vsr-policy-cost-weight"
 
 	// VSRProtocolWarnings carries a structured, comma-separated list
 	// of translation observations emitted by the inbound parser during

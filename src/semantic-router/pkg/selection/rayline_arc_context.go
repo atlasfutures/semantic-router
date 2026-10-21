@@ -53,6 +53,11 @@ type RaylineARCSelectionContext struct {
 	// it holds for every turn until the card changes. Nil when no arm is
 	// marked, which is the unmarked default.
 	DisabledArms []bool
+	// PrivacyExcludedArms marks, by arm ordinal, the candidates outside a
+	// private request's allowed set, as its trusted gateway headers state it
+	// (extproc/rayline_arc_privacy.go). Nil for a standard request, which
+	// leaves selection exactly as it was.
+	PrivacyExcludedArms []bool
 	// ContextTokens is the request's conservative token estimate, the same
 	// number the generic context filter compares a card's window against.
 	// Zero when no estimate was made, which excludes nothing.
@@ -216,6 +221,10 @@ type RaylineARCTrace struct {
 	// its model; nil when the package states no by-model offer. An arm it
 	// does not offer is never published as an alternative.
 	PolicyArmOffered []bool
+	// PolicyCostWeight is the stage-one cost weight the service echoed for
+	// the decision, on every policy-service cell; nil when it echoed none,
+	// never read as 0.
+	PolicyCostWeight *float64
 	// PolicyOperatingPoint is the operating point the service decided at, as
 	// it echoed it (point_id names its cost weight), and PolicyTierPicks the
 	// decision at each configured tier point. Both are set only for a cell

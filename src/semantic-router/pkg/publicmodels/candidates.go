@@ -55,6 +55,25 @@ type RoutingCandidate struct {
 	// enforces as a mask. A disabled arm is listed, so the arms keep their
 	// artifact ordinals, and marked.
 	Disabled bool `json:"disabled"`
+	// ProviderPin is the OpenRouter provider object the dispatch filter writes
+	// for the arm: on a Chat Completions or Messages body, and on every private
+	// turn's body whatever its format, with the data mode added (a standard
+	// turn's native Responses body carries none). Absent when the arm is not
+	// dispatched through OpenRouter, where no provider object is sent.
+	ProviderPin *CandidateProviderPin `json:"provider_pin,omitempty"`
+}
+
+// CandidateProviderPin is an OpenRouter arm's provider routing. Pinned is
+// false when the card sets no provider_preferences, so OpenRouter chooses
+// the provider per request; the other members are then absent. Otherwise the
+// members are the card's provider_preferences in their wire spelling, every
+// one the dispatch filter sends (order, only, ignore, allow_fallbacks,
+// require_parameters, data_collection, zdr, max_price). A member the card
+// leaves unset is absent, and OpenRouter's default applies to it
+// (allow_fallbacks defaults to true).
+type CandidateProviderPin struct {
+	Pinned bool `json:"pinned"`
+	*config.OpenRouterProviderPreferences
 }
 
 // CandidateThinking spells the decision's use_reasoning for the arm the way
@@ -103,6 +122,30 @@ func routingCandidatesOf(cfg *config.RouterConfig, recipe *config.RoutingRecipe)
 // entrypoint recipe alike); so there is one limit to read, and the first
 // decision's is every decision's on a cell that serves.
 func routingContextLimitOf(recipe *config.RoutingRecipe) *int {
+	arc := raylineARCAlgorithmOf(recipe)
+	if arc == nil {
+		return nil
+	}
+	return positiveIntPointer(arc.ContextLimit())
+}
+
+// routingTrustsTurnSignalHeadersOf reports whether the recipe's Rayline ARC
+// decision reads the gateway's turn-signal headers (trust_turn_signal_headers),
+// the privacy headers among them, or nil when the recipe has no such
+// decision. An artifact-mode decision has no policy service and trusts none.
+// It is one setting for the recipe for the reason the context limit is.
+func routingTrustsTurnSignalHeadersOf(recipe *config.RoutingRecipe) *bool {
+	arc := raylineARCAlgorithmOf(recipe)
+	if arc == nil {
+		return nil
+	}
+	trusted := arc.PolicyService != nil && arc.PolicyService.TrustTurnSignalHeaders
+	return &trusted
+}
+
+// raylineARCAlgorithmOf is the recipe's first rayline_arc decision's config,
+// or nil when it has none.
+func raylineARCAlgorithmOf(recipe *config.RoutingRecipe) *config.RaylineARCAlgorithmConfig {
 	if recipe == nil {
 		return nil
 	}
@@ -111,7 +154,7 @@ func routingContextLimitOf(recipe *config.RoutingRecipe) *int {
 		if decision.Algorithm == nil || decision.Algorithm.Type != config.RaylineARCAlgorithmType {
 			continue
 		}
-		return positiveIntPointer(decision.Algorithm.RaylineARC.ContextLimit())
+		return decision.Algorithm.RaylineARC
 	}
 	return nil
 }
@@ -186,6 +229,9 @@ func routingCandidateOf(cfg *config.RouterConfig, modelRef config.ModelRef, outp
 		if providerModel := cfg.ResolveExternalModelID(model, endpointName); providerModel != model {
 			candidate.ProviderModel = providerModel
 		}
+		if profile, err := cfg.GetProviderProfileForEndpoint(endpointName); err == nil && profile.IsOpenRouter() {
+			candidate.ProviderPin = providerPinOf(cfg.ProviderPreferencesForModel(model))
+		}
 	}
 	if pricing, ok := cfg.GetFullModelPricing(model); ok {
 		candidate.Pricing = &CandidatePricing{
@@ -197,6 +243,15 @@ func routingCandidateOf(cfg *config.RouterConfig, modelRef config.ModelRef, outp
 		}
 	}
 	return candidate
+}
+
+// providerPinOf reads the card's provider_preferences the way the dispatch
+// filter sends them (applyProviderPreferences).
+func providerPinOf(preferences *config.OpenRouterProviderPreferences) *CandidateProviderPin {
+	if preferences == nil {
+		return &CandidateProviderPin{}
+	}
+	return &CandidateProviderPin{Pinned: true, OpenRouterProviderPreferences: preferences}
 }
 
 func thinkingModeOf(modelRef config.ModelRef) string {

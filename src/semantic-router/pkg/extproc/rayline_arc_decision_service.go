@@ -699,6 +699,13 @@ func (service *raylineARCDecisionService) decisionOnlyRequestContext(
 		}
 		headers[algorithm.RaylineARC.Episode.IDHeader] = episodeIdentity
 	}
+	// The privacy headers alone: the builder reads them only on a cell that
+	// trusts them, and a consult must be masked as the routed turn would be.
+	for _, name := range []string{raylineARCPrivacyModeHeader, raylineARCPrivacyAllowedArmsHeader} {
+		if value, stated := request.Headers[name]; stated {
+			headers[name] = value
+		}
+	}
 	return &RequestContext{
 		Headers:              headers,
 		RaylineARCRawBody:    request.Body,
@@ -852,6 +859,12 @@ func selectionFailureError(err error) error {
 		if selectionShapeRefusalClasses[failure.class] {
 			return fmt.Errorf("%w: %w: %w",
 				routerruntime.ErrRouteDecisionInvalidBody, errRaylineRoutesRequestShape, err)
+		}
+		// A private turn with no allowed arm is refused the same way: no
+		// model is served in its place, and retrying cannot change that.
+		if failure.class == arcFailureNoPrivateArm {
+			return fmt.Errorf("%w: %w: %w",
+				routerruntime.ErrRouteDecisionUndecidable, routerruntime.ErrRouteDecisionNoPrivateArm, err)
 		}
 		if failure.class == arcFailurePolicyUndecidable {
 			return fmt.Errorf("%w: %w", routerruntime.ErrRouteDecisionUndecidable, err)

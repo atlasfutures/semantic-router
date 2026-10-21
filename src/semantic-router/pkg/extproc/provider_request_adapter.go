@@ -19,6 +19,12 @@ func (r *OpenAIRouter) adaptProviderRequest(
 		return nil, err
 	}
 	if dispatch == nil || ctx == nil || dispatch.decisionName == "" {
+		// A model named directly, or an internal hop, carries no decision but
+		// can still reach OpenRouter's Messages API.
+		body, err = foldMidConversationToolChanges(body, dispatch, ctx)
+		if err != nil {
+			return nil, err
+		}
 		recordDispatchedReasoningControls(ctx, body)
 		return body, nil
 	}
@@ -41,7 +47,7 @@ func (r *OpenAIRouter) adaptProviderRequest(
 		if dispatch.targetFormat != llmprotocol.OpenAIResponsesV1 || family == nil ||
 			transport != modelcatalog.ReasoningTransportChatTemplate {
 			recordDispatchedReasoningControls(ctx, body)
-			return body, nil
+			return r.applyPrivateProviderPreferences(body, dispatch, ctx)
 		}
 	}
 	body, err = r.setReasoningModeToRequestBodyForModelAndProvider(
@@ -63,7 +69,7 @@ func (r *OpenAIRouter) adaptProviderRequest(
 	if err != nil {
 		return nil, err
 	}
-	body, err = applyProviderPreferences(body, dispatch, r.Config)
+	body, err = applyProviderPreferences(body, dispatch, r.Config, ctx.RaylineARCPrivacyMode)
 	if err != nil {
 		return nil, err
 	}
@@ -74,21 +80,48 @@ func (r *OpenAIRouter) adaptProviderRequest(
 	return body, nil
 }
 
+// applyPrivateProviderPreferences gives a private turn its data-use members on
+// a format that otherwise takes no provider extensions (a native Responses
+// body): the privacy mode is not an extension the format may go without. A
+// standard turn keeps the bytes it sent before. Either way the provider object
+// the body carries is recorded, a caller's own included.
+func (r *OpenAIRouter) applyPrivateProviderPreferences(
+	body []byte,
+	dispatch *providerDispatch,
+	ctx *RequestContext,
+) ([]byte, error) {
+	if ctx.RaylineARCPrivacyMode != "" {
+		var err error
+		body, err = applyProviderPreferences(body, dispatch, r.Config, ctx.RaylineARCPrivacyMode)
+		if err != nil {
+			return nil, err
+		}
+	}
+	recordDispatchedProviderPin(ctx, body)
+	return body, nil
+}
+
 // adaptMessagesProviderRequest applies the provider extensions a Messages body
 // carries. The Messages codec owns the reasoning controls, so only
 // OpenRouter's routing members are added: its Messages API reads the same
 // provider pin and session_id as its Chat API. Both self-gate on OpenRouter,
-// so a body bound for Anthropic itself is left as the codec rendered it.
+// so a body bound for Anthropic itself is left as the codec rendered it, as
+// is the fold of Claude Code's mid-conversation tool changes, which
+// OpenRouter refuses as content blocks.
 func (r *OpenAIRouter) adaptMessagesProviderRequest(
 	body []byte,
 	dispatch *providerDispatch,
 	ctx *RequestContext,
 ) ([]byte, error) {
-	body, err := applyUpstreamSessionID(body, dispatch, ctx)
+	body, err := foldMidConversationToolChanges(body, dispatch, ctx)
 	if err != nil {
 		return nil, err
 	}
-	body, err = applyProviderPreferences(body, dispatch, r.Config)
+	body, err = applyUpstreamSessionID(body, dispatch, ctx)
+	if err != nil {
+		return nil, err
+	}
+	body, err = applyProviderPreferences(body, dispatch, r.Config, ctx.RaylineARCPrivacyMode)
 	if err != nil {
 		return nil, err
 	}

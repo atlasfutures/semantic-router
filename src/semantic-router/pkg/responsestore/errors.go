@@ -1,6 +1,9 @@
 package responsestore
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+)
 
 // Common errors returned by ResponseStore implementations.
 var (
@@ -27,4 +30,11 @@ var (
 
 	// ErrConversationNotEmpty is returned when trying to delete a non-empty conversation.
 	ErrConversationNotEmpty = errors.New("conversation is not empty")
+
+	// ErrNoRetention is returned by a store that retains nothing (the none
+	// backend) for every read. It is also ErrNotFound, so a caller that only
+	// asks "was it there?" gets the same answer as for an id never stored,
+	// while one that asks errors.Is(err, ErrNoRetention) can tell that
+	// nothing is ever there.
+	ErrNoRetention = fmt.Errorf("%w: this store retains nothing", ErrNotFound)
 )

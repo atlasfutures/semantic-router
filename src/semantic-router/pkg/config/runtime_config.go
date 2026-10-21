@@ -346,7 +346,9 @@ type MemoryQdrantConfig struct {
 // ResponseAPIConfig controls response and conversation history storage.
 // StoreBackend defaults to "redis" for durable storage that survives router
 // restarts. Set to "memory" only for local development — all history is lost
-// when the router process exits.
+// when the router process exits. Set to "none" for zero data retention with
+// the Responses surface still on: nothing is stored, and a turn naming
+// previous_response_id is refused with 400 stateless_path.
 type ResponseAPIConfig struct {
 	Enabled      bool                   `yaml:"enabled"`
 	StoreBackend string                 `yaml:"store_backend,omitempty"`

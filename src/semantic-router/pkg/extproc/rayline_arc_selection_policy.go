@@ -233,6 +233,7 @@ func observeRaylineARCSelection(
 		"encoder_failover":       trace.EncoderFailover,
 		"recipe":                 raylineARCRecipeLabel(ctx.Routing.RecipeName()),
 	}
+	addPrivacyFields(fields, ctx)
 	// The policy-service facts exist only when a policy service decided; an
 	// artifact-mode selection carries none rather than zeros.
 	if trace.OfferKind != "" {
