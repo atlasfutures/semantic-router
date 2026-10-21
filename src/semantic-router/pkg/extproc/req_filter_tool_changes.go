@@ -62,7 +62,7 @@ func foldMidConversationToolChanges(body []byte, dispatch *providerDispatch, ctx
 		tools = append(tools, json.RawMessage(tool.Raw))
 	}
 	removed := map[int]bool{}
-	admitAdditions := decisionLeavesToolsToClient(ctx)
+	admitAdditions := decisionLeavesToolsToClient(ctx, body)
 
 	changed := false
 	keptMessages := []json.RawMessage{}
@@ -174,20 +174,59 @@ func foldMidConversationToolChanges(body []byte, dispatch *providerDispatch, ctx
 	return sjson.SetRawBytes(out, "tools", encodedTools)
 }
 
-// decisionLeavesToolsToClient reports that the selected decision sends the
-// client's tools as declared: no tools plugin mode that filters them, no
-// semantic selection, and no tool_selection plugin. Only then may a
-// mid-conversation addition join the tools.
-func decisionLeavesToolsToClient(ctx *RequestContext) bool {
-	if ctx == nil || ctx.VSRSelectedDecision == nil {
+// decisionLeavesToolsToClient reports that the router sends the client's
+// tools as declared, so a mid-conversation addition may join them. Two
+// checks, because either alone misses a case:
+//   - outcome: every tool the client declared is still in the dispatched
+//     body. Any narrowing path (a tools plugin, selection, blocked params)
+//     shows up here without being named.
+//   - policy: no decision setting that narrows tools is on. This covers a
+//     client that declared no tools, where the outcome check has nothing to
+//     compare.
+func decisionLeavesToolsToClient(ctx *RequestContext, body []byte) bool {
+	if ctx == nil {
+		return true
+	}
+	dispatched := map[string]bool{}
+	for _, name := range toolNames(body) {
+		dispatched[name] = true
+	}
+	for _, name := range toolNames(ctx.ProtocolEnvelope.Request) {
+		if !dispatched[name] {
+			return false
+		}
+	}
+	decision := ctx.VSRSelectedDecision
+	if decision == nil {
 		return true
 	}
 	if toolsCfg := resolveDecisionToolsConfig(ctx); toolsCfg != nil && toolsCfg.Enabled &&
 		(toolsCfg.EffectiveMode() != config.ToolsPluginModePassthrough || toolsCfg.SelectionEnabled()) {
 		return false
 	}
-	if selection := ctx.VSRSelectedDecision.GetToolSelectionConfig(); selection != nil && selection.Enabled {
+	if selection := decision.GetToolSelectionConfig(); selection != nil && selection.Enabled {
 		return false
 	}
+	if params := decision.GetRequestParamsConfig(); params != nil {
+		for _, blocked := range params.BlockedParams {
+			if blocked == "tools" {
+				return false
+			}
+		}
+	}
 	return true
+}
+
+// toolNames are the names a body declares in `tools`, in the Messages and
+// Responses shape (name) or the Chat shape (function.name).
+func toolNames(body []byte) []string {
+	var names []string
+	for _, tool := range gjson.GetBytes(body, "tools").Array() {
+		if name := tool.Get("name").String(); name != "" {
+			names = append(names, name)
+		} else if name := tool.Get("function.name").String(); name != "" {
+			names = append(names, name)
+		}
+	}
+	return names
 }

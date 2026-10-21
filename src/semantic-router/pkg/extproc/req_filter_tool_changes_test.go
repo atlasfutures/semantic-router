@@ -142,6 +142,13 @@ func TestFoldMidConversationToolChangesKeepsAToolPolicy(t *testing.T) {
 			want:    `{"messages":[{"role":"user","content":"hi"}]}`,
 		},
 		{
+			name: "request_params blocks tools",
+			plugins: []config.DecisionPlugin{toolsPlugin(t, config.DecisionPluginRequestParams, config.RequestParamsPluginConfig{
+				BlockedParams: []string{"tools"},
+			})},
+			want: `{"messages":[{"role":"user","content":"hi"}]}`,
+		},
+		{
 			name: "passthrough without selection",
 			plugins: []config.DecisionPlugin{toolsPlugin(t, config.DecisionPluginTools, config.ToolsPluginConfig{
 				Enabled: true, SemanticSelection: &noSelection,
@@ -151,7 +158,7 @@ func TestFoldMidConversationToolChangesKeepsAToolPolicy(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			ctx :=&RequestContext{VSRSelectedDecision: &config.Decision{Name: "route", Plugins: tc.plugins}}
+			ctx := &RequestContext{VSRSelectedDecision: &config.Decision{Name: "route", Plugins: tc.plugins}}
 			body := []byte(`{"tools":[{"name":"Bash"}],"messages":[{"role":"user","content":"hi"},` +
 				`{"role":"system","content":[{"type":"tool_addition","tool":{"type":"tool_definition","definition":{"name":"Docs"}}},` +
 				`{"type":"tool_removal","tool":{"type":"tool_reference","name":"Bash"}}]}]}`)
@@ -165,6 +172,37 @@ func TestFoldMidConversationToolChangesKeepsAToolPolicy(t *testing.T) {
 				t.Fatalf("got  %s\nwant %s", got, tc.want)
 			}
 		})
+	}
+}
+
+// Whatever path narrowed the client's tools, the dispatched body shows it: a
+// declared tool that did not travel keeps additions out.
+func TestFoldMidConversationToolChangesKeepsANarrowedToolSet(t *testing.T) {
+	ctx := &RequestContext{ProtocolEnvelope: llmprotocol.Envelope{
+		Request: []byte(`{"tools":[{"name":"Bash"},{"name":"Read"}]}`),
+	}}
+	body := []byte(`{"tools":[{"name":"Bash"}],"messages":[{"role":"user","content":"hi"},` +
+		`{"role":"system","content":[{"type":"tool_addition","tool":{"type":"tool_definition","definition":{"name":"Docs"}}}]}]}`)
+	dispatch := &providerDispatch{
+		profile: &config.ProviderProfile{Type: "openrouter"}, targetFormat: llmprotocol.AnthropicMessagesV1,
+	}
+	out, err := foldMidConversationToolChanges(body, dispatch, ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"tools":[{"name":"Bash"}],"messages":[{"role":"user","content":"hi"}]}`
+	if got := compactJSON(t, out); !bytes.Equal(got, compactJSON(t, []byte(want))) {
+		t.Fatalf("narrowed: got  %s\nwant %s", got, want)
+	}
+
+	ctx.ProtocolEnvelope.Request = []byte(`{"tools":[{"name":"Bash"}]}`)
+	out, err = foldMidConversationToolChanges(body, dispatch, ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want = `{"tools":[{"name":"Bash"},{"name":"Docs"}],"messages":[{"role":"user","content":"hi"}]}`
+	if got := compactJSON(t, out); !bytes.Equal(got, compactJSON(t, []byte(want))) {
+		t.Fatalf("as declared: got  %s\nwant %s", got, want)
 	}
 }
 
