@@ -1,0 +1,98 @@
+[
+  {
+    "prices": {
+      "anthropic/claude-sonnet-5": {
+        "input": 3,
+        "cache_read": 0.3,
+        "cache_write": 3.75,
+        "output": 15
+      },
+      "deepseek/deepseek-v4.1-flash": {
+        "input": 0.1,
+        "cache_read": 0,
+        "cache_write": 0,
+        "output": 0.4
+      }
+    },
+    "exclusive": true,
+    "jcs": "{\"exclusive\":true,\"prices\":{\"anthropic/claude-sonnet-5\":{\"cache_read\":0.3,\"cache_write\":3.75,\"input\":3,\"output\":15},\"deepseek/deepseek-v4.1-flash\":{\"cache_read\":0,\"cache_write\":0,\"input\":0.1,\"output\":0.4}},\"schema\":\"arc-caller-prices.v1\"}",
+    "price_sha256": "d5c16e9479a1aba03cd9e38b4b3878e21440b5a5d156f46e882d3eec835cf57f"
+  },
+  {
+    "prices": {
+      "anthropic/claude-sonnet-5": {
+        "input": 3,
+        "cache_read": 0.3,
+        "cache_write": 3.75,
+        "output": 15
+      },
+      "deepseek/deepseek-v4.1-flash": {
+        "input": 0.1,
+        "cache_read": 0,
+        "cache_write": 0,
+        "output": 0.4
+      }
+    },
+    "exclusive": false,
+    "jcs": "{\"exclusive\":false,\"prices\":{\"anthropic/claude-sonnet-5\":{\"cache_read\":0.3,\"cache_write\":3.75,\"input\":3,\"output\":15},\"deepseek/deepseek-v4.1-flash\":{\"cache_read\":0,\"cache_write\":0,\"input\":0.1,\"output\":0.4}},\"schema\":\"arc-caller-prices.v1\"}",
+    "price_sha256": "3abe1bbdf0242628534a98f82b917de91f29b93320c876891005afb993530b35"
+  },
+  {
+    "prices": {
+      "m/a": {
+        "input": 1,
+        "cache_read": 0,
+        "cache_write": 0,
+        "output": 2
+      }
+    },
+    "exclusive": false,
+    "jcs": "{\"exclusive\":false,\"prices\":{\"m/a\":{\"cache_read\":0,\"cache_write\":0,\"input\":1,\"output\":2}},\"schema\":\"arc-caller-prices.v1\"}",
+    "price_sha256": "62fad7dede48638275ddc4eccab435b9fbe333d554573f165fe9f380141d457c"
+  },
+  {
+    "prices": {
+      "m/a": {
+        "input": 1.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0,
+        "output": 2.0
+      }
+    },
+    "exclusive": false,
+    "jcs": "{\"exclusive\":false,\"prices\":{\"m/a\":{\"cache_read\":0,\"cache_write\":0,\"input\":1,\"output\":2}},\"schema\":\"arc-caller-prices.v1\"}",
+    "price_sha256": "62fad7dede48638275ddc4eccab435b9fbe333d554573f165fe9f380141d457c"
+  },
+  {
+    "prices": {
+      "m/a": {
+        "input": 1e-07,
+        "cache_read": 1e+21,
+        "cache_write": 123.456,
+        "output": 1e-06
+      }
+    },
+    "exclusive": false,
+    "jcs": "{\"exclusive\":false,\"prices\":{\"m/a\":{\"cache_read\":1e+21,\"cache_write\":123.456,\"input\":1e-7,\"output\":0.000001}},\"schema\":\"arc-caller-prices.v1\"}",
+    "price_sha256": "92da0585ba13e23683a4fed387d24c9415a7c27955cdb18a0dc5cd197b1bc364"
+  },
+  {
+    "prices": {
+      "z/\u00e9": {
+        "input": 0.25,
+        "cache_read": 0.025,
+        "cache_write": 0.3125,
+        "output": 1.25
+      },
+      "a/b": {
+        "input": 3,
+        "cache_read": 0.3,
+        "cache_write": 3.75,
+        "output": 15
+      }
+    },
+    "exclusive": true,
+    "jcs": "{\"exclusive\":true,\"prices\":{\"a/b\":{\"cache_read\":0.3,\"cache_write\":3.75,\"input\":3,\"output\":15},\"z/\u00e9\":{\"cache_read\":0.025,\"cache_write\":0.3125,\"input\":0.25,\"output\":1.25}},\"schema\":\"arc-caller-prices.v1\"}",
+    "price_sha256": "7b2bf5b103e53748fb31b44d6b464f5545c0909a137c03b6c3fd03aec004734c"
+  }
+]

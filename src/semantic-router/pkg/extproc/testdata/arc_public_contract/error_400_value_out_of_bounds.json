@@ -1,0 +1,11 @@
+{
+  "status": 400,
+  "body": {
+    "type": "error",
+    "error": {
+      "type": "invalid_request_error",
+      "message": "routing.value_usd must lie in [0.1, 5.0]; it is never clamped.",
+      "code": "value_out_of_bounds"
+    }
+  }
+}

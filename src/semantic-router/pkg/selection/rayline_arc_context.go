@@ -94,6 +94,10 @@ type RaylineARCSelectionContext struct {
 	// PolicySignalHeaders holds the request's explicit turn-signal headers
 	// (call kind, compaction ordinal), keyed by lower-case name.
 	PolicySignalHeaders map[string]string
+	// RouteControls are a POST /v1/routes lookup's public routing controls
+	// (pathfinder#5664): its result points, caller prices and exploration.
+	// Nil on every routed turn and on a lookup that names none.
+	RouteControls *RaylineARCRouteControls
 	// PolicyCallKind and PolicyCallKindSource are the request's call kind as
 	// classified before the episode was read; selection serves the request as
 	// that kind. Empty when the request was not classified ahead of selection.
@@ -102,6 +106,28 @@ type RaylineARCSelectionContext struct {
 }
 
 // RaylineARCTrace records bounded, privacy-safe artifact policy diagnostics.
+// RaylineARCRouteResult is one checked result pick: the arm its action
+// dispatches and that action's level.
+type RaylineARCRouteResult struct {
+	Pick          raylinearc.PolicyTierPick
+	Arm           int
+	ThinkingLevel string
+}
+
+// RaylineARCRouteControls is what a Decisions lookup adds to its decide
+// request. Points are asked as selection.tier_points beside any the cell
+// configures, each a result the lookup returns; Exploration replaces the
+// request's exploration (surface decisions, never training data); Prices
+// replace the live feed's rates; with Exclusive only the actions of
+// PricedModels are offered.
+type RaylineARCRouteControls struct {
+	Points       []raylinearc.PolicyTierPoint
+	Exploration  *raylinearc.PolicyExplorationRequest
+	Prices       *raylinearc.PolicyRoutingPrices
+	PricedModels []string
+	Exclusive    bool
+}
+
 type RaylineARCTrace struct {
 	// PolicyActionID, PolicyArmID and ThinkingLevel are the policy-service
 	// decision: the package action, the trained arm the service scored, and
@@ -146,6 +172,16 @@ type RaylineARCTrace struct {
 	// service returned one.
 	PolicyPackageSHA256    string
 	PolicyPredictedCostUSD *float64
+	// RouteResults are a Decisions lookup's results, keyed by result name
+	// (swift, sage, custom): the service's tier pick at each requested
+	// point, each checked as the decision's own action is. Nil off a lookup
+	// with route controls.
+	RouteResults map[string]RaylineARCRouteResult
+	// RouteExploration is the service's exploration record for the
+	// lookup's own decision under route controls' exploration. Kept apart
+	// from PolicyExploration, which feeds llm_usage and the episode's
+	// boundary origin: Decisions draws are never training data.
+	RouteExploration *raylinearc.PolicyExplorationRecord
 	// PolicyOperatingPoint is the operating point the service decided at, as
 	// it echoed it (point_id names its cost weight), and PolicyTierPicks the
 	// decision at each configured tier point. Both are set only for a cell

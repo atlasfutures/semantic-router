@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/url"
 	"strconv"
 	"strings"
@@ -33,6 +34,7 @@ import (
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/routerruntime"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
 )
 
 // raylineRoutesAPIPath answers one question -- where should this request go --
@@ -102,6 +104,17 @@ type raylineRoutesResponse struct {
 	// two routes on one worker differ by; absent outside that mode.
 	ThinkingLevel  string `json:"thinking_level,omitempty"`
 	PolicyActionID string `json:"policy_action_id,omitempty"`
+	// Presets, Custom and Routing are the Decisions results and the echo of
+	// the request's routing block (pathfinder#5664), on a cell that serves
+	// routing controls: presets always, custom exactly when routing.value_usd
+	// was sent, routing exactly when the request carried it. Exploration is
+	// the service's record for the lookup's own decision when the request
+	// asked for a temperature and the service reported one
+	// (memex-desktop#7531 reads it).
+	Presets     *raylineRoutesPresets     `json:"presets,omitempty"`
+	Custom      *raylineRoutesResult      `json:"custom,omitempty"`
+	Routing     *raylineRoutesRoutingEcho `json:"routing,omitempty"`
+	Exploration json.RawMessage           `json:"exploration,omitempty"`
 }
 
 type raylineRoutesThinking struct {
@@ -251,6 +264,33 @@ func (r *OpenAIRouter) handleRaylineRoutesAPI(
 		return r.createRaylineRoutesError(ctx, 400, "invalid_request_error", detail)
 	}
 	warnings = append(warnings, raylineRoutesHeaderWarnings(ctx, settings)...)
+	// The public routing controls (pathfinder#5664). A body's routing block
+	// is read, validated and removed before the codec sees the body; on a
+	// cell that does not serve them it is refused rather than ignored.
+	// memex-desktop#7531's temperature header alone keeps its older meaning
+	// there: no exploration, which the gateway echoes as unsupported.
+	routing, body, refusal := readRaylineRoutesRouting(
+		body, raylineRoutesHeader(ctx, raylineARCExplorationTemperatureHeader), r.Config.EffectiveAutoModelNames(),
+	)
+	if refusal != nil {
+		return r.createRaylineRoutesCodedError(ctx, refusal)
+	}
+	var controls *selection.RaylineARCRouteControls
+	switch {
+	case settings.Routing != nil:
+		if unknown := raylineRoutesUnknownPriceModels(routing, r.raylineRoutesDecisionWorkerModels()); len(unknown) > 0 {
+			return r.createRaylineRoutesCodedError(ctx, routesInvalid("unknown_price_model",
+				"routing.prices names a model this ARC release does not offer: "+strings.Join(unknown, ", ")+"."))
+		}
+		controls = raylineRoutesControls(routing, settings.Routing, time.Now())
+	case routing != nil && routing.bodySent:
+		return r.createRaylineRoutesCodedError(ctx, &routesContractError{
+			status: 503, errType: "api_error", code: "unavailable",
+			message: "this ARC cell does not serve routing controls",
+		})
+	default:
+		routing = nil
+	}
 	// The format the body was actually read under, recorded before selection
 	// runs. wireFormatOf reads this when a decode fails, and without the
 	// update it still held the path-derived default -- so a caller who sent
@@ -290,7 +330,7 @@ func (r *OpenAIRouter) handleRaylineRoutesAPI(
 	started := time.Now()
 	decision, err := runtime.RouteDecision(
 		lookupContext,
-		raylineRoutesConsult(body, routeID, episode, ephemeral, wireFormat),
+		raylineRoutesConsultWithControls(body, routeID, episode, ephemeral, wireFormat, controls),
 	)
 	if err != nil {
 		return r.raylineRoutesFailure(ctx, lookupContext, routeID, err)
@@ -304,14 +344,21 @@ func (r *OpenAIRouter) handleRaylineRoutesAPI(
 	})
 	// Same claim as the error path: this body is the route contract, not an
 	// inference response to be re-encoded into a client protocol.
-	ctx.ImmediateResponseEncoded = true
-	return r.createJSONResponse(200, raylineRoutesPayload(
+	payload := raylineRoutesPayload(
 		routeID,
 		raylineRoutesCheckpoint(settings.CheckpointLabel, decision.Checkpoint),
 		decision,
 		warnings,
 		time.Since(started),
-	))
+	)
+	if controls != nil {
+		if err := raylineRoutesAddResults(&payload, routing, decision); err != nil {
+			return r.raylineRoutesFailure(ctx, lookupContext, routeID,
+				fmt.Errorf("%w: %w", routerruntime.ErrRouteDecisionInconsistent, err))
+		}
+	}
+	ctx.ImmediateResponseEncoded = true
+	return r.createJSONResponse(200, payload)
 }
 
 // raylineRoutesContext keeps the decision on the request's own trace, and
@@ -383,6 +430,14 @@ func (r *OpenAIRouter) raylineRoutesFailure(
 			detail = statelessPathMessage
 		}
 		return r.createRaylineRoutesError(ctx, 400, "invalid_request_error", detail)
+	}
+	// A decision the service answered inconsistently with the request's
+	// routing controls is withheld: never shown as applied.
+	if errors.Is(err, routerruntime.ErrRouteDecisionInconsistent) {
+		return r.createRaylineRoutesCodedError(ctx, &routesContractError{
+			status: 502, errType: "api_error", code: "inconsistent_upstream",
+			message: "route lookup returned a decision inconsistent with its routing controls",
+		})
 	}
 	// A turn the policy would not decide is answered as the ExtProc path
 	// answers it: 422 undecidable, never a default model.
@@ -878,7 +933,21 @@ func raylineRoutesConsult(
 	ephemeral bool,
 	wireFormat llmprotocol.WireFormat,
 ) routerruntime.RouteDecisionRequest {
+	return raylineRoutesConsultWithControls(body, routeID, episode, ephemeral, wireFormat, nil)
+}
+
+// raylineRoutesConsultWithControls is the consult with the lookup's routing
+// controls, nil for none.
+func raylineRoutesConsultWithControls(
+	body []byte,
+	routeID string,
+	episode string,
+	ephemeral bool,
+	wireFormat llmprotocol.WireFormat,
+	controls *selection.RaylineARCRouteControls,
+) routerruntime.RouteDecisionRequest {
 	return routerruntime.RouteDecisionRequest{
+		Routing:    controls,
 		Body:       body,
 		DecisionID: routeID,
 		SessionID:  episode,

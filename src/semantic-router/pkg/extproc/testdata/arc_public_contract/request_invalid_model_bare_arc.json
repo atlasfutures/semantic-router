@@ -1,0 +1,18 @@
+{
+  "surface": "decisions",
+  "body": {
+    "model": "arc",
+    "max_tokens": 1024,
+    "messages": [
+      {
+        "role": "user",
+        "content": "Refactor the parser and add tests."
+      }
+    ]
+  },
+  "expect": {
+    "status": 400,
+    "type": "invalid_request_error",
+    "code": "unknown_model"
+  }
+}

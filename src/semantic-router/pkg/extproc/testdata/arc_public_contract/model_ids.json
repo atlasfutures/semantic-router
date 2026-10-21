@@ -1,0 +1,62 @@
+{
+  "resolve": {
+    "arc-swift": {
+      "canonical": "arc-swift",
+      "mode": "tier",
+      "tier": "swift",
+      "value_usd": 0.1
+    },
+    "arc-sage": {
+      "canonical": "arc-sage",
+      "mode": "tier",
+      "tier": "sage",
+      "value_usd": 4.5
+    },
+    "arc-1.0": {
+      "canonical": "arc-1.0",
+      "mode": "configurable",
+      "tier": null,
+      "value_usd": null
+    },
+    "rayline/arc-swift": {
+      "canonical": "arc-swift",
+      "mode": "tier",
+      "tier": "swift",
+      "value_usd": 0.1
+    },
+    "rayline/arc-sage": {
+      "canonical": "arc-sage",
+      "mode": "tier",
+      "tier": "sage",
+      "value_usd": 4.5
+    },
+    "arc-1": {
+      "canonical": "arc-1.0",
+      "mode": "configurable",
+      "tier": null,
+      "value_usd": null
+    },
+    "rayline/arc-1": {
+      "canonical": "arc-1.0",
+      "mode": "configurable",
+      "tier": null,
+      "value_usd": null
+    },
+    "rayline/arc-1.0": {
+      "canonical": "arc-1.0",
+      "mode": "configurable",
+      "tier": null,
+      "value_usd": null
+    },
+    "claude-sonnet-5": null,
+    "auto": null
+  },
+  "refused_unknown_model": [
+    "arc",
+    "rayline/arc",
+    "arc-2.0",
+    "arc-1.0@2026-10-20",
+    "arc-swift-1.0",
+    "arc@latest"
+  ]
+}

@@ -5,6 +5,8 @@ import (
 	"errors"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
 
 // RouteDecisionRequest is one decision-only route consult.
@@ -57,6 +59,11 @@ type RouteDecisionRequest struct {
 	// normalizes both without the wire format being guessed from the body
 	// twice, once by the adapter and once by the router.
 	WireFormat llmprotocol.WireFormat
+	// Routing is a POST /v1/routes lookup's validated routing controls
+	// (pathfinder#5664), already turned into decide-request members: the
+	// result points, caller prices, exclusivity and exploration. Nil asks
+	// for the lookup's own decision alone.
+	Routing *selection.RaylineARCRouteControls
 }
 
 // RouteDecisionSurface names which endpoint a consult came from.
@@ -123,6 +130,28 @@ type RouteDecision struct {
 	// what the request literally asked for. Always non-nil on a successful
 	// decision, and usually empty.
 	Warnings []string
+	// Results are the decisions at the request's Routing points, in the
+	// order the points were asked, each from the same encode. Alternatives:
+	// none of them advanced the episode. Empty without Routing.
+	Results []RouteResult
+	// Exploration is the service's exploration record for the lookup's own
+	// decision when Routing asked for exploration and the service reported
+	// one; nil otherwise, never a fabricated greedy record.
+	Exploration *raylinearc.PolicyExplorationRecord
+}
+
+// RouteResult is the decision at one Routing point.
+type RouteResult struct {
+	Name           string
+	CostWeight     float64
+	SelectedWorker string
+	WorkerModel    string
+	Provider       string
+	Thinking       RouteThinking
+	ThinkingLevel  string
+	PolicyActionID string
+	// Exploration is the point's own draw when the service reported one.
+	Exploration *raylinearc.PolicyExplorationRecord
 }
 
 // RouteThinking is the reasoning configuration of the selected arm.
@@ -230,3 +259,10 @@ var ErrRouteDecisionInvalidBody = errors.New("route decision request is invalid"
 // chosen in its place, and the same request is refused identically every
 // time, so an adapter answers 422 rather than 503.
 var ErrRouteDecisionUndecidable = errors.New("route decision undecidable")
+
+// ErrRouteDecisionInconsistent marks a decision the service answered in a
+// way the request cannot stand behind: a requested result point with no
+// pick, caller prices it did not apply, or an exploration record that
+// contradicts the requested temperature. The answer is withheld rather than
+// shown as applied, so an adapter answers 502.
+var ErrRouteDecisionInconsistent = errors.New("route decision inconsistent")
