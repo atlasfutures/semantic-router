@@ -35,6 +35,10 @@ const (
 	PolicyCapabilityTierPoints     = "tier_points"
 	PolicyCapabilityResponseFields = "response_fields"
 	PolicyCapabilityExploration    = "exploration"
+	// PolicyCapabilityExplorationTemperature: selection.exploration in the
+	// temperature shape (pathfinder#5637). Proposed name: a service that
+	// does not advertise it is never sent that shape.
+	PolicyCapabilityExplorationTemperature = "exploration_temperature"
 )
 
 // Readiness classes for a service that cannot serve what the cell sends.
