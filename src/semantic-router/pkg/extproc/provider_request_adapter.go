@@ -19,6 +19,12 @@ func (r *OpenAIRouter) adaptProviderRequest(
 		return nil, err
 	}
 	if dispatch == nil || ctx == nil || dispatch.decisionName == "" {
+		// A model named directly, or an internal hop, carries no decision but
+		// can still reach OpenRouter's Messages API.
+		body, err = foldMidConversationToolChanges(body, dispatch, ctx)
+		if err != nil {
+			return nil, err
+		}
 		recordDispatchedReasoningControls(ctx, body)
 		return body, nil
 	}
@@ -99,13 +105,19 @@ func (r *OpenAIRouter) applyPrivateProviderPreferences(
 // carries. The Messages codec owns the reasoning controls, so only
 // OpenRouter's routing members are added: its Messages API reads the same
 // provider pin and session_id as its Chat API. Both self-gate on OpenRouter,
-// so a body bound for Anthropic itself is left as the codec rendered it.
+// so a body bound for Anthropic itself is left as the codec rendered it, as
+// is the fold of Claude Code's mid-conversation tool changes, which
+// OpenRouter refuses as content blocks.
 func (r *OpenAIRouter) adaptMessagesProviderRequest(
 	body []byte,
 	dispatch *providerDispatch,
 	ctx *RequestContext,
 ) ([]byte, error) {
-	body, err := applyUpstreamSessionID(body, dispatch, ctx)
+	body, err := foldMidConversationToolChanges(body, dispatch, ctx)
+	if err != nil {
+		return nil, err
+	}
+	body, err = applyUpstreamSessionID(body, dispatch, ctx)
 	if err != nil {
 		return nil, err
 	}
