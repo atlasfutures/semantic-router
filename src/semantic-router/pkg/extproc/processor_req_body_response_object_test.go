@@ -10,6 +10,7 @@ import (
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/responseapi"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/responsestore"
 )
 
 func TestSameFormatResponsesBodyPublishesRouterOwnedID(t *testing.T) {
@@ -114,10 +115,11 @@ func TestPrepareObjectStateCreatesUniquePublicResponseIdentity(t *testing.T) {
 	}
 }
 
-func TestPrepareObjectStateRejectsStorelessMissingAndUnloadablePreviousResponse(t *testing.T) {
+func TestPrepareObjectStateRejectsNonRetainingMissingAndUnloadablePreviousResponse(t *testing.T) {
 	request := llmprotocol.Request{PreviousResponseID: "resp_missing"}
-	// No store: the id can never resolve here, so it is the caller's to fix.
-	_, err := (&ResponseAPIFilter{}).PrepareObjectState(t.Context(), request, nil)
+	// A store that retains nothing: the id can never resolve here, so it is
+	// the caller's to fix.
+	_, err := NewResponseAPIFilter(responsestore.NewNoneStore()).PrepareObjectState(t.Context(), request, nil)
 	assertResponseObjectStateError(t, err, llmprotocol.ErrorInvalidRequest, selectionFailureStatelessPath)
 
 	filter := NewResponseAPIFilter(NewMockResponseStore())
@@ -125,10 +127,12 @@ func TestPrepareObjectStateRejectsStorelessMissingAndUnloadablePreviousResponse(
 	assertResponseObjectStateError(t, err, llmprotocol.ErrorNotFound, "previous_response_not_found")
 
 	// A store that fails to load history it keeps is the router's own fault,
-	// and so is a configured store that failed to open.
+	// and so are a configured store that failed to open and no store at all.
 	for _, filter := range []*ResponseAPIFilter{
 		NewResponseAPIFilter(newFailingResponseStore()),
 		NewUnavailableResponseAPIFilter(),
+		{},
+		nil,
 	} {
 		_, err = filter.PrepareObjectState(t.Context(), request, nil)
 		assertResponseObjectStateError(
@@ -210,8 +214,13 @@ func TestPrepareProtocolRequestReturnsTypedPreviousResponseFailures(t *testing.T
 		wantClass string
 	}{
 		{
-			name: "no store", wantStatus: typev3.StatusCode_BadRequest,
-			wantText: statelessPathMessage, wantClass: selectionFailureStatelessPath,
+			name: "store retains nothing", filter: NewResponseAPIFilter(responsestore.NewNoneStore()),
+			wantStatus: typev3.StatusCode_BadRequest,
+			wantText:   statelessPathMessage, wantClass: selectionFailureStatelessPath,
+		},
+		{
+			name: "no store", wantStatus: typev3.StatusCode_ServiceUnavailable,
+			wantText: "retained response history is unavailable",
 		},
 		{
 			name: "response missing", filter: NewResponseAPIFilter(NewMockResponseStore()),

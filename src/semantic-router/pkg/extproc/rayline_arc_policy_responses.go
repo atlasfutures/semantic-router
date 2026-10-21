@@ -17,9 +17,10 @@ var (
 	// On the ExtProc path this is never reached for live traffic: the
 	// Responses store gate (ResponseAPIFilter.PrepareObjectState, run by
 	// prepareProtocolRequest) has already answered a previous_response_id it
-	// cannot resolve, with the same stateless_path class and message. The
-	// branch serves the decision API (POST /v1/routes), which does not run
-	// that gate and so arrives here with no ResponseObjectState.
+	// cannot resolve, with the same stateless_path class and message on a
+	// cell that retains nothing. The branch serves the decision API (POST
+	// /v1/routes), which does not run that gate and so arrives here with no
+	// ResponseObjectState.
 	errPolicyResponsesHistoryUnavailable = errors.New("previous_response_id history is not available on this path")
 )
 

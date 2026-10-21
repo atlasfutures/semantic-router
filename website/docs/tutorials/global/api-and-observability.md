@@ -78,6 +78,7 @@ The `store_backend` field controls where response and conversation history is pe
 |---------|-----------|----------|
 | `redis` | Survives router restart, shared across replicas | Production (default) |
 | `memory` | Lost on router restart | Local development only |
+| `none` | Nothing is retained | Zero data retention with the Responses surface still on. Stateless turns (the conversation's items in `input`) are served and get a response id; a turn naming `previous_response_id` is refused with 400 and `x-vsr-failure-class: stateless_path`; `GET`/`DELETE /v1/responses/{id}` answer 404. |
 
 ### Observability
 
