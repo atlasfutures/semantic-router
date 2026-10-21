@@ -128,6 +128,12 @@ type RaylineARCPolicyServiceConfig struct {
 	// (selection.exploration) on the turns of eligible users. Absent, every
 	// decision is greedy.
 	Exploration *RaylineARCExplorationConfig `yaml:"exploration,omitempty"`
+	// ExplorationTemperature sends Stage-1 exploration in the temperature
+	// shape (pathfinder#5637) on the hosted turns of eligible users: the
+	// cell's default T, or the gateway's caller T. It replaces Exploration;
+	// a cell configures at most one of the two. Absent, every hosted
+	// decision is greedy.
+	ExplorationTemperature *RaylineARCExplorationTemperatureConfig `yaml:"exploration_temperature,omitempty"`
 	// EvalCell marks an eval or lab cell. Such a cell never sends
 	// exploration, even when it is configured: its decisions must be the
 	// package's greedy ones.
@@ -382,6 +388,12 @@ func validateRaylineARCPolicyServiceConfig(cfg *RaylineARCPolicyServiceConfig) e
 		return err
 	}
 	if err := validateRaylineARCExplorationConfig(cfg.Exploration, cfg.PackageSHA256); err != nil {
+		return err
+	}
+	if cfg.Exploration != nil && cfg.ExplorationTemperature != nil {
+		return fmt.Errorf("exploration and exploration_temperature are exclusive: the service refuses a request carrying both shapes")
+	}
+	if err := validateRaylineARCExplorationTemperatureConfig(cfg.ExplorationTemperature); err != nil {
 		return err
 	}
 	if len(cfg.Bindings) == 0 {
