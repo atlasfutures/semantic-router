@@ -42,6 +42,11 @@ const (
 	// PolicyCapabilityCallerPrices: routing_prices.basis caller, one caller
 	// price world for the decision and every tier pick (pathfinder#5668).
 	PolicyCapabilityCallerPrices = "caller_prices"
+	// PolicyCapabilityPredictions: response_fields predictions, the
+	// decision's stage-one prediction table and each tier pick's row
+	// (pathfinder#5717). Read at readiness; a lookup asking for predictions
+	// of a service without it is answered unsupported, never guessed.
+	PolicyCapabilityPredictions = "predictions"
 )
 
 // Readiness classes for a service that cannot serve what the cell sends.

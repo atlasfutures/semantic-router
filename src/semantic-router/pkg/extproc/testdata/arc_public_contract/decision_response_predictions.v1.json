@@ -1,0 +1,1709 @@
+{
+  "package": {
+    "alias": "rayline/arc-073b",
+    "package_sha256": "61ae11565f404c64062ed379f34f20add70ce0c955a2a1056adcfb47468f423d"
+  },
+  "policy_id": "873caa67331f5c39ed8ab5349481f7eb7c360bb3c46cfef332b8134cc5b280d2",
+  "decision": {
+    "selected_action_id": "21324c14b079ebff6d402361a26511bf7991107fe920ded73607361c3a1eba44",
+    "selected_arm_id": "001b6085e8f685d4616b74a6492d0619c846d6ba589d6f6ff73f827601ebfe5b",
+    "reason": "supported_prediction",
+    "operating_point": {
+      "name": "default",
+      "point_id": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "cost_weight": 0.3
+    },
+    "predictions": {
+      "action_horizon": "policy_continuation",
+      "stage_one": {
+        "boundary": "task_start",
+        "selector_id": "78914b01dca4e08b4b1525dd3d3d26a75f018380866fe10f15117e7daed89dc1",
+        "world_id": "base",
+        "horizon": "rest_of_episode",
+        "candidates": [
+          {
+            "model": "claude-3.7-sonnet",
+            "effort": null,
+            "offered": false,
+            "p_pass": 0.6440597433143853,
+            "predicted_usage": null,
+            "predicted_cost_usd": null
+          },
+          {
+            "model": "claude-fable-5",
+            "effort": null,
+            "offered": false,
+            "p_pass": 0.8948497735366379,
+            "predicted_usage": {
+              "uncached_input": 6.94071241121141,
+              "cache_read": 41302.44714418649,
+              "cache_write": 20459.76537770096,
+              "output": 1180.9416036831994
+            },
+            "predicted_cost_usd": null
+          },
+          {
+            "model": "claude-fable-5.1",
+            "effort": null,
+            "offered": false,
+            "p_pass": 0.7984057875168727,
+            "predicted_usage": {
+              "uncached_input": 3.999999999999999,
+              "cache_read": 159066.00000000003,
+              "cache_write": 3853.999999999999,
+              "output": 5544.000000000003
+            },
+            "predicted_cost_usd": null
+          },
+          {
+            "model": "claude-haiku-4.5",
+            "effort": null,
+            "offered": false,
+            "p_pass": 0.8363997520440339,
+            "predicted_usage": {
+              "uncached_input": 628.7722919338684,
+              "cache_read": 8018.560582504966,
+              "cache_write": 13151.866199858097,
+              "output": 515.912644501424
+            },
+            "predicted_cost_usd": null
+          },
+          {
+            "model": "claude-haiku-5.5",
+            "effort": null,
+            "offered": true,
+            "p_pass": 0.9387996064254507,
+            "predicted_usage": {
+              "uncached_input": 1407.4851886938711,
+              "cache_read": 0.9577844595576108,
+              "cache_write": 3.740859411750739e-06,
+              "output": 4909.861704204431
+            },
+            "predicted_cost_usd": 0.0025956889492838053
+          },
+          {
+            "model": "claude-opus-4.1",
+            "effort": null,
+            "offered": false,
+            "p_pass": null,
+            "predicted_usage": null,
+            "predicted_cost_usd": null
+          },
+          {
+            "model": "claude-opus-4.5",
+            "effort": null,
+            "offered": false,
+            "p_pass": 0.8733064043324082,
+            "predicted_usage": null,
+            "predicted_cost_usd": null
+          },
+          {
+            "model": "claude-opus-4.6",
+            "effort": null,
+            "offered": false,
+            "p_pass": 0.7383806891072973,
+            "predicted_usage": {
+              "uncached_input": 11.96566980509633,
+              "cache_read": 609128.550479071,
+              "cache_write": 31637.41445648927,
+              "output": 5790.751271525929
+            },
+            "predicted_cost_usd": null
+          },
+          {
+            "model": "claude-opus-4.7",
+            "effort": null,
+            "offered": false,
+            "p_pass": 0.826081763784152,
+            "predicted_usage": {
+              "uncached_input": 9.516730987505152,
+              "cache_read": 45089.74336256914,
+              "cache_write": 10522.891683223916,
+              "output": 1277.0622737734066
+            },
+            "predicted_cost_usd": null
+          },
+          {
+            "model": "claude-opus-4.8",
+            "effort": null,
+            "offered": false,
+            "p_pass": 0.9060697917674133,
+            "predicted_usage": {
+              "uncached_input": 34.170959621713585,
+              "cache_read": 656093.1376100089,
+              "cache_write": 38365.74846203551,
+              "output": 5565.820137136116
+            },
+            "predicted_cost_usd": null
+          },
+          {
+            "model": "claude-opus-5",
+            "effort": null,
+            "offered": false,
+            "p_pass": 0.8507140137820397,
+            "predicted_usage": {
+              "uncached_input": 6.57026112447695,
+              "cache_read": 192001.93419859445,
+              "cache_write": 43031.424709801926,
+              "output": 5449.855079842897
+            },
+            "predicted_cost_usd": null
+          },
+          {
+            "model": "claude-opus-5.5",
+            "effort": null,
+            "offered": true,
+            "p_pass": 0.9310796148285,
+            "predicted_usage": {
+              "uncached_input": 66.87382869617127,
+              "cache_read": 87454.64760410562,
+              "cache_write": 7174.604792031199,
+              "output": 1092.6321172712826
+            },
+            "predicted_cost_usd": 0.07548409114118745
+          },
+          {
+            "model": "claude-sonnet-4",
+            "effort": null,
+            "offered": false,
+            "p_pass": 0.6126206273999737,
+            "predicted_usage": {
+              "uncached_input": 9.123012149111233,
+              "cache_read": 2473.8129756847907,
+              "cache_write": 2322.83162347743,
+              "output": 459.1216844886982
+            },
+            "predicted_cost_usd": null
+          },
+          {
+            "model": "claude-sonnet-4.5",
+            "effort": null,
+            "offered": false,
+            "p_pass": 0.6889998989682482,
+            "predicted_usage": {
+              "uncached_input": 280.4717302493385,
+              "cache_read": 219310.6121760568,
+              "cache_write": 14138.617806974598,
+              "output": 4354.5260244576875
+            },
+            "predicted_cost_usd": null
+          },
+          {
+            "model": "claude-sonnet-4.6",
+            "effort": null,
+            "offered": false,
+            "p_pass": 0.8434572440258716,
+            "predicted_usage": {
+              "uncached_input": 10.724659761297135,
+              "cache_read": 191656.58687323908,
+              "cache_write": 24080.69432063256,
+              "output": 2152.213544896714
+            },
+            "predicted_cost_usd": null
+          },
+          {
+            "model": "claude-sonnet-5",
+            "effort": null,
+            "offered": false,
+            "p_pass": 0.9150929789070578,
+            "predicted_usage": {
+              "uncached_input": 2.033253617470217,
+              "cache_read": 23717.04284541686,
+              "cache_write": 5012.170419190255,
+              "output": 431.6714348642757
+            },
+            "predicted_cost_usd": null
+          },
+          {
+            "model": "claude-sonnet-5.5",
+            "effort": null,
+            "offered": true,
+            "p_pass": 0.9010892098887522,
+            "predicted_usage": {
+              "uncached_input": 4210.609064138919,
+              "cache_read": 163538.26338031873,
+              "cache_write": 12460.754294053891,
+              "output": 3770.255724415808
+            },
+            "predicted_cost_usd": 0.10998331378363439
+          },
+          {
+            "model": "deepseek-v4-flash",
+            "effort": null,
+            "offered": false,
+            "p_pass": 0.9503342770371981,
+            "predicted_usage": null,
+            "predicted_cost_usd": null
+          },
+          {
+            "model": "deepseek-v4-pro",
+            "effort": null,
+            "offered": false,
+            "p_pass": 0.9628546459624301,
+            "predicted_usage": {
+              "uncached_input": 101739.4885909901,
+              "cache_read": 95278.03495646115,
+              "cache_write": 0.0,
+              "output": 8626.153827174994
+            },
+            "predicted_cost_usd": 0.1726479276338042
+          },
+          {
+            "model": "deepseek-v4.1-flash",
+            "effort": null,
+            "offered": true,
+            "p_pass": 0.8882670568561487,
+            "predicted_usage": {
+              "uncached_input": 42003.22793700098,
+              "cache_read": 486192.0126810439,
+              "cache_write": 0.0,
+              "output": 9785.759337692416
+            },
+            "predicted_cost_usd": 0.027261031662417456
+          },
+          {
+            "model": "exact-dodo",
+            "effort": null,
+            "offered": false,
+            "p_pass": null,
+            "predicted_usage": null,
+            "predicted_cost_usd": null
+          },
+          {
+            "model": "gemini-3.1-flash-lite",
+            "effort": null,
+            "offered": false,
+            "p_pass": 0.9232229705804207,
+            "predicted_usage": null,
+            "predicted_cost_usd": null
+          },
+          {
+            "model": "gemini-3.1-flash-lite-preview",
+            "effort": null,
+            "offered": false,
+            "p_pass": null,
+            "predicted_usage": null,
+            "predicted_cost_usd": null
+          },
+          {
+            "model": "gemini-3.1-pro-preview",
+            "effort": null,
+            "offered": false,
+            "p_pass": 0.9900785106233443,
+            "predicted_usage": null,
+            "predicted_cost_usd": null
+          },
+          {
+            "model": "gemini-4-argon",
+            "effort": null,
+            "offered": false,
+            "p_pass": 0.8868663024424416,
+            "predicted_usage": {
+              "uncached_input": 175870.06310055056,
+              "cache_read": 2353.165958261734,
+              "cache_write": 0.0,
+              "output": 2693.557316245844
+            },
+            "predicted_cost_usd": null
+          },
+          {
+            "model": "glm-5",
+            "effort": null,
+            "offered": false,
+            "p_pass": 0.8634189304235242,
+            "predicted_usage": null,
+            "predicted_cost_usd": null
+          },
+          {
+            "model": "glm-5.1",
+            "effort": null,
+            "offered": false,
+            "p_pass": 0.7972749991759912,
+            "predicted_usage": null,
+            "predicted_cost_usd": null
+          },
+          {
+            "model": "glm-5.2",
+            "effort": null,
+            "offered": false,
+            "p_pass": 0.7208291746339645,
+            "predicted_usage": null,
+            "predicted_cost_usd": null
+          },
+          {
+            "model": "glm-5.3",
+            "effort": null,
+            "offered": true,
+            "p_pass": 0.8599628161028254,
+            "predicted_usage": {
+              "uncached_input": 13923.551285212723,
+              "cache_read": 251584.86936653414,
+              "cache_write": 0.0,
+              "output": 29346.422819499458
+            },
+            "predicted_cost_usd": 0.21402929824039432
+          },
+          {
+            "model": "glm-5.3-flash",
+            "effort": null,
+            "offered": true,
+            "p_pass": 0.8036312741865199,
+            "predicted_usage": {
+              "uncached_input": 3588.1562036284995,
+              "cache_read": 288898.47147163673,
+              "cache_write": 0.0,
+              "output": 711.4651003433344
+            },
+            "predicted_cost_usd": 0.009560910124865044
+          },
+          {
+            "model": "glm-5v-turbo",
+            "effort": null,
+            "offered": false,
+            "p_pass": 0.9427114468072697,
+            "predicted_usage": null,
+            "predicted_cost_usd": null
+          },
+          {
+            "model": "gpt-4o",
+            "effort": null,
+            "offered": false,
+            "p_pass": 0.9514630709015706,
+            "predicted_usage": null,
+            "predicted_cost_usd": null
+          },
+          {
+            "model": "gpt-5.3-codex",
+            "effort": null,
+            "offered": false,
+            "p_pass": null,
+            "predicted_usage": null,
+            "predicted_cost_usd": null
+          },
+          {
+            "model": "gpt-5.3-codex-spark",
+            "effort": null,
+            "offered": false,
+            "p_pass": 0.8346236910896444,
+            "predicted_usage": null,
+            "predicted_cost_usd": null
+          },
+          {
+            "model": "gpt-5.4",
+            "effort": null,
+            "offered": false,
+            "p_pass": 0.8837266814327567,
+            "predicted_usage": null,
+            "predicted_cost_usd": null
+          },
+          {
+            "model": "gpt-5.4-mini",
+            "effort": null,
+            "offered": false,
+            "p_pass": null,
+            "predicted_usage": null,
+            "predicted_cost_usd": null
+          },
+          {
+            "model": "gpt-5.5",
+            "effort": null,
+            "offered": false,
+            "p_pass": 0.8744390970132564,
+            "predicted_usage": null,
+            "predicted_cost_usd": null
+          },
+          {
+            "model": "gpt-5.6-luna",
+            "effort": null,
+            "offered": false,
+            "p_pass": 0.9835234845785216,
+            "predicted_usage": null,
+            "predicted_cost_usd": null
+          },
+          {
+            "model": "gpt-5.6-sol",
+            "effort": null,
+            "offered": false,
+            "p_pass": 0.6772713799846042,
+            "predicted_usage": {
+              "uncached_input": 2682.445266933545,
+              "cache_read": 136945.1189182196,
+              "cache_write": 25734.9931210979,
+              "output": 7563.01382624151
+            },
+            "predicted_cost_usd": null
+          },
+          {
+            "model": "gpt-5.6-terra",
+            "effort": null,
+            "offered": true,
+            "p_pass": 0.9355447262088663,
+            "predicted_usage": {
+              "uncached_input": 15.315094772996261,
+              "cache_read": 34542.20135933217,
+              "cache_write": 16973.831321022975,
+              "output": 2166.6129060634203
+            },
+            "predicted_cost_usd": 0.07537300363673091
+          },
+          {
+            "model": "gpt-6-astra",
+            "effort": null,
+            "offered": true,
+            "p_pass": 0.9517828397837114,
+            "predicted_usage": {
+              "uncached_input": 115.89911185429874,
+              "cache_read": 382481.4486828207,
+              "cache_write": 22784.539152630892,
+              "output": 3512.668246041405
+            },
+            "predicted_cost_usd": 0.8440805915113201
+          },
+          {
+            "model": "gpt-6-luna",
+            "effort": null,
+            "offered": true,
+            "p_pass": 0.9411599505388424,
+            "predicted_usage": {
+              "uncached_input": 77.23814255930805,
+              "cache_read": 171142.24232435465,
+              "cache_write": 10549.473721429138,
+              "output": 982.2146325423722
+            },
+            "predicted_cost_usd": 0.0035289377689493055
+          },
+          {
+            "model": "gpt-6-sol",
+            "effort": null,
+            "offered": false,
+            "p_pass": 0.8384230917562668,
+            "predicted_usage": {
+              "uncached_input": 42.37701748800191,
+              "cache_read": 782629.6679148509,
+              "cache_write": 43655.032223646886,
+              "output": 23698.009582598865
+            },
+            "predicted_cost_usd": null
+          },
+          {
+            "model": "gpt-6.1-sol",
+            "effort": null,
+            "offered": true,
+            "p_pass": 0.9374529059288597,
+            "predicted_usage": {
+              "uncached_input": 76.41864868393128,
+              "cache_read": 629635.0633855956,
+              "cache_write": 105954.45110484728,
+              "output": 17785.104817376705
+            },
+            "predicted_cost_usd": 0.5058535195718127
+          },
+          {
+            "model": "grok-4.7",
+            "effort": null,
+            "offered": false,
+            "p_pass": 0.7270689653333052,
+            "predicted_usage": {
+              "uncached_input": 367856.85289313353,
+              "cache_read": 1826341.29000327,
+              "cache_write": 0.0,
+              "output": 29813.12354924528
+            },
+            "predicted_cost_usd": 1.8277630920833736
+          },
+          {
+            "model": "huge-cougar",
+            "effort": null,
+            "offered": false,
+            "p_pass": null,
+            "predicted_usage": null,
+            "predicted_cost_usd": null
+          },
+          {
+            "model": "kimi-for-coding",
+            "effort": null,
+            "offered": false,
+            "p_pass": null,
+            "predicted_usage": null,
+            "predicted_cost_usd": null
+          },
+          {
+            "model": "kimi-k2.5",
+            "effort": null,
+            "offered": false,
+            "p_pass": null,
+            "predicted_usage": null,
+            "predicted_cost_usd": null
+          },
+          {
+            "model": "kimi-k2.6",
+            "effort": null,
+            "offered": false,
+            "p_pass": 0.958768919699948,
+            "predicted_usage": {
+              "uncached_input": 32742.867827803413,
+              "cache_read": 172955.00790218372,
+              "cache_write": 0.0,
+              "output": 3556.141085708691
+            },
+            "predicted_cost_usd": null
+          },
+          {
+            "model": "kimi-k3",
+            "effort": null,
+            "offered": true,
+            "p_pass": 0.8764881397697477,
+            "predicted_usage": {
+              "uncached_input": 48432.962655488634,
+              "cache_read": 248770.3403971431,
+              "cache_write": 0.0,
+              "output": 9911.413325057752
+            },
+            "predicted_cost_usd": 0.3686011899614752
+          },
+          {
+            "model": "minimax-m2.5",
+            "effort": null,
+            "offered": false,
+            "p_pass": null,
+            "predicted_usage": null,
+            "predicted_cost_usd": null
+          },
+          {
+            "model": "mistral-large-4-0",
+            "effort": null,
+            "offered": false,
+            "p_pass": 0.8392472394017583,
+            "predicted_usage": {
+              "uncached_input": 106778.17461251662,
+              "cache_read": 18958.384660945634,
+              "cache_write": 0.0,
+              "output": 21467.504005336108
+            },
+            "predicted_cost_usd": null
+          },
+          {
+            "model": "muse-spark-1.3",
+            "effort": null,
+            "offered": false,
+            "p_pass": null,
+            "predicted_usage": null,
+            "predicted_cost_usd": null
+          },
+          {
+            "model": "muse-spark-1.3-contributor",
+            "effort": null,
+            "offered": false,
+            "p_pass": 0.7515239416170127,
+            "predicted_usage": {
+              "uncached_input": 369754.916935518,
+              "cache_read": 1142994.5223181932,
+              "cache_write": 0.0,
+              "output": 31697.167374720797
+            },
+            "predicted_cost_usd": null
+          },
+          {
+            "model": "muse-wonder",
+            "effort": null,
+            "offered": false,
+            "p_pass": 0.9666315147460814,
+            "predicted_usage": {
+              "uncached_input": 54182.477334913056,
+              "cache_read": 77666.14521893694,
+              "cache_write": 0.0,
+              "output": 2176.7787003199783
+            },
+            "predicted_cost_usd": null
+          },
+          {
+            "model": "qwen3.8-27b",
+            "effort": null,
+            "offered": true,
+            "p_pass": 0.8244549998606369,
+            "predicted_usage": {
+              "uncached_input": 429020.32140919863,
+              "cache_read": 259817.27769693252,
+              "cache_write": 8.612984888082676e-09,
+              "output": 32829.03255851504
+            },
+            "predicted_cost_usd": 0.2881321382273666
+          },
+          {
+            "model": "qwen3.8-max",
+            "effort": null,
+            "offered": true,
+            "p_pass": 0.7324648698188151,
+            "predicted_usage": {
+              "uncached_input": 10339.516441686832,
+              "cache_read": 76665.42442531252,
+              "cache_write": 21255.659997210852,
+              "output": 9601.3672035975
+            },
+            "predicted_cost_usd": 0.15059274220431393
+          }
+        ]
+      }
+    },
+    "tier_picks": {
+      "swift": {
+        "selected_action_id": "e8125a6d6e00df0bafbaf85796c433241de68d73b59af55c02c6a06ceae0bec2",
+        "selected_arm_id": "0f2881479b543f40aef7659065ff9f3e7464e379544c9f893f5efceedec3655e",
+        "model": "claude-haiku-5.5",
+        "thinking": {
+          "effort": "default",
+          "budget_tokens": null,
+          "steering_level": "none",
+          "control_id": "17ce2fd14e762777a95db605228cc8f731d2d3e200c4c5d07a735f85fca2eae1"
+        },
+        "stage_one_candidate": 4
+      },
+      "sage": {
+        "selected_action_id": "21324c14b079ebff6d402361a26511bf7991107fe920ded73607361c3a1eba44",
+        "selected_arm_id": "001b6085e8f685d4616b74a6492d0619c846d6ba589d6f6ff73f827601ebfe5b",
+        "model": "gpt-6-luna",
+        "thinking": {
+          "effort": "default",
+          "budget_tokens": null,
+          "steering_level": null,
+          "control_id": "628d285537ca7cdb52c4bd3433cea7a1ec36005a14dbc67ffa1c40487d7b8ad0"
+        },
+        "stage_one_candidate": 41
+      },
+      "custom": {
+        "selected_action_id": "21324c14b079ebff6d402361a26511bf7991107fe920ded73607361c3a1eba44",
+        "selected_arm_id": "001b6085e8f685d4616b74a6492d0619c846d6ba589d6f6ff73f827601ebfe5b",
+        "model": "gpt-6-luna",
+        "thinking": {
+          "effort": "default",
+          "budget_tokens": null,
+          "steering_level": null,
+          "control_id": "628d285537ca7cdb52c4bd3433cea7a1ec36005a14dbc67ffa1c40487d7b8ad0"
+        },
+        "stage_one_candidate": 41
+      }
+    }
+  },
+  "actions": [
+    {
+      "action_id": "a07a4be96deb1a91b1309a06ae57b9dcb236981313d64b737abcc7f51e930794",
+      "available": true,
+      "supported": false,
+      "selected": false,
+      "score": 0.055418044328689575,
+      "predicted_quality": null,
+      "predicted_usage": null,
+      "predicted_cost_usd": null,
+      "thinking": {
+        "effort": "default",
+        "budget_tokens": null,
+        "steering_level": null,
+        "control_id": "628d285537ca7cdb52c4bd3433cea7a1ec36005a14dbc67ffa1c40487d7b8ad0"
+      }
+    },
+    {
+      "action_id": "21324c14b079ebff6d402361a26511bf7991107fe920ded73607361c3a1eba44",
+      "available": true,
+      "supported": true,
+      "selected": true,
+      "score": 0.0074120620265603065,
+      "predicted_quality": 0.007663121912628412,
+      "predicted_usage": {
+        "uncached_input": 0.0024529616348445415,
+        "cache_read": 83614.6171875,
+        "cache_write": 5.609477519989014,
+        "output": 0.03640446439385414
+      },
+      "predicted_cost_usd": 0.0008368658018298447,
+      "thinking": {
+        "effort": "default",
+        "budget_tokens": null,
+        "steering_level": null,
+        "control_id": "628d285537ca7cdb52c4bd3433cea7a1ec36005a14dbc67ffa1c40487d7b8ad0"
+      }
+    },
+    {
+      "action_id": "72bf1eb7d35c6cc17398fce8c0cb00f8f93a1dc76b579f89d15302bd26cd7fce",
+      "available": true,
+      "supported": false,
+      "selected": false,
+      "score": 0.03910429775714874,
+      "predicted_quality": null,
+      "predicted_usage": null,
+      "predicted_cost_usd": null,
+      "thinking": {
+        "effort": "default",
+        "budget_tokens": null,
+        "steering_level": "up",
+        "control_id": "605a61ada934f704248cb99cc84179bf15747302120d11e67ba723db0d8d955b"
+      }
+    },
+    {
+      "action_id": "7efede8411deb09eef5f846a4fadcc7b9efe16a5da8ec628054f0b21a23410dd",
+      "available": true,
+      "supported": false,
+      "selected": false,
+      "score": 0.031293079257011414,
+      "predicted_quality": 0.036969173699617386,
+      "predicted_usage": {
+        "uncached_input": 0.002472610678523779,
+        "cache_read": 63067.0546875,
+        "cache_write": 2.284834623336792,
+        "output": 0.012476427480578423
+      },
+      "predicted_cost_usd": 0.018920311704277992,
+      "thinking": {
+        "effort": "default",
+        "budget_tokens": null,
+        "steering_level": "down",
+        "control_id": "77f4674fea6c3b4f3f53ab0337b61fc725ef66e045f317767efdbf94b6979d48"
+      }
+    },
+    {
+      "action_id": "6e3ae8c693dcb85ff1aeee2193c0c555ee1ce3b21672cbf4e48c9643b366f716",
+      "available": true,
+      "supported": false,
+      "selected": false,
+      "score": 0.06425537914037704,
+      "predicted_quality": 0.06437483429908752,
+      "predicted_usage": {
+        "uncached_input": 0.20005087554454803,
+        "cache_read": 66324.875,
+        "cache_write": 3.9172377586364746,
+        "output": 0.15252399444580078
+      },
+      "predicted_cost_usd": 0.0003981922927778214,
+      "thinking": {
+        "effort": "default",
+        "budget_tokens": null,
+        "steering_level": null,
+        "control_id": "628d285537ca7cdb52c4bd3433cea7a1ec36005a14dbc67ffa1c40487d7b8ad0"
+      }
+    },
+    {
+      "action_id": "b399be26ceb6193121d05eeda1119d2bea8f224874d019bdc0e31baa99432b75",
+      "available": true,
+      "supported": false,
+      "selected": false,
+      "score": 0.044973213225603104,
+      "predicted_quality": 0.04869410768151283,
+      "predicted_usage": {
+        "uncached_input": 0.002129776170477271,
+        "cache_read": 61995.15625,
+        "cache_write": 1.539824366569519,
+        "output": 0.009787799790501595
+      },
+      "predicted_cost_usd": 0.012402982451021671,
+      "thinking": {
+        "effort": "default",
+        "budget_tokens": null,
+        "steering_level": "none",
+        "control_id": "17ce2fd14e762777a95db605228cc8f731d2d3e200c4c5d07a735f85fca2eae1"
+      }
+    },
+    {
+      "action_id": "7276f0793ca6c15f9bd7a03633d1e9bfa546d723f530391e6628f0e3fabfda11",
+      "available": true,
+      "supported": false,
+      "selected": false,
+      "score": 0.01780897006392479,
+      "predicted_quality": null,
+      "predicted_usage": null,
+      "predicted_cost_usd": null,
+      "thinking": {
+        "effort": "default",
+        "budget_tokens": null,
+        "steering_level": "none",
+        "control_id": "17ce2fd14e762777a95db605228cc8f731d2d3e200c4c5d07a735f85fca2eae1"
+      }
+    },
+    {
+      "action_id": "aff7ee4e0b2732ae5d3cd366eca92597c18fa11bbe3ab1a5f05a07c55c8598f1",
+      "available": true,
+      "supported": false,
+      "selected": false,
+      "score": 0.038902752101421356,
+      "predicted_quality": 0.03906173259019852,
+      "predicted_usage": {
+        "uncached_input": 0.006495131645351648,
+        "cache_read": 88315.140625,
+        "cache_write": 6.075658321380615,
+        "output": 0.0354059673845768
+      },
+      "predicted_cost_usd": 0.0005299352924339473,
+      "thinking": {
+        "effort": "default",
+        "budget_tokens": null,
+        "steering_level": "down",
+        "control_id": "77f4674fea6c3b4f3f53ab0337b61fc725ef66e045f317767efdbf94b6979d48"
+      }
+    },
+    {
+      "action_id": "e620b53eff414fa68e77f64c54f918ab96ddc614acb6fd655919eca6a7e250a5",
+      "available": true,
+      "supported": false,
+      "selected": false,
+      "score": 0.0040897345170378685,
+      "predicted_quality": null,
+      "predicted_usage": {
+        "uncached_input": 0.0014862081734463573,
+        "cache_read": 45488.01171875,
+        "cache_write": 1.303052544593811,
+        "output": 0.012558677233755589
+      },
+      "predicted_cost_usd": 0.003867205698043108,
+      "thinking": {
+        "effort": "default",
+        "budget_tokens": null,
+        "steering_level": "none",
+        "control_id": "17ce2fd14e762777a95db605228cc8f731d2d3e200c4c5d07a735f85fca2eae1"
+      }
+    },
+    {
+      "action_id": "f2707a4603afc23b469ffc3154b5a4994844a4d35bc38bc7790baad7276cea23",
+      "available": true,
+      "supported": false,
+      "selected": false,
+      "score": 0.002066771499812603,
+      "predicted_quality": 0.004401577170938253,
+      "predicted_usage": {
+        "uncached_input": 0.0007972171879373491,
+        "cache_read": 31124.9609375,
+        "cache_write": 0.5639058947563171,
+        "output": 0.005639936774969101
+      },
+      "predicted_cost_usd": 0.007782685104757547,
+      "thinking": {
+        "effort": "default",
+        "budget_tokens": null,
+        "steering_level": "up",
+        "control_id": "605a61ada934f704248cb99cc84179bf15747302120d11e67ba723db0d8d955b"
+      }
+    },
+    {
+      "action_id": "9fd9f0b2edce093d0388e8abdbc76ef741bc7c80535fca6c989807b63a40ebf6",
+      "available": true,
+      "supported": false,
+      "selected": false,
+      "score": 0.009060429409146309,
+      "predicted_quality": 0.01608826220035553,
+      "predicted_usage": {
+        "uncached_input": 0.004460485186427832,
+        "cache_read": 90099.59375,
+        "cache_write": 7.214936256408691,
+        "output": 0.047060225158929825
+      },
+      "predicted_cost_usd": 0.023426106199622154,
+      "thinking": {
+        "effort": "default",
+        "budget_tokens": null,
+        "steering_level": "up",
+        "control_id": "605a61ada934f704248cb99cc84179bf15747302120d11e67ba723db0d8d955b"
+      }
+    },
+    {
+      "action_id": "d0f0691173735dcc3e3b9e517ef059865767da0eddcc098db0d13799c920b57d",
+      "available": true,
+      "supported": false,
+      "selected": false,
+      "score": 0.004027885850518942,
+      "predicted_quality": null,
+      "predicted_usage": {
+        "uncached_input": 0.0010355990380048752,
+        "cache_read": 35602.3671875,
+        "cache_write": 0.6064811944961548,
+        "output": 0.006508711259812117
+      },
+      "predicted_cost_usd": 0.008902149274945259,
+      "thinking": {
+        "effort": "default",
+        "budget_tokens": null,
+        "steering_level": "none",
+        "control_id": "17ce2fd14e762777a95db605228cc8f731d2d3e200c4c5d07a735f85fca2eae1"
+      }
+    },
+    {
+      "action_id": "356df8a9a571b5962b63dd4030287796fa568446f36d4158b3478693e88b3d71",
+      "available": true,
+      "supported": false,
+      "selected": false,
+      "score": 0.020386749878525734,
+      "predicted_quality": 0.020995808765292168,
+      "predicted_usage": null,
+      "predicted_cost_usd": null,
+      "thinking": {
+        "effort": "default",
+        "budget_tokens": null,
+        "steering_level": "down",
+        "control_id": "77f4674fea6c3b4f3f53ab0337b61fc725ef66e045f317767efdbf94b6979d48"
+      }
+    },
+    {
+      "action_id": "929c2db67bb14c0995bf1c7bd3ad26e679bb568d13364482f6ea971f33455059",
+      "available": true,
+      "supported": false,
+      "selected": false,
+      "score": 0.03722630813717842,
+      "predicted_quality": 0.0450129471719265,
+      "predicted_usage": {
+        "uncached_input": 0.006109635345637798,
+        "cache_read": 129624.0546875,
+        "cache_write": 11.970442771911621,
+        "output": 0.05927585810422897
+      },
+      "predicted_cost_usd": 0.025955459102988243,
+      "thinking": {
+        "effort": "default",
+        "budget_tokens": null,
+        "steering_level": null,
+        "control_id": "628d285537ca7cdb52c4bd3433cea7a1ec36005a14dbc67ffa1c40487d7b8ad0"
+      }
+    },
+    {
+      "action_id": "77efebd32cc35bccb1a14a63880ea5bb63711e4c6b0c4a319fb283044f69b7a6",
+      "available": true,
+      "supported": false,
+      "selected": false,
+      "score": 0.005523146130144596,
+      "predicted_quality": 0.005612960550934076,
+      "predicted_usage": {
+        "uncached_input": 0.0006484371842816472,
+        "cache_read": 29932.3671875,
+        "cache_write": 0.4386953115463257,
+        "output": 0.004287995398044586
+      },
+      "predicted_cost_usd": 0.00029938071384094656,
+      "thinking": {
+        "effort": "default",
+        "budget_tokens": null,
+        "steering_level": "up",
+        "control_id": "605a61ada934f704248cb99cc84179bf15747302120d11e67ba723db0d8d955b"
+      }
+    },
+    {
+      "action_id": "8a3787b121f03eb61c77381ad0a024f5bfa03db323e32076c9906840984bc0b4",
+      "available": true,
+      "supported": false,
+      "selected": false,
+      "score": 0.044973213225603104,
+      "predicted_quality": 0.04869410768151283,
+      "predicted_usage": {
+        "uncached_input": 0.002129776170477271,
+        "cache_read": 61995.15625,
+        "cache_write": 1.539824366569519,
+        "output": 0.009787799790501595
+      },
+      "predicted_cost_usd": 0.012402982451021671,
+      "thinking": {
+        "effort": "default",
+        "budget_tokens": null,
+        "steering_level": null,
+        "control_id": "628d285537ca7cdb52c4bd3433cea7a1ec36005a14dbc67ffa1c40487d7b8ad0"
+      }
+    },
+    {
+      "action_id": "1b39fd5c58b733a4b5cfdb50f386cf2c50f0dc72aa03720adb9f645b2aeed740",
+      "available": true,
+      "supported": false,
+      "selected": false,
+      "score": 0.0023303718771785498,
+      "predicted_quality": null,
+      "predicted_usage": {
+        "uncached_input": 0.0009495943086221814,
+        "cache_read": 31411.62109375,
+        "cache_write": 0.7056982517242432,
+        "output": 0.007205558475106955
+      },
+      "predicted_cost_usd": 0.002670381683856249,
+      "thinking": {
+        "effort": "default",
+        "budget_tokens": null,
+        "steering_level": "up",
+        "control_id": "605a61ada934f704248cb99cc84179bf15747302120d11e67ba723db0d8d955b"
+      }
+    },
+    {
+      "action_id": "d0ec45fe5ae516f2485ccd77e3318384e12f9f774b07df55843ab93dd1a18687",
+      "available": true,
+      "supported": false,
+      "selected": false,
+      "score": 0.047339748591184616,
+      "predicted_quality": 0.0538298636674881,
+      "predicted_usage": {
+        "uncached_input": 0.0032064674887806177,
+        "cache_read": 72111.6328125,
+        "cache_write": 2.457247018814087,
+        "output": 0.014321766793727875
+      },
+      "predicted_cost_usd": 0.02163371443748474,
+      "thinking": {
+        "effort": "default",
+        "budget_tokens": null,
+        "steering_level": "none",
+        "control_id": "17ce2fd14e762777a95db605228cc8f731d2d3e200c4c5d07a735f85fca2eae1"
+      }
+    },
+    {
+      "action_id": "fef78dc1956117b24a08e8d9cd5774f41f2154f258d0cccec59e113f5793792c",
+      "available": true,
+      "supported": false,
+      "selected": false,
+      "score": 0.05261678248643875,
+      "predicted_quality": 0.05699912831187248,
+      "predicted_usage": {
+        "uncached_input": 0.006513007916510105,
+        "cache_read": 145714.40625,
+        "cache_write": 14.292733192443848,
+        "output": 0.0631587877869606
+      },
+      "predicted_cost_usd": 0.014607816003262997,
+      "thinking": {
+        "effort": "default",
+        "budget_tokens": null,
+        "steering_level": null,
+        "control_id": "628d285537ca7cdb52c4bd3433cea7a1ec36005a14dbc67ffa1c40487d7b8ad0"
+      }
+    },
+    {
+      "action_id": "9ea2b023ddc38a126adf2cb4ddabec8af858355bf788525cfb2c45b0ab2e3acf",
+      "available": true,
+      "supported": false,
+      "selected": false,
+      "score": 0.06425537914037704,
+      "predicted_quality": 0.06437483429908752,
+      "predicted_usage": {
+        "uncached_input": 0.20005087554454803,
+        "cache_read": 66324.875,
+        "cache_write": 3.9172377586364746,
+        "output": 0.15252399444580078
+      },
+      "predicted_cost_usd": 0.0003981922927778214,
+      "thinking": {
+        "effort": "default",
+        "budget_tokens": null,
+        "steering_level": "none",
+        "control_id": "17ce2fd14e762777a95db605228cc8f731d2d3e200c4c5d07a735f85fca2eae1"
+      }
+    },
+    {
+      "action_id": "e81ea80c57fbf3059f145a124c3f48d46e4ac6fc18fcab2dad65c8e344c44799",
+      "available": true,
+      "supported": false,
+      "selected": false,
+      "score": 0.031442008912563324,
+      "predicted_quality": 0.03712813928723335,
+      "predicted_usage": {
+        "uncached_input": 0.002482027979567647,
+        "cache_read": 63178.5703125,
+        "cache_write": 2.2885000705718994,
+        "output": 0.012508190236985683
+      },
+      "predicted_cost_usd": 0.01895376667380333,
+      "thinking": {
+        "effort": "default",
+        "budget_tokens": null,
+        "steering_level": "up",
+        "control_id": "605a61ada934f704248cb99cc84179bf15747302120d11e67ba723db0d8d955b"
+      }
+    },
+    {
+      "action_id": "8ff3fe329826b7e59a20cb133dc2644b9ccc4c782e56993c25e66d21514952de",
+      "available": true,
+      "supported": false,
+      "selected": false,
+      "score": 0.005496813450008631,
+      "predicted_quality": 0.0055864667519927025,
+      "predicted_usage": {
+        "uncached_input": 0.000645942403934896,
+        "cache_read": 29878.693359375,
+        "cache_write": 0.43798506259918213,
+        "output": 0.004276772495359182
+      },
+      "predicted_cost_usd": 0.00029884386458434165,
+      "thinking": {
+        "effort": "default",
+        "budget_tokens": null,
+        "steering_level": "down",
+        "control_id": "77f4674fea6c3b4f3f53ab0337b61fc725ef66e045f317767efdbf94b6979d48"
+      }
+    },
+    {
+      "action_id": "e8125a6d6e00df0bafbaf85796c433241de68d73b59af55c02c6a06ceae0bec2",
+      "available": true,
+      "supported": false,
+      "selected": false,
+      "score": 0.008433905430138111,
+      "predicted_quality": 0.008536647073924541,
+      "predicted_usage": {
+        "uncached_input": 0.000842326320707798,
+        "cache_read": 34241.1171875,
+        "cache_write": 0.4718170762062073,
+        "output": 0.004948498215526342
+      },
+      "predicted_cost_usd": 0.0003424727183301002,
+      "thinking": {
+        "effort": "default",
+        "budget_tokens": null,
+        "steering_level": "none",
+        "control_id": "17ce2fd14e762777a95db605228cc8f731d2d3e200c4c5d07a735f85fca2eae1"
+      }
+    },
+    {
+      "action_id": "216520e83b7c0a2c1b583320717dc67488b6b2ee76b28f4984c6f9a5b0a3b38d",
+      "available": true,
+      "supported": false,
+      "selected": false,
+      "score": 0.03205471485853195,
+      "predicted_quality": null,
+      "predicted_usage": null,
+      "predicted_cost_usd": null,
+      "thinking": {
+        "effort": "medium",
+        "budget_tokens": null,
+        "steering_level": null,
+        "control_id": "e63d9d8f3c66e9181cbdedfc4eb0f58b329595447b4ce11e693944b0b4374fdb"
+      }
+    },
+    {
+      "action_id": "4e59f3d923d07f3c702da44ef63532ab9f68eed23644e55ec2a04f84e5b440d2",
+      "available": true,
+      "supported": false,
+      "selected": false,
+      "score": 0.03891310468316078,
+      "predicted_quality": null,
+      "predicted_usage": {
+        "uncached_input": 0.002215977292507887,
+        "cache_read": 63848.30078125,
+        "cache_write": 2.2122998237609863,
+        "output": 0.010894760489463806
+      },
+      "predicted_cost_usd": 0.012780948542058468,
+      "thinking": {
+        "effort": "high",
+        "budget_tokens": null,
+        "steering_level": "up",
+        "control_id": "81d08d646c9db5bbb2b10590c16064f63d8b39c7ce25a91744925a78d34855dd"
+      }
+    },
+    {
+      "action_id": "1c9c7983d30cbc0ee52b1ad074432e0ee29dd49439690f382c4da53cbe01be3c",
+      "available": true,
+      "supported": false,
+      "selected": false,
+      "score": 0.002317048842087388,
+      "predicted_quality": 0.003115507774055004,
+      "predicted_usage": {
+        "uncached_input": 0.0009447201737202704,
+        "cache_read": 31307.50390625,
+        "cache_write": 0.7021557092666626,
+        "output": 0.007166837342083454
+      },
+      "predicted_cost_usd": 0.0026615296956151724,
+      "thinking": {
+        "effort": "default",
+        "budget_tokens": null,
+        "steering_level": "down",
+        "control_id": "77f4674fea6c3b4f3f53ab0337b61fc725ef66e045f317767efdbf94b6979d48"
+      }
+    },
+    {
+      "action_id": "78c901608efbed63739a5e4e44380b4b9a98326b39ac6ed8f3be7db574b38cfe",
+      "available": true,
+      "supported": false,
+      "selected": false,
+      "score": 0.030133076012134552,
+      "predicted_quality": 0.03338529169559479,
+      "predicted_usage": {
+        "uncached_input": 0.0016423454508185387,
+        "cache_read": 54185.26171875,
+        "cache_write": 1.4317811727523804,
+        "output": 0.008526640012860298
+      },
+      "predicted_cost_usd": 0.010840719565749168,
+      "thinking": {
+        "effort": "default",
+        "budget_tokens": null,
+        "steering_level": "down",
+        "control_id": "77f4674fea6c3b4f3f53ab0337b61fc725ef66e045f317767efdbf94b6979d48"
+      }
+    },
+    {
+      "action_id": "841d7b42e99f5c4a79fed33e9b88d0230f991bfea2213b99c8aec919759bf8a9",
+      "available": true,
+      "supported": false,
+      "selected": false,
+      "score": 0.008959606289863586,
+      "predicted_quality": 0.01592770777642727,
+      "predicted_usage": {
+        "uncached_input": 0.004418503027409315,
+        "cache_read": 89333.8125,
+        "cache_write": 7.095510482788086,
+        "output": 0.046397481113672256
+      },
+      "predicted_cost_usd": 0.02322700247168541,
+      "thinking": {
+        "effort": "default",
+        "budget_tokens": null,
+        "steering_level": "down",
+        "control_id": "77f4674fea6c3b4f3f53ab0337b61fc725ef66e045f317767efdbf94b6979d48"
+      }
+    },
+    {
+      "action_id": "231d62afdd0cc65c726614798985f31baa45536533fdbee6cec3abc511c4443b",
+      "available": true,
+      "supported": false,
+      "selected": false,
+      "score": 0.03027140162885189,
+      "predicted_quality": 0.03352939337491989,
+      "predicted_usage": {
+        "uncached_input": 0.001648603705689311,
+        "cache_read": 54281.50390625,
+        "cache_write": 1.434079647064209,
+        "output": 0.008548394776880741
+      },
+      "predicted_cost_usd": 0.010859974659979343,
+      "thinking": {
+        "effort": "default",
+        "budget_tokens": null,
+        "steering_level": "up",
+        "control_id": "605a61ada934f704248cb99cc84179bf15747302120d11e67ba723db0d8d955b"
+      }
+    },
+    {
+      "action_id": "dd88c0f87dca7b84f9c58f49a83213bfd04875e8a6bfd5b8d51b7fa008a02ada",
+      "available": true,
+      "supported": false,
+      "selected": false,
+      "score": 0.002050156006589532,
+      "predicted_quality": 0.004380776546895504,
+      "predicted_usage": {
+        "uncached_input": 0.0007941515068523586,
+        "cache_read": 31069.16796875,
+        "cache_write": 0.5629929900169373,
+        "output": 0.005625207908451557
+      },
+      "predicted_cost_usd": 0.007768734823912382,
+      "thinking": {
+        "effort": "default",
+        "budget_tokens": null,
+        "steering_level": "down",
+        "control_id": "77f4674fea6c3b4f3f53ab0337b61fc725ef66e045f317767efdbf94b6979d48"
+      }
+    },
+    {
+      "action_id": "d6936db7073d3f30c663d504b7acbb124e8f752a9a766cfb5e3129050e26e0a6",
+      "available": true,
+      "supported": false,
+      "selected": false,
+      "score": 0.0040897345170378685,
+      "predicted_quality": null,
+      "predicted_usage": null,
+      "predicted_cost_usd": null,
+      "thinking": {
+        "effort": "default",
+        "budget_tokens": null,
+        "steering_level": null,
+        "control_id": "628d285537ca7cdb52c4bd3433cea7a1ec36005a14dbc67ffa1c40487d7b8ad0"
+      }
+    },
+    {
+      "action_id": "382c509930f825569a6f0276607ef77e9a2d2c605cd2f909929a1154129be347",
+      "available": true,
+      "supported": false,
+      "selected": false,
+      "score": 0.01780897006392479,
+      "predicted_quality": null,
+      "predicted_usage": {
+        "uncached_input": 0.01045215968042612,
+        "cache_read": 233978.390625,
+        "cache_write": 52.341957092285156,
+        "output": 0.22650817036628723
+      },
+      "predicted_cost_usd": 0.06083539128303528,
+      "thinking": {
+        "effort": "default",
+        "budget_tokens": null,
+        "steering_level": null,
+        "control_id": "628d285537ca7cdb52c4bd3433cea7a1ec36005a14dbc67ffa1c40487d7b8ad0"
+      }
+    },
+    {
+      "action_id": "20b6cddd7ae7cedc3ba8321cac7d962dca24b3c98dcf0408076adf40549e4a80",
+      "available": true,
+      "supported": false,
+      "selected": false,
+      "score": 0.04136292636394501,
+      "predicted_quality": 0.04261240363121033,
+      "predicted_usage": {
+        "uncached_input": 0.006537688430398703,
+        "cache_read": 138829.78125,
+        "cache_write": 14.408746719360352,
+        "output": 0.06910106539726257
+      },
+      "predicted_cost_usd": 0.004164929036051035,
+      "thinking": {
+        "effort": "default",
+        "budget_tokens": null,
+        "steering_level": "none",
+        "control_id": "17ce2fd14e762777a95db605228cc8f731d2d3e200c4c5d07a735f85fca2eae1"
+      }
+    },
+    {
+      "action_id": "cf5bc08ecfab91cdc1e26c1c2b98e7256e4a9e64183210ceb619e9c4745ff055",
+      "available": true,
+      "supported": false,
+      "selected": false,
+      "score": 0.020495403558015823,
+      "predicted_quality": 0.02110649086534977,
+      "predicted_usage": {
+        "uncached_input": 0.0031701752450317144,
+        "cache_read": 67898.2265625,
+        "cache_write": 3.5008537769317627,
+        "output": 0.02159568853676319
+      },
+      "predicted_cost_usd": 0.0020369580015540123,
+      "thinking": {
+        "effort": "default",
+        "budget_tokens": null,
+        "steering_level": "up",
+        "control_id": "605a61ada934f704248cb99cc84179bf15747302120d11e67ba723db0d8d955b"
+      }
+    },
+    {
+      "action_id": "c9f217a80fddd7acaffdc16566c65e21af76e5acd694c3225ee3c4290b06029b",
+      "available": true,
+      "supported": false,
+      "selected": false,
+      "score": 0.057438578456640244,
+      "predicted_quality": 0.061814576387405396,
+      "predicted_usage": {
+        "uncached_input": 0.002862758468836546,
+        "cache_read": 72872.59375,
+        "cache_write": 2.3754260540008545,
+        "output": 0.012474286369979382
+      },
+      "predicted_cost_usd": 0.014586656354367733,
+      "thinking": {
+        "effort": "high",
+        "budget_tokens": null,
+        "steering_level": "none",
+        "control_id": "ed143fc8288b25589866829f3a7f4caa1382220286b0100383f49f87a3722e79"
+      }
+    },
+    {
+      "action_id": "bd202891c3ed5bf9af5250868da17cb3ad68a05184ec5fa757876880257a5b26",
+      "available": true,
+      "supported": false,
+      "selected": false,
+      "score": 0.04136292636394501,
+      "predicted_quality": 0.04261240363121033,
+      "predicted_usage": {
+        "uncached_input": 0.006537688430398703,
+        "cache_read": 138829.78125,
+        "cache_write": 14.408746719360352,
+        "output": 0.06910106539726257
+      },
+      "predicted_cost_usd": 0.004164929036051035,
+      "thinking": {
+        "effort": "default",
+        "budget_tokens": null,
+        "steering_level": null,
+        "control_id": "628d285537ca7cdb52c4bd3433cea7a1ec36005a14dbc67ffa1c40487d7b8ad0"
+      }
+    },
+    {
+      "action_id": "4bf076770a2ba20749b0517d35ef991c8a2abfcd23a79337b1051d6240427e2f",
+      "available": true,
+      "supported": false,
+      "selected": false,
+      "score": 0.05261678248643875,
+      "predicted_quality": 0.05699912831187248,
+      "predicted_usage": {
+        "uncached_input": 0.006513007916510105,
+        "cache_read": 145714.40625,
+        "cache_write": 14.292733192443848,
+        "output": 0.0631587877869606
+      },
+      "predicted_cost_usd": 0.014607816003262997,
+      "thinking": {
+        "effort": "default",
+        "budget_tokens": null,
+        "steering_level": "none",
+        "control_id": "17ce2fd14e762777a95db605228cc8f731d2d3e200c4c5d07a735f85fca2eae1"
+      }
+    },
+    {
+      "action_id": "ea40370fd1b06471498640b5fc99311eeaa4db24cebc71549f0464f17da51365",
+      "available": true,
+      "supported": false,
+      "selected": false,
+      "score": 0.057438578456640244,
+      "predicted_quality": null,
+      "predicted_usage": {
+        "uncached_input": 0.002862758468836546,
+        "cache_read": 72872.59375,
+        "cache_write": 2.3754260540008545,
+        "output": 0.012474286369979382
+      },
+      "predicted_cost_usd": 0.014586656354367733,
+      "thinking": {
+        "effort": "high",
+        "budget_tokens": null,
+        "steering_level": null,
+        "control_id": "8c4faa90467d7151b03810424e673723a62bdface213d36659862037aaf4dc2d"
+      }
+    },
+    {
+      "action_id": "4eedfb0d8d6deb1e18eb07d6737073c37bd15def7f6c241eb1484dee750a3826",
+      "available": true,
+      "supported": false,
+      "selected": false,
+      "score": 0.018898874521255493,
+      "predicted_quality": 0.054930731654167175,
+      "predicted_usage": {
+        "uncached_input": 0.005605768412351608,
+        "cache_read": 119988.171875,
+        "cache_write": 9.261167526245117,
+        "output": 0.04394601657986641
+      },
+      "predicted_cost_usd": 0.12010619044303894,
+      "thinking": {
+        "effort": "default",
+        "budget_tokens": null,
+        "steering_level": null,
+        "control_id": "628d285537ca7cdb52c4bd3433cea7a1ec36005a14dbc67ffa1c40487d7b8ad0"
+      }
+    },
+    {
+      "action_id": "cd7c76971ab176b35e0aeac6f772d9b320bf0e952307982896a3411aa6d677fb",
+      "available": true,
+      "supported": false,
+      "selected": false,
+      "score": 0.03088100254535675,
+      "predicted_quality": 0.03329847753047943,
+      "predicted_usage": {
+        "uncached_input": 0.0037868863437324762,
+        "cache_read": 80466.2421875,
+        "cache_write": 4.547932147979736,
+        "output": 0.024422116577625275
+      },
+      "predicted_cost_usd": 0.008058246225118637,
+      "thinking": {
+        "effort": "default",
+        "budget_tokens": null,
+        "steering_level": "up",
+        "control_id": "605a61ada934f704248cb99cc84179bf15747302120d11e67ba723db0d8d955b"
+      }
+    },
+    {
+      "action_id": "fed8502fce21aae1e12e4d20eb63096f454ee6148d626bf33a8b778708a11d11",
+      "available": true,
+      "supported": false,
+      "selected": false,
+      "score": 0.004027885850518942,
+      "predicted_quality": null,
+      "predicted_usage": {
+        "uncached_input": 0.0010355990380048752,
+        "cache_read": 35602.3671875,
+        "cache_write": 0.6064811944961548,
+        "output": 0.006508711259812117
+      },
+      "predicted_cost_usd": 0.008902149274945259,
+      "thinking": {
+        "effort": "default",
+        "budget_tokens": null,
+        "steering_level": null,
+        "control_id": "628d285537ca7cdb52c4bd3433cea7a1ec36005a14dbc67ffa1c40487d7b8ad0"
+      }
+    },
+    {
+      "action_id": "015282dcd224004704593b22eda05d703f91147337f0ed6b98097cc5d991997d",
+      "available": true,
+      "supported": false,
+      "selected": false,
+      "score": 0.049663178622722626,
+      "predicted_quality": 0.058415044099092484,
+      "predicted_usage": {
+        "uncached_input": 0.004681731574237347,
+        "cache_read": 97241.546875,
+        "cache_write": 5.369109630584717,
+        "output": 0.026902221143245697
+      },
+      "predicted_cost_usd": 0.029172882437705994,
+      "thinking": {
+        "effort": "default",
+        "budget_tokens": null,
+        "steering_level": null,
+        "control_id": "628d285537ca7cdb52c4bd3433cea7a1ec36005a14dbc67ffa1c40487d7b8ad0"
+      }
+    },
+    {
+      "action_id": "006f51006d6d399a7aca7cf302c783ccada800a4192f3d91bbdce8bfea9dc711",
+      "available": true,
+      "supported": false,
+      "selected": false,
+      "score": 0.03873791918158531,
+      "predicted_quality": 0.04256543889641762,
+      "predicted_usage": {
+        "uncached_input": 0.0022075739689171314,
+        "cache_read": 63735.625,
+        "cache_write": 2.2087562084198,
+        "output": 0.010867075063288212
+      },
+      "predicted_cost_usd": 0.01275839563459158,
+      "thinking": {
+        "effort": "high",
+        "budget_tokens": null,
+        "steering_level": "down",
+        "control_id": "fb5c5369da0f33329ac598d3709e070527d0f4b1b1406d109659eb870882c367"
+      }
+    },
+    {
+      "action_id": "5bf1f7e84b5e7d532b9936682249b965f502063355b4867d937dc80b13bc2083",
+      "available": true,
+      "supported": false,
+      "selected": false,
+      "score": 0.012901583686470985,
+      "predicted_quality": 0.021310029551386833,
+      "predicted_usage": {
+        "uncached_input": 0.0023424499668180943,
+        "cache_read": 56056.13671875,
+        "cache_write": 1.7344900369644165,
+        "output": 0.013504239730536938
+      },
+      "predicted_cost_usd": 0.028028152883052826,
+      "thinking": {
+        "effort": "default",
+        "budget_tokens": null,
+        "steering_level": null,
+        "control_id": "628d285537ca7cdb52c4bd3433cea7a1ec36005a14dbc67ffa1c40487d7b8ad0"
+      }
+    },
+    {
+      "action_id": "2e372cc01d6485711cd3900231ea97ff577ff4e706e85e186751f6a2bb1432e6",
+      "available": true,
+      "supported": false,
+      "selected": false,
+      "score": 0.03732949122786522,
+      "predicted_quality": 0.04110465571284294,
+      "predicted_usage": {
+        "uncached_input": 0.00229122256860137,
+        "cache_read": 62863.41015625,
+        "cache_write": 2.192173719406128,
+        "output": 0.01119054015725851
+      },
+      "predicted_cost_usd": 0.01258387602865696,
+      "thinking": {
+        "effort": "default",
+        "budget_tokens": null,
+        "steering_level": "down",
+        "control_id": "77f4674fea6c3b4f3f53ab0337b61fc725ef66e045f317767efdbf94b6979d48"
+      }
+    },
+    {
+      "action_id": "160b92a72c09743f353721b9fc50c13d655e2f231bda060d629e37ccc059851f",
+      "available": true,
+      "supported": false,
+      "selected": false,
+      "score": 0.055418044328689575,
+      "predicted_quality": 0.05973444879055023,
+      "predicted_usage": {
+        "uncached_input": 0.002971238922327757,
+        "cache_read": 71879.796875,
+        "cache_write": 2.3576011657714844,
+        "output": 0.012845640070736408
+      },
+      "predicted_cost_usd": 0.014388016425073147,
+      "thinking": {
+        "effort": "default",
+        "budget_tokens": null,
+        "steering_level": "none",
+        "control_id": "17ce2fd14e762777a95db605228cc8f731d2d3e200c4c5d07a735f85fca2eae1"
+      }
+    },
+    {
+      "action_id": "d751ccaaabfc7419ff2dcee3ee1fbf5cd5e5dc35dff40bd4c19e48525e2755f5",
+      "available": true,
+      "supported": false,
+      "selected": false,
+      "score": 0.03071654587984085,
+      "predicted_quality": 0.03312603756785393,
+      "predicted_usage": {
+        "uncached_input": 0.0037680885288864374,
+        "cache_read": 80200.8046875,
+        "cache_write": 4.521953105926514,
+        "output": 0.02429398149251938
+      },
+      "predicted_cost_usd": 0.008031635545194149,
+      "thinking": {
+        "effort": "default",
+        "budget_tokens": null,
+        "steering_level": "down",
+        "control_id": "77f4674fea6c3b4f3f53ab0337b61fc725ef66e045f317767efdbf94b6979d48"
+      }
+    },
+    {
+      "action_id": "d0ccb755e775ebb3d29bd6e65f6defeef14d4fe10d3d8ecc7c4deb799f78a7c7",
+      "available": true,
+      "supported": false,
+      "selected": false,
+      "score": 0.03749880567193031,
+      "predicted_quality": 0.04128064587712288,
+      "predicted_usage": {
+        "uncached_input": 0.0022999488282948732,
+        "cache_read": 62974.5859375,
+        "cache_write": 2.195693016052246,
+        "output": 0.01121904980391264
+      },
+      "predicted_cost_usd": 0.012606129050254822,
+      "thinking": {
+        "effort": "default",
+        "budget_tokens": null,
+        "steering_level": "up",
+        "control_id": "605a61ada934f704248cb99cc84179bf15747302120d11e67ba723db0d8d955b"
+      }
+    },
+    {
+      "action_id": "e5be4c04c88f0135964d4bd98dff620975975eb3b13906378ae68c6587bc3fbc",
+      "available": true,
+      "supported": false,
+      "selected": false,
+      "score": 0.020897142589092255,
+      "predicted_quality": 0.021454788744449615,
+      "predicted_usage": {
+        "uncached_input": 0.002192927524447441,
+        "cache_read": 42245.08984375,
+        "cache_write": 0.6870470643043518,
+        "output": 0.008273054845631123
+      },
+      "predicted_cost_usd": 0.0018588196253404021,
+      "thinking": {
+        "effort": "default",
+        "budget_tokens": null,
+        "steering_level": null,
+        "control_id": "628d285537ca7cdb52c4bd3433cea7a1ec36005a14dbc67ffa1c40487d7b8ad0"
+      }
+    }
+  ],
+  "schema_version": "rayline.arc.policy-decision-response.v1",
+  "pricing": {
+    "scenario_id": "p1-comparison:b47fdd695b6d71f5090e4f31304711edd1acf1fcda3e88bfa9c7ba024a902663",
+    "pricing_identity": "59e11ab33257acf12dfe7ed484a7120d3ecab532475dafb9650eac2cd61eb2c5"
+  },
+  "encoding": {
+    "profile_id": "faccaf970ee4e2a82a7c362291d42dad898566b85df497199535e4a047a90b0b",
+    "tokenization_id": "c1bcc18a35a930933d1c4f879137fc340e1a2b8a29761597c3608443bf630bda",
+    "representation_id": "27cc77d464a88d28f18c8c73e6b1ad664dc570d5c57b5be8ce08d0252aa57781",
+    "token_count": 61,
+    "session_action": "rebuilt",
+    "session_revision": null,
+    "engine_build_id": "local"
+  },
+  "timing_ms": {
+    "encode": null,
+    "score": null,
+    "total": 1.0
+  },
+  "shadow": [],
+  "quality_parity_established": false
+}

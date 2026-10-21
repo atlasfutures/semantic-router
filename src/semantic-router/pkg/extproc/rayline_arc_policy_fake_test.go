@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -98,8 +100,12 @@ type fakePolicyService struct {
 	// tierPickExploration gives every tier pick its own temperature-shape
 	// record, as a service that draws per point (pathfinder#5664) does.
 	tierPickExploration bool
-	tierPickAction      string
-	tierPickModel       func(actionID string) string
+	// predictionsRow, when set, answers response_fields: predictions with a
+	// two-row stage-one table (an unoffered row, then each pick's model)
+	// and points every tier pick at row predictionsRow.
+	predictionsRow *int
+	tierPickAction string
+	tierPickModel  func(actionID string) string
 	// A decide that carries selection.exploration with tau > 0 gets the
 	// exploration fixture's record, with the request's tau, basis and salt
 	// (pathfinder#5436). explorationHeld answers it as a held turn's record;
@@ -398,6 +404,24 @@ func (fake *fakePolicyService) decision(request raylinearc.PolicyDecisionRequest
 		}
 		pick := raylinearc.PolicyTierPick{SelectedActionID: picked, SelectedArmID: "arm-" + picked[:8], Model: model}
 		response.Decision.TierPicks = map[string]raylinearc.PolicyTierPick{"unrequested": pick}
+		if fake.predictionsRow != nil && slices.Contains(request.ResponseFields, "predictions") {
+			pass, cost, tokens := 0.9, 0.0025, 1200.0
+			response.Decision.Predictions = &raylinearc.PolicyDecisionPredictions{
+				ActionHorizon: "policy_continuation",
+				StageOne: &raylinearc.PolicyStageOnePredictions{
+					Boundary: "task_start", SelectorID: strings.Repeat("c", 64), Horizon: "rest_of_episode",
+					Candidates: []raylinearc.PolicyStageOneCandidatePrediction{
+						{Model: "not-offered", Offered: false},
+						{
+							Model: model, Offered: true, PPass: &pass, PredictedCostUSD: &cost,
+							PredictedUsage: &raylinearc.PolicyPredictedUsage{UncachedInput: &tokens},
+						},
+					},
+				},
+			}
+			row := *fake.predictionsRow
+			pick.StageOneCandidate = &row
+		}
 		for _, tier := range request.Selection.TierPoints {
 			if tier.Name != omitTierPick {
 				response.Decision.TierPicks[tier.Name] = pick

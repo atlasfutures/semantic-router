@@ -65,6 +65,11 @@ type PolicyTierPick struct {
 	SelectedArmID    string               `json:"selected_arm_id"`
 	Model            string               `json:"model"`
 	Thinking         PolicyActionThinking `json:"thinking"`
+	// StageOneCandidate is the row of decision.predictions.stage_one
+	// .candidates stage one chose at this point's weight (pathfinder#5717),
+	// present when the request named response_fields: predictions; nil
+	// where stage one decided no boundary, never read as row 0.
+	StageOneCandidate *int `json:"stage_one_candidate,omitempty"`
 	// Exploration is this point's own draw (u = draw(salt, decision_key,
 	// point name), pathfinder#5664), when the service reports one; absent
 	// from a service that explores only the decision itself, and then the
@@ -251,4 +256,36 @@ func (record *PolicyExplorationRecord) FloorApplied() *bool {
 	}
 	applied := *floor.AppliedMass > 0
 	return &applied
+}
+
+// PolicyDecisionPredictions is decision.predictions (pathfinder#5717,
+// response_fields: predictions): the package's stage-two horizon and stage
+// one's table at the boundary this request decided, nil off a boundary.
+// Null stays nil throughout: an unknown prediction is never 0.
+type PolicyDecisionPredictions struct {
+	ActionHorizon string                     `json:"action_horizon"`
+	StageOne      *PolicyStageOnePredictions `json:"stage_one"`
+}
+
+// PolicyStageOnePredictions is stage one's candidate table, in the
+// selector's order, shared by the decision and every tier pick.
+type PolicyStageOnePredictions struct {
+	Boundary   string                              `json:"boundary"`
+	SelectorID string                              `json:"selector_id"`
+	WorldID    *string                             `json:"world_id"`
+	Horizon    string                              `json:"horizon"`
+	Candidates []PolicyStageOneCandidatePrediction `json:"candidates"`
+}
+
+// PolicyStageOneCandidatePrediction is one stage-one candidate as the
+// decision scored it: p_pass the selector's pass probability, the
+// rest-of-episode tokens per billed leg and their cost in this request's
+// price world. Offered: an arm of it was available to this request.
+type PolicyStageOneCandidatePrediction struct {
+	Model            string                `json:"model"`
+	Effort           *string               `json:"effort"`
+	Offered          bool                  `json:"offered"`
+	PPass            *float64              `json:"p_pass"`
+	PredictedUsage   *PolicyPredictedUsage `json:"predicted_usage"`
+	PredictedCostUSD *float64              `json:"predicted_cost_usd"`
 }

@@ -1,0 +1,24 @@
+{
+  "surface": "decisions",
+  "body": {
+    "model": "arc-1.0",
+    "max_tokens": 1024,
+    "messages": [
+      {
+        "role": "user",
+        "content": "Refactor the parser and add tests."
+      }
+    ],
+    "routing": {
+      "response_fields": [
+        "predictions",
+        "predictions"
+      ]
+    }
+  },
+  "expect": {
+    "status": 400,
+    "type": "invalid_request_error",
+    "code": "response_fields_invalid"
+  }
+}
