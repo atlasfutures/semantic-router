@@ -176,6 +176,12 @@ type llmUsageRecord struct {
 	RouterTau              *float64 `json:"router_tau"`
 	RouterExplored         *bool    `json:"router_explored"`
 	ExplorationDecisionKey *string  `json:"exploration_decision_key"`
+	// RouterTemperature and RouterFloorApplied are a temperature-shape
+	// record's (pathfinder#5637): the softmax temperature the decision used,
+	// and whether the new-model floor put mass in its distribution. Null on
+	// a legacy tau record and when the decision carried none.
+	RouterTemperature  *float64 `json:"router_temperature"`
+	RouterFloorApplied *bool    `json:"router_floor_applied"`
 }
 
 // newLLMUsageRecord fills what the request context and the counts say. The
@@ -267,6 +273,7 @@ func addUsageRecordARCAttribution(record *llmUsageRecord, ctx *RequestContext) {
 		explored := policyExplorationUsage(trace)
 		record.RouterPropensity, record.RouterTau = explored.propensity, explored.tau
 		record.RouterExplored, record.ExplorationDecisionKey = explored.explored, explored.decisionKey
+		record.RouterTemperature, record.RouterFloorApplied = explored.temperature, explored.floorApplied
 	}
 	if thinking := ctx.RaylineARCThinking; thinking != nil {
 		record.ThinkingLevelInForce = nonEmpty(thinking.LevelInForce)

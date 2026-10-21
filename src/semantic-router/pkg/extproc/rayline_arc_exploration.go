@@ -19,6 +19,8 @@ package extproc
 import (
 	"encoding/json"
 	"errors"
+	"math"
+	"strconv"
 	"strings"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
@@ -40,6 +42,14 @@ const (
 	// team) is not opted out of training-data collection; any other value or
 	// none excludes it.
 	raylineARCTrainingDataHeader = "x-rayline-training-data"
+	// raylineARCExplorationTemperatureHeader is the end caller's own
+	// exploration temperature on a hosted turn (pathfinder#5637,
+	// memex-desktop#7531's header): a T >= 0 the gateway sends only when the
+	// user opted in and privacy mode is off. It is read only with
+	// trust_turn_signal_headers, only on a cell whose
+	// exploration_temperature sets caller_temperature, and only on a turn
+	// that is otherwise eligible; it is never forwarded upstream.
+	raylineARCExplorationTemperatureHeader = "x-rayline-exploration-temperature"
 )
 
 // Why an exploration-configured cell sent no exploration on a turn, as
@@ -52,6 +62,11 @@ const (
 	explorationExcludedPrivacyUnknown   = "privacy_mode_unknown"
 	explorationExcludedTrainingOptOut   = "training_data_opted_out"
 	explorationExcludedTrainingUnknown  = "training_data_unknown"
+	// explorationExcludedCallerTemperature: the gateway stated a caller
+	// temperature that is not a finite number >= 0. The turn is sent no
+	// exploration rather than the default in its place: the caller asked
+	// for something else, and a guessed T would be logged as theirs.
+	explorationExcludedCallerTemperature = "caller_temperature_invalid"
 )
 
 // policyExploration is a cell's selection.exploration member, from its
@@ -62,10 +77,38 @@ type policyExploration struct {
 	// trusted is trust_turn_signal_headers: the eligibility headers are the
 	// gateway's, not the client's.
 	trusted bool
+	// temperature is the temperature shape (exploration_temperature,
+	// pathfinder#5637): request.Temperature is the cell's default.
+	temperature bool
+	// callerTemperature honours the gateway's caller T header.
+	callerTemperature bool
 }
 
 func newPolicyExploration(policy *config.RaylineARCPolicyServiceConfig) *policyExploration {
-	if policy == nil || policy.Exploration == nil {
+	if policy == nil {
+		return nil
+	}
+	if cfg := policy.ExplorationTemperature; cfg != nil {
+		member := &raylinearc.PolicyExplorationTemperature{
+			Temperature:  *cfg.Temperature,
+			Surface:      raylinearc.PolicyExplorationSurfaceHosted,
+			Source:       raylinearc.PolicyExplorationSourceDefault,
+			TrainingData: raylinearc.PolicyTrainingDataAllowed,
+		}
+		if basis := cfg.Calibration; basis != nil {
+			member.Calibration = &raylinearc.PolicyExplorationBasis{
+				R: *basis.R, PackageSHA256: basis.PackageSHA256, ReadoutPin: basis.ReadoutPin,
+			}
+		}
+		return &policyExploration{
+			request:           raylinearc.PolicyExplorationRequest{Salt: cfg.Salt, Temperature: member},
+			evalCell:          policy.EvalCell,
+			trusted:           policy.TrustTurnSignalHeaders,
+			temperature:       true,
+			callerTemperature: cfg.CallerTemperature,
+		}
+	}
+	if policy.Exploration == nil {
 		return nil
 	}
 	cfg := policy.Exploration
@@ -130,8 +173,34 @@ func (exploration *policyExploration) apply(
 		return reason
 	}
 	member := exploration.request
+	if exploration.temperature {
+		// Copied, so a turn's caller T never reaches the cell's default.
+		hosted := *exploration.request.Temperature
+		if exploration.callerTemperature {
+			if stated := strings.TrimSpace(headers[raylineARCExplorationTemperatureHeader]); stated != "" {
+				callerT, ok := parseExplorationTemperature(stated)
+				if !ok {
+					return explorationExcludedCallerTemperature
+				}
+				// The service clamps a caller's T to the cell's hosted cap
+				// and logs both; the default's provenance is not the
+				// caller's.
+				hosted.Temperature, hosted.Source, hosted.Calibration = callerT, raylinearc.PolicyExplorationSourceCaller, nil
+			}
+		}
+		member.Temperature = &hosted
+	}
 	request.Selection.Exploration = &member
 	return ""
+}
+
+// parseExplorationTemperature reads a stated T: a finite number >= 0.
+func parseExplorationTemperature(stated string) (float64, bool) {
+	value, err := strconv.ParseFloat(stated, 64)
+	if err != nil || math.IsNaN(value) || math.IsInf(value, 0) || value < 0 {
+		return 0, false
+	}
+	return value, true
 }
 
 // record keeps what the turn's exploration did on its trace: the exclusion,
@@ -179,6 +248,12 @@ func addPolicyExplorationFields(fields map[string]interface{}, trace *selection.
 	}
 	var record map[string]interface{}
 	if json.Unmarshal(encoded, &record) == nil {
+		if trace.PolicyExploration.Temperature != nil || trace.PolicyExploration.Surface != nil {
+			// A temperature-shape record states no tau basis; the zero
+			// values the legacy members decode to are not the service's.
+			delete(record, "requested_tau")
+			delete(record, "basis")
+		}
 		fields["exploration"] = record
 	}
 }
@@ -197,6 +272,11 @@ type explorationUsage struct {
 	tau         *float64
 	explored    *bool
 	decisionKey *string
+	// temperature and floorApplied are the temperature shape's
+	// (pathfinder#5637 "llm_usage gains"): the T the decision used and
+	// whether floor mass was in its distribution; nil on a legacy record.
+	temperature  *float64
+	floorApplied *bool
 }
 
 func policyExplorationUsage(trace *selection.RaylineARCTrace) explorationUsage {
@@ -233,6 +313,7 @@ func policyExplorationUsage(trace *selection.RaylineARCTrace) explorationUsage {
 	}
 	return explorationUsage{
 		propensity: copyFloat(record.Propensity), tau: copyFloat(record.Tau), explored: explored, decisionKey: decisionKey,
+		temperature: copyFloat(record.Temperature), floorApplied: record.FloorApplied(),
 	}
 }
 

@@ -395,7 +395,9 @@ func (fake *fakePolicyService) decision(request raylinearc.PolicyDecisionRequest
 			}
 		}
 	}
-	if explore := request.Selection.Exploration; explore != nil && explore.Tau > 0 && !omitExploration {
+	if explore := request.Selection.Exploration; explore != nil && explore.Temperature != nil && !omitExploration {
+		response.Decision.StageOne = fake.temperatureExplorationRecord(*explore)
+	} else if explore != nil && explore.Tau > 0 && !omitExploration {
 		relaxed := request.EpisodeMode == raylinearc.PolicyEpisodeModeRelaxed && !ignoreEpisodeMode
 		response.Decision.StageOne = fake.explorationRecord(*explore, explorationHeld, relaxed, explorationChosen)
 	}
@@ -432,6 +434,30 @@ func (fake *fakePolicyService) explorationRecord(
 	}
 	if chosen != nil {
 		record.Chosen = chosen
+	}
+	return &raylinearc.PolicyDecisionStageOne{Exploration: record}
+}
+
+// temperatureExplorationRecord is a temperature-shape record (pathfinder#5637)
+// for this request member: the legacy fixture's draw under the requested T,
+// with the shape's own members and no tau basis. A hosted record carries a
+// floor that put mass in the distribution.
+func (fake *fakePolicyService) temperatureExplorationRecord(
+	explore raylinearc.PolicyExplorationRequest,
+) *raylinearc.PolicyDecisionStageOne {
+	var fixture raylinearc.PolicyDecisionResponse
+	fake.readFixture("decision_response_exploration.v1.json", &fixture)
+	record := fixture.Decision.StageOne.Exploration
+	member := explore.Temperature
+	requested, applied := member.Temperature, member.Temperature
+	surface, source, training := member.Surface, member.Source, member.TrainingData
+	record.Tau, record.RequestedTau, record.Basis, record.Salt = nil, 0, raylinearc.PolicyExplorationBasis{}, explore.Salt
+	record.Surface, record.Source, record.TrainingData = &surface, &source, &training
+	record.RequestedTemperature, record.Temperature = &requested, &applied
+	record.Normalization = json.RawMessage(`{"kind":"sd","spread":1.5}`)
+	record.PiSoftmax = json.RawMessage(`[0.5,0.5]`)
+	if surface == raylinearc.PolicyExplorationSurfaceHosted {
+		record.Floor = json.RawMessage(`{"models":["m"],"epsilon":0.01,"applied_mass":0.01,"config_digest":"d"}`)
 	}
 	return &raylinearc.PolicyDecisionStageOne{Exploration: record}
 }
