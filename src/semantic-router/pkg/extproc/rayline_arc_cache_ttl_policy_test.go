@@ -73,6 +73,15 @@ func TestProviderCacheTTLFallsBackToTheDocumentedLifetimeOnly(t *testing.T) {
 			t.Fatalf("%s: source %q", tc.name, call.TTLSource)
 		}
 	}
+	observed := &config.RaylineARCPolicyServiceConfig{CacheContext: true, CacheTTLPolicy: []config.RaylineARCCacheTTLPolicyRow{
+		{Provider: "Z.AI", TTLSeconds: 3600, Basis: config.RaylineARCCacheTTLBasisObserved, Source: "probe 20261021 n=2"},
+	}}
+	transaction := &raylineARCEpisodeTransaction{cachePolicy: observed, servedModel: "glm-5.3"}
+	transaction.stageWireCacheTTL(0, "")
+	transaction.stageProviderCacheTTL("Z.AI")
+	if transaction.call.TTLSeconds != 3600 || transaction.call.TTLSource != "provider_observed: probe 20261021 n=2" {
+		t.Fatalf("observed row: %+v", transaction.call)
+	}
 	var none *raylineARCEpisodeTransaction
 	none.stageProviderCacheTTL("Moonshot AI")
 	none.stageBodyCacheControl(true, 300)

@@ -838,6 +838,10 @@ func (transaction *raylineARCEpisodeTransaction) stageProviderCacheTTL(provider 
 		return
 	}
 	transaction.call.TTLSeconds = row.TTLSeconds
+	if row.Basis == config.RaylineARCCacheTTLBasisObserved {
+		transaction.call.TTLSource = raylinearc.ProviderObservedTTLSource(row.Source)
+		return
+	}
 	transaction.call.TTLSource = raylinearc.ProviderPolicyTTLSource(row.Source)
 }
 

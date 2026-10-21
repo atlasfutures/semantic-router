@@ -48,9 +48,20 @@ type RaylineARCCacheTTLPolicyRow struct {
 	// longer) is not an expiry, and a provider whose lifetime is
 	// undocumented has no row.
 	TTLSeconds int `yaml:"ttl_seconds"`
-	// Source is the documentation the TTL comes from, with its read date.
+	// Source is the documentation the TTL comes from, with its read date,
+	// or the measurement it was observed in (route, date, sample size).
 	Source string `yaml:"source"`
+	// Basis is documented (the provider's own documentation; the default)
+	// or observed (a cache-read probe on the route at known gaps). It names
+	// the entry's ttl_source prefix, so the two are never confused.
+	Basis string `yaml:"basis,omitempty"`
 }
+
+// The cache_ttl_policy row bases.
+const (
+	RaylineARCCacheTTLBasisDocumented = "documented"
+	RaylineARCCacheTTLBasisObserved   = "observed"
+)
 
 // raylineARCMaxCacheTTLPolicyRows bounds cache_ttl_policy.
 const raylineARCMaxCacheTTLPolicyRows = 64
@@ -90,6 +101,12 @@ func validateRaylineARCUserTurnCache(cfg *RaylineARCPolicyServiceConfig) error {
 		if row.TTLSeconds <= 0 || row.TTLSeconds > raylineARCMaxCacheTTLSeconds {
 			return fmt.Errorf("cache_ttl_policy[%d].ttl_seconds must be between 1 and %d", index,
 				raylineARCMaxCacheTTLSeconds)
+		}
+		switch row.Basis {
+		case "", RaylineARCCacheTTLBasisDocumented, RaylineARCCacheTTLBasisObserved:
+		default:
+			return fmt.Errorf("cache_ttl_policy[%d].basis must be empty, %s or %s", index,
+				RaylineARCCacheTTLBasisDocumented, RaylineARCCacheTTLBasisObserved)
 		}
 		if row.Source == "" || len(row.Source) > maxRaylineARCConfigStringLength {
 			return fmt.Errorf("cache_ttl_policy[%d].source is required: the documentation and its read date", index)

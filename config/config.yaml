@@ -2052,6 +2052,8 @@ recipes:
                 #     workers: [kimi-k3]      # optional; empty is every worker
                 #     ttl_seconds: 300
                 #     source: platform.kimi.ai/docs/guide/use-context-caching-feature-of-kimi-api (5m idle, refreshed on hit), read 2026-10-21
+                #     basis: documented   # or observed (a cache-read probe;
+                #                         # ttl_source "provider_observed: ...")
                 cache_ttl_policy: []
                 # trained_models declares, per bound worker, the trained model
                 # it serves (a v5 action's model, e.g. claude-opus-5); a binding

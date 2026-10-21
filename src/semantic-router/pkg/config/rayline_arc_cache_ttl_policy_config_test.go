@@ -63,6 +63,11 @@ func TestRaylineARCUserTurnCacheAndTTLPolicyValidate(t *testing.T) {
 			row.TTLSeconds = 0
 			p.CacheContext, p.CacheTTLPolicy = true, []RaylineARCCacheTTLPolicyRow{row}
 		}, "ttl_seconds must be"},
+		{"unknown basis", func(p *RaylineARCPolicyServiceConfig) {
+			row := moonshot
+			row.Basis = "guessed"
+			p.CacheContext, p.CacheTTLPolicy = true, []RaylineARCCacheTTLPolicyRow{row}
+		}, "basis must be"},
 		{"repeated provider", func(p *RaylineARCPolicyServiceConfig) {
 			p.CacheContext, p.CacheTTLPolicy = true, []RaylineARCCacheTTLPolicyRow{moonshot, moonshot}
 		}, "repeats provider"},
