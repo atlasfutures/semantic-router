@@ -146,6 +146,7 @@ func requireRaylineARCPolicyServing(
 	}
 	required := raylineARCPolicyServiceRequirements(policy)
 	routesRequirements(&required, routing)
+	generationRoutingRequirements(&required, policy)
 	err = raylinearc.CheckPolicyServiceRequirements(listing, loaded, required)
 	var failure *raylinearc.PolicyServiceError
 	if errors.As(err, &failure) {
@@ -180,4 +181,17 @@ func routesRequirements(required *raylinearc.PolicyServiceRequirements, routing 
 	for _, preset := range routesPresets {
 		required.CostWeights = append(required.CostWeights, 1/preset.valueUSD)
 	}
+}
+
+// generationRoutingRequirements adds what configurable ARC's caller V needs:
+// decisions_v2, and cost weights over the whole public V range [0.1, 5]
+// (cost_weight [0.2, 10]).
+func generationRoutingRequirements(required *raylinearc.PolicyServiceRequirements, policy *config.RaylineARCPolicyServiceConfig) {
+	if policy == nil || policy.GenerationRouting == nil || !policy.GenerationRouting.CallerValue {
+		return
+	}
+	if !slices.Contains(required.Capabilities, raylinearc.PolicyCapabilityDecisionsV2) {
+		required.Capabilities = append(required.Capabilities, raylinearc.PolicyCapabilityDecisionsV2)
+	}
+	required.CostWeights = append(required.CostWeights, 1/routesValueUSDMax, 1/routesValueUSDMin)
 }
