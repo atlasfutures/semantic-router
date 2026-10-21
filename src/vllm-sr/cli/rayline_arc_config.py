@@ -469,6 +469,16 @@ class RaylineARCExplorationConfig(BaseModel):
         return self
 
 
+class RaylineARCGenerationRoutingConfig(BaseModel):
+    """A generation turn's routing.{value_usd, temperature} (Go
+    RaylineARCGenerationRoutingConfig, pathfinder#5664). caller_value marks
+    configurable ARC (arc-1.0); without it the cell is a tier whose V is fixed."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    caller_value: bool = False
+
+
 class RaylineARCPolicyServiceConfig(BaseModel):
     """The policy-service mode: an external service returns the decision."""
 
@@ -520,6 +530,24 @@ class RaylineARCPolicyServiceConfig(BaseModel):
     exploration: RaylineARCExplorationConfig | None = None
     # An eval or lab cell never sends exploration.
     eval_cell: bool = False
+    # Absent: a generation turn's routing block is not read.
+    generation_routing: RaylineARCGenerationRoutingConfig | None = None
+
+    @model_validator(mode="after")
+    def _caller_value_is_not_a_tier(self):
+        # Mirrors the Go loader: configurable ARC takes the caller's V, so it
+        # cannot also be pinned to a tier's cost weight.
+        if (
+            self.generation_routing is not None
+            and self.generation_routing.caller_value
+            and self.decisions_v2 is not None
+            and self.decisions_v2.cost_weight is not None
+        ):
+            raise ValueError(
+                "generation_routing.caller_value serves configurable ARC: a cell "
+                "pinned to decisions_v2.cost_weight is a tier"
+            )
+        return self
 
     @model_validator(mode="after")
     def _exploration_basis_is_this_package(self):

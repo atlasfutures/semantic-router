@@ -853,6 +853,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		return nil, arcSelectionFailure(arcFailurePolicyOperatingPointMismatch)
 	}
 	recordRoutingPriceDecision(response.RoutingPricesUsed)
+	turnWeightApplied := arcContext.TurnCostWeight != nil
 	decision := policyDecision(scorer, response, binding, workerIDs, excluded)
 	if !validARCDecision(decision, workerIDs) {
 		return nil, arcSelectionFailure("artifact_result")
@@ -884,6 +885,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	result.RaylineARC.OfferKind = policyOfferKind(derivedOffer, forced, retained, held)
 	result.RaylineARC.MaskedArms = policyMaskedArms(scorer, workerIDs, excluded, fallback, turn, offeredRoutes)
 	result.RaylineARC.PolicyPackageSHA256 = scorer.sha256
+	result.RaylineARC.TurnCostWeightApplied = turnWeightApplied
 	result.RaylineARC.RoutingPricesStatus = pricesStatus
 	result.RaylineARC.SettlementPrices = armed.prices
 	result.RaylineARC.RoutingPricesUsed = response.RoutingPricesUsed

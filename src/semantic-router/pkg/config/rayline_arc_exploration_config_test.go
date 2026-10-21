@@ -183,3 +183,23 @@ func TestRaylineARCGenerationRoutingRefusesACallerValueOnATier(t *testing.T) {
 		t.Fatalf("a tier reading routing refused: %v", err)
 	}
 }
+
+// generation_routing is read before the request's recipe is known, from the
+// default recipe: a config with named recipes refuses it (GrayHorse P2 on
+// #305), and a single-recipe one keeps it.
+func TestRaylineARCGenerationRoutingNeedsASingleRecipeCell(t *testing.T) {
+	_, decision := policyDispatchFixture()
+	decision.Algorithm.RaylineARC.PolicyService.GenerationRouting = &RaylineARCGenerationRoutingConfig{CallerValue: true}
+	single := &RouterConfig{Recipes: []RoutingRecipe{{Name: DefaultRecipeName}}}
+	if err := validateRaylineARCGenerationRoutingScope(single, decision); err != nil {
+		t.Fatalf("a single-recipe cell refused: %v", err)
+	}
+	multi := &RouterConfig{Recipes: []RoutingRecipe{{Name: DefaultRecipeName}, {Name: "other"}}}
+	if err := validateRaylineARCGenerationRoutingScope(multi, decision); err == nil || !strings.Contains(err.Error(), "single-recipe") {
+		t.Fatalf("a multi-recipe config: err = %v", err)
+	}
+	decision.Algorithm.RaylineARC.PolicyService.GenerationRouting = nil
+	if err := validateRaylineARCGenerationRoutingScope(multi, decision); err != nil {
+		t.Fatalf("a cell without generation_routing refused: %v", err)
+	}
+}

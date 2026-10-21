@@ -124,10 +124,9 @@ func readRaylineRoutesRouting(
 	if failure := routesReadMembers(routing, members, envelope["model"]); failure != nil {
 		return nil, nil, failure
 	}
-	delete(envelope, "routing")
-	stripped, err := json.Marshal(envelope)
-	if err != nil {
-		return nil, nil, routesInvalid("invalid_body", "The request body must be a JSON object.")
+	stripped, refusal := stripRoutingMember(body)
+	if refusal != nil {
+		return nil, nil, refusal
 	}
 	return routing, stripped, nil
 }
