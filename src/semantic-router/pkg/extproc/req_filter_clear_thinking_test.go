@@ -14,12 +14,13 @@ func TestDropClearThinkingWithoutThinking(t *testing.T) {
 	tests := []struct {
 		name     string
 		model    string // "" means anthropic/claude-sonnet-5.5
-		thinking string // "" means no thinking member
+		thinking string // "" means no thinking member; "effort" means output_config.effort only
 		edits    string
 		want     string // context_management as sent; "" means absent
 	}{
 		{"non-Claude arm untouched", "z-ai/glm-5.3-flash", "", "[" + clearThinking + "]", `{"edits":[` + clearThinking + `]}`},
 		{"bare claude id", "claude-sonnet-5.5", `{"type":"disabled"}`, "[" + clearThinking + "]", ""},
+		{"effort without thinking keeps it", "", "effort", "[" + clearThinking + "]", `{"edits":[` + clearThinking + `]}`},
 		{"disabled, only edit", "", `{"type":"disabled"}`, "[" + clearThinking + "]", ""},
 		{"absent, only edit", "", "", "[" + clearThinking + "]", ""},
 		{"disabled, other edits stay", "", `{"type":"disabled"}`, "[" + clearThinking + "," + clearTools + "]", `{"edits":[` + clearTools + `]}`},
@@ -34,7 +35,11 @@ func TestDropClearThinkingWithoutThinking(t *testing.T) {
 				model = "anthropic/claude-sonnet-5.5"
 			}
 			body := `{"model":"` + model + `","max_tokens":64,"messages":[{"role":"user","content":"hi"}],`
-			if test.thinking != "" {
+			switch test.thinking {
+			case "":
+			case "effort":
+				body += `"output_config":{"effort":"high"},`
+			default:
 				body += `"thinking":` + test.thinking + `,`
 			}
 			body += `"context_management":{"edits":` + test.edits + `}}`

@@ -35,6 +35,13 @@ func dropClearThinkingWithoutThinking(body []byte) ([]byte, error) {
 	switch gjson.GetBytes(body, "thinking.type").String() {
 	case "adaptive", "enabled":
 		return body, nil
+	case "":
+		// An effort with no thinking member is adaptive thinking on a Claude
+		// 5 model: dev 2026-10-21, opus-5.5 took the edit beside effort high
+		// and no thinking, 7 of 7 turns 200. Those bytes stay as they are.
+		if gjson.GetBytes(body, "output_config.effort").Exists() {
+			return body, nil
+		}
 	}
 	kept := make([]json.RawMessage, 0, len(edits.Array()))
 	for _, edit := range edits.Array() {
