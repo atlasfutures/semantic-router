@@ -20,6 +20,23 @@ import (
 type ResponseAPIFilter struct {
 	store   responsestore.ResponseStore
 	enabled bool
+	// retains says the store keeps what it is given. The none backend is
+	// enabled (the Responses surface is on) and retains nothing: every turn
+	// gets a response id, nothing is written, and previous_response_id can
+	// never resolve, so it is refused as the caller's error (400
+	// stateless_path) rather than as a lookup miss (404) or an outage (503).
+	retains bool
+	// storeUnavailable says the cell configured retained history but its
+	// store could not be opened at startup. Retention is off, as for a cell
+	// with no store, but a previous_response_id is refused as the router's
+	// outage (503), not as the caller's error: the id may well resolve once
+	// the store is back, so telling the caller to rewrite the request would
+	// be wrong. On the ExtProc path the filter is disabled, so the header
+	// phase answers 404 for the whole surface during the outage, exactly as
+	// the nil filter did before this flag existed; the 503 here is what any
+	// caller that reaches the gate directly gets, and what keeps the outage
+	// from ever being misread as a cell that retains nothing.
+	storeUnavailable bool
 }
 
 // NewResponseAPIFilter creates a new Response API filter.
@@ -27,7 +44,16 @@ func NewResponseAPIFilter(store responsestore.ResponseStore) *ResponseAPIFilter 
 	return &ResponseAPIFilter{
 		store:   store,
 		enabled: store != nil && store.IsEnabled(),
+		retains: responsestore.Retains(store),
 	}
+}
+
+// NewUnavailableResponseAPIFilter is the filter for a cell whose configured
+// response store failed to open. It is disabled, so the surface stays 404 at
+// the header phase as it was before, it retains nothing and serves no object,
+// and it keeps previous_response_id answering 503 rather than 400.
+func NewUnavailableResponseAPIFilter() *ResponseAPIFilter {
+	return &ResponseAPIFilter{storeUnavailable: true}
 }
 
 // IsEnabled returns whether Response API is enabled.
@@ -95,6 +121,18 @@ type ResponseObjectState struct {
 // an already validated neutral request. Stateless POST generation remains
 // available without a store; an explicit previous_response_id fails closed if
 // its history cannot be retrieved.
+//
+// Three refusals look alike and must not share a status. A cell whose store
+// retains nothing (store_backend: none) cannot resolve any
+// previous_response_id, ever: that is the caller's to fix by resending the
+// conversation's items, so it answers 400 with the stateless_path class and
+// message the ARC policy path and the decision API already use
+// (memex-desktop#7484). An id a retaining store does not hold is a 404. A
+// store the cell configured and could not open, or one that is open and
+// fails to load the history, is the router failing at something it
+// undertook, so those stay response_history_unavailable and a 503; so does a
+// nil or disabled filter, which the header phase answers 404 before this
+// runs on the ExtProc path.
 func (f *ResponseAPIFilter) PrepareObjectState(
 	ctx context.Context,
 	request llmprotocol.Request,
@@ -108,11 +146,14 @@ func (f *ResponseAPIFilter) PrepareObjectState(
 	}
 	state.Input, state.Instructions = snapshotResponseObjectRequest(sourceBody, request)
 	if request.PreviousResponseID != "" {
-		if f == nil || !f.enabled {
+		if f == nil || !f.enabled || f.storeUnavailable {
+			return nil, responseHistoryUnavailableError(nil)
+		}
+		if !f.retains {
 			return nil, llmprotocol.NewError(
-				llmprotocol.ErrorUpstreamUnavailable,
-				"response_history_unavailable",
-				"retained response history is unavailable",
+				llmprotocol.ErrorInvalidRequest,
+				selectionFailureStatelessPath,
+				statelessPathMessage,
 				nil,
 			)
 		}
@@ -127,12 +168,7 @@ func (f *ResponseAPIFilter) PrepareObjectState(
 		}
 		if err != nil {
 			logging.Warnf("Failed to fetch response history (error_class=%T)", err)
-			return nil, llmprotocol.NewError(
-				llmprotocol.ErrorUpstreamUnavailable,
-				"response_history_unavailable",
-				"retained response history is unavailable",
-				err,
-			)
+			return nil, responseHistoryUnavailableError(err)
 		}
 		state.ConversationHistory = history
 	}
@@ -141,6 +177,18 @@ func (f *ResponseAPIFilter) PrepareObjectState(
 		request.ConversationID, state.ConversationHistory, state.GeneratedResponseID,
 	)
 	return state, nil
+}
+
+// responseHistoryUnavailableError is the router's own failure to serve
+// history it undertook to keep. It reads as a 503, so the caller waits and
+// retries rather than rewriting a request that was fine.
+func responseHistoryUnavailableError(cause error) error {
+	return llmprotocol.NewError(
+		llmprotocol.ErrorUpstreamUnavailable,
+		"response_history_unavailable",
+		"retained response history is unavailable",
+		cause,
+	)
 }
 
 // HandleGetResponse handles GET /v1/responses/{id} requests.

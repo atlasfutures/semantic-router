@@ -1038,6 +1038,7 @@ func TestRaylineRoutesNamesItsSurface(t *testing.T) {
 		"conv-1",
 		false,
 		llmprotocol.AnthropicMessagesV1,
+		nil,
 	)
 	if consult.Surface != routerruntime.RouteDecisionSurfaceRoutes {
 		t.Fatalf("Surface = %q, want %q", consult.Surface, routerruntime.RouteDecisionSurfaceRoutes)
@@ -1424,5 +1425,21 @@ func TestRaylineRoutesAnswersItsOwnStreamedBodyGuardBreaches(t *testing.T) {
 				t.Fatal("the refusal was not claimed, so it will be re-encoded")
 			}
 		})
+	}
+}
+
+// A private turn with no allowed arm is the undecidable 422 on this surface
+// too, with its own message, so the caller is told why.
+func TestRaylineRoutesNoPrivateArmSaysWhy(t *testing.T) {
+	t.Parallel()
+	failure := selectionFailureError(&raylineARCSelectionFailure{class: arcFailureNoPrivateArm})
+	response := routesRouter(true).raylineRoutesFailure(
+		routesContext(nil), context.Background(), "rte_1234abcd5678efab", failure,
+	)
+	if code := immediateStatusCode(t, response); code != 422 {
+		t.Fatalf("status = %d, want 422", code)
+	}
+	if body := string(response.GetImmediateResponse().GetBody()); !strings.Contains(body, "privacy mode") {
+		t.Fatalf("body does not name the privacy mode: %s", body)
 	}
 }

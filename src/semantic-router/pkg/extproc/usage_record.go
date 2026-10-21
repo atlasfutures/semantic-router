@@ -104,6 +104,18 @@ type llmUsageRecord struct {
 	// named it; ProviderOrder is the route the dispatched body pinned.
 	UpstreamProvider *string  `json:"upstream_provider"`
 	ProviderOrder    []string `json:"provider_order"`
+	// PrivacyMode is the data mode a Rayline ARC turn was served under
+	// (standard, privacy or zdr), null outside ARC; a private turn also
+	// carries its allowed set's size and digest, never the set
+	// (rayline_arc_privacy.go).
+	PrivacyMode             *string `json:"privacy_mode"`
+	PrivacyAllowedArmsCount *int    `json:"privacy_allowed_arms_count"`
+	PrivacyAllowedArmsHash  *string `json:"privacy_allowed_arms_hash"`
+	// The provider object's data-use members as the dispatched body carried
+	// them, null where it carried none.
+	ProviderDataCollection *string `json:"provider_data_collection"`
+	ProviderZDR            *bool   `json:"provider_zdr"`
+	ProviderAllowFallbacks *bool   `json:"provider_allow_fallbacks"`
 	// UpstreamServiceTier is the service tier the upstream says it served
 	// the call at (service_tier, or Anthropic's usage.service_tier), in its
 	// spelling; null when the response did not say.
@@ -182,6 +194,15 @@ type llmUsageRecord struct {
 	// a legacy tau record and when the decision carried none.
 	RouterTemperature  *float64 `json:"router_temperature"`
 	RouterFloorApplied *bool    `json:"router_floor_applied"`
+
+	// The served identity of an ARC call (x-vsr-served-model and
+	// x-vsr-policy-cost-weight), null outside ARC and when unknown:
+	// ServedModel is the provider model id the call was dispatched to, read
+	// back off the final provider body, which a pass-through bill resolves
+	// its card from; PolicyCostWeight is the stage-one cost weight the
+	// service echoed for the decision.
+	ServedModel      *string  `json:"served_model"`
+	PolicyCostWeight *float64 `json:"policy_cost_weight"`
 }
 
 // newLLMUsageRecord fills what the request context and the counts say. The
@@ -228,6 +249,17 @@ func (r *OpenAIRouter) newLLMUsageRecord(ctx *RequestContext, usage responseUsag
 	if len(ctx.DispatchedProviderOrder) > 0 {
 		record.ProviderOrder = append([]string(nil), ctx.DispatchedProviderOrder...)
 	}
+	record.ProviderDataCollection = nonEmpty(ctx.DispatchedProviderPrivacy.dataCollection)
+	record.ProviderZDR = ctx.DispatchedProviderPrivacy.zdr
+	record.ProviderAllowFallbacks = ctx.DispatchedProviderPrivacy.allowFallbacks
+	if ctx.VSRRaylineARC != nil {
+		record.PrivacyMode = nonEmpty(privacyModeLabel(ctx.RaylineARCPrivacyMode))
+		if ctx.RaylineARCPrivacyMode != "" {
+			count := len(ctx.RaylineARCPrivacyAllowedArms)
+			record.PrivacyAllowedArmsCount = &count
+			record.PrivacyAllowedArmsHash = nonEmpty(privacyAllowedArmsHash(ctx.RaylineARCPrivacyAllowedArms))
+		}
+	}
 	record.RequestedServiceTier = nonEmpty(ctx.DispatchedServiceTier)
 	if ctx.FlexResend.served() {
 		record.FlexResend = nonEmpty(flexResendStandard)
@@ -265,6 +297,10 @@ func addUsageRecordARCAttribution(record *llmUsageRecord, ctx *RequestContext) {
 		record.ArtifactRevisionHash = nonEmpty(trace.ArtifactRevision)
 		record.PolicyActionID = nonEmpty(trace.PolicyActionID)
 		record.PolicyArmID = nonEmpty(trace.PolicyArmID)
+		if identity, ok := raylineARCServedIdentityOf(ctx); ok {
+			record.ServedModel = nonEmpty(identity.model)
+			record.PolicyCostWeight = identity.costWeight
+		}
 		if decision := ctx.VSRSelectedDecision; trace.PolicyActionID != "" && decision != nil &&
 			decision.Algorithm != nil && decision.Algorithm.RaylineARC != nil &&
 			decision.Algorithm.RaylineARC.PolicyService != nil {

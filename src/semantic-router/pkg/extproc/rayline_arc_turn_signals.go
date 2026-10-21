@@ -78,6 +78,7 @@ func raylineARCTurnSignalHeadersForRemoval() []string {
 		raylineARCCallKindHeader, raylineARCCompactionHeader,
 		raylineARCAgentKeySourceHeader, raylineARCParentSessionHeader, raylineARCParentAgentHeader,
 		raylineARCPrivacyModeHeader, raylineARCTrainingDataHeader, raylineARCExplorationTemperatureHeader,
+		raylineARCPrivacyAllowedArmsHeader,
 	}
 }
 

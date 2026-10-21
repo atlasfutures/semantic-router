@@ -42,6 +42,12 @@ type RoutingMetadata struct {
 	// on. Absent when the decision declares none, so a cell that has not
 	// declared a limit publishes no number rather than a zero.
 	MaxContextTokens *int `json:"max_context_tokens,omitempty"`
+	// TrustTurnSignalHeaders is the alias's Rayline ARC decision's
+	// trust_turn_signal_headers: whether the cell reads the gateway's
+	// turn-signal headers, x-rayline-privacy-mode and
+	// x-rayline-privacy-allowed-arms among them. False on an artifact-mode
+	// decision, which has no policy service. Absent where Candidates is.
+	TrustTurnSignalHeaders *bool `json:"trust_turn_signal_headers,omitempty"`
 }
 
 // OpenAIModel represents a single model in the OpenAI /v1/models response.
@@ -94,6 +100,7 @@ func (b *modelListBuilder) appendAutoAliases(cfg *config.RouterConfig) {
 	if cfg != nil {
 		routing.Candidates = routingCandidatesOf(cfg, cfg.DefaultRecipe())
 		routing.MaxContextTokens = routingContextLimitOf(cfg.DefaultRecipe())
+		routing.TrustTurnSignalHeaders = routingTrustsTurnSignalHeadersOf(cfg.DefaultRecipe())
 	}
 	b.appendAll(
 		autoModelNames,
@@ -113,6 +120,7 @@ func (b *modelListBuilder) appendEntrypointAliases(cfg *config.RouterConfig) {
 		if recipe, ok := cfg.RecipeByName(entrypoint.Recipe); ok {
 			routing.Candidates = routingCandidatesOf(cfg, recipe)
 			routing.MaxContextTokens = routingContextLimitOf(recipe)
+			routing.TrustTurnSignalHeaders = routingTrustsTurnSignalHeadersOf(recipe)
 		}
 		b.appendAll(entrypoint.ModelNames, routerOwner, description, routing)
 	}

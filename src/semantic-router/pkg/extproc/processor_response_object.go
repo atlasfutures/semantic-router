@@ -60,6 +60,14 @@ func (r *OpenAIRouter) persistResponseObject(ctx *RequestContext) {
 		ctx.ResponseObjectState == nil || ctx.SemanticResponse == nil {
 		return
 	}
+	// A store that retains nothing (store_backend: none) accepts store: true
+	// and persists nothing: the turn keeps the response id it was minted, so
+	// a client sees the same object shape on every cell, and there is simply
+	// nothing to read back. Returning before the attempt is recorded keeps
+	// the state honest: no persistence was attempted.
+	if !r.ResponseAPIFilter.retains {
+		return
+	}
 	state := ctx.ResponseObjectState
 	if state.PersistenceAttempted {
 		return
