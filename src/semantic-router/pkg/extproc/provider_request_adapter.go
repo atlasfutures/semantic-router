@@ -84,7 +84,11 @@ func (r *OpenAIRouter) adaptMessagesProviderRequest(
 	dispatch *providerDispatch,
 	ctx *RequestContext,
 ) ([]byte, error) {
-	body, err := applyUpstreamSessionID(body, dispatch, ctx)
+	body, err := dropClearThinkingWithoutThinking(body)
+	if err != nil {
+		return nil, err
+	}
+	body, err = applyUpstreamSessionID(body, dispatch, ctx)
 	if err != nil {
 		return nil, err
 	}
