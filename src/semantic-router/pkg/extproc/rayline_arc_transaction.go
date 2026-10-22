@@ -23,6 +23,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/metrics"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/protocolcodec"
@@ -76,6 +77,16 @@ type raylineARCEpisodeTransaction struct {
 	// provider's usage. It is recorded on the served arm's warmth with the
 	// turn, and only when the action is known.
 	call raylinearc.CallCache
+	// cachePolicy is the cell's policy-service config when it sends
+	// cache_context: its cache_ttl_policy supplies a call's documented TTL
+	// when the wire states none the Router reads (stageProviderCacheTTL).
+	cachePolicy *config.RaylineARCPolicyServiceConfig
+	// bodyCacheControl and bodyCacheTTL are what a non-Anthropic dispatched
+	// body stated: whether it carried any cache_control, and the TTL the
+	// Router reads from it (0: none it knows). That provider may not follow
+	// it, so it is never reported as the call's TTL.
+	bodyCacheControl bool
+	bodyCacheTTL     int
 	// callCompleted is set once the provider's response to this turn was
 	// read; a turn without one (a decision-only consult) records no call.
 	callCompleted bool
@@ -793,6 +804,45 @@ func (transaction *raylineARCEpisodeTransaction) stageWireCacheTTL(seconds int, 
 		return
 	}
 	transaction.call.TTLSeconds, transaction.call.TTLSource = seconds, source
+}
+
+// stageBodyCacheControl records what a body sent to a provider whose cache
+// does not follow cache_control stated about caching.
+func (transaction *raylineARCEpisodeTransaction) stageBodyCacheControl(present bool, seconds int) {
+	if transaction == nil {
+		return
+	}
+	transaction.bodyCacheControl, transaction.bodyCacheTTL = present, seconds
+}
+
+// stageProviderCacheTTL reports, for a call whose dispatched body stated no
+// TTL the Router reads, the cache lifetime its serving provider documents
+// (the cell's cache_ttl_policy): a documented assumption, never a
+// cache-verified fact, named as such in its source. A body that asked for
+// another lifetime than the documented one leaves the TTL unknown: whether
+// the provider honoured it is not known. No row, no provider, or a cell that
+// sends no cache_context leaves it unknown too.
+func (transaction *raylineARCEpisodeTransaction) stageProviderCacheTTL(provider string) {
+	if transaction == nil || transaction.cachePolicy == nil || transaction.call.TTLSeconds != 0 {
+		return
+	}
+	worker := transaction.servedModel
+	if worker == "" {
+		worker = transaction.dispatchWorker
+	}
+	row, ok := transaction.cachePolicy.CacheTTLPolicyFor(provider, worker)
+	if !ok {
+		return
+	}
+	if transaction.bodyCacheControl && transaction.bodyCacheTTL != row.TTLSeconds {
+		return
+	}
+	transaction.call.TTLSeconds = row.TTLSeconds
+	if row.Basis == config.RaylineARCCacheTTLBasisObserved {
+		transaction.call.TTLSource = raylinearc.ProviderObservedTTLSource(row.Source)
+		return
+	}
+	transaction.call.TTLSource = raylinearc.ProviderPolicyTTLSource(row.Source)
 }
 
 // stageCallUsage records the provider-reported prompt and cache legs of the

@@ -84,6 +84,11 @@ type PolicySelection struct {
 	// response's decision.stage_one.exploration records it. Omitted unless
 	// the cell configures it and the turn's user is eligible.
 	Exploration *PolicyExplorationRequest `json:"exploration,omitempty"`
+	// UserTurnCache is the cell's serving-time cache mode for a typed user
+	// turn (pathfinder #5721, selection.user_turn_cache); the service
+	// records it with user_turn_cache_source: request. Omitted when the cell
+	// configures none, so the package's own mode decides.
+	UserTurnCache string `json:"user_turn_cache,omitempty"`
 }
 
 type PolicyEvaluation struct {
