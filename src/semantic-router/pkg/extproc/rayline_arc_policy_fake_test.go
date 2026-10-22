@@ -454,6 +454,15 @@ func (fake *fakePolicyService) decision(request raylinearc.PolicyDecisionRequest
 		relaxed := request.EpisodeMode == raylinearc.PolicyEpisodeModeRelaxed && !ignoreEpisodeMode
 		response.Decision.StageOne = fake.explorationRecord(*explore, explorationHeld, relaxed, explorationChosen)
 	}
+	// The opt-in tool status answers as pathfinder#5751's service does:
+	// present when the request carried tool definitions.
+	if slices.Contains(request.ResponseFields, raylinearc.PolicyCapabilityToolDefinitionsStatus) {
+		status := "absent"
+		if tools := strings.TrimSpace(string(request.Request.Tools)); tools != "" && tools != "null" && tools != "[]" {
+			status = "present"
+		}
+		response.Encoding.ToolDefinitionsStatus = &status
+	}
 	// A relaxed call advances no session (pathfinder#3068).
 	if (request.EpisodeMode == raylinearc.PolicyEpisodeModeRelaxed && !ignoreEpisodeMode) || nullRevision {
 		response.Encoding.SessionRevision = nil

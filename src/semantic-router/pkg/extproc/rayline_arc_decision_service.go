@@ -917,10 +917,11 @@ func prepareFailureError(failure string) error {
 
 // routeToolsEncoded is whether the decision's encoding included the
 // request's tool definitions. The service's own statement wins
-// (encoding.tool_definitions_status); without one, a package (the policy
-// block that decided) whose encoding profile includes the recorded
-// definitions encoded them; otherwise nothing says, and nil keeps the
-// endpoint's configured account.
+// (encoding.tool_definitions_status: present or absent; unknown says
+// nothing); without it, a package (the policy block that decided) whose
+// encoding profile encodes request tools (PackageEncodesRequestTools)
+// encoded them; otherwise nothing says, and nil keeps the endpoint's
+// configured account.
 func routeToolsEncoded(status *string, policy *config.RaylineARCPolicyServiceConfig) *bool {
 	encoded := func(value bool) *bool { return &value }
 	if status != nil {
@@ -934,7 +935,7 @@ func routeToolsEncoded(status *string, policy *config.RaylineARCPolicyServiceCon
 	if policy == nil {
 		return nil
 	}
-	if policy.PackageToolDefinitions() == "include_recorded" {
+	if policy.PackageEncodesRequestTools() {
 		return encoded(true)
 	}
 	return nil

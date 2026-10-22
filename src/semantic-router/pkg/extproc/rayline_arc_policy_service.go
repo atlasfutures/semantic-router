@@ -698,6 +698,11 @@ func (selector *raylineARCSelector) selectViaPolicyScorer(
 		turnWeight := *weight
 		request.Selection.OperatingPoint.CostWeight = &turnWeight
 	}
+	// Whether the encode included the request's tools, asked only of a
+	// service that lists the opt-in (an older one refuses the field).
+	if scorer.advertises(raylinearc.PolicyCapabilityToolDefinitionsStatus) {
+		request.ResponseFields = append(append([]string(nil), request.ResponseFields...), raylinearc.PolicyCapabilityToolDefinitionsStatus)
+	}
 	explorationExcluded := scorer.exploration.apply(&request, arcContext.PolicySignalHeaders, sideCall)
 	pricesStatus := attachRoutingPrices(armed.prices, &request)
 	applyRouteControls(&request, routeControls)
@@ -1388,6 +1393,8 @@ func turnOperatingPointMismatch(weight *float64, response *raylinearc.PolicyDeci
 	return echoed == nil || *echoed != *weight
 }
 
+// setAdvertised records the service's capability list from a readiness
+// listing.
 func (scorer *policyServiceScorer) setAdvertised(capabilities []string) {
 	copied := append([]string(nil), capabilities...)
 	scorer.advertised.Store(&copied)
