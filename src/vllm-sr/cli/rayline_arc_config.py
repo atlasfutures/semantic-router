@@ -441,6 +441,37 @@ class RaylineARCExplorationConfig(BaseModel):
         return self
 
 
+class RaylineARCExplorationTemperatureConfig(BaseModel):
+    """Hosted Stage-1 exploration as a softmax temperature (Go
+    RaylineARCExplorationTemperatureConfig, pathfinder#5637): the cell's
+    default T within its hosted cap, whether the end caller's own T is
+    honoured, the draw's salt, and the default's calibration (logged, never
+    checked). Exclusive with the legacy tau ``exploration`` block."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    temperature: float = Field(ge=0, allow_inf_nan=False)
+    temperature_max: float = Field(ge=0, allow_inf_nan=False)
+    caller_temperature: bool = False
+    salt: str = Field(min_length=1)
+    calibration: RaylineARCExplorationBasisConfig | None = None
+
+    @field_validator("salt")
+    @classmethod
+    def _salt_bytes(cls, value: str) -> str:
+        if len(value.encode()) > 128:
+            raise ValueError("exploration_temperature salt must be at most 128 bytes")
+        return value
+
+    @model_validator(mode="after")
+    def _default_within_cap(self):
+        if self.temperature > self.temperature_max:
+            raise ValueError(
+                "exploration_temperature temperature must not exceed temperature_max"
+            )
+        return self
+
+
 class RaylineARCPolicyServiceConfig(BaseModel):
     """The policy-service mode: an external service returns the decision."""
 
@@ -492,6 +523,15 @@ class RaylineARCPolicyServiceConfig(BaseModel):
     exploration: RaylineARCExplorationConfig | None = None
     # An eval or lab cell never sends exploration.
     eval_cell: bool = False
+    # Absent: hosted decisions draw no temperature. Exclusive with exploration.
+    exploration_temperature: RaylineARCExplorationTemperatureConfig | None = None
+
+    @model_validator(mode="after")
+    def _one_exploration_shape(self):
+        # The service refuses a request carrying both shapes (Go loader).
+        if self.exploration is not None and self.exploration_temperature is not None:
+            raise ValueError("exploration and exploration_temperature are exclusive")
+        return self
 
     @model_validator(mode="after")
     def _exploration_basis_is_this_package(self):
