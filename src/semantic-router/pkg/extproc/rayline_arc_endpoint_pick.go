@@ -80,9 +80,11 @@ func raylineARCSessionKey(signalHeaders map[string]string, rawEpisodeID string) 
 }
 
 // soleEndpoint is the endpoint a pin names alone with no OpenRouter fallback
-// (its only list, or its order when it sets no only list, of one tag), or ""
-// when OpenRouter may choose: several tags, fallbacks allowed, no pin, or a
-// slug the feed says reaches several endpoints of the model.
+// (its only list, or its order when it sets no only list, of one tag) when
+// the feed records that tag as the one endpoint the pin reaches, or "" when
+// OpenRouter may choose or the cell cannot tell: several tags, fallbacks
+// allowed, no pin, no feed, or a slug that reaches no recorded endpoint or
+// several.
 func soleEndpoint(
 	pin *config.OpenRouterProviderPreferences,
 	settlement *raylinearc.RoutingPriceSettlement,
@@ -101,25 +103,37 @@ func soleEndpoint(
 			slugs = append(slugs, slug)
 		}
 	}
-	if len(slugs) != 1 ||
-		(settlement != nil && len(raylinearc.PinRange(pin.Only, pin.Order, pin.Ignore, settlement.EndpointTags(model))) > 1) {
+	if len(slugs) != 1 || settlement == nil {
+		return ""
+	}
+	reach := raylinearc.PinRange(pin.Only, pin.Order, pin.Ignore, settlement.EndpointTags(model))
+	if len(reach) != 1 || reach[0] != strings.ToLower(slugs[0]) {
 		return ""
 	}
 	return slugs[0]
 }
 
-// pinnedEndpointPreferences pins an arm to its endpoint tag: order and only
-// are the tag and fallbacks are off, so only the tag can serve; every other
-// member of the arm's pin travels as configured.
+// pinnedEndpointPreferences pins an arm to its endpoint tag as the gateway's
+// pinnedProviderBlock does (memex-desktop endpointPick.ts): order and only
+// are the tag, fallbacks are off, ignore adds every endpoint the feed records
+// under the tag (pinning xai/zdr ignores xai/zdr/us and xai/zdr/priority), and
+// max_price caps the prompt and completion legs at the tag's recorded price,
+// in OpenRouter's units (USD per million tokens), so a child endpoint
+// OpenRouter adds under the tag between feed refreshes cannot serve above
+// it. Only the tag can then serve, at its price. A cap the arm configures
+// lower stays; every other member of the arm's pin travels as configured.
+// A tag without a row in effect is sent without a cap of its own.
 //
-// TODO(endpoint tag format): pinnedProviderBlock (memex-desktop
-// endpointPick.ts) also ignores the arm's tier endpoints under the tag
-// (pinning xai/zdr ignores xai/zdr/us) and the gateway will price the
-// pinned block with the endpoint's own max_price. Both wait on the endpoint
-// tag format; until then the arm's configured ignore and max_price stand.
+// TODO(endpoint tag format): a cell without the feed has no records to ignore
+// children or cap a price by; it does not pick, and its configured pins keep
+// their own ignore and max_price until the endpoint tag format lets the cell
+// know an arm's endpoints without the feed.
 func pinnedEndpointPreferences(
 	pin *config.OpenRouterProviderPreferences,
 	tag string,
+	feed *raylinearc.RoutingPriceSettlement,
+	model string,
+	now time.Time,
 ) *config.OpenRouterProviderPreferences {
 	pinned := config.OpenRouterProviderPreferences{}
 	if pin != nil {
@@ -129,6 +143,23 @@ func pinnedEndpointPreferences(
 	pinned.Order = []string{tag}
 	pinned.Only = []string{tag}
 	pinned.AllowFallbacks = &noFallbacks
+	if children := raylinearc.ChildEndpoints(feed.EndpointTags(model), tag); len(children) > 0 {
+		ignore := append(append([]string(nil), pinned.Ignore...), children...)
+		slices.Sort(ignore)
+		pinned.Ignore = slices.Compact(ignore)
+	}
+	if legs, ok := feed.EndpointLegs(model, tag, now); ok {
+		ceiling := map[string]float64{}
+		for kind, price := range pinned.MaxPrice {
+			ceiling[kind] = price
+		}
+		for kind, price := range map[string]float64{"prompt": legs.Input, "completion": legs.Output} {
+			if configured, set := ceiling[kind]; !set || price < configured {
+				ceiling[kind] = price
+			}
+		}
+		pinned.MaxPrice = ceiling
+	}
 	return &pinned
 }
 
@@ -149,10 +180,18 @@ func privacyAllowedArmEndpoints(ctx *RequestContext, arm string) ([]string, bool
 // the ones its gateway allows the arm. With more than one candidate and a
 // session key, the call is pinned to the session's pick and the rendezvous
 // order is recorded for the re-send; a private turn narrowed to one
-// candidate is pinned to it. Otherwise, and on a cell with no feed in effect
+// candidate is pinned to it, and one narrowed to several with no session key
+// to pick by is kept to them. Otherwise, and on a cell with no feed in effect
 // (endpoint_source none: the pin's strings are not endpoint records), the
 // arm's pin goes out unchanged. An unpinned arm is pinned only on a private
 // turn whose gateway listed its endpoints.
+//
+// A private turn picks only when its gateway listed the arm's endpoints
+// (x-rayline-privacy-allowed-endpoints): without the list (a gateway older
+// than it) the cell cannot tell which endpoints the mode admits, so the pin
+// goes out with the data-use members and OpenRouter keeps to the admitted
+// ones, as before the pick. An arm listed with no endpoints (arm=, a direct
+// arm with no pin) is allowed and goes out unpicked too.
 func pickArmEndpoint(
 	ctx *RequestContext,
 	dispatch *providerDispatch,
@@ -167,7 +206,11 @@ func pickArmEndpoint(
 		return pin
 	}
 	ctx.RaylineARCEndpointSource = endpointSourceFeed
+	ctx.RaylineARCEndpointFeed = settlement
 	allowed, listed := privacyAllowedArmEndpoints(ctx, dispatch.logicalModel)
+	if ctx.RaylineARCPrivacyMode != "" && (!listed || len(allowed) == 0) {
+		return pin
+	}
 	if pin == nil && !listed {
 		return pin
 	}
@@ -185,7 +228,16 @@ func pickArmEndpoint(
 	case len(candidates) == 0, len(candidates) == 1 && !narrowed:
 		return pin
 	case len(candidates) > 1 && ctx.RaylineARCSessionKey == "":
-		return pin
+		if !narrowed {
+			return pin
+		}
+		// Nothing to pick by, but the gateway's narrowing still holds.
+		kept := config.OpenRouterProviderPreferences{}
+		if pin != nil {
+			kept = *pin
+		}
+		kept.Only = append([]string(nil), candidates...)
+		return &kept
 	}
 	picked := candidates
 	if len(candidates) > 1 {
@@ -193,7 +245,7 @@ func pickArmEndpoint(
 	}
 	ctx.RaylineARCEndpointOrder = picked
 	ctx.RaylineARCEndpointsTried = []string{picked[0]}
-	return pinnedEndpointPreferences(pin, picked[0])
+	return pinnedEndpointPreferences(pin, picked[0], settlement, dispatch.upstreamModel, ctx.VSRRaylineARC.SettlementPrices.Now())
 }
 
 // dispatchedEndpoint is the endpoint an ARC call is known to be served by:
@@ -217,7 +269,7 @@ func resetDispatchedEndpoint(ctx *RequestContext) {
 		return
 	}
 	ctx.RaylineARCEndpointOrder, ctx.RaylineARCEndpointsTried, ctx.RaylineARCDispatchedEndpoint = nil, nil, ""
-	ctx.RaylineARCEndpointSource = ""
+	ctx.RaylineARCEndpointSource, ctx.RaylineARCEndpointFeed = "", nil
 }
 
 // addEndpointPickFields writes the turn's endpoint facts into a log record:
@@ -317,8 +369,14 @@ func (r *OpenAIRouter) buildEndpointResends(
 	tags []string,
 ) ([]endpointResendCall, string) {
 	calls := make([]endpointResendCall, 0, len(tags))
+	now := time.Now()
+	if ctx.VSRRaylineARC != nil && ctx.VSRRaylineARC.SettlementPrices != nil {
+		now = ctx.VSRRaylineARC.SettlementPrices.Now()
+	}
 	for _, tag := range tags {
-		pin := privacyProviderPreferences(pinnedEndpointPreferences(plan.pin, tag), plan.privacyMode)
+		// Each re-send is pinned as the pick was, from the same feed snapshot.
+		pinned := pinnedEndpointPreferences(plan.pin, tag, ctx.RaylineARCEndpointFeed, plan.dispatch.upstreamModel, now)
+		pin := privacyProviderPreferences(pinned, plan.privacyMode)
 		body, ok := withProviderObject(plan.dispatched, pin)
 		if !ok {
 			return nil, "body_unpinned"

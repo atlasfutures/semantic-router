@@ -223,6 +223,7 @@ func TestARCTurnIsPinnedToTheSessionsReachableEndpoint(t *testing.T) {
 	}
 	want := mustJSON(t, map[string]interface{}{
 		"order": []interface{}{order[0]}, "only": []interface{}{order[0]}, "allow_fallbacks": false,
+		"max_price": map[string]float64{"prompt": 3, "completion": 15},
 	})
 	if got, _ := json.Marshal(providerObject(t, body)); !sameJSON(t, got, want) {
 		t.Fatalf("provider object %s, want %s", got, want)
@@ -262,22 +263,179 @@ func TestTurnWithoutSessionKeyKeepsTheArmsPin(t *testing.T) {
 	}
 }
 
-// An arm sent with one configured endpoint tag is named; a single bare slug
-// the feed says reaches several endpoints is not, unless the cell picked.
+// An arm sent with one configured endpoint tag is known to be served there
+// only when the feed records that tag as the one endpoint it reaches: a
+// feed-less cell cannot tell, a slug that reaches several is not one, and a
+// slug with no feed row is not recorded.
 func TestSoleConfiguredEndpointIsNamedOnlyWhenItIsOne(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		feed *raylinearc.RoutingPriceCache
 		want string
 	}{
-		{"feedless single tag", nil, "google-vertex"},
+		{"feedless single tag", nil, ""},
 		{"feed reaches one", endpointFeed(t, "google-vertex", "anthropic"), "google-vertex"},
 		{"feed reaches several", endpointFeed(t, "google-vertex", "google-vertex/global"), ""},
+		{"no feed row", endpointFeed(t, "anthropic"), ""},
 	} {
 		ctx, _ := routeEndpointTurn(t, endpointPickRouter("http://127.0.0.1:1", "google-vertex"), endpointTurn{feed: tc.feed})
 		if ctx.RaylineARCDispatchedEndpoint != tc.want {
 			t.Fatalf("%s: endpoint %q, want %q", tc.name, ctx.RaylineARCDispatchedEndpoint, tc.want)
 		}
+	}
+}
+
+// x-vsr-served-endpoint names only a known leaf: a tag the feed records once
+// with nothing recorded under it, on the pick path and on an arm's one
+// configured tag alike. A tag with a recorded child, a tag the feed does not
+// record, and every tag on a feed-less cell leave the header unsent.
+func TestServedEndpointHeaderNamesOnlyAKnownLeaf(t *testing.T) {
+	order := raylinearc.PickEndpoint(endpointPickKey, endpointPickTags)
+	parentOnly := privacyAllowedEndpoints{present: true, arms: map[string][]string{endpointPickArm: {"xai/zdr"}}}
+	for _, tc := range []struct {
+		name string
+		pin  []string
+		turn endpointTurn
+		want string
+	}{
+		{"picked leaf", nil, endpointTurn{key: endpointPickKey, feed: endpointFeed(t, endpointPickTags...)}, order[0]},
+		{"configured leaf", []string{"anthropic"}, endpointTurn{feed: endpointFeed(t, "anthropic", "azure/global")}, "anthropic"},
+		// Picked (narrowed to one): its block ignores the recorded child.
+		{"picked parent, children ignored", []string{"xai"}, endpointTurn{
+			privacy: raylineARCPrivacyModeZDR, feed: endpointFeed(t, "xai/zdr", "xai/zdr/us"), allowed: parentOnly,
+		}, "xai/zdr"},
+		{"configured parent with a recorded child", []string{"xai/zdr"},
+			endpointTurn{feed: endpointFeed(t, "xai/zdr", "xai/zdr/us")}, ""},
+		{"configured slug with a recorded tier under it", []string{"xai"},
+			endpointTurn{feed: endpointFeed(t, "xai", "xai/priority")}, ""},
+		{"configured slug with no feed row", []string{"anthropic"}, endpointTurn{feed: endpointFeed(t, "azure/global")}, ""},
+		{"feed-less configured tag", []string{"anthropic"}, endpointTurn{}, ""},
+		{"feed-less pin", nil, endpointTurn{key: endpointPickKey}, ""},
+	} {
+		ctx, _ := routeEndpointTurn(t, endpointPickRouter("http://127.0.0.1:1", tc.pin...), tc.turn)
+		served := ""
+		for _, option := range buildResponseHeaderMutation(ctx, true).GetSetHeaders() {
+			if option.GetHeader().GetKey() == headers.VSRServedEndpoint {
+				served = string(option.GetHeader().GetRawValue())
+			}
+		}
+		if served != tc.want {
+			t.Fatalf("%s: %s = %q (pinned to %q), want %q",
+				tc.name, headers.VSRServedEndpoint, served, ctx.RaylineARCDispatchedEndpoint, tc.want)
+		}
+	}
+}
+
+// A pick that lands on a tag with recorded endpoints under it is sent as the
+// gateway's pinnedProviderBlock: only and order the tag, every recorded
+// endpoint under it ignored, and max_price at the tag's recorded prompt and
+// completion price, so only the tag serves and the header can name it.
+func TestPickedParentIsSentAsThePinnedBlock(t *testing.T) {
+	tags := []string{"xai", "xai/zdr", "xai/zdr/us"}
+	key := ""
+	for index := 0; index < 64 && key == ""; index++ {
+		candidate := fmt.Sprintf("session-%d", index)
+		if raylinearc.PickEndpoint(candidate, tags)[0] != "xai/zdr/us" {
+			key = candidate
+		}
+	}
+	if key == "" {
+		t.Fatal("no session key picks a parent")
+	}
+	tag := raylinearc.PickEndpoint(key, tags)[0]
+	ctx, body := routeEndpointTurn(t, endpointPickRouter("http://127.0.0.1:1", "xai"),
+		endpointTurn{key: key, feed: endpointFeed(t, tags...)})
+
+	pin := providerObject(t, body)
+	var ignore []string
+	for _, child := range tags {
+		if strings.HasPrefix(child, tag+"/") {
+			ignore = append(ignore, child)
+		}
+	}
+	want := mustJSON(t, map[string]interface{}{
+		"order": []string{tag}, "only": []string{tag}, "allow_fallbacks": false, "ignore": ignore,
+		"max_price": map[string]float64{"prompt": 3, "completion": 15},
+	})
+	if got := mustJSONRaw(t, pin); !sameJSON(t, got, want) {
+		t.Fatalf("provider object %s, want %s", got, want)
+	}
+	served := ""
+	for _, option := range buildResponseHeaderMutation(ctx, true).GetSetHeaders() {
+		if option.GetHeader().GetKey() == headers.VSRServedEndpoint {
+			served = string(option.GetHeader().GetRawValue())
+		}
+	}
+	if served != tag {
+		t.Fatalf("%s = %q, want the picked parent %q", headers.VSRServedEndpoint, served, tag)
+	}
+}
+
+// An arm's configured max_price below the endpoint's recorded price stays:
+// the block only ever lowers a cap.
+func TestPinnedBlockKeepsALowerConfiguredCap(t *testing.T) {
+	cache := endpointFeed(t, "anthropic", "azure/global")
+	feed, _ := cache.Settlement()
+	pin := &config.OpenRouterProviderPreferences{MaxPrice: map[string]float64{"prompt": 1, "request": 0.5}}
+	pinned := pinnedEndpointPreferences(pin, "anthropic", feed, endpointPickModelID, cache.Now())
+	if want := map[string]float64{"prompt": 1, "completion": 15, "request": 0.5}; fmt.Sprint(pinned.MaxPrice) != fmt.Sprint(want) {
+		t.Fatalf("max_price %v, want %v", pinned.MaxPrice, want)
+	}
+	if fmt.Sprint(pin.MaxPrice) != fmt.Sprint(map[string]float64{"prompt": 1, "request": 0.5}) {
+		t.Fatalf("the arm's configured pin was changed: %v", pin.MaxPrice)
+	}
+	if bare := pinnedEndpointPreferences(nil, "anthropic", nil, endpointPickModelID, cache.Now()); bare.MaxPrice != nil || bare.Ignore != nil {
+		t.Fatalf("a feed-less block carried feed members: %+v", bare)
+	}
+}
+
+// A private turn from a gateway that sends no endpoint list (older than
+// x-rayline-privacy-allowed-endpoints) is not picked: the pin goes out with
+// its data-use members, OpenRouter keeps to the admitted endpoints, and no
+// re-send chain is staged.
+func TestPrivateTurnWithoutEndpointListIsNotPicked(t *testing.T) {
+	for _, mode := range []string{raylineARCPrivacyModeZDR, raylineARCPrivacyModePrivacy} {
+		ctx, body := routeEndpointTurn(t, endpointPickRouter("http://127.0.0.1:1"),
+			endpointTurn{key: endpointPickKey, privacy: mode, feed: endpointFeed(t, endpointPickTags...)})
+
+		if ctx.RaylineARCEndpointOrder != nil || ctx.RaylineARCEndpointResend != nil {
+			t.Fatalf("%s: picked %v without the gateway's endpoint list", mode, ctx.RaylineARCEndpointOrder)
+		}
+		pin := providerObject(t, body)
+		if order := pin["order"].([]interface{}); len(order) != len(endpointPickSlugs) || pin["data_collection"] != "deny" {
+			t.Fatalf("%s: provider object %v, want the arm's pin with its data mode", mode, pin)
+		}
+	}
+}
+
+// An arm the gateway lists with no endpoints (arm=) is allowed and goes out
+// unpicked, on its own pin.
+func TestPrivateArmListedWithoutEndpointsIsAllowedUnpicked(t *testing.T) {
+	allowed := privacyAllowedEndpoints{present: true, arms: map[string][]string{endpointPickArm: {}}}
+	ctx, body := routeEndpointTurn(t, endpointPickRouter("http://127.0.0.1:1"), endpointTurn{
+		key: endpointPickKey, privacy: raylineARCPrivacyModeZDR, feed: endpointFeed(t, endpointPickTags...), allowed: allowed,
+	})
+	if ctx.RaylineARCEndpointOrder != nil {
+		t.Fatalf("an arm= arm was picked: %v", ctx.RaylineARCEndpointOrder)
+	}
+	if order := providerObject(t, body)["order"].([]interface{}); len(order) != len(endpointPickSlugs) {
+		t.Fatalf("the arm's pin was changed: %v", order)
+	}
+}
+
+// A private turn narrowed to several endpoints with no session key to pick
+// by is kept to them rather than sent on the arm's whole reach.
+func TestNarrowedPrivateTurnWithoutKeyKeepsTheNarrowing(t *testing.T) {
+	kept := []string{"anthropic", "azure/global"}
+	allowed := privacyAllowedEndpoints{present: true, arms: map[string][]string{endpointPickArm: kept}}
+	ctx, body := routeEndpointTurn(t, endpointPickRouter("http://127.0.0.1:1"), endpointTurn{
+		privacy: raylineARCPrivacyModePrivacy, feed: endpointFeed(t, endpointPickTags...), allowed: allowed,
+	})
+	if ctx.RaylineARCEndpointOrder != nil {
+		t.Fatalf("a keyless turn picked: %v", ctx.RaylineARCEndpointOrder)
+	}
+	if only := mustJSONRaw(t, providerObject(t, body)["only"]); !sameJSON(t, only, mustJSON(t, kept)) {
+		t.Fatalf("only = %s, want %v", only, kept)
 	}
 }
 
@@ -464,9 +622,25 @@ func TestPrivacyAllowedEndpointsParse(t *testing.T) {
 	if !parsed.present || parsed.malformed || fmt.Sprint(parsed.arms) != fmt.Sprint(want) {
 		t.Fatalf("parsed %+v, want %v", parsed, want)
 	}
+	// The gateway's own output (memex-desktop rayline_cell_data_use.spec.ts,
+	// claude/optc-m5-arc-mask @ 727b1bc37f): an arm id may hold "@", and arm=
+	// is an allowed arm with no endpoints, not a malformed entry.
+	for raw, want := range map[string]map[string][]string{
+		"a@x=z-ai|deepinfra/fp8,b=": {"a@x": {"z-ai", "deepinfra/fp8"}, "b": {}},
+		"z-ai/glm-5.2@thinking-off=z-ai,xiaomi/mimo-v2.5-pro@thinking-on=xiaomi|deepinfra/fp8,kimi-k3@thinking-off=": {
+			"z-ai/glm-5.2@thinking-off":        {"z-ai"},
+			"xiaomi/mimo-v2.5-pro@thinking-on": {"xiaomi", "deepinfra/fp8"},
+			"kimi-k3@thinking-off":             {},
+		},
+	} {
+		got := raylineARCPrivacyAllowedEndpoints(raylineARCPrivacyModeZDR, headersWith(raw))
+		if !got.present || got.malformed || fmt.Sprint(got.arms) != fmt.Sprint(want) {
+			t.Fatalf("gateway vector %q parsed %+v, want %v", raw, got, want)
+		}
+	}
 	for _, mode := range []string{raylineARCPrivacyModeZDR, raylineARCPrivacyModePrivacy} {
 		for _, raw := range []string{
-			"arm-a", "=anthropic", "arm-a=", "arm-a=anthropic|", "arm-a=|anthropic", "arm-a=a=b",
+			"arm-a", "=anthropic", "=", "arm-a=anthropic|", "arm-a=|anthropic", "arm-a=a=b", "arm-a=,arm-a=",
 			"arm-a=anthropic,arm-a=xai", "arm-a=anthropic,", ",arm-a=anthropic",
 		} {
 			if got := raylineARCPrivacyAllowedEndpoints(mode, headersWith(raw)); !got.present || !got.malformed {
@@ -512,6 +686,11 @@ func TestPrivacyAllowedEndpointsMaskArms(t *testing.T) {
 	}
 	if excluded, constraints := mask(privacyAllowedEndpoints{}); !slices.Equal(excluded, []bool{false, false}) || constraints != nil {
 		t.Fatalf("an absent list changed the mask: %v %v", excluded, constraints)
+	}
+	// arm= allows the arm with nothing to narrow by, OpenRouter arm or not.
+	excluded, constraints = mask(privacyAllowedEndpoints{present: true, arms: map[string][]string{endpointPickArm: {}, "arc/direct": {}}})
+	if !slices.Equal(excluded, []bool{false, false}) || constraints[0] != nil || constraints[1] != nil {
+		t.Fatalf("arm= masked or constrained: %v %v", excluded, constraints)
 	}
 
 	feed := endpointFeed(t, endpointPickTags...)

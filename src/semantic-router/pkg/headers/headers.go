@@ -356,7 +356,10 @@ const (
 	// the arm's endpoints or the next one a re-send reached, with no
 	// OpenRouter fallback past it. A gateway bills the turn at that
 	// endpoint's price. Set on a successful ARC turn whose call was pinned to
-	// one endpoint; absent when OpenRouter could choose.
+	// one endpoint the routing-price feed makes a known leaf: the cell's
+	// pick, sent with every recorded endpoint under it ignored, or an arm's
+	// one tag the feed records with nothing under it; absent when OpenRouter
+	// could choose, and always absent on a cell without the feed.
 	VSRServedEndpoint = "x-vsr-served-endpoint"
 
 	// VSRPolicyPackage is the sha256 of the Rayline ARC policy package that

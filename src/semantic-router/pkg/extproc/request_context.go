@@ -145,7 +145,10 @@ type RequestContext struct {
 	// far this turn, and DispatchedEndpoint the one the call in flight is
 	// known to be served by (x-vsr-served-endpoint once it serves), empty
 	// when OpenRouter chooses. EndpointResend is the re-send staged on the
-	// next endpoints when the pick fails before any byte.
+	// next endpoints when the pick fails before any byte. EndpointFeed is the
+	// feed snapshot the pick read, so its re-sends and the served-endpoint
+	// header read the same records.
+	RaylineARCEndpointFeed       *raylinearc.RoutingPriceSettlement
 	RaylineARCEndpointSource     string
 	RaylineARCEndpointOrder      []string
 	RaylineARCEndpointsTried     []string

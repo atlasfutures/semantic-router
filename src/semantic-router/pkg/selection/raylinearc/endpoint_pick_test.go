@@ -131,3 +131,25 @@ func TestPinRangeIntersectsOnlyAndOrderLessIgnore(t *testing.T) {
 		t.Fatalf("ignore xai left %v", got)
 	}
 }
+
+// A tag is a known leaf only when recorded once with nothing recorded under
+// it: a slash is no leaf test, since xai/zdr still reaches xai/zdr/us.
+func TestIsLeafEndpointNeedsTheRecordsToSaySo(t *testing.T) {
+	tags := []string{"anthropic", "xai/zdr", "xai/zdr/us"}
+	for tag, want := range map[string]bool{
+		"anthropic":  true,
+		"xai/zdr/us": true,
+		"XAI/ZDR/US": true,
+		"xai/zdr":    false,
+		"xai":        false,
+		"google":     false,
+		"":           false,
+	} {
+		if got := IsLeafEndpoint(tags, tag); got != want {
+			t.Fatalf("IsLeafEndpoint(%q) = %v, want %v", tag, got, want)
+		}
+	}
+	if IsLeafEndpoint(nil, "anthropic") {
+		t.Fatal("no records named a leaf")
+	}
+}

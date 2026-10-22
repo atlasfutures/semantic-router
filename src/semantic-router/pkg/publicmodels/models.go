@@ -49,11 +49,13 @@ type RoutingMetadata struct {
 	// decision, which has no policy service. Absent where Candidates is.
 	TrustTurnSignalHeaders *bool `json:"trust_turn_signal_headers,omitempty"`
 	// ServedEndpointHeader says the cell states the OpenRouter endpoint that
-	// served a turn in x-vsr-served-endpoint whenever it knows it, so a
-	// gateway may read a successful turn without the header as one OpenRouter
-	// routed freely. True on every alias with a Rayline ARC decision, since
-	// every such cell runs the endpoint pick. Absent where Candidates is.
-	ServedEndpointHeader *bool `json:"servedEndpointHeader,omitempty"`
+	// served a turn in x-vsr-served-endpoint whenever it is a known leaf of
+	// the routing-price feed, so a gateway may read a successful turn without
+	// the header as one OpenRouter routed freely. True only on a Rayline ARC
+	// decision with the feed configured (policy_service.routing_prices); a
+	// cell without it never states an endpoint, so it is false there. Absent
+	// where Candidates is.
+	ServedEndpointHeader *bool `json:"served_endpoint_header,omitempty"`
 }
 
 // OpenAIModel represents a single model in the OpenAI /v1/models response.

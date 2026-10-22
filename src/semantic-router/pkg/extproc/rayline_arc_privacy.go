@@ -85,8 +85,12 @@ type privacyAllowedEndpoints struct {
 
 // raylineARCPrivacyAllowedEndpoints parses the per-arm endpoint allow list of
 // a private request that states its allowed arms; the zero value (absent)
-// otherwise. Tags never contain ",", "=" or "|", so an entry is malformed
-// when it has no "=", an empty arm or tag, a tag with "=", or repeats an arm.
+// otherwise. The format is the gateway's (memex-desktop
+// buildRaylineDataUseHeaders): arm=tag|tag entries joined by ",", an arm id
+// possibly holding "@", and arm= for an allowed arm with no endpoints. Tags
+// never contain ",", "=" or "|", so an entry is malformed when it has no "=",
+// an empty arm, an empty tag in a non-empty list, a tag with "=", or repeats
+// an arm.
 func raylineARCPrivacyAllowedEndpoints(mode string, signalHeaders map[string]string) privacyAllowedEndpoints {
 	raw := strings.TrimSpace(signalHeaders[raylineARCPrivacyAllowedEndpointsHeader])
 	if mode == "" || raw == "" || strings.TrimSpace(signalHeaders[raylineARCPrivacyAllowedArmsHeader]) == "" {
@@ -101,6 +105,13 @@ func raylineARCPrivacyAllowedEndpoints(mode string, signalHeaders map[string]str
 			return malformed
 		}
 		tags := []string{}
+		if strings.TrimSpace(list) == "" {
+			// arm= is an allowed arm with no endpoints to pick among (the
+			// gateway writes it for a direct arm with no pin): its pin goes
+			// out as it is.
+			parsed.arms[arm] = tags
+			continue
+		}
 		for _, tag := range strings.Split(list, "|") {
 			tag = strings.ToLower(strings.TrimSpace(tag))
 			if tag == "" || strings.Contains(tag, "=") {
@@ -119,8 +130,9 @@ func raylineARCPrivacyAllowedEndpoints(mode string, signalHeaders map[string]str
 // request's arm mask: a malformed list excludes every arm and an allowed arm
 // it leaves out is excluded, both failing closed. Each remaining OpenRouter
 // arm's constraint is returned by ordinal for the selector, which masks it
-// when none of its reachable endpoints is allowed; a non-OpenRouter arm has
-// no endpoints to narrow and is judged by its presence alone.
+// when none of its reachable endpoints is allowed; a non-OpenRouter arm, or
+// one listed with no endpoints (arm=), has none to narrow and is judged by
+// its presence alone.
 func (r *OpenAIRouter) withPrivacyEndpointConstraints(
 	excluded []bool,
 	endpoints privacyAllowedEndpoints,
@@ -137,6 +149,10 @@ func (r *OpenAIRouter) withPrivacyEndpointConstraints(
 		allowed, listed := endpoints.arms[strings.TrimSpace(ref.Model)]
 		if endpoints.malformed || !listed {
 			excluded[index] = true
+			continue
+		}
+		if len(allowed) == 0 {
+			// Listed as arm=: allowed, with no endpoints to narrow by.
 			continue
 		}
 		constraints[index] = r.armEndpointConstraint(ref.Model, allowed)

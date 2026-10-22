@@ -1,10 +1,12 @@
 package extproc
 
 import (
+	"slices"
 	"strconv"
 	"strings"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/headers"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
 
 // raylineARCServedIdentity is what a gateway needs to bill a Rayline ARC turn
@@ -61,10 +63,26 @@ func (builder *responseHeaderMutationBuilder) addRaylineARCServedIdentity(ctx *R
 }
 
 // addRaylineARCServedEndpoint names the endpoint a successful ARC turn was
-// served by (x-vsr-served-endpoint), when its call was pinned to one.
+// served by (x-vsr-served-endpoint), only when the routing-price feed makes
+// it a known leaf of the served model, so OpenRouter could serve it nowhere
+// else: a tag the cell picked, which its pinned block keeps to the tag by
+// ignoring every recorded endpoint under it (pinnedEndpointPreferences), or
+// an arm's one configured tag the feed records with nothing under it. A cell
+// without the feed never names one.
 func (builder *responseHeaderMutationBuilder) addRaylineARCServedEndpoint(ctx *RequestContext) {
-	if _, ok := raylineARCServedIdentityOf(ctx); !ok {
+	identity, ok := raylineARCServedIdentityOf(ctx)
+	tag := ctx.RaylineARCDispatchedEndpoint
+	if !ok || tag == "" {
 		return
 	}
-	builder.addString(headers.VSRServedEndpoint, ctx.RaylineARCDispatchedEndpoint)
+	feed := ctx.RaylineARCEndpointFeed
+	if feed == nil {
+		feed = routingPriceSettlementOf(ctx.VSRRaylineARC.SettlementPrices)
+	}
+	recorded := feed.EndpointTags(identity.model)
+	picked := len(ctx.RaylineARCEndpointOrder) > 0 && slices.Contains(recorded, strings.ToLower(tag))
+	if !picked && !raylinearc.IsLeafEndpoint(recorded, tag) {
+		return
+	}
+	builder.addString(headers.VSRServedEndpoint, tag)
 }

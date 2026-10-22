@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"slices"
 	"strings"
+	"time"
 )
 
 // Which OpenRouter endpoint of an arm serves a conversation's turn. The
@@ -68,6 +69,72 @@ func (settlement *RoutingPriceSettlement) EndpointTags(model string) []string {
 	}
 	slices.Sort(tags)
 	return tags
+}
+
+// ChildEndpoints are the recorded tags under tag (tag + "/" prefix), sorted:
+// the endpoints a pin on tag still reaches, or would if OpenRouter routed a
+// tier endpoint there, which a pinned block ignores so only tag can serve.
+func ChildEndpoints(tags []string, tag string) []string {
+	prefix := strings.ToLower(strings.TrimSpace(tag)) + "/"
+	var children []string
+	for _, recorded := range tags {
+		if recorded = strings.ToLower(recorded); strings.HasPrefix(recorded, prefix) && !slices.Contains(children, recorded) {
+			children = append(children, recorded)
+		}
+	}
+	slices.Sort(children)
+	return children
+}
+
+// EndpointLegs are the standard legs of the one row the feed records for
+// model at tag, in USD per million tokens, when that row is valid and in
+// effect at now; false otherwise (no row, several, an invalid row, or one
+// not in effect), and a pinned block then carries no price cap of its own.
+func (settlement *RoutingPriceSettlement) EndpointLegs(model, tag string, now time.Time) (SettlementLegs, bool) {
+	if settlement == nil {
+		return SettlementLegs{}, false
+	}
+	tag = strings.ToLower(strings.TrimSpace(tag))
+	var found *settlementRow
+	rows := settlement.rows[model]
+	for index := range rows {
+		if rows[index].endpointTag != tag {
+			continue
+		}
+		if found != nil {
+			return SettlementLegs{}, false
+		}
+		found = &rows[index]
+	}
+	if found == nil || found.invalid ||
+		(found.validFrom != nil && now.Before(*found.validFrom)) ||
+		(found.validUntil != nil && !now.Before(*found.validUntil)) {
+		return SettlementLegs{}, false
+	}
+	return found.legs, true
+}
+
+// IsLeafEndpoint reports whether tag is a known leaf among a model's
+// recorded endpoint tags: exactly one recorded tag is it, and no other
+// starts with tag + "/". Only then can a pin on tag be served by no endpoint
+// but tag itself (xai/zdr still reaches a recorded xai/zdr/us), so only then
+// is the endpoint that served known. No records know no leaf.
+func IsLeafEndpoint(tags []string, tag string) bool {
+	tag = strings.ToLower(strings.TrimSpace(tag))
+	if tag == "" {
+		return false
+	}
+	equal := 0
+	for _, recorded := range tags {
+		recorded = strings.ToLower(recorded)
+		switch {
+		case recorded == tag:
+			equal++
+		case strings.HasPrefix(recorded, tag+"/"):
+			return false
+		}
+	}
+	return equal == 1
 }
 
 // PinRange is the tags, in their order, an OpenRouter provider object can be
