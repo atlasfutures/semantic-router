@@ -455,3 +455,25 @@ func TestAliasStatesWhetherItTrustsTurnSignalHeaders(t *testing.T) {
 		}
 	}
 }
+
+// Every ARC cell advertises that it states the served endpoint, so a gateway
+// may read a successful turn without x-vsr-served-endpoint as unpinned; an
+// alias with no ARC decision behind it says nothing.
+func TestARCAliasAdvertisesTheServedEndpointHeader(t *testing.T) {
+	cfg := &config.RouterConfig{
+		RouterOptions: config.RouterOptions{AutoModelNames: []string{"router/auto"}},
+		Entrypoints:   []config.EntrypointMapping{{ModelNames: []string{"partner/plain"}, Recipe: "plain"}},
+		Recipes: []config.RoutingRecipe{
+			{Name: "default", Profile: config.RoutingProfile{Decisions: []config.Decision{arcDecision("artifact", config.ModelRef{Model: "arm-0"})}}},
+			{Name: "plain"},
+		},
+		BackendModels: config.BackendModels{ModelConfig: map[string]config.ModelParams{"arm-0": {}}},
+	}
+	listing := marshalListing(t, NewOpenAIModelList(cfg, 123))
+	if routing := modelEntry(t, listing, "router/auto")["routing"].(map[string]interface{}); routing["servedEndpointHeader"] != true {
+		t.Fatalf("router/auto servedEndpointHeader = %v, want true", routing["servedEndpointHeader"])
+	}
+	if routing := modelEntry(t, listing, "partner/plain")["routing"].(map[string]interface{}); routing["servedEndpointHeader"] != nil {
+		t.Fatalf("an alias with no ARC decision advertises servedEndpointHeader = %v", routing["servedEndpointHeader"])
+	}
+}

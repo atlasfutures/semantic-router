@@ -143,6 +143,18 @@ func routingTrustsTurnSignalHeadersOf(recipe *config.RoutingRecipe) *bool {
 	return &trusted
 }
 
+// routingStatesServedEndpointOf reports that the recipe's Rayline ARC cell
+// states the endpoint that served a turn (x-vsr-served-endpoint) whenever it
+// knows it, or nil when the recipe has no such decision. Every cell running
+// this router does, so it is true wherever there is a decision to say it of.
+func routingStatesServedEndpointOf(recipe *config.RoutingRecipe) *bool {
+	if raylineARCAlgorithmOf(recipe) == nil {
+		return nil
+	}
+	states := true
+	return &states
+}
+
 // raylineARCAlgorithmOf is the recipe's first rayline_arc decision's config,
 // or nil when it has none.
 func raylineARCAlgorithmOf(recipe *config.RoutingRecipe) *config.RaylineARCAlgorithmConfig {

@@ -542,7 +542,8 @@ func (r *OpenAIRouter) serveFlexTwin(
 		allowFallbacks: plan.twinPin.AllowFallbacks,
 	}
 	ctx.DispatchedServiceTier = plan.resentTier
-	ctx.RaylineARCDispatchedEndpoint = soleEndpoint(plan.twinPin)
+	ctx.RaylineARCEndpointOrder, ctx.RaylineARCEndpointsTried = nil, nil
+	ctx.RaylineARCDispatchedEndpoint = dispatchedEndpoint(ctx, plan.twinPin, plan.twinDispatch.upstreamModel)
 	return r.serveResent(ctx, plan.twinModel, result)
 }
 

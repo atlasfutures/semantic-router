@@ -52,3 +52,61 @@ func SessionKeyDigest(userID string, conversationID string) string {
 	digest := sha256.Sum256([]byte(userID + ":" + conversationID))
 	return hex.EncodeToString(digest[:])
 }
+
+// EndpointTags are the endpoint tags the feed carries rows for under an
+// OpenRouter model id, lower-cased, sorted and each once: the endpoints a
+// pin can reach for that model. Nil for a model the feed does not carry.
+func (settlement *RoutingPriceSettlement) EndpointTags(model string) []string {
+	if settlement == nil {
+		return nil
+	}
+	var tags []string
+	for _, row := range settlement.rows[model] {
+		if row.endpointTag != "" && !slices.Contains(tags, row.endpointTag) {
+			tags = append(tags, row.endpointTag)
+		}
+	}
+	slices.Sort(tags)
+	return tags
+}
+
+// PinRange is the tags, in their order, an OpenRouter provider object can be
+// served by: what both only and order reach (a list left unset does not
+// narrow), less what ignore reaches, each slug reaching as OpenRouter matches
+// endpoint slugs (slugMatches: xai reaches xai/zdr and xai/zdr/us, a tier
+// endpoint only its full slug). It is memex's pinRange
+// (firebase/router/src/rayline-data-use.ts) over the feed's tags rather than
+// catalog records.
+func PinRange(only, order, ignore, tags []string) []string {
+	only, order, ignore = uniqueLowerSlugs(only), uniqueLowerSlugs(order), uniqueLowerSlugs(ignore)
+	reached := []string{}
+	for _, tag := range tags {
+		if (len(only) == 0 || pinAdmits(only, tag)) && (len(order) == 0 || pinAdmits(order, tag)) &&
+			!pinAdmits(ignore, tag) {
+			reached = append(reached, tag)
+		}
+	}
+	return reached
+}
+
+// ArmEndpoints is what a private turn's endpoint constraint needs of one
+// OpenRouter arm: the model id and pin its reach is computed from, and the
+// endpoint tags the gateway allows it (x-rayline-privacy-allowed-endpoints).
+type ArmEndpoints struct {
+	Model               string
+	Only, Order, Ignore []string
+	Allowed             []string
+}
+
+// AllowedReach is the arm's reachable endpoints that the gateway allows, in
+// the feed's order: empty when none is, and then the arm cannot serve the
+// turn.
+func (arm ArmEndpoints) AllowedReach(settlement *RoutingPriceSettlement) []string {
+	reach := PinRange(arm.Only, arm.Order, arm.Ignore, settlement.EndpointTags(arm.Model))
+	return AllowedEndpoints(reach, arm.Allowed)
+}
+
+// AllowedEndpoints keeps the tags, in their order, that allowed lists.
+func AllowedEndpoints(tags, allowed []string) []string {
+	return slices.DeleteFunc(slices.Clone(tags), func(tag string) bool { return !slices.Contains(allowed, tag) })
+}

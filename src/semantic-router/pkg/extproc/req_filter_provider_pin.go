@@ -54,9 +54,9 @@ func applyProviderPreferences(
 	if !openRouter || (pin == nil && privacyMode == "") {
 		return body, nil
 	}
-	sent := privacyProviderPreferences(pickArmEndpoint(ctx, pin), privacyMode)
+	sent := privacyProviderPreferences(pickArmEndpoint(ctx, dispatch, pin), privacyMode)
 	if ctx != nil {
-		ctx.RaylineARCDispatchedEndpoint = soleEndpoint(sent)
+		ctx.RaylineARCDispatchedEndpoint = dispatchedEndpoint(ctx, sent, dispatch.upstreamModel)
 	}
 	var requestMap map[string]json.RawMessage
 	if err := json.Unmarshal(body, &requestMap); err != nil {

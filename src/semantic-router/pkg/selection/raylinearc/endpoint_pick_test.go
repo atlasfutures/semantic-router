@@ -62,10 +62,72 @@ func TestPickEndpointIgnoresListOrderAndRepeats(t *testing.T) {
 	}
 }
 
-// The session key is the gateway's sessionKeyDigest: hex sha256 of uid:conversation.
+// The session key is the gateway's sessionKeyDigest: hex sha256 of
+// uid:conversation. memex's test (endpointPick.test.ts) states the rule for
+// uid-1 and conv-7 rather than a literal; this literal was computed with
+// `shasum -a 256` over "uid-1:conv-7".
 func TestSessionKeyDigestIsTheGatewaysDigest(t *testing.T) {
-	sum := sha256.Sum256([]byte("uid-1:conv-1"))
-	if got := SessionKeyDigest("uid-1", "conv-1"); got != hex.EncodeToString(sum[:]) || len(got) != 64 {
-		t.Fatalf("session key %q", got)
+	const want = "eda4777e0ee8f325dde334879e8f9f4125fe99aef897a8eb180134b039f14963"
+	if got := SessionKeyDigest("uid-1", "conv-7"); got != want {
+		t.Fatalf("session key %q, want %q", got, want)
+	}
+}
+
+// slugReachFixture is vendored verbatim from memex-desktop
+// firebase/shared/tests/usage/fixtures/openrouter-slug-reach.json at commit
+// d6220f7c29 (branch claude/optc-m5-arc-mask): the slug rule memex pinReach
+// and VSR slugMatches share.
+const (
+	slugReachFixture       = "testdata/endpoint_pick/openrouter-slug-reach.json"
+	slugReachFixtureSHA256 = "d55b592f47933870ba4c33b16472496df7d5e94f46e01715036b4a1381c14769"
+)
+
+// Every slug the gateway's fixture names reaches the same endpoints here, in
+// the endpoints' order.
+func TestPinRangeReachesWhatTheGatewayFixtureReaches(t *testing.T) {
+	raw, err := os.ReadFile(slugReachFixture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sum := sha256.Sum256(raw); hex.EncodeToString(sum[:]) != slugReachFixtureSHA256 {
+		t.Fatalf("%s is not the vendored copy: sha256 %x", slugReachFixture, sum)
+	}
+	var fixture struct {
+		Endpoints []struct {
+			Tag string `json:"tag"`
+		} `json:"endpoints"`
+		Cases []struct {
+			Name  string   `json:"name"`
+			Slugs []string `json:"slugs"`
+			Reach []string `json:"reach"`
+		} `json:"cases"`
+	}
+	if err := json.Unmarshal(raw, &fixture); err != nil {
+		t.Fatal(err)
+	}
+	tags := make([]string, len(fixture.Endpoints))
+	for index, endpoint := range fixture.Endpoints {
+		tags[index] = endpoint.Tag
+	}
+	if len(fixture.Cases) != 11 {
+		t.Fatalf("fixture has %d cases, want 11", len(fixture.Cases))
+	}
+	for _, c := range fixture.Cases {
+		if got := PinRange(c.Slugs, nil, nil, tags); !slices.Equal(got, c.Reach) {
+			t.Errorf("%s: %v reaches %v, want %v", c.Name, c.Slugs, got, c.Reach)
+		}
+	}
+}
+
+// only and order both narrow; ignore removes what it reaches, children
+// included.
+func TestPinRangeIntersectsOnlyAndOrderLessIgnore(t *testing.T) {
+	tags := []string{"anthropic", "google-vertex", "google-vertex/global", "xai", "xai/zdr", "xai/zdr/us"}
+	got := PinRange([]string{"Google-Vertex", "xai"}, []string{"google-vertex/global", "xai/zdr"}, []string{"xai/zdr/us"}, tags)
+	if want := []string{"google-vertex/global", "xai/zdr"}; !slices.Equal(got, want) {
+		t.Fatalf("reach %v, want %v", got, want)
+	}
+	if got := PinRange(nil, nil, []string{"xai"}, tags); !slices.Equal(got, tags[:3]) {
+		t.Fatalf("ignore xai left %v", got)
 	}
 }

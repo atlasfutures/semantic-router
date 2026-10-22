@@ -58,6 +58,14 @@ type RaylineARCSelectionContext struct {
 	// (extproc/rayline_arc_privacy.go). Nil for a standard request, which
 	// leaves selection exactly as it was.
 	PrivacyExcludedArms []bool
+	// PrivacyArmEndpoints is, by arm ordinal, each OpenRouter arm's endpoint
+	// constraint on a private request whose gateway listed the endpoints
+	// each allowed arm may use (x-rayline-privacy-allowed-endpoints); nil
+	// otherwise, and nil at an arm that is masked already or not on
+	// OpenRouter. The selector masks an arm none of whose reachable
+	// endpoints the gateway allows, once it holds the routing-price feed
+	// that says what the arm reaches.
+	PrivacyArmEndpoints []*raylinearc.ArmEndpoints
 	// ContextTokens is the request's conservative token estimate, the same
 	// number the generic context filter compares a card's window against.
 	// Zero when no estimate was made, which excludes nothing.

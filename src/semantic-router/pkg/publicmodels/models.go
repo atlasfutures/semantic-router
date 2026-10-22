@@ -48,6 +48,12 @@ type RoutingMetadata struct {
 	// x-rayline-privacy-allowed-arms among them. False on an artifact-mode
 	// decision, which has no policy service. Absent where Candidates is.
 	TrustTurnSignalHeaders *bool `json:"trust_turn_signal_headers,omitempty"`
+	// ServedEndpointHeader says the cell states the OpenRouter endpoint that
+	// served a turn in x-vsr-served-endpoint whenever it knows it, so a
+	// gateway may read a successful turn without the header as one OpenRouter
+	// routed freely. True on every alias with a Rayline ARC decision, since
+	// every such cell runs the endpoint pick. Absent where Candidates is.
+	ServedEndpointHeader *bool `json:"servedEndpointHeader,omitempty"`
 }
 
 // OpenAIModel represents a single model in the OpenAI /v1/models response.
@@ -101,6 +107,7 @@ func (b *modelListBuilder) appendAutoAliases(cfg *config.RouterConfig) {
 		routing.Candidates = routingCandidatesOf(cfg, cfg.DefaultRecipe())
 		routing.MaxContextTokens = routingContextLimitOf(cfg.DefaultRecipe())
 		routing.TrustTurnSignalHeaders = routingTrustsTurnSignalHeadersOf(cfg.DefaultRecipe())
+		routing.ServedEndpointHeader = routingStatesServedEndpointOf(cfg.DefaultRecipe())
 	}
 	b.appendAll(
 		autoModelNames,
@@ -121,6 +128,7 @@ func (b *modelListBuilder) appendEntrypointAliases(cfg *config.RouterConfig) {
 			routing.Candidates = routingCandidatesOf(cfg, recipe)
 			routing.MaxContextTokens = routingContextLimitOf(recipe)
 			routing.TrustTurnSignalHeaders = routingTrustsTurnSignalHeadersOf(recipe)
+			routing.ServedEndpointHeader = routingStatesServedEndpointOf(recipe)
 		}
 		b.appendAll(entrypoint.ModelNames, routerOwner, description, routing)
 	}

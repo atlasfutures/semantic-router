@@ -14,9 +14,10 @@ import (
 )
 
 // Which OpenRouter endpoint serves an ARC turn (option C, memex-desktop
-// D-optc-mixed-price). An arm whose pin names more than one endpoint is sent
-// to one of them, picked by the conversation's session key with the
-// gateway's rendezvous hash (raylinearc.PickEndpoint), so the conversation
+// D-optc-mixed-price). An arm whose pin reaches more than one endpoint of its
+// model, as the routing-price feed records them, is sent to one of them,
+// picked by the conversation's session key with the gateway's rendezvous
+// hash (raylinearc.PickEndpoint), so the conversation
 // keeps hitting one endpoint's prompt cache, the gateway and the cell agree
 // on the endpoint whichever side picks, and x-vsr-served-endpoint can name
 // the endpoint that served, the one the gateway bills.
@@ -33,6 +34,12 @@ const (
 	sessionKeySourceFallback = "fallback"
 	sessionKeySourceNone     = "none"
 
+	// The sources of an arm's endpoints, as logged (endpoint_source): the
+	// routing-price feed's rows, or none when no feed is in effect and the
+	// arm's pin goes out unpicked.
+	endpointSourceFeed = "feed"
+	endpointSourceNone = "none"
+
 	// endpointResendMaxExtra is how many further endpoints a turn tries once
 	// its pick failed before any byte.
 	endpointResendMaxExtra = 2
@@ -46,11 +53,18 @@ const (
 
 // raylineARCSessionKey is the key the turn's endpoint is picked by: the
 // gateway's x-rayline-session-key, read from the trusted signal headers, or
-// when it sent none the same digest computed here from the episode id the
-// gateway keys as user:conversation, with a third component for a
-// subagent's branch. The branch is dropped, as the gateway's key drops it,
-// so a subagent stays on its conversation's endpoint. An episode id that is
-// not user:conversation is hashed whole. A turn with no episode has no key.
+// when it sent none a digest computed here from the episode id the gateway
+// keys as user:conversation, with further components for an episode scope
+// or a subagent's branch, which are dropped as the gateway's key drops them.
+//
+// The fallback is best-effort. It equals the gateway's key for a
+// conversation id without ":"; a conversation id with one is split short,
+// and a sessionless turn (keyed by the gateway on its request prefix, while
+// its episode id names the route) gets a key of its own. On a cell that does
+// not trust the gateway's headers the episode id is the client's to choose,
+// which is harmless: the key only chooses among the arm's own endpoints. An
+// episode id that is not user:conversation is hashed whole; a turn with no
+// episode has no key.
 func raylineARCSessionKey(signalHeaders map[string]string, rawEpisodeID string) (string, string) {
 	if key := strings.TrimSpace(signalHeaders[raylineARCSessionKeyHeader]); key != "" {
 		return key, sessionKeySourceHeader
@@ -65,38 +79,33 @@ func raylineARCSessionKey(signalHeaders map[string]string, rawEpisodeID string) 
 	return raylinearc.SessionKeyDigest(parts[0], parts[1]), sessionKeySourceFallback
 }
 
-// armEndpoints are the endpoints an arm's pin lets serve it, in its order:
-// the order list (the only list when it sets no order), kept to the only
-// list when it sets one, less the tags it ignores. A repeated or blank tag
-// counts once or not at all.
-func armEndpoints(pin *config.OpenRouterProviderPreferences) []string {
-	if pin == nil {
-		return nil
-	}
-	listed := pin.Order
-	if len(listed) == 0 {
-		listed = pin.Only
-	}
-	endpoints := []string{}
-	for _, tag := range listed {
-		tag = strings.TrimSpace(tag)
-		if tag == "" || slices.Contains(endpoints, tag) || slices.Contains(pin.Ignore, tag) ||
-			(len(pin.Only) > 0 && !slices.Contains(pin.Only, tag)) {
-			continue
-		}
-		endpoints = append(endpoints, tag)
-	}
-	return endpoints
-}
-
-// soleEndpoint is the one endpoint a pin lets serve, or "" when OpenRouter
-// may choose among several, or fall back past the one it names.
-func soleEndpoint(pin *config.OpenRouterProviderPreferences) string {
-	endpoints := armEndpoints(pin)
-	if len(endpoints) != 1 || pin.AllowFallbacks == nil || *pin.AllowFallbacks {
+// soleEndpoint is the endpoint a pin names alone with no OpenRouter fallback
+// (its only list, or its order when it sets no only list, of one tag), or ""
+// when OpenRouter may choose: several tags, fallbacks allowed, no pin, or a
+// slug the feed says reaches several endpoints of the model.
+func soleEndpoint(
+	pin *config.OpenRouterProviderPreferences,
+	settlement *raylinearc.RoutingPriceSettlement,
+	model string,
+) string {
+	if pin == nil || pin.AllowFallbacks == nil || *pin.AllowFallbacks {
 		return ""
 	}
-	return endpoints[0]
+	listed := pin.Only
+	if len(listed) == 0 {
+		listed = pin.Order
+	}
+	slugs := []string{}
+	for _, slug := range listed {
+		if slug = strings.TrimSpace(slug); slug != "" && !slices.Contains(slugs, slug) {
+			slugs = append(slugs, slug)
+		}
+	}
+	if len(slugs) != 1 ||
+		(settlement != nil && len(raylinearc.PinRange(pin.Only, pin.Order, pin.Ignore, settlement.EndpointTags(model))) > 1) {
+		return ""
+	}
+	return slugs[0]
 }
 
 // pinnedEndpointPreferences pins an arm to its endpoint tag: order and only
@@ -112,7 +121,10 @@ func pinnedEndpointPreferences(
 	pin *config.OpenRouterProviderPreferences,
 	tag string,
 ) *config.OpenRouterProviderPreferences {
-	pinned := *pin
+	pinned := config.OpenRouterProviderPreferences{}
+	if pin != nil {
+		pinned = *pin
+	}
 	noFallbacks := false
 	pinned.Order = []string{tag}
 	pinned.Only = []string{tag}
@@ -120,25 +132,82 @@ func pinnedEndpointPreferences(
 	return &pinned
 }
 
-// pickArmEndpoint returns the pin an arm's call is sent with: on an ARC turn
-// with a session key and an arm that names more than one endpoint, the
-// session's pick, its rendezvous order recorded for the re-send; otherwise
-// the arm's pin unchanged.
+// privacyAllowedArmEndpoints is the endpoint tags a private turn's gateway
+// allows the arm, and whether it listed the arm at all.
+func privacyAllowedArmEndpoints(ctx *RequestContext, arm string) ([]string, bool) {
+	endpoints := ctx.RaylineARCPrivacyAllowedEndpoints
+	if ctx.RaylineARCPrivacyMode == "" || !endpoints.present || endpoints.malformed {
+		return nil, false
+	}
+	allowed, listed := endpoints.arms[strings.TrimSpace(arm)]
+	return allowed, listed
+}
+
+// pickArmEndpoint returns the pin an ARC turn's call is sent with. The arm's
+// candidates are the endpoints its pin reaches among the routing-price
+// feed's rows for the model (raylinearc.PinRange), kept on a private turn to
+// the ones its gateway allows the arm. With more than one candidate and a
+// session key, the call is pinned to the session's pick and the rendezvous
+// order is recorded for the re-send; a private turn narrowed to one
+// candidate is pinned to it. Otherwise, and on a cell with no feed in effect
+// (endpoint_source none: the pin's strings are not endpoint records), the
+// arm's pin goes out unchanged. An unpinned arm is pinned only on a private
+// turn whose gateway listed its endpoints.
 func pickArmEndpoint(
 	ctx *RequestContext,
+	dispatch *providerDispatch,
 	pin *config.OpenRouterProviderPreferences,
 ) *config.OpenRouterProviderPreferences {
-	if ctx == nil || ctx.RaylineARCSessionKey == "" {
+	if ctx == nil || ctx.VSRRaylineARC == nil || dispatch == nil {
 		return pin
 	}
-	endpoints := armEndpoints(pin)
-	if len(endpoints) < 2 {
+	settlement := routingPriceSettlementOf(ctx.VSRRaylineARC.SettlementPrices)
+	if settlement == nil {
+		ctx.RaylineARCEndpointSource = endpointSourceNone
 		return pin
 	}
-	order := raylinearc.PickEndpoint(ctx.RaylineARCSessionKey, endpoints)
-	ctx.RaylineARCEndpointOrder = order
-	ctx.RaylineARCEndpointsTried = []string{order[0]}
-	return pinnedEndpointPreferences(pin, order[0])
+	ctx.RaylineARCEndpointSource = endpointSourceFeed
+	allowed, listed := privacyAllowedArmEndpoints(ctx, dispatch.logicalModel)
+	if pin == nil && !listed {
+		return pin
+	}
+	var only, order, ignore []string
+	if pin != nil {
+		only, order, ignore = pin.Only, pin.Order, pin.Ignore
+	}
+	reach := raylinearc.PinRange(only, order, ignore, settlement.EndpointTags(dispatch.upstreamModel))
+	candidates := reach
+	if listed {
+		candidates = raylinearc.AllowedEndpoints(reach, allowed)
+	}
+	narrowed := len(candidates) < len(reach)
+	switch {
+	case len(candidates) == 0, len(candidates) == 1 && !narrowed:
+		return pin
+	case len(candidates) > 1 && ctx.RaylineARCSessionKey == "":
+		return pin
+	}
+	picked := candidates
+	if len(candidates) > 1 {
+		picked = raylinearc.PickEndpoint(ctx.RaylineARCSessionKey, candidates)
+	}
+	ctx.RaylineARCEndpointOrder = picked
+	ctx.RaylineARCEndpointsTried = []string{picked[0]}
+	return pinnedEndpointPreferences(pin, picked[0])
+}
+
+// dispatchedEndpoint is the endpoint an ARC call is known to be served by:
+// the pick when the cell picked, else the one tag the sent pin names alone
+// (soleEndpoint); "" when OpenRouter chooses.
+func dispatchedEndpoint(ctx *RequestContext, sent *config.OpenRouterProviderPreferences, model string) string {
+	if len(ctx.RaylineARCEndpointOrder) > 0 {
+		return ctx.RaylineARCEndpointOrder[0]
+	}
+	var settlement *raylinearc.RoutingPriceSettlement
+	if ctx.VSRRaylineARC != nil {
+		settlement = routingPriceSettlementOf(ctx.VSRRaylineARC.SettlementPrices)
+	}
+	return soleEndpoint(sent, settlement, model)
 }
 
 // resetDispatchedEndpoint clears what an earlier rendering of the body said
@@ -148,18 +217,22 @@ func resetDispatchedEndpoint(ctx *RequestContext) {
 		return
 	}
 	ctx.RaylineARCEndpointOrder, ctx.RaylineARCEndpointsTried, ctx.RaylineARCDispatchedEndpoint = nil, nil, ""
+	ctx.RaylineARCEndpointSource = ""
 }
 
 // addEndpointPickFields writes the turn's endpoint facts into a log record:
-// where its session key came from, the endpoints in the order it tries them,
-// the ones tried and the one the call is pinned to. Fields it does not hold
-// are left out.
+// where its session key and its endpoints came from, the endpoints in the
+// order it tries them, the ones tried and the one the call is known to be
+// served by. Fields it does not hold are left out.
 func addEndpointPickFields(fields map[string]interface{}, ctx *RequestContext) {
 	if ctx == nil {
 		return
 	}
 	if ctx.RaylineARCSessionKeySource != "" {
 		fields["session_key_source"] = ctx.RaylineARCSessionKeySource
+	}
+	if ctx.RaylineARCEndpointSource != "" {
+		fields["endpoint_source"] = ctx.RaylineARCEndpointSource
 	}
 	if len(ctx.RaylineARCEndpointOrder) > 0 {
 		fields["provider_endpoint_order"] = ctx.RaylineARCEndpointOrder
@@ -192,10 +265,8 @@ func (r *OpenAIRouter) stageEndpointResend(ctx *RequestContext, dispatch *provid
 		len(ctx.RaylineARCEndpointOrder) < 2 {
 		return
 	}
+	// An unpinned arm's re-send is pinned as its pick was, from nothing.
 	pin := r.Config.ProviderPreferencesForModel(dispatch.logicalModel)
-	if pin == nil {
-		return
-	}
 	ctx.RaylineARCEndpointResend = &endpointResendPlan{
 		dispatch:    dispatch,
 		pin:         pin,
@@ -204,14 +275,21 @@ func (r *OpenAIRouter) stageEndpointResend(ctx *RequestContext, dispatch *provid
 	}
 }
 
-// endpointResendTrigger is the failure class a status re-sends on, or "":
-// a 429, a timeout, or a server error, the failures another endpoint of the
-// same model can answer. A 4xx is the request's, refused the same anywhere.
+// endpointResendTrigger is the failure class a call's status re-sends on, or
+// "": every failure before the first byte, a transport failure (status 0)
+// included, except the request's own 400, 413 and 422, which every endpoint
+// refuses alike. It is the gateway's retriesOnNextEndpoint
+// (memex-desktop firebase/router/src/providers.ts).
 func endpointResendTrigger(status int) string {
-	if status == http.StatusTooManyRequests || status == http.StatusRequestTimeout || status >= 500 {
-		return upstreamFailureClass(status, nil)
+	switch {
+	case status >= 200 && status < 300,
+		status == http.StatusBadRequest, status == http.StatusRequestEntityTooLarge,
+		status == http.StatusUnprocessableEntity:
+		return ""
+	case status == 0:
+		return turnFailureUpstreamError
 	}
-	return ""
+	return upstreamFailureClass(status, nil)
 }
 
 // endpointResendTags are the endpoints the turn may still try, in rendezvous
