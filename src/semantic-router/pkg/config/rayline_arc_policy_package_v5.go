@@ -99,15 +99,23 @@ func (cfg *RaylineARCPolicyServiceConfig) PackageTwoStage() bool {
 	return err == nil && pkg.manifest.StageOne != nil
 }
 
-// PackageToolDefinitions is the package's encoding_profile.tool_definitions
-// (how its projection treats the request's tool definitions); empty when
-// the manifest does not load.
-func (cfg *RaylineARCPolicyServiceConfig) PackageToolDefinitions() string {
+// PackageEncodesRequestTools reports whether the package's encoding
+// profile encodes the request's tool definitions: the policy service keeps
+// them only under a harness shell it includes (include, include_v2) and a
+// tool_definitions other than exclude. False when the manifest does not
+// load or says otherwise (an absent harness_shell excludes the shell).
+func (cfg *RaylineARCPolicyServiceConfig) PackageEncodesRequestTools() bool {
 	pkg, err := cfg.loadPackageV5()
 	if err != nil {
-		return ""
+		return false
 	}
-	return pkg.manifest.EncodingProfile.ToolDefinitions
+	profile := pkg.manifest.EncodingProfile
+	var shell string
+	if len(profile.HarnessShell) == 0 || json.Unmarshal(profile.HarnessShell, &shell) != nil {
+		return false
+	}
+	included := shell == raylinearc.PolicyHarnessShellInclude || shell == raylinearc.PolicyHarnessShellIncludeV2
+	return included && profile.ToolDefinitions != "" && profile.ToolDefinitions != "exclude"
 }
 
 // PackageStageOneByModel reports whether the package's stage one chooses a
