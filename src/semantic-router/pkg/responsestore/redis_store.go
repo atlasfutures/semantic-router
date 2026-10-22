@@ -307,6 +307,12 @@ func (s *RedisStore) IsEnabled() bool {
 	return s.enabled
 }
 
+// Retains is true: what this store is given is written to Redis and can be
+// read back until its TTL expires, so a previous_response_id resolves.
+func (s *RedisStore) Retains() bool {
+	return true
+}
+
 // Response Store Methods
 
 func (s *RedisStore) StoreResponse(ctx context.Context, response *responseapi.StoredResponse) error {

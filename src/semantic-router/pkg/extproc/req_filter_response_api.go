@@ -20,11 +20,14 @@ import (
 type ResponseAPIFilter struct {
 	store   responsestore.ResponseStore
 	enabled bool
-	// retains says the store keeps what it is given. The none backend is
-	// enabled (the Responses surface is on) and retains nothing: every turn
-	// gets a response id, nothing is written, and previous_response_id can
-	// never resolve, so it is refused as the caller's error (400
-	// stateless_path) rather than as a lookup miss (404) or an outage (503).
+	// retains is the store's own ResponseStore.Retains answer, captured once
+	// at construction, and false when there is no store at all. Capturing it
+	// is what keeps every later read a plain field access on a filter that
+	// may hold a nil store. The none backend is enabled (the Responses
+	// surface is on) and retains nothing: every turn gets a response id,
+	// nothing is written, and previous_response_id can never resolve, so it
+	// is refused as the caller's error (400 stateless_path) rather than as a
+	// lookup miss (404) or an outage (503).
 	retains bool
 	// storeUnavailable says the cell configured retained history but its
 	// store could not be opened at startup. Retention is off, as for a cell
@@ -39,12 +42,15 @@ type ResponseAPIFilter struct {
 	storeUnavailable bool
 }
 
-// NewResponseAPIFilter creates a new Response API filter.
+// NewResponseAPIFilter creates a new Response API filter. A nil store is a
+// cell that keeps nothing: the filter is disabled and retains nothing, and
+// the nil is handled here rather than at the gate so no read of f.retains or
+// f.store further down has to repeat the check.
 func NewResponseAPIFilter(store responsestore.ResponseStore) *ResponseAPIFilter {
 	return &ResponseAPIFilter{
 		store:   store,
 		enabled: store != nil && store.IsEnabled(),
-		retains: responsestore.Retains(store),
+		retains: store != nil && store.Retains(),
 	}
 }
 
@@ -52,6 +58,9 @@ func NewResponseAPIFilter(store responsestore.ResponseStore) *ResponseAPIFilter 
 // response store failed to open. It is disabled, so the surface stays 404 at
 // the header phase as it was before, it retains nothing and serves no object,
 // and it keeps previous_response_id answering 503 rather than 400.
+// It holds no store, so retains is false as for any storeless filter; the
+// storeUnavailable check at the gate runs first and keeps the 503, so that
+// false is never read as "this cell retains nothing on purpose".
 func NewUnavailableResponseAPIFilter() *ResponseAPIFilter {
 	return &ResponseAPIFilter{storeUnavailable: true}
 }

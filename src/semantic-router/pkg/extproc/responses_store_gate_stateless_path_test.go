@@ -181,6 +181,64 @@ func TestResponsesStoreGateKeepsTheOtherRefusals(t *testing.T) {
 	}
 }
 
+// A filter built over no store at all must not panic when the gate asks
+// whether it retains. Retains is a method on the store now, so the nil is
+// handled once at construction; a filter built from a nil store reads as
+// disabled and as retaining nothing, and the gate answers the 503 it
+// answered before, not a 400.
+func TestNilStoreFilterDoesNotPanicAndStays503(t *testing.T) {
+	var store responsestore.ResponseStore
+	filter := NewResponseAPIFilter(store)
+	if filter.IsEnabled() {
+		t.Fatal("a filter over no store must not read as enabled")
+	}
+	if filter.retains {
+		t.Fatal("a filter over no store must not read as retaining")
+	}
+	router, ctx, request, immediate := storeGateRequest(t, filter, storeGateContinuationBody)
+	if request != nil || immediate == nil {
+		t.Fatalf("request=%+v immediate=%+v, want a refusal", request, immediate)
+	}
+	encoded := router.encodeImmediateResponseForClient(immediate, ctx)
+	if got := int(encoded.GetImmediateResponse().GetStatus().GetCode()); got != 503 {
+		t.Fatalf("status = %d, want 503", got)
+	}
+	// Persistence reads the same flag and must not dereference the nil store.
+	noStoreRouter := &OpenAIRouter{ResponseAPIFilter: filter}
+	noStoreRouter.persistResponseObject(&RequestContext{
+		SourceFormat:        llmprotocol.OpenAIResponsesV1,
+		TraceContext:        t.Context(),
+		ResponseObjectState: &ResponseObjectState{GeneratedResponseID: "resp_x", ShouldStore: true},
+		SemanticResponse:    &llmprotocol.Response{ID: "resp_x"},
+	})
+	if err := filter.Close(); err != nil {
+		t.Fatalf("Close() = %v", err)
+	}
+}
+
+// The unavailable filter holds no store, so Retains cannot be asked of it.
+// What matters is that its storeUnavailable check runs before the retains
+// branch, so the outage keeps answering 503 and is never reported as a cell
+// that retains nothing on purpose.
+func TestUnavailableFilterRetainsNothingButStill503s(t *testing.T) {
+	filter := NewUnavailableResponseAPIFilter()
+	if filter.retains {
+		t.Fatal("the unavailable filter holds no store, so it retains nothing")
+	}
+	router, ctx, _, immediate := storeGateRequest(t, filter, storeGateContinuationBody)
+	if immediate == nil {
+		t.Fatal("want a refusal")
+	}
+	if ctx.ImmediateProtocolError == nil || ctx.ImmediateProtocolError.Code != "response_history_unavailable" {
+		t.Fatalf("protocol error = %+v, want response_history_unavailable, not the stateless_path 400",
+			ctx.ImmediateProtocolError)
+	}
+	encoded := router.encodeImmediateResponseForClient(immediate, ctx)
+	if got := int(encoded.GetImmediateResponse().GetStatus().GetCode()); got != 503 {
+		t.Fatalf("status = %d, want 503", got)
+	}
+}
+
 // A cell that configured a store and could not open it is not a cell that
 // retains nothing. The filter it builds is not nil, is disabled (so the
 // surface stays 404 at the header phase during the outage, as before), and
@@ -350,7 +408,7 @@ func TestRetainingStoreStillResolvesPreviousResponseID(t *testing.T) {
 	}
 	filter := NewResponseAPIFilter(store)
 	if !filter.retains {
-		t.Fatal("a store without the capability must be read as retaining")
+		t.Fatal("a retaining store must be read as retaining")
 	}
 	_, ctx, request, immediate := storeGateRequest(t, filter, storeGateContinuationBody)
 	if immediate != nil || request == nil {

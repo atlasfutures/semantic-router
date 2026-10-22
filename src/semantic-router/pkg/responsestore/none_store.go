@@ -6,29 +6,6 @@ import (
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/responseapi"
 )
 
-// Retainer is the optional capability a store exposes to say whether it keeps
-// what it is given. A store that does not implement it retains; only a store
-// that answers false, such as the none backend, is read as retaining nothing.
-// The response API gate reads it to refuse previous_response_id as the
-// caller's error (400 stateless_path) rather than as a lookup miss or an
-// outage, and persistence reads it to skip a write that would discard the
-// object anyway.
-type Retainer interface {
-	Retains() bool
-}
-
-// Retains reports whether store keeps what it is given. A nil store retains
-// nothing; a store without the capability is assumed to retain.
-func Retains(store ResponseStore) bool {
-	if store == nil {
-		return false
-	}
-	if retainer, ok := store.(Retainer); ok {
-		return retainer.Retains()
-	}
-	return true
-}
-
 // NoneStore is the store for a cell that serves the Responses surface and
 // retains nothing: zero data retention with the endpoint still on. It is
 // enabled, so POST /v1/responses is admitted and a response id is minted for
@@ -46,7 +23,8 @@ func NewNoneStore() *NoneStore { return &NoneStore{} }
 // IsEnabled is true: the Responses surface is on, retention is not.
 func (*NoneStore) IsEnabled() bool { return true }
 
-// Retains is false: nothing given to this store can be read back.
+// Retains is false: nothing given to this store can be read back, so a
+// previous_response_id naming any id is refused 400 stateless_path.
 func (*NoneStore) Retains() bool { return false }
 
 // CheckConnection always succeeds: there is nothing to connect to.
