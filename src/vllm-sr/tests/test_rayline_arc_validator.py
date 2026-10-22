@@ -744,3 +744,36 @@ def test_rayline_arc_cli_checks_routing_prices_urls():
         )
         errors = _validate_rayline_arc_decision(decision)
         assert any(error.field.endswith(field) for error in errors), (field, errors)
+
+
+def _policy_service_with_snapshots(default_sha):
+    sha = "a" * 64
+    return {
+        "base_url": "http://policy-service:8000",
+        "total_timeout_seconds": 60,
+        "package_alias": "rayline/arc-073b-speed-pf099",
+        "package_sha256": sha,
+        "bindings": [{"action_id": "b" * 64, "worker": "worker-a"}],
+        "snapshots": {
+            "default": "arc-1.0-20261022",
+            "entries": {
+                "arc-1.0-20261022": {
+                    "release": "rayline-ai/arc-1.0@20261022",
+                    "package_alias": "rayline/arc-073b-speed-pf099",
+                    "package_sha256": default_sha,
+                    "cost_weight": 10.0,
+                }
+            },
+        },
+    }
+
+
+def test_policy_service_snapshots_mirror_the_go_loader():
+    policy = RaylineARCPolicyServiceConfig.model_validate(
+        _policy_service_with_snapshots("a" * 64)
+    )
+    assert policy.snapshots.entries["arc-1.0-20261022"].cost_weight == 10.0
+    with pytest.raises(ValidationError, match="default snapshot"):
+        RaylineARCPolicyServiceConfig.model_validate(
+            _policy_service_with_snapshots("c" * 64)
+        )

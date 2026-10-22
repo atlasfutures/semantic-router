@@ -305,6 +305,10 @@ func addUsageRecordARCAttribution(record *llmUsageRecord, ctx *RequestContext) {
 			decision.Algorithm != nil && decision.Algorithm.RaylineARC != nil &&
 			decision.Algorithm.RaylineARC.PolicyService != nil {
 			record.PolicyPackageSHA256 = nonEmpty(decision.Algorithm.RaylineARC.PolicyService.PackageSHA256)
+			// A snapshot cell's turn was decided by its snapshot's package.
+			if trace.Snapshot != "" {
+				record.PolicyPackageSHA256 = nonEmpty(trace.PolicyPackageSHA256)
+			}
 		}
 		explored := policyExplorationUsage(trace)
 		record.RouterPropensity, record.RouterTau = explored.propensity, explored.tau

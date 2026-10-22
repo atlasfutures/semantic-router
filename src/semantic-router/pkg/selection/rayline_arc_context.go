@@ -92,6 +92,10 @@ type RaylineARCSelectionContext struct {
 	// only for the policy-service mode.
 	RawRequest    []byte
 	RequestFormat string
+	// Snapshot is the dated ARC snapshot this request is served under, on a
+	// cell with a snapshot table: the x-rayline-arc-snapshot header's, else
+	// the table's default. Empty on a cell without one.
+	Snapshot string
 	// PolicyInput and PolicyInstructions are a Responses request materialized
 	// for the policy service; set only for request format openai_responses.
 	PolicyInput        []json.RawMessage
@@ -155,6 +159,12 @@ type RaylineARCTrace struct {
 	// the decision, on every policy-service cell; nil when it echoed none,
 	// never read as 0.
 	PolicyCostWeight *float64
+	// Snapshot and Release name the dated ARC snapshot that decided and its
+	// published release, on a cell with a snapshot table; empty otherwise.
+	// Snapshot is set only beside PolicyPackageSHA256, the package that
+	// snapshot pins.
+	Snapshot string
+	Release  string
 	// PolicyOperatingPoint is the operating point the service decided at, as
 	// it echoed it (point_id names its cost weight), and PolicyTierPicks the
 	// decision at each configured tier point. Both are set only for a cell

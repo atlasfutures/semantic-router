@@ -319,9 +319,13 @@ const (
 	// no backend was called), "stateless_path" (the turn named previous_response_id on a route that
 	// does not continue a stored conversation, either because its policy
 	// does not do stateful continuation or because the cell retains nothing
-	// (response_api store_backend: none); resend the items instead) or
-	// "unavailable" (anything else). The first three ride a 429 or 503;
-	// "missing_session", "request_shape" and "stateless_path" ride a 400;
+	// (response_api store_backend: none); resend the items instead),
+	// "unknown_snapshot" (the request's x-rayline-arc-snapshot names an ARC
+	// snapshot the cell does not serve, and no other is served in its place;
+	// no backend was called) or "unavailable" (anything else, a 503, or a 502
+	// when the policy service decided with another package than the pinned
+	// snapshot's). The first three ride a 429 or 503; "missing_session",
+	// "request_shape", "stateless_path" and "unknown_snapshot" ride a 400;
 	// "undecidable" and "no_private_arm" ride a 422. Emitted only on those refusals, never with
 	// an internal class. "stateless_path" is also the one value emitted
 	// before any selection runs: the Responses store gate answers it on a
@@ -359,6 +363,15 @@ const (
 	// taken at, as the policy service echoed it (V = 1 / cost weight).
 	// Absent when the service echoed none.
 	VSRPolicyCostWeight = "x-vsr-policy-cost-weight"
+
+	// VSRARCSnapshot is the dated ARC snapshot that decided a Rayline ARC
+	// turn (e.g. arc-1.0-20261022), and VSRARCRelease that snapshot's
+	// published release (e.g. rayline-ai/arc-1.0@20261022). Set beside
+	// x-vsr-policy-package on a cell with a snapshot table, from the
+	// snapshot whose package the policy service confirmed it decided with;
+	// absent on a cell without one.
+	VSRARCSnapshot = "x-vsr-arc-snapshot"
+	VSRARCRelease  = "x-vsr-arc-release"
 
 	// VSRProtocolWarnings carries a structured, comma-separated list
 	// of translation observations emitted by the inbound parser during

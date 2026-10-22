@@ -100,6 +100,15 @@ type policyServiceScorer struct {
 	// side calls strict after the service last showed it cannot serve them
 	// relaxed; zero or past means relaxed.
 	sideStrictUntil atomic.Int64
+	// snapshots are a snapshot cell's per-snapshot scorers, keyed by
+	// snapshot id: each decides with its snapshot's package, bindings, cost
+	// weight and exploration, over this scorer's workers and routes. Nil on
+	// a cell without a snapshot table, whose turns this scorer decides.
+	snapshots map[string]*policyServiceScorer
+	// snapshot and release name the snapshot a per-snapshot scorer serves;
+	// empty on the cell's own scorer.
+	snapshot string
+	release  string
 }
 
 // policySideCallStrictFor is how long a strict cell keeps its side calls
@@ -164,6 +173,29 @@ func newPolicyServiceScorer(
 ) *policyServiceScorer {
 	policy := decision.Algorithm.RaylineARC.PolicyService
 	generation := strconv.FormatUint(raylineARCScorerGeneration.Add(1), 10)
+	scorer := buildPolicyServiceScorer(cfg, decision, policy, generation)
+	if policy.Snapshots != nil {
+		scorer.snapshots = make(map[string]*policyServiceScorer, len(policy.Snapshots.Entries))
+		for _, id := range policy.SnapshotIDs() {
+			derived, entry, _ := policy.SnapshotPolicy(id)
+			// The same generation: a route a snapshot's turn excluded is
+			// excluded for every snapshot, since they share the workers.
+			served := buildPolicyServiceScorer(cfg, decision, derived, generation)
+			served.snapshot, served.release = id, entry.Release
+			scorer.snapshots[id] = served
+		}
+	}
+	return scorer
+}
+
+// buildPolicyServiceScorer is the scorer for one package: policy is the
+// decision's policy_service block, or one snapshot's view of it.
+func buildPolicyServiceScorer(
+	cfg *config.RouterConfig,
+	decision *config.Decision,
+	policy *config.RaylineARCPolicyServiceConfig,
+	generation string,
+) *policyServiceScorer {
 	scorer := &policyServiceScorer{
 		fallback:   policy.FallbackEnabled(),
 		schedule:   policy.ModelSchedule,
@@ -343,13 +375,7 @@ func createRaylineARCPolicySelector(
 	}
 	scorer := armed.scorer.(*policyServiceScorer)
 	probe := func(ctx context.Context) error {
-		if err := requireRaylineARCPolicyServing(ctx, client, policy); err != nil {
-			return err
-		}
-		if scorer.episodeMode == raylinearc.PolicyEpisodeModeRelaxed {
-			return probeRelaxedPolicyDecide(ctx, client, scorer)
-		}
-		return nil
+		return probeRaylineARCPolicyCell(ctx, client, policy, scorer)
 	}
 	raylineARCArmInBackground(
 		probeContext,
@@ -439,7 +465,8 @@ type policyClientRequest struct {
 }
 
 // selectViaPolicyService asks the policy service for the decision and maps
-// the chosen action onto the worker pool.
+// the chosen action onto the worker pool. A snapshot cell decides with the
+// scorer of the snapshot the request is served under, and records which.
 func (selector *raylineARCSelector) selectViaPolicyService(
 	ctx context.Context,
 	armed *raylineARCArmedComponents,
@@ -451,13 +478,43 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	hard []bool,
 	hold toolLoopHold,
 ) (*selection.SelectionResult, error) {
+	cell, ok := armed.scorer.(*policyServiceScorer)
+	if !ok {
+		hold.log(arcContext)
+		return nil, arcSelectionFailure("policy_scorer")
+	}
+	scorer, ok := cell.forSnapshot(arcContext.Snapshot)
+	if !ok {
+		hold.log(arcContext)
+		return nil, arcSelectionFailure(arcFailureUnknownSnapshot)
+	}
+	result, err := selector.selectViaPolicyScorer(ctx, armed, scorer, selCtx, arcContext, workerIDs, state, excluded, hard, hold)
+	if err == nil && result != nil && result.RaylineARC != nil && scorer.snapshot != "" {
+		trace := result.RaylineARC
+		trace.Snapshot, trace.Release = scorer.snapshot, scorer.release
+		trace.PolicyPackageSHA256 = scorer.sha256
+		trace.ArtifactID = hashedARCIdentity(scorer.alias)
+		trace.ArtifactRevision = hashedARCIdentity(scorer.sha256)
+	}
+	return result, err
+}
+
+// selectViaPolicyScorer decides one turn with one package's scorer.
+func (selector *raylineARCSelector) selectViaPolicyScorer(
+	ctx context.Context,
+	armed *raylineARCArmedComponents,
+	scorer *policyServiceScorer,
+	selCtx *selection.SelectionContext,
+	arcContext *selection.RaylineARCSelectionContext,
+	workerIDs []string,
+	state *raylinearc.EpisodeState,
+	excluded []bool,
+	hard []bool,
+	hold toolLoopHold,
+) (*selection.SelectionResult, error) {
 	// The offer below can still lift the tool-loop hold, so its outcome is
 	// logged once, when the turn's selection ends.
 	defer func() { hold.log(arcContext) }()
-	scorer, ok := armed.scorer.(*policyServiceScorer)
-	if !ok {
-		return nil, arcSelectionFailure("policy_scorer")
-	}
 	if arcContext.RequestFormat == "" {
 		return nil, arcSelectionFailure(arcFailurePolicyRequestFormat)
 	}
@@ -475,6 +532,9 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		signals.CallKind, signals.CallKindSource = arcContext.PolicyCallKind, arcContext.PolicyCallKindSource
 	}
 	turn, attribution, transition := raylinearc.PolicyTurn(state.Policy, messages, roles, state.TurnIndex, signals)
+	if scorer.snapshot != "" {
+		attribution = scorer.snapshotAttribution(attribution)
+	}
 	sideCall := signals.CallKind == raylinearc.PolicyCallSide
 	scheduled := scorer.schedule != "" && !sideCall
 	// A two-stage package's service owns the model choice: it decides at the
@@ -525,7 +585,11 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 			_, routeOut := cellOut[arm]
 			return fallback && (turn.Excludes(model) || routeOut)
 		}
-		if held >= 0 && (out(held, scorer.armModel(held)) || len(hard) == len(workerIDs) && hard[held]) {
+		// A snapshot whose package has no action on the held arm cannot hold
+		// it either: the conversation's earlier turns were another
+		// snapshot's.
+		if held >= 0 && (out(held, scorer.armModel(held)) || len(hard) == len(workerIDs) && hard[held] ||
+			scorer.snapshot != "" && !scorer.armBound(held)) {
 			held, forced = -1, true
 		}
 		available := make([]string, 0, len(scorer.actionOrder))
@@ -770,9 +834,15 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	// A decision is only this package's if the service says it is: a service
 	// that swapped the package under the alias is not the one readiness armed.
 	if response.Package != request.Package {
-		logging.ComponentErrorEvent("extproc", "rayline_arc_policy_service_failed", map[string]interface{}{
-			"class": "package_mismatch", "episode_id_hash": arcContext.EpisodeIDHash,
-		})
+		fields := map[string]interface{}{"class": "package_mismatch", "episode_id_hash": arcContext.EpisodeIDHash}
+		// A snapshot cell names the snapshot the turn was pinned to; a
+		// decision from another package is the service's error (502).
+		if scorer.snapshot != "" {
+			fields["snapshot"] = scorer.snapshot
+			logging.ComponentErrorEvent("extproc", "rayline_arc_policy_service_failed", fields)
+			return nil, arcSelectionFailure(arcFailureSnapshotPackageMismatch)
+		}
+		logging.ComponentErrorEvent("extproc", "rayline_arc_policy_service_failed", fields)
 		return nil, arcSelectionFailure("policy_package_mismatch")
 	}
 	// Every action the package scores must be one this router can dispatch.
