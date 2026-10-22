@@ -479,6 +479,50 @@ class RaylineARCGenerationRoutingConfig(BaseModel):
     caller_value: bool = False
 
 
+class RaylineARCSnapshotEntryConfig(BaseModel):
+    """One dated ARC snapshot (Go RaylineARCSnapshotEntry).
+
+    Members left empty are the policy_service block's own.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    release: str = Field(
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}@[A-Za-z0-9._-]{1,64}$"
+    )
+    package_alias: str = Field(min_length=1)
+    package_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    package_manifest: str = ""
+    cost_weight: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    exploration: RaylineARCExplorationConfig | None = None
+    bindings: list[RaylineARCPolicyBindingConfig] = Field(default_factory=list)
+    trained_models: dict[str, str] = Field(default_factory=dict)
+
+
+class RaylineARCSnapshotsConfig(BaseModel):
+    """Dated ARC snapshots served by one cell (Go RaylineARCSnapshotsConfig).
+
+    The gateway pins one per request with x-rayline-arc-snapshot; without it
+    the default serves, and an id not listed is refused.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    default: str
+    entries: dict[str, RaylineARCSnapshotEntryConfig] = Field(
+        min_length=1, max_length=16
+    )
+
+    @model_validator(mode="after")
+    def _default_and_ids(self):
+        if self.default not in self.entries:
+            raise ValueError("snapshots default must be an entry")
+        for snapshot in self.entries:
+            if not re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,63}", snapshot):
+                raise ValueError(f"snapshot id {snapshot!r} is not a dated id")
+        return self
+
+
 class RaylineARCPolicyServiceConfig(BaseModel):
     """The policy-service mode: an external service returns the decision."""
 
@@ -532,6 +576,8 @@ class RaylineARCPolicyServiceConfig(BaseModel):
     eval_cell: bool = False
     # Absent: a generation turn's routing block is not read.
     generation_routing: RaylineARCGenerationRoutingConfig | None = None
+    # Absent: the cell serves its one package and reads no snapshot pin.
+    snapshots: RaylineARCSnapshotsConfig | None = None
 
     @model_validator(mode="after")
     def _caller_value_is_not_a_tier(self):
@@ -547,6 +593,28 @@ class RaylineARCPolicyServiceConfig(BaseModel):
                 "generation_routing.caller_value serves configurable ARC: a cell "
                 "pinned to decisions_v2.cost_weight is a tier"
             )
+        return self
+
+    @model_validator(mode="after")
+    def _default_snapshot_is_this_package(self):
+        if self.snapshots is None:
+            return self
+        default = self.snapshots.entries[self.snapshots.default]
+        if (default.package_alias, default.package_sha256) != (
+            self.package_alias,
+            self.package_sha256,
+        ):
+            raise ValueError(
+                "the default snapshot's package must be package_alias and package_sha256"
+            )
+        # A snapshot's cost_weight is its tier V, as decisions_v2's is.
+        if self.generation_routing is not None and self.generation_routing.caller_value:
+            for snapshot, entry in self.snapshots.entries.items():
+                if entry.cost_weight is not None:
+                    raise ValueError(
+                        f"snapshot {snapshot}: generation_routing.caller_value serves "
+                        "configurable ARC, which states no cost_weight"
+                    )
         return self
 
     @model_validator(mode="after")

@@ -62,8 +62,9 @@ func raylineARCTrustedSignalHeaders(
 	}
 	trusted := map[string]string{}
 	for _, header := range raylineARCTurnSignalHeadersForRemoval() {
-		// The retired caller-temperature header is stripped, never read.
-		if header == raylineARCExplorationTemperatureHeader {
+		// The retired caller-temperature header is stripped, never read;
+		// the snapshot pin is read on its own (buildRaylineARCSelectionContext).
+		if header == raylineARCExplorationTemperatureHeader || header == config.RaylineARCSnapshotHeader {
 			continue
 		}
 		trusted[header] = requestHeaders[header]
@@ -72,13 +73,13 @@ func raylineARCTrustedSignalHeaders(
 }
 
 // raylineARCTurnSignalHeadersForRemoval are never forwarded upstream: they
-// speak to this router, not to a provider.
+// speak to this router, not to a provider. The snapshot pin is among them.
 func raylineARCTurnSignalHeadersForRemoval() []string {
 	return []string{
 		raylineARCCallKindHeader, raylineARCCompactionHeader,
 		raylineARCAgentKeySourceHeader, raylineARCParentSessionHeader, raylineARCParentAgentHeader,
 		raylineARCPrivacyModeHeader, raylineARCTrainingDataHeader, raylineARCExplorationTemperatureHeader,
-		raylineARCPrivacyAllowedArmsHeader,
+		raylineARCPrivacyAllowedArmsHeader, config.RaylineARCSnapshotHeader,
 	}
 }
 

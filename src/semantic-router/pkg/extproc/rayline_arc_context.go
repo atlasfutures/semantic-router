@@ -37,6 +37,16 @@ import (
 // what separates it from every other preparation class.
 const arcFailureMissingEpisodeID = "missing_episode_id"
 
+// arcFailureUnknownSnapshot is the bounded class for a request pinned to an
+// ARC snapshot the cell does not serve. It is the caller's to fix, so it
+// answers 400 with the public class unknown_snapshot.
+const arcFailureUnknownSnapshot = "unknown_arc_snapshot"
+
+// arcFailureSnapshotPackageMismatch is a snapshot cell's decision answered
+// for another package than the snapshot pins. The policy service answered
+// wrongly, so it answers 502.
+const arcFailureSnapshotPackageMismatch = "policy_snapshot_package_mismatch"
+
 // arcFailureNoCapableArm is the bounded class for a turn no arm in the basket
 // can serve without changing what the model is shown. It answers 503 like
 // every other authoritative selection failure, because the gateway replays 503
@@ -155,6 +165,17 @@ func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 	if algorithm.RaylineARC.PolicyService != nil && policyRequestFormat(reqCtx.SourceFormat) == "" {
 		result.PreparationFailure = arcFailurePolicyRequestFormat
 		return result
+	}
+	// A snapshot cell serves the snapshot the request pins, or its default.
+	// A pin the table does not hold is refused here, before the lease: no
+	// other snapshot is served in its place.
+	if policy := algorithm.RaylineARC.PolicyService; policy != nil && policy.Snapshots != nil {
+		snapshot, ok := policy.ResolveSnapshot(strings.TrimSpace(reqCtx.Headers[config.RaylineARCSnapshotHeader]))
+		if !ok {
+			result.PreparationFailure = arcFailureUnknownSnapshot
+			return result
+		}
+		result.Snapshot = snapshot
 	}
 	// The cell's own context limit, before the lease, in artifact mode: a
 	// turn past the window the cell promises is refused here, with the

@@ -2167,6 +2167,28 @@ recipes:
                 # eval_cell marks an eval or lab cell: it never sends
                 # exploration, so its decisions are the package's greedy ones.
                 eval_cell: false
+                # snapshots (off when absent) serves several dated ARC
+                # snapshots from this cell, each one package published as one
+                # release. The gateway pins one per request with
+                # x-rayline-arc-snapshot (stripped before upstream); without
+                # it the default serves, and an id not listed is refused (400,
+                # x-vsr-failure-class: unknown_snapshot). Each snapshot is
+                # decided with its own package and cost_weight (in place of
+                # decisions_v2's), and the response names it in
+                # x-vsr-arc-snapshot and x-vsr-arc-release. The default's
+                # package must be package_alias and package_sha256 above. A
+                # snapshot of another package may state package_manifest (v5:
+                # required), exploration (required on an exploring cell),
+                # bindings and trained_models; omitted, the block's apply.
+                # Readiness waits until the service serves every snapshot.
+                snapshots:
+                  default: arc-1.0-20261022
+                  entries:
+                    arc-1.0-20261022:
+                      release: rayline-ai/arc-1.0@20261022
+                      package_alias: rayline/arc-public-example
+                      package_sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+                      cost_weight: 1.0
                 # Each binding maps a package action to a worker. model, effort
                 # and reasoning_max_tokens declare what the action dispatches,
                 # as the package's catalog states it: model is the trained

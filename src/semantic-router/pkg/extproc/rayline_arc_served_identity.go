@@ -23,6 +23,10 @@ type raylineARCServedIdentity struct {
 	model         string
 	packageSHA256 string
 	costWeight    *float64
+	// snapshot and release name the dated snapshot that decided, on a
+	// snapshot cell.
+	snapshot string
+	release  string
 }
 
 // raylineARCServedIdentityOf reads the identity of an ARC turn that reached
@@ -37,7 +41,9 @@ func raylineARCServedIdentityOf(ctx *RequestContext) (raylineARCServedIdentity, 
 		return raylineARCServedIdentity{}, false
 	}
 	trace := ctx.VSRRaylineARC
-	identity := raylineARCServedIdentity{model: model, packageSHA256: trace.PolicyPackageSHA256}
+	identity := raylineARCServedIdentity{
+		model: model, packageSHA256: trace.PolicyPackageSHA256, snapshot: trace.Snapshot, release: trace.Release,
+	}
 	if weight := trace.PolicyCostWeight; weight != nil {
 		echoed := *weight
 		identity.costWeight = &echoed
@@ -46,7 +52,8 @@ func raylineARCServedIdentityOf(ctx *RequestContext) (raylineARCServedIdentity, 
 }
 
 // addRaylineARCServedIdentity publishes the served identity of an ARC turn:
-// x-vsr-served-model, x-vsr-policy-package and x-vsr-policy-cost-weight.
+// x-vsr-served-model, x-vsr-policy-package and x-vsr-policy-cost-weight, and
+// on a snapshot cell x-vsr-arc-snapshot and x-vsr-arc-release.
 func (builder *responseHeaderMutationBuilder) addRaylineARCServedIdentity(ctx *RequestContext) {
 	identity, ok := raylineARCServedIdentityOf(ctx)
 	if !ok {
@@ -54,6 +61,8 @@ func (builder *responseHeaderMutationBuilder) addRaylineARCServedIdentity(ctx *R
 	}
 	builder.addString(headers.VSRServedModel, identity.model)
 	builder.addString(headers.VSRPolicyPackage, identity.packageSHA256)
+	builder.addString(headers.VSRARCSnapshot, identity.snapshot)
+	builder.addString(headers.VSRARCRelease, identity.release)
 	if identity.costWeight != nil && *identity.costWeight >= 0 {
 		// Full precision: V = 1 / cost weight, and 0.2222 is not 1/4.5.
 		builder.addString(headers.VSRPolicyCostWeight, strconv.FormatFloat(*identity.costWeight, 'g', -1, 64))

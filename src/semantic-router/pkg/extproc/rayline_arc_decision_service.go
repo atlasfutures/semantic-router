@@ -701,7 +701,9 @@ func (service *raylineARCDecisionService) decisionOnlyRequestContext(
 	}
 	// The privacy headers alone: the builder reads them only on a cell that
 	// trusts them, and a consult must be masked as the routed turn would be.
-	for _, name := range []string{raylineARCPrivacyModeHeader, raylineARCPrivacyAllowedArmsHeader} {
+	// So is the snapshot pin, which a consult is decided under as the routed
+	// turn would be.
+	for _, name := range []string{raylineARCPrivacyModeHeader, raylineARCPrivacyAllowedArmsHeader, config.RaylineARCSnapshotHeader} {
 		if value, stated := request.Headers[name]; stated {
 			headers[name] = value
 		}
@@ -899,6 +901,10 @@ func prepareFailureError(failure string) error {
 	if failure == arcFailureResponsesPreviousID {
 		return fmt.Errorf("%w: %w: %w",
 			routerruntime.ErrRouteDecisionInvalidBody, errRaylineRoutesStatelessPath, base)
+	}
+	if failure == arcFailureUnknownSnapshot {
+		return fmt.Errorf("%w: %w: %w",
+			routerruntime.ErrRouteDecisionInvalidBody, errRaylineRoutesUnknownSnapshot, base)
 	}
 	return base
 }

@@ -407,6 +407,11 @@ var errRaylineRoutesStatelessPath = errors.New("route does not continue a stored
 // unknown_price_model.
 var errRaylineRoutesUnknownPriceModel = errors.New("routing.prices names a model the package does not offer")
 
+// errRaylineRoutesUnknownSnapshot tags a consult pinned to an ARC snapshot
+// this cell does not serve; it answers 400 with unknownSnapshotMessage, as
+// the ExtProc path does. A tag, never a message.
+var errRaylineRoutesUnknownSnapshot = errors.New("consult pins an unserved ARC snapshot")
+
 // wrong on the way.
 func (r *OpenAIRouter) raylineRoutesFailure(
 	ctx *RequestContext,
@@ -442,6 +447,9 @@ func (r *OpenAIRouter) raylineRoutesFailure(
 		}
 		if errors.Is(err, errRaylineRoutesStatelessPath) {
 			detail = statelessPathMessage
+		}
+		if errors.Is(err, errRaylineRoutesUnknownSnapshot) {
+			detail = unknownSnapshotMessage
 		}
 		return r.createRaylineRoutesError(ctx, 400, "invalid_request_error", detail)
 	}

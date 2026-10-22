@@ -147,7 +147,7 @@ func raylineARCTurnInputs(
 		eligibility = strings.TrimSpace(reqCtx.Headers[lever.EligibilityHeader])
 	}
 	return fmt.Sprintf(
-		"decision=%p|format=%s|close=%t|eligible=%q|fault=%s|credentials=%s|call_kind=%q|compaction=%q|agent_key_source=%q|privacy_mode=%q|training_data=%q|privacy_allowed_arms=%q|route_controls=%q",
+		"decision=%p|format=%s|close=%t|eligible=%q|fault=%s|credentials=%s|call_kind=%q|compaction=%q|agent_key_source=%q|privacy_mode=%q|training_data=%q|privacy_allowed_arms=%q|route_controls=%q|snapshot=%q",
 		arcConfig,
 		reqCtx.SourceFormat,
 		reqCtx.RaylineARCCloseRequested,
@@ -169,6 +169,9 @@ func raylineARCTurnInputs(
 		strings.TrimSpace(reqCtx.Headers[raylineARCPrivacyAllowedArmsHeader]),
 		// A lookup's result points, prices and exploration.
 		reqCtx.RaylineRoutesControlsKey,
+		// A request pinned to one ARC snapshot must never inherit another's
+		// decision.
+		strings.TrimSpace(reqCtx.Headers[config.RaylineARCSnapshotHeader]),
 	)
 }
 
