@@ -14,9 +14,9 @@ import (
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
 
-// toolsAlgorithm is a policy-service algorithm whose package states
+// toolsPolicy is a policy_service block whose package states
 // encoding_profile.tool_definitions as given.
-func toolsAlgorithm(t *testing.T, toolDefinitions string) *config.AlgorithmConfig {
+func toolsPolicy(t *testing.T, toolDefinitions string) *config.RaylineARCPolicyServiceConfig {
 	t.Helper()
 	raw, err := os.ReadFile("../selection/raylinearc/testdata/policy_service/package_manifest.v5.json")
 	if err != nil {
@@ -28,12 +28,10 @@ func toolsAlgorithm(t *testing.T, toolDefinitions string) *config.AlgorithmConfi
 		t.Fatal(err)
 	}
 	sum := sha256.Sum256(body)
-	decision := policyTestDecision(config.RaylineARCModelScheduleTaskTurnCompaction)
-	decision.Algorithm.RaylineARC.PolicyService = &config.RaylineARCPolicyServiceConfig{
+	return &config.RaylineARCPolicyServiceConfig{
 		PackageAlias: policyTestAlias, PackageSHA256: hex.EncodeToString(sum[:]), PackageManifest: path,
 		Bindings: policyTestBindings(), ModelSchedule: config.RaylineARCModelScheduleTaskTurnCompaction,
 	}
-	return decision.Algorithm
 }
 
 // Whether the encoding included the request's tools: the service's
@@ -41,11 +39,11 @@ func toolsAlgorithm(t *testing.T, toolDefinitions string) *config.AlgorithmConfi
 // encoding profile, include_recorded meaning encoded; else unknown.
 func TestRouteToolsEncoded(t *testing.T) {
 	present, absent, other := "present", "absent", "unknown"
-	recorded, excluded := toolsAlgorithm(t, "include_recorded"), toolsAlgorithm(t, "exclude")
+	recorded, excluded := toolsPolicy(t, "include_recorded"), toolsPolicy(t, "exclude")
 	for name, tc := range map[string]struct {
-		status    *string
-		algorithm *config.AlgorithmConfig
-		want      *bool
+		status *string
+		policy *config.RaylineARCPolicyServiceConfig
+		want   *bool
 	}{
 		"present wins over an excluding package":      {&present, excluded, ptrTo(true)},
 		"absent wins over an including package":       {&absent, recorded, ptrTo(false)},
@@ -54,7 +52,7 @@ func TestRouteToolsEncoded(t *testing.T) {
 		"an unstated value falls back to the package": {&other, recorded, ptrTo(true)},
 		"missing, no policy service: unknown":         {nil, nil, nil},
 	} {
-		got := routeToolsEncoded(tc.status, tc.algorithm)
+		got := routeToolsEncoded(tc.status, tc.policy)
 		if (got == nil) != (tc.want == nil) || (got != nil && *got != *tc.want) {
 			t.Errorf("%s: %v, want %v", name, deref(got), deref(tc.want))
 		}

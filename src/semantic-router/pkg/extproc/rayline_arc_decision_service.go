@@ -145,7 +145,7 @@ func (service *raylineARCDecisionService) RouteDecision(
 	decisionFacts.ThinkingLevel = trace.ThinkingLevel
 	decisionFacts.PolicyActionID = trace.PolicyActionID
 	decisionFacts.Checkpoint = trace.ArtifactRevision
-	decisionFacts.ToolsEncoded = routeToolsEncoded(trace.PolicyToolDefinitionsStatus, algorithm)
+	decisionFacts.ToolsEncoded = routeToolsEncoded(trace.PolicyToolDefinitionsStatus, routePolicyService(algorithm))
 	decisionFacts.Alternatives = routeAlternatives(trace, selected.catalog)
 	// Both kinds of reuse count. A resumable encoder reports reuse as
 	// RetainedPrefixTokens and leaves CachedPrefixTokens at zero, so reading
@@ -826,10 +826,11 @@ func prepareFailureError(failure string) error {
 
 // routeToolsEncoded is whether the decision's encoding included the
 // request's tool definitions. The service's own statement wins
-// (encoding.tool_definitions_status); without one, a package whose encoding
-// profile includes the recorded definitions encoded them; otherwise nothing
-// says, and nil keeps the endpoint's configured account.
-func routeToolsEncoded(status *string, algorithm *config.AlgorithmConfig) *bool {
+// (encoding.tool_definitions_status); without one, a package (the policy
+// block that decided) whose encoding profile includes the recorded
+// definitions encoded them; otherwise nothing says, and nil keeps the
+// endpoint's configured account.
+func routeToolsEncoded(status *string, policy *config.RaylineARCPolicyServiceConfig) *bool {
 	encoded := func(value bool) *bool { return &value }
 	if status != nil {
 		switch *status {
@@ -839,11 +840,20 @@ func routeToolsEncoded(status *string, algorithm *config.AlgorithmConfig) *bool 
 			return encoded(false)
 		}
 	}
-	if algorithm == nil || algorithm.RaylineARC == nil || algorithm.RaylineARC.PolicyService == nil {
+	if policy == nil {
 		return nil
 	}
-	if algorithm.RaylineARC.PolicyService.PackageToolDefinitions() == "include_recorded" {
+	if policy.PackageToolDefinitions() == "include_recorded" {
 		return encoded(true)
 	}
 	return nil
+}
+
+// routePolicyService is the decision's policy_service block; nil outside
+// the policy-service mode.
+func routePolicyService(algorithm *config.AlgorithmConfig) *config.RaylineARCPolicyServiceConfig {
+	if algorithm == nil || algorithm.RaylineARC == nil {
+		return nil
+	}
+	return algorithm.RaylineARC.PolicyService
 }
