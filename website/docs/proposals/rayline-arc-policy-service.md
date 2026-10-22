@@ -435,9 +435,16 @@ policy_service:
   `x-vsr-arc-release` beside `x-vsr-policy-package` (the snapshot's package)
   and `x-vsr-policy-cost-weight`. The llm_usage record's
   `policy_package_sha256` is the snapshot's package.
-- **Readiness.** The cell is ready once the service lists every snapshot's
-  package as loaded and serving the members that snapshot sends, so a store
-  app's `ARC_MAX_PACKAGES` must hold every live snapshot of the line.
+- **Readiness.** The cell is ready once the service lists the default
+  snapshot's package as loaded and serving the members it sends. Every other
+  snapshot is verified the same way on the first turn that pins it: that turn
+  (and any pinning it meanwhile) waits up to `readiness_wait_seconds` for the
+  one verification. A snapshot still loading after the wait answers 503 with
+  `Retry-After` and the class `not_ready`; one whose verification failed
+  answers 503 `unavailable`, and is verified again after 30 s. Neither is
+  ever served from another package. A store app's `ARC_MAX_PACKAGES` bounds
+  how many snapshots are resident at once, not how many the table may hold
+  (at most 64).
 - **Validation.** The default snapshot's package must be the block's own
   `package_alias` and `package_sha256` (its manifest, bindings and
   exploration are the block's). A snapshot of another package on a v5 cell

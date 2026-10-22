@@ -75,9 +75,11 @@ type RaylineARCSnapshotEntry struct {
 }
 
 const (
-	// maxRaylineARCSnapshots bounds the table: each snapshot is a package
-	// the policy service keeps loaded for readiness.
-	maxRaylineARCSnapshots = 16
+	// maxRaylineARCSnapshots bounds the table. Readiness loads only the
+	// default snapshot (the others are verified on first pin), so the bound
+	// is not the store app's package budget; it keeps a 180-day retention at
+	// a snapshot every few days within one table.
+	maxRaylineARCSnapshots = 64
 	// RaylineARCSnapshotHeader is the request header that pins a snapshot.
 	RaylineARCSnapshotHeader = "x-rayline-arc-snapshot"
 )

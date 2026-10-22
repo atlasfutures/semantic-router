@@ -79,37 +79,69 @@ func (scorer *policyServiceScorer) snapshotAttribution(attribution []raylinearc.
 // probeRaylineARCPolicyCell is a policy cell's readiness: the service has
 // loaded the cell's package and serves what the cell sends, and a relaxed
 // cell's service decides relaxed. A snapshot cell is ready once that holds
-// for every snapshot: a store-mode service loads each package on the pin
-// that names it, so no pinned turn finds its package unloaded.
+// for its default snapshot, the block's own package; every other snapshot is
+// verified the same way on the first turn that pins it
+// (raylineARCSnapshotReadiness), so readiness does not grow with the table.
 func probeRaylineARCPolicyCell(
 	ctx context.Context,
 	client *raylinearc.PolicyServiceClient,
 	policy *config.RaylineARCPolicyServiceConfig,
 	scorer *policyServiceScorer,
 ) error {
-	probeOne := func(policy *config.RaylineARCPolicyServiceConfig, scorer *policyServiceScorer) error {
-		if err := requireRaylineARCPolicyServing(ctx, client, policy); err != nil {
-			return err
-		}
-		if scorer.episodeMode == raylinearc.PolicyEpisodeModeRelaxed {
-			return probeRelaxedPolicyDecide(ctx, client, scorer)
-		}
-		return nil
-	}
 	if policy.Snapshots == nil {
-		return probeOne(policy, scorer)
+		return probeRaylineARCPolicyPackage(ctx, client, policy, scorer)
 	}
-	for _, id := range policy.SnapshotIDs() {
-		served, _, _ := policy.SnapshotPolicy(id)
-		snapshotScorer, ok := scorer.forSnapshot(id)
-		if !ok {
-			return &raylinearc.PolicyServiceError{Class: "snapshot_scorer"}
-		}
-		if err := probeOne(served, snapshotScorer); err != nil {
-			return err
-		}
+	return probeRaylineARCSnapshot(ctx, client, policy, scorer, policy.Snapshots.Default)
+}
+
+// probeRaylineARCSnapshot verifies one snapshot of a snapshot cell: the
+// service loads and serves its package (a store-mode service loads it on
+// the listing that names it).
+func probeRaylineARCSnapshot(
+	ctx context.Context,
+	client *raylinearc.PolicyServiceClient,
+	policy *config.RaylineARCPolicyServiceConfig,
+	scorer *policyServiceScorer,
+	id string,
+) error {
+	served, _, ok := policy.SnapshotPolicy(id)
+	snapshotScorer, found := scorer.forSnapshot(id)
+	if !ok || !found {
+		return &raylinearc.PolicyServiceError{Class: "snapshot_scorer"}
+	}
+	return probeRaylineARCPolicyPackage(ctx, client, served, snapshotScorer)
+}
+
+// probeRaylineARCPolicyPackage verifies one package: the service has loaded
+// it and serves what the cell sends, and decides relaxed for a relaxed cell.
+func probeRaylineARCPolicyPackage(
+	ctx context.Context,
+	client *raylinearc.PolicyServiceClient,
+	policy *config.RaylineARCPolicyServiceConfig,
+	scorer *policyServiceScorer,
+) error {
+	if err := requireRaylineARCPolicyServing(ctx, client, policy); err != nil {
+		return err
+	}
+	if scorer.episodeMode == raylinearc.PolicyEpisodeModeRelaxed {
+		return probeRelaxedPolicyDecide(ctx, client, scorer)
 	}
 	return nil
+}
+
+// lazySnapshotIDs are a snapshot cell's ids but its default: the rows
+// verified on first pin.
+func lazySnapshotIDs(policy *config.RaylineARCPolicyServiceConfig) []string {
+	if policy == nil || policy.Snapshots == nil {
+		return nil
+	}
+	ids := make([]string, 0, len(policy.Snapshots.Entries))
+	for _, id := range policy.SnapshotIDs() {
+		if id != policy.Snapshots.Default {
+			ids = append(ids, id)
+		}
+	}
+	return ids
 }
 
 // raylineARCServedPolicy is the policy_service block as it served this turn:

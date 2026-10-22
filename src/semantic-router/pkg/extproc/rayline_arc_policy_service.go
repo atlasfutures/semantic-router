@@ -112,6 +112,9 @@ type policyServiceScorer struct {
 	// empty on the cell's own scorer.
 	snapshot string
 	release  string
+	// lazy is a snapshot cell's readiness for its non-default snapshots,
+	// verified on first pin; nil verifies none (every snapshot ready).
+	lazy *raylineARCSnapshotReadiness
 }
 
 // policySideCallStrictFor is how long a strict cell keeps its side calls
@@ -380,6 +383,11 @@ func createRaylineARCPolicySelector(
 		go armed.prices.Run(probeContext)
 	}
 	scorer := armed.scorer.(*policyServiceScorer)
+	if lazy := lazySnapshotIDs(policy); len(lazy) > 0 {
+		scorer.lazy = newRaylineARCSnapshotReadiness(probeContext, lazy, func(ctx context.Context, id string) error {
+			return probeRaylineARCSnapshot(ctx, client, policy, scorer, id)
+		})
+	}
 	probe := func(ctx context.Context) error {
 		return probeRaylineARCPolicyCell(ctx, client, policy, scorer)
 	}
@@ -493,6 +501,13 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	if !ok {
 		hold.log(arcContext)
 		return nil, arcSelectionFailure(arcFailureUnknownSnapshot)
+	}
+	// A pinned snapshot past the default is verified on its first pin; a
+	// turn waits for that up to the cell's readiness wait, and is refused,
+	// never served from another package, while it loads or if it failed.
+	if class := cell.lazy.ensure(ctx, arcContext.Snapshot, selector.readinessWait); class != "" {
+		hold.log(arcContext)
+		return nil, arcSelectionFailure(class)
 	}
 	result, err := selector.selectViaPolicyScorer(ctx, armed, scorer, selCtx, arcContext, workerIDs, state, excluded, hard, hold)
 	if err == nil && result != nil && result.RaylineARC != nil && scorer.snapshot != "" {

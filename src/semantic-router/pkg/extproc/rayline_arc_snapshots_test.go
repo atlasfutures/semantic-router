@@ -338,30 +338,27 @@ func TestSnapshotKeepsOnlyItsOwnAttributionsAndArms(t *testing.T) {
 	}
 }
 
-// A snapshot cell is ready only once the service serves every snapshot's
-// package, each asked for by its own pin.
-func TestSnapshotCellReadinessCoversEverySnapshot(t *testing.T) {
+// A snapshot cell is ready once the service serves its default snapshot's
+// package; the other rows are not asked for at readiness (they are verified
+// on first pin), so a service without them still lets the cell arm.
+func TestSnapshotCellReadinessCoversTheDefaultOnly(t *testing.T) {
 	fixture := newSnapshotFixture(t)
 	policy := fixture.decision.Algorithm.RaylineARC.PolicyService
 	cell := newPolicyServiceScorer(&config.RouterConfig{}, fixture.decision)
 	client := raylinearc.NewPolicyServiceClient(raylinearc.PolicyServiceConfig{BaseURL: fixture.fake.URL(), TotalTimeout: 5 * time.Second})
-	if err := probeRaylineARCPolicyCell(context.Background(), client, policy, cell); err != nil {
-		t.Fatalf("a service serving both packages: %v", err)
-	}
-	asked := map[string]bool{}
-	for _, query := range fixture.fake.listingQueries {
-		asked[query.Get("alias")+"@"+query.Get("package_sha256")] = true
-	}
-	if !asked[policyTestAlias+"@"+policyTestPackage] || !asked[snapshotSecondAlias+"@"+snapshotSecondPackage] {
-		t.Fatalf("listings asked for %v", asked)
-	}
 	fixture.fake.mu.Lock()
 	fixture.fake.others = nil
 	fixture.fake.mu.Unlock()
-	var failure *raylinearc.PolicyServiceError
-	err := probeRaylineARCPolicyCell(context.Background(), client, policy, cell)
-	if !errors.As(err, &failure) || failure.Class != "package_not_loaded" {
-		t.Fatalf("a service without the second package: err = %v", err)
+	if err := probeRaylineARCPolicyCell(context.Background(), client, policy, cell); err != nil {
+		t.Fatalf("a service serving the default package: %v", err)
+	}
+	for _, query := range fixture.fake.listingQueries {
+		if query.Get("alias") == snapshotSecondAlias {
+			t.Fatalf("readiness asked for a non-default snapshot: %v", query)
+		}
+	}
+	if ids := lazySnapshotIDs(policy); !slices.Equal(ids, []string{snapshotSecond}) {
+		t.Fatalf("lazy ids %v", ids)
 	}
 }
 

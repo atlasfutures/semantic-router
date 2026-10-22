@@ -3,6 +3,7 @@ package config
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -225,5 +226,26 @@ func TestRaylineARCSnapshotsOfAnotherV5Package(t *testing.T) {
 	}
 	if err := validatePolicyDispatch(cfg, decision); err == nil || !strings.Contains(err.Error(), "not package_sha256") {
 		t.Fatalf("a manifest of another package: err = %v", err)
+	}
+}
+
+// The table holds up to 64 snapshots (readiness loads only the default, so
+// the old 16-row package budget no longer applies); a 65th is refused.
+func TestRaylineARCSnapshotsTableCap(t *testing.T) {
+	for rows, valid := range map[int]bool{64: true, 65: false} {
+		cfg, decision := policyDispatchFixture()
+		block := decision.Algorithm.RaylineARC.PolicyService
+		table := snapshotTestTable(block)
+		first := table.Entries[snapshotTestFirst]
+		for index := len(table.Entries); index < rows; index++ {
+			entry := first
+			entry.Release = fmt.Sprintf("rayline-ai/arc-1.0@2027%04d", index)
+			table.Entries[fmt.Sprintf("arc-1.0-2027%04d", index)] = entry
+		}
+		block.Snapshots = table
+		err := validatePolicyDispatch(cfg, decision)
+		if valid != (err == nil) {
+			t.Fatalf("%d rows: err = %v", rows, err)
+		}
 	}
 }

@@ -114,7 +114,7 @@ func publicSelectionFailureClass(class string) string {
 		arcEncoderFailureClassAdmission,
 		"policy_service_session_capacity":
 		return selectionFailureCapacity
-	case "not_ready":
+	case "not_ready", arcFailureSnapshotLoading:
 		return selectionFailureNotReady
 	case arcFailureMissingEpisodeID:
 		return selectionFailureMissingSession
@@ -325,6 +325,10 @@ func (r *OpenAIRouter) authoritativeSelectionFailureResponse(
 		response = r.statelessPathResponse(ctx)
 	case failure.class == arcFailureUnknownSnapshot:
 		response = r.unknownSnapshotResponse(ctx)
+	case failure.class == arcFailureSnapshotLoading:
+		// The pinned snapshot's package is still loading: retry shortly.
+		response = r.createErrorResponse(http.StatusServiceUnavailable, selectionUnavailableMessage(ctx))
+		appendRetryAfterHeader(response, snapshotLoadingRetryAfterSeconds)
 	case failure.class == arcFailureSnapshotPackageMismatch:
 		// The policy service answered for another package than the
 		// snapshot pins: an upstream fault, never served.
