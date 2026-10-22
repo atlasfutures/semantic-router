@@ -1,12 +1,12 @@
 package extproc
 
 import (
-	"slices"
 	"strconv"
 	"strings"
 
+	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
+
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/headers"
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
 
 // raylineARCServedIdentity is what a gateway needs to bill a Rayline ARC turn
@@ -69,20 +69,21 @@ func (builder *responseHeaderMutationBuilder) addRaylineARCServedIdentity(ctx *R
 // ignoring every recorded endpoint under it (pinnedEndpointPreferences), or
 // an arm's one configured tag the feed records with nothing under it. A cell
 // without the feed never names one.
-func (builder *responseHeaderMutationBuilder) addRaylineARCServedEndpoint(ctx *RequestContext) {
-	identity, ok := raylineARCServedIdentityOf(ctx)
+//
+// The value is the call's dispatched endpoint, which dispatchedEndpoint (and
+// each re-send) set by that rule (knownEndpoint), so llm_usage
+// provider_endpoint names the same one. Only the cell states the header: a
+// copy the upstream sent is replaced when the cell names an endpoint and
+// removed on every other response, so a client never sees two values or one
+// the cell did not state.
+func (builder *responseHeaderMutationBuilder) addRaylineARCServedEndpoint(ctx *RequestContext, isSuccessful bool) {
+	_, ok := raylineARCServedIdentityOf(ctx)
 	tag := ctx.RaylineARCDispatchedEndpoint
-	if !ok || tag == "" {
-		return
-	}
-	feed := ctx.RaylineARCEndpointFeed
-	if feed == nil {
-		feed = routingPriceSettlementOf(ctx.VSRRaylineARC.SettlementPrices)
-	}
-	recorded := feed.EndpointTags(identity.model)
-	picked := len(ctx.RaylineARCEndpointOrder) > 0 && slices.Contains(recorded, strings.ToLower(tag))
-	if !picked && !raylinearc.IsLeafEndpoint(recorded, tag) {
+	if !ok || !isSuccessful || ctx.VSRCacheHit || tag == "" {
+		builder.removeHeaders = append(builder.removeHeaders, headers.VSRServedEndpoint)
 		return
 	}
 	builder.addString(headers.VSRServedEndpoint, tag)
+	last := builder.setHeaders[len(builder.setHeaders)-1]
+	last.AppendAction = core.HeaderValueOption_OVERWRITE_IF_EXISTS_OR_ADD
 }

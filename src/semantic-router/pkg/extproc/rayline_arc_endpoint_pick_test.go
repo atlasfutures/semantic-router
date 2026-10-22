@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
@@ -277,11 +278,91 @@ func TestSoleConfiguredEndpointIsNamedOnlyWhenItIsOne(t *testing.T) {
 		{"feed reaches one", endpointFeed(t, "google-vertex", "anthropic"), "google-vertex"},
 		{"feed reaches several", endpointFeed(t, "google-vertex", "google-vertex/global"), ""},
 		{"no feed row", endpointFeed(t, "anthropic"), ""},
+		// The pin reaches only google-vertex (a tier is reached by its full
+		// slug alone), but a recorded endpoint under it makes it no leaf: the
+		// usage record names no endpoint, as the header names none.
+		{"feed reaches one with a tier under it", endpointFeed(t, "google-vertex", "google-vertex/priority"), ""},
 	} {
-		ctx, _ := routeEndpointTurn(t, endpointPickRouter("http://127.0.0.1:1", "google-vertex"), endpointTurn{feed: tc.feed})
+		router := endpointPickRouter("http://127.0.0.1:1", "google-vertex")
+		ctx, _ := routeEndpointTurn(t, router, endpointTurn{feed: tc.feed})
 		if ctx.RaylineARCDispatchedEndpoint != tc.want {
 			t.Fatalf("%s: endpoint %q, want %q", tc.name, ctx.RaylineARCDispatchedEndpoint, tc.want)
 		}
+		record := router.newLLMUsageRecord(ctx, responseUsageMetrics{})
+		if got := record.ProviderEndpoint; (got == nil) != (tc.want == "") || (got != nil && *got != tc.want) {
+			t.Fatalf("%s: llm_usage provider_endpoint %v, want %q", tc.name, got, tc.want)
+		}
+		served := ""
+		for _, option := range buildResponseHeaderMutation(ctx, true).GetSetHeaders() {
+			if option.GetHeader().GetKey() == headers.VSRServedEndpoint {
+				served = string(option.GetHeader().GetRawValue())
+			}
+		}
+		if served != tc.want {
+			t.Fatalf("%s: %s = %q, want %q, the usage record's value", tc.name, headers.VSRServedEndpoint, served, tc.want)
+		}
+	}
+}
+
+// Only the cell states x-vsr-served-endpoint. An upstream's copy is replaced
+// when the cell names an endpoint, so the client sees one value, and removed
+// on every response it names none on: a failure, a turn OpenRouter routed,
+// a response outside ARC.
+func TestUpstreamServedEndpointIsReplacedOrRemoved(t *testing.T) {
+	order := raylinearc.PickEndpoint(endpointPickKey, endpointPickTags)
+	picked, _ := routeEndpointTurn(t, endpointPickRouter("http://127.0.0.1:1"),
+		endpointTurn{key: endpointPickKey, feed: endpointFeed(t, endpointPickTags...)})
+	unpicked, _ := routeEndpointTurn(t, endpointPickRouter("http://127.0.0.1:1"), endpointTurn{key: endpointPickKey})
+
+	mutation := buildResponseHeaderMutation(picked, true)
+	set := 0
+	for _, option := range mutation.GetSetHeaders() {
+		if option.GetHeader().GetKey() != headers.VSRServedEndpoint {
+			continue
+		}
+		set++
+		if string(option.GetHeader().GetRawValue()) != order[0] ||
+			option.GetAppendAction() != core.HeaderValueOption_OVERWRITE_IF_EXISTS_OR_ADD {
+			t.Fatalf("the served endpoint does not replace an upstream copy: %v", option)
+		}
+	}
+	if set != 1 || slices.Contains(mutation.GetRemoveHeaders(), headers.VSRServedEndpoint) {
+		t.Fatalf("served endpoint set %d times, removals %v", set, mutation.GetRemoveHeaders())
+	}
+	for name, removal := range map[string]*ext_proc.HeaderMutation{
+		"failed pick":          buildResponseHeaderMutation(picked, false),
+		"feed-less turn":       buildResponseHeaderMutation(unpicked, true),
+		"response outside ARC": buildResponseHeaderMutation(&RequestContext{}, true),
+		"unmutated response":   privacyModeRemoval(),
+	} {
+		for _, option := range removal.GetSetHeaders() {
+			if option.GetHeader().GetKey() == headers.VSRServedEndpoint {
+				t.Fatalf("%s: the cell stated %s", name, headers.VSRServedEndpoint)
+			}
+		}
+		if !slices.Contains(removal.GetRemoveHeaders(), headers.VSRServedEndpoint) {
+			t.Fatalf("%s: an upstream %s passes through (removed %v)", name, headers.VSRServedEndpoint, removal.GetRemoveHeaders())
+		}
+	}
+}
+
+// The endpoint facts read the feed snapshot the decision's mask read, not
+// the cache's current one, so a refresh between the two cannot split them.
+func TestTurnEndpointFeedIsTheMasksSnapshot(t *testing.T) {
+	cache := endpointFeed(t, "anthropic")
+	snapshot := routingPriceSettlementOf(endpointFeed(t, "xai"))
+	trace := &selection.RaylineARCTrace{SettlementPrices: cache, EndpointFeed: snapshot}
+	if turnEndpointFeed(trace) != snapshot {
+		t.Fatal("the endpoint facts did not read the mask's snapshot")
+	}
+	trace.EndpointFeed = nil
+	if got := turnEndpointFeed(trace).EndpointTags(endpointPickModelID); !slices.Equal(got, []string{"anthropic"}) {
+		t.Fatalf("a decision without a snapshot read %v, want the cache's", got)
+	}
+	arcContext := &selection.RaylineARCSelectionContext{}
+	withPrivacyEndpointExclusions(arcContext, snapshot)
+	if arcContext.EndpointFeed != snapshot {
+		t.Fatal("the mask did not keep the snapshot it read")
 	}
 }
 
@@ -705,13 +786,23 @@ func TestPrivacyAllowedEndpointsParse(t *testing.T) {
 		t.Fatalf("parsed %+v, want %v", parsed, want)
 	}
 	// The gateway's own output (memex-desktop rayline_cell_data_use.spec.ts,
-	// claude/optc-m5-arc-mask @ 727b1bc37f): an arm id may hold "@", and arm=
-	// is an allowed arm with no endpoints, not a malformed entry.
+	// claude/optc-m5-arc-mask @ 727b1bc37f), copied verbatim: the spec's
+	// writer literal (:571), and its cellHeaders privacy and zdr values
+	// (:604, :607-608). An arm id may hold "@", and arm= is an allowed arm
+	// with no endpoints, not a malformed entry.
 	for raw, want := range map[string]map[string][]string{
 		"a@x=z-ai|deepinfra/fp8,b=": {"a@x": {"z-ai", "deepinfra/fp8"}, "b": {}},
 		"z-ai/glm-5.2@thinking-off=z-ai,xiaomi/mimo-v2.5-pro@thinking-on=xiaomi|deepinfra/fp8,kimi-k3@thinking-off=": {
 			"z-ai/glm-5.2@thinking-off":        {"z-ai"},
 			"xiaomi/mimo-v2.5-pro@thinking-on": {"xiaomi", "deepinfra/fp8"},
+			"kimi-k3@thinking-off":             {},
+		},
+		"z-ai/glm-5.2@thinking-off=z-ai,xiaomi/mimo-v2.5-pro@thinking-on=deepinfra/fp8,z-ai/glm-5.2@thinking-on=z-ai," +
+			"qwen/qwen3.6-35b-a3b@thinking-on=z-ai,kimi-k3@thinking-off=": {
+			"z-ai/glm-5.2@thinking-off":        {"z-ai"},
+			"xiaomi/mimo-v2.5-pro@thinking-on": {"deepinfra/fp8"},
+			"z-ai/glm-5.2@thinking-on":         {"z-ai"},
+			"qwen/qwen3.6-35b-a3b@thinking-on": {"z-ai"},
 			"kimi-k3@thinking-off":             {},
 		},
 	} {

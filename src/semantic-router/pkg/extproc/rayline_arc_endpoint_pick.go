@@ -10,6 +10,7 @@ import (
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
 
@@ -200,7 +201,7 @@ func pickArmEndpoint(
 	if ctx == nil || ctx.VSRRaylineARC == nil || dispatch == nil {
 		return pin
 	}
-	settlement := routingPriceSettlementOf(ctx.VSRRaylineARC.SettlementPrices)
+	settlement := turnEndpointFeed(ctx.VSRRaylineARC)
 	if settlement == nil {
 		ctx.RaylineARCEndpointSource = endpointSourceNone
 		return pin
@@ -248,18 +249,55 @@ func pickArmEndpoint(
 	return pinnedEndpointPreferences(pin, picked[0], settlement, dispatch.upstreamModel, ctx.VSRRaylineARC.SettlementPrices.Now())
 }
 
-// dispatchedEndpoint is the endpoint an ARC call is known to be served by:
-// the pick when the cell picked, else the one tag the sent pin names alone
-// (soleEndpoint); "" when OpenRouter chooses.
+// dispatchedEndpoint is the endpoint an ARC call is known to be served by,
+// the one value both x-vsr-served-endpoint and llm_usage provider_endpoint
+// name: the pick when the cell picked, else the one tag the sent pin names
+// alone (soleEndpoint), either only when it is a known leaf of the served
+// model in the turn's feed snapshot (knownEndpoint); "" when OpenRouter
+// chooses.
 func dispatchedEndpoint(ctx *RequestContext, sent *config.OpenRouterProviderPreferences, model string) string {
-	if len(ctx.RaylineARCEndpointOrder) > 0 {
-		return ctx.RaylineARCEndpointOrder[0]
-	}
 	var settlement *raylinearc.RoutingPriceSettlement
 	if ctx.VSRRaylineARC != nil {
-		settlement = routingPriceSettlementOf(ctx.VSRRaylineARC.SettlementPrices)
+		settlement = turnEndpointFeed(ctx.VSRRaylineARC)
 	}
-	return soleEndpoint(sent, settlement, model)
+	if len(ctx.RaylineARCEndpointOrder) > 0 {
+		return knownEndpoint(settlement, model, ctx.RaylineARCEndpointOrder[0], true)
+	}
+	return knownEndpoint(settlement, model, soleEndpoint(sent, settlement, model), false)
+}
+
+// knownEndpoint is tag when the feed makes it the only endpoint that can
+// serve the call, else "". A picked tag is one the feed records, and its
+// pinned block ignores every recorded endpoint under it
+// (pinnedEndpointPreferences), so being recorded is enough; any other tag
+// must be a leaf the feed records once with nothing under it
+// (raylinearc.IsLeafEndpoint). Without the feed no tag is known.
+func knownEndpoint(settlement *raylinearc.RoutingPriceSettlement, model, tag string, picked bool) string {
+	if tag == "" || settlement == nil {
+		return ""
+	}
+	recorded := settlement.EndpointTags(model)
+	if picked && slices.Contains(recorded, strings.ToLower(tag)) {
+		return tag
+	}
+	if !picked && raylinearc.IsLeafEndpoint(recorded, tag) {
+		return tag
+	}
+	return ""
+}
+
+// turnEndpointFeed is the routing-price feed snapshot a turn's endpoint facts
+// read: the one the decision's endpoint mask read (RaylineARCTrace.
+// EndpointFeed), so the mask, the pick, its re-sends and the served-endpoint
+// header agree; the cache's current one for a decision that carries none.
+func turnEndpointFeed(trace *selection.RaylineARCTrace) *raylinearc.RoutingPriceSettlement {
+	if trace == nil {
+		return nil
+	}
+	if trace.EndpointFeed != nil {
+		return trace.EndpointFeed
+	}
+	return routingPriceSettlementOf(trace.SettlementPrices)
 }
 
 // resetDispatchedEndpoint clears what an earlier rendering of the body said
@@ -443,7 +481,7 @@ func (r *OpenAIRouter) endpointResendOnResponseHeaders(
 	for index, resend := range calls {
 		// The call in flight is now this endpoint's, read back off its body.
 		ctx.RaylineARCEndpointsTried = append(ctx.RaylineARCEndpointsTried, resend.tag)
-		ctx.RaylineARCDispatchedEndpoint = resend.tag
+		ctx.RaylineARCDispatchedEndpoint = knownEndpoint(ctx.RaylineARCEndpointFeed, plan.dispatch.upstreamModel, resend.tag, true)
 		ctx.DispatchedOutbound = readDispatchedOutboundParams(resend.call.body, plan.dispatch)
 		recordDispatchedProviderPin(ctx, resend.call.body)
 		result = callFlexTwin(ctx, resend.call, r.flexResendBodyLimit(), deadline)

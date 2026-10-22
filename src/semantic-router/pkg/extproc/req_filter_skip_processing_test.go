@@ -281,11 +281,12 @@ func TestHandleResponseHeadersSkipProcessingBypassesVSRHeaders(t *testing.T) {
 	if response.GetResponseHeaders().Response.Status != ext_proc.CommonResponse_CONTINUE {
 		t.Fatalf("expected CONTINUE status, got %v", response.GetResponseHeaders().Response.Status)
 	}
-	// No routing header is set; the one mutation strips x-vsr-privacy-mode,
-	// which only the router may state.
+	// No routing header is set; the one mutation strips x-vsr-privacy-mode
+	// and x-vsr-served-endpoint, which only the router may state.
 	mutation := response.GetResponseHeaders().Response.HeaderMutation
-	if len(mutation.GetSetHeaders()) != 0 || !slices.Equal(mutation.GetRemoveHeaders(), []string{headers.VSRPrivacyMode}) {
-		t.Fatalf("expected only the %s strip when skipping processing, got %v", headers.VSRPrivacyMode, mutation)
+	if len(mutation.GetSetHeaders()) != 0 ||
+		!slices.Equal(mutation.GetRemoveHeaders(), []string{headers.VSRPrivacyMode, headers.VSRServedEndpoint}) {
+		t.Fatalf("expected only the router-stated strips when skipping processing, got %v", mutation)
 	}
 	if response.ModeOverride != nil {
 		t.Fatal("did not expect mode override when skipping processing on a non-streaming response")

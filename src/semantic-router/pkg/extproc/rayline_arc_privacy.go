@@ -185,6 +185,7 @@ func withPrivacyEndpointExclusions(
 	arcContext *selection.RaylineARCSelectionContext,
 	settlement *raylinearc.RoutingPriceSettlement,
 ) {
+	arcContext.EndpointFeed = settlement
 	if settlement == nil || len(arcContext.PrivacyArmEndpoints) != len(arcContext.PrivacyExcludedArms) {
 		return
 	}
