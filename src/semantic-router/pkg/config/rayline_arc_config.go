@@ -803,6 +803,9 @@ func validateRaylineARCDecisionContract(cfg *RouterConfig, decision Decision) er
 		if err := validateRaylineARCPolicyDispatch(cfg, decision); err != nil {
 			return fmt.Errorf("decision '%s': %w", decision.Name, err)
 		}
+		if err := validateRaylineARCSnapshotDecisions(cfg, decision); err != nil {
+			return fmt.Errorf("decision '%s': policy_service %w", decision.Name, err)
+		}
 	}
 	if err := validateRaylineARCThinkingWorkers(decision.Algorithm.RaylineARC, decision.ModelRefs); err != nil {
 		return fmt.Errorf("decision '%s': algorithm.rayline_arc.thinking_lever: %w", decision.Name, err)

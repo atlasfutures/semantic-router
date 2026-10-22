@@ -30,7 +30,7 @@ func raylineARCPolicyAction(ctx *RequestContext) (config.RaylineARCPolicyBinding
 	if decision == nil || decision.Algorithm == nil || decision.Algorithm.RaylineARC == nil {
 		return config.RaylineARCPolicyBinding{}, false
 	}
-	binding, ok := decision.Algorithm.RaylineARC.PolicyService.PolicyBinding(ctx.VSRRaylineARC.PolicyActionID)
+	binding, ok := raylineARCServedPolicy(ctx).PolicyBinding(ctx.VSRRaylineARC.PolicyActionID)
 	return binding, ok && binding.DeclaresDispatch()
 }
 
@@ -261,6 +261,20 @@ func sameInt64Pointer(left, right *int64) bool {
 // other (applyRaylineARCReasoningIssuer, atlasfutures/semantic-router#109).
 func raylineARCPolicyActionsCarriable(cfg *config.RouterConfig, decision *config.Decision) bool {
 	policy := decision.Algorithm.RaylineARC.PolicyService
+	if !raylineARCPolicyBindingsCarriable(cfg, policy) {
+		return false
+	}
+	// Every snapshot's actions are dispatched as the block's are.
+	for _, id := range policy.SnapshotIDs() {
+		served, _, _ := policy.SnapshotPolicy(id)
+		if !raylineARCPolicyBindingsCarriable(cfg, served) {
+			return false
+		}
+	}
+	return true
+}
+
+func raylineARCPolicyBindingsCarriable(cfg *config.RouterConfig, policy *config.RaylineARCPolicyServiceConfig) bool {
 	for _, binding := range policy.Bindings {
 		// A v5 control is rendered from the registry in each format it
 		// knows: Messages, Chat and Responses. Whether the worker's cells

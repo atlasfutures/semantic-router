@@ -441,6 +441,50 @@ class RaylineARCExplorationConfig(BaseModel):
         return self
 
 
+class RaylineARCSnapshotEntryConfig(BaseModel):
+    """One dated ARC snapshot (Go RaylineARCSnapshotEntry).
+
+    Members left empty are the policy_service block's own.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    release: str = Field(
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}@[A-Za-z0-9._-]{1,64}$"
+    )
+    package_alias: str = Field(min_length=1)
+    package_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    package_manifest: str = ""
+    cost_weight: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    exploration: RaylineARCExplorationConfig | None = None
+    bindings: list[RaylineARCPolicyBindingConfig] = Field(default_factory=list)
+    trained_models: dict[str, str] = Field(default_factory=dict)
+
+
+class RaylineARCSnapshotsConfig(BaseModel):
+    """Dated ARC snapshots served by one cell (Go RaylineARCSnapshotsConfig).
+
+    The gateway pins one per request with x-rayline-arc-snapshot; without it
+    the default serves, and an id not listed is refused.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    default: str
+    entries: dict[str, RaylineARCSnapshotEntryConfig] = Field(
+        min_length=1, max_length=16
+    )
+
+    @model_validator(mode="after")
+    def _default_and_ids(self):
+        if self.default not in self.entries:
+            raise ValueError("snapshots default must be an entry")
+        for snapshot in self.entries:
+            if not re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,63}", snapshot):
+                raise ValueError(f"snapshot id {snapshot!r} is not a dated id")
+        return self
+
+
 class RaylineARCPolicyServiceConfig(BaseModel):
     """The policy-service mode: an external service returns the decision."""
 
@@ -492,6 +536,22 @@ class RaylineARCPolicyServiceConfig(BaseModel):
     exploration: RaylineARCExplorationConfig | None = None
     # An eval or lab cell never sends exploration.
     eval_cell: bool = False
+    # Absent: the cell serves its one package and reads no snapshot pin.
+    snapshots: RaylineARCSnapshotsConfig | None = None
+
+    @model_validator(mode="after")
+    def _default_snapshot_is_this_package(self):
+        if self.snapshots is None:
+            return self
+        default = self.snapshots.entries[self.snapshots.default]
+        if (default.package_alias, default.package_sha256) != (
+            self.package_alias,
+            self.package_sha256,
+        ):
+            raise ValueError(
+                "the default snapshot's package must be package_alias and package_sha256"
+            )
+        return self
 
     @model_validator(mode="after")
     def _exploration_basis_is_this_package(self):

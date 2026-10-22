@@ -147,7 +147,7 @@ func raylineARCTurnInputs(
 		eligibility = strings.TrimSpace(reqCtx.Headers[lever.EligibilityHeader])
 	}
 	return fmt.Sprintf(
-		"decision=%p|format=%s|close=%t|eligible=%q|fault=%s|credentials=%s|call_kind=%q|compaction=%q|agent_key_source=%q|privacy_mode=%q|training_data=%q|privacy_allowed_arms=%q",
+		"decision=%p|format=%s|close=%t|eligible=%q|fault=%s|credentials=%s|call_kind=%q|compaction=%q|agent_key_source=%q|privacy_mode=%q|training_data=%q|privacy_allowed_arms=%q|snapshot=%q",
 		arcConfig,
 		reqCtx.SourceFormat,
 		reqCtx.RaylineARCCloseRequested,
@@ -167,6 +167,9 @@ func raylineARCTurnInputs(
 		// A private request must never inherit a decision made over another
 		// allowed set.
 		strings.TrimSpace(reqCtx.Headers[raylineARCPrivacyAllowedArmsHeader]),
+		// A request pinned to one ARC snapshot must never inherit another's
+		// decision.
+		strings.TrimSpace(reqCtx.Headers[config.RaylineARCSnapshotHeader]),
 	)
 }
 

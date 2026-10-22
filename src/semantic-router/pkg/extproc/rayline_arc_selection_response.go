@@ -75,6 +75,9 @@ const (
 	// The turn asked to continue a stored conversation on a path that does
 	// not do stateful continuation: resend the items instead of the id.
 	selectionFailureStatelessPath = "stateless_path"
+	// The request pinned an ARC snapshot this route does not serve:
+	// resending it unchanged cannot succeed; name a served snapshot or none.
+	selectionFailureUnknownSnapshot = "unknown_snapshot"
 	// Anything else: waiting is not known to help.
 	selectionFailureUnavailable = "unavailable"
 )
@@ -121,6 +124,8 @@ func publicSelectionFailureClass(class string) string {
 		return selectionFailureStatelessPath
 	case arcFailureNoPrivateArm:
 		return selectionFailureNoPrivateArm
+	case arcFailureUnknownSnapshot:
+		return selectionFailureUnknownSnapshot
 	default:
 		if selectionShapeRefusalClasses[class] {
 			return selectionFailureRequestShape
@@ -272,6 +277,29 @@ func (r *OpenAIRouter) statelessPathResponse(
 	return r.createErrorResponse(http.StatusBadRequest, statelessPathMessage)
 }
 
+// unknownSnapshotMessage says the request named an ARC snapshot this route
+// does not serve, without listing the ones it does.
+const unknownSnapshotMessage = "This route does not serve the ARC snapshot the x-rayline-arc-snapshot header names, and serves no other in its place."
+
+// unknownSnapshotResponse refuses a request pinned to a snapshot the cell
+// does not serve. It is a 400: the caller's pin is wrong, the router is
+// healthy, and the same request is refused identically every time. Serving
+// another snapshot instead would bill and decide under a release the caller
+// did not ask for.
+func (r *OpenAIRouter) unknownSnapshotResponse(
+	ctx *RequestContext,
+) *ext_proc.ProcessingResponse {
+	if ctx != nil {
+		ctx.ImmediateProtocolError = llmprotocol.NewError(
+			llmprotocol.ErrorInvalidRequest,
+			selectionFailureUnknownSnapshot,
+			unknownSnapshotMessage,
+			nil,
+		)
+	}
+	return r.createErrorResponse(http.StatusBadRequest, unknownSnapshotMessage)
+}
+
 // authoritativeSelectionFailureResponse maps a fail-closed selector's bounded
 // failure onto the admission contract. It answers nil for every other error so
 // the caller keeps its existing classification.
@@ -295,6 +323,12 @@ func (r *OpenAIRouter) authoritativeSelectionFailureResponse(
 		response = r.noPrivateArmResponse(ctx)
 	case failure.class == arcFailureResponsesPreviousID:
 		response = r.statelessPathResponse(ctx)
+	case failure.class == arcFailureUnknownSnapshot:
+		response = r.unknownSnapshotResponse(ctx)
+	case failure.class == arcFailureSnapshotPackageMismatch:
+		// The policy service answered for another package than the
+		// snapshot pins: an upstream fault, never served.
+		response = r.createErrorResponse(http.StatusBadGateway, selectionUnavailableMessage(ctx))
 	case selectionFailureIsCallerError(failure.class):
 		// The bounded class is already counted where it is constructed, which
 		// is the one place that sees both entrypoints. Counting it again here
