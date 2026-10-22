@@ -139,8 +139,15 @@ type RaylineARCPolicyServiceConfig struct {
 	// exploration, even when it is configured: its decisions must be the
 	// package's greedy ones.
 	EvalCell bool `yaml:"eval_cell,omitempty"`
+	// Snapshots serves several dated ARC snapshots from this cell, each
+	// pinned per request by x-rayline-arc-snapshot
+	// (rayline_arc_snapshots_config.go). Absent, the cell serves its one
+	// package as before.
+	Snapshots *RaylineARCSnapshotsConfig `yaml:"snapshots,omitempty"`
 
 	packageV5 *raylineARCPolicyPackageV5
+	// snapshotPolicies are the built snapshot views (SnapshotPolicy).
+	snapshotPolicies map[string]*RaylineARCPolicyServiceConfig
 }
 
 // RaylineARCPolicyFallbackConfig switches ADR 0120's fallback on for a cell.
@@ -436,7 +443,7 @@ func validateRaylineARCPolicyServiceConfig(cfg *RaylineARCPolicyServiceConfig) e
 			return fmt.Errorf("either every binding declares model, effort and reasoning_max_tokens, or none does")
 		}
 	}
-	return nil
+	return validateRaylineARCSnapshotsConfig(cfg)
 }
 
 // RaylineARCPolicyActionID is pathfinder's action identity

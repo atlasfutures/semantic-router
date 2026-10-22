@@ -61,7 +61,7 @@ func raylineARCPolicyControlAction(
 	if decision == nil || decision.Algorithm == nil || decision.Algorithm.RaylineARC == nil {
 		return nil, action, false, nil
 	}
-	policy = decision.Algorithm.RaylineARC.PolicyService
+	policy = raylineARCServedPolicy(ctx)
 	if !policy.IsPackageV5() {
 		return nil, action, false, nil
 	}

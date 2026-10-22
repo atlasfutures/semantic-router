@@ -114,6 +114,10 @@ type fakePolicyService struct {
 	bounds        *raylinearc.PolicyAdjustableCostWeight
 	// listingQueries are the packages listings' queries, in order.
 	listingQueries []url.Values
+	// others are further packages (alias to sha256) the service serves, as a
+	// store-mode service serves several snapshots' packages: each is listed
+	// for the pin that names it and answers the decide calls that name it.
+	others map[string]string
 }
 
 func newFakePolicyService(t *testing.T, alias, sha256 string, catalog []string) *fakePolicyService {
@@ -168,7 +172,12 @@ func (fake *fakePolicyService) serve(writer http.ResponseWriter, request *http.R
 		// for the pin that names it; a bare listing loads nothing.
 		query := request.URL.Query()
 		listing := fake.packages()
-		if query.Get("alias") != fake.alias || query.Get("package_sha256") != fake.sha256 {
+		fake.mu.Lock()
+		other := fake.others[query.Get("alias")] == query.Get("package_sha256") && query.Get("alias") != fake.alias
+		fake.mu.Unlock()
+		if other && len(listing.Packages) > 0 {
+			listing.Packages[0].Alias, listing.Packages[0].PackageSHA256 = query.Get("alias"), query.Get("package_sha256")
+		} else if query.Get("alias") != fake.alias || query.Get("package_sha256") != fake.sha256 {
 			listing.Packages = listing.Packages[:0]
 		}
 		fake.mu.Lock()
@@ -335,6 +344,9 @@ func (fake *fakePolicyService) decision(request raylinearc.PolicyDecisionRequest
 	fake.readFixture("decision_response.v1.json", &response)
 	response.Package = raylinearc.PolicyPackageRef{Alias: fake.alias, PackageSHA256: fake.sha256}
 	fake.mu.Lock()
+	if sha, ok := fake.others[request.Package.Alias]; ok && sha == request.Package.PackageSHA256 {
+		response.Package = request.Package
+	}
 	if fake.answerAs != nil {
 		response.Package = *fake.answerAs
 	}

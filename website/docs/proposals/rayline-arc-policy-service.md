@@ -382,6 +382,82 @@ API v2 (an older one refuses the members, and so every turn), and set a V
 only for a package that declares operating bounds: every package before ARC
 0.7.2 answers `operating_point_not_adjustable`.
 
+## Dated snapshots
+
+ARC is released as immutable dated snapshots (`arc-1.0-YYYYMMDD`), each one
+policy package published as one release (`rayline-ai/arc-1.0@YYYYMMDD`). A
+tier cell serves every live snapshot of its tier from one policy service in
+store mode, which loads each package on the pin that names it.
+`policy_service.snapshots` (off when absent) lists them:
+
+```yaml
+policy_service:
+  package_alias: rayline/arc-073b-speed-pf099          # the default snapshot's package
+  package_sha256: 1a03f5079ac2e64e2200e788edeb0a8314c2a72941b37ec13ecd784b5f1a759b
+  package_manifest: /etc/vsr-package/package.json
+  decisions_v2: {name: swift, cost_weight: 10.0}
+  snapshots:
+    default: arc-1.0-20261022
+    entries:
+      arc-1.0-20261022:
+        release: rayline-ai/arc-1.0@20261022
+        package_alias: rayline/arc-073b-speed-pf099
+        package_sha256: 1a03f5079ac2e64e2200e788edeb0a8314c2a72941b37ec13ecd784b5f1a759b
+        cost_weight: 10.0                               # this tier's V in this release
+      arc-1.0-20261105:                                 # a later snapshot (illustrative)
+        release: rayline-ai/arc-1.0@20261105
+        package_alias: rayline/arc-...
+        package_sha256: <64 hex>
+        package_manifest: /etc/vsr-package/20261105/package.json
+        cost_weight: 9.5
+        exploration: {...}                              # tau is calibrated per package
+```
+
+- **Pin.** The gateway names the snapshot in the request header
+  `x-rayline-arc-snapshot`. Without it the turn is served the table's
+  `default`. A snapshot the table does not hold is refused with a 400 and
+  `x-vsr-failure-class: unknown_snapshot`; no other snapshot is served in its
+  place. The header is read whether or not the cell trusts the turn-signal
+  headers (any caller may choose a served snapshot), is never forwarded
+  upstream, and is part of the in-flight coalescing key. `POST /v1/routes`
+  reads it too.
+- **Decide.** The turn is decided with its snapshot's package
+  (`package: {alias, package_sha256}`), its `cost_weight` as
+  `selection.operating_point.cost_weight` (in place of `decisions_v2`'s;
+  absent, `decisions_v2`'s applies, which on a configurable cell is none),
+  its `exploration`, and its `bindings` and `trained_models` (the block's
+  when omitted: action ids are content-addressed, so a package with the same
+  catalog keeps its bindings).
+- **Echo.** The decision's echoed package must be the snapshot's. Another one
+  fails the turn with a 502 (`policy_snapshot_package_mismatch`), never
+  served.
+- **Headers.** A served turn returns `x-vsr-arc-snapshot` and
+  `x-vsr-arc-release` beside `x-vsr-policy-package` (the snapshot's package)
+  and `x-vsr-policy-cost-weight`. The llm_usage record's
+  `policy_package_sha256` is the snapshot's package.
+- **Readiness.** The cell is ready once the service lists the default
+  snapshot's package as loaded and serving the members it sends. Every other
+  snapshot is verified the same way on the first turn that pins it: that turn
+  (and any pinning it meanwhile) waits up to `readiness_wait_seconds` for the
+  one verification. A snapshot still loading after the wait answers 503 with
+  `Retry-After` and the class `not_ready`; one whose verification failed
+  answers 503 `unavailable`, and is verified again after 30 s. Neither is
+  ever served from another package. A store app's `ARC_MAX_PACKAGES` bounds
+  how many snapshots are resident at once, not how many the table may hold
+  (at most 64).
+- **Validation.** The default snapshot's package must be the block's own
+  `package_alias` and `package_sha256` (its manifest, bindings and
+  exploration are the block's). A snapshot of another package on a v5 cell
+  states its own `package_manifest`, and on an exploring cell its own
+  `exploration`. Each snapshot's policy is validated as the block is; a
+  snapshot need not serve every modelRef, but every binding names one.
+- **Episodes.** A conversation keeps one episode across snapshots. When a
+  turn is served by another snapshot than earlier ones (the gateway moved its
+  alias), only attributions whose action the new package also has are sent;
+  the rest stay unattributed, as after a prefix break, rather than being
+  refused as out of the package's catalog. A held arm the new package has no
+  action on is released and decided again, as at a boundary.
+
 ## Stage-1 exploration
 
 `policy_service.exploration` (off when absent) asks the policy service to

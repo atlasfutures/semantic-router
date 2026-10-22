@@ -194,6 +194,11 @@ func (scorer *policyServiceScorer) servedModelOf(recorded string) string {
 	}
 	for arm, worker := range scorer.workerIDs {
 		if worker == recorded {
+			// A snapshot's package may bind no action on a worker the cell
+			// keeps for another snapshot: its record says nothing here.
+			if scorer.snapshot != "" && !scorer.armBound(arm) {
+				return ""
+			}
 			return scorer.armModel(arm)
 		}
 	}
