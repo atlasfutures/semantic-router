@@ -18,6 +18,7 @@ package extproc
 
 import (
 	"context"
+	"slices"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
@@ -55,13 +56,22 @@ func (scorer *policyServiceScorer) armBound(arm int) bool {
 // carries that package's actions in its ledger; an action id is
 // content-addressed, so one this package also has means the same action,
 // and the others stay unattributed, as after a prefix break, rather than
-// being refused as out of the package's catalog.
+// being refused as out of the package's catalog. Trained arm ids are per
+// package, and the service refuses one outside the action's: an arm id this
+// package's manifest does not list for the action, or any arm id when VSR
+// does not know the package's arms (v4), is sent as null, which the service
+// reads as the action's first trained arm.
 func (scorer *policyServiceScorer) snapshotAttribution(attribution []raylinearc.PolicyAttribution) []raylinearc.PolicyAttribution {
 	kept := make([]raylinearc.PolicyAttribution, 0, len(attribution))
 	for _, entry := range attribution {
-		if _, bound := scorer.bindings[entry.ActionID]; bound {
-			kept = append(kept, entry)
+		binding, bound := scorer.bindings[entry.ActionID]
+		if !bound {
+			continue
 		}
+		if entry.ArmID != nil && !slices.Contains(binding.trainedArms, *entry.ArmID) {
+			entry.ArmID = nil
+		}
+		kept = append(kept, entry)
 	}
 	return kept
 }

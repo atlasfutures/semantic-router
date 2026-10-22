@@ -55,6 +55,9 @@ type policyBinding struct {
 	level string
 	// model is the action's trained model, when the binding declares it.
 	model string
+	// trainedArms are the package's trained arm ids for the action, read
+	// from a v5 manifest; nil when VSR does not know them (v4).
+	trainedArms []string
 }
 
 // policyServiceScorer carries the worker catalog and action bindings. It does
@@ -226,15 +229,18 @@ func buildPolicyServiceScorer(
 	}
 	for _, binding := range policy.Bindings {
 		level, model := binding.Level, binding.Model
+		var trainedArms []string
 		// A v5 binding is only its action and worker; the package names the
 		// model and the control's level.
 		if action, ok := policy.PackageV5Action(binding.ActionID); ok {
-			level, model = "", action.Model
+			level, model, trainedArms = "", action.Model, action.TrainedArmIDs
 			if action.Control.Instruction != nil {
 				level = action.Control.Instruction.Level
 			}
 		}
-		scorer.bindings[binding.ActionID] = policyBinding{arm: index[binding.Worker], level: level, model: model}
+		scorer.bindings[binding.ActionID] = policyBinding{
+			arm: index[binding.Worker], level: level, model: model, trainedArms: trainedArms,
+		}
 		scorer.actionOrder = append(scorer.actionOrder, binding.ActionID)
 	}
 	return scorer

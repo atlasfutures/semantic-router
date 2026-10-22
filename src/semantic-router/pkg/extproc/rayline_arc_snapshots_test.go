@@ -281,6 +281,27 @@ func TestSnapshotKeepsOnlyItsOwnAttributionsAndArms(t *testing.T) {
 	if len(kept) != 1 || kept[0].Message != 1 {
 		t.Fatalf("kept %+v", kept)
 	}
+	// Trained arm ids are per package: one this package's manifest does not
+	// list (here, a v4 package's, which VSR cannot know) is sent as null.
+	otherArm := "arm-of-another-package"
+	nulled := second.snapshotAttribution([]raylinearc.PolicyAttribution{
+		{Message: 1, ActionID: policy.Bindings[0].ActionID, ArmID: &otherArm},
+	})
+	if len(nulled) != 1 || nulled[0].ArmID != nil {
+		t.Fatalf("attribution %+v keeps another package's arm", nulled)
+	}
+	known := policyServiceScorer{bindings: map[string]policyBinding{"a": {trainedArms: []string{otherArm}}}}
+	if got := known.snapshotAttribution([]raylinearc.PolicyAttribution{{ActionID: "a", ArmID: &otherArm}}); got[0].ArmID == nil {
+		t.Fatal("an arm the package lists for the action was dropped")
+	}
+	// A served-model record naming a worker this package binds no action on
+	// says nothing to this snapshot.
+	if model := second.servedModelOf("off"); model != "" {
+		t.Fatalf("servedModelOf(off) = %q under a package without it", model)
+	}
+	if model := second.servedModelOf("think"); model == "" {
+		t.Fatal("servedModelOf(think) says nothing under a package that binds it")
+	}
 	if !second.armBound(0) || second.armBound(1) {
 		t.Fatal("arm binding is not the package's")
 	}
