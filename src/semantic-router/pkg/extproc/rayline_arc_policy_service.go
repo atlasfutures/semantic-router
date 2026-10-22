@@ -97,6 +97,9 @@ type policyServiceScorer struct {
 	episodeMode string
 	// cacheContext sends the episode's cache evidence on each decide.
 	cacheContext bool
+	// userTurnCache is the cell's selection.user_turn_cache; empty sends
+	// none.
+	userTurnCache string
 	// decisionsV2 is the cell's Decisions API v2 request members; nil sends
 	// none.
 	decisionsV2 *policyDecisionsV2
@@ -216,9 +219,10 @@ func buildPolicyServiceScorer(
 		sha256:     policy.PackageSHA256,
 		bindings:   make(map[string]policyBinding, len(policy.Bindings)),
 		// Off, the decide request carries no cache_context, as before it.
-		cacheContext: policy.CacheContext,
-		decisionsV2:  newPolicyDecisionsV2(policy.DecisionsV2),
-		exploration:  newPolicyExploration(policy),
+		cacheContext:  policy.CacheContext,
+		userTurnCache: policy.UserTurnCache,
+		decisionsV2:   newPolicyDecisionsV2(policy.DecisionsV2),
+		exploration:   newPolicyExploration(policy),
 	}
 	if decision.Algorithm.RaylineARC.Episode.RelaxedConsistency() {
 		scorer.episodeMode = raylinearc.PolicyEpisodeModeRelaxed
@@ -678,6 +682,8 @@ func (selector *raylineARCSelector) selectViaPolicyScorer(
 			AvailableActionIDs:  available,
 			OperatingPoint:      raylinearc.PolicyOperatingPoint{Name: "default"},
 			PreferenceDimension: "overall",
+			// The cell's serving-time cache mode; empty leaves the package's.
+			UserTurnCache: scorer.userTurnCache,
 		},
 		Shadow:      []raylinearc.PolicyPackageRef{},
 		EpisodeMode: scorer.episodeMode,

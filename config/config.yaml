@@ -2048,6 +2048,27 @@ recipes:
                 # and their prompt caches. Only for a policy service built at
                 # or after pathfinder 204d287ec4, which refuses it otherwise.
                 cache_context: false
+                # user_turn_cache sends selection.user_turn_cache: the cache
+                # mode a typed user turn is decided under in place of the
+                # package's own (switch_cost, repartition, repartition_ttl,
+                # repartition_multiwarm; pathfinder #5721). The two TTL modes
+                # need cache_context. Empty: the package's mode decides. Only
+                # for a service listing the user_turn_cache capability.
+                user_turn_cache: ""
+                # cache_ttl_policy is each provider's documented prompt-cache
+                # idle lifetime, reported in cache_context as ttl_source
+                # "provider_policy: <source>" for a call whose body states no
+                # TTL the Router reads (only Anthropic's cache_control is read
+                # from the wire). A documented assumption, never a verified
+                # cache; a provider with no documented lifetime has no row.
+                # Needs cache_context. For example:
+                #   - provider: Moonshot AI   # as upstream_provider reports it
+                #     workers: [kimi-k3]      # optional; empty is every worker
+                #     ttl_seconds: 300
+                #     source: platform.kimi.ai/docs/guide/use-context-caching-feature-of-kimi-api (5m idle, refreshed on hit), read 2026-10-21
+                #     basis: documented   # or observed (a cache-read probe;
+                #                         # ttl_source "provider_observed: ...")
+                cache_ttl_policy: []
                 # trained_models declares, per bound worker, the trained model
                 # it serves (a v5 action's model, e.g. claude-opus-5); a binding
                 # whose worker declares another is refused. v5 and v6 only.

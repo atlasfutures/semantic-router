@@ -17,6 +17,7 @@ limitations under the License.
 package extproc
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -151,6 +152,8 @@ func stageRaylineARCWireCacheTTL(r *OpenAIRouter, body []byte, ctx *RequestConte
 	}
 	if r.armFamily(ctx.RaylineARCDispatch.ID) != anthropicFamily {
 		transaction.stageWireCacheTTL(0, "")
+		seconds, _ := raylinearc.WireCacheTTL(body)
+		transaction.stageBodyCacheControl(bytes.Contains(body, []byte(`"cache_control"`)), seconds)
 		return
 	}
 	transaction.stageWireCacheTTL(raylinearc.WireCacheTTL(body))

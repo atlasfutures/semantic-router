@@ -83,6 +83,7 @@ func (r *OpenAIRouter) reportNonStreamingUsage(
 	usage responseUsageMetrics,
 ) {
 	ctx.RaylineARCTransaction.stageCallUsage(usage)
+	ctx.RaylineARCTransaction.stageProviderCacheTTL(servedUpstreamProvider(ctx))
 	if usage.invalid {
 		// Nothing was counted, so every count is unreported and the usage
 		// record writes null for it. What the upstream charged still stands.
@@ -260,6 +261,18 @@ func responseFailureClass(err error) string {
 // attributedResponse is the response the usage line describes. A turn the
 // Router refused has no semantic response, but the remnant the decoder kept
 // still names what the upstream said and billed.
+// servedUpstreamProvider is the provider that served the call, as the
+// upstream reported it (llm_usage upstream_provider); "" when it did not.
+func servedUpstreamProvider(ctx *RequestContext) string {
+	if response := attributedResponse(ctx); response != nil {
+		return response.UpstreamProvider
+	}
+	if ctx != nil && ctx.SemanticStreamState != nil {
+		return ctx.SemanticStreamState.provider
+	}
+	return ""
+}
+
 func attributedResponse(ctx *RequestContext) *llmprotocol.Response {
 	if ctx == nil {
 		return nil

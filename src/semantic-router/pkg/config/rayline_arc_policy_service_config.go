@@ -98,6 +98,18 @@ type RaylineARCPolicyServiceConfig struct {
 	// the member, and so every turn. Off, the request is as before; the
 	// evidence is recorded either way.
 	CacheContext bool `yaml:"cache_context,omitempty"`
+	// UserTurnCache sends selection.user_turn_cache on each decide: the
+	// serving-time cache mode a typed user turn is decided under, in place
+	// of the package's own (pathfinder #5721). A mode that reads
+	// cache_context needs CacheContext. Set it only for a policy service
+	// that lists the user_turn_cache capability: an older one refuses the
+	// member, and so every turn. Empty sends none: the package decides.
+	UserTurnCache string `yaml:"user_turn_cache,omitempty"`
+	// CacheTTLPolicy is each provider's documented prompt-cache lifetime,
+	// reported in cache_context (as ttl_source "provider_policy: <source>")
+	// for a call whose dispatched body states no TTL the Router reads.
+	// Empty: only the wire's TTL is reported, as before.
+	CacheTTLPolicy []RaylineARCCacheTTLPolicyRow `yaml:"cache_ttl_policy,omitempty"`
 	// TrainedModels declares, per bound worker, the trained model it serves:
 	// the name a v5 action's model states (e.g. claude-opus-5). Trained names
 	// are decoupled from providers, so the pairing is declared, never
@@ -398,6 +410,9 @@ func validateRaylineARCPolicyServiceConfig(cfg *RaylineARCPolicyServiceConfig) e
 		return err
 	}
 	if err := validateRaylineARCDecisionsV2Config(cfg.DecisionsV2); err != nil {
+		return err
+	}
+	if err := validateRaylineARCUserTurnCache(cfg); err != nil {
 		return err
 	}
 	if err := validateRaylineARCExplorationConfig(cfg.Exploration, cfg.PackageSHA256); err != nil {
