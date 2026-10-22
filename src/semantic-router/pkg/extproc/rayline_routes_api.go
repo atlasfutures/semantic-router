@@ -353,7 +353,7 @@ func (r *OpenAIRouter) handleRaylineRoutesAPI(
 		routeID,
 		raylineRoutesCheckpoint(settings.CheckpointLabel, decision.Checkpoint),
 		decision,
-		warnings,
+		raylineRoutesToolWarnings(warnings, decision.ToolsEncoded),
 		time.Since(started),
 	)
 	if controls != nil {
@@ -850,7 +850,7 @@ func raylineRoutesBodyWarnings(
 		warnings = append(warnings, "tool_schemas_not_encoded: tool names influenced this route; their descriptions and schemas were not encoded")
 		return warnings
 	}
-	warnings = append(warnings, "tools_not_encoded: tools were dropped before encoding and did not influence this route")
+	warnings = append(warnings, raylineRoutesToolsNotEncoded)
 	return warnings
 }
 
@@ -1100,4 +1100,32 @@ func raylineRoutesBodyCarriesRouting(body []byte) bool {
 	}
 	_, present := envelope["routing"]
 	return present
+}
+
+const (
+	raylineRoutesToolsNotEncoded       = "tools_not_encoded: tools were dropped before encoding and did not influence this route"
+	raylineRoutesToolsNotEncodedPrefix = "tools_not_encoded:"
+	raylineRoutesToolSchemasPrefix     = "tool_schemas_not_encoded:"
+)
+
+// raylineRoutesToolWarnings settles the tool warning against what the
+// decision's encoding did with the request's tools. The body warnings name
+// a tool only when the request declared one; a decision that encoded them
+// drops the warning, one that did not states tools_not_encoded, and an
+// unknown leaves the configured account as it was.
+func raylineRoutesToolWarnings(warnings []string, encoded *bool) []string {
+	if encoded == nil {
+		return warnings
+	}
+	settled := make([]string, 0, len(warnings))
+	for _, warning := range warnings {
+		tool := strings.HasPrefix(warning, raylineRoutesToolsNotEncodedPrefix) || strings.HasPrefix(warning, raylineRoutesToolSchemasPrefix)
+		switch {
+		case !tool:
+			settled = append(settled, warning)
+		case !*encoded:
+			settled = append(settled, raylineRoutesToolsNotEncoded)
+		}
+	}
+	return settled
 }

@@ -474,6 +474,10 @@ type PolicyEncoding struct {
 	SessionAction    string `json:"session_action"`
 	// SessionRevision is null for a relaxed call, which advances no session.
 	SessionRevision *int   `json:"session_revision"`
+	// ToolDefinitionsStatus is whether the encode included the request's
+	// tool definitions ("present") or had none to include ("absent"); nil
+	// from a service that does not state it.
+	ToolDefinitionsStatus *string `json:"tool_definitions_status,omitempty"`
 	EngineBuildID   string `json:"engine_build_id"`
 }
 

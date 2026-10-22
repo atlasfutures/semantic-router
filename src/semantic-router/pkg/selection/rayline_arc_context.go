@@ -225,6 +225,10 @@ type RaylineARCTrace struct {
 	// its model; nil when the package states no by-model offer. An arm it
 	// does not offer is never published as an alternative.
 	PolicyArmOffered []bool
+	// PolicyToolDefinitionsStatus is the service's statement of whether the
+	// encode included the request's tool definitions; nil when it stated
+	// none (an older service, or a held turn that encoded nothing).
+	PolicyToolDefinitionsStatus *string
 	// PolicyCostWeight is the stage-one cost weight the service echoed for
 	// the decision, on every policy-service cell; nil when it echoed none,
 	// never read as 0.

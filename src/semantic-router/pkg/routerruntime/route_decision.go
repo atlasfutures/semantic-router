@@ -110,6 +110,10 @@ type RouteDecision struct {
 	// level and package action; empty outside that mode.
 	ThinkingLevel  string
 	PolicyActionID string
+	// ToolsEncoded is whether the decision's encoding included the request's
+	// tool definitions: true or false when the policy service or its
+	// package says, nil when nothing says.
+	ToolsEncoded *bool
 	// Checkpoint identifies the artifact revision that scored this route. It
 	// is the already-hashed deployment identity, never the raw pin.
 	Checkpoint string

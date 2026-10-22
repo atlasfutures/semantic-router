@@ -102,6 +102,17 @@ func (cfg *RaylineARCPolicyServiceConfig) PackageTwoStage() bool {
 	return err == nil && pkg.manifest.StageOne != nil
 }
 
+// PackageToolDefinitions is the package's encoding_profile.tool_definitions
+// (how its projection treats the request's tool definitions); empty when
+// the manifest does not load.
+func (cfg *RaylineARCPolicyServiceConfig) PackageToolDefinitions() string {
+	pkg, err := cfg.loadPackageV5()
+	if err != nil {
+		return ""
+	}
+	return pkg.manifest.EncodingProfile.ToolDefinitions
+}
+
 // PackageStageOneByModel reports whether the package's stage one chooses a
 // model, not a model at an effort: every offered stage-one candidate states
 // no effort (pathfinder arc_policy_contract StageOneCandidate). Any action of a
