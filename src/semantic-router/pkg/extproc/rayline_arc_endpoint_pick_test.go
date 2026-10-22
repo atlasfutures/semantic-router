@@ -409,8 +409,11 @@ func TestServedEndpointHeaderNamesOnlyAKnownLeaf(t *testing.T) {
 
 // Interop with the gateway's writer of x-rayline-privacy-allowed-endpoints
 // (memex-desktop buildRaylineDataUseHeaders, claude/optc-m5-arc-mask @
-// 727b1bc37f, #7645): its exact output for a privacy and a zdr turn parses
-// to each arm's tags. The writer refuses an arm id holding "=" or ",", so
+// 727b1bc37f, #7645): the values it writes for a privacy and a zdr turn of
+// the prod fixture, derived from the spec's armEndpoints maps (spec
+// :504-544) joined as the writer joins them, not literals memex pins, parse
+// to each arm's tags. The spec's own literals are in
+// TestPrivacyAllowedEndpointsParse. The writer refuses an arm id holding "=" or ",", so
 // the cell's split on them is unambiguous. An arm allowed a parent tag the
 // feed records children under (grok-4.7=xai, gpt-6-luna=openai) is sent as
 // the pinned block: only the tag, its recorded children ignored.
