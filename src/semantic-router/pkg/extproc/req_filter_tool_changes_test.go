@@ -214,3 +214,31 @@ func toolsPlugin(t *testing.T, kind string, cfg any) config.DecisionPlugin {
 	}
 	return config.DecisionPlugin{Type: kind, Configuration: payload}
 }
+
+// Per-turn control on an in-band message leaves an OpenRouter body; a body
+// bound for Anthropic itself keeps it.
+func TestStripMessageOutputConfig(t *testing.T) {
+	body := []byte(`{"output_config":{"effort":"medium"},"messages":[{"role":"user","content":"hi"},` +
+		`{"role":"system","output_config":{"effort":"high"},"content":[{"type":"text","text":"note"}]}]}`)
+	out, err := stripMessageOutputConfig(body, &providerDispatch{
+		profile: &config.ProviderProfile{Type: "openrouter"}, targetFormat: llmprotocol.AnthropicMessagesV1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"output_config":{"effort":"medium"},"messages":[{"role":"user","content":"hi"},` +
+		`{"role":"system","content":[{"type":"text","text":"note"}]}]}`
+	if got := compactJSON(t, out); !bytes.Equal(got, compactJSON(t, []byte(want))) {
+		t.Fatalf("openrouter: got  %s\nwant %s", got, want)
+	}
+
+	out, err = stripMessageOutputConfig(body, &providerDispatch{
+		profile: &config.ProviderProfile{Type: "anthropic"}, targetFormat: llmprotocol.AnthropicMessagesV1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(out, body) {
+		t.Fatalf("anthropic: got %s, want the body unchanged", out)
+	}
+}

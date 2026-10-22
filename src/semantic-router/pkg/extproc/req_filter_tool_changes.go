@@ -230,3 +230,33 @@ func toolNames(body []byte) []string {
 	}
 	return names
 }
+
+// Claude Code's per-turn control (beta per-turn-control-2026-07-01) sets
+// generation control on an in-band message, {"role":"system",
+// "output_config":{"effort":"high"},"content":[...]}, usually the message that
+// also carries its tool changes. The Messages codec carries an unnamed
+// message member through to a same-format target, so OpenRouter would receive
+// it; its Messages API validates the transcript against the public schema,
+// which has no message-level output_config. The request's own top-level
+// output_config still states the turn's effort.
+
+// stripMessageOutputConfig removes output_config from every message of a
+// Messages body bound for OpenRouter. Any other body is returned unchanged.
+func stripMessageOutputConfig(body []byte, dispatch *providerDispatch) ([]byte, error) {
+	if dispatch == nil || dispatch.targetFormat != llmprotocol.AnthropicMessagesV1 ||
+		!providerIsOpenRouter(dispatch.profile) || !bytes.Contains(body, []byte(`"output_config"`)) {
+		return body, nil
+	}
+	out := body
+	for index, message := range gjson.GetBytes(body, "messages").Array() {
+		if !message.Get("output_config").Exists() {
+			continue
+		}
+		stripped, err := sjson.DeleteBytes(out, fmt.Sprintf("messages.%d.output_config", index))
+		if err != nil {
+			return nil, fmt.Errorf("failed to strip a message's output_config: %w", err)
+		}
+		out = stripped
+	}
+	return out, nil
+}
