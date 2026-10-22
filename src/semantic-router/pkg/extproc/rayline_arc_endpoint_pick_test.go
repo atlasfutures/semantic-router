@@ -326,6 +326,88 @@ func TestServedEndpointHeaderNamesOnlyAKnownLeaf(t *testing.T) {
 	}
 }
 
+// Interop with the gateway's writer of x-rayline-privacy-allowed-endpoints
+// (memex-desktop buildRaylineDataUseHeaders, claude/optc-m5-arc-mask @
+// 727b1bc37f, #7645): its exact output for a privacy and a zdr turn parses
+// to each arm's tags. The writer refuses an arm id holding "=" or ",", so
+// the cell's split on them is unambiguous. An arm allowed a parent tag the
+// feed records children under (grok-4.7=xai, gpt-6-luna=openai) is sent as
+// the pinned block: only the tag, its recorded children ignored.
+func TestPrivacyAllowedEndpointsGatewayInterop(t *testing.T) {
+	vectors := map[string]struct {
+		raw  string
+		want map[string][]string
+	}{
+		raylineARCPrivacyModePrivacy: {
+			raw: "glm-5.3-flash=z-ai/fp8,kimi-k3=deepinfra/mxfp4|digitalocean|fireworks|fireworks/spot|fireworks/us|modal/mxfp4|moonshotai/mxfp4," +
+				"claude-opus-5.5=anthropic,claude-sonnet-5.5=anthropic,deepseek-v4.1-flash=siliconflow/fp8,glm-5.3=z-ai/fp8," +
+				"gpt-6-luna=openai,gpt-6.1-sol=openai,grok-4.7=xai",
+			want: map[string][]string{
+				"glm-5.3-flash": {"z-ai/fp8"},
+				"kimi-k3": {"deepinfra/mxfp4", "digitalocean", "fireworks", "fireworks/spot", "fireworks/us",
+					"modal/mxfp4", "moonshotai/mxfp4"},
+				"claude-opus-5.5": {"anthropic"}, "claude-sonnet-5.5": {"anthropic"},
+				"deepseek-v4.1-flash": {"siliconflow/fp8"}, "glm-5.3": {"z-ai/fp8"},
+				"gpt-6-luna": {"openai"}, "gpt-6.1-sol": {"openai"}, "grok-4.7": {"xai"},
+			},
+		},
+		raylineARCPrivacyModeZDR: {
+			raw: "glm-5.3-flash=z-ai/fp8,kimi-k3=deepinfra/mxfp4|digitalocean|fireworks|fireworks/spot|fireworks/us|modal/mxfp4|moonshotai/mxfp4," +
+				"deepseek-v4.1-flash=siliconflow/fp8,glm-5.3=z-ai/fp8",
+			want: map[string][]string{
+				"glm-5.3-flash": {"z-ai/fp8"},
+				"kimi-k3": {"deepinfra/mxfp4", "digitalocean", "fireworks", "fireworks/spot", "fireworks/us",
+					"modal/mxfp4", "moonshotai/mxfp4"},
+				"deepseek-v4.1-flash": {"siliconflow/fp8"}, "glm-5.3": {"z-ai/fp8"},
+			},
+		},
+	}
+	parsedPrivacy := privacyAllowedEndpoints{}
+	for mode, vector := range vectors {
+		arms := make([]string, 0, len(vector.want))
+		for arm := range vector.want {
+			arms = append(arms, arm)
+		}
+		parsed := raylineARCPrivacyAllowedEndpoints(mode, map[string]string{
+			raylineARCPrivacyAllowedArmsHeader:      strings.Join(arms, ","),
+			raylineARCPrivacyAllowedEndpointsHeader: vector.raw,
+		})
+		if !parsed.present || parsed.malformed || len(parsed.arms) != len(vector.want) {
+			t.Fatalf("%s: parsed %+v", mode, parsed)
+		}
+		for arm, tags := range vector.want {
+			if !slices.Equal(parsed.arms[arm], tags) {
+				t.Errorf("%s: %s = %v, want %v", mode, arm, parsed.arms[arm], tags)
+			}
+		}
+		if mode == raylineARCPrivacyModePrivacy {
+			parsedPrivacy = parsed
+		}
+	}
+
+	for arm, feedTags := range map[string][]string{
+		"grok-4.7":   {"xai", "xai/zdr", "xai/zdr/us"},
+		"gpt-6-luna": {"openai", "openai/priority", "openai/us", "azure"},
+	} {
+		tag := parsedPrivacy.arms[arm][0]
+		allowed := privacyAllowedEndpoints{present: true, arms: map[string][]string{endpointPickArm: parsedPrivacy.arms[arm]}}
+		ctx, body := routeEndpointTurn(t, endpointPickRouter("http://127.0.0.1:1", tag), endpointTurn{
+			key: endpointPickKey, privacy: raylineARCPrivacyModePrivacy, feed: endpointFeed(t, feedTags...), allowed: allowed,
+		})
+		pin := providerObject(t, body)
+		wantIgnore := raylinearc.ChildEndpoints(feedTags, tag)
+		if only := mustJSONRaw(t, pin["only"]); !sameJSON(t, only, mustJSON(t, []string{tag})) {
+			t.Fatalf("%s: only = %s, want [%s]", arm, only, tag)
+		}
+		if ignore := mustJSONRaw(t, pin["ignore"]); len(wantIgnore) == 0 || !sameJSON(t, ignore, mustJSON(t, wantIgnore)) {
+			t.Fatalf("%s: ignore = %s, want %v", arm, ignore, wantIgnore)
+		}
+		if pin["allow_fallbacks"] != false || pin["data_collection"] != "deny" || ctx.RaylineARCDispatchedEndpoint != tag {
+			t.Fatalf("%s: provider object %v, endpoint %q", arm, pin, ctx.RaylineARCDispatchedEndpoint)
+		}
+	}
+}
+
 // A pick that lands on a tag with recorded endpoints under it is sent as the
 // gateway's pinnedProviderBlock: only and order the tag, every recorded
 // endpoint under it ignored, and max_price at the tag's recorded prompt and
