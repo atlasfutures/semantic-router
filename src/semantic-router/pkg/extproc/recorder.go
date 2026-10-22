@@ -59,6 +59,7 @@ func (r *OpenAIRouter) emitRoutingDecision(ctx *RequestContext) {
 	if len(ctx.DispatchedProviderOrder) > 0 {
 		record["provider_order"] = ctx.DispatchedProviderOrder
 	}
+	addEndpointPickFields(record, ctx)
 	appendOutboundParamFields(record, ctx.DispatchedOutbound)
 	appendRaylineARCThinkingFields(record, ctx)
 	appendRaylineARCUpstreamFields(record, ctx)

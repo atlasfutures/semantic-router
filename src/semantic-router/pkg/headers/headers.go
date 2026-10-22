@@ -351,6 +351,14 @@ const (
 	// alike; never guessed when no body was dispatched.
 	VSRServedModel = "x-vsr-served-model"
 
+	// VSRServedEndpoint is the OpenRouter endpoint tag that served a Rayline
+	// ARC turn: the endpoint its arm was pinned to, the session's pick among
+	// the arm's endpoints or the next one a re-send reached, with no
+	// OpenRouter fallback past it. A gateway bills the turn at that
+	// endpoint's price. Set on a successful ARC turn whose call was pinned to
+	// one endpoint; absent when OpenRouter could choose.
+	VSRServedEndpoint = "x-vsr-served-endpoint"
+
 	// VSRPolicyPackage is the sha256 of the Rayline ARC policy package that
 	// decided the turn (its release identity), on a policy-service cell.
 	VSRPolicyPackage = "x-vsr-policy-package"

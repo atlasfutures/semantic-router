@@ -84,8 +84,10 @@ type RaylineARCPolicyServiceConfig struct {
 	// the request: x-rayline-call-kind, x-rayline-compaction,
 	// x-rayline-agent-key-source, x-rayline-parent-session and
 	// x-rayline-parent-agent, the exploration eligibility headers
-	// x-rayline-privacy-mode and x-rayline-training-data, and the privacy arm
-	// mask x-rayline-privacy-allowed-arms. Set it only when a gateway in front
+	// x-rayline-privacy-mode and x-rayline-training-data, the privacy arm
+	// mask x-rayline-privacy-allowed-arms, and x-rayline-session-key, the key
+	// an arm's OpenRouter endpoint is picked by (without it the cell derives
+	// the same key from the episode id). Set it only when a gateway in front
 	// of the router sets (or strips) every one of them, since a client could
 	// otherwise claim any turn is a side call or its own subagent episode,
 	// consent to exploration, or widen its own allowed arms.

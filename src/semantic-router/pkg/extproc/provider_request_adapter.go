@@ -73,7 +73,7 @@ func (r *OpenAIRouter) adaptProviderRequest(
 	if err != nil {
 		return nil, err
 	}
-	body, err = applyProviderPreferences(body, dispatch, r.Config, ctx.RaylineARCPrivacyMode)
+	body, err = applyProviderPreferences(body, dispatch, r.Config, ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -96,7 +96,7 @@ func (r *OpenAIRouter) applyPrivateProviderPreferences(
 ) ([]byte, error) {
 	if ctx.RaylineARCPrivacyMode != "" {
 		var err error
-		body, err = applyProviderPreferences(body, dispatch, r.Config, ctx.RaylineARCPrivacyMode)
+		body, err = applyProviderPreferences(body, dispatch, r.Config, ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -130,7 +130,7 @@ func (r *OpenAIRouter) adaptMessagesProviderRequest(
 	if err != nil {
 		return nil, err
 	}
-	body, err = applyProviderPreferences(body, dispatch, r.Config, ctx.RaylineARCPrivacyMode)
+	body, err = applyProviderPreferences(body, dispatch, r.Config, ctx)
 	if err != nil {
 		return nil, err
 	}

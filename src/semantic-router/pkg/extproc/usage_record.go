@@ -129,6 +129,20 @@ type llmUsageRecord struct {
 	// re-sent on its standard twin: flex_attempt on the refused or timed-out
 	// call, standard_resend on the re-send. Null on every other call.
 	FlexResend *string `json:"flex_resend"`
+	// EndpointResend marks the calls of an ARC turn whose picked OpenRouter
+	// endpoint failed before any byte and was re-sent on the arm's next
+	// endpoints (rayline_arc_endpoint_pick.go): endpoint_attempt on each
+	// refused call, endpoint_resend on the call that answered. Null on every
+	// other call.
+	EndpointResend *string `json:"endpoint_resend"`
+	// ProviderEndpoint is the endpoint tag the call was pinned to, null when
+	// OpenRouter could choose; ProviderEndpointsTried are the turn's
+	// endpoints dispatched so far when it picked one of several, and
+	// SessionKeySource where the key that picks came from (header, fallback
+	// or none), null outside ARC.
+	ProviderEndpoint       *string  `json:"provider_endpoint"`
+	ProviderEndpointsTried []string `json:"provider_endpoints_tried"`
+	SessionKeySource       *string  `json:"session_key_source"`
 
 	// The rate-card price: Cost is cache-aware, from the rates beside it,
 	// which come from the table PricingSnapshot names. Cost is null whenever
@@ -263,6 +277,15 @@ func (r *OpenAIRouter) newLLMUsageRecord(ctx *RequestContext, usage responseUsag
 	record.RequestedServiceTier = nonEmpty(ctx.DispatchedServiceTier)
 	if ctx.FlexResend.served() {
 		record.FlexResend = nonEmpty(flexResendStandard)
+	}
+	record.ProviderEndpoint = nonEmpty(ctx.RaylineARCDispatchedEndpoint)
+	record.SessionKeySource = nonEmpty(ctx.RaylineARCSessionKeySource)
+	if len(ctx.RaylineARCEndpointsTried) > 0 {
+		record.ProviderEndpointsTried = append([]string(nil), ctx.RaylineARCEndpointsTried...)
+	}
+	if len(ctx.RaylineARCEndpointsTried) > 1 {
+		// A refused re-send overwrites this with endpoint_attempt.
+		record.EndpointResend = nonEmpty(endpointResendServed)
 	}
 	stop := responseStopTelemetry(ctx)
 	record.ProviderStopReason = nonEmpty(stop.providerStop)

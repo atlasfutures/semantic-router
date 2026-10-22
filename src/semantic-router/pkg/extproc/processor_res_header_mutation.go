@@ -326,6 +326,7 @@ func buildResponseHeaderMutation(
 	// so demoting the wire header does not change behavior.
 	addFinalDecisionHeaders(builder, ctx)
 	builder.addRaylineARCServedIdentity(ctx)
+	builder.addRaylineARCServedEndpoint(ctx)
 	if debugHeadersRequested(ctx) {
 		addRetentionDirectiveHeaders(builder, ctx)
 		addDecisionDetailHeaders(builder, ctx)

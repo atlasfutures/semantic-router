@@ -450,6 +450,7 @@ func (r *OpenAIRouter) finalizeProviderDispatchResponse(
 	ctx.DispatchedOutbound = readDispatchedOutboundParams(body, dispatch)
 	ctx.DispatchedServiceTier = dispatchedServiceTier(body)
 	r.stageFlexResend(ctx, dispatch, body)
+	r.stageEndpointResend(ctx, dispatch, body)
 	r.auditRaylineARCUpstream(body, ctx)
 	common := response.GetRequestBody().GetResponse()
 	if common == nil {

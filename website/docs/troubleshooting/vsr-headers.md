@@ -46,8 +46,9 @@ A Rayline ARC turn that reached its provider also names what served it, on a `2x
 | `x-vsr-served-model` | The provider model id the turn was dispatched to, read back off the final provider body (an OpenRouter id on an OpenRouter arm), with no arm qualifier. `x-vsr-selected-model` stays the arm's name, which is the policy package's name for it, not a rate-card id. Absent when no provider body was dispatched. |
 | `x-vsr-policy-package` | The sha256 of the policy package that decided the turn, on a policy-service cell. |
 | `x-vsr-policy-cost-weight` | The stage-one cost weight the decision was taken at, as the policy service echoed it, at full precision (V = 1 / cost weight). Absent when the service echoed none. |
+| `x-vsr-served-endpoint` | The OpenRouter endpoint tag that served the turn, on a `2xx` whose call was pinned to one endpoint with no OpenRouter fallback. An arm that pins several endpoints is sent to one per conversation, picked by rendezvous hashing on the gateway's `x-rayline-session-key` (read only with `trust_turn_signal_headers`; without it, the cell's own sha256 of the episode's `user:conversation`), and a failure before any byte is re-sent on at most two further endpoints in that order. Absent when OpenRouter could choose. |
 
-The `llm_usage` record carries the first and the last as `served_model` and `policy_cost_weight`, null when unknown.
+The `llm_usage` record carries the first and the last as `served_model` and `policy_cost_weight`, null when unknown, and the endpoint as `provider_endpoint`, with `provider_endpoints_tried`, `session_key_source` and `endpoint_resend`.
 
 ## Request headers
 

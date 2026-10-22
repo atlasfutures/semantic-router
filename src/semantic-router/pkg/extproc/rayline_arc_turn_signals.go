@@ -48,6 +48,10 @@ const (
 	// reads the parent (pathfinder ADR 0117, rayline_arc_derived_hold.go).
 	raylineARCParentSessionHeader = "x-rayline-parent-session"
 	raylineARCParentAgentHeader   = "x-rayline-parent-agent"
+	// raylineARCSessionKeyHeader is the opaque key the gateway picks an
+	// arm's OpenRouter endpoint by (hex sha256 of user:conversation), so the
+	// cell picks the endpoint the gateway bills (rayline_arc_endpoint_pick.go).
+	raylineARCSessionKeyHeader = "x-rayline-session-key"
 )
 
 // raylineARCTrustedSignalHeaders returns the turn-signal headers this cell
@@ -78,7 +82,7 @@ func raylineARCTurnSignalHeadersForRemoval() []string {
 		raylineARCCallKindHeader, raylineARCCompactionHeader,
 		raylineARCAgentKeySourceHeader, raylineARCParentSessionHeader, raylineARCParentAgentHeader,
 		raylineARCPrivacyModeHeader, raylineARCTrainingDataHeader, raylineARCExplorationTemperatureHeader,
-		raylineARCPrivacyAllowedArmsHeader,
+		raylineARCPrivacyAllowedArmsHeader, raylineARCSessionKeyHeader,
 	}
 }
 

@@ -59,3 +59,12 @@ func (builder *responseHeaderMutationBuilder) addRaylineARCServedIdentity(ctx *R
 		builder.addString(headers.VSRPolicyCostWeight, strconv.FormatFloat(*identity.costWeight, 'g', -1, 64))
 	}
 }
+
+// addRaylineARCServedEndpoint names the endpoint a successful ARC turn was
+// served by (x-vsr-served-endpoint), when its call was pinned to one.
+func (builder *responseHeaderMutationBuilder) addRaylineARCServedEndpoint(ctx *RequestContext) {
+	if _, ok := raylineARCServedIdentityOf(ctx); !ok {
+		return
+	}
+	builder.addString(headers.VSRServedEndpoint, ctx.RaylineARCDispatchedEndpoint)
+}

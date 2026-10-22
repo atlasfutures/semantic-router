@@ -189,6 +189,7 @@ func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 			signalHeaders, policyRequestFormat(reqCtx.SourceFormat), reqCtx.RaylineARCRawBody, result.EpisodeIDHash,
 		)
 	}
+	reqCtx.RaylineARCSessionKey, reqCtx.RaylineARCSessionKeySource = raylineARCSessionKey(signalHeaders, rawEpisodeID)
 	if rawEpisodeID != "" {
 		state, coalesced, failure := r.prepareOrJoinRaylineARCTurn(
 			algorithm.RaylineARC,
