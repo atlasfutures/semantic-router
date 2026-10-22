@@ -50,7 +50,8 @@ func publicChatStreamError(object map[string]json.RawMessage) (bool, error) {
 
 // AnthropicPublicStreamFilter passes a same-format Anthropic stream through
 // frame by frame, as the upstream wrote it, except an error event, which is
-// restated in its public form. With a thinking-marker family it also signs
+// restated in its public form, and content blocks that overlap, which are
+// sent one at a time (anthropicBlockOrder). With a thinking-marker family it also signs
 // each thinking block the upstream left unsigned with a Router marker
 // (thinkingMarkerPassthrough).
 type AnthropicPublicStreamFilter struct {
@@ -58,12 +59,16 @@ type AnthropicPublicStreamFilter struct {
 	failure   error
 	finalized bool
 	mint      thinkingMarkerPassthrough
+	order     *anthropicBlockOrder
 }
 
 // NewAnthropicPublicStreamFilter returns the filter. markerFamily is the
 // family to mint thinking markers for, or empty to mint none.
 func NewAnthropicPublicStreamFilter(limit int, markerFamily string) *AnthropicPublicStreamFilter {
-	return &AnthropicPublicStreamFilter{framer: newSSEFramer(limit), mint: thinkingMarkerPassthrough{family: markerFamily}}
+	return &AnthropicPublicStreamFilter{
+		framer: newSSEFramer(limit), mint: thinkingMarkerPassthrough{family: markerFamily},
+		order: newAnthropicBlockOrder(),
+	}
 }
 
 func (filter *AnthropicPublicStreamFilter) Push(chunk []byte) ([]byte, error) {
@@ -94,7 +99,23 @@ func (filter *AnthropicPublicStreamFilter) Finalize() ([]byte, error) {
 		filter.failure = err
 		return nil, err
 	}
-	return filter.filterFrames(frames)
+	output, err := filter.filterFrames(frames)
+	if err != nil {
+		return nil, err
+	}
+	if filter.order == nil {
+		return output, nil
+	}
+	held, err := filter.order.finish()
+	if err != nil {
+		filter.failure = err
+		return nil, err
+	}
+	rest, err := filter.writeOrdered(held)
+	if err != nil {
+		return nil, err
+	}
+	return append(output, rest...), nil
 }
 
 func (filter *AnthropicPublicStreamFilter) filterFrames(frames [][]byte) ([]byte, error) {
@@ -105,22 +126,55 @@ func (filter *AnthropicPublicStreamFilter) filterFrames(frames [][]byte) ([]byte
 			filter.failure = err
 			return nil, err
 		}
+		ordered, err := filter.orderFrame(public)
+		if err != nil {
+			filter.failure = err
+			return nil, err
+		}
+		written, err := filter.writeOrdered(ordered)
+		if err != nil {
+			return nil, err
+		}
+		output.Write(written)
+	}
+	return output.Bytes(), nil
+}
+
+// writeOrdered writes the frames the block order released, each after the
+// thinking marker minted for it, if any.
+func (filter *AnthropicPublicStreamFilter) writeOrdered(frames [][]byte) ([]byte, error) {
+	var output bytes.Buffer
+	for _, out := range frames {
 		if filter.mint.family != "" {
-			parsed, parseErr := parseSSEFrame(frame, filter.framer.limit)
-			if parseErr != nil {
-				filter.failure = parseErr
-				return nil, parseErr
+			parsed, err := parseSSEFrame(out, filter.framer.limit)
+			if err != nil {
+				filter.failure = err
+				return nil, err
 			}
-			signature, mintErr := filter.mint.before(parsed)
-			if mintErr != nil {
-				filter.failure = mintErr
-				return nil, mintErr
+			signature, err := filter.mint.before(parsed)
+			if err != nil {
+				filter.failure = err
+				return nil, err
 			}
 			output.Write(signature)
 		}
-		output.Write(public)
+		output.Write(out)
 	}
 	return output.Bytes(), nil
+}
+
+// orderFrame puts one public frame through the block order
+// (anthropicBlockOrder), which passes it unchanged unless the upstream broke
+// Messages' one-block-at-a-time order.
+func (filter *AnthropicPublicStreamFilter) orderFrame(public []byte) ([][]byte, error) {
+	if filter.order == nil {
+		filter.order = newAnthropicBlockOrder()
+	}
+	parsed, err := parseSSEFrame(public, filter.framer.limit)
+	if err != nil {
+		return nil, err
+	}
+	return filter.order.push(public, parsed)
 }
 
 func publicAnthropicStreamFrame(frame []byte, limit int) ([]byte, error) {
