@@ -99,6 +99,25 @@ func (cfg *RaylineARCPolicyServiceConfig) PackageTwoStage() bool {
 	return err == nil && pkg.manifest.StageOne != nil
 }
 
+// PackageEncodesRequestTools reports whether the package's encoding
+// profile encodes the request's tool definitions: the policy service keeps
+// them only under a harness shell it includes (include, include_v2) and a
+// tool_definitions other than exclude. False when the manifest does not
+// load or says otherwise (an absent harness_shell excludes the shell).
+func (cfg *RaylineARCPolicyServiceConfig) PackageEncodesRequestTools() bool {
+	pkg, err := cfg.loadPackageV5()
+	if err != nil {
+		return false
+	}
+	profile := pkg.manifest.EncodingProfile
+	var shell string
+	if len(profile.HarnessShell) == 0 || json.Unmarshal(profile.HarnessShell, &shell) != nil {
+		return false
+	}
+	included := shell == raylinearc.PolicyHarnessShellInclude || shell == raylinearc.PolicyHarnessShellIncludeV2
+	return included && profile.ToolDefinitions != "" && profile.ToolDefinitions != "exclude"
+}
+
 // PackageStageOneByModel reports whether the package's stage one chooses a
 // model, not a model at an effort: every offered stage-one candidate states
 // no effort (pathfinder arc_policy_contract StageOneCandidate). Any action of a

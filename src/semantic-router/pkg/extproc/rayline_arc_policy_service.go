@@ -100,6 +100,10 @@ type policyServiceScorer struct {
 	// side calls strict after the service last showed it cannot serve them
 	// relaxed; zero or past means relaxed.
 	sideStrictUntil atomic.Int64
+	// advertised is the service's capability list as its readiness listing
+	// stated it; nil before the first listing. An opt-in a service does not
+	// list is never sent, since one that lacks it refuses the field.
+	advertised atomic.Pointer[[]string]
 }
 
 // policySideCallStrictFor is how long a strict cell keeps its side calls
@@ -343,7 +347,7 @@ func createRaylineARCPolicySelector(
 	}
 	scorer := armed.scorer.(*policyServiceScorer)
 	probe := func(ctx context.Context) error {
-		if err := requireRaylineARCPolicyServing(ctx, client, policy); err != nil {
+		if err := requireRaylineARCPolicyServing(ctx, client, policy, scorer.setAdvertised); err != nil {
 			return err
 		}
 		if scorer.episodeMode == raylinearc.PolicyEpisodeModeRelaxed {
@@ -598,6 +602,11 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		request.EpisodeMode = scorer.sideCallEpisodeMode(selector.now())
 	}
 	scorer.decisionsV2.apply(&request)
+	// Whether the encode included the request's tools, asked only of a
+	// service that lists the opt-in (an older one refuses the field).
+	if scorer.advertises(raylinearc.PolicyCapabilityToolDefinitionsStatus) {
+		request.ResponseFields = append(request.ResponseFields, raylinearc.PolicyCapabilityToolDefinitionsStatus)
+	}
 	explorationExcluded := scorer.exploration.apply(&request, arcContext.PolicySignalHeaders, sideCall)
 	pricesStatus := attachRoutingPrices(armed.prices, &request)
 	// The episode's cache evidence is read at each call, so a retry's gaps
@@ -859,6 +868,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	result.RaylineARC.OfferKind = policyOfferKind(derivedOffer, forced, retained, held)
 	result.RaylineARC.MaskedArms = policyMaskedArms(scorer, workerIDs, excluded, fallback, turn, offeredRoutes)
 	result.RaylineARC.PolicyPackageSHA256 = scorer.sha256
+	result.RaylineARC.PolicyToolDefinitionsStatus = response.Encoding.ToolDefinitionsStatus
 	result.RaylineARC.RoutingPricesStatus = pricesStatus
 	result.RaylineARC.SettlementPrices = armed.prices
 	result.RaylineARC.EndpointFeed = arcContext.EndpointFeed
@@ -1230,4 +1240,18 @@ func boundedPolicySessionAction(action string) string {
 		return action
 	}
 	return ""
+}
+
+// setAdvertised records the service's capability list from a readiness
+// listing.
+func (scorer *policyServiceScorer) setAdvertised(capabilities []string) {
+	copied := append([]string(nil), capabilities...)
+	scorer.advertised.Store(&copied)
+}
+
+// advertises reports whether the service's readiness listing stated
+// capability; false before any listing.
+func (scorer *policyServiceScorer) advertises(capability string) bool {
+	list := scorer.advertised.Load()
+	return list != nil && slices.Contains(*list, capability)
 }
