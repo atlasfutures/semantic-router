@@ -112,7 +112,7 @@ func TestProviderPinSitsBesideTheReasoningObject(t *testing.T) {
 	}
 	reasoned := []byte(`{"model":"` + providerPinArm + `","reasoning":{"max_tokens":1024}}`)
 
-	pinned, err := applyProviderPreferences(reasoned, dispatch, router.Config, "")
+	pinned, err := applyProviderPreferences(reasoned, dispatch, router.Config, &RequestContext{})
 	if err != nil {
 		t.Fatalf("applyProviderPreferences: %v", err)
 	}
@@ -295,7 +295,7 @@ func TestPrivateTurnReplacesTheCallersProviderObjectOnAnUnpinnedArm(t *testing.T
 	}
 	body := []byte(`{"model":"m","provider":{"only":["unstated-retention"],"allow_fallbacks":true}}`)
 
-	pinned, err := applyProviderPreferences(body, dispatch, router.Config, raylineARCPrivacyModeZDR)
+	pinned, err := applyProviderPreferences(body, dispatch, router.Config, &RequestContext{RaylineARCPrivacyMode: raylineARCPrivacyModeZDR})
 	if err != nil {
 		t.Fatalf("applyProviderPreferences: %v", err)
 	}
@@ -303,7 +303,7 @@ func TestPrivateTurnReplacesTheCallersProviderObjectOnAnUnpinnedArm(t *testing.T
 	if !bytes.Contains(pinned, []byte(want)) {
 		t.Fatalf("the caller's provider object was not replaced, want %s:\n%s", want, pinned)
 	}
-	unchanged, err := applyProviderPreferences(body, dispatch, router.Config, "")
+	unchanged, err := applyProviderPreferences(body, dispatch, router.Config, &RequestContext{})
 	if err != nil || !bytes.Equal(unchanged, body) {
 		t.Fatalf("a standard turn's provider object changed (err %v):\n%s", err, unchanged)
 	}

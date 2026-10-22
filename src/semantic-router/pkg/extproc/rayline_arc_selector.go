@@ -140,6 +140,23 @@ type raylineARCArmedComponents struct {
 	prices *raylinearc.RoutingPriceCache
 }
 
+// routingPriceSettlement is the routing-price feed in effect, or nil when the
+// cell has none configured or the one it has cannot be read.
+func (armed *raylineARCArmedComponents) routingPriceSettlement() *raylinearc.RoutingPriceSettlement {
+	if armed == nil {
+		return nil
+	}
+	return routingPriceSettlementOf(armed.prices)
+}
+
+func routingPriceSettlementOf(cache *raylinearc.RoutingPriceCache) *raylinearc.RoutingPriceSettlement {
+	if cache == nil {
+		return nil
+	}
+	settlement, _ := cache.Settlement()
+	return settlement
+}
+
 type raylineARCSelector struct {
 	armed            atomic.Pointer[raylineARCArmedComponents]
 	artifactRevision string
@@ -311,6 +328,7 @@ func (selector *raylineARCSelector) Select(
 	if err != nil {
 		return nil, err
 	}
+	withPrivacyEndpointExclusions(arcContext, armed.routingPriceSettlement())
 	hard, err := hardExcludedArms(arcContext, len(workerIDs))
 	if err != nil {
 		return nil, err

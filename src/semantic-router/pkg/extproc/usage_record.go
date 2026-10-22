@@ -129,6 +129,25 @@ type llmUsageRecord struct {
 	// re-sent on its standard twin: flex_attempt on the refused or timed-out
 	// call, standard_resend on the re-send. Null on every other call.
 	FlexResend *string `json:"flex_resend"`
+	// EndpointResend marks the calls of an ARC turn whose picked OpenRouter
+	// endpoint failed before any byte and was re-sent on the arm's next
+	// endpoints (rayline_arc_endpoint_pick.go): endpoint_attempt on each
+	// refused call the cell went on from, endpoint_resend on the last call,
+	// whose answer the client got whatever its status: a failed last call
+	// carries its failure_class like any failed call. Null on every other
+	// call.
+	EndpointResend *string `json:"endpoint_resend"`
+	// ProviderEndpoint is the endpoint tag the call is known to be served
+	// by, null when OpenRouter could choose; ProviderEndpointsTried are the
+	// turn's endpoints dispatched so far when it picked one of several;
+	// SessionKeySource is where the key that picks came from (header,
+	// fallback or none) and EndpointSource where the arm's endpoints did
+	// (feed, or none when no routing-price feed was in effect). Null outside
+	// ARC.
+	ProviderEndpoint       *string  `json:"provider_endpoint"`
+	ProviderEndpointsTried []string `json:"provider_endpoints_tried"`
+	SessionKeySource       *string  `json:"session_key_source"`
+	EndpointSource         *string  `json:"endpoint_source"`
 
 	// The rate-card price: Cost is cache-aware, from the rates beside it,
 	// which come from the table PricingSnapshot names. Cost is null whenever
@@ -263,6 +282,16 @@ func (r *OpenAIRouter) newLLMUsageRecord(ctx *RequestContext, usage responseUsag
 	record.RequestedServiceTier = nonEmpty(ctx.DispatchedServiceTier)
 	if ctx.FlexResend.served() {
 		record.FlexResend = nonEmpty(flexResendStandard)
+	}
+	record.ProviderEndpoint = nonEmpty(ctx.RaylineARCDispatchedEndpoint)
+	record.SessionKeySource = nonEmpty(ctx.RaylineARCSessionKeySource)
+	record.EndpointSource = nonEmpty(ctx.RaylineARCEndpointSource)
+	if len(ctx.RaylineARCEndpointsTried) > 0 {
+		record.ProviderEndpointsTried = append([]string(nil), ctx.RaylineARCEndpointsTried...)
+	}
+	if len(ctx.RaylineARCEndpointsTried) > 1 {
+		// A refused re-send overwrites this with endpoint_attempt.
+		record.EndpointResend = nonEmpty(endpointResendServed)
 	}
 	stop := responseStopTelemetry(ctx)
 	record.ProviderStopReason = nonEmpty(stop.providerStop)

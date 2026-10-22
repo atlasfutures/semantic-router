@@ -126,6 +126,34 @@ type RequestContext struct {
 	// trusted header states it, sorted and deduplicated; nil for a standard
 	// request. Logged only as a count and a digest.
 	RaylineARCPrivacyAllowedArms []string
+	// RaylineARCPrivacyAllowedEndpoints is a private request's per-arm
+	// endpoint allow list (x-rayline-privacy-allowed-endpoints); absent for
+	// a standard request or one whose gateway sent none.
+	RaylineARCPrivacyAllowedEndpoints privacyAllowedEndpoints
+	// RaylineARCSessionKey is the opaque key an arm's OpenRouter endpoint is
+	// picked by (rayline_arc_endpoint_pick.go): the gateway's
+	// x-rayline-session-key, or the cell's own digest of the episode's user
+	// and conversation when the header is absent; SessionKeySource says which
+	// (header, fallback, or none when the turn has no episode).
+	RaylineARCSessionKey       string
+	RaylineARCSessionKeySource string
+	// RaylineARCEndpointSource says where the arm's endpoints were read from:
+	// feed (the routing-price feed's rows) or none (no feed in effect, so no
+	// pick). RaylineARCEndpointOrder is the candidates in the session's
+	// rendezvous order, set only when the cell picked; the first is the pick
+	// and the rest the retry order. EndpointsTried are the ones dispatched so
+	// far this turn, and DispatchedEndpoint the one the call in flight is
+	// known to be served by (x-vsr-served-endpoint once it serves), empty
+	// when OpenRouter chooses. EndpointResend is the re-send staged on the
+	// next endpoints when the pick fails before any byte. EndpointFeed is the
+	// feed snapshot the pick read, so its re-sends and the served-endpoint
+	// header read the same records.
+	RaylineARCEndpointFeed       *raylinearc.RoutingPriceSettlement
+	RaylineARCEndpointSource     string
+	RaylineARCEndpointOrder      []string
+	RaylineARCEndpointsTried     []string
+	RaylineARCDispatchedEndpoint string
+	RaylineARCEndpointResend     *endpointResendPlan
 	// ContextRecoveryProviderCost is the charge for both calls of a turn
 	// context recovery answered. The recovered body is re-encoded for the
 	// client, which drops it, so the usage report reads it from here.

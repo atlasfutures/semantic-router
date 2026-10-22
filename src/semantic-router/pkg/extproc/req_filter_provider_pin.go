@@ -30,6 +30,11 @@ const providerPreferencesField = "provider"
 // is added to the pin, or sent alone when the arm pins nothing, and either way
 // replaces the provider object the request carries.
 //
+// An ARC turn on an arm that pins more than one endpoint is pinned to one of
+// them, picked by its session (rayline_arc_endpoint_pick.go), so the
+// conversation keeps one endpoint's cache and the endpoint that served is
+// known.
+//
 // Two conditions gate it. The arm must carry the key, because an unpinned arm
 // keeps the bytes it sent before the key existed. And the backend must be
 // OpenRouter, because every other OpenAI-compatible backend would see an
@@ -38,17 +43,26 @@ func applyProviderPreferences(
 	body []byte,
 	dispatch *providerDispatch,
 	routerConfig *config.RouterConfig,
-	privacyMode string,
+	ctx *RequestContext,
 ) ([]byte, error) {
+	privacyMode := ""
+	if ctx != nil {
+		privacyMode = ctx.RaylineARCPrivacyMode
+	}
+	resetDispatchedEndpoint(ctx)
 	pin, openRouter := providerPreferencesForDispatch(dispatch, routerConfig)
 	if !openRouter || (pin == nil && privacyMode == "") {
 		return body, nil
+	}
+	sent := privacyProviderPreferences(pickArmEndpoint(ctx, dispatch, pin), privacyMode)
+	if ctx != nil {
+		ctx.RaylineARCDispatchedEndpoint = dispatchedEndpoint(ctx, sent, dispatch.upstreamModel)
 	}
 	var requestMap map[string]json.RawMessage
 	if err := json.Unmarshal(body, &requestMap); err != nil {
 		return nil, fmt.Errorf("failed to parse request body: %w", err)
 	}
-	encoded, err := json.Marshal(privacyProviderPreferences(pin, privacyMode))
+	encoded, err := json.Marshal(sent)
 	if err != nil {
 		return nil, fmt.Errorf("failed to serialize provider preferences: %w", err)
 	}

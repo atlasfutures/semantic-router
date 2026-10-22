@@ -58,6 +58,18 @@ type RaylineARCSelectionContext struct {
 	// (extproc/rayline_arc_privacy.go). Nil for a standard request, which
 	// leaves selection exactly as it was.
 	PrivacyExcludedArms []bool
+	// PrivacyArmEndpoints is, by arm ordinal, each OpenRouter arm's endpoint
+	// constraint on a private request whose gateway listed the endpoints
+	// each allowed arm may use (x-rayline-privacy-allowed-endpoints); nil
+	// otherwise, and nil at an arm that is masked already or not on
+	// OpenRouter. The selector masks an arm none of whose reachable
+	// endpoints the gateway allows, once it holds the routing-price feed
+	// that says what the arm reaches.
+	PrivacyArmEndpoints []*raylinearc.ArmEndpoints
+	// EndpointFeed is the routing-price feed snapshot the selector read for
+	// the endpoint mask, nil when the cell has none; the decision carries it
+	// on (RaylineARCTrace.EndpointFeed) so the endpoint pick reads the same.
+	EndpointFeed *raylinearc.RoutingPriceSettlement
 	// ContextTokens is the request's conservative token estimate, the same
 	// number the generic context filter compares a card's window against.
 	// Zero when no estimate was made, which excludes nothing.
@@ -196,6 +208,11 @@ type RaylineARCTrace struct {
 	// a capacity hold included: the feed then prices the call's usage
 	// record where it can (raylinearc.RoutingPriceSettlement).
 	SettlementPrices *raylinearc.RoutingPriceCache
+	// EndpointFeed is the feed snapshot the decision's endpoint mask read
+	// (RaylineARCSelectionContext.EndpointFeed): the endpoint pick, its
+	// re-sends and x-vsr-served-endpoint read this one, so a refresh between
+	// the mask and the dispatch cannot give the two different endpoints.
+	EndpointFeed *raylinearc.RoutingPriceSettlement
 	// ArtifactID and ArtifactRevision hold SHA256-derived hashes of the
 	// deployment-private artifact identity, never the raw pins.
 	ArtifactID          string

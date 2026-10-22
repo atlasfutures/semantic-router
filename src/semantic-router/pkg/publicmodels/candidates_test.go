@@ -455,3 +455,43 @@ func TestAliasStatesWhetherItTrustsTurnSignalHeaders(t *testing.T) {
 		}
 	}
 }
+
+// An ARC cell advertises served_endpoint_header only with the routing-price
+// feed configured, the records that make an endpoint a known leaf: a
+// feed-less ARC cell (artifact mode, or a policy service without the feed)
+// states false, and an alias with no ARC decision says nothing.
+func TestARCAliasAdvertisesTheServedEndpointHeaderOnlyWithTheFeed(t *testing.T) {
+	fed := arcDecision("fed", config.ModelRef{Model: "arm-0"})
+	fed.Algorithm.RaylineARC.PolicyService = &config.RaylineARCPolicyServiceConfig{
+		RoutingPrices: &config.RaylineARCRoutingPricesConfig{URL: "https://prices.example/feed"},
+	}
+	feedless := arcDecision("feedless", config.ModelRef{Model: "arm-0"})
+	feedless.Algorithm.RaylineARC.PolicyService = &config.RaylineARCPolicyServiceConfig{}
+	cfg := &config.RouterConfig{
+		RouterOptions: config.RouterOptions{AutoModelNames: []string{"router/auto"}},
+		Entrypoints: []config.EntrypointMapping{
+			{ModelNames: []string{"partner/fed"}, Recipe: "fed"},
+			{ModelNames: []string{"partner/feedless"}, Recipe: "feedless"},
+			{ModelNames: []string{"partner/plain"}, Recipe: "plain"},
+		},
+		Recipes: []config.RoutingRecipe{
+			{Name: "default", Profile: config.RoutingProfile{Decisions: []config.Decision{arcDecision("artifact", config.ModelRef{Model: "arm-0"})}}},
+			{Name: "fed", Profile: config.RoutingProfile{Decisions: []config.Decision{fed}}},
+			{Name: "feedless", Profile: config.RoutingProfile{Decisions: []config.Decision{feedless}}},
+			{Name: "plain"},
+		},
+		BackendModels: config.BackendModels{ModelConfig: map[string]config.ModelParams{"arm-0": {}}},
+	}
+	listing := marshalListing(t, NewOpenAIModelList(cfg, 123))
+	for id, want := range map[string]interface{}{
+		"partner/fed": true, "partner/feedless": false, "router/auto": false, "partner/plain": nil,
+	} {
+		routing := modelEntry(t, listing, id)["routing"].(map[string]interface{})
+		if routing["served_endpoint_header"] != want {
+			t.Fatalf("%s served_endpoint_header = %v, want %v", id, routing["served_endpoint_header"], want)
+		}
+		if _, camel := routing["servedEndpointHeader"]; camel {
+			t.Fatalf("%s still carries the camelCase field", id)
+		}
+	}
+}

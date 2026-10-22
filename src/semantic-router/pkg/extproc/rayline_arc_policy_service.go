@@ -745,6 +745,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 				); held != nil {
 					held.RaylineARC.OfferKind = offerKind
 					held.RaylineARC.SettlementPrices = armed.prices
+					held.RaylineARC.EndpointFeed = arcContext.EndpointFeed
 					held.RaylineARC.MaskedArms = policyMaskedArms(scorer, workerIDs, excluded, fallback, turn, offeredRoutes)
 					return held, nil
 				}
@@ -860,6 +861,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	result.RaylineARC.PolicyPackageSHA256 = scorer.sha256
 	result.RaylineARC.RoutingPricesStatus = pricesStatus
 	result.RaylineARC.SettlementPrices = armed.prices
+	result.RaylineARC.EndpointFeed = arcContext.EndpointFeed
 	result.RaylineARC.RoutingPricesUsed = response.RoutingPricesUsed
 	result.RaylineARC.PolicyPredictedCostUSD = policySelectedPredictedCost(response)
 	if weight := response.Decision.OperatingPoint.CostWeight; weight != nil {

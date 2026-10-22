@@ -711,7 +711,25 @@ gateway's turn-signal headers, the privacy headers
 (`x-rayline-privacy-mode`, `x-rayline-privacy-allowed-arms`) among them;
 false for an artifact-mode decision, which has no policy service. A gateway
 computes a private request's allowed arms from `provider_pin` and sends the
-privacy headers only to an alias that trusts them. Nothing else about the
+privacy headers only to an alias that trusts them. Beside them it may send
+`x-rayline-privacy-allowed-endpoints: <arm>=<tag>|<tag>,...`, the endpoint
+tags each allowed arm may be served by: the cell keeps an arm's endpoints to
+the ones its pin reaches in the routing-price feed and the header lists, an
+arm the header leaves out or none of whose reachable endpoints it lists is
+excluded, and a header it cannot parse excludes every arm. An arm listed as
+`<arm>=`, with no tags, is allowed and goes out on its own pin, unpicked;
+an arm id may hold `@`. A private turn without the header is not picked:
+its arm's pin goes out with the data-use members. With no feed the
+cell masks by the arm names alone. A picked endpoint is sent as the
+gateway's pinned block: `only` and `order` the tag, no fallbacks, every
+endpoint the feed records under the tag in `ignore`, and `max_price` at the
+tag's recorded prompt and completion price (a lower configured cap stays). `routing.served_endpoint_header` is true
+on an ARC alias whose policy service has `routing_prices` configured, and
+false on one without it: the cell states the endpoint that served a turn in
+`x-vsr-served-endpoint` whenever it picked the endpoint or the feed records
+the arm's one tag as a leaf, so a gateway
+may treat a successful turn without the header as one OpenRouter routed
+freely, and a feed-less cell, which never sends it, does not claim to. Nothing else about the
 decision is published: the gateway derives its document from the candidates and that
 limit, and when the arm set changes the candidates change with it, so there
 is no artifact pin to key on.
