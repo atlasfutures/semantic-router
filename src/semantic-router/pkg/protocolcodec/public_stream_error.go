@@ -58,12 +58,16 @@ type AnthropicPublicStreamFilter struct {
 	failure   error
 	finalized bool
 	mint      thinkingMarkerPassthrough
+	order     *anthropicBlockOrder
 }
 
 // NewAnthropicPublicStreamFilter returns the filter. markerFamily is the
 // family to mint thinking markers for, or empty to mint none.
 func NewAnthropicPublicStreamFilter(limit int, markerFamily string) *AnthropicPublicStreamFilter {
-	return &AnthropicPublicStreamFilter{framer: newSSEFramer(limit), mint: thinkingMarkerPassthrough{family: markerFamily}}
+	return &AnthropicPublicStreamFilter{
+		framer: newSSEFramer(limit), mint: thinkingMarkerPassthrough{family: markerFamily},
+		order: newAnthropicBlockOrder(),
+	}
 }
 
 func (filter *AnthropicPublicStreamFilter) Push(chunk []byte) ([]byte, error) {
@@ -105,22 +109,43 @@ func (filter *AnthropicPublicStreamFilter) filterFrames(frames [][]byte) ([]byte
 			filter.failure = err
 			return nil, err
 		}
-		if filter.mint.family != "" {
-			parsed, parseErr := parseSSEFrame(frame, filter.framer.limit)
-			if parseErr != nil {
-				filter.failure = parseErr
-				return nil, parseErr
-			}
-			signature, mintErr := filter.mint.before(parsed)
-			if mintErr != nil {
-				filter.failure = mintErr
-				return nil, mintErr
-			}
-			output.Write(signature)
+		ordered, err := filter.orderFrame(public)
+		if err != nil {
+			filter.failure = err
+			return nil, err
 		}
-		output.Write(public)
+		for _, out := range ordered {
+			if filter.mint.family != "" {
+				parsed, parseErr := parseSSEFrame(out, filter.framer.limit)
+				if parseErr != nil {
+					filter.failure = parseErr
+					return nil, parseErr
+				}
+				signature, mintErr := filter.mint.before(parsed)
+				if mintErr != nil {
+					filter.failure = mintErr
+					return nil, mintErr
+				}
+				output.Write(signature)
+			}
+			output.Write(out)
+		}
 	}
 	return output.Bytes(), nil
+}
+
+// orderFrame puts one public frame through the block order
+// (anthropicBlockOrder), which returns it unchanged unless the upstream broke
+// Messages' one-block-at-a-time order.
+func (filter *AnthropicPublicStreamFilter) orderFrame(public []byte) ([][]byte, error) {
+	if filter.order == nil {
+		filter.order = newAnthropicBlockOrder()
+	}
+	parsed, err := parseSSEFrame(public, filter.framer.limit)
+	if err != nil {
+		return nil, err
+	}
+	return filter.order.push(public, parsed)
 }
 
 func publicAnthropicStreamFrame(frame []byte, limit int) ([]byte, error) {
