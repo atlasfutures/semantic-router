@@ -40,7 +40,11 @@ func TestPolicyDecideRequestCarriesTheClientBytes(t *testing.T) {
 			t.Fatalf("%s: %v", path, err)
 		}
 		before := len(fake.received())
-		v5Turn(t, router, fake, v5GLMUp, "request-bytes-"+strings.ReplaceAll(path, "/", "-"), string(client))
+		provider, _ := v5Turn(t, router, fake, v5GLMUp, "request-bytes-"+strings.ReplaceAll(path, "/", "-"), string(client))
+		// The provider reads the conversation the client sent, steered.
+		if err := conversationKept(client, provider, capturedCorpusTransforms); err != nil {
+			t.Errorf("%s: %v", path, err)
+		}
 		received := fake.received()
 		if len(received) != before+1 {
 			t.Fatalf("%s: %d decide calls, want 1", path, len(received)-before)
@@ -63,6 +67,12 @@ func TestPolicyDecideRequestCarriesTheClientBytes(t *testing.T) {
 			}
 		}
 	}
+}
+
+// capturedCorpusTransforms are the rewrites the corpus's bodies may see on
+// the way to the GLM "up" arm (conversation_continuity_test.go).
+var capturedCorpusTransforms = []string{
+	transformSteerTailText, transformDeveloperAsSystem, transformToolChangesToTools,
 }
 
 // clientModel is a capture's top-level model; a nested "model" key never
