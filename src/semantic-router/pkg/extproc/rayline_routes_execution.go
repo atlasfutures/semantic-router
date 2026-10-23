@@ -724,7 +724,8 @@ type raylineRoutesExecutionEcho struct {
 	// under: per_lookup_random, a fresh random id per execution lookup
 	// (tenant-safe, no encoder-session reuse). Account-scoped reuse waits on
 	// a trusted gateway account header.
-	EpisodeIdentity     string                             `json:"episode_identity"`
+	// Null when unsupported.
+	EpisodeIdentity     *string                            `json:"episode_identity"`
 	Pinned              map[string]string                  `json:"pinned"`
 	Boundary            *string                            `json:"boundary"`
 	UserTurnCache       *string                            `json:"user_turn_cache"`
@@ -760,16 +761,17 @@ type raylineRoutesExecutionWorkerEcho struct {
 func raylineRoutesExecutionEchoOf(routing *raylineRoutesRouting, decision routerruntime.RouteDecision) *raylineRoutesExecutionEcho {
 	execution := routing.execution
 	echo := &raylineRoutesExecutionEcho{
-		Status:          "unsupported",
-		Turn:            raylineRoutesExecutionTurn{ID: execution.turnID, Attempt: execution.turnAttempt},
-		EpisodeIdentity: routesExecutionEpisodePerLookup,
-		Workers:         []raylineRoutesExecutionWorkerEcho{},
+		Status:  "unsupported",
+		Turn:    raylineRoutesExecutionTurn{ID: execution.turnID, Attempt: execution.turnAttempt},
+		Workers: []raylineRoutesExecutionWorkerEcho{},
 	}
 	trace := decision.CacheTrace
 	if trace == nil || !decision.ExecutionApplied {
 		return echo
 	}
 	echo.Status = "applied"
+	episode := routesExecutionEpisodePerLookup
+	echo.EpisodeIdentity = &episode
 	echo.Pinned = map[string]string{}
 	for key, pin := range map[string]*string{
 		"package_sha256": execution.expectPackage, "thinking_controls_sha256": execution.expectThinkingControls,
@@ -794,7 +796,8 @@ func raylineRoutesExecutionEchoOf(routing *raylineRoutesRouting, decision router
 	reason := func(value string) *string { return &value }
 	for _, worker := range execution.workers {
 		row, found := byAction[worker.actionID]
-		found = found && priced
+		// A model this request did not offer: no switch to it was priced.
+		found = found && priced && (row.Offered || row.Held)
 		read := found && row.EvidenceActionID != nil && *row.EvidenceActionID == worker.actionID
 		entry := raylineRoutesExecutionWorkerEcho{
 			ActionID: worker.actionID, Worker: worker.worker, Read: read,

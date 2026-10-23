@@ -411,9 +411,12 @@ type PolicyCacheTrace struct {
 // actions, whether its model is held, the warmth basis and probability, the
 // evidence entry that priced it (null when none did), and the prefix count.
 type PolicyCacheTraceCandidate struct {
-	Model            string   `json:"model"`
-	Effort           *string  `json:"effort"`
-	Held             bool     `json:"held"`
+	Model  string  `json:"model"`
+	Effort *string `json:"effort"`
+	Held   bool    `json:"held"`
+	// Offered: some arm of this candidate was available to this request
+	// (after the cell's allow-list and exclusive).
+	Offered          bool     `json:"offered"`
 	ActionIDs        []string `json:"action_ids"`
 	Basis            *string  `json:"basis"`
 	PWarm            *float64 `json:"p_warm"`

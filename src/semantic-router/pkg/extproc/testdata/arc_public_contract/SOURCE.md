@@ -8,5 +8,5 @@ contract: `docs/contracts/arc-public-api.openapi.yaml`, generated from
 the directory from a newer pin; do not edit these files here.
 
 `execution_vectors.json` and `request_*execution*.json` are copied unchanged
-from pathfinder#5875 at `bf325d3d70` (`routing.execution`, proposed;
+from pathfinder#5875 at `cefe836a48` (`routing.execution`, proposed;
 reference `src/rayline_router/serving/arc_execution_context.py`).

@@ -29,7 +29,12 @@ type executionVectors struct {
 		ActionArms             map[string][]string `json:"action_arms"`
 	} `json:"package"`
 	OfferSHA256 string `json:"offer_sha256"`
-	Vectors     []struct {
+	OfferChecks []struct {
+		ExpectOfferSHA256  *string  `json:"expect_offer_sha256"`
+		AvailableActionIDs []string `json:"available_action_ids"`
+		Expect             string   `json:"expect"`
+	} `json:"offer_checks"`
+	Vectors []struct {
 		Name      string          `json:"name"`
 		Execution json.RawMessage `json:"execution"`
 		Expect    struct {
@@ -302,8 +307,8 @@ func TestRoutesExecutionEchoAndIdentity(t *testing.T) {
 	trace := &raylinearc.PolicyCacheTrace{
 		Boundary: text("user_message"), UserTurnCache: text("repartition_multiwarm"), Source: text("service_config"),
 		Candidates: []raylinearc.PolicyCacheTraceCandidate{
-			{Model: "qwen/qwen3.8-27b", ActionIDs: []string{qwen}, Basis: text("observed_resident"), PWarm: &warm, EvidenceActionID: &qwen},
-			{Model: "anthropic/claude-opus-5.5", Held: true, ActionIDs: []string{opus}, Basis: text("assumed_warm_held")},
+			{Model: "qwen/qwen3.8-27b", Offered: true, ActionIDs: []string{qwen}, Basis: text("observed_resident"), PWarm: &warm, EvidenceActionID: &qwen},
+			{Model: "anthropic/claude-opus-5.5", Held: true, Offered: true, ActionIDs: []string{opus}, Basis: text("assumed_warm_held")},
 		},
 	}
 	result := func(name string, weight float64) routerruntime.RouteResult {
@@ -322,7 +327,7 @@ func TestRoutesExecutionEchoAndIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	echo := payload.Routing.Execution
-	if echo == nil || echo.Status != "applied" || echo.EpisodeIdentity != "per_lookup_random" || echo.Pinned["package_sha256"] != "matched" ||
+	if echo == nil || echo.Status != "applied" || echo.EpisodeIdentity == nil || *echo.EpisodeIdentity != "per_lookup_random" || echo.Pinned["package_sha256"] != "matched" ||
 		echo.Pinned["offer_sha256"] != "unpinned" || echo.Multiwarm == nil || !*echo.Multiwarm ||
 		*echo.UserTurnCacheSource != "service_config" || len(echo.Workers) != 2 {
 		t.Fatalf("echo %+v", echo)
@@ -350,7 +355,7 @@ func TestRoutesExecutionEchoAndIdentity(t *testing.T) {
 	if err := raylineRoutesAddResults(&payload, routing, decision); err != nil {
 		t.Fatal(err)
 	}
-	if echo := payload.Routing.Execution; echo.Status != "unsupported" || echo.Pinned != nil || echo.Multiwarm != nil ||
+	if echo := payload.Routing.Execution; echo.Status != "unsupported" || echo.Pinned != nil || echo.Multiwarm != nil || echo.EpisodeIdentity != nil ||
 		len(echo.Workers) != 0 || !slices.Contains(payload.Routing.UnappliedKeys, "execution") {
 		t.Fatalf("unsupported echo %+v %v", echo, payload.Routing.UnappliedKeys)
 	}
@@ -385,5 +390,54 @@ func TestRouteExecutionRefusalContracts(t *testing.T) {
 	outside := &raylinearc.PolicyServiceError{Class: "selection_refused", Detail: map[string]any{"reason": "attribution_out_of_catalog"}}
 	if routeExecutionServiceRefusal(outside) != arcFailureExecutionUnknownAction {
 		t.Fatal("attribution_out_of_catalog not mapped")
+	}
+}
+
+// check_offer's vectors: the offer pin against the effective offer (the
+// decide response's available actions).
+func TestRoutesExecutionOfferChecks(t *testing.T) {
+	vectors := readExecutionVectors(t)
+	if len(vectors.OfferChecks) == 0 {
+		t.Fatal("no offer checks")
+	}
+	scorer := vectorScorer(vectors)
+	for index, check := range vectors.OfferChecks {
+		response := &raylinearc.PolicyDecisionResponse{}
+		for _, id := range check.AvailableActionIDs {
+			response.Actions = append(response.Actions, raylinearc.PolicyActionScore{ActionID: id, Available: true})
+		}
+		response.Actions = append(response.Actions, raylinearc.PolicyActionScore{ActionID: strings.Repeat("3", 64)})
+		class := checkRouteExecutionOffer(&selection.RaylineARCRouteExecution{ExpectOffer: check.ExpectOfferSHA256}, routeIdentity(scorer, response))
+		got := "unpinned"
+		switch {
+		case class != "":
+			got = routeExecutionClasses[class].code
+		case check.ExpectOfferSHA256 != nil:
+			got = "matched"
+		}
+		if got != check.Expect {
+			t.Errorf("check %d: %s, want %s", index, got, check.Expect)
+		}
+	}
+}
+
+// A candidate the request did not offer (and not held) prices nothing.
+func TestRoutesExecutionEchoUnofferedCandidate(t *testing.T) {
+	vectors := readExecutionVectors(t)
+	routing, _, refusal := readRaylineRoutesRouting(executionBody(string(vectors.Vectors[0].Execution)), nil)
+	if refusal != nil {
+		t.Fatal(refusal)
+	}
+	raylineRoutesControls(routing, &config.RaylineARCRoutesRoutingConfig{}, time.Now())
+	qwen := strings.Repeat("1", 64)
+	boundary, basis := "user_message", "observed_resident"
+	decision := routerruntime.RouteDecision{ExecutionApplied: true, CacheTrace: &raylinearc.PolicyCacheTrace{
+		Boundary: &boundary, Candidates: []raylinearc.PolicyCacheTraceCandidate{
+			{Model: "qwen/qwen3.8-27b", ActionIDs: []string{qwen}, Basis: &basis, EvidenceActionID: &qwen},
+		},
+	}}
+	echo := raylineRoutesExecutionEchoOf(routing, decision)
+	if row := echo.Workers[0]; row.Read || row.Pricing != "not_priced" || *row.Reason != "not_in_offer" || row.Held != nil {
+		t.Fatalf("unoffered row %+v", row)
 	}
 }

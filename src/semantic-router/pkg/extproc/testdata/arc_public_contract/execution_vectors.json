@@ -115,8 +115,7 @@
       "expect": {
         "pinned": {
           "package_sha256": "matched",
-          "thinking_controls_sha256": "unpinned",
-          "offer_sha256": "unpinned"
+          "thinking_controls_sha256": "unpinned"
         },
         "decide": {
           "context_epoch": "e3",
@@ -255,8 +254,7 @@
       "expect": {
         "pinned": {
           "package_sha256": "matched",
-          "thinking_controls_sha256": "unpinned",
-          "offer_sha256": "unpinned"
+          "thinking_controls_sha256": "unpinned"
         },
         "decide": {
           "context_epoch": "e3",
@@ -413,8 +411,7 @@
       "expect": {
         "pinned": {
           "package_sha256": "matched",
-          "thinking_controls_sha256": "unpinned",
-          "offer_sha256": "unpinned"
+          "thinking_controls_sha256": "unpinned"
         },
         "decide": {
           "context_epoch": "e3",
@@ -925,6 +922,38 @@
       "expect": {
         "refused": "execution_hold_unavailable"
       }
+    }
+  ],
+  "offer_checks": [
+    {
+      "expect_offer_sha256": null,
+      "available_action_ids": [
+        "1111111111111111111111111111111111111111111111111111111111111111",
+        "2222222222222222222222222222222222222222222222222222222222222222"
+      ],
+      "expect": "unpinned"
+    },
+    {
+      "expect_offer_sha256": "df7ec36be47b602e4cea3b2444856c6c0ae9aaa2fe188f9322f56f2b65684bf6",
+      "available_action_ids": [
+        "1111111111111111111111111111111111111111111111111111111111111111",
+        "2222222222222222222222222222222222222222222222222222222222222222"
+      ],
+      "expect": "matched"
+    },
+    {
+      "expect_offer_sha256": "e1f7bdc00db077a6e896296b98a560cdf746423f06dbb29f17e88787fb73c773",
+      "available_action_ids": [
+        "1111111111111111111111111111111111111111111111111111111111111111"
+      ],
+      "expect": "matched"
+    },
+    {
+      "expect_offer_sha256": "df7ec36be47b602e4cea3b2444856c6c0ae9aaa2fe188f9322f56f2b65684bf6",
+      "available_action_ids": [
+        "1111111111111111111111111111111111111111111111111111111111111111"
+      ],
+      "expect": "execution_identity_mismatch"
     }
   ]
 }
