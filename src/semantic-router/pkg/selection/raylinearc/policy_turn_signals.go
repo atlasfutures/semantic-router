@@ -38,9 +38,19 @@ const ClaudeCodeContinuationMarker = "This session is being continued from a pre
 
 // ClaudeCodeSummarizeDirective opens the text block Claude Code appends to the
 // last user message of its compaction (summarization) call. The whole block is
-// several kilobytes of instructions; its opening line is the stable literal.
-// Captured from Claude Code 2.1.238 and 2.1.280, byte-identical in both.
-const ClaudeCodeSummarizeDirective = "CRITICAL: Respond with TEXT ONLY. Do NOT call any tools."
+// several kilobytes of instructions; its opening sentence and first rule are
+// the stable literal, long enough that a typed prompt does not open with it.
+// The opening sentence was captured byte-identical from Claude Code 2.1.238
+// and 2.1.280; the whole literal from 2.1.280 and 2.1.309.
+const ClaudeCodeSummarizeDirective = "CRITICAL: Respond with TEXT ONLY. Do NOT call any tools.\n\n" +
+	"- Do NOT use Read, Bash, Grep, Glob, Edit, Write, or ANY other tool."
+
+// ClaudeCodeSuggestionPrompt opens the user message Claude Code appends to
+// the main history for its prompt-suggestion call, which guesses what the
+// user will type next. The whole bracketed sentence is the literal, so a typed
+// prompt opening with "[SUGGESTION MODE:" is not read as the call. Captured
+// from Claude Code 2.1.309.
+const ClaudeCodeSuggestionPrompt = "[SUGGESTION MODE: Suggest what the user might naturally type next into Claude Code.]"
 
 // ClaudeCodeTitlePrompt opens the system block of Claude Code's
 // session-title call, as captured from Claude Code 2.1.238 and 2.1.280.
@@ -142,23 +152,47 @@ func IsCodexCompactionRequest(input []json.RawMessage) bool {
 }
 
 // IsClaudeCodeCompactionRequest reports whether this Anthropic Messages
-// transcript is Claude Code's summarization call: the last message is a user
-// message whose last block is a text block opening with the summarize
-// directive. The directive anywhere else is transcript content.
+// transcript is Claude Code's summarization call: the last message before any
+// trailing system messages is a user message whose last block is a text block
+// opening with the summarize directive. The directive anywhere else is
+// transcript content. Claude Code 2.1.309 sends a role:system message after
+// the directive; 2.1.280 sent none.
 func IsClaudeCodeCompactionRequest(messages []json.RawMessage) bool {
-	if len(messages) == 0 {
-		return false
-	}
+	return lastUserTextOpensWith(messages, ClaudeCodeSummarizeDirective)
+}
+
+// IsClaudeCodeSuggestionRequest reports whether this Anthropic Messages
+// transcript is Claude Code's prompt-suggestion call: the last message before
+// any trailing system messages is a user message whose last text opens with
+// the suggestion prompt. The prompt anywhere else is transcript content.
+func IsClaudeCodeSuggestionRequest(messages []json.RawMessage) bool {
+	return lastUserTextOpensWith(messages, ClaudeCodeSuggestionPrompt)
+}
+
+// lastUserTextOpensWith reports whether the last message, skipping trailing
+// role:system messages, is a user message whose content (a string, or its
+// last block when that block is text) opens with prefix.
+func lastUserTextOpensWith(messages []json.RawMessage, prefix string) bool {
 	var last struct {
 		Role    string          `json:"role"`
 		Content json.RawMessage `json:"content"`
 	}
-	if json.Unmarshal(messages[len(messages)-1], &last) != nil || last.Role != "user" {
+	i := len(messages) - 1
+	for ; i >= 0; i-- {
+		last.Role, last.Content = "", nil
+		if json.Unmarshal(messages[i], &last) != nil {
+			return false
+		}
+		if last.Role != "system" {
+			break
+		}
+	}
+	if i < 0 || last.Role != "user" {
 		return false
 	}
 	var whole string
 	if json.Unmarshal(last.Content, &whole) == nil {
-		return strings.HasPrefix(whole, ClaudeCodeSummarizeDirective)
+		return strings.HasPrefix(whole, prefix)
 	}
 	var blocks []struct {
 		Type string  `json:"type"`
@@ -168,7 +202,7 @@ func IsClaudeCodeCompactionRequest(messages []json.RawMessage) bool {
 		return false
 	}
 	final := blocks[len(blocks)-1]
-	return final.Type == "text" && final.Text != nil && strings.HasPrefix(*final.Text, ClaudeCodeSummarizeDirective)
+	return final.Type == "text" && final.Text != nil && strings.HasPrefix(*final.Text, prefix)
 }
 
 // IsClaudeCodeTitleRequest reports whether a system block of this Anthropic
