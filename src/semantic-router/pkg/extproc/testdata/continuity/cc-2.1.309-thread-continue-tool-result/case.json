@@ -1,0 +1,9 @@
+{
+  "description": "The root cause of the 2026-10-23 rollback: a message-threads continuation. thread.type is continue and names the previous response; the body is only [tool_result, system] with no tools, because the client expects the server to hold the history. The cell holds no thread, so it must refuse and let the client resend the whole conversation. Answering the stub answers a fragment.",
+  "client": "claude-cli/2.1.309 (rld proxy mode)",
+  "captured": "2026-10-23",
+  "path": "/v1/messages?beta=true",
+  "expect": "refused",
+  "body": "../../thread_continuation/claude-code-2.1.309-thread-continue.request.json",
+  "refusal_body": "../../thread_continuation/claude-code-2.1.309-thread-continue.refusal.json"
+}

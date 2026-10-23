@@ -1,0 +1,8 @@
+{
+  "description": "A second tool turn resent whole: an assistant message with a thinking block before its tool_use.",
+  "client": "claude-cli/2.1.309 (rld proxy mode)",
+  "captured": "2026-10-23",
+  "path": "/v1/messages?beta=true",
+  "expect": "served",
+  "transforms": ["tool_changes_to_tools"]
+}

@@ -1,0 +1,11 @@
+{
+  "description": "The full resend after the cell refused a thread continuation: the whole history, ending tool_use, tool_result and a system message carrying a cache breakpoint.",
+  "client": "claude-cli/2.1.309 (rld proxy mode)",
+  "captured": "2026-10-23",
+  "path": "/v1/messages?beta=true",
+  "expect": "served",
+  "transforms": [
+    "tool_changes_to_tools"
+  ],
+  "body": "../../thread_continuation/claude-code-2.1.309-thread-create-resend.request.json"
+}
