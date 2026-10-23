@@ -42,6 +42,15 @@ func TestFoldOrphanToolResults(t *testing.T) {
 			folded: 1,
 		},
 		{
+			name:   "tool references and blank text stay behind; a blank string is empty",
+			format: llmprotocol.AnthropicMessagesV1,
+			body: `{"messages":[{"role":"user","content":[` +
+				`{"type":"tool_result","tool_use_id":"a","content":[{"type":"tool_reference","tool_name":"Docs"},{"type":"text","text":" "},{"type":"text","text":"found"}]},` +
+				`{"type":"tool_result","tool_use_id":"b","content":"\n"}]}]}`,
+			want:   `{"messages":[{"role":"user","content":[{"type":"text","text":"found"},{"type":"text","text":"(empty tool result)"}]}]}`,
+			folded: 2,
+		},
+		{
 			name:   "a result that answers an earlier call is untouched",
 			format: llmprotocol.AnthropicMessagesV1,
 			body: `{"messages":[{"role":"user","content":"go"},` +

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
@@ -27,6 +28,9 @@ import (
 const (
 	toolResultBlockType = "tool_result"
 	toolUseBlockType    = "tool_use"
+	// toolReferenceBlockType names a tool ToolSearch loaded; Messages accepts
+	// it only inside a tool_result.
+	toolReferenceBlockType = "tool_reference"
 	// emptyOrphanToolResultText stands in for an orphan result with no content:
 	// Messages refuses an empty text block, and dropping the block could leave
 	// its message with nothing in it.
@@ -122,14 +126,22 @@ type textBlock struct {
 }
 
 // orphanToolResultContent is the user content one orphan tool_result carries.
+// Two kinds of nested block do not survive the move to the top level, so they
+// are left out: a tool_reference (ToolSearch's result) is valid only inside a
+// tool_result, and Messages refuses a blank top-level text block that it
+// accepts inside one.
 func orphanToolResultContent(block gjson.Result) ([]json.RawMessage, error) {
 	var blocks []json.RawMessage
 	switch content := block.Get("content"); {
 	case content.IsArray():
 		for _, nested := range content.Array() {
+			kind := nested.Get("type").String()
+			if kind == toolReferenceBlockType || kind == "text" && strings.TrimSpace(nested.Get("text").String()) == "" {
+				continue
+			}
 			blocks = append(blocks, json.RawMessage(nested.Raw))
 		}
-	case content.Type == gjson.String && content.String() != "":
+	case content.Type == gjson.String && strings.TrimSpace(content.String()) != "":
 		text, err := json.Marshal(textBlock{Type: "text", Text: content.String()})
 		if err != nil {
 			return nil, err
