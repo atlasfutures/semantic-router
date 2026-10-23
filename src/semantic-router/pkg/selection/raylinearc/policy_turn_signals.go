@@ -38,14 +38,19 @@ const ClaudeCodeContinuationMarker = "This session is being continued from a pre
 
 // ClaudeCodeSummarizeDirective opens the text block Claude Code appends to the
 // last user message of its compaction (summarization) call. The whole block is
-// several kilobytes of instructions; its opening line is the stable literal.
-// Captured from Claude Code 2.1.238 and 2.1.280, byte-identical in both.
-const ClaudeCodeSummarizeDirective = "CRITICAL: Respond with TEXT ONLY. Do NOT call any tools."
+// several kilobytes of instructions; its opening sentence and first rule are
+// the stable literal, long enough that a typed prompt does not open with it.
+// The opening sentence was captured byte-identical from Claude Code 2.1.238
+// and 2.1.280; the whole literal from 2.1.280 and 2.1.309.
+const ClaudeCodeSummarizeDirective = "CRITICAL: Respond with TEXT ONLY. Do NOT call any tools.\n\n" +
+	"- Do NOT use Read, Bash, Grep, Glob, Edit, Write, or ANY other tool."
 
 // ClaudeCodeSuggestionPrompt opens the user message Claude Code appends to
 // the main history for its prompt-suggestion call, which guesses what the
-// user will type next. Captured from Claude Code 2.1.309.
-const ClaudeCodeSuggestionPrompt = "[SUGGESTION MODE:"
+// user will type next. The whole bracketed sentence is the literal, so a typed
+// prompt opening with "[SUGGESTION MODE:" is not read as the call. Captured
+// from Claude Code 2.1.309.
+const ClaudeCodeSuggestionPrompt = "[SUGGESTION MODE: Suggest what the user might naturally type next into Claude Code.]"
 
 // ClaudeCodeTitlePrompt opens the system block of Claude Code's
 // session-title call, as captured from Claude Code 2.1.238 and 2.1.280.
