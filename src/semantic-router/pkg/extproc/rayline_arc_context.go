@@ -219,15 +219,29 @@ func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 			reqCtx.RaylineARCTransaction.commitOnCompletion = true
 		}
 	}
-	turns, imageBearing, err := r.projectRaylineARCTurns(
-		reqCtx,
-		raylinearc.TurnOptions{
-			IncludeSystemText: algorithm.RaylineARC.IncludeSystemText,
-			DropMidConversationSystemText: algorithm.RaylineARC.
-				DropMidConversationSystemText,
-			IncludeToolNames: algorithm.RaylineARC.IncludeToolNames,
-		},
+	// Only the artifact-mode encoder reads the projected turns. A policy
+	// service projects and encodes the raw request itself, so a policy-service
+	// cell does not project: the Go projection's refusals would otherwise
+	// refuse turns the service accepts. The image fact is still read here,
+	// since the vision mask is applied on both paths.
+	var (
+		turns        []raylinearc.Turn
+		imageBearing bool
+		err          error
 	)
+	if algorithm.RaylineARC.PolicyService != nil {
+		imageBearing, err = r.raylineARCImageBearing(reqCtx)
+	} else {
+		turns, imageBearing, err = r.projectRaylineARCTurns(
+			reqCtx,
+			raylinearc.TurnOptions{
+				IncludeSystemText: algorithm.RaylineARC.IncludeSystemText,
+				DropMidConversationSystemText: algorithm.RaylineARC.
+					DropMidConversationSystemText,
+				IncludeToolNames: algorithm.RaylineARC.IncludeToolNames,
+			},
+		)
+	}
 	if err != nil {
 		code := raylinearc.TurnNormalizationErrorCode(err)
 		if code == "" {
@@ -632,6 +646,16 @@ func (r *OpenAIRouter) projectRaylineARCTurns(
 	// covers instruction blocks, message blocks and the blocks nested inside
 	// a tool result, which is the whole of what the provider will receive.
 	return turns, requestCarriesImageInput(request), nil
+}
+
+// raylineARCImageBearing reads the image fact off the whole conversation,
+// stored Responses history included, without projecting it into turns.
+func (r *OpenAIRouter) raylineARCImageBearing(reqCtx *RequestContext) (bool, error) {
+	request, err := r.raylineARCConversation(reqCtx)
+	if err != nil {
+		return false, err
+	}
+	return requestCarriesImageInput(request), nil
 }
 
 func requestCarriesImageInput(request *llmprotocol.Request) bool {
