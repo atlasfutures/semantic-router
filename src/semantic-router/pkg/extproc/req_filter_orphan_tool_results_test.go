@@ -62,6 +62,27 @@ func TestFoldOrphanToolResults(t *testing.T) {
 			folded: 1,
 		},
 		{
+			name:   "a fold that moves past a linked result leaves its cache breakpoint behind",
+			format: llmprotocol.AnthropicMessagesV1,
+			body: `{"messages":[{"role":"assistant","content":[{"type":"tool_use","id":"live","name":"Bash","input":{}}]},` +
+				`{"role":"user","content":[{"type":"tool_result","tool_use_id":"gone","content":"old","cache_control":{"type":"ephemeral","ttl":"1h"}},` +
+				`{"type":"text","text":"between"},` +
+				`{"type":"tool_result","tool_use_id":"live","content":"new","cache_control":{"type":"ephemeral","ttl":"5m"}},` +
+				`{"type":"tool_result","tool_use_id":"late","content":"kept","cache_control":{"type":"ephemeral"}}]}]}`,
+			want: `{"messages":[{"role":"assistant","content":[{"type":"tool_use","id":"live","name":"Bash","input":{}}]},` +
+				`{"role":"user","content":[{"type":"tool_result","tool_use_id":"live","content":"new","cache_control":{"type":"ephemeral","ttl":"5m"}},` +
+				`{"type":"text","text":"old"},{"type":"text","text":"between"},` +
+				`{"type":"text","text":"kept","cache_control":{"type":"ephemeral"}}]}]}`,
+			folded: 2,
+		},
+		{
+			name:   "an escaped block type is still folded",
+			format: llmprotocol.AnthropicMessagesV1,
+			body:   `{"messages":[{"role":"user","content":[{"type":"tool_result","tool_use_id":"x","content":"a"}]}]}`,
+			want:   `{"messages":[{"role":"user","content":[{"type":"text","text":"a"}]}]}`,
+			folded: 1,
+		},
+		{
 			name:   "a result that answers an earlier call is untouched",
 			format: llmprotocol.AnthropicMessagesV1,
 			body: `{"messages":[{"role":"user","content":"go"},` +

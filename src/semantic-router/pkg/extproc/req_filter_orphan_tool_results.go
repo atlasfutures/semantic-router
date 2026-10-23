@@ -1,7 +1,6 @@
 package extproc
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -44,7 +43,8 @@ const (
 // is_error has no user-content form and is not carried. It returns the body
 // and the number of results folded; any other body is returned unchanged.
 func foldOrphanToolResults(body []byte, format llmprotocol.WireFormat) ([]byte, int, error) {
-	if format != llmprotocol.AnthropicMessagesV1 || !bytes.Contains(body, []byte(`"`+toolResultBlockType+`"`)) {
+	// No byte-level shortcut: a block type may arrive JSON-escaped.
+	if format != llmprotocol.AnthropicMessagesV1 {
 		return body, 0, nil
 	}
 	messages := gjson.GetBytes(body, "messages")
@@ -65,6 +65,10 @@ func foldOrphanToolResults(body []byte, format llmprotocol.WireFormat) ([]byte, 
 		linkedResults := make([]json.RawMessage, 0, len(blocks))
 		rest := make([]json.RawMessage, 0, len(blocks))
 		changed := false
+		// movedFolds indexes, in rest, folded blocks that move past a linked
+		// result. Their cache breakpoints are dropped: Messages wants longer
+		// TTLs before shorter ones, and moving a breakpoint can break that.
+		var movedFolds, pendingFolds []int
 		for _, block := range blocks {
 			if block.Get("type").String() != toolResultBlockType {
 				rest = append(rest, json.RawMessage(block.Raw))
@@ -72,15 +76,30 @@ func foldOrphanToolResults(body []byte, format llmprotocol.WireFormat) ([]byte, 
 			}
 			if _, linked := calls[block.Get("tool_use_id").String()]; linked {
 				linkedResults = append(linkedResults, json.RawMessage(block.Raw))
+				movedFolds = append(movedFolds, pendingFolds...)
+				pendingFolds = nil
 				continue
 			}
 			replacement, err := orphanToolResultContent(block)
 			if err != nil {
 				return nil, 0, err
 			}
-			rest = append(rest, replacement...)
+			for _, replaced := range replacement {
+				pendingFolds = append(pendingFolds, len(rest))
+				rest = append(rest, replaced)
+			}
 			changed = true
 			folded++
+		}
+		for _, moved := range movedFolds {
+			if !gjson.GetBytes(rest[moved], "cache_control").Exists() {
+				continue
+			}
+			unmarked, err := sjson.DeleteBytes(rest[moved], "cache_control")
+			if err != nil {
+				return nil, 0, fmt.Errorf("failed to drop a moved cache breakpoint: %w", err)
+			}
+			rest[moved] = unmarked
 		}
 		rewritten := append(linkedResults, rest...)
 		// Calls are recorded after the message's results are checked: a
