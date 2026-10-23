@@ -1,0 +1,70 @@
+{
+ "provenance": "Claude Code 2.1.309 request body from one of our own test sessions through the dev cell, captured 2026-10-23 (message threads on; thread member dropped). Every string not read by a detector is replaced by a placeholder derived deterministically from its bytes, so bytes equal (or different) across these files were equal (or different) in the captured bodies; detector literals keep their opening text. Only messages are kept. The first main turn of the compacted context. The first message's leading system-reminder tags and the full continuation marker, which the scrub had cut, are restored as the detectors read them; the live request was read as a compaction.",
+ "body": {
+  "messages": [
+   {
+    "role": "user",
+    "content": [
+     {
+      "type": "text",
+      "text": "<system-reminder>\nt-184f631c3bc4\n</system-reminder>"
+     },
+     {
+      "type": "text",
+      "text": "This session is being continued from a previous conversation that ran out of context. t-539228db36f8"
+     }
+    ]
+   },
+   {
+    "role": "system",
+    "content": "t-cf30bb29d1b5"
+   },
+   {
+    "role": "assistant",
+    "content": [
+     {
+      "type": "thinking",
+      "thinking": "t-e3b0c44298fc",
+      "signature": "t-9231016468ba"
+     },
+     {
+      "type": "tool_use",
+      "id": "toolu_x-6459e46970af",
+      "caller": {
+       "type": "direct"
+      },
+      "name": "Bash",
+      "input": {
+       "command": "t-a7127f21fad9",
+       "description": "t-d977630c1b67"
+      }
+     }
+    ]
+   },
+   {
+    "role": "user",
+    "content": [
+     {
+      "tool_use_id": "toolu_x-6459e46970af",
+      "type": "tool_result",
+      "content": "t-a70664139bd0",
+      "is_error": false
+     }
+    ]
+   },
+   {
+    "role": "system",
+    "content": [
+     {
+      "type": "text",
+      "text": "t-ed6c59d3844c",
+      "cache_control": {
+       "type": "ephemeral",
+       "ttl": "1h"
+      }
+     }
+    ]
+   }
+  ]
+ }
+}

@@ -1,0 +1,300 @@
+{
+ "provenance": "Claude Code 2.1.309 request body from one of our own test sessions through the dev cell, captured 2026-10-23 (message threads on; thread member dropped). Every string not read by a detector is replaced by a placeholder derived deterministically from its bytes, so bytes equal (or different) across these files were equal (or different) in the captured bodies; detector literals keep their opening text. Only messages are kept. The next typed main turn after the suggestion call.",
+ "body": {
+  "messages": [
+   {
+    "role": "user",
+    "content": [
+     {
+      "type": "text",
+      "text": "t-184f631c3bc4"
+     },
+     {
+      "type": "text",
+      "text": "t-19cf21a5f443"
+     },
+     {
+      "type": "text",
+      "text": "t-3587db267811"
+     },
+     {
+      "type": "text",
+      "text": "t-c605a7b07158"
+     },
+     {
+      "type": "text",
+      "text": "t-e81822e6501e"
+     }
+    ]
+   },
+   {
+    "role": "system",
+    "content": "t-84378825a79b"
+   },
+   {
+    "role": "assistant",
+    "content": [
+     {
+      "type": "text",
+      "text": "t-cd43db7f997a",
+      "citations": []
+     }
+    ]
+   },
+   {
+    "role": "user",
+    "content": "t-16d4f7cd6321"
+   },
+   {
+    "role": "system",
+    "content": "t-925e5246dcf2"
+   },
+   {
+    "role": "assistant",
+    "content": [
+     {
+      "type": "thinking",
+      "thinking": "t-e3b0c44298fc",
+      "signature": "t-653ae57a8f5e"
+     },
+     {
+      "type": "tool_use",
+      "id": "toolu_x-7fa6772f54c8",
+      "caller": {
+       "type": "direct"
+      },
+      "name": "Bash",
+      "input": {
+       "command": "t-2f10df6abff4",
+       "description": "t-52a82f295a8f"
+      }
+     },
+     {
+      "type": "tool_use",
+      "id": "toolu_x-8098cd2c7add",
+      "caller": {
+       "type": "direct"
+      },
+      "name": "Bash",
+      "input": {
+       "command": "t-1dc68f5b9836",
+       "description": "t-43d2fe30d568"
+      }
+     }
+    ]
+   },
+   {
+    "role": "user",
+    "content": [
+     {
+      "tool_use_id": "toolu_x-7fa6772f54c8",
+      "type": "tool_result",
+      "content": "t-5d870fde65d0",
+      "is_error": false
+     },
+     {
+      "tool_use_id": "toolu_x-8098cd2c7add",
+      "type": "tool_result",
+      "content": "t-6216f829ea84",
+      "is_error": false
+     }
+    ]
+   },
+   {
+    "role": "system",
+    "content": "t-925e5246dcf2"
+   },
+   {
+    "role": "assistant",
+    "content": [
+     {
+      "type": "tool_use",
+      "id": "toolu_x-942317ef3a6b",
+      "caller": {
+       "type": "direct"
+      },
+      "name": "Bash",
+      "input": {
+       "command": "t-c691e4abb3bd",
+       "description": "t-f1d2af5ddd50"
+      }
+     }
+    ]
+   },
+   {
+    "role": "user",
+    "content": [
+     {
+      "tool_use_id": "toolu_x-942317ef3a6b",
+      "type": "tool_result",
+      "content": "t-8c095ed6442a",
+      "is_error": false
+     }
+    ]
+   },
+   {
+    "role": "system",
+    "content": "t-925e5246dcf2"
+   },
+   {
+    "role": "assistant",
+    "content": [
+     {
+      "type": "thinking",
+      "thinking": "t-e3b0c44298fc",
+      "signature": "t-4d7041a6a821"
+     },
+     {
+      "type": "text",
+      "text": "t-67bc6e52b8c5",
+      "citations": []
+     }
+    ]
+   },
+   {
+    "role": "user",
+    "content": "t-f9fe8c877dbf"
+   },
+   {
+    "role": "system",
+    "content": "t-925e5246dcf2"
+   },
+   {
+    "role": "assistant",
+    "content": [
+     {
+      "type": "tool_use",
+      "id": "toolu_x-1e36648d9850",
+      "caller": {
+       "type": "direct"
+      },
+      "name": "Read",
+      "input": {
+       "file_path": "t-f7f2bc0f4def",
+       "offset": 1,
+       "limit": 400
+      }
+     },
+     {
+      "type": "tool_use",
+      "id": "toolu_x-c32f9cf03062",
+      "caller": {
+       "type": "direct"
+      },
+      "name": "Read",
+      "input": {
+       "file_path": "t-eca6e8ae6c22",
+       "offset": 1,
+       "limit": 400
+      }
+     }
+    ]
+   },
+   {
+    "role": "user",
+    "content": [
+     {
+      "tool_use_id": "toolu_x-1e36648d9850",
+      "type": "tool_result",
+      "content": "t-16a4fbb548db"
+     },
+     {
+      "tool_use_id": "toolu_x-c32f9cf03062",
+      "type": "tool_result",
+      "content": "t-af2503cbbc10"
+     }
+    ]
+   },
+   {
+    "role": "system",
+    "content": "t-925e5246dcf2"
+   },
+   {
+    "role": "assistant",
+    "content": [
+     {
+      "type": "thinking",
+      "thinking": "t-e3b0c44298fc",
+      "signature": "t-25145d313ddc"
+     },
+     {
+      "type": "text",
+      "text": "t-401ae8714b13",
+      "citations": []
+     }
+    ]
+   },
+   {
+    "role": "user",
+    "content": "t-9395635fecec"
+   },
+   {
+    "role": "system",
+    "content": "t-925e5246dcf2"
+   },
+   {
+    "role": "assistant",
+    "content": [
+     {
+      "type": "tool_use",
+      "id": "toolu_x-cbe6da9edd6e",
+      "caller": {
+       "type": "direct"
+      },
+      "name": "EnterWorktree",
+      "input": {
+       "name": "feature-x"
+      }
+     }
+    ]
+   },
+   {
+    "role": "user",
+    "content": [
+     {
+      "type": "tool_result",
+      "content": "t-009ac8563799",
+      "is_error": true,
+      "tool_use_id": "toolu_x-cbe6da9edd6e"
+     }
+    ]
+   },
+   {
+    "role": "system",
+    "content": "t-925e5246dcf2"
+   },
+   {
+    "role": "assistant",
+    "content": [
+     {
+      "type": "thinking",
+      "thinking": "t-e3b0c44298fc",
+      "signature": "t-77917000a22b"
+     },
+     {
+      "type": "text",
+      "text": "t-08469088cf6e",
+      "citations": []
+     }
+    ]
+   },
+   {
+    "role": "user",
+    "content": "t-8e007e24c3e9"
+   },
+   {
+    "role": "system",
+    "content": [
+     {
+      "type": "text",
+      "text": "t-aeee3f5db554",
+      "cache_control": {
+       "type": "ephemeral",
+       "ttl": "1h"
+      }
+     }
+    ]
+   }
+  ]
+ }
+}
