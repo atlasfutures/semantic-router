@@ -60,25 +60,29 @@ func foldOrphanToolResults(body []byte, format llmprotocol.WireFormat) ([]byte, 
 			continue
 		}
 		blocks := content.Array()
-		rewritten := make([]json.RawMessage, 0, len(blocks))
+		// Messages wants a message's tool results before its other content,
+		// so the results that stay lead and the folded content joins the rest.
+		linkedResults := make([]json.RawMessage, 0, len(blocks))
+		rest := make([]json.RawMessage, 0, len(blocks))
 		changed := false
 		for _, block := range blocks {
 			if block.Get("type").String() != toolResultBlockType {
-				rewritten = append(rewritten, json.RawMessage(block.Raw))
+				rest = append(rest, json.RawMessage(block.Raw))
 				continue
 			}
 			if _, linked := calls[block.Get("tool_use_id").String()]; linked {
-				rewritten = append(rewritten, json.RawMessage(block.Raw))
+				linkedResults = append(linkedResults, json.RawMessage(block.Raw))
 				continue
 			}
 			replacement, err := orphanToolResultContent(block)
 			if err != nil {
 				return nil, 0, err
 			}
-			rewritten = append(rewritten, replacement...)
+			rest = append(rest, replacement...)
 			changed = true
 			folded++
 		}
+		rewritten := append(linkedResults, rest...)
 		// Calls are recorded after the message's results are checked: a
 		// result answers a call from an earlier message, never its own.
 		for _, block := range blocks {

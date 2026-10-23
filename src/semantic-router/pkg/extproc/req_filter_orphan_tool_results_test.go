@@ -51,6 +51,17 @@ func TestFoldOrphanToolResults(t *testing.T) {
 			folded: 2,
 		},
 		{
+			name:   "folded content follows the results that stay",
+			format: llmprotocol.AnthropicMessagesV1,
+			body: `{"messages":[{"role":"user","content":"go"},` +
+				`{"role":"assistant","content":[{"type":"tool_use","id":"live","name":"Bash","input":{}}]},` +
+				`{"role":"user","content":[{"type":"tool_result","tool_use_id":"gone","content":"old"},{"type":"tool_result","tool_use_id":"live","content":"new"}]}]}`,
+			want: `{"messages":[{"role":"user","content":"go"},` +
+				`{"role":"assistant","content":[{"type":"tool_use","id":"live","name":"Bash","input":{}}]},` +
+				`{"role":"user","content":[{"type":"tool_result","tool_use_id":"live","content":"new"},{"type":"text","text":"old"}]}]}`,
+			folded: 1,
+		},
+		{
 			name:   "a result that answers an earlier call is untouched",
 			format: llmprotocol.AnthropicMessagesV1,
 			body: `{"messages":[{"role":"user","content":"go"},` +
