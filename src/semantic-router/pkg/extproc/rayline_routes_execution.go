@@ -705,15 +705,26 @@ func routesOfferSHA256(packageSHA256 string, actionIDs []string) string {
 
 // --- the echo ----------------------------------------------------------------
 
-const routesUserTurnCacheMultiwarm = "repartition_multiwarm"
+const (
+	routesUserTurnCacheMultiwarm = "repartition_multiwarm"
+	// routesExecutionEpisodePerLookup: an execution lookup is decided under
+	// a fresh random episode id (ephemeral), never one derived from the
+	// caller's session alone.
+	routesExecutionEpisodePerLookup = "per_lookup_random"
+)
 
 // raylineRoutesExecutionEcho is routing.execution as the serving path
 // applied it (arc_execution_context.ExecutionEcho). unsupported: the cell
 // reported no cache_trace, so every applied field is null and no worker row
 // is stated.
 type raylineRoutesExecutionEcho struct {
-	Status              string                             `json:"status"`
-	Turn                raylineRoutesExecutionTurn         `json:"turn"`
+	Status string                     `json:"status"`
+	Turn   raylineRoutesExecutionTurn `json:"turn"`
+	// EpisodeIdentity is the basis of the episode the lookup was decided
+	// under: per_lookup_random, a fresh random id per execution lookup
+	// (tenant-safe, no encoder-session reuse). Account-scoped reuse waits on
+	// a trusted gateway account header.
+	EpisodeIdentity     string                             `json:"episode_identity"`
 	Pinned              map[string]string                  `json:"pinned"`
 	Boundary            *string                            `json:"boundary"`
 	UserTurnCache       *string                            `json:"user_turn_cache"`
@@ -749,9 +760,10 @@ type raylineRoutesExecutionWorkerEcho struct {
 func raylineRoutesExecutionEchoOf(routing *raylineRoutesRouting, decision routerruntime.RouteDecision) *raylineRoutesExecutionEcho {
 	execution := routing.execution
 	echo := &raylineRoutesExecutionEcho{
-		Status:  "unsupported",
-		Turn:    raylineRoutesExecutionTurn{ID: execution.turnID, Attempt: execution.turnAttempt},
-		Workers: []raylineRoutesExecutionWorkerEcho{},
+		Status:          "unsupported",
+		Turn:            raylineRoutesExecutionTurn{ID: execution.turnID, Attempt: execution.turnAttempt},
+		EpisodeIdentity: routesExecutionEpisodePerLookup,
+		Workers:         []raylineRoutesExecutionWorkerEcho{},
 	}
 	trace := decision.CacheTrace
 	if trace == nil || !decision.ExecutionApplied {

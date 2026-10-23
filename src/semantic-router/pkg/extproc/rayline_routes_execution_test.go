@@ -322,7 +322,7 @@ func TestRoutesExecutionEchoAndIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	echo := payload.Routing.Execution
-	if echo == nil || echo.Status != "applied" || echo.Pinned["package_sha256"] != "matched" ||
+	if echo == nil || echo.Status != "applied" || echo.EpisodeIdentity != "per_lookup_random" || echo.Pinned["package_sha256"] != "matched" ||
 		echo.Pinned["offer_sha256"] != "unpinned" || echo.Multiwarm == nil || !*echo.Multiwarm ||
 		*echo.UserTurnCacheSource != "service_config" || len(echo.Workers) != 2 {
 		t.Fatalf("echo %+v", echo)
