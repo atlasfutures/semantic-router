@@ -95,6 +95,7 @@ const (
 	callKindSourceGatewaySubagent    = "gateway_subagent_shared_key"
 	callKindSourceClaudeCompactionRq = "claude_code_compaction_request"
 	callKindSourceClaudeTitle        = "claude_code_title"
+	callKindSourceClaudeSuggestion   = "claude_code_suggestion"
 	callKindSourceCodexCompactionRq  = "codex_compaction_request"
 )
 
@@ -184,6 +185,8 @@ func raylineARCPolicyCallKind(
 			return raylinearc.PolicyCallSide, callKindSourceClaudeTitle
 		case raylinearc.IsClaudeCodeCompactionRequest(messages):
 			return raylinearc.PolicyCallSide, callKindSourceClaudeCompactionRq
+		case raylinearc.IsClaudeCodeSuggestionRequest(messages):
+			return raylinearc.PolicyCallSide, callKindSourceClaudeSuggestion
 		case raylinearc.ClaudeCodeSubagentClaim(system):
 			// A subagent keyed on its own agent id is its own conversation:
 			// a main turn of its own episode, deciding its own model and
