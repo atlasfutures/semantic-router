@@ -490,3 +490,27 @@ func TestRouteDecisionKeepsEncoderBreakageUncontended(t *testing.T) {
 		})
 	}
 }
+
+// A consult on a thread continuation is refused as an invalid body, as the
+// ExtProc path refuses the same turn, even when the fragment decodes: routing
+// it would decide on a conversation the cell does not hold.
+func TestDecisionOnlyRequestContextRefusesAThreadContinuation(t *testing.T) {
+	selector := &stubARCSelector{arm: 0, workers: decisionServiceWorkers()}
+	service := &raylineARCDecisionService{router: decisionServiceRouter(t, selector)}
+	algorithm := decisionServiceConfig().Decisions[0].Algorithm
+	body := []byte(`{"model":"auto","max_tokens":16,` +
+		`"thread":{"type":"continue","previous_message_id":"msg_Q2r9XyK1bWm4Zt7Lp0VaHc3E"},` +
+		`"messages":[{"role":"user","content":"hello"}]}`)
+	_, err := service.decisionOnlyRequestContext(context.Background(), algorithm,
+		routerruntime.RouteDecisionRequest{Body: body, DecisionID: "rt_0a1c", SessionID: "session-1"})
+	if !errors.Is(err, routerruntime.ErrRouteDecisionInvalidBody) {
+		t.Fatalf("error = %v, want ErrRouteDecisionInvalidBody", err)
+	}
+
+	created := []byte(`{"model":"auto","max_tokens":16,"thread":{"type":"create"},` +
+		`"messages":[{"role":"user","content":"hello"}]}`)
+	if _, err := service.decisionOnlyRequestContext(context.Background(), algorithm,
+		routerruntime.RouteDecisionRequest{Body: created, DecisionID: "rt_0a1d", SessionID: "session-1"}); err != nil {
+		t.Fatalf("a thread create consult was refused: %v", err)
+	}
+}
