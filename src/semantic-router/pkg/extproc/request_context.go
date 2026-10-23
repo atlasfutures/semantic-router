@@ -423,7 +423,8 @@ type RequestContext struct {
 	// contract and neutral request.
 	SourceFormat llmprotocol.WireFormat
 	TargetFormat llmprotocol.WireFormat
-	// RaylineARCRawBody is the client's request body exactly as received. The
+	// RaylineARCRawBody is the client's request body as received, after the
+	// ingress fold of orphan tool results (req_filter_orphan_tool_results.go). The
 	// ARC policy-service mode forwards its system, tools and messages so the
 	// service projects the conversation itself; nothing else reads it.
 	RaylineARCRawBody []byte
