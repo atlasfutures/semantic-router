@@ -603,9 +603,10 @@ func (service *raylineARCDecisionService) decisionOnlyRequestContext(
 	if wireFormat == "" {
 		wireFormat = defaultConsultWireFormat
 	}
+	body := foldIngressOrphanToolResults(request.Body, wireFormat, request.DecisionID)
 	decoded, envelope, _, err := engine.DecodeRequestForMutation(
 		wireFormat,
-		request.Body,
+		body,
 	)
 	if err != nil {
 		return nil, fmt.Errorf(
@@ -637,7 +638,7 @@ func (service *raylineARCDecisionService) decisionOnlyRequestContext(
 	}
 	return &RequestContext{
 		Headers:              headers,
-		RaylineARCRawBody:    request.Body,
+		RaylineARCRawBody:    body,
 		RequestID:            request.DecisionID,
 		SourceFormat:         wireFormat,
 		SemanticRequest:      &decoded,
