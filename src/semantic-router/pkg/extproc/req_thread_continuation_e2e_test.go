@@ -28,7 +28,9 @@ import (
 //     previous response, then the mid-conversation system message.
 //   - thread-continue.refusal: the 400 the cell answered that body with before
 //     2026-10-23 and that Claude Code answers with a full-history re-send.
-//   - full-history: the 8-message turn that re-send carries (tools omitted).
+//   - thread-create-resend: the full-history turn Claude Code re-sent after
+//     that 400. It opens with {"thread":{"type":"create"}}, as every turn this
+//     client sends in full does, and must be served whole.
 const threadContinuationFixtures = "testdata/thread_continuation"
 
 // claudeCodeBetas is the anthropic-beta Claude Code 2.1.309 sent with the
@@ -150,11 +152,13 @@ func TestThreadContinuationThatDecodesIsStillRefused(t *testing.T) {
 	}
 }
 
-// The full-history turn Claude Code re-sends after the refusal is served with
-// every message it carries, in order, its tool call and result still linked.
-func TestFullHistoryTurnReachesTheProviderWhole(t *testing.T) {
-	router, _ := newThreadContinuationRouter(t)
-	client := readThreadFixture(t, "claude-code-2.1.309-full-history.request.json")
+// The full-history turn Claude Code re-sends after the refusal, which opens a
+// thread of type create, is served with every message it carries, in order,
+// its tool call and result still linked. Refusing it would refuse every turn
+// this client sends.
+func TestThreadCreateResendReachesTheProviderWhole(t *testing.T) {
+	router, fake := newThreadContinuationRouter(t)
+	client := readThreadFixture(t, "claude-code-2.1.309-thread-create-resend.request.json")
 	response := runClaudeCodeRequest(t, router, client)
 	if immediate := response.GetImmediateResponse(); immediate != nil {
 		t.Fatalf("the full-history turn was refused: %d %s", immediate.GetStatus().GetCode(), immediate.GetBody())
@@ -194,10 +198,34 @@ func TestFullHistoryTurnReachesTheProviderWhole(t *testing.T) {
 			t.Fatalf("the provider body lost %q", text)
 		}
 	}
-	lastCall := gjson.GetBytes(served.Messages[len(served.Messages)-2].Content, "0.id").String()
-	lastResult := gjson.GetBytes(served.Messages[len(served.Messages)-1].Content, "0.tool_use_id").String()
-	if lastCall == "" || lastResult != lastCall {
-		t.Fatalf("the tool result is no longer linked to its call: %q -> %q", lastResult, lastCall)
+	sentCalls := gjson.GetBytes(client, `messages.#.content.#(type=="tool_use")#.id|@flatten`).Array()
+	servedResults := gjson.GetBytes(mutation.GetBody(), `messages.#.content.#(type=="tool_result")#.tool_use_id|@flatten`).Array()
+	if len(sentCalls) == 0 || len(servedResults) != len(sentCalls) {
+		t.Fatalf("tool calls sent %v, results served %v", sentCalls, servedResults)
+	}
+	for i := range sentCalls {
+		if servedResults[i].String() != sentCalls[i].String() {
+			t.Fatalf("tool result %d answers %q, the client's call is %q", i, servedResults[i], sentCalls[i])
+		}
+	}
+	if n := len(fake.received()); n != 1 {
+		t.Fatalf("policy decisions = %d, want 1", n)
+	}
+}
+
+func TestContinuesServerThread(t *testing.T) {
+	cases := map[string]bool{
+		`{}`:              false,
+		`{"thread":null}`: false,
+		`{"thread":{"type":"create"},"diagnostics":{"previous_message_id":"msg_x"}}`: false,
+		`{"thread":{"type":"continue","previous_message_id":"msg_x"}}`:               true,
+		`{"thread":{"type":"continue"}}`:                                             true,
+		`{"thread":{"type":"fork","previous_message_id":"msg_x"}}`:                   true,
+	}
+	for body, want := range cases {
+		if got := continuesServerThread(gjson.Get(body, "thread")); got != want {
+			t.Errorf("continuesServerThread(%s) = %v, want %v", body, got, want)
+		}
 	}
 }
 
