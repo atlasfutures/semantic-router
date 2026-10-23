@@ -494,10 +494,6 @@ class RaylineARCPolicyServiceConfig(BaseModel):
     package_alias: str = Field(min_length=1)
     package_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
     bindings: list[RaylineARCPolicyBindingConfig] = Field(min_length=1)
-    # The operator's allow-list of offered actions (pathfinder #5874):
-    # bound action ids, sent as selection.offered_action_ids. Empty offers
-    # every bound action.
-    offered_action_ids: list[str] = Field(default_factory=list)
     model_schedule: Literal["", "task_turn_compaction_v1"] = ""
     # Mirrors RaylineARCPolicyServiceConfig.DispatchEffort in the Go loader:
     # provider_default serves actions without their declared effort (v4).

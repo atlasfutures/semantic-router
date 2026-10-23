@@ -48,9 +48,6 @@ const (
 	routesExecutionMaxCount       = 100_000_000
 	routesExecutionMaxGapS        = 604_800
 	routesExecutionMaxTTLS        = 86_400
-	// routesUserTurnCacheMultiwarm is the selection.user_turn_cache mode the
-	// lookup asks for when it carries admitted cache evidence.
-	routesUserTurnCacheMultiwarm = "repartition_multiwarm"
 )
 
 const (
@@ -524,9 +521,12 @@ func checkRoutesExecutionAttribution(
 	if len(attribution) == 0 {
 		return nil
 	}
-	raw, responses := envelope["input"]
-	if !responses {
-		raw = envelope["messages"]
+	_, hasInput := envelope["input"]
+	_, hasMessages := envelope["messages"]
+	responses := hasInput && !hasMessages
+	raw := envelope["messages"]
+	if responses {
+		raw = envelope["input"]
 	}
 	var items []json.RawMessage
 	_ = json.Unmarshal(raw, &items)
@@ -553,15 +553,15 @@ func routesExecutionAssistantItem(raw json.RawMessage, responses bool) bool {
 	if json.Unmarshal(raw, &item) != nil {
 		return false
 	}
-	if item.Role == "assistant" {
-		return true
-	}
 	if !responses {
-		return false
+		return item.Role == "assistant"
 	}
+	// Responses: an assistant-output item (a message with role assistant, a
+	// function_call or a reasoning item).
 	switch item.Type {
-	case "function_call", "custom_tool_call", "reasoning", "web_search_call", "file_search_call",
-		"computer_call", "code_interpreter_call", "local_shell_call", "image_generation_call":
+	case "", "message":
+		return item.Role == "assistant"
+	case "function_call", "reasoning":
 		return true
 	}
 	return false
@@ -569,78 +569,79 @@ func routesExecutionAssistantItem(raw json.RawMessage, responses bool) bool {
 
 // --- admission ---------------------------------------------------------------
 
-// routesExecutionNotAdmitted names a value passed on as unknown, and why.
+// routesExecutionNotAdmitted names a value passed on as unknown, and why
+// (pathfinder #5875, arc_execution_context.NotAdmitted).
 type routesExecutionNotAdmitted struct {
-	Field  string `json:"field"`
-	Reason string `json:"reason"`
+	ActionID string `json:"-"`
+	Field    string `json:"field"`
+	Reason   string `json:"reason"`
 }
 
 // admitRoutesExecutionWorker is one worker's ActionCache after admission
-// (pathfinder #5874, "Admission"): caller evidence moves a price only when
-// its provenance may, and is never relabelled. A value not admitted is sent
-// null and named, with its reason, in the echo. admitted reports whether
-// any cache evidence (TTL, residency, prompt tokens, prefix) was admitted.
-func admitRoutesExecutionWorker(worker routesExecutionWorker) (raylinearc.PolicyActionCache, []routesExecutionNotAdmitted, bool) {
-	entry := raylinearc.PolicyActionCache{ActionID: worker.actionID, GapS: worker.gapS, ContextEpoch: worker.contextEpoch}
-	notAdmitted := []routesExecutionNotAdmitted{}
-	admitted := false
+// (arc_execution_context.decide_inputs): a value not admitted is sent
+// unknown and named, never relabelled; missing evidence never makes a switch
+// cheaper.
+//
+//   - ttl: wire_declared and provider_documented only;
+//   - residency: local_measured on a local worker only;
+//   - usage and current_prefix: any provenance but caller_estimated. A usage
+//     in other units than the current prefix is not comparable with it and is
+//     left out (units_mismatch); the current prefix stays.
+func admitRoutesExecutionWorker(worker routesExecutionWorker) (raylinearc.PolicyActionCache, []routesExecutionNotAdmitted) {
+	refused := []routesExecutionNotAdmitted{}
 	refuse := func(field, reason string) {
-		notAdmitted = append(notAdmitted, routesExecutionNotAdmitted{Field: field, Reason: reason})
+		refused = append(refused, routesExecutionNotAdmitted{ActionID: worker.actionID, Field: field, Reason: reason})
 	}
-	if ttl := worker.ttl; ttl != nil {
-		if ttl.basis == "wire_declared" || ttl.basis == "provider_documented" {
-			seconds, source := ttl.seconds, ttl.source
-			entry.TTLS, entry.TTLSource = &seconds, &source
-			admitted = true
-		} else {
-			refuse("ttl", "estimated_not_admitted")
-		}
+	ttl := worker.ttl
+	if ttl != nil && ttl.basis == "caller_estimated" {
+		refuse("ttl", "estimated_not_admitted")
+		ttl = nil
 	}
-	if residency := worker.residency; residency != nil {
-		switch {
-		case residency.provenance == provenanceProviderReported,
-			residency.provenance == provenanceLocalMeasured && worker.placement == "local":
-			state := residency.state
-			entry.Residency = &state
-			admitted = true
-		case residency.provenance == provenanceLocalMeasured:
-			refuse("residency", "local_measured_not_local")
-		default:
-			refuse("residency", "estimated_not_admitted")
-		}
+	residency := worker.residency
+	switch {
+	case residency != nil && residency.provenance != provenanceLocalMeasured:
+		refuse("residency", "residency_requires_local_measured")
+		residency = nil
+	case residency != nil && worker.placement != "local":
+		refuse("residency", "residency_requires_local_placement")
+		residency = nil
 	}
-	usageAdmitted := false
-	if usage := worker.usage; usage != nil {
-		if usage.provenance == provenanceCallerEstimated {
-			refuse("usage", "estimated_not_admitted")
-		} else {
-			usageAdmitted = true
-			entry.PromptTokens, entry.CacheReadTokens, entry.CacheWriteTokens = usage.promptTokens, usage.cacheReadTokens, usage.cacheWriteTokens
-			admitted = admitted || usage.promptTokens != nil
-		}
+	usage, prefix := worker.usage, worker.currentPrefix
+	if usage != nil && usage.provenance == provenanceCallerEstimated {
+		refuse("usage", "estimated_not_admitted")
+		usage = nil
 	}
-	if prefix := worker.currentPrefix; prefix != nil {
-		switch {
-		case prefix.provenance == provenanceCallerEstimated:
-			refuse("current_prefix", "estimated_not_admitted")
-		case usageAdmitted && worker.usage.units != prefix.units:
-			// Two counts are compared only in the same units: the prefix
-			// stays unknown, so the worker is never credited warmth it
-			// cannot be shown to have.
-			refuse("current_prefix", "units_mismatch")
-		default:
-			tokens := prefix.tokens
-			entry.CurrentPrefixTokens, entry.OverlapTokens = &tokens, prefix.overlapTokens
-			admitted = true
-		}
+	if prefix != nil && prefix.provenance == provenanceCallerEstimated {
+		refuse("current_prefix", "estimated_not_admitted")
+		prefix = nil
 	}
-	return entry, notAdmitted, admitted
+	if usage != nil && prefix != nil && usage.units != prefix.units {
+		refuse("usage", "units_mismatch")
+		usage = nil
+	}
+	entry := raylinearc.PolicyActionCache{ActionID: worker.actionID, GapS: worker.gapS, ContextEpoch: worker.contextEpoch}
+	if ttl != nil {
+		seconds, source := ttl.seconds, ttl.source
+		entry.TTLS, entry.TTLSource = &seconds, &source
+	}
+	if usage != nil {
+		entry.PromptTokens, entry.CacheReadTokens, entry.CacheWriteTokens = usage.promptTokens, usage.cacheReadTokens, usage.cacheWriteTokens
+	}
+	if prefix != nil {
+		tokens := prefix.tokens
+		entry.CurrentPrefixTokens, entry.OverlapTokens = &tokens, prefix.overlapTokens
+	}
+	if residency != nil {
+		state := residency.state
+		entry.Residency = &state
+	}
+	return entry, refused
 }
 
 // routesExecutionControls is the lookup's execution context as decide-request
 // members: the caller's epoch and attribution, its hold, and the admitted
-// cache evidence (with user_turn_cache repartition_multiwarm when any is).
-func routesExecutionControls(execution *routesExecution) (*selection.RaylineARCRouteExecution, map[string][]routesExecutionNotAdmitted) {
+// cache evidence. The cache mode is the service's to decide.
+func routesExecutionControls(execution *routesExecution) (*selection.RaylineARCRouteExecution, []routesExecutionNotAdmitted) {
 	controls := &selection.RaylineARCRouteExecution{
 		ContextEpoch:           execution.contextEpoch,
 		Attribution:            make([]raylinearc.PolicyAttribution, 0, len(execution.attribution)),
@@ -655,33 +656,37 @@ func routesExecutionControls(execution *routesExecution) (*selection.RaylineARCR
 		controls.ActionIDs = append(controls.ActionIDs, entry.actionID)
 	}
 	sort.Slice(controls.Attribution, func(i, j int) bool { return controls.Attribution[i].Message < controls.Attribution[j].Message })
+	for _, worker := range execution.workers {
+		controls.ActionIDs = append(controls.ActionIDs, worker.actionID)
+	}
 	if hold := execution.hold; hold != nil {
 		controls.HoldScope, controls.HoldActionID = hold.scope, hold.actionID
 		controls.ActionIDs = append(controls.ActionIDs, hold.actionID)
 	}
-	notAdmitted := make(map[string][]routesExecutionNotAdmitted, len(execution.workers))
-	anyAdmitted := false
+	refused := []routesExecutionNotAdmitted{}
 	if len(execution.workers) > 0 {
 		controls.CacheContext = &raylinearc.PolicyCacheContext{Actions: make([]raylinearc.PolicyActionCache, 0, len(execution.workers))}
 	}
 	for _, worker := range execution.workers {
-		entry, refused, admitted := admitRoutesExecutionWorker(worker)
+		entry, notAdmitted := admitRoutesExecutionWorker(worker)
 		controls.CacheContext.Actions = append(controls.CacheContext.Actions, entry)
-		controls.ActionIDs = append(controls.ActionIDs, worker.actionID)
-		notAdmitted[worker.actionID] = refused
-		anyAdmitted = anyAdmitted || admitted
+		refused = append(refused, notAdmitted...)
 	}
-	if anyAdmitted {
-		controls.UserTurnCache = routesUserTurnCacheMultiwarm
-	}
-	return controls, notAdmitted
+	return controls, refused
 }
 
 // routesOfferSHA256 is the offer's identity, sha256(JCS({schema:
-// "arc-offer.v1", package_sha256, action_ids})) over the actions offered to
-// this request, sorted.
+// "arc-offer.v1", package_sha256, action_ids})) over the sorted, distinct
+// actions offered to the request.
 func routesOfferSHA256(packageSHA256 string, actionIDs []string) string {
-	sorted := append([]string(nil), actionIDs...)
+	distinct := map[string]bool{}
+	sorted := make([]string, 0, len(actionIDs))
+	for _, id := range actionIDs {
+		if !distinct[id] {
+			distinct[id] = true
+			sorted = append(sorted, id)
+		}
+	}
 	sort.Slice(sorted, func(i, j int) bool { return jcsLess(sorted[i], sorted[j]) })
 	var out strings.Builder
 	out.WriteString(`{"action_ids":[`)
@@ -700,18 +705,21 @@ func routesOfferSHA256(packageSHA256 string, actionIDs []string) string {
 
 // --- the echo ----------------------------------------------------------------
 
-// raylineRoutesExecutionEcho is routing.execution in the routing echo (gate 6
-// of the sidecar plan): whether it was applied, the turn, the pinned
-// identity, the effective user_turn_cache and boundary, and per worker how
-// the decision read its evidence. Values come from the service's
-// decision.cache_trace, never recomputed; null when it did not say.
+const routesUserTurnCacheMultiwarm = "repartition_multiwarm"
+
+// raylineRoutesExecutionEcho is routing.execution as the serving path
+// applied it (arc_execution_context.ExecutionEcho). unsupported: the cell
+// reported no cache_trace, so every applied field is null and no worker row
+// is stated.
 type raylineRoutesExecutionEcho struct {
-	Status        string                             `json:"status"`
-	Turn          raylineRoutesExecutionTurn         `json:"turn"`
-	Pinned        map[string]string                  `json:"pinned"`
-	UserTurnCache *string                            `json:"user_turn_cache"`
-	Boundary      *string                            `json:"boundary"`
-	Workers       []raylineRoutesExecutionWorkerEcho `json:"workers"`
+	Status              string                             `json:"status"`
+	Turn                raylineRoutesExecutionTurn         `json:"turn"`
+	Pinned              map[string]string                  `json:"pinned"`
+	Boundary            *string                            `json:"boundary"`
+	UserTurnCache       *string                            `json:"user_turn_cache"`
+	UserTurnCacheSource *string                            `json:"user_turn_cache_source"`
+	Multiwarm           *bool                              `json:"multiwarm"`
+	Workers             []raylineRoutesExecutionWorkerEcho `json:"workers"`
 }
 
 type raylineRoutesExecutionTurn struct {
@@ -719,58 +727,96 @@ type raylineRoutesExecutionTurn struct {
 	Attempt int    `json:"attempt"`
 }
 
+// raylineRoutesExecutionWorkerEcho is one stated worker as the decision
+// priced it (arc_execution_context.WorkerEcho).
 type raylineRoutesExecutionWorkerEcho struct {
-	ActionID         string                       `json:"action_id"`
-	Worker           string                       `json:"worker"`
-	Read             *bool                        `json:"read"`
-	Reason           *string                      `json:"reason"`
-	Basis            *string                      `json:"basis"`
-	PWarm            *float64                     `json:"p_warm"`
-	PrefixTokensUsed *int                         `json:"prefix_tokens_used"`
-	PrefixBasis      *string                      `json:"prefix_basis"`
-	NotAdmitted      []routesExecutionNotAdmitted `json:"not_admitted"`
+	ActionID     string                       `json:"action_id"`
+	Worker       string                       `json:"worker"`
+	Held         *bool                        `json:"held"`
+	Pricing      string                       `json:"pricing"`
+	Read         bool                         `json:"read"`
+	Reason       *string                      `json:"reason"`
+	Basis        *string                      `json:"basis"`
+	PWarm        *float64                     `json:"p_warm"`
+	PrefixTokens *int                         `json:"prefix_tokens"`
+	PrefixBasis  *string                      `json:"prefix_basis"`
+	NotAdmitted  []routesExecutionNotAdmitted `json:"not_admitted"`
 }
 
+// raylineRoutesExecutionEchoOf mirrors arc_execution_context.execution_echo:
+// admission's refusals joined to the decision's cache_trace, values copied,
+// one row per stated worker in request order.
 func raylineRoutesExecutionEchoOf(routing *raylineRoutesRouting, decision routerruntime.RouteDecision) *raylineRoutesExecutionEcho {
 	execution := routing.execution
 	echo := &raylineRoutesExecutionEcho{
 		Status:  "unsupported",
 		Turn:    raylineRoutesExecutionTurn{ID: execution.turnID, Attempt: execution.turnAttempt},
-		Pinned:  map[string]string{},
-		Workers: make([]raylineRoutesExecutionWorkerEcho, 0, len(execution.workers)),
+		Workers: []raylineRoutesExecutionWorkerEcho{},
 	}
-	if decision.ExecutionApplied {
-		echo.Status = "applied"
+	trace := decision.CacheTrace
+	if trace == nil || !decision.ExecutionApplied {
+		return echo
 	}
-	// A mismatch never reaches an answer (it is refused): a pinned member
-	// matched.
+	echo.Status = "applied"
+	echo.Pinned = map[string]string{}
 	for key, pin := range map[string]*string{
 		"package_sha256": execution.expectPackage, "thinking_controls_sha256": execution.expectThinkingControls,
 		"offer_sha256": execution.expectOffer,
 	} {
+		// A mismatch never reaches an answer: it is refused.
 		echo.Pinned[key] = "unpinned"
 		if pin != nil {
 			echo.Pinned[key] = "matched"
 		}
 	}
-	traced := map[string]raylinearc.PolicyCacheTraceAction{}
-	if trace := decision.CacheTrace; trace != nil {
-		echo.UserTurnCache, echo.Boundary = trace.UserTurnCache, trace.Boundary
-		for _, action := range trace.Actions {
-			traced[action.ActionID] = action
+	echo.Boundary, echo.UserTurnCache, echo.UserTurnCacheSource = trace.Boundary, trace.UserTurnCache, trace.Source
+	multiwarm := trace.UserTurnCache != nil && *trace.UserTurnCache == routesUserTurnCacheMultiwarm
+	echo.Multiwarm = &multiwarm
+	priced := trace.Boundary != nil && *trace.Boundary == "user_message"
+	byAction := map[string]raylinearc.PolicyCacheTraceCandidate{}
+	for _, candidate := range trace.Candidates {
+		for _, actionID := range candidate.ActionIDs {
+			byAction[actionID] = candidate
 		}
 	}
+	reason := func(value string) *string { return &value }
 	for _, worker := range execution.workers {
+		row, found := byAction[worker.actionID]
+		found = found && priced
+		read := found && row.EvidenceActionID != nil && *row.EvidenceActionID == worker.actionID
 		entry := raylineRoutesExecutionWorkerEcho{
-			ActionID: worker.actionID, Worker: worker.worker,
-			NotAdmitted: routing.executionNotAdmitted[worker.actionID],
+			ActionID: worker.actionID, Worker: worker.worker, Read: read,
+			NotAdmitted: []routesExecutionNotAdmitted{},
 		}
-		if entry.NotAdmitted == nil {
-			entry.NotAdmitted = []routesExecutionNotAdmitted{}
+		switch {
+		case read:
+		case !priced:
+			entry.Reason = reason("boundary")
+		case !found:
+			entry.Reason = reason("not_in_offer")
+		case row.EvidenceActionID != nil:
+			entry.Reason = reason("superseded")
+		default:
+			entry.Reason = reason("package_mode")
 		}
-		if action, ok := traced[worker.actionID]; ok {
-			entry.Read, entry.Reason, entry.Basis = action.Read, action.Reason, action.Basis
-			entry.PWarm, entry.PrefixTokensUsed, entry.PrefixBasis = action.PWarm, action.PrefixTokensUsed, action.PrefixBasis
+		switch {
+		case !found:
+			entry.Pricing = "not_priced"
+		case read && row.Basis != nil && strings.HasPrefix(*row.Basis, "observed_"):
+			entry.Pricing = "observed"
+		case row.Held:
+			entry.Pricing = "default_held_warm"
+		default:
+			entry.Pricing = "default_rival_cold"
+		}
+		if found {
+			held := row.Held
+			entry.Held, entry.Basis, entry.PWarm, entry.PrefixTokens, entry.PrefixBasis = &held, row.Basis, row.PWarm, row.PrefixTokens, row.PrefixBasis
+		}
+		for _, refused := range routing.executionNotAdmitted {
+			if refused.ActionID == worker.actionID {
+				entry.NotAdmitted = append(entry.NotAdmitted, refused)
+			}
 		}
 		echo.Workers = append(echo.Workers, entry)
 	}

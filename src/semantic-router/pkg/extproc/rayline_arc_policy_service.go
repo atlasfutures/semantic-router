@@ -75,9 +75,9 @@ type policyServiceScorer struct {
 	// thinkingControls is the package manifest's thinking_controls_sha256,
 	// part of a Decisions answer's identity; empty for a v4 package.
 	thinkingControls string
-	// offered is the operator's allow-list of offered actions
-	// (offered_action_ids); empty offers every bound action.
-	offered []string
+	// actionArms are a v5 package's trained arms per action, for checking
+	// a Decisions caller's attribution; nil for a v4 package.
+	actionArms map[string][]string
 	// busyWait bounds how long a decision retries the service's
 	// session_busy (the episode's acquire timeout).
 	busyWait    time.Duration
@@ -176,7 +176,6 @@ func newPolicyServiceScorer(
 		twoStage:         policy.PackageTwoStage(),
 		attestable:       policy.PackageTwoStage() && policy.PackageStageOneByModel(),
 		thinkingControls: policy.PackageThinkingControlsSHA256(),
-		offered:          append([]string(nil), policy.OfferedActionIDs...),
 		busyWait:         time.Duration(decision.Algorithm.RaylineARC.Episode.AcquireTimeoutSeconds) * time.Second,
 		alias:            policy.PackageAlias,
 		sha256:           policy.PackageSHA256,
@@ -209,6 +208,10 @@ func newPolicyServiceScorer(
 			if action.Control.Instruction != nil {
 				level = action.Control.Instruction.Level
 			}
+			if scorer.actionArms == nil {
+				scorer.actionArms = map[string][]string{}
+			}
+			scorer.actionArms[binding.ActionID] = action.TrainedArmIDs
 		}
 		scorer.bindings[binding.ActionID] = policyBinding{arm: index[binding.Worker], level: level, model: model}
 		scorer.actionOrder = append(scorer.actionOrder, binding.ActionID)
@@ -616,9 +619,6 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		request.EpisodeMode = scorer.sideCallEpisodeMode(selector.now())
 	}
 	scorer.decisionsV2.apply(&request)
-	if len(scorer.offered) > 0 {
-		request.Selection.OfferedActionIDs = append([]string(nil), scorer.offered...)
-	}
 	if weight := arcContext.TurnCostWeight; weight != nil {
 		// Configurable ARC: the turn's own V, within the bounds readiness
 		// checked the package admits.
@@ -634,7 +634,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	}
 	// A caller's routing.execution stands in for VSR's own episode for this
 	// lookup only; it is checked against the package and offer first.
-	if class := applyRouteExecution(&request, scorer, execution, routeIdentity(scorer, available)); class != "" {
+	if class := applyRouteExecution(&request, scorer, execution); class != "" {
 		logging.ComponentErrorEvent("extproc", "rayline_arc_policy_service_failed", map[string]interface{}{
 			"class": class, "episode_id_hash": arcContext.EpisodeIDHash,
 		})
@@ -782,6 +782,9 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	latency := selector.now().Sub(started)
 	if err != nil && execution != nil {
 		if class := routeExecutionServiceRefusal(err); class != "" {
+			if class == arcFailureExecutionNotAdmitted && execution.HoldScope != "" {
+				class = arcFailureExecutionHoldUnavailable
+			}
 			return nil, arcSelectionFailure(class)
 		}
 	}
@@ -941,7 +944,10 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	}
 	scorer.exploration.record(result.RaylineARC, cellExploration, response, explorationExcluded)
 	if routeControls != nil {
-		identity := routeIdentity(scorer, request.Selection.AvailableActionIDs)
+		identity := routeIdentity(scorer, response)
+		if class := checkRouteExecutionOffer(execution, identity); class != "" {
+			return nil, arcSelectionFailure(class)
+		}
 		result.RaylineARC.RouteIdentity = &identity
 		result.RaylineARC.RouteExecutionApplied = execution != nil
 		if execution != nil {

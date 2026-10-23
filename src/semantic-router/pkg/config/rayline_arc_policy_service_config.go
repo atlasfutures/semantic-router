@@ -53,12 +53,6 @@ type RaylineARCPolicyServiceConfig struct {
 	// actions of one model differ only in thinking level, so they share the
 	// worker and carry the level the lever applies.
 	Bindings []RaylineARCPolicyBinding `yaml:"bindings"`
-	// OfferedActionIDs is the operator's allow-list of the package actions
-	// this cell offers (pathfinder #5874; provisional name): every decide
-	// sends it as selection.offered_action_ids, which the service intersects
-	// with the offer. Operator config, never caller input. Empty offers
-	// every bound action, as before.
-	OfferedActionIDs []string `yaml:"offered_action_ids,omitempty"`
 	// ModelSchedule names the package's model-switch schedule, which VSR
 	// enforces: between boundaries the model is held and only its level
 	// varies. Empty lets every turn choose any action. A two-stage package
@@ -425,9 +419,6 @@ func validateRaylineARCPolicyServiceConfig(cfg *RaylineARCPolicyServiceConfig) e
 		}
 	}
 	seen := make(map[string]bool, len(cfg.Bindings))
-	if err := validateRaylineARCOfferedActionIDs(cfg); err != nil {
-		return err
-	}
 	for _, binding := range cfg.Bindings {
 		if !raylineARCSHA256Pattern.MatchString(binding.ActionID) {
 			return fmt.Errorf("binding action_id must be 64 lowercase hex characters")
@@ -736,28 +727,4 @@ func validateRaylineARCDerivedHoldModel(cfg *RaylineARCPolicyServiceConfig) erro
 // refused (prices_not_supported).
 type RaylineARCGenerationRoutingConfig struct {
 	CallerValue bool `yaml:"caller_value,omitempty"`
-}
-
-// validateRaylineARCOfferedActionIDs checks the offer allow-list: each id a
-// bound action, none twice. An id the cell does not bind could never be
-// offered, so it is a configuration error rather than a silent no-op.
-func validateRaylineARCOfferedActionIDs(cfg *RaylineARCPolicyServiceConfig) error {
-	if len(cfg.OfferedActionIDs) == 0 {
-		return nil
-	}
-	bound := make(map[string]bool, len(cfg.Bindings))
-	for _, binding := range cfg.Bindings {
-		bound[binding.ActionID] = true
-	}
-	seen := make(map[string]bool, len(cfg.OfferedActionIDs))
-	for _, actionID := range cfg.OfferedActionIDs {
-		if !bound[actionID] {
-			return fmt.Errorf("offered_action_ids names %s, which no binding binds", actionID)
-		}
-		if seen[actionID] {
-			return fmt.Errorf("offered_action_ids names %s twice", actionID)
-		}
-		seen[actionID] = true
-	}
-	return nil
 }

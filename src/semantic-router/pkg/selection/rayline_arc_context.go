@@ -150,10 +150,9 @@ type RaylineARCRouteExecution struct {
 	HoldScope    string
 	HoldActionID string
 	// CacheContext is the admitted cache evidence, nil when the caller sent
-	// no workers; UserTurnCache is repartition_multiwarm when any of it was
-	// admitted.
-	CacheContext  *raylinearc.PolicyCacheContext
-	UserTurnCache string
+	// no workers. The service decides the cache mode itself (its cell's
+	// ARC_CALLER_CACHE_MULTIWARM switch); the caller never forces it.
+	CacheContext *raylinearc.PolicyCacheContext
 	// ActionIDs are every action the context names (attribution, hold,
 	// workers), each checked against the serving package's catalog.
 	ActionIDs []string

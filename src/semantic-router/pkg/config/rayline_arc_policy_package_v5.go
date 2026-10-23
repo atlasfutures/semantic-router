@@ -66,6 +66,9 @@ type RaylineARCPolicyActionV5 struct {
 	// and the action_id both key on it.
 	Model   string
 	Control thinkingcontrol.Control
+	// TrainedArmIDs are the action's trained arms, as the manifest lists
+	// them.
+	TrainedArmIDs []string
 }
 
 var raylineARCPolicyPackageV5Lock sync.Mutex
@@ -193,6 +196,7 @@ func (cfg *RaylineARCPolicyServiceConfig) loadPackageV5() (*raylineARCPolicyPack
 		}
 		pkg.actions[action.ActionID] = RaylineARCPolicyActionV5{
 			ActionID: action.ActionID, Model: action.Model, Control: control,
+			TrainedArmIDs: append([]string(nil), action.TrainedArmIDs...),
 		}
 	}
 	cfg.packageV5 = pkg

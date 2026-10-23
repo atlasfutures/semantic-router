@@ -2187,14 +2187,6 @@ recipes:
                     level: none
                     model: qwen3-32b-instruct
                     reasoning_max_tokens: 4096
-                # offered_action_ids (optional) is the operator's allow-list of
-                # the bound actions this cell offers, sent on every decide as
-                # selection.offered_action_ids for the service to intersect with
-                # the offer (pathfinder #5874). Operator config, never caller
-                # input; absent offers every bound action.
-                offered_action_ids:
-                  - 6b17d6750c0bb3b365d9b474315615cb8fffdfb6bf0b7125e328390ab98c546a
-                  - eca208426c62c4c0289d7f409134cc2515013c70d9cb09bd9b3e2c0a73198cce
               episode:
                 id_header: x-rayline-episode-id
                 close_header: ""

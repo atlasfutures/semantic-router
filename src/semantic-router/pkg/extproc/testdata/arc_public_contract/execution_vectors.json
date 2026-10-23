@@ -1,0 +1,930 @@
+{
+  "package": {
+    "package_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "thinking_controls_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "offered_action_ids": [
+      "1111111111111111111111111111111111111111111111111111111111111111",
+      "2222222222222222222222222222222222222222222222222222222222222222"
+    ],
+    "action_models": {
+      "1111111111111111111111111111111111111111111111111111111111111111": "qwen/qwen3.8-27b",
+      "2222222222222222222222222222222222222222222222222222222222222222": "anthropic/claude-opus-5.5",
+      "3333333333333333333333333333333333333333333333333333333333333333": "anthropic/claude-opus-5.5"
+    },
+    "action_arms": {
+      "1111111111111111111111111111111111111111111111111111111111111111": [
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      ],
+      "2222222222222222222222222222222222222222222222222222222222222222": [
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      ],
+      "3333333333333333333333333333333333333333333333333333333333333333": [
+        "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      ]
+    }
+  },
+  "offer_sha256": "df7ec36be47b602e4cea3b2444856c6c0ae9aaa2fe188f9322f56f2b65684bf6",
+  "vectors": [
+    {
+      "name": "admitted",
+      "execution": {
+        "version": "arc-execution-context.v1",
+        "context_epoch": "e3",
+        "turn": {
+          "id": "t-0007",
+          "attempt": 1
+        },
+        "expect": {
+          "package_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "thinking_controls_sha256": null,
+          "offer_sha256": null
+        },
+        "attribution": [
+          {
+            "message": 1,
+            "action_id": "1111111111111111111111111111111111111111111111111111111111111111",
+            "arm_id": null,
+            "worker": "local-qwen",
+            "route_id": "rt_1",
+            "result": "custom"
+          },
+          {
+            "message": 3,
+            "action_id": "2222222222222222222222222222222222222222222222222222222222222222",
+            "arm_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "worker": "cloud-opus",
+            "route_id": "rt_2",
+            "result": "custom"
+          }
+        ],
+        "hold": null,
+        "workers": [
+          {
+            "action_id": "1111111111111111111111111111111111111111111111111111111111111111",
+            "worker": "local-qwen",
+            "placement": "local",
+            "context_epoch": "e3",
+            "gap_s": 412.5,
+            "ttl": null,
+            "residency": {
+              "state": "resident",
+              "provenance": "local_measured"
+            },
+            "usage": {
+              "prompt_tokens": 18210,
+              "cache_read_tokens": 17900,
+              "cache_write_tokens": null,
+              "units": "hf:Qwen/Qwen3.8-27B@r1",
+              "provenance": "provider_reported"
+            },
+            "current_prefix": {
+              "tokens": 21544,
+              "overlap_tokens": 18210,
+              "units": "hf:Qwen/Qwen3.8-27B@r1",
+              "provenance": "local_measured"
+            }
+          },
+          {
+            "action_id": "2222222222222222222222222222222222222222222222222222222222222222",
+            "worker": "cloud-opus",
+            "placement": "cloud",
+            "context_epoch": "e3",
+            "gap_s": 35.2,
+            "ttl": {
+              "seconds": 300,
+              "source": "anthropic cache_control ephemeral 5m",
+              "basis": "wire_declared"
+            },
+            "residency": null,
+            "usage": {
+              "prompt_tokens": 20977,
+              "cache_read_tokens": 18100,
+              "cache_write_tokens": 2877,
+              "units": "provider:cloud-opus",
+              "provenance": "provider_reported"
+            },
+            "current_prefix": {
+              "tokens": 21390,
+              "overlap_tokens": null,
+              "units": "provider:cloud-opus",
+              "provenance": "provider_reported"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "pinned": {
+          "package_sha256": "matched",
+          "thinking_controls_sha256": "unpinned",
+          "offer_sha256": "unpinned"
+        },
+        "decide": {
+          "context_epoch": "e3",
+          "attribution": [
+            {
+              "message": 1,
+              "action_id": "1111111111111111111111111111111111111111111111111111111111111111"
+            },
+            {
+              "message": 3,
+              "action_id": "2222222222222222222222222222222222222222222222222222222222222222",
+              "arm_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            }
+          ],
+          "selection": {},
+          "cache_context": {
+            "actions": [
+              {
+                "action_id": "1111111111111111111111111111111111111111111111111111111111111111",
+                "gap_s": 412.5,
+                "ttl_s": null,
+                "ttl_source": null,
+                "prompt_tokens": 18210,
+                "cache_read_tokens": 17900,
+                "cache_write_tokens": null,
+                "context_epoch": "e3",
+                "current_prefix_tokens": 21544,
+                "overlap_tokens": 18210,
+                "residency": "resident"
+              },
+              {
+                "action_id": "2222222222222222222222222222222222222222222222222222222222222222",
+                "gap_s": 35.2,
+                "ttl_s": 300.0,
+                "ttl_source": "anthropic cache_control ephemeral 5m",
+                "prompt_tokens": 20977,
+                "cache_read_tokens": 18100,
+                "cache_write_tokens": 2877,
+                "context_epoch": "e3",
+                "current_prefix_tokens": 21390
+              }
+            ]
+          },
+          "not_admitted": []
+        },
+        "caller_evidence": true
+      }
+    },
+    {
+      "name": "not_admitted",
+      "execution": {
+        "version": "arc-execution-context.v1",
+        "context_epoch": "e3",
+        "turn": {
+          "id": "t-0007",
+          "attempt": 1
+        },
+        "expect": {
+          "package_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "thinking_controls_sha256": null,
+          "offer_sha256": null
+        },
+        "attribution": [
+          {
+            "message": 1,
+            "action_id": "1111111111111111111111111111111111111111111111111111111111111111",
+            "arm_id": null,
+            "worker": "local-qwen",
+            "route_id": "rt_1",
+            "result": "custom"
+          },
+          {
+            "message": 3,
+            "action_id": "2222222222222222222222222222222222222222222222222222222222222222",
+            "arm_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "worker": "cloud-opus",
+            "route_id": "rt_2",
+            "result": "custom"
+          }
+        ],
+        "hold": null,
+        "workers": [
+          {
+            "action_id": "1111111111111111111111111111111111111111111111111111111111111111",
+            "worker": "local-qwen",
+            "placement": "local",
+            "context_epoch": "e3",
+            "gap_s": 412.5,
+            "ttl": null,
+            "residency": {
+              "state": "resident",
+              "provenance": "caller_estimated"
+            },
+            "usage": {
+              "prompt_tokens": 18210,
+              "cache_read_tokens": 17900,
+              "cache_write_tokens": null,
+              "units": "hf:Qwen/Qwen3.8-27B@r1",
+              "provenance": "provider_reported"
+            },
+            "current_prefix": {
+              "tokens": 21544,
+              "overlap_tokens": 18210,
+              "units": "hf:Qwen/Qwen3.8-27B@r1",
+              "provenance": "local_measured"
+            }
+          },
+          {
+            "action_id": "2222222222222222222222222222222222222222222222222222222222222222",
+            "worker": "cloud-opus",
+            "placement": "cloud",
+            "context_epoch": "e3",
+            "gap_s": 35.2,
+            "ttl": {
+              "seconds": 300,
+              "source": "anthropic cache_control ephemeral 5m",
+              "basis": "caller_estimated"
+            },
+            "residency": null,
+            "usage": {
+              "prompt_tokens": 20977,
+              "cache_read_tokens": 18100,
+              "cache_write_tokens": 2877,
+              "units": "provider:other",
+              "provenance": "provider_reported"
+            },
+            "current_prefix": {
+              "tokens": 21390,
+              "overlap_tokens": null,
+              "units": "provider:cloud-opus",
+              "provenance": "provider_reported"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "pinned": {
+          "package_sha256": "matched",
+          "thinking_controls_sha256": "unpinned",
+          "offer_sha256": "unpinned"
+        },
+        "decide": {
+          "context_epoch": "e3",
+          "attribution": [
+            {
+              "message": 1,
+              "action_id": "1111111111111111111111111111111111111111111111111111111111111111"
+            },
+            {
+              "message": 3,
+              "action_id": "2222222222222222222222222222222222222222222222222222222222222222",
+              "arm_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            }
+          ],
+          "selection": {},
+          "cache_context": {
+            "actions": [
+              {
+                "action_id": "1111111111111111111111111111111111111111111111111111111111111111",
+                "gap_s": 412.5,
+                "ttl_s": null,
+                "ttl_source": null,
+                "prompt_tokens": 18210,
+                "cache_read_tokens": 17900,
+                "cache_write_tokens": null,
+                "context_epoch": "e3",
+                "current_prefix_tokens": 21544,
+                "overlap_tokens": 18210
+              },
+              {
+                "action_id": "2222222222222222222222222222222222222222222222222222222222222222",
+                "gap_s": 35.2,
+                "ttl_s": null,
+                "ttl_source": null,
+                "prompt_tokens": null,
+                "cache_read_tokens": null,
+                "cache_write_tokens": null,
+                "context_epoch": "e3",
+                "current_prefix_tokens": 21390
+              }
+            ]
+          },
+          "not_admitted": [
+            {
+              "action_id": "1111111111111111111111111111111111111111111111111111111111111111",
+              "field": "residency",
+              "reason": "residency_requires_local_measured"
+            },
+            {
+              "action_id": "2222222222222222222222222222222222222222222222222222222222222222",
+              "field": "ttl",
+              "reason": "estimated_not_admitted"
+            },
+            {
+              "action_id": "2222222222222222222222222222222222222222222222222222222222222222",
+              "field": "usage",
+              "reason": "units_mismatch"
+            }
+          ]
+        },
+        "caller_evidence": true
+      }
+    },
+    {
+      "name": "model_hold_same_model",
+      "execution": {
+        "version": "arc-execution-context.v1",
+        "context_epoch": "e3",
+        "turn": {
+          "id": "t-0007",
+          "attempt": 1
+        },
+        "expect": {
+          "package_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "thinking_controls_sha256": null,
+          "offer_sha256": null
+        },
+        "attribution": [
+          {
+            "message": 1,
+            "action_id": "1111111111111111111111111111111111111111111111111111111111111111",
+            "arm_id": null,
+            "worker": "local-qwen",
+            "route_id": "rt_1",
+            "result": "custom"
+          },
+          {
+            "message": 3,
+            "action_id": "2222222222222222222222222222222222222222222222222222222222222222",
+            "arm_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "worker": "cloud-opus",
+            "route_id": "rt_2",
+            "result": "custom"
+          }
+        ],
+        "hold": {
+          "scope": "model",
+          "action_id": "2222222222222222222222222222222222222222222222222222222222222222"
+        },
+        "workers": [
+          {
+            "action_id": "1111111111111111111111111111111111111111111111111111111111111111",
+            "worker": "local-qwen",
+            "placement": "local",
+            "context_epoch": "e3",
+            "gap_s": 412.5,
+            "ttl": null,
+            "residency": {
+              "state": "resident",
+              "provenance": "local_measured"
+            },
+            "usage": {
+              "prompt_tokens": 18210,
+              "cache_read_tokens": 17900,
+              "cache_write_tokens": null,
+              "units": "hf:Qwen/Qwen3.8-27B@r1",
+              "provenance": "provider_reported"
+            },
+            "current_prefix": {
+              "tokens": 21544,
+              "overlap_tokens": 18210,
+              "units": "hf:Qwen/Qwen3.8-27B@r1",
+              "provenance": "local_measured"
+            }
+          },
+          {
+            "action_id": "2222222222222222222222222222222222222222222222222222222222222222",
+            "worker": "cloud-opus",
+            "placement": "cloud",
+            "context_epoch": "e3",
+            "gap_s": 35.2,
+            "ttl": {
+              "seconds": 300,
+              "source": "anthropic cache_control ephemeral 5m",
+              "basis": "wire_declared"
+            },
+            "residency": null,
+            "usage": {
+              "prompt_tokens": 20977,
+              "cache_read_tokens": 18100,
+              "cache_write_tokens": 2877,
+              "units": "provider:cloud-opus",
+              "provenance": "provider_reported"
+            },
+            "current_prefix": {
+              "tokens": 21390,
+              "overlap_tokens": null,
+              "units": "provider:cloud-opus",
+              "provenance": "provider_reported"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "pinned": {
+          "package_sha256": "matched",
+          "thinking_controls_sha256": "unpinned",
+          "offer_sha256": "unpinned"
+        },
+        "decide": {
+          "context_epoch": "e3",
+          "attribution": [
+            {
+              "message": 1,
+              "action_id": "1111111111111111111111111111111111111111111111111111111111111111"
+            },
+            {
+              "message": 3,
+              "action_id": "2222222222222222222222222222222222222222222222222222222222222222",
+              "arm_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            }
+          ],
+          "selection": {
+            "attested_held_action_id": "2222222222222222222222222222222222222222222222222222222222222222"
+          },
+          "cache_context": {
+            "actions": [
+              {
+                "action_id": "1111111111111111111111111111111111111111111111111111111111111111",
+                "gap_s": 412.5,
+                "ttl_s": null,
+                "ttl_source": null,
+                "prompt_tokens": 18210,
+                "cache_read_tokens": 17900,
+                "cache_write_tokens": null,
+                "context_epoch": "e3",
+                "current_prefix_tokens": 21544,
+                "overlap_tokens": 18210,
+                "residency": "resident"
+              },
+              {
+                "action_id": "2222222222222222222222222222222222222222222222222222222222222222",
+                "gap_s": 35.2,
+                "ttl_s": 300.0,
+                "ttl_source": "anthropic cache_control ephemeral 5m",
+                "prompt_tokens": 20977,
+                "cache_read_tokens": 18100,
+                "cache_write_tokens": 2877,
+                "context_epoch": "e3",
+                "current_prefix_tokens": 21390
+              }
+            ]
+          },
+          "not_admitted": []
+        },
+        "caller_evidence": true
+      }
+    },
+    {
+      "name": "identity_mismatch",
+      "execution": {
+        "version": "arc-execution-context.v1",
+        "context_epoch": "e3",
+        "turn": {
+          "id": "t-0007",
+          "attempt": 1
+        },
+        "expect": {
+          "package_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+          "thinking_controls_sha256": null,
+          "offer_sha256": null
+        },
+        "attribution": [
+          {
+            "message": 1,
+            "action_id": "1111111111111111111111111111111111111111111111111111111111111111",
+            "arm_id": null,
+            "worker": "local-qwen",
+            "route_id": "rt_1",
+            "result": "custom"
+          },
+          {
+            "message": 3,
+            "action_id": "2222222222222222222222222222222222222222222222222222222222222222",
+            "arm_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "worker": "cloud-opus",
+            "route_id": "rt_2",
+            "result": "custom"
+          }
+        ],
+        "hold": null,
+        "workers": [
+          {
+            "action_id": "1111111111111111111111111111111111111111111111111111111111111111",
+            "worker": "local-qwen",
+            "placement": "local",
+            "context_epoch": "e3",
+            "gap_s": 412.5,
+            "ttl": null,
+            "residency": {
+              "state": "resident",
+              "provenance": "local_measured"
+            },
+            "usage": {
+              "prompt_tokens": 18210,
+              "cache_read_tokens": 17900,
+              "cache_write_tokens": null,
+              "units": "hf:Qwen/Qwen3.8-27B@r1",
+              "provenance": "provider_reported"
+            },
+            "current_prefix": {
+              "tokens": 21544,
+              "overlap_tokens": 18210,
+              "units": "hf:Qwen/Qwen3.8-27B@r1",
+              "provenance": "local_measured"
+            }
+          },
+          {
+            "action_id": "2222222222222222222222222222222222222222222222222222222222222222",
+            "worker": "cloud-opus",
+            "placement": "cloud",
+            "context_epoch": "e3",
+            "gap_s": 35.2,
+            "ttl": {
+              "seconds": 300,
+              "source": "anthropic cache_control ephemeral 5m",
+              "basis": "wire_declared"
+            },
+            "residency": null,
+            "usage": {
+              "prompt_tokens": 20977,
+              "cache_read_tokens": 18100,
+              "cache_write_tokens": 2877,
+              "units": "provider:cloud-opus",
+              "provenance": "provider_reported"
+            },
+            "current_prefix": {
+              "tokens": 21390,
+              "overlap_tokens": null,
+              "units": "provider:cloud-opus",
+              "provenance": "provider_reported"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "refused": "execution_identity_mismatch"
+      }
+    },
+    {
+      "name": "unknown_action",
+      "execution": {
+        "version": "arc-execution-context.v1",
+        "context_epoch": "e3",
+        "turn": {
+          "id": "t-0007",
+          "attempt": 1
+        },
+        "expect": {
+          "package_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "thinking_controls_sha256": null,
+          "offer_sha256": null
+        },
+        "attribution": [
+          {
+            "message": 1,
+            "action_id": "1111111111111111111111111111111111111111111111111111111111111111",
+            "arm_id": null,
+            "worker": "local-qwen",
+            "route_id": "rt_1",
+            "result": "custom"
+          },
+          {
+            "message": 3,
+            "action_id": "2222222222222222222222222222222222222222222222222222222222222222",
+            "arm_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "worker": "cloud-opus",
+            "route_id": "rt_2",
+            "result": "custom"
+          }
+        ],
+        "hold": null,
+        "workers": [
+          {
+            "action_id": "9999999999999999999999999999999999999999999999999999999999999999",
+            "worker": "local-qwen",
+            "placement": "local",
+            "context_epoch": "e3",
+            "gap_s": 412.5,
+            "ttl": null,
+            "residency": {
+              "state": "resident",
+              "provenance": "local_measured"
+            },
+            "usage": {
+              "prompt_tokens": 18210,
+              "cache_read_tokens": 17900,
+              "cache_write_tokens": null,
+              "units": "hf:Qwen/Qwen3.8-27B@r1",
+              "provenance": "provider_reported"
+            },
+            "current_prefix": {
+              "tokens": 21544,
+              "overlap_tokens": 18210,
+              "units": "hf:Qwen/Qwen3.8-27B@r1",
+              "provenance": "local_measured"
+            }
+          },
+          {
+            "action_id": "2222222222222222222222222222222222222222222222222222222222222222",
+            "worker": "cloud-opus",
+            "placement": "cloud",
+            "context_epoch": "e3",
+            "gap_s": 35.2,
+            "ttl": {
+              "seconds": 300,
+              "source": "anthropic cache_control ephemeral 5m",
+              "basis": "wire_declared"
+            },
+            "residency": null,
+            "usage": {
+              "prompt_tokens": 20977,
+              "cache_read_tokens": 18100,
+              "cache_write_tokens": 2877,
+              "units": "provider:cloud-opus",
+              "provenance": "provider_reported"
+            },
+            "current_prefix": {
+              "tokens": 21390,
+              "overlap_tokens": null,
+              "units": "provider:cloud-opus",
+              "provenance": "provider_reported"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "refused": "execution_unknown_action"
+      }
+    },
+    {
+      "name": "unknown_arm",
+      "execution": {
+        "version": "arc-execution-context.v1",
+        "context_epoch": "e3",
+        "turn": {
+          "id": "t-0007",
+          "attempt": 1
+        },
+        "expect": {
+          "package_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "thinking_controls_sha256": null,
+          "offer_sha256": null
+        },
+        "attribution": [
+          {
+            "message": 1,
+            "action_id": "1111111111111111111111111111111111111111111111111111111111111111",
+            "arm_id": null,
+            "worker": "local-qwen",
+            "route_id": "rt_1",
+            "result": "custom"
+          },
+          {
+            "message": 3,
+            "action_id": "2222222222222222222222222222222222222222222222222222222222222222",
+            "arm_id": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "worker": "cloud-opus",
+            "route_id": "rt_2",
+            "result": "custom"
+          }
+        ],
+        "hold": null,
+        "workers": [
+          {
+            "action_id": "1111111111111111111111111111111111111111111111111111111111111111",
+            "worker": "local-qwen",
+            "placement": "local",
+            "context_epoch": "e3",
+            "gap_s": 412.5,
+            "ttl": null,
+            "residency": {
+              "state": "resident",
+              "provenance": "local_measured"
+            },
+            "usage": {
+              "prompt_tokens": 18210,
+              "cache_read_tokens": 17900,
+              "cache_write_tokens": null,
+              "units": "hf:Qwen/Qwen3.8-27B@r1",
+              "provenance": "provider_reported"
+            },
+            "current_prefix": {
+              "tokens": 21544,
+              "overlap_tokens": 18210,
+              "units": "hf:Qwen/Qwen3.8-27B@r1",
+              "provenance": "local_measured"
+            }
+          },
+          {
+            "action_id": "2222222222222222222222222222222222222222222222222222222222222222",
+            "worker": "cloud-opus",
+            "placement": "cloud",
+            "context_epoch": "e3",
+            "gap_s": 35.2,
+            "ttl": {
+              "seconds": 300,
+              "source": "anthropic cache_control ephemeral 5m",
+              "basis": "wire_declared"
+            },
+            "residency": null,
+            "usage": {
+              "prompt_tokens": 20977,
+              "cache_read_tokens": 18100,
+              "cache_write_tokens": 2877,
+              "units": "provider:cloud-opus",
+              "provenance": "provider_reported"
+            },
+            "current_prefix": {
+              "tokens": 21390,
+              "overlap_tokens": null,
+              "units": "provider:cloud-opus",
+              "provenance": "provider_reported"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "refused": "execution_unknown_action"
+      }
+    },
+    {
+      "name": "hold_conflict",
+      "execution": {
+        "version": "arc-execution-context.v1",
+        "context_epoch": "e3",
+        "turn": {
+          "id": "t-0007",
+          "attempt": 1
+        },
+        "expect": {
+          "package_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "thinking_controls_sha256": null,
+          "offer_sha256": null
+        },
+        "attribution": [
+          {
+            "message": 1,
+            "action_id": "1111111111111111111111111111111111111111111111111111111111111111",
+            "arm_id": null,
+            "worker": "local-qwen",
+            "route_id": "rt_1",
+            "result": "custom"
+          },
+          {
+            "message": 3,
+            "action_id": "2222222222222222222222222222222222222222222222222222222222222222",
+            "arm_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "worker": "cloud-opus",
+            "route_id": "rt_2",
+            "result": "custom"
+          }
+        ],
+        "hold": {
+          "scope": "model",
+          "action_id": "1111111111111111111111111111111111111111111111111111111111111111"
+        },
+        "workers": [
+          {
+            "action_id": "1111111111111111111111111111111111111111111111111111111111111111",
+            "worker": "local-qwen",
+            "placement": "local",
+            "context_epoch": "e3",
+            "gap_s": 412.5,
+            "ttl": null,
+            "residency": {
+              "state": "resident",
+              "provenance": "local_measured"
+            },
+            "usage": {
+              "prompt_tokens": 18210,
+              "cache_read_tokens": 17900,
+              "cache_write_tokens": null,
+              "units": "hf:Qwen/Qwen3.8-27B@r1",
+              "provenance": "provider_reported"
+            },
+            "current_prefix": {
+              "tokens": 21544,
+              "overlap_tokens": 18210,
+              "units": "hf:Qwen/Qwen3.8-27B@r1",
+              "provenance": "local_measured"
+            }
+          },
+          {
+            "action_id": "2222222222222222222222222222222222222222222222222222222222222222",
+            "worker": "cloud-opus",
+            "placement": "cloud",
+            "context_epoch": "e3",
+            "gap_s": 35.2,
+            "ttl": {
+              "seconds": 300,
+              "source": "anthropic cache_control ephemeral 5m",
+              "basis": "wire_declared"
+            },
+            "residency": null,
+            "usage": {
+              "prompt_tokens": 20977,
+              "cache_read_tokens": 18100,
+              "cache_write_tokens": 2877,
+              "units": "provider:cloud-opus",
+              "provenance": "provider_reported"
+            },
+            "current_prefix": {
+              "tokens": 21390,
+              "overlap_tokens": null,
+              "units": "provider:cloud-opus",
+              "provenance": "provider_reported"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "refused": "execution_hold_conflict"
+      }
+    },
+    {
+      "name": "hold_unavailable",
+      "execution": {
+        "version": "arc-execution-context.v1",
+        "context_epoch": "e3",
+        "turn": {
+          "id": "t-0007",
+          "attempt": 1
+        },
+        "expect": {
+          "package_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "thinking_controls_sha256": null,
+          "offer_sha256": null
+        },
+        "attribution": [
+          {
+            "message": 1,
+            "action_id": "1111111111111111111111111111111111111111111111111111111111111111",
+            "arm_id": null,
+            "worker": "local-qwen",
+            "route_id": "rt_1",
+            "result": "custom"
+          },
+          {
+            "message": 3,
+            "action_id": "2222222222222222222222222222222222222222222222222222222222222222",
+            "arm_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "worker": "cloud-opus",
+            "route_id": "rt_2",
+            "result": "custom"
+          }
+        ],
+        "hold": {
+          "scope": "action",
+          "action_id": "3333333333333333333333333333333333333333333333333333333333333333"
+        },
+        "workers": [
+          {
+            "action_id": "1111111111111111111111111111111111111111111111111111111111111111",
+            "worker": "local-qwen",
+            "placement": "local",
+            "context_epoch": "e3",
+            "gap_s": 412.5,
+            "ttl": null,
+            "residency": {
+              "state": "resident",
+              "provenance": "local_measured"
+            },
+            "usage": {
+              "prompt_tokens": 18210,
+              "cache_read_tokens": 17900,
+              "cache_write_tokens": null,
+              "units": "hf:Qwen/Qwen3.8-27B@r1",
+              "provenance": "provider_reported"
+            },
+            "current_prefix": {
+              "tokens": 21544,
+              "overlap_tokens": 18210,
+              "units": "hf:Qwen/Qwen3.8-27B@r1",
+              "provenance": "local_measured"
+            }
+          },
+          {
+            "action_id": "2222222222222222222222222222222222222222222222222222222222222222",
+            "worker": "cloud-opus",
+            "placement": "cloud",
+            "context_epoch": "e3",
+            "gap_s": 35.2,
+            "ttl": {
+              "seconds": 300,
+              "source": "anthropic cache_control ephemeral 5m",
+              "basis": "wire_declared"
+            },
+            "residency": null,
+            "usage": {
+              "prompt_tokens": 20977,
+              "cache_read_tokens": 18100,
+              "cache_write_tokens": 2877,
+              "units": "provider:cloud-opus",
+              "provenance": "provider_reported"
+            },
+            "current_prefix": {
+              "tokens": 21390,
+              "overlap_tokens": null,
+              "units": "provider:cloud-opus",
+              "provenance": "provider_reported"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "refused": "execution_hold_unavailable"
+      }
+    }
+  ]
+}

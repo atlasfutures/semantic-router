@@ -35,6 +35,9 @@ const (
 	arcFailureExecutionIdentityOffer    = "execution_identity_mismatch_offer_sha256"
 	arcFailureExecutionHoldConflict     = "execution_hold_conflict"
 	arcFailureExecutionHoldUnavailable  = "execution_hold_unavailable"
+	// arcFailureExecutionNotAdmitted is the cell's action_not_admitted
+	// without a hold: nothing it offers can serve this request (503).
+	arcFailureExecutionNotAdmitted = "execution_offer_not_admitted"
 )
 
 // routeExecutionClasses are the execution refusals, by class: the public
@@ -52,44 +55,35 @@ var routeExecutionClasses = map[string]struct {
 	arcFailureExecutionHoldUnavailable:  {"execution_hold_unavailable", 409, ""},
 }
 
-// routeIdentity is the identity a lookup decides under: the serving
-// package, its thinking-controls registry, and the offer (the actions
-// offered to this request, after binding health and exclusive).
-func routeIdentity(scorer *policyServiceScorer, available []string) selection.RaylineARCRouteIdentity {
+// routeIdentity is the identity a lookup was decided under: the serving
+// package, its thinking-controls registry, and the offer, which is the
+// decide response's available actions (the cell may narrow the request's).
+func routeIdentity(scorer *policyServiceScorer, response *raylinearc.PolicyDecisionResponse) selection.RaylineARCRouteIdentity {
+	offered := make([]string, 0, len(response.Actions))
+	for _, action := range response.Actions {
+		if action.Available {
+			offered = append(offered, action.ActionID)
+		}
+	}
 	return selection.RaylineARCRouteIdentity{
 		PackageSHA256:          scorer.sha256,
 		ThinkingControlsSHA256: scorer.thinkingControls,
-		OfferSHA256:            routesOfferSHA256(scorer.sha256, scorer.offerOf(available)),
+		OfferSHA256:            routesOfferSHA256(scorer.sha256, offered),
 	}
-}
-
-// offerOf is the offer the service decides over: the available actions,
-// narrowed to the operator's allow-list when the cell configures one.
-func (scorer *policyServiceScorer) offerOf(available []string) []string {
-	if len(scorer.offered) == 0 {
-		return available
-	}
-	offer := make([]string, 0, len(available))
-	for _, actionID := range available {
-		if slices.Contains(scorer.offered, actionID) {
-			offer = append(offer, actionID)
-		}
-	}
-	return offer
 }
 
 // applyRouteExecution checks a lookup's execution context against the
-// serving package and offer, in the contract's order (catalog, expect,
-// hold), and writes it into the decide request: the caller's epoch and
-// attribution, its hold, relaxed (no session state), and user_turn_cache
-// when it carries admitted cache evidence. The cache evidence itself is
-// sent by the request's cache_context hook (routeExecutionCacheContext).
-// It answers a failure class, or "" once applied.
+// serving package and the request's offer, in the contract's order
+// (arc_execution_context.bind: catalog and arms, the package and
+// thinking-controls pins, the hold), and writes it into the decide request:
+// the caller's epoch and attribution, its hold, relaxed (no session state),
+// and response_fields cache_trace for the echo. The offer pin is checked
+// against the answer (checkRouteExecutionOffer), since the cell may narrow
+// the offer. It answers a failure class, or "" once applied.
 func applyRouteExecution(
 	request *raylinearc.PolicyDecisionRequest,
 	scorer *policyServiceScorer,
 	execution *selection.RaylineARCRouteExecution,
-	identity selection.RaylineARCRouteIdentity,
 ) string {
 	if execution == nil {
 		return ""
@@ -99,40 +93,51 @@ func applyRouteExecution(
 			return arcFailureExecutionUnknownAction
 		}
 	}
-	for _, pin := range []struct {
-		expect  *string
-		serving string
-		class   string
-	}{
-		{execution.ExpectPackage, identity.PackageSHA256, arcFailureExecutionIdentityPackage},
-		{execution.ExpectThinkingControls, identity.ThinkingControlsSHA256, arcFailureExecutionIdentityControls},
-		{execution.ExpectOffer, identity.OfferSHA256, arcFailureExecutionIdentityOffer},
-	} {
-		if pin.expect != nil && *pin.expect != pin.serving {
-			return pin.class
+	for _, entry := range execution.Attribution {
+		arms, known := scorer.actionArms[entry.ActionID]
+		if entry.ArmID != nil && known && !slices.Contains(arms, *entry.ArmID) {
+			return arcFailureExecutionUnknownAction
 		}
 	}
+	if pin := execution.ExpectPackage; pin != nil && *pin != scorer.sha256 {
+		return arcFailureExecutionIdentityPackage
+	}
+	if pin := execution.ExpectThinkingControls; pin != nil && *pin != scorer.thinkingControls {
+		return arcFailureExecutionIdentityControls
+	}
 	held := execution.HoldActionID
+	if execution.HoldScope == "model" && len(execution.Attribution) > 0 &&
+		scorer.actionModel(execution.Attribution[len(execution.Attribution)-1].ActionID) != scorer.actionModel(held) {
+		// The service holds the last attributed message's model; a hold
+		// naming another would be silently overruled.
+		return arcFailureExecutionHoldConflict
+	}
+	if execution.HoldScope != "" && !slices.Contains(request.Selection.AvailableActionIDs, held) {
+		return arcFailureExecutionHoldUnavailable
+	}
 	switch execution.HoldScope {
 	case "model":
-		// The service holds the last attributed message's model; a hold
-		// naming another would be silently overruled, so it is refused.
-		if last := len(execution.Attribution); last > 0 &&
-			scorer.actionModel(execution.Attribution[last-1].ActionID) != scorer.actionModel(held) {
-			return arcFailureExecutionHoldConflict
-		}
 		request.Selection.AttestedHeldActionID = &held
 	case "action":
-		if !slices.Contains(scorer.offerOf(request.Selection.AvailableActionIDs), held) {
-			return arcFailureExecutionHoldUnavailable
-		}
 		request.Selection.HeldActionID = &held
 	}
 	request.ContextEpoch = execution.ContextEpoch
 	request.Attribution = append([]raylinearc.PolicyAttribution{}, execution.Attribution...)
 	request.EpisodeMode = raylinearc.PolicyEpisodeModeRelaxed
-	if execution.UserTurnCache != "" {
-		request.Selection.UserTurnCache = execution.UserTurnCache
+	if !slices.Contains(request.ResponseFields, routesCacheTraceField) {
+		request.ResponseFields = append(append([]string(nil), request.ResponseFields...), routesCacheTraceField)
+	}
+	return ""
+}
+
+// routesCacheTraceField elicits decision.cache_trace.
+const routesCacheTraceField = "cache_trace"
+
+// checkRouteExecutionOffer refuses an answer decided over another offer
+// than the caller pinned: it never reaches the caller.
+func checkRouteExecutionOffer(execution *selection.RaylineARCRouteExecution, identity selection.RaylineARCRouteIdentity) string {
+	if execution != nil && execution.ExpectOffer != nil && *execution.ExpectOffer != identity.OfferSHA256 {
+		return arcFailureExecutionIdentityOffer
 	}
 	return ""
 }
@@ -164,6 +169,11 @@ func routeExecutionServiceRefusal(err error) string {
 		return arcFailureExecutionHoldUnavailable
 	case reason == "attribution_out_of_catalog":
 		return arcFailureExecutionUnknownAction
+	case reason == "action_not_admitted":
+		// The cell's offer admits nothing for this request, or not the
+		// held action: the hold's refusal when there is one, otherwise the
+		// cell is unavailable for this request (503).
+		return arcFailureExecutionNotAdmitted
 	}
 	return ""
 }

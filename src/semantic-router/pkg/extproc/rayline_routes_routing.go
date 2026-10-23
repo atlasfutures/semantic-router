@@ -84,7 +84,7 @@ type raylineRoutesRouting struct {
 	// executionNotAdmitted is, per worker action, the evidence admission
 	// passed on as unknown, for the echo.
 	execution            *routesExecution
-	executionNotAdmitted map[string][]routesExecutionNotAdmitted
+	executionNotAdmitted []routesExecutionNotAdmitted
 }
 
 func (routing *raylineRoutesRouting) pricedModels() []string {
@@ -580,7 +580,8 @@ type raylineRoutesIdentity struct {
 type raylineRoutesIdentityPrices struct {
 	Basis       string  `json:"basis"`
 	PriceSHA256 *string `json:"price_sha256"`
-	Exclusive   bool    `json:"exclusive"`
+	// Exclusive is null for the catalog's prices.
+	Exclusive *bool `json:"exclusive"`
 }
 
 // raylineRoutesIdentityOf is one action's identity under the decision's
@@ -608,7 +609,8 @@ func raylineRoutesIdentityOf(
 	}
 	if routing != nil && routing.prices != nil {
 		hash := routing.priceSHA256
-		identity.Prices = raylineRoutesIdentityPrices{Basis: routesBasisCaller, PriceSHA256: &hash, Exclusive: routing.exclusive}
+		exclusive := routing.exclusive
+		identity.Prices = raylineRoutesIdentityPrices{Basis: routesBasisCaller, PriceSHA256: &hash, Exclusive: &exclusive}
 	}
 	return identity
 }
