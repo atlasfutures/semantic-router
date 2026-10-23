@@ -140,6 +140,8 @@ func TestClaudeCodeDirectiveCountsOnlyAsTheLastUserBlock(t *testing.T) {
 		{"before trailing system messages", []string{`{"role":"user","content":` + directive + `}`, `{"role":"system","content":"r"}`, `{"role":"system","content":[{"type":"text","text":"s"}]}`}, true},
 		{"before a later user message", []string{`{"role":"user","content":` + directive + `}`, `{"role":"system","content":"r"}`, `{"role":"user","content":"next"}`}, false},
 		{"system messages only", []string{`{"role":"system","content":` + directive + `}`}, false},
+		// A typed prompt opening with the directive's first sentence alone is a main turn.
+		{"typed opening sentence before a trailing system message", []string{`{"role":"user","content":` + jsonString("CRITICAL: Respond with TEXT ONLY. Do NOT call any tools.\nExplain caching.") + `}`, `{"role":"system","content":"r"}`}, false},
 	}
 	for _, c := range cases {
 		messages, _ := rawMessages(t, c.messages...)
@@ -157,7 +159,7 @@ func TestClaudeCodeDirectiveCountsOnlyAsTheLastUserBlock(t *testing.T) {
 // text, after any trailing system messages; a user who types the words is
 // having a main turn.
 func TestClaudeCodeSuggestionPromptCountsOnlyAsTheLastUserText(t *testing.T) {
-	prompt := jsonString(ClaudeCodeSuggestionPrompt + " Suggest what the user might naturally type next into Claude Code.]")
+	prompt := jsonString(ClaudeCodeSuggestionPrompt + "\n\nFIRST: look at the conversation.")
 	cases := []struct {
 		name     string
 		messages []string
@@ -168,6 +170,8 @@ func TestClaudeCodeSuggestionPromptCountsOnlyAsTheLastUserText(t *testing.T) {
 		{"before a trailing system message", []string{`{"role":"user","content":` + prompt + `}`, `{"role":"system","content":"r"}`}, true},
 		{"mid-text", []string{`{"role":"user","content":` + jsonString("what does [SUGGESTION MODE: do? I saw SUGGESTION MODE in a log") + `}`}, false},
 		{"unbracketed", []string{`{"role":"user","content":` + jsonString("SUGGESTION MODE: on") + `}`}, false},
+		{"typed with the marker leading", []string{`{"role":"user","content":` + jsonString("[SUGGESTION MODE: disabled] Explain this log marker.") + `}`, `{"role":"system","content":"r"}`}, false},
+		{"typed with the marker leading, as a block", []string{`{"role":"user","content":[{"type":"text","text":` + jsonString("[SUGGESTION MODE: disabled] Explain this log marker.") + `}]}`}, false},
 		{"quoted earlier in the transcript", []string{`{"role":"user","content":` + prompt + `}`, `{"role":"assistant","content":"done"}`, `{"role":"user","content":"next"}`}, false},
 		{"not the last block", []string{`{"role":"user","content":[{"type":"text","text":` + prompt + `},{"type":"text","text":"and also"}]}`}, false},
 		{"assistant message", []string{`{"role":"assistant","content":` + prompt + `}`}, false},

@@ -1,5 +1,5 @@
 {
- "provenance": "Claude Code 2.1.309 request body from one of our own test sessions through the dev cell, captured 2026-10-23 (message threads on; thread member dropped). Every string not read by a detector is replaced by a placeholder derived deterministically from its bytes, so bytes equal (or different) across these files were equal (or different) in the captured bodies; detector literals keep their opening text. Only messages are kept. The auto-compaction call: the summarize directive is the last block of the last user message, followed by a trailing role:system message.",
+ "provenance": "Claude Code 2.1.309 request body from one of our own test sessions through the dev cell, captured 2026-10-23 (message threads on; thread member dropped). Every string not read by a detector is replaced by a placeholder derived deterministically from its bytes, so bytes equal (or different) across these files were equal (or different) in the captured bodies; detector literals keep their opening text. Only messages are kept. The auto-compaction call: the summarize directive is the last block of the last user message, followed by a trailing role:system message. The summarize directive's opening sentence and first rule are restored verbatim from the capture.",
  "body": {
   "messages": [
    {
@@ -702,7 +702,7 @@
      },
      {
       "type": "text",
-      "text": "CRITICAL: Respond with TEXT ONLY. Do NOT call any tools. t-63e2bfb4ded2"
+      "text": "CRITICAL: Respond with TEXT ONLY. Do NOT call any tools.\n\n- Do NOT use Read, Bash, Grep, Glob, Edit, Write, or ANY other tool.\nt-63e2bfb4ded2"
      }
     ]
    },
