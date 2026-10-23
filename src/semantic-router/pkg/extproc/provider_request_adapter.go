@@ -1,8 +1,8 @@
 package extproc
 
 import (
+	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
 	modelcatalog "github.com/vllm-project/semantic-router/src/semantic-router/pkg/catalog"
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 )
 
 // adaptProviderRequest applies backend-dialect extensions after the standard

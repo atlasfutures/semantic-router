@@ -6,14 +6,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
+	"github.com/atlasfutures/semantic-router/rayline-core/protocolcodec"
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/headers"
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/metrics"
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/protocolcodec"
 )
 
 func (r *OpenAIRouter) handleNonStreamingResponseBody(
@@ -40,7 +40,7 @@ func (r *OpenAIRouter) handleNonStreamingResponseBody(
 	// A refused policy turn is declined before any response plugin can
 	// return early, so a blocked refusal still clears the boundary decision
 	// that chose the refusing arm.
-	refused := selectionCommitsOnCompletion(ctx) && responseRefused(semanticResponse)
+	refused := selectionCommitsOnCompletion(ctx) && llmprotocol.ResponseRefused(semanticResponse)
 	if refused {
 		declineRefusedTurn(ctx)
 	}
@@ -131,7 +131,7 @@ func (r *OpenAIRouter) handleNonStreamingResponseBody(
 	}
 	// A refusal is classed only once no response check blocked it, so one
 	// turn is one failure.
-	if responseRefused(semanticResponse) && ctx.ResponseFailureClass == "" {
+	if llmprotocol.ResponseRefused(semanticResponse) && ctx.ResponseFailureClass == "" {
 		recordTurnFailure(ctx, turnFailureRefusal, contentBeforeRefusal(semanticResponse))
 	}
 	reportUsage()

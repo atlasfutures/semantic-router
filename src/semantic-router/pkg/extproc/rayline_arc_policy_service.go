@@ -30,8 +30,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/atlasfutures/semantic-router/rayline-core/cachecontext"
+	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/metrics"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
@@ -606,7 +607,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		if !scorer.cacheContext {
 			return
 		}
-		request.CacheContext = raylinearc.BuildPolicyCacheContext(state.Warmth, time.Now().UTC(), scorer.actionArm)
+		request.CacheContext = cachecontext.BuildPolicyCacheContext(state.Warmth, time.Now().UTC(), scorer.actionArm)
 	}
 	// Admission is checked after the episode lease and before each service
 	// call, as the artifact mode checks it before encoding: a shed request

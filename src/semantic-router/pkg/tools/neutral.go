@@ -4,9 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
 	"github.com/openai/openai-go"
-
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 )
 
 // SemanticTool projects the typed tool-catalog value into the protocol-neutral

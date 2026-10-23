@@ -3,9 +3,9 @@ package extproc
 import (
 	"errors"
 
+	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
 	modelcatalog "github.com/vllm-project/semantic-router/src/semantic-router/pkg/catalog"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 )
 
 // raylineARCPolicyActionLevel is the base-level label a policy action's

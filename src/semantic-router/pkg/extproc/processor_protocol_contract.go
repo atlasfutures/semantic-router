@@ -5,14 +5,14 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
+	"github.com/atlasfutures/semantic-router/rayline-core/protocolcodec"
 	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 	typev3 "github.com/envoyproxy/go-control-plane/envoy/type/v3"
 
 	modelcatalog "github.com/vllm-project/semantic-router/src/semantic-router/pkg/catalog"
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/metrics"
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/protocolcodec"
 )
 
 func (r *OpenAIRouter) encodeSyntheticTextResponse(
@@ -240,18 +240,7 @@ func (r *OpenAIRouter) encodeDispatchRequest(ctx *RequestContext) ([]byte, error
 	dispatchRequest.HostedTools = ctx.DispatchHostedTools
 	applyDispatchAutoCache(&dispatchRequest, ctx)
 	applyDispatchToolResultNames(&dispatchRequest, ctx, format)
-	if format == llmprotocol.OpenAIChatV1 && dispatchRequest.Stream &&
-		!streamUsageAlreadyRequested(dispatchRequest.StreamOptions) {
-		// The Router always asks Chat backends for the final usage chunk so
-		// accounting observes authoritative tokens. Public stream rendering uses
-		// the original client preference retained in ctx.SemanticRequest.
-		includeUsage := true
-		dispatchRequest.StreamOptions.IncludeUsage = &includeUsage
-		// Source bytes no longer describe the dispatch request, so retire the
-		// replay claim on them. Without this the encoder forwards the original
-		// client bytes and the forced flag never reaches the backend.
-		dispatchRequest.Generation++
-	}
+	dispatchRequest = llmprotocol.WithUpstreamStreamUsage(dispatchRequest, format)
 	encoded, err := engine.EncodeRequest(format, dispatchRequest, ctx.ProtocolEnvelope)
 	if err != nil {
 		return nil, err
@@ -316,7 +305,7 @@ func (r *OpenAIRouter) decodeClientResponse(
 			if responseID != "" {
 				response.ID = responseID
 			}
-			restoreResponseToolNamespaces(response, namespaces)
+			llmprotocol.RestoreResponseToolNamespaces(response, namespaces)
 			return nil
 		}
 	}

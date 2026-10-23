@@ -5,7 +5,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
+	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
 )
 
 // Through the router's own ingress and dispatch: a Responses request with

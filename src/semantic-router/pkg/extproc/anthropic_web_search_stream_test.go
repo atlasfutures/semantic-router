@@ -7,14 +7,14 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
+	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
 )
 
 // A Claude Code turn in which the model searched streams through the router to
 // the client with its search blocks and citations, and the settled response
 // keeps them. Before this, the router refused the stream.
 func TestAnthropicSearchedAnswerStreamsThroughTheRouter(t *testing.T) {
-	raw, err := os.ReadFile("../protocolcodec/testdata/golden/stream/039-anthropic-web-search-in.json")
+	raw, err := os.ReadFile("../../../../rayline-core/protocolcodec/testdata/golden/stream/039-anthropic-web-search-in.json")
 	if err != nil {
 		t.Fatal(err)
 	}

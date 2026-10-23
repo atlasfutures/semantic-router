@@ -19,7 +19,7 @@ package extproc
 import (
 	"testing"
 
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
+	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
 )
 
 // semantic-router #248, ADR 0131 on the policy-mode lever: kimi-k3's Chat

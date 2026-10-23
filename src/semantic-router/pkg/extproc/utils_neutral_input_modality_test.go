@@ -3,9 +3,9 @@ package extproc
 import (
 	"testing"
 
+	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
+	"github.com/atlasfutures/semantic-router/rayline-core/protocolcodec"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/classification"
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/protocolcodec"
 )
 
 func decodeSignalRequest(t *testing.T, format llmprotocol.WireFormat, body string) *llmprotocol.Request {

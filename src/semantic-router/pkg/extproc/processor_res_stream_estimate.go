@@ -1,8 +1,8 @@
 package extproc
 
 import (
+	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/classification"
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 )
 
 // What a truncated turn cost, when the upstream never said.

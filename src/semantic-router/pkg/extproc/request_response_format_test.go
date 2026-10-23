@@ -5,10 +5,9 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
+	"github.com/atlasfutures/semantic-router/rayline-core/protocolcodec"
 	"github.com/openai/openai-go"
-
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/protocolcodec"
 )
 
 // jsonSchemaProbeFormat mirrors issue #3024. A type-only response_format is

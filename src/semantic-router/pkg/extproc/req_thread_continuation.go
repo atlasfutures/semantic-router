@@ -1,10 +1,9 @@
 package extproc
 
 import (
+	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
+	"github.com/atlasfutures/semantic-router/rayline-core/protocolcodec"
 	"github.com/tidwall/gjson"
-
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/protocolcodec"
 )
 
 // Claude Code under the message-threads-2026-08-12 beta continues a turn by

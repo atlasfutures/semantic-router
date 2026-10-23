@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/protocolcodec"
+	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
+	"github.com/atlasfutures/semantic-router/rayline-core/protocolcodec"
 )
 
 // The provider-bound body carries a client's web_search declaration only when
@@ -47,7 +47,7 @@ func TestDispatchSendsWebSearchOnlyToAnAdmittedModel(t *testing.T) {
 // A searched answer streams through the router to a Responses client with its
 // web_search_call item, and the settled response keeps the answer.
 func TestSearchedAnswerStreamsThroughTheRouter(t *testing.T) {
-	stream, err := os.ReadFile("../protocolcodec/testdata/golden/stream/038-responses-web-search-in.json")
+	stream, err := os.ReadFile("../../../../rayline-core/protocolcodec/testdata/golden/stream/038-responses-web-search-in.json")
 	if err != nil {
 		t.Fatal(err)
 	}
