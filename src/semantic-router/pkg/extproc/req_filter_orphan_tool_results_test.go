@@ -78,7 +78,7 @@ func TestFoldOrphanToolResults(t *testing.T) {
 		{
 			name:   "an escaped block type is still folded",
 			format: llmprotocol.AnthropicMessagesV1,
-			body:   `{"messages":[{"role":"user","content":[{"type":"tool_result","tool_use_id":"x","content":"a"}]}]}`,
+			body:   `{"messages":[{"role":"user","content":[{"type":"tool_\u0072esult","tool_use_id":"x","content":"a"}]}]}`,
 			want:   `{"messages":[{"role":"user","content":[{"type":"text","text":"a"}]}]}`,
 			folded: 1,
 		},
