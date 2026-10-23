@@ -72,6 +72,12 @@ type policyServiceScorer struct {
 	// model names its held candidate, so a lost replica's turn is re-asked
 	// with that model attested. A model-effort package is re-asked narrowed.
 	attestable bool
+	// thinkingControls is the package manifest's thinking_controls_sha256,
+	// part of a Decisions answer's identity; empty for a v4 package.
+	thinkingControls string
+	// offered is the operator's allow-list of offered actions
+	// (offered_action_ids); empty offers every bound action.
+	offered []string
 	// busyWait bounds how long a decision retries the service's
 	// session_busy (the episode's acquire timeout).
 	busyWait    time.Duration
@@ -165,14 +171,16 @@ func newPolicyServiceScorer(
 	policy := decision.Algorithm.RaylineARC.PolicyService
 	generation := strconv.FormatUint(raylineARCScorerGeneration.Add(1), 10)
 	scorer := &policyServiceScorer{
-		fallback:   policy.FallbackEnabled(),
-		schedule:   policy.ModelSchedule,
-		twoStage:   policy.PackageTwoStage(),
-		attestable: policy.PackageTwoStage() && policy.PackageStageOneByModel(),
-		busyWait:   time.Duration(decision.Algorithm.RaylineARC.Episode.AcquireTimeoutSeconds) * time.Second,
-		alias:      policy.PackageAlias,
-		sha256:     policy.PackageSHA256,
-		bindings:   make(map[string]policyBinding, len(policy.Bindings)),
+		fallback:         policy.FallbackEnabled(),
+		schedule:         policy.ModelSchedule,
+		twoStage:         policy.PackageTwoStage(),
+		attestable:       policy.PackageTwoStage() && policy.PackageStageOneByModel(),
+		thinkingControls: policy.PackageThinkingControlsSHA256(),
+		offered:          append([]string(nil), policy.OfferedActionIDs...),
+		busyWait:         time.Duration(decision.Algorithm.RaylineARC.Episode.AcquireTimeoutSeconds) * time.Second,
+		alias:            policy.PackageAlias,
+		sha256:           policy.PackageSHA256,
+		bindings:         make(map[string]policyBinding, len(policy.Bindings)),
 		// Off, the decide request carries no cache_context, as before it.
 		cacheContext: policy.CacheContext,
 		decisionsV2:  newPolicyDecisionsV2(policy.DecisionsV2),
@@ -608,6 +616,9 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		request.EpisodeMode = scorer.sideCallEpisodeMode(selector.now())
 	}
 	scorer.decisionsV2.apply(&request)
+	if len(scorer.offered) > 0 {
+		request.Selection.OfferedActionIDs = append([]string(nil), scorer.offered...)
+	}
 	if weight := arcContext.TurnCostWeight; weight != nil {
 		// Configurable ARC: the turn's own V, within the bounds readiness
 		// checked the package admits.
@@ -617,9 +628,27 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	explorationExcluded := scorer.exploration.apply(&request, arcContext.PolicySignalHeaders, sideCall)
 	pricesStatus := attachRoutingPrices(armed.prices, &request)
 	applyRouteControls(&request, routeControls)
+	var execution *selection.RaylineARCRouteExecution
+	if routeControls != nil {
+		execution = routeControls.Execution
+	}
+	// A caller's routing.execution stands in for VSR's own episode for this
+	// lookup only; it is checked against the package and offer first.
+	if class := applyRouteExecution(&request, scorer, execution, routeIdentity(scorer, available)); class != "" {
+		logging.ComponentErrorEvent("extproc", "rayline_arc_policy_service_failed", map[string]interface{}{
+			"class": class, "episode_id_hash": arcContext.EpisodeIDHash,
+		})
+		return nil, arcSelectionFailure(class)
+	}
 	// The episode's cache evidence is read at each call, so a retry's gaps
-	// are as of that call, on the wall clock the commit dates warmth by.
+	// are as of that call, on the wall clock the commit dates warmth by. A
+	// lookup with an execution context sends the caller's admitted evidence
+	// instead: it has no episode warmth of its own.
 	withCacheContext := func(request *raylinearc.PolicyDecisionRequest) {
+		if execution != nil {
+			request.CacheContext = routeExecutionCacheContext(execution)
+			return
+		}
 		if !scorer.cacheContext {
 			return
 		}
@@ -667,7 +696,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		derivedOffer = true
 		request.Selection.AvailableActionIDs = offer
 	}
-	if held < 0 && scorer.twoStage {
+	if held < 0 && scorer.twoStage && execution == nil {
 		if found, ok := derivedHoldOffer(scorer, arcContext, available); ok && len(found.offer) > 0 {
 			derived = found
 			logRaylineARCDerivedHold(arcContext, derived, "first")
@@ -751,6 +780,11 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		return nil, boundedARCEncoderFailure(shed.err)
 	}
 	latency := selector.now().Sub(started)
+	if err != nil && execution != nil {
+		if class := routeExecutionServiceRefusal(err); class != "" {
+			return nil, arcSelectionFailure(class)
+		}
+	}
 	if err != nil {
 		class := "transport"
 		var failure *raylinearc.PolicyServiceError
@@ -906,6 +940,14 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		cellExploration = &withoutRoute
 	}
 	scorer.exploration.record(result.RaylineARC, cellExploration, response, explorationExcluded)
+	if routeControls != nil {
+		identity := routeIdentity(scorer, request.Selection.AvailableActionIDs)
+		result.RaylineARC.RouteIdentity = &identity
+		result.RaylineARC.RouteExecutionApplied = execution != nil
+		if execution != nil {
+			result.RaylineARC.RouteCacheTrace = response.Decision.CacheTrace
+		}
+	}
 	if class := recordRouteControls(result.RaylineARC, scorer, routeControls, response, available); class != "" {
 		logging.ComponentErrorEvent("extproc", "rayline_arc_policy_service_failed", map[string]interface{}{
 			"class": class, "episode_id_hash": arcContext.EpisodeIDHash,

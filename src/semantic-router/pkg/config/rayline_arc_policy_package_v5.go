@@ -89,6 +89,17 @@ func (cfg *RaylineARCPolicyServiceConfig) PackageV5Action(actionID string) (Rayl
 	return action, ok
 }
 
+// PackageThinkingControlsSHA256 is the v5 manifest's
+// thinking_controls_sha256 (the compiled registry its actions resolve
+// from); empty when the manifest does not load.
+func (cfg *RaylineARCPolicyServiceConfig) PackageThinkingControlsSHA256() string {
+	pkg, err := cfg.loadPackageV5()
+	if err != nil {
+		return ""
+	}
+	return pkg.manifest.ThinkingControlsSHA256
+}
+
 // PackageTwoStage reports whether the package is two-stage: its manifest
 // carries pathfinder's stage_one part, so the policy service chooses the
 // model at the package's own stage-one boundaries and holds it between them

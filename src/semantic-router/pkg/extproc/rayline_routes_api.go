@@ -104,6 +104,9 @@ type raylineRoutesResponse struct {
 	// two routes on one worker differ by; absent outside that mode.
 	ThinkingLevel  string `json:"thinking_level,omitempty"`
 	PolicyActionID string `json:"policy_action_id,omitempty"`
+	// Identity is the route's own identity (pathfinder #5874), on a
+	// policy-service lookup with routing controls.
+	Identity *raylineRoutesIdentity `json:"identity,omitempty"`
 	// Presets, Custom and Routing are the Decisions results and the echo of
 	// the request's routing block (pathfinder#5664), on a cell that serves
 	// routing controls: presets always, custom exactly when routing.value_usd
@@ -323,6 +326,13 @@ func (r *OpenAIRouter) handleRaylineRoutesAPI(
 	// no trajectory to join, and without the setting this cell does not keep
 	// one to join it to.
 	ephemeral := episode == "" || !settings.EpisodeWrites
+	// A lookup carrying routing.execution is stateless: the caller owns its
+	// execution state, so nothing is read from or written to an episode. An
+	// ephemeral consult decides under a fresh random episode id, so no two
+	// callers (nor two lookups) ever share an encoder session.
+	if controls != nil && controls.Execution != nil {
+		ephemeral = true
+	}
 	started := time.Now()
 	decision, err := runtime.RouteDecision(
 		lookupContext,
@@ -407,6 +417,11 @@ func (r *OpenAIRouter) raylineRoutesFailure(
 ) *ext_proc.ProcessingResponse {
 	contended := errors.Is(err, routerruntime.ErrRouteDecisionContended)
 	invalid := errors.Is(err, routerruntime.ErrRouteDecisionInvalidBody)
+	// A refused routing.execution answers its own code, before anything else.
+	var executionRefusal *routeExecutionRefusal
+	if errors.As(err, &executionRefusal) {
+		return r.createRaylineRoutesCodedError(ctx, executionRefusal.contract())
+	}
 	expired := errors.Is(lookupContext.Err(), context.DeadlineExceeded)
 	logging.ComponentErrorEvent("extproc", "routing_decision_failed", map[string]interface{}{
 		"routing_decision_id": routeID,

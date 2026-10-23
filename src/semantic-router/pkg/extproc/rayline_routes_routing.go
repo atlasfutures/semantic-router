@@ -80,6 +80,11 @@ type raylineRoutesRouting struct {
 	// exclusiveSent tells an explicit false from absence.
 	exclusiveSent bool
 	priceSHA256   string
+	// execution is the caller's execution context (routing.execution);
+	// executionNotAdmitted is, per worker action, the evidence admission
+	// passed on as unknown, for the echo.
+	execution            *routesExecution
+	executionNotAdmitted map[string][]routesExecutionNotAdmitted
 }
 
 func (routing *raylineRoutesRouting) pricedModels() []string {
@@ -124,6 +129,13 @@ func readRaylineRoutesRouting(
 	if failure := routesReadMembers(routing, members, envelope["model"]); failure != nil {
 		return nil, nil, failure
 	}
+	if raw, ok := members["execution"]; ok {
+		execution, failure := readRoutesExecution(raw, envelope)
+		if failure != nil {
+			return nil, nil, failure
+		}
+		routing.execution = execution
+	}
 	stripped, refusal := stripRoutingMember(body)
 	if refusal != nil {
 		return nil, nil, refusal
@@ -163,7 +175,7 @@ func routesReadMembers(
 	var unknown []string
 	for name := range members {
 		switch name {
-		case "value_usd", "temperature", "prices", "exclusive":
+		case "value_usd", "temperature", "prices", "exclusive", "execution":
 		default:
 			unknown = append(unknown, name)
 		}
@@ -478,6 +490,9 @@ func raylineRoutesControls(
 		controls.Exclusive = routing.exclusive
 		controls.PriceSHA256 = routing.priceSHA256
 	}
+	if routing.execution != nil {
+		controls.Execution, routing.executionNotAdmitted = routesExecutionControls(routing.execution)
+	}
 	return controls
 }
 
@@ -492,7 +507,9 @@ func raylineRoutesRoutingControlsKey(controls *selection.RaylineARCRouteControls
 		Exploration *raylinearc.PolicyExplorationRequest `json:"exploration"`
 		Store       string                               `json:"store"`
 		Exclusive   bool                                 `json:"exclusive"`
-	}{controls.Points, controls.Exploration, routesStoreVersion(controls), controls.Exclusive})
+		// Two lookups with different execution contexts decide differently.
+		Execution *selection.RaylineARCRouteExecution `json:"execution"`
+	}{controls.Points, controls.Exploration, routesStoreVersion(controls), controls.Exclusive, controls.Execution})
 	if err != nil {
 		return "unencodable"
 	}
@@ -540,6 +557,60 @@ type raylineRoutesResult struct {
 	CostWeight     float64                         `json:"cost_weight"`
 	Prices         raylineRoutesResultPrices       `json:"prices"`
 	Temperature    *raylineRoutesResultTemperature `json:"temperature,omitempty"`
+	// Identity is what the result was decided under and executes as
+	// (pathfinder #5874), on a policy-service lookup.
+	Identity *raylineRoutesIdentity `json:"identity,omitempty"`
+}
+
+// raylineRoutesIdentity is a result's identity: the serving package, the
+// action (policy_action_id is the same value), its control, the arm the
+// service selected, the thinking-controls registry, the offer, and the
+// price world. A value the service did not state is null.
+type raylineRoutesIdentity struct {
+	PackageSHA256          string                      `json:"package_sha256"`
+	ActionID               *string                     `json:"action_id"`
+	PolicyActionID         *string                     `json:"policy_action_id"`
+	ControlID              *string                     `json:"control_id"`
+	ArmID                  *string                     `json:"arm_id"`
+	ThinkingControlsSHA256 *string                     `json:"thinking_controls_sha256"`
+	OfferSHA256            string                      `json:"offer_sha256"`
+	Prices                 raylineRoutesIdentityPrices `json:"prices"`
+}
+
+type raylineRoutesIdentityPrices struct {
+	Basis       string  `json:"basis"`
+	PriceSHA256 *string `json:"price_sha256"`
+	Exclusive   bool    `json:"exclusive"`
+}
+
+// raylineRoutesIdentityOf is one action's identity under the decision's
+// package and offer; nil when the decision states no identity.
+func raylineRoutesIdentityOf(
+	decision routerruntime.RouteDecision,
+	routing *raylineRoutesRouting,
+	actionID, controlID, armID string,
+) *raylineRoutesIdentity {
+	if decision.Identity == nil {
+		return nil
+	}
+	known := func(value string) *string {
+		if value == "" {
+			return nil
+		}
+		return &value
+	}
+	identity := &raylineRoutesIdentity{
+		PackageSHA256: decision.Identity.PackageSHA256, ActionID: known(actionID), PolicyActionID: known(actionID),
+		ControlID: known(controlID), ArmID: known(armID),
+		ThinkingControlsSHA256: known(decision.Identity.ThinkingControlsSHA256),
+		OfferSHA256:            decision.Identity.OfferSHA256,
+		Prices:                 raylineRoutesIdentityPrices{Basis: routesBasisCatalog},
+	}
+	if routing != nil && routing.prices != nil {
+		hash := routing.priceSHA256
+		identity.Prices = raylineRoutesIdentityPrices{Basis: routesBasisCaller, PriceSHA256: &hash, Exclusive: routing.exclusive}
+	}
+	return identity
 }
 
 type raylineRoutesPresets struct {
@@ -560,10 +631,11 @@ type raylineRoutesPricesEcho struct {
 }
 
 type raylineRoutesRoutingEcho struct {
-	ValueUSD      *raylineRoutesEchoStatus `json:"value_usd,omitempty"`
-	Temperature   *raylineRoutesEchoStatus `json:"temperature,omitempty"`
-	Prices        *raylineRoutesPricesEcho `json:"prices,omitempty"`
-	UnappliedKeys []string                 `json:"unapplied_keys"`
+	ValueUSD      *raylineRoutesEchoStatus    `json:"value_usd,omitempty"`
+	Temperature   *raylineRoutesEchoStatus    `json:"temperature,omitempty"`
+	Prices        *raylineRoutesPricesEcho    `json:"prices,omitempty"`
+	Execution     *raylineRoutesExecutionEcho `json:"execution,omitempty"`
+	UnappliedKeys []string                    `json:"unapplied_keys"`
 }
 
 // raylineRoutesAddResults writes the presets, the custom result, the routing
@@ -579,9 +651,11 @@ func raylineRoutesAddResults(
 	allSupported := true
 	for _, result := range decision.Results {
 		rendered, supported := raylineRoutesResultOf(result, routing)
+		rendered.Identity = raylineRoutesIdentityOf(decision, routing, result.PolicyActionID, result.ControlID, result.ArmID)
 		allSupported = allSupported && supported
 		results[result.Name] = rendered
 	}
+	payload.Identity = raylineRoutesIdentityOf(decision, routing, decision.PolicyActionID, decision.ControlID, decision.ArmID)
 	swift, haveSwift := results["swift"]
 	sage, haveSage := results["sage"]
 	if !haveSwift || !haveSage {
@@ -611,6 +685,12 @@ func raylineRoutesAddResults(
 			if encoded, err := json.Marshal(decision.Exploration); err == nil {
 				payload.Exploration = encoded
 			}
+		}
+	}
+	if routing.execution != nil {
+		echo.Execution = raylineRoutesExecutionEchoOf(routing, decision)
+		if echo.Execution.Status == "unsupported" {
+			echo.UnappliedKeys = append(echo.UnappliedKeys, "execution")
 		}
 	}
 	if routing.prices != nil {

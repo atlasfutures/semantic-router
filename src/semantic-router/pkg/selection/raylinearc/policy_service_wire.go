@@ -84,6 +84,15 @@ type PolicySelection struct {
 	// response's decision.stage_one.exploration records it. Omitted unless
 	// the cell configures it and the turn's user is eligible.
 	Exploration *PolicyExplorationRequest `json:"exploration,omitempty"`
+	// UserTurnCache is the cell's serving-time cache mode for a typed user
+	// turn (pathfinder #5721, selection.user_turn_cache); the service
+	// records it with user_turn_cache_source: request. Omitted when the cell
+	// configures none, so the package's own mode decides.
+	UserTurnCache string `json:"user_turn_cache,omitempty"`
+	// OfferedActionIDs is the cell operator's allow-list of offered actions
+	// (pathfinder #5874, provisional name), which the service intersects
+	// with available_action_ids. Omitted when the cell configures none.
+	OfferedActionIDs []string `json:"offered_action_ids,omitempty"`
 }
 
 type PolicyEvaluation struct {
@@ -390,6 +399,32 @@ type PolicyDecision struct {
 	// StageOne is present only when the request sent selection.exploration
 	// with tau > 0 (pathfinder#5436); the service omits it, never nulls it.
 	StageOne *PolicyDecisionStageOne `json:"stage_one,omitempty"`
+	// CacheTrace is the opt-in record of how the decision read a caller's
+	// cache evidence (pathfinder #5874, decision.cache_trace), elicited by a
+	// cache_context carrying execution members. Kept as the service wrote
+	// it: VSR copies it into the routing.execution echo, never recomputes it.
+	CacheTrace *PolicyCacheTrace `json:"cache_trace,omitempty"`
+}
+
+// PolicyCacheTrace is decision.cache_trace: the boundary the decision was
+// taken at, the effective user_turn_cache mode, and per evidence entry
+// whether it was read and what it gave the decision.
+type PolicyCacheTrace struct {
+	Boundary      *string                  `json:"boundary"`
+	UserTurnCache *string                  `json:"user_turn_cache"`
+	Actions       []PolicyCacheTraceAction `json:"actions"`
+}
+
+// PolicyCacheTraceAction is one cache_context entry as the decision read it;
+// every value but ActionID is null when the service did not state it.
+type PolicyCacheTraceAction struct {
+	ActionID         string   `json:"action_id"`
+	Read             *bool    `json:"read"`
+	Reason           *string  `json:"reason"`
+	Basis            *string  `json:"basis"`
+	PWarm            *float64 `json:"p_warm"`
+	PrefixTokensUsed *int     `json:"prefix_tokens_used"`
+	PrefixBasis      *string  `json:"prefix_basis"`
 }
 
 type PolicyScoredPackage struct {

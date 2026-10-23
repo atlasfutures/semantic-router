@@ -170,8 +170,19 @@ func (service *raylineARCDecisionService) RouteDecision(
 	}
 	decisionFacts.Baseline = routeBaseline(selected.catalog, selected.reference)
 	if request.Routing != nil {
-		decisionFacts.Results = routeResults(request.Routing, trace, selected.catalog)
+		controlOf := routeControlOf(algorithm)
+		decisionFacts.Results = routeResults(request.Routing, trace, selected.catalog, controlOf)
 		decisionFacts.Exploration = trace.RouteExploration
+		if identity := trace.RouteIdentity; identity != nil {
+			decisionFacts.Identity = &routerruntime.RouteIdentity{
+				PackageSHA256: identity.PackageSHA256, ThinkingControlsSHA256: identity.ThinkingControlsSHA256,
+				OfferSHA256: identity.OfferSHA256,
+			}
+			decisionFacts.ArmID = trace.PolicyArmID
+			decisionFacts.ControlID = controlOf(trace.PolicyActionID)
+		}
+		decisionFacts.ExecutionApplied = trace.RouteExecutionApplied
+		decisionFacts.CacheTrace = trace.RouteCacheTrace
 	}
 	// The episode is reported only when the caller joined one. An ephemeral
 	// consult scored against a fresh in-memory episode, so its turn index and
@@ -199,6 +210,7 @@ func routeResults(
 	controls *selection.RaylineARCRouteControls,
 	trace *selection.RaylineARCTrace,
 	catalog raylineARCWorkerProvider,
+	controlOf func(actionID string) string,
 ) []routerruntime.RouteResult {
 	results := make([]routerruntime.RouteResult, 0, len(controls.Points))
 	for _, point := range controls.Points {
@@ -222,6 +234,8 @@ func routeResults(
 			},
 			ThinkingLevel:  picked.ThinkingLevel,
 			PolicyActionID: picked.Pick.SelectedActionID,
+			ArmID:          picked.Pick.SelectedArmID,
+			ControlID:      controlOf(picked.Pick.SelectedActionID),
 			Exploration:    picked.Pick.Exploration,
 		})
 	}
@@ -849,6 +863,9 @@ func selectionFailureError(err error) error {
 		if routesInconsistentClasses[failure.class] {
 			return fmt.Errorf("%w: %w", routerruntime.ErrRouteDecisionInconsistent, err)
 		}
+		if _, refused := routeExecutionClasses[failure.class]; refused {
+			return &routeExecutionRefusal{class: failure.class, err: err}
+		}
 	}
 	return err
 }
@@ -874,4 +891,20 @@ func prepareFailureError(failure string) error {
 			routerruntime.ErrRouteDecisionInvalidBody, errRaylineRoutesStatelessPath, base)
 	}
 	return base
+}
+
+// routeControlOf names a package action's control id (sha256(JCS(control)),
+// the manifest's control_id) from the decision's v5 package; "" for an
+// action or package it does not know.
+func routeControlOf(algorithm *config.AlgorithmConfig) func(actionID string) string {
+	return func(actionID string) string {
+		if algorithm == nil || algorithm.RaylineARC == nil || algorithm.RaylineARC.PolicyService == nil {
+			return ""
+		}
+		action, ok := algorithm.RaylineARC.PolicyService.PackageV5Action(actionID)
+		if !ok {
+			return ""
+		}
+		return action.Control.ID()
+	}
 }
