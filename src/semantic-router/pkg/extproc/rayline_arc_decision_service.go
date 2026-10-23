@@ -603,10 +603,18 @@ func (service *raylineARCDecisionService) decisionOnlyRequestContext(
 	if wireFormat == "" {
 		wireFormat = defaultConsultWireFormat
 	}
-	body := foldIngressOrphanToolResults(request.Body, wireFormat, request.DecisionID)
+	// A thread continuation names history this cell does not hold, so a
+	// consult on it would route a fragment (req_thread_continuation.go).
+	if err := threadContinuationRefusal(engine, wireFormat, request.Body); err != nil {
+		return nil, fmt.Errorf(
+			"%w: decision-only routing refused a thread continuation: %w",
+			routerruntime.ErrRouteDecisionInvalidBody,
+			err,
+		)
+	}
 	decoded, envelope, _, err := engine.DecodeRequestForMutation(
 		wireFormat,
-		body,
+		request.Body,
 	)
 	if err != nil {
 		return nil, fmt.Errorf(
@@ -638,7 +646,7 @@ func (service *raylineARCDecisionService) decisionOnlyRequestContext(
 	}
 	return &RequestContext{
 		Headers:              headers,
-		RaylineARCRawBody:    body,
+		RaylineARCRawBody:    request.Body,
 		RequestID:            request.DecisionID,
 		SourceFormat:         wireFormat,
 		SemanticRequest:      &decoded,

@@ -10,6 +10,7 @@ import (
 
 	modelcatalog "github.com/vllm-project/semantic-router/src/semantic-router/pkg/catalog"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/metrics"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/protocolcodec"
 )
@@ -109,15 +110,17 @@ func (r *OpenAIRouter) prepareProtocolRequest(
 	if err != nil {
 		return nil, r.createErrorResponse(503, "protocol runtime unavailable")
 	}
+	// A thread continuation is refused before it is decoded or routed: the
+	// cell keeps no thread, so the body is a fragment (req_thread_continuation.go).
+	if err := threadContinuationRefusal(engine, ctx.SourceFormat, body); err != nil {
+		logging.ComponentEvent("extproc", "thread_continuation_refused", map[string]interface{}{
+			"request_id": ctx.RequestID,
+		})
+		return nil, r.ingressProtocolErrorResponse(ctx, err)
+	}
 	request, envelope, diagnostics, err := engine.DecodeRequestForMutation(ctx.SourceFormat, body)
 	if err != nil {
-		recordIngressProtocolError(ctx, err)
-		var protocolError *llmprotocol.ProtocolError
-		if errors.As(err, &protocolError) {
-			copy := *protocolError
-			ctx.ImmediateProtocolError = &copy
-		}
-		return nil, r.createErrorResponse(400, "invalid inference request")
+		return nil, r.ingressProtocolErrorResponse(ctx, err)
 	}
 	logIngressBetaSet(ctx)
 	request.Trusted.SourceFormat = ctx.SourceFormat
@@ -140,6 +143,19 @@ func (r *OpenAIRouter) prepareProtocolRequest(
 	}
 	populateSessionTransitionFields(ctx)
 	return &request, nil
+}
+
+// ingressProtocolErrorResponse answers a request the ingress refused: the
+// protocol error is kept on the context so the client re-encode shows its
+// code and message.
+func (r *OpenAIRouter) ingressProtocolErrorResponse(ctx *RequestContext, err error) *ext_proc.ProcessingResponse {
+	recordIngressProtocolError(ctx, err)
+	var protocolError *llmprotocol.ProtocolError
+	if errors.As(err, &protocolError) {
+		copy := *protocolError
+		ctx.ImmediateProtocolError = &copy
+	}
+	return r.createErrorResponse(400, "invalid inference request")
 }
 
 // responseObjectStateResponse answers a Responses object-state refusal. The
