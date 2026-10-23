@@ -55,6 +55,12 @@ var (
 		"claude_code_2.1.280_title.json",
 		"claude_code_2.1.280_compaction_request.json",
 		"claude_code_2.1.280_post_compaction.json",
+		"claude_code_2.1.309_main_turn_before_suggestion.json",
+		"claude_code_2.1.309_prompt_suggestion.json",
+		"claude_code_2.1.309_main_turn_after_suggestion.json",
+		"claude_code_2.1.309_main_turn_before_compaction.json",
+		"claude_code_2.1.309_compaction_request.json",
+		"claude_code_2.1.309_post_compaction.json",
 	}
 	codexFixtures = []string{
 		"codex_0.154.0_main_turn.json",
@@ -70,15 +76,25 @@ func TestClaudeCodeWireShapesAreEachRecognisedByExactlyTheirDetector(t *testing.
 		title := IsClaudeCodeTitleRequest(body.System)
 		summarize := IsClaudeCodeCompactionRequest(body.Messages)
 		continued := ClaudeCodeCompactionSummaryDigest(body.Messages) != ""
+		suggestion := IsClaudeCodeSuggestionRequest(body.Messages)
 		subagent := ClaudeCodeSubagentClaim(body.System)
-		want := map[string][3]bool{
-			"claude_code_2.1.280_main_turn.json":          {false, false, false},
-			"claude_code_2.1.280_title.json":              {true, false, false},
-			"claude_code_2.1.280_compaction_request.json": {false, true, false},
-			"claude_code_2.1.280_post_compaction.json":    {false, false, true},
+		want, ok := map[string][4]bool{
+			"claude_code_2.1.280_main_turn.json":                   {false, false, false, false},
+			"claude_code_2.1.280_title.json":                       {true, false, false, false},
+			"claude_code_2.1.280_compaction_request.json":          {false, true, false, false},
+			"claude_code_2.1.280_post_compaction.json":             {false, false, true, false},
+			"claude_code_2.1.309_main_turn_before_suggestion.json": {false, false, false, false},
+			"claude_code_2.1.309_prompt_suggestion.json":           {false, false, false, true},
+			"claude_code_2.1.309_main_turn_after_suggestion.json":  {false, false, false, false},
+			"claude_code_2.1.309_main_turn_before_compaction.json": {false, false, false, false},
+			"claude_code_2.1.309_compaction_request.json":          {false, true, false, false},
+			"claude_code_2.1.309_post_compaction.json":             {false, false, true, false},
 		}[name]
-		if got := [3]bool{title, summarize, continued}; got != want || subagent {
-			t.Errorf("%s: title/summarize/continued = %v subagent %v, want %v", name, got, subagent, want)
+		if !ok {
+			t.Fatalf("%s: no expectation", name)
+		}
+		if got := [4]bool{title, summarize, continued, suggestion}; got != want || subagent {
+			t.Errorf("%s: title/summarize/continued/suggestion = %v subagent %v, want %v", name, got, subagent, want)
 		}
 	}
 }
@@ -120,6 +136,10 @@ func TestClaudeCodeDirectiveCountsOnlyAsTheLastUserBlock(t *testing.T) {
 		{"not the last block", []string{`{"role":"user","content":[{"type":"text","text":` + directive + `},{"type":"text","text":"and also"}]}`}, false},
 		{"assistant message", []string{`{"role":"assistant","content":` + directive + `}`}, false},
 		{"mid-text", []string{`{"role":"user","content":` + jsonString("please: "+ClaudeCodeSummarizeDirective) + `}`}, false},
+		// Claude Code 2.1.309 sends a role:system message after the directive.
+		{"before trailing system messages", []string{`{"role":"user","content":` + directive + `}`, `{"role":"system","content":"r"}`, `{"role":"system","content":[{"type":"text","text":"s"}]}`}, true},
+		{"before a later user message", []string{`{"role":"user","content":` + directive + `}`, `{"role":"system","content":"r"}`, `{"role":"user","content":"next"}`}, false},
+		{"system messages only", []string{`{"role":"system","content":` + directive + `}`}, false},
 	}
 	for _, c := range cases {
 		messages, _ := rawMessages(t, c.messages...)
@@ -130,6 +150,34 @@ func TestClaudeCodeDirectiveCountsOnlyAsTheLastUserBlock(t *testing.T) {
 	if IsClaudeCodeTitleRequest(json.RawMessage(`[{"type":"text","text":"be brief"}]`)) ||
 		!IsClaudeCodeTitleRequest(json.RawMessage(jsonString(ClaudeCodeTitlePrompt+" Use five words."))) {
 		t.Fatal("title prompt detection is wrong on a plain system or a string system")
+	}
+}
+
+// The suggestion prompt counts only when it opens the last user message's
+// text, after any trailing system messages; a user who types the words is
+// having a main turn.
+func TestClaudeCodeSuggestionPromptCountsOnlyAsTheLastUserText(t *testing.T) {
+	prompt := jsonString(ClaudeCodeSuggestionPrompt + " Suggest what the user might naturally type next into Claude Code.]")
+	cases := []struct {
+		name     string
+		messages []string
+		want     bool
+	}{
+		{"string content", []string{`{"role":"user","content":` + prompt + `}`}, true},
+		{"last text block", []string{`{"role":"user","content":[{"type":"text","text":` + prompt + `}]}`}, true},
+		{"before a trailing system message", []string{`{"role":"user","content":` + prompt + `}`, `{"role":"system","content":"r"}`}, true},
+		{"mid-text", []string{`{"role":"user","content":` + jsonString("what does [SUGGESTION MODE: do? I saw SUGGESTION MODE in a log") + `}`}, false},
+		{"unbracketed", []string{`{"role":"user","content":` + jsonString("SUGGESTION MODE: on") + `}`}, false},
+		{"quoted earlier in the transcript", []string{`{"role":"user","content":` + prompt + `}`, `{"role":"assistant","content":"done"}`, `{"role":"user","content":"next"}`}, false},
+		{"not the last block", []string{`{"role":"user","content":[{"type":"text","text":` + prompt + `},{"type":"text","text":"and also"}]}`}, false},
+		{"assistant message", []string{`{"role":"assistant","content":` + prompt + `}`}, false},
+		{"no messages", nil, false},
+	}
+	for _, c := range cases {
+		messages, _ := rawMessages(t, c.messages...)
+		if got := IsClaudeCodeSuggestionRequest(messages); got != c.want {
+			t.Errorf("%s: %v, want %v", c.name, got, c.want)
+		}
 	}
 }
 
