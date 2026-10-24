@@ -72,10 +72,19 @@ type Decision struct {
 	ReportedModel   string
 	IdentitySource  string
 	AppliedValueUSD *float64
+	PriceProfile    *AppliedPriceProfile
 	PackageSHA256   string
 	ControlID       string
 	ArmID           *string
 	Result          string
+}
+
+// AppliedPriceProfile records the immutable profile resolved by the gateway.
+// Its saved content hash is distinct from the policy's canonical price digest.
+type AppliedPriceProfile struct {
+	ID          string `json:"id"`
+	Version     int64  `json:"version"`
+	ContentHash string `json:"content_hash"`
 }
 
 // DecisionInput contains the original public request and execution evidence.

@@ -19,13 +19,15 @@ import (
 // HTTPDecisions supports the current public API and an explicitly selected
 // execution-context contract. An unsupported request never changes API modes.
 type HTTPDecisions struct {
-	config      Config
-	client      *http.Client
-	actions     map[string]Action
-	deployments map[string]Deployment
-	now         func() time.Time
-	exclusive   bool
-	valueUSD    *float64
+	config         Config
+	client         *http.Client
+	actions        map[string]Action
+	deployments    map[string]Deployment
+	now            func() time.Time
+	exclusive      bool
+	valueUSD       *float64
+	profileID      string
+	profileVersion int64
 }
 
 func NewHTTPDecisions(config Config) (*HTTPDecisions, error) {
@@ -56,7 +58,7 @@ func NewHTTPDecisions(config Config) (*HTTPDecisions, error) {
 	}
 	if mode == DecisionsCurrent {
 		for key := range routing {
-			if key != "value_usd" && key != "prices" && key != "exclusive" {
+			if key != "value_usd" && key != "prices" && key != "exclusive" && key != "price_profile_id" && key != "price_profile_version" {
 				return nil, fmt.Errorf("current Decisions routing key %q has no supported applied acknowledgement", key)
 			}
 		}
@@ -64,10 +66,28 @@ func NewHTTPDecisions(config Config) (*HTTPDecisions, error) {
 	if _, exists := routing["prices"]; exists && !validSHA256(config.Decisions.PriceSHA256) {
 		return nil, fmt.Errorf("caller prices require a pinned price_sha256")
 	}
-	if _, exists := routing["prices"]; !exists && config.Decisions.PriceSHA256 != "" {
-		return nil, fmt.Errorf("price_sha256 requires explicit caller prices")
-	}
 	provider := &HTTPDecisions{config: config, client: &http.Client{Timeout: 90 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, actions: make(map[string]Action), deployments: make(map[string]Deployment), now: time.Now}
+	if raw, exists := routing["price_profile_id"]; exists {
+		if err := json.Unmarshal(raw, &provider.profileID); err != nil || provider.profileID == "" || strings.TrimSpace(provider.profileID) != provider.profileID || len(provider.profileID) > 128 {
+			return nil, fmt.Errorf("routing price_profile_id must be a nonempty profile ID")
+		}
+		if _, inline := routing["prices"]; inline {
+			return nil, fmt.Errorf("routing price_profile_id and prices are mutually exclusive")
+		}
+	}
+	if raw, exists := routing["price_profile_version"]; exists {
+		if provider.profileID == "" || json.Unmarshal(raw, &provider.profileVersion) != nil || provider.profileVersion <= 0 || provider.profileVersion > 9007199254740991 {
+			return nil, fmt.Errorf("routing price_profile_version requires a profile ID and a positive safe integer")
+		}
+	}
+	if config.Decisions.PriceSHA256 != "" {
+		if !validSHA256(config.Decisions.PriceSHA256) {
+			return nil, fmt.Errorf("price_sha256 must be a SHA256 digest")
+		}
+		if _, inline := routing["prices"]; !inline && provider.profileID == "" {
+			return nil, fmt.Errorf("price_sha256 requires caller prices or a price profile")
+		}
+	}
 	if raw, exists := routing["value_usd"]; exists {
 		var value float64
 		if err := json.Unmarshal(raw, &value); err != nil || math.IsNaN(value) || math.IsInf(value, 0) || value < 0 || string(raw) == "null" {
@@ -247,8 +267,12 @@ type decisionsResponse struct {
 			Boundary            string            `json:"boundary"`
 			Workers             []workerEcho      `json:"workers"`
 		} `json:"execution"`
-		Unapplied []string `json:"unapplied_keys"`
-		Prices    *struct {
+		Unapplied    []string `json:"unapplied_keys"`
+		PriceProfile *struct {
+			Status string `json:"status"`
+			AppliedPriceProfile
+		} `json:"price_profile"`
+		Prices *struct {
 			Status    string `json:"status"`
 			SHA256    string `json:"price_sha256"`
 			Exclusive *bool  `json:"exclusive"`
@@ -368,15 +392,24 @@ func (provider *HTTPDecisions) Decide(ctx context.Context, input DecisionInput) 
 		slog.Info("execution context applied", "route_id", result.RouteID, "boundary", echo.Boundary, "cache_policy", echo.UserTurnCache, "cache_policy_source", echo.UserTurnCacheSource, "episode_identity", echo.EpisodeIdentity, "worker_evidence", len(echo.Workers))
 	}
 
-	if provider.config.Decisions.PriceSHA256 != "" {
+	var appliedProfile *AppliedPriceProfile
+	if provider.profileID != "" {
+		profile := result.Routing.PriceProfile
+		if profile == nil || profile.Status != "applied" || profile.ID != provider.profileID || profile.Version <= 0 || profile.Version > 9007199254740991 || (provider.profileVersion != 0 && profile.Version != provider.profileVersion) || !strings.HasPrefix(profile.ContentHash, "sha256:") || !validSHA256(strings.TrimPrefix(profile.ContentHash, "sha256:")) {
+			return Decision{}, fmt.Errorf("Decisions did not apply the requested price profile")
+		}
+		appliedProfile = &profile.AppliedPriceProfile
+	}
+	if provider.config.Decisions.PriceSHA256 != "" || appliedProfile != nil {
 		prices := result.Routing.Prices
-		if prices == nil || prices.Status != "applied" || prices.SHA256 != provider.config.Decisions.PriceSHA256 || identity.Prices.Basis != "caller" || identity.Prices.SHA256 == nil || *identity.Prices.SHA256 != prices.SHA256 || identity.Prices.Exclusive == nil || prices.Exclusive == nil || *identity.Prices.Exclusive != *prices.Exclusive || *prices.Exclusive != provider.exclusive {
-			return Decision{}, fmt.Errorf("Decisions did not apply the pinned caller price world")
+		if prices == nil || prices.Status != "applied" || !validSHA256(prices.SHA256) || (provider.config.Decisions.PriceSHA256 != "" && prices.SHA256 != provider.config.Decisions.PriceSHA256) || identity.Prices.Basis != "caller" || identity.Prices.SHA256 == nil || *identity.Prices.SHA256 != prices.SHA256 || identity.Prices.Exclusive == nil || prices.Exclusive == nil || *identity.Prices.Exclusive != *prices.Exclusive || *prices.Exclusive != provider.exclusive {
+			return Decision{}, fmt.Errorf("Decisions did not apply the requested caller price world")
 		}
 	} else if identity.Prices.Basis != "catalog" || identity.Prices.SHA256 != nil || identity.Prices.Exclusive == nil || *identity.Prices.Exclusive != provider.exclusive {
 		return Decision{}, fmt.Errorf("Decisions did not confirm the requested catalog price world")
 	}
 	decision := Decision{RouteID: result.RouteID, ActionID: identity.ActionID, Worker: selected.Worker, Model: action.Model, ReportedModel: selected.Model, PackageSHA256: identity.PackageSHA256, ControlID: identity.ControlID, ArmID: identity.ArmID, Result: provider.config.Decisions.Result, IdentitySource: "response", AppliedValueUSD: provider.valueUSD}
+	decision.PriceProfile = appliedProfile
 	provider.logDecision(decision, identity.Prices.Basis, identity.Prices.SHA256)
 	return decision, nil
 }
@@ -424,7 +457,7 @@ func (provider *HTTPDecisions) matchesActionModel(model string, action Action) b
 }
 
 func (provider *HTTPDecisions) logDecision(decision Decision, priceBasis string, priceSHA *string) {
-	slog.Info("decision selected", "route_id", decision.RouteID, "selected_model", decision.Model, "reported_model", decision.ReportedModel, "action_id", decision.ActionID, "control_id", decision.ControlID, "package_sha256", decision.PackageSHA256, "identity_source", decision.IdentitySource, "result", decision.Result, "applied_value_usd", decision.AppliedValueUSD, "price_basis", priceBasis, "price_sha256", priceSHA, "api_mode", provider.config.Decisions.apiMode())
+	slog.Info("decision selected", "route_id", decision.RouteID, "selected_model", decision.Model, "reported_model", decision.ReportedModel, "action_id", decision.ActionID, "control_id", decision.ControlID, "package_sha256", decision.PackageSHA256, "identity_source", decision.IdentitySource, "result", decision.Result, "applied_value_usd", decision.AppliedValueUSD, "price_basis", priceBasis, "price_sha256", priceSHA, "price_profile", decision.PriceProfile, "api_mode", provider.config.Decisions.apiMode())
 }
 
 func validateWorkerEcho(workers []externalWorker, echoed []workerEcho, boundary, cachePolicy string) error {

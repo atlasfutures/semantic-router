@@ -37,7 +37,15 @@ silently narrow a larger hosted offer after selection.
 or `custom`), and explicit `routing`. `offer_sha256` is optional in current mode
 and required in advanced mode. `routing.prices` requires
 `price_sha256`; its returned digest and `exclusive` must match the request. The
-current adapter supports `value_usd`, `prices`, and `exclusive`. A configured
+current adapter supports `value_usd`, `prices`, `exclusive`, `price_profile_id`,
+and `price_profile_version`. A profile ID references an authorized saved profile
+through the gateway; it cannot be combined with inline `prices`. Omit the version
+to resolve the current version on each decision, or pin a positive version for a
+repeatable run. A profile may also pin `price_sha256`. The adapter requires an
+applied profile ID/version/content-hash receipt and matches the resolved price
+digest and exclusivity to the selected action's identity. Profile content hashes
+and canonical price digests use different encodings and are not interchangeable.
+The resolved profile identity is recorded with each selection. A configured
 `value_usd` requires `result: "custom"`, a returned custom result, and an applied
 value acknowledgement. Missing custom results, mismatched identities or prices,
 and unapplied routing keys fail visibly. A harness cannot override these settings

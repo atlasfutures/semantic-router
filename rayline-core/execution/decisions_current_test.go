@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -26,6 +27,16 @@ func currentDecisionFixture(t *testing.T, config Config, response map[string]any
 		}
 		if _, exists := routing["execution"]; exists {
 			t.Error("current API received unsupported local cache state")
+		}
+		var expected, actual map[string]any
+		if err := json.Unmarshal(config.Decisions.Routing, &expected); err != nil {
+			t.Fatal(err)
+		}
+		if err := json.Unmarshal(body["routing"], &actual); err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(expected, actual) {
+			t.Error("current API routing preferences changed in transit")
 		}
 		writeJSON(w, 200, response)
 	}))
