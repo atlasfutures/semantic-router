@@ -199,13 +199,13 @@ func routeExecutionServiceRefusal(err error) string {
 		return arcFailureExecutionHoldUnavailable
 	case reason == "attribution_out_of_catalog":
 		return arcFailureExecutionUnknownAction
-	case reason == "last_served_conflict", reason == arcFailureExecutionLastServedConflict:
-		return arcFailureExecutionLastServedConflict
-	case reason == "no_feasible_target", reason == arcFailureExecutionNoFeasibleTarget:
+	// v2's service reasons (pathfinder #5906, selection_refusals_v2.v1.json).
+	// last_served_conflict is the binding's, never the service's.
+	case reason == "no_feasible_target":
 		return arcFailureExecutionNoFeasibleTarget
-	case reason == arcFailurePolicyPresetNotAdmitted, failure.Class == arcFailurePolicyPresetNotAdmitted:
+	case reason == "policy_preset_not_admitted":
 		return arcFailurePolicyPresetNotAdmitted
-	case reason == arcFailurePolicyScheduleNotAdmitted, failure.Class == arcFailurePolicyScheduleNotAdmitted:
+	case reason == "policy_schedule_not_admitted":
 		return arcFailurePolicyScheduleNotAdmitted
 	case reason == "action_not_admitted":
 		// The cell's offer admits nothing for this request, or not the

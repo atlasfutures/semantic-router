@@ -316,3 +316,46 @@ func TestRoutesEchoWithoutV2IsUnchanged(t *testing.T) {
 		t.Fatal("a plain lookup wants receipts")
 	}
 }
+
+// The policy service's v2 refusal strings map onto their public codes and
+// statuses exactly as pathfinder pins them; the contract-side codes are
+// the binding's, never mapped from a service reason.
+func TestRouteExecutionV2ServiceRefusals(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join(arcPublicContractDir, "selection_refusals_v2.v1.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pinned struct {
+		SelectionRefused struct {
+			Reasons  []string `json:"reasons"`
+			V2Public map[string]struct {
+				Code   string `json:"code"`
+				Status int    `json:"status"`
+			} `json:"v2_public"`
+		} `json:"selection_refused"`
+		ContractSide []string `json:"contract_side"`
+	}
+	if err := json.Unmarshal(raw, &pinned); err != nil {
+		t.Fatal(err)
+	}
+	for reason, want := range pinned.SelectionRefused.V2Public {
+		class := routeExecutionServiceRefusal(&raylinearc.PolicyServiceError{Class: "selection_refused", Detail: map[string]any{"reason": reason}})
+		entry, ok := routeExecutionClasses[class]
+		if !ok || entry.code != want.Code || entry.status != want.Status {
+			t.Errorf("%s: class %q -> %+v, want %s %d", reason, class, entry, want.Code, want.Status)
+		}
+	}
+	for _, code := range pinned.ContractSide {
+		if class := routeExecutionServiceRefusal(&raylinearc.PolicyServiceError{Class: "selection_refused", Detail: map[string]any{"reason": code}}); class != "" &&
+			code != "execution_hold_unavailable" {
+			t.Errorf("contract-side %s mapped from a service reason to %s", code, class)
+		}
+		found := false
+		for _, entry := range routeExecutionClasses {
+			found = found || entry.code == code
+		}
+		if !found {
+			t.Errorf("contract-side %s has no public refusal", code)
+		}
+	}
+}

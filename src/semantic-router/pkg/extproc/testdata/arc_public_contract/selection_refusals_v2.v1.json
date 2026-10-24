@@ -1,0 +1,48 @@
+{
+  "description": "The policy service's refusal strings a hybrid routing v2 caller (VSR) maps. selection_refused (HTTP 422) carries detail.reason, one of `reasons` (arc_policy_contract.SelectionRefusal, exactly). `v2_public` maps the reasons v2 added onto their public Decisions error code and status (arc_public_contract.ERRORS); every other reason keeps its pre-v2 handling. A malformed v2 decide-request member is invalid_request (HTTP 400) with detail.field, one of `invalid_request_fields`. `contract_side` codes are decided by the v2 envelope binding (arc_execution_v2.bind_v2) before any decide call, and the service never emits them.",
+  "selection_refused": {
+    "status": 422,
+    "reasons": [
+      "action_not_admitted",
+      "action_not_in_catalog",
+      "attribution_out_of_catalog",
+      "exploration_basis_mismatch",
+      "exploration_tau_exceeds_ceiling",
+      "exploration_unsupported_by_package",
+      "held_action_unavailable",
+      "no_feasible_target",
+      "no_supported_selection",
+      "operating_point_not_adjustable",
+      "operating_point_out_of_bounds",
+      "policy_preset_not_admitted",
+      "policy_schedule_not_admitted",
+      "reference_unavailable",
+      "stage_one_held_unknown",
+      "stage_one_model_unavailable",
+      "unknown_price_model"
+    ],
+    "v2_public": {
+      "policy_preset_not_admitted": {"code": "policy_preset_not_admitted", "status": 400},
+      "policy_schedule_not_admitted": {"code": "policy_schedule_not_admitted", "status": 400},
+      "no_feasible_target": {"code": "execution_no_feasible_target", "status": 409}
+    }
+  },
+  "invalid_request": {
+    "status": 400,
+    "invalid_request_fields": [
+      "capacity",
+      "event",
+      "policy",
+      "reconsult",
+      "selection.last_served_action_id",
+      "turn_key"
+    ]
+  },
+  "contract_side": [
+    "execution_hold_infeasible",
+    "execution_hold_unavailable",
+    "execution_identity_mismatch",
+    "execution_last_served_conflict",
+    "execution_unknown_action"
+  ]
+}
