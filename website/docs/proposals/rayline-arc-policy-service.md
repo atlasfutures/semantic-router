@@ -542,6 +542,11 @@ the session.
   `unavailable_cooldown_seconds`. A 409 `session_busy`, any other status, a
   timeout or a transport error leaves the episode where it is, and the
   session_busy retries and re-asks of one turn stay on its replica.
+- **Stale owner.** A replica that answers for another package than the
+  request's (during a rollover a replica can still run the previous build)
+  cools down too, and the episode moves once. The stale answer is never
+  served: with no replica to move to, the turn fails as
+  `policy_package_mismatch`, as it does today.
 - **Readiness.** The cell arms once one active replica serves the package. A
   replica that fails the readiness check takes no episode, owned or new, and
   is checked again every 30 s until it passes.
