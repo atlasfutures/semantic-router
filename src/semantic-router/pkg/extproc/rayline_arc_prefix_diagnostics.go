@@ -88,8 +88,10 @@ func (cache *policyPrefixShapeCache) remember(episode string, shape *raylinearc.
 // recorded prefix (transition prefix_break), and an extending turn whose
 // system prompt or tools changed, which the message digest does not cover
 // but the policy service's encoder session does. It then remembers this
-// request's shape. A side call is neither logged nor remembered: it never
-// records a prefix.
+// request's shape for the caller to remember once the service has decided it
+// (rememberPolicyPrefix): a request refused before the decide was never
+// encoded. A side call is neither logged nor remembered: it never records a
+// prefix, and its shape is nil.
 func observePolicyPrefix(
 	arcContext *selection.RaylineARCSelectionContext,
 	clientRequest raylinearc.PolicyClientRequest,
@@ -97,23 +99,22 @@ func observePolicyPrefix(
 	previous *raylinearc.PolicyEpisodeState,
 	signals raylinearc.PolicyTurnSignals,
 	transition string,
-) {
+) *raylinearc.PolicyPrefixShape {
 	if signals.CallKind == raylinearc.PolicyCallSide {
-		return
+		return nil
 	}
 	system := clientRequest.System
 	if clientRequest.Instructions != nil {
 		system, _ = json.Marshal(*clientRequest.Instructions)
 	}
 	current := raylinearc.NewPolicyPrefixShape(messages, system, clientRequest.Tools)
-	defer policyPrefixShapes.remember(arcContext.EpisodeIDHash, current)
 	if transition != raylinearc.PolicyTransitionPrefixBreak && transition != raylinearc.PolicyTransitionExtends {
-		return
+		return current
 	}
 	recorded := policyPrefixShapes.recorded(arcContext.EpisodeIDHash, previous)
 	shellChanged := recorded != nil && (recorded.System != current.System || recorded.Tools != current.Tools)
 	if transition == raylinearc.PolicyTransitionExtends && !shellChanged {
-		return
+		return current
 	}
 	fields := map[string]interface{}{
 		"request_id":             arcContext.RequestID,
@@ -144,6 +145,15 @@ func observePolicyPrefix(
 	}
 	addPolicyRequestShapeFields(fields, arcContext, clientRequest)
 	logging.ComponentEvent("extproc", "rayline_arc_policy_prefix_diagnostic", fields)
+	return current
+}
+
+// rememberPolicyPrefix keeps a decided request's shape; a nil shape (a side
+// call) is not kept.
+func rememberPolicyPrefix(episode string, shape *raylinearc.PolicyPrefixShape) {
+	if shape != nil {
+		policyPrefixShapes.remember(episode, shape)
+	}
 }
 
 // addPolicyRequestShapeFields adds the request's stream flag, output budget

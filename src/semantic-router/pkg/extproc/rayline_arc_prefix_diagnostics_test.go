@@ -18,10 +18,12 @@ package extproc
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"go.uber.org/zap/zaptest/observer"
 
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
@@ -48,7 +50,8 @@ func prefixDiagnosticTurn(
 	}
 	signals := raylinearc.PolicyTurnSignals{CallKind: kind}
 	turn, _, transition := raylinearc.PolicyTurn(previous, messages, roles, 0, signals)
-	observePolicyPrefix(arcContext, clientRequest, messages, previous, signals, transition)
+	rememberPolicyPrefix(arcContext.EpisodeIDHash,
+		observePolicyPrefix(arcContext, clientRequest, messages, previous, signals, transition))
 	if kind == raylinearc.PolicyCallSide {
 		return transition, previous
 	}
@@ -269,5 +272,26 @@ func TestPrefixDiagnosticComparesTheNewestMatchingShape(t *testing.T) {
 	}
 	if events := prefixDiagnostics(logs); len(events) != 0 {
 		t.Fatalf("compared with the older tools: %v", events)
+	}
+}
+
+// Through the selector: a request whose decide failed was never encoded, so
+// it is not remembered; one the service decided is.
+func TestPolicySelectorRemembersOnlyDecidedShapes(t *testing.T) {
+	freshPolicyPrefixShapes(t)
+	fixture := newSideCallFixture(t, config.RaylineARCConsistencyStrict)
+	fixture.fake.failNext("not_ready")
+	if _, err := fixture.selectCall(t, raylinearc.PolicyCallMain); err == nil {
+		t.Fatal("a failed decide selected")
+	}
+	if len(policyPrefixShapes.episodes) != 0 {
+		t.Fatalf("a failed decide was remembered: %v", policyPrefixShapes.episodes)
+	}
+	fixture.fake.failNext("")
+	if _, err := fixture.selectCall(t, raylinearc.PolicyCallMain); err != nil {
+		t.Fatal(err)
+	}
+	if shapes := policyPrefixShapes.episodes[strings.Repeat("e", 64)]; len(shapes) != 1 {
+		t.Fatalf("decided request remembered %d shapes, want 1", len(shapes))
 	}
 }
