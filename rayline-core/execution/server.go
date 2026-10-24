@@ -234,17 +234,20 @@ func (server *Server) execute(writer http.ResponseWriter, incoming *http.Request
 	event := inferEvent(request, fresh, branch)
 	if explicitEvent != nil {
 		event = *explicitEvent
+	} else if state.explicitEvents {
+		sidecall := EventSidecall
+		event = ExecutionEvent{Kind: &sidecall, Basis: BasisMarkerInferred}
 	}
 	// A side call is decided with the held model and never advances this
 	// branch: no epoch change, retained decision or committed evidence.
 	sidecall := event.is(EventSidecall)
 	wire := wireMessageFingerprints(format, body)
 	if !sidecall && len(state.prefix) > 0 && !extendsPrefix(state.prefix, prefix) {
-		var retained []attributedTurn
-		if event.is(EventCompaction) {
-			retained = remapRetainedAttribution(state.ledger, state.wire, wire, roles, format, event.Compaction)
-		}
 		state.resetEpoch()
+		var retained []attributedTurn
+		if event.is(EventCompaction) && state.carried != nil {
+			retained = remapRetainedAttribution(state.carried.ledger, state.carried.wire, wire, roles, format, event.Compaction)
+		}
 		state.ledger = retained
 	}
 	requestFingerprint := fingerprint(body)
@@ -329,7 +332,14 @@ func (server *Server) execute(writer http.ResponseWriter, incoming *http.Request
 			return
 		}
 		// The pre-dispatch capacity check. The core may veto the final
-		// prepared request with a reason; the service reselects.
+		// prepared request with a reason; the service reselects. A refusal
+		// already recorded for this turn is never dispatched again.
+		if known := pending.input.Capacity[selected.action.ID]; v2 && known != nil && !known.Fits {
+			if !server.reconsult(ctx, writer, format, pending, selected.action.ID, decision.RouteID, "veto", known) {
+				return
+			}
+			continue
+		}
 		if v2 {
 			if fact := capacityFact(selected.deployment, prompt, prepared.outputLimit); fact != nil && !fact.Fits {
 				if !server.reconsult(ctx, writer, format, pending, selected.action.ID, decision.RouteID, "veto", fact) {
@@ -435,6 +445,8 @@ func (server *Server) execute(writer http.ResponseWriter, incoming *http.Request
 	state.recordAttribution(format, roles, decision)
 	state.prefix = prefix
 	state.wire = wire
+	state.carried = nil
+	state.explicitEvents = state.explicitEvents || event.Basis == BasisExplicitClient
 	pending.completed = true
 	var decidedBy any
 	if selection.Receipt != nil {
@@ -462,6 +474,9 @@ func (server *Server) reconsult(ctx context.Context, writer http.ResponseWriter,
 	}
 	capacity[actionID] = fact
 	input.Capacity = capacity
+	// Keep the fact even if this consult fails, so a client retry of the same
+	// request cannot dispatch the refused target again.
+	pending.input.Capacity = capacity
 	input.Reconsult = &Reconsult{Kind: kind, RetryOf: retryOf, Attempt: pending.consults + 2}
 	slog.Info("execution reconsult", "reconsult", kind, "retry_of", retryOf, "vetoed_action_id", actionID, "required", int64OrNil(fact.Required), "available", int64OrNil(fact.Available), "attempt", input.Reconsult.Attempt)
 	decision, err := server.provider.Decide(ctx, input)

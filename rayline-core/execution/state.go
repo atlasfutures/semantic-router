@@ -36,6 +36,19 @@ type branchState struct {
 	// wire fingerprints the last committed request's wire messages, so an
 	// explicit compaction can carry retained attribution to new positions.
 	wire []string
+	// carried keeps the last committed transcript's ledger and wire across an
+	// epoch reset until the next commit, so a failed compaction request can be
+	// retried without losing retained attribution.
+	carried *carriedTranscript
+	// explicitEvents records that this branch's harness adapter states events.
+	// A later request without one (such as Pi's compaction summary call) is
+	// then a side call, never an advance of the main transcript.
+	explicitEvents bool
+}
+
+type carriedTranscript struct {
+	ledger []attributedTurn
+	wire   []string
 }
 
 // attributedTurn uses the original client wire's message index, as VSR's
@@ -257,6 +270,9 @@ func extendsPrefix(previous, current []string) bool {
 // prefix change alone is not a model-switch boundary, and last_served must
 // stay truthful (from the Codex continuity work, codex/hybrid-model-continuity).
 func (state *branchState) resetEpoch() {
+	if state.wire != nil {
+		state.carried = &carriedTranscript{ledger: state.ledger, wire: state.wire}
+	}
 	state.epoch++
 	state.placements = make(map[string]thinkingcontrol.PlacerState)
 	state.workers = make(map[string]WorkerEvidence)

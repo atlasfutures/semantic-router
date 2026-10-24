@@ -572,3 +572,62 @@ func TestV2ConfigRequiresAnExplicitPublishedPolicy(t *testing.T) {
 		})
 	}
 }
+
+func TestV2CompactionRetryAfterFailureKeepsRetainedAttribution(t *testing.T) {
+	local, cloud := &upstreamFixture{}, &upstreamFixture{}
+	config := hybridV2Config(t, chatUpstream(t, local, false).URL, chatUpstream(t, cloud, true).URL+"/v1/chat/completions")
+	fixture := &v2Decisions{choose: func(contextV2) string { return localActionID }}
+	_, httpServer := v2Server(t, config, fixture)
+	for _, body := range []string{chatTurn(userTask), chatTurn(userTask, toolCall, toolResult)} {
+		if status, response := executeHTTP(t, httpServer.URL, "/v1/chat/completions", body, "compact-retry"); status != 200 {
+			t.Fatalf("status %d: %s", status, response)
+		}
+	}
+	compaction := func(followUp string) string {
+		return `{"model":"arc-1.0","max_tokens":64,` + v2Tools + `,"rayline_event":{"kind":"compaction","compaction":{"summary_message":0,"retained_from":1,"new":true}},"messages":[{"role":"user","content":"Summary."},` + toolCall + `,` + toolResult + `,` + answer + `,` + followUp + `]}`
+	}
+	local.mu.Lock()
+	local.fail = 1
+	local.mu.Unlock()
+	if status, _ := executeHTTP(t, httpServer.URL, "/v1/chat/completions", compaction(followUp), "compact-retry"); status != 503 {
+		t.Fatalf("first compaction attempt status %d", status)
+	}
+	// The harness retries with a changed body (for example a re-sent prompt);
+	// the core decides anew and must still carry the retained attribution.
+	if status, response := executeHTTP(t, httpServer.URL, "/v1/chat/completions", compaction(`{"role":"user","content":"Now summarise it, please."}`), "compact-retry"); status != 200 {
+		t.Fatalf("retry status %d: %s", status, response)
+	}
+	lookups := fixture.snapshot()
+	history := lookups[len(lookups)-1].Execution.History
+	if len(history) != 2 || history[0].Message != 1 || history[1].Message != 3 {
+		t.Fatalf("retained history after retry %+v", history)
+	}
+}
+
+func TestV2UnlabelledRequestOnAnExplicitBranchIsASidecall(t *testing.T) {
+	local, cloud := &upstreamFixture{}, &upstreamFixture{}
+	config := hybridV2Config(t, chatUpstream(t, local, false).URL, chatUpstream(t, cloud, true).URL+"/v1/chat/completions")
+	fixture := &v2Decisions{choose: func(contextV2) string { return localActionID }}
+	server, httpServer := v2Server(t, config, fixture)
+	explicit := `{"rayline_event":{"kind":"task_start"},` + chatTurn(userTask)[1:]
+	if status, response := executeHTTP(t, httpServer.URL, "/v1/chat/completions", explicit, "pi-like"); status != 200 {
+		t.Fatalf("status %d: %s", status, response)
+	}
+	// Pi's compaction summary call bypasses the extension: no event.
+	summary := `{"model":"arc-1.0","max_tokens":64,"messages":[{"role":"user","content":"Summarise this conversation: ..."}]}`
+	if status, response := executeHTTP(t, httpServer.URL, "/v1/chat/completions", summary, "pi-like"); status != 200 {
+		t.Fatalf("status %d: %s", status, response)
+	}
+	event := fixture.snapshot()[1].Execution.Event
+	if event.Kind == nil || *event.Kind != EventSidecall || event.Basis != BasisMarkerInferred {
+		t.Fatalf("unlabelled event %+v", event)
+	}
+	state, err := server.states.acquire(t.Context(), "pi-like", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.release()
+	if state.completed != 1 || state.epoch != 0 {
+		t.Fatalf("summary call advanced the main branch: completed=%d epoch=%d", state.completed, state.epoch)
+	}
+}
