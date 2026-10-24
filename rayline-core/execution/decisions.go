@@ -29,6 +29,7 @@ type HTTPDecisions struct {
 	valueUSD       *float64
 	profileID      string
 	profileVersion int64
+	policyPreset   string
 }
 
 var decisionsCellTag = regexp.MustCompile(`^[a-z][a-z0-9-]{0,45}$`)
@@ -44,8 +45,8 @@ func NewHTTPDecisions(config Config) (*HTTPDecisions, error) {
 		return nil, fmt.Errorf("Decisions credential environment is unset")
 	}
 	mode := config.Decisions.apiMode()
-	if mode != DecisionsCurrent && mode != DecisionsExecutionContextV1 {
-		return nil, fmt.Errorf("Decisions api_mode must be current or execution_context_v1")
+	if mode != DecisionsCurrent && mode != DecisionsExecutionContextV1 && mode != DecisionsExecutionContextV2 {
+		return nil, fmt.Errorf("Decisions api_mode must be current, execution_context_v1 or execution_context_v2")
 	}
 	if config.Decisions.Model == "" || (mode == DecisionsExecutionContextV1 && !validSHA256(config.Decisions.OfferSHA256)) || (config.Decisions.OfferSHA256 != "" && !validSHA256(config.Decisions.OfferSHA256)) {
 		return nil, fmt.Errorf("Decisions requires a model and valid configured offer SHA256; execution_context_v1 requires an offer pin")
@@ -62,6 +63,24 @@ func NewHTTPDecisions(config Config) (*HTTPDecisions, error) {
 	if _, exists := routing["execution"]; exists {
 		return nil, fmt.Errorf("execution context is owned by the sidecar, not static routing config")
 	}
+	var policyPreset string
+	if raw, exists := routing["policy"]; exists || mode == DecisionsExecutionContextV2 {
+		// Rayline Local never relies on an absent policy: its default is the
+		// hybrid preset, sent explicitly. v2 therefore requires one.
+		if !exists || mode != DecisionsExecutionContextV2 {
+			return nil, fmt.Errorf("execution_context_v2 requires an explicit routing.policy, and routing.policy requires execution_context_v2")
+		}
+		policy, err := validateRoutingPolicy(raw)
+		if err != nil {
+			return nil, err
+		}
+		policyPreset = policy.Preset
+		for key := range routing {
+			if key != "policy" && key != "value_usd" && key != "prices" && key != "exclusive" && key != "price_profile_id" && key != "price_profile_version" {
+				return nil, fmt.Errorf("execution_context_v2 routing key %q has no supported applied acknowledgement", key)
+			}
+		}
+	}
 	if mode == DecisionsCurrent {
 		for key := range routing {
 			if key != "value_usd" && key != "prices" && key != "exclusive" && key != "price_profile_id" && key != "price_profile_version" {
@@ -72,7 +91,7 @@ func NewHTTPDecisions(config Config) (*HTTPDecisions, error) {
 	if _, exists := routing["prices"]; exists && !validSHA256(config.Decisions.PriceSHA256) {
 		return nil, fmt.Errorf("caller prices require a pinned price_sha256")
 	}
-	provider := &HTTPDecisions{config: config, client: &http.Client{Timeout: 90 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, actions: make(map[string]Action), deployments: make(map[string]Deployment), now: time.Now}
+	provider := &HTTPDecisions{config: config, client: &http.Client{Timeout: 90 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, actions: make(map[string]Action), deployments: make(map[string]Deployment), now: time.Now, policyPreset: policyPreset}
 	if raw, exists := routing["price_profile_id"]; exists {
 		if err := json.Unmarshal(raw, &provider.profileID); err != nil || provider.profileID == "" || strings.TrimSpace(provider.profileID) != provider.profileID || len(provider.profileID) > 128 {
 			return nil, fmt.Errorf("routing price_profile_id must be a nonempty profile ID")
@@ -237,6 +256,7 @@ type publicDecision struct {
 		Basis  string  `json:"basis"`
 		SHA256 *string `json:"price_sha256"`
 	} `json:"prices"`
+	Receipt *DecisionReceipt `json:"receipt"`
 }
 
 type notAdmittedEcho struct {
@@ -305,7 +325,15 @@ func (provider *HTTPDecisions) Decide(ctx context.Context, input DecisionInput) 
 		return Decision{}, err
 	}
 	var external externalContext
-	if provider.config.Decisions.apiMode() == DecisionsExecutionContextV1 {
+	var externalV2 contextV2
+	if provider.config.Decisions.apiMode() == DecisionsExecutionContextV2 {
+		externalV2 = provider.projectV2(input)
+		executionBytes, err := json.Marshal(externalV2)
+		if err != nil {
+			return Decision{}, err
+		}
+		routing["execution"] = executionBytes
+	} else if provider.config.Decisions.apiMode() == DecisionsExecutionContextV1 {
 		external = provider.project(input)
 		executionBytes, err := json.Marshal(external)
 		if err != nil {
@@ -412,6 +440,16 @@ func (provider *HTTPDecisions) Decide(ctx context.Context, input DecisionInput) 
 		}
 		slog.Info("execution context applied", "route_id", result.RouteID, "boundary", echo.Boundary, "cache_policy", echo.UserTurnCache, "cache_policy_source", echo.UserTurnCacheSource, "episode_identity", echo.EpisodeIdentity, "worker_evidence", len(echo.Workers))
 	}
+	var receipt *DecisionReceipt
+	if provider.config.Decisions.apiMode() == DecisionsExecutionContextV2 {
+		receipt, err = validateV2(responseBytes, selected, identity, externalV2, provider.policyPreset)
+		if err != nil {
+			return Decision{}, err
+		}
+		slog.Info("execution context applied", "route_id", result.RouteID, "version", executionContextV2, "event_kind", externalV2.Event.kindName(), "event_basis", externalV2.Event.Basis,
+			"attempt", externalV2.Turn.Attempt, "reconsult", stringOrNil(externalV2.Turn.Reconsult), "decided_by_model", receipt.DecidedBy.Model, "decided_by_thinking", receipt.DecidedBy.Thinking,
+			"held_from", stringOrNil(receipt.HeldFrom), "excluded", receipt.Excluded, "receipt_basis", receipt.Basis, "capacity_basis", stringOrNil(receipt.CapacityBasis))
+	}
 
 	appliedProfile, err := provider.appliedPriceProfile(result)
 	if err != nil {
@@ -422,11 +460,12 @@ func (provider *HTTPDecisions) Decide(ctx context.Context, input DecisionInput) 
 		if prices == nil || prices.Status != "applied" || !validSHA256(prices.SHA256) || (provider.config.Decisions.PriceSHA256 != "" && prices.SHA256 != provider.config.Decisions.PriceSHA256) || identity.Prices.Basis != "caller" || identity.Prices.SHA256 == nil || *identity.Prices.SHA256 != prices.SHA256 || identity.Prices.Exclusive == nil || prices.Exclusive == nil || *identity.Prices.Exclusive != *prices.Exclusive || *prices.Exclusive != provider.exclusive {
 			return Decision{}, fmt.Errorf("Decisions did not apply the requested caller price world")
 		}
-	} else if identity.Prices.Basis != "catalog" || identity.Prices.SHA256 != nil || identity.Prices.Exclusive == nil || *identity.Prices.Exclusive != provider.exclusive {
+	} else if identity.Prices.Basis != "catalog" || identity.Prices.SHA256 != nil || (identity.Prices.Exclusive == nil && (provider.config.Decisions.apiMode() != DecisionsExecutionContextV2 || provider.exclusive)) || (identity.Prices.Exclusive != nil && *identity.Prices.Exclusive != provider.exclusive) {
 		return Decision{}, fmt.Errorf("Decisions did not confirm the requested catalog price world")
 	}
 	decision := Decision{RouteID: result.RouteID, ActionID: identity.ActionID, Worker: selected.Worker, Model: action.Model, ReportedModel: selected.Model, PackageSHA256: identity.PackageSHA256, ControlID: identity.ControlID, ArmID: identity.ArmID, Result: provider.config.Decisions.Result, IdentitySource: "response", AppliedValueUSD: provider.valueUSD}
 	decision.PriceProfile = appliedProfile
+	decision.Receipt = receipt
 	provider.logDecision(decision, identity.Prices.Basis, identity.Prices.SHA256)
 	return decision, nil
 }

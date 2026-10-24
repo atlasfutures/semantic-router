@@ -24,6 +24,8 @@ type preparedDispatch struct {
 	nextIssuers  []string
 	opaqueIssuer string
 	response     responseMetadata
+	// outputLimit is the prepared request's actual output allowance.
+	outputLimit int64
 }
 
 type responseMetadata struct {
@@ -97,7 +99,7 @@ func (server *Server) prepare(request llmprotocol.Request, envelope llmprotocol.
 		return nil, err
 	}
 	return &preparedDispatch{body: body, placer: placer, key: key, receipt: receipt,
-		nextIssuers: nextIssuers, opaqueIssuer: opaqueIssuer, response: response}, nil
+		nextIssuers: nextIssuers, opaqueIssuer: opaqueIssuer, response: response, outputLimit: *request.Sampling.MaxOutputTokens}, nil
 }
 
 // prepareReasoning stages provenance before any codec drops or rewrites history.

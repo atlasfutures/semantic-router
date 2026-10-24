@@ -53,6 +53,8 @@ type MeasuredPrompt struct {
 	prefix     *int
 	tokens     []int
 	provenance string
+	// total is the full prepared prompt count in the serving tokenizer.
+	total int
 }
 
 type CurrentPrefix struct {
@@ -97,7 +99,7 @@ func admitMeasurement(prompt PreparedPrompt, body [sha256.Size]byte, measurement
 			return nil, fmt.Errorf("prompt counter returned a negative token ID")
 		}
 	}
-	result := &MeasuredPrompt{identity: prompt.Identity, epoch: prompt.ContextEpoch, body: body, provenance: measurement.Provenance}
+	result := &MeasuredPrompt{identity: prompt.Identity, epoch: prompt.ContextEpoch, body: body, provenance: measurement.Provenance, total: measurement.PromptTokens}
 	if measurement.CarriedPrefixTokens != nil {
 		count := *measurement.CarriedPrefixTokens
 		result.prefix = &count
@@ -114,6 +116,14 @@ func admitMeasurement(prompt PreparedPrompt, body [sha256.Size]byte, measurement
 func (measured *MeasuredPrompt) Matches(prompt PreparedPrompt) bool {
 	return measured != nil && measured.identity == prompt.Identity && measured.epoch == prompt.ContextEpoch && measured.body == sha256.Sum256(prompt.Body)
 }
+
+// PromptTokens is the full prepared prompt in the serving tokenizer's units,
+// as counted by the qualified runtime. It is what capacity admission needs.
+func (measured *MeasuredPrompt) PromptTokens() int { return measured.total }
+
+// Units and Provenance identify the count's tokenizer and source.
+func (measured *MeasuredPrompt) Units() string      { return measured.identity.Units }
+func (measured *MeasuredPrompt) Provenance() string { return measured.provenance }
 
 // Prefix compares serving token IDs only in the same qualified units, template
 // and epoch. The result says nothing about physical residency or TTL. Unknown
