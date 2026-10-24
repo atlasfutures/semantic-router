@@ -85,6 +85,8 @@ func TestPolicyMessageKind(t *testing.T) {
 		{`{"type":"function_call_output","call_id":"c","output":"x"}`, "function_call_output", ""},
 		{`{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}`, "user", "input_text"},
 		{`not json`, "", ""},
+		{`{"role":"PRIVATE_ROLE","content":[{"type":"PRIVATE_BLOCK"}]}`, "other", "other"},
+		{`{"type":"PRIVATE_ITEM","content":"x"}`, "other", "text"},
 	} {
 		role, block := PolicyMessageKind(json.RawMessage(c.message))
 		if role != c.role || block != c.block {

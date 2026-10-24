@@ -83,10 +83,41 @@ func (shape *PolicyPrefixShape) FirstDivergence(current *PolicyPrefixShape) (int
 	return common, true
 }
 
+// policyMessageRoles and policyBlockTypes are the protocol values a
+// prefix_break log reports as they are; any other value the client sent is
+// reported as "other", so a log never carries a client-chosen string.
+var (
+	policyMessageRoles = map[string]bool{
+		"user": true, "assistant": true, "system": true, "developer": true, "tool": true,
+		"message": true, "function_call": true, "function_call_output": true, "reasoning": true,
+		"custom_tool_call": true, "custom_tool_call_output": true, "local_shell_call": true,
+		"local_shell_call_output": true, "web_search_call": true, "compaction": true,
+	}
+	policyBlockTypes = map[string]bool{
+		"text": true, "image": true, "document": true, "tool_use": true, "tool_result": true,
+		"thinking": true, "redacted_thinking": true, "server_tool_use": true, "web_search_tool_result": true,
+		"search_result": true, "container_upload": true, "mcp_tool_use": true, "mcp_tool_result": true,
+		"input_text": true, "input_image": true, "input_file": true, "output_text": true, "refusal": true,
+	}
+)
+
+func policyKindValue(value string, known map[string]bool) string {
+	if value == "" || known[value] {
+		return value
+	}
+	return "other"
+}
+
 // PolicyMessageKind is a message's role (or a Responses item's type, when it
 // has no role) and the type of its first content block ("text" for string
-// content), as a prefix_break log reports them. Neither carries content.
+// content), as a prefix_break log reports them. Neither carries content: a
+// value outside the protocol's is "other".
 func PolicyMessageKind(message json.RawMessage) (string, string) {
+	role, block := policyMessageKind(message)
+	return policyKindValue(role, policyMessageRoles), policyKindValue(block, policyBlockTypes)
+}
+
+func policyMessageKind(message json.RawMessage) (string, string) {
 	var value struct {
 		Role    string          `json:"role"`
 		Type    string          `json:"type"`
