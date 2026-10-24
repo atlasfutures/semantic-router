@@ -54,6 +54,15 @@ jobs:
       - name: Build Rust bindings (CPU-only)
         run: make rust-ci
 
+      - name: Test and build standalone execution core
+        working-directory: rayline-core
+        env:
+          CGO_ENABLED: 0
+        run: |
+          go test -count=1 ./...
+          go vet ./...
+          go build ./cmd/rayline-core
+
       - name: Run router Go tests
         working-directory: src/semantic-router
         env:
