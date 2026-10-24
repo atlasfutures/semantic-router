@@ -94,3 +94,29 @@ func TestPolicyMessageKind(t *testing.T) {
 		}
 	}
 }
+
+// Only Claude Code's billing header line is ignored: a prompt sharing its
+// block still counts.
+func TestPolicyPrefixShapeSystemIgnoresOnlyTheBillingHeaderLine(t *testing.T) {
+	system := func(blocks ...string) json.RawMessage {
+		list := make([]any, len(blocks))
+		for index, text := range blocks {
+			list[index] = map[string]any{"type": "text", "text": text}
+		}
+		raw, _ := json.Marshal(list)
+		return raw
+	}
+	digest := func(raw json.RawMessage) uint64 { return NewPolicyPrefixShape(nil, raw, nil).System }
+	if digest(system("x-anthropic-billing-header: cc_version=1.a;", "Prompt A")) !=
+		digest(system("x-anthropic-billing-header: cc_version=1.b;", "Prompt A")) {
+		t.Fatal("a separate header block's build suffix changed the digest")
+	}
+	if digest(system("x-anthropic-billing-header: cc_version=1.a;\nPrompt A")) !=
+		digest(system("x-anthropic-billing-header: cc_version=1.b;\nPrompt A")) {
+		t.Fatal("a combined block's header suffix changed the digest")
+	}
+	if digest(system("x-anthropic-billing-header: cc_version=1.a;\nPrompt A")) ==
+		digest(system("x-anthropic-billing-header: cc_version=1.a;\nPrompt B")) {
+		t.Fatal("a prompt sharing the header's block was ignored")
+	}
+}
