@@ -196,10 +196,24 @@ func (server *Server) execute(writer http.ResponseWriter, incoming *http.Request
 		server.writeError(writer, format, http.StatusBadRequest, "invalid_execution_event", err.Error())
 		return
 	}
+	v2 := server.config.Decisions.apiMode() == DecisionsExecutionContextV2
+	if !v2 {
+		// Current and v1 modes keep their pre-v2 behaviour: an explicit event
+		// is removed from the body (it must never reach a provider) and ignored.
+		explicitEvent = nil
+	}
+	wireRequest := parseWireRequest(format, body)
+	markerSidecall := v2 && explicitEvent == nil && wireRequest.isSidecall()
+	ephemeral := false
 	session, branch, err := requestIdentity(incoming.Header, body)
 	if err != nil {
-		server.writeError(writer, format, http.StatusBadRequest, "session_identity_required", err.Error())
-		return
+		// A harness's own auxiliary call (Pi's compaction summary call sends no
+		// session header) runs statelessly: it can advance nothing anyway.
+		if !(markerSidecall || explicitEvent != nil && explicitEvent.is(EventSidecall)) {
+			server.writeError(writer, format, http.StatusBadRequest, "session_identity_required", err.Error())
+			return
+		}
+		session, branch, ephemeral = "sidecall:"+fingerprint(body), "main", true
 	}
 	request, envelope, _, err := server.engine.DecodeRequestForMutation(format, body)
 	if err != nil {
@@ -220,41 +234,57 @@ func (server *Server) execute(writer http.ResponseWriter, incoming *http.Request
 		server.writeError(writer, format, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
-	state, err := server.states.acquire(ctx, session, branch)
-	if err != nil {
+	var state *branchState
+	if ephemeral {
+		state = newBranchState()
+		<-state.lease
+	} else if state, err = server.states.acquire(ctx, session, branch); err != nil {
 		server.writeError(writer, format, http.StatusServiceUnavailable, "execution_state_unavailable", err.Error())
 		return
 	}
 	defer state.release()
 	fresh := state.pending == nil && state.completed == 0
-	if fresh && hasExecutionHistory(request) {
+	if fresh && hasExecutionHistory(request) && !markerSidecall {
 		server.writeError(writer, format, http.StatusConflict, "execution_state_not_found", "this session has assistant or tool history but no execution ledger; start a fresh session")
 		return
 	}
-	v2 := server.config.Decisions.apiMode() == DecisionsExecutionContextV2
-	event := inferEvent(request, fresh, branch)
-	if !v2 {
-		// Current and v1 modes keep their pre-v2 behaviour: an explicit event
-		// is removed from the body (it must never reach a provider) and ignored.
-		explicitEvent = nil
-	}
-	if explicitEvent != nil {
+	wire := wireMessageFingerprints(format, body)
+	rewrite := len(state.prefix) > 0 && !extendsPrefix(state.prefix, prefix)
+	var event ExecutionEvent
+	switch {
+	case !v2:
+		event = inferEvent(request, fresh, branch)
+	case explicitEvent != nil:
 		event = *explicitEvent
-	} else if state.explicitEvents {
+	case markerSidecall:
 		sidecall := EventSidecall
 		event = ExecutionEvent{Kind: &sidecall, Basis: BasisMarkerInferred}
+	case state.explicitEvents:
+		// An adapter that states events left this one unlabelled.
+		sidecall := EventSidecall
+		event = ExecutionEvent{Kind: &sidecall, Basis: BasisMarkerInferred}
+	default:
+		// The primary v2 source: what the unmodified harness already sends,
+		// compared with the last request this branch saw.
+		previous := state.seen
+		if state.carried != nil {
+			previous = state.carried.wire
+		}
+		event = inferV2Event(wireRequest, previous, wire, rewrite, fresh && branch != "main" && server.states.hasOtherBranch(session, branch))
 	}
 	// A side call is decided with the held model and never advances this
 	// branch: no epoch change, retained decision or committed evidence.
 	sidecall := event.is(EventSidecall)
-	wire := wireMessageFingerprints(format, body)
-	if !sidecall && len(state.prefix) > 0 && !extendsPrefix(state.prefix, prefix) {
+	if !sidecall && rewrite {
 		state.resetEpoch(v2)
 		var retained []attributedTurn
 		if event.is(EventCompaction) && state.carried != nil {
 			retained = remapRetainedAttribution(state.carried.ledger, state.carried.wire, wire, roles, format, event.Compaction)
 		}
 		state.ledger = retained
+	}
+	if !sidecall {
+		state.seen = wire
 	}
 	requestFingerprint := fingerprint(body)
 	requestID := incoming.Header.Get("Idempotency-Key")

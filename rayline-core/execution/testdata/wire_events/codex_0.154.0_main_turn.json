@@ -1,0 +1,73 @@
+{
+ "provenance": "codex 0.154.0 Responses input, captured 2026-09-30 from the release binary against a local stub (model_auto_compact_token_limit=250; no provider). Strings not read by the detectors are shortened to a prefix and a digest.",
+ "body": {
+  "input": [
+   {
+    "content": [
+     {
+      "text": "<skills_instructions>\n## Skills\nA skill is a set of local instructions to follow that is stored in a `SKILL.md` file. Be...[sha256:f647f0f6ed2e9c81]",
+      "type": "input_text"
+     },
+     {
+      "text": "<permissions instructions>\nFilesystem sandboxing defines which files can be read or written. `sandbox_mode` is `danger-f...[sha256:681b5ba580483b28]",
+      "type": "input_text"
+     },
+     {
+      "text": "<collaboration_mode># Collaboration Mode: Default\n\nYou are now in Default mode. Any previous instructions for other mode...[sha256:bec8e7b5358a20b4]",
+      "type": "input_text"
+     }
+    ],
+    "id": "msg_01a0f434-e12d-79d2-9f86-d129dec41f83",
+    "role": "developer",
+    "type": "message"
+   },
+   {
+    "content": [
+     {
+      "text": "<environment_context>\n  <cwd>/testbed</cwd>\n  <shell>bash</shell>\n  <current_date>2026-09-30</current_date>\n  <timezone>...[sha256:3764285f6ccd0c25]",
+      "type": "input_text"
+     }
+    ],
+    "id": "msg_01a0f434-e12d-79d2-9f86-d1311aa11576",
+    "role": "user",
+    "type": "message"
+   },
+   {
+    "content": [
+     {
+      "text": "Issue: `line_total(\"apple\", 2)` returns 2.4 but should be 5.4 (two apples at 3 each with the documented 10% bulk discoun...[sha256:ee26d3c1bf1c0ae8]",
+      "type": "input_text"
+     }
+    ],
+    "id": "msg_01a0f434-e133-7732-b3d7-8691520d6df5",
+    "role": "user",
+    "type": "message"
+   },
+   {
+    "content": null,
+    "encrypted_content": "ENC-TURN-0-SECRET",
+    "id": "item_0_0",
+    "summary": [
+     {
+      "text": "stub summary turn 0",
+      "type": "summary_text"
+     }
+    ],
+    "type": "reasoning"
+   },
+   {
+    "arguments": "{\"cmd\": \"ls -R && cat README.md\"}",
+    "call_id": "call_0_1",
+    "id": "item_0_1",
+    "name": "exec_command",
+    "type": "function_call"
+   },
+   {
+    "call_id": "call_0_1",
+    "id": "fco_01a0f434-e167-7f61-b888-04a2b073d4bd",
+    "output": "Chunk ID: 66961f\nWall time: 0.0000 seconds\nProcess exited with code 0\nOriginal token count: 46\nOutput:\n.:\nREADME.md\ninve...[sha256:81b5a0a2b4a65ac7]",
+    "type": "function_call_output"
+   }
+  ]
+ }
+}
