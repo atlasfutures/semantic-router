@@ -19,6 +19,7 @@ from cli.validator_rayline_arc_episode import (
 from cli.validator_rayline_arc_membership import (
     validate_encoder_membership,
     validate_episode_membership,
+    validate_policy_replicas,
 )
 
 _ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -280,7 +281,10 @@ def _validate_policy_service(name, policy) -> list[ValidationError]:
     """Mirror the Go loader's connection checks for the policy-service mode."""
     prefix = f"decisions.{name}.algorithm.rayline_arc.policy_service"
     errors: list[ValidationError] = []
-    if not _valid_service_url(policy.base_url):
+    # One service (base_url) or a replica pool; the schema allows exactly one.
+    if policy.replicas:
+        errors.extend(validate_policy_replicas(prefix, policy))
+    elif not _valid_service_url(policy.base_url or ""):
         errors.append(
             ValidationError(
                 "base_url must be an absolute HTTP(S) URL without credentials, a query, or a fragment",

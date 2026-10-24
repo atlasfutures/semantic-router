@@ -446,7 +446,15 @@ class RaylineARCPolicyServiceConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    base_url: str
+    # Exactly one of base_url (one service) or replicas (each episode sticks
+    # to one replica; mirrors the Go loader's policy replica pool).
+    base_url: str | None = None
+    replicas: list[RaylineARCEncoderReplicaConfig] = Field(
+        default_factory=list, max_length=8
+    )
+    # The policy failover contract (rayline.arc.policy-failover.v1); its
+    # statuses are limited to 404, 429 and 503 by the Go loader.
+    failover: RaylineARCEncoderFailoverConfig | None = None
     modal_key_env: str = ""
     modal_secret_env: str = ""
     total_timeout_seconds: int = Field(ge=1, le=900)
@@ -492,6 +500,25 @@ class RaylineARCPolicyServiceConfig(BaseModel):
     exploration: RaylineARCExplorationConfig | None = None
     # An eval or lab cell never sends exploration.
     eval_cell: bool = False
+
+    @field_validator("failover", mode="before")
+    @classmethod
+    def empty_failover_is_absent(cls, value):
+        # The reference config shows failover: {} beside base_url, as the
+        # encoder's does; the Go loader treats a zero block as omitted.
+        if value in (None, {}):
+            return None
+        return value
+
+    @model_validator(mode="after")
+    def _one_endpoint_mode(self):
+        if bool(self.base_url) == bool(self.replicas):
+            raise ValueError("exactly one of base_url or replicas must be configured")
+        if self.replicas and self.failover is None:
+            raise ValueError("replicas require failover")
+        if not self.replicas and self.failover is not None:
+            raise ValueError("failover requires replicas")
+        return self
 
     @model_validator(mode="after")
     def _exploration_basis_is_this_package(self):
