@@ -36,21 +36,38 @@ opt-in. The core reports facts and never picks or ranks a model.
   executable action. `turn.epoch` equals the `cache.context_epoch` string of
   evidence from the current epoch. `cache` is v1's worker evidence without the
   identity members; `capacity` is described below. Unknown is null.
-- **Events.** A harness adapter states the event explicitly, either in an
-  `X-Rayline-Event` JSON header or, for a harness that can only edit its provider
-  payload (Pi), in a top-level `rayline_event` member that the core removes
-  before decoding, Decisions and dispatch. Both at once are refused. Without one,
-  documented wire markers give `task_start` (first request of the main branch),
-  `subagent_start` (first request of another branch), `tool_result` or
-  `user_message` with `basis: marker_inferred`; anything else is
-  `basis: unknown` with a null kind. A retained-tail compaction is never
-  inferred. An explicit `compaction` with `retained_from` carries the retained
-  messages' attribution to their new positions. A `sidecall` is decided with
-  the held model and advances nothing: no epoch change, retained decision,
-  attribution, placement or cache evidence. Once a branch has completed a request with an
-  explicit event, a later request without one (for example Pi's compaction
-  summary call, which bypasses its extension hooks) is treated as a side call.
-  Retained attribution survives a failed compaction request and its retry.
+- **Events.** Harnesses are unmodified: the primary source is what they
+  already send, read by the core and labelled `basis: marker_inferred`
+  (`wire_events.go`; replay tests over real Pi 0.80.2, Claude Code 2.1.280 and
+  2.1.309, and Codex 0.154.0 captures in `testdata/wire_events`).
+  - `task_start`: no assistant message yet; `subagent_start` instead when
+    Claude Code's billing block claims `cc_is_subagent=true` or the request
+    opens a new branch of a session that already has another branch.
+  - `tool_result` versus `user_message`: the last message's tool results versus
+    the user's own words. Injected `<system-reminder>`/project context, command
+    expansions, compaction summaries and Codex's `<environment_context>` are not
+    typed words (pathfinder's `typed_user_turn` rule), and a subagent's report
+    after an `Agent`/`Task` call is tool output.
+  - `sidecall`: a harness's own auxiliary call, recognized by its literal
+    (Pi's summarization system prompt, Claude Code's summarize directive,
+    title and suggestion prompts, Codex's compaction prompt). It advances
+    nothing, and one sent without a session header (Pi's summary call) runs
+    statelessly instead of being refused.
+  - `compaction`: a request that rewrites the prefix is compared with the last
+    request this branch saw (committed or not). A harness summary literal (Pi,
+    Claude Code, Codex) or, without one, a new first user message replacing at
+    least two messages and followed by a retained run that ends where the
+    previous request ended, is a compaction with `summary_message`,
+    `retained_from` (null without a retained run) and `new: true`; the retained
+    messages keep their attribution at their new positions. Any other rewrite
+    is a new epoch with no boundary.
+  - Anything else is `basis: unknown` with a null kind, which holds.
+
+  A harness may optionally state the event itself, in an `X-Rayline-Event`
+  JSON header or a top-level `rayline_event` member that the core removes
+  before decoding, Decisions and dispatch (both at once are refused). An
+  explicit event takes precedence. No default or acceptance path depends on
+  it.
 - **Continuity.** A prefix change starts a new epoch and clears
   transcript-dependent evidence but keeps the last successfully executed action,
   sent as `last_served` even when that target is not offered or does not fit. Current and v1 modes are unchanged: a prefix

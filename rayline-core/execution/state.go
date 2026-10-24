@@ -44,6 +44,9 @@ type branchState struct {
 	// A later request without one (such as Pi's compaction summary call) is
 	// then a side call, never an advance of the main transcript.
 	explicitEvents bool
+	// seen fingerprints the wire messages of the last non-sidecall request
+	// this branch saw, committed or not: a compaction is detected against it.
+	seen []string
 }
 
 type carriedTranscript struct {
@@ -90,8 +93,7 @@ func (store *stateStore) acquire(ctx context.Context, session, branch string) (*
 			store.mu.Unlock()
 			return nil, fmt.Errorf("execution session capacity reached; restart with fresh sessions")
 		}
-		state = &branchState{lease: make(chan struct{}, 1), placements: make(map[string]thinkingcontrol.PlacerState), workers: make(map[string]WorkerEvidence)}
-		state.lease <- struct{}{}
+		state = newBranchState()
 		store.branches[key] = state
 	}
 	store.mu.Unlock()
@@ -101,6 +103,26 @@ func (store *stateStore) acquire(ctx context.Context, session, branch string) (*
 	case <-state.lease:
 		return state, nil
 	}
+}
+
+func newBranchState() *branchState {
+	state := &branchState{lease: make(chan struct{}, 1), placements: make(map[string]thinkingcontrol.PlacerState), workers: make(map[string]WorkerEvidence)}
+	state.lease <- struct{}{}
+	return state
+}
+
+// hasOtherBranch reports whether this session already has another branch: a
+// new branch of it with no assistant turn is a child session or subagent.
+func (store *stateStore) hasOtherBranch(session, branch string) bool {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	for key := range store.branches {
+		var identity []string
+		if json.Unmarshal([]byte(key), &identity) == nil && len(identity) == 2 && identity[0] == session && identity[1] != branch {
+			return true
+		}
+	}
+	return false
 }
 
 func (state *branchState) release() { state.lease <- struct{}{} }
@@ -271,8 +293,8 @@ func extendsPrefix(previous, current []string) bool {
 // the event whether this is a switch boundary. Current and v1 modes clear it,
 // exactly as before v2: there a compaction is a model-switch boundary.
 func (state *branchState) resetEpoch(keepServed bool) {
-	if state.wire != nil {
-		state.carried = &carriedTranscript{ledger: state.ledger, wire: state.wire}
+	if state.carried == nil {
+		state.carried = &carriedTranscript{ledger: state.ledger, wire: state.seen}
 	}
 	state.epoch++
 	if !keepServed {
