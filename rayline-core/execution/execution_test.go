@@ -49,8 +49,8 @@ func testConfig(t *testing.T, endpoint string, privateAppend bool) Config {
 		protocol = llmprotocol.AnthropicMessagesV1
 	}
 	return Config{ContractVersion: 1, PackageSHA256: strings.Repeat("a", 64), RegistrySHA256: thinkingcontrol.EmbeddedSHA256, AllowExperimentalControls: privateAppend,
-		Decisions:   DecisionsConfig{AuthEnv: "TEST_DECISIONS_KEY", Model: "arc-1.0", Result: "top", Routing: json.RawMessage(`{}`), OfferSHA256: strings.Repeat("b", 64)},
-		Deployments: []Deployment{{ID: "fixture-worker", Kind: "local", URL: endpoint, Protocol: protocol, WireModel: "qwen-fixture", RegistryModel: "qwen/qwen3.8-27b", RegistryProvider: provider, RuntimeIdentity: "external-http-fixture-v1", MaxOutputTokens: 8192, TokenUnits: "provider:fixture-worker"}},
+		Decisions:   DecisionsConfig{APIMode: DecisionsExecutionContextV1, AuthEnv: "TEST_DECISIONS_KEY", Model: "arc-1.0", Result: "top", Routing: json.RawMessage(`{}`), OfferSHA256: strings.Repeat("b", 64)},
+		Deployments: []Deployment{{ID: "fixture-worker", Kind: "local", URL: endpoint, Protocol: protocol, WireModel: "qwen-fixture", RegistryModel: "qwen/qwen3.8-27b", RegistryProvider: provider, RuntimeIdentity: "external-http-fixture-v1", MaxOutputTokens: 8192, ContextWindow: 16384, InputModalities: []string{"text"}, TokenUnits: "provider:fixture-worker"}},
 		Actions:     []Action{{ID: strings.Repeat("c", 64), Worker: "fixture-qwen", Model: "qwen3.8-27b", DeploymentID: "fixture-worker", ControlID: controlID, Control: publicControl(t, controlID)}}}
 }
 

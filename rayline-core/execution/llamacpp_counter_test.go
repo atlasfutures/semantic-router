@@ -3,6 +3,7 @@ package execution
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -24,6 +25,7 @@ type llamaEndpointFixture struct {
 	prefill        bool
 	rewriteHistory bool
 	counted        []string
+	generated      [][]byte
 }
 
 func llamaCounterFixture(t *testing.T) (Deployment, *llamaEndpointFixture) {
@@ -38,6 +40,13 @@ func llamaCounterFixture(t *testing.T) (Deployment, *llamaEndpointFixture) {
 		fixture.mu.Lock()
 		defer fixture.mu.Unlock()
 		switch r.URL.Path {
+		case "/v1/chat/completions":
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Error(err)
+			}
+			fixture.generated = append(fixture.generated, body)
+			_, _ = io.WriteString(w, `{"id":"chat1","object":"chat.completion","created":1,"model":"qwen-fixture","choices":[{"index":0,"message":{"role":"assistant","content":"ready"},"finish_reason":"stop"}],"usage":{"prompt_tokens":20,"completion_tokens":1,"total_tokens":21}}`)
 		case "/props":
 			writeJSON(w, 200, map[string]any{"model_path": path, "model_alias": "qwen-fixture", "build_info": "b11840-36e36e63a", "chat_template": fixture.template, "endpoint_props": false, "modalities": map[string]bool{"vision": false, "audio": false}})
 		case "/apply-template":

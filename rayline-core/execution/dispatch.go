@@ -107,8 +107,11 @@ func prepareReasoning(request *llmprotocol.Request, source llmprotocol.WireForma
 	nextIssuers := reasoning.ApplyEncryptedReasoning(request, state.issuers, encryptedDeploymentIssuer(deployment), deployment.Protocol)
 	opaqueIssuer := opaqueDeploymentIssuer(deployment)
 	foreignDropped := 0
+	if deployment.Kind == "cloud" && cloudTransport(deployment) == cloudModelPin {
+		foreignDropped = stripModelPinReasoning(request)
+	}
 	if isAnthropicDeployment(deployment) {
-		foreignDropped = protocolcodec.DropReasoningNotFromAnthropic(request, source)
+		foreignDropped += protocolcodec.DropReasoningNotFromAnthropic(request, source)
 		switch deployment.Protocol {
 		case llmprotocol.OpenAIChatV1:
 			protocolcodec.SignedThinkingAsReasoningDetails(request)
@@ -130,7 +133,7 @@ func isAnthropicDeployment(deployment Deployment) bool {
 }
 
 func encryptedDeploymentIssuer(deployment Deployment) string {
-	if deployment.Kind != "cloud" {
+	if deployment.Kind != "cloud" || cloudTransport(deployment) == cloudModelPin {
 		return reasoning.ReasoningIssuerUnknown
 	}
 	return reasoning.EncryptedIssuer(deployment.ID, deployment.URL, deployment.WireModel,
@@ -138,7 +141,7 @@ func encryptedDeploymentIssuer(deployment Deployment) string {
 }
 
 func opaqueDeploymentIssuer(deployment Deployment) string {
-	if deployment.Kind != "cloud" {
+	if deployment.Kind != "cloud" || cloudTransport(deployment) == cloudModelPin {
 		return reasoning.ReasoningIssuerUnknown
 	}
 	// The dispatch service attests this exact approved profile's actual model,
@@ -162,10 +165,14 @@ func (server *Server) upstream(ctx context.Context, selected admittedAction, dec
 		request.Header.Set("Anthropic-Version", "2023-06-01")
 	}
 	if deployment.Kind == "cloud" {
-		request.Header.Set("X-Rayline-Dispatch-Profile", deployment.DispatchProfileSHA256)
-		request.Header.Set("X-Rayline-Worker", decision.Worker)
-		request.Header.Set("X-Rayline-Action-Id", decision.ActionID)
-		request.Header.Set("X-Rayline-Route-Id", decision.RouteID)
+		if cloudTransport(deployment) == cloudModelPin {
+			request.Header.Set("X-Workshop-Required-Model", deployment.WireModel)
+		} else {
+			request.Header.Set("X-Rayline-Dispatch-Profile", deployment.DispatchProfileSHA256)
+			request.Header.Set("X-Rayline-Worker", decision.Worker)
+			request.Header.Set("X-Rayline-Action-Id", decision.ActionID)
+			request.Header.Set("X-Rayline-Route-Id", decision.RouteID)
+		}
 		request.Header.Set("X-Conversation-Id", session)
 		request.Header.Set("X-Rayline-Branch-Id", branch)
 	}
@@ -173,6 +180,9 @@ func (server *Server) upstream(ctx context.Context, selected admittedAction, dec
 }
 
 func dispatchEchoMatches(header http.Header, selected admittedAction, decision Decision) bool {
+	if cloudTransport(selected.deployment) == cloudModelPin {
+		return modelPinEchoMatches(header, selected.deployment)
+	}
 	return header.Get("X-Rayline-Dispatch-Profile") == selected.deployment.DispatchProfileSHA256 &&
 		header.Get("X-Rayline-Worker") == decision.Worker && header.Get("X-Rayline-Action-Id") == decision.ActionID &&
 		header.Get("X-Rayline-Dispatched-Model") == selected.deployment.WireModel &&

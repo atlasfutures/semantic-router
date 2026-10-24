@@ -102,6 +102,10 @@ runtime's `/apply-template`, then calls `/tokenize` with `add_special: true` and
 `parse_special: true`, matching the pinned inference path. It sends a known
 carried-prefix count only when the history's token sequence exactly prefixes the
 full prompt; template-dependent history rewrites leave that count unknown.
+This boundary is qualified only for a trailing run of Chat `user` messages that
+opens a new user turn. A request ending in a `tool` result still stores its exact
+full-prompt tokens, but reports no carried-prefix count or overlap. Extending the
+costing boundary to tool turns requires separate qualification.
 Multimodal requests are refused by this text counter because plain `/tokenize`
 does not include the runtime's image/audio processing.
 

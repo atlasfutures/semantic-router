@@ -19,6 +19,7 @@ const ContractVersion = 1
 type Deployment struct {
 	ID                    string                 `json:"id"`
 	Kind                  string                 `json:"kind"`
+	CloudTransport        string                 `json:"cloud_transport,omitempty"`
 	URL                   string                 `json:"url"`
 	Protocol              llmprotocol.WireFormat `json:"protocol"`
 	WireModel             string                 `json:"wire_model"`
@@ -32,6 +33,8 @@ type Deployment struct {
 	// profile. It is not evidence of cache residency or exclusive use.
 	RuntimeIdentity string          `json:"runtime_identity"`
 	MaxOutputTokens int64           `json:"max_output_tokens"`
+	ContextWindow   int64           `json:"context_window"`
+	InputModalities []string        `json:"input_modalities"`
 	TokenUnits      string          `json:"token_units"`
 	PromptCounter   *LlamaCPPConfig `json:"prompt_counter,omitempty"`
 	// InbandSystem is an explicitly qualified role-changing compatibility
@@ -52,23 +55,27 @@ type ProviderPin struct {
 // is the package's v5 JSON object, parsed by the shared renderer, not rebuilt
 // from a display label such as "high".
 type Action struct {
-	ID           string          `json:"action_id"`
-	Worker       string          `json:"worker"`
-	Model        string          `json:"model"`
-	DeploymentID string          `json:"deployment_id"`
-	ControlID    string          `json:"control_id"`
-	Control      json.RawMessage `json:"control"`
+	ID            string          `json:"action_id"`
+	Worker        string          `json:"worker"`
+	Model         string          `json:"model"`
+	DeploymentID  string          `json:"deployment_id"`
+	ReportedModel string          `json:"-"`
+	ControlID     string          `json:"control_id"`
+	Control       json.RawMessage `json:"control"`
 }
 
 type Decision struct {
-	RouteID       string
-	ActionID      string
-	Worker        string
-	Model         string
-	PackageSHA256 string
-	ControlID     string
-	ArmID         *string
-	Result        string
+	RouteID         string
+	ActionID        string
+	Worker          string
+	Model           string
+	ReportedModel   string
+	IdentitySource  string
+	AppliedValueUSD *float64
+	PackageSHA256   string
+	ControlID       string
+	ArmID           *string
+	Result          string
 }
 
 // DecisionInput contains the original public request and execution evidence.
@@ -110,8 +117,11 @@ type Attribution struct {
 }
 
 type WorkerEvidence struct {
-	DeploymentID string
-	Call         cachecontext.CallCache
+	DeploymentID     string
+	SelectedActionID string
+	SelectedModel    string
+	ExecutedModel    string
+	Call             cachecontext.CallCache
 	// PrefixTokens is unknown until a qualified worker tokenizer or provider
 	// count establishes current compatible overlap; ARC encoder tokens are
 	// not a substitute.

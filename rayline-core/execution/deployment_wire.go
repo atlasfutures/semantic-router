@@ -23,6 +23,12 @@ func hasExecutionHistory(request llmprotocol.Request) bool {
 }
 
 func validateProviderPin(deployment Deployment) error {
+	if deployment.Kind == "cloud" && cloudTransport(deployment) == cloudModelPin {
+		if deployment.ProviderPin != nil {
+			return fmt.Errorf("model_pin uses catalog provider routing, not an approved provider pin")
+		}
+		return nil
+	}
 	openRouter := deployment.Kind == "cloud" && deployment.RegistryProvider == "openrouter"
 	if !openRouter {
 		if deployment.ProviderPin != nil {
@@ -41,8 +47,9 @@ func validateProviderPin(deployment Deployment) error {
 }
 
 // applyDeploymentWireBody materializes the executor's approved transport
-// settings. The cloud gateway validates these bytes against its profile and
-// forwards them unchanged. Private transcript identity stays in headers.
+// settings. Exact dispatch validates these bytes against its profile;
+// model_pin leaves provider routing to the existing gateway's catalog.
+// Private transcript identity stays in headers.
 func applyDeploymentWireBody(body []byte, deployment Deployment) ([]byte, error) {
 	if deployment.Kind != "cloud" {
 		return body, nil
@@ -63,6 +70,17 @@ func applyDeploymentWireBody(body []byte, deployment Deployment) ([]byte, error)
 	if deployment.ProviderPin != nil {
 		body, err = sjson.SetBytes(body, "provider", deployment.ProviderPin)
 		if err != nil {
+			return nil, err
+		}
+	}
+	if cloudTransport(deployment) == cloudModelPin {
+		// Harness routing preferences cannot displace the deployment selected by
+		// ARC. This transport explicitly delegates provider choice to the gateway.
+		body, err = sjson.DeleteBytes(body, "provider")
+		if err != nil {
+			return nil, err
+		}
+		if err := validateModelPinBody(body, deployment); err != nil {
 			return nil, err
 		}
 	}

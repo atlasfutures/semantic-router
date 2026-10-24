@@ -16,8 +16,8 @@ import (
 	"github.com/atlasfutures/semantic-router/rayline-core/cachecontext"
 )
 
-// HTTPDecisions consumes Pathfinder's proposed routing.execution v1 contract
-// (pathfinder#5875, contract revision cefe836a48). It refuses older cells that cannot apply this evidence.
+// HTTPDecisions supports the current public API and an explicitly selected
+// execution-context contract. An unsupported request never changes API modes.
 type HTTPDecisions struct {
 	config      Config
 	client      *http.Client
@@ -25,6 +25,7 @@ type HTTPDecisions struct {
 	deployments map[string]Deployment
 	now         func() time.Time
 	exclusive   bool
+	valueUSD    *float64
 }
 
 func NewHTTPDecisions(config Config) (*HTTPDecisions, error) {
@@ -34,8 +35,12 @@ func NewHTTPDecisions(config Config) (*HTTPDecisions, error) {
 	if config.Decisions.AuthEnv == "" || os.Getenv(config.Decisions.AuthEnv) == "" {
 		return nil, fmt.Errorf("Decisions credential environment is unset")
 	}
-	if config.Decisions.Model == "" || !validSHA256(config.Decisions.OfferSHA256) {
-		return nil, fmt.Errorf("Decisions model and pinned offer SHA256 are required")
+	mode := config.Decisions.apiMode()
+	if mode != DecisionsCurrent && mode != DecisionsExecutionContextV1 {
+		return nil, fmt.Errorf("Decisions api_mode must be current or execution_context_v1")
+	}
+	if config.Decisions.Model == "" || (mode == DecisionsExecutionContextV1 && !validSHA256(config.Decisions.OfferSHA256)) || (config.Decisions.OfferSHA256 != "" && !validSHA256(config.Decisions.OfferSHA256)) {
+		return nil, fmt.Errorf("Decisions requires a model and valid configured offer SHA256; execution_context_v1 requires an offer pin")
 	}
 	switch config.Decisions.Result {
 	case "top", "swift", "sage", "custom":
@@ -49,6 +54,13 @@ func NewHTTPDecisions(config Config) (*HTTPDecisions, error) {
 	if _, exists := routing["execution"]; exists {
 		return nil, fmt.Errorf("execution context is owned by the sidecar, not static routing config")
 	}
+	if mode == DecisionsCurrent {
+		for key := range routing {
+			if key != "value_usd" && key != "prices" && key != "exclusive" {
+				return nil, fmt.Errorf("current Decisions routing key %q has no supported applied acknowledgement", key)
+			}
+		}
+	}
 	if _, exists := routing["prices"]; exists && !validSHA256(config.Decisions.PriceSHA256) {
 		return nil, fmt.Errorf("caller prices require a pinned price_sha256")
 	}
@@ -56,6 +68,19 @@ func NewHTTPDecisions(config Config) (*HTTPDecisions, error) {
 		return nil, fmt.Errorf("price_sha256 requires explicit caller prices")
 	}
 	provider := &HTTPDecisions{config: config, client: &http.Client{Timeout: 90 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, actions: make(map[string]Action), deployments: make(map[string]Deployment), now: time.Now}
+	if raw, exists := routing["value_usd"]; exists {
+		var value float64
+		if err := json.Unmarshal(raw, &value); err != nil || math.IsNaN(value) || math.IsInf(value, 0) || value < 0 || string(raw) == "null" {
+			return nil, fmt.Errorf("routing value_usd must be a nonnegative finite number")
+		}
+		if config.Decisions.Result != "custom" {
+			return nil, fmt.Errorf("routing value_usd requires the custom Decisions result")
+		}
+		provider.valueUSD = &value
+	}
+	if config.Decisions.Result == "custom" && provider.valueUSD == nil {
+		return nil, fmt.Errorf("custom Decisions result requires explicit routing value_usd")
+	}
 	if raw, exists := routing["exclusive"]; exists {
 		if err := json.Unmarshal(raw, &provider.exclusive); err != nil {
 			return nil, fmt.Errorf("routing exclusive must be boolean")
@@ -170,12 +195,13 @@ type decisionIdentity struct {
 	Prices         struct {
 		Basis     string  `json:"basis"`
 		SHA256    *string `json:"price_sha256"`
-		Exclusive bool    `json:"exclusive"`
+		Exclusive *bool   `json:"exclusive"`
 	} `json:"prices"`
 }
 
 type publicDecision struct {
 	Model    string            `json:"model"`
+	Provider string            `json:"provider"`
 	Worker   string            `json:"worker"`
 	ActionID string            `json:"policy_action_id"`
 	Identity *decisionIdentity `json:"identity"`
@@ -206,6 +232,10 @@ type decisionsResponse struct {
 	Presets map[string]publicDecision `json:"presets"`
 	Custom  *publicDecision           `json:"custom"`
 	Routing struct {
+		ValueUSD *struct {
+			Status    string   `json:"status"`
+			Requested *float64 `json:"requested"`
+		} `json:"value_usd"`
 		Execution *struct {
 			Status              string            `json:"status"`
 			Turn                executionTurn     `json:"turn"`
@@ -221,7 +251,7 @@ type decisionsResponse struct {
 		Prices    *struct {
 			Status    string `json:"status"`
 			SHA256    string `json:"price_sha256"`
-			Exclusive bool   `json:"exclusive"`
+			Exclusive *bool  `json:"exclusive"`
 		} `json:"prices"`
 	} `json:"routing"`
 }
@@ -238,16 +268,20 @@ func (provider *HTTPDecisions) Decide(ctx context.Context, input DecisionInput) 
 	if err := json.Unmarshal(provider.config.Decisions.Routing, &routing); err != nil {
 		return Decision{}, err
 	}
-	external := provider.project(input)
-	executionBytes, err := json.Marshal(external)
+	var external externalContext
+	if provider.config.Decisions.apiMode() == DecisionsExecutionContextV1 {
+		external = provider.project(input)
+		executionBytes, err := json.Marshal(external)
+		if err != nil {
+			return Decision{}, err
+		}
+		routing["execution"] = executionBytes
+	}
+	routingBytes, err := json.Marshal(routing)
 	if err != nil {
 		return Decision{}, err
 	}
-	routing["execution"] = executionBytes
-	body["routing"], err = json.Marshal(routing)
-	if err != nil {
-		return Decision{}, err
-	}
+	body["routing"] = routingBytes
 	body["model"], err = json.Marshal(provider.config.Decisions.Model)
 	if err != nil {
 		return Decision{}, err
@@ -271,7 +305,7 @@ func (provider *HTTPDecisions) Decide(ctx context.Context, input DecisionInput) 
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return Decision{}, fmt.Errorf("Decisions refused the execution context (HTTP %d)", response.StatusCode)
+		return Decision{}, fmt.Errorf("Decisions request refused (HTTP %d)", response.StatusCode)
 	}
 	responseBytes, err := readBounded(response.Body, 8<<20)
 	if err != nil {
@@ -284,47 +318,113 @@ func (provider *HTTPDecisions) Decide(ctx context.Context, input DecisionInput) 
 	selected := result.publicDecision
 	switch provider.config.Decisions.Result {
 	case "swift", "sage":
-		selected = result.Presets[provider.config.Decisions.Result]
+		var exists bool
+		selected, exists = result.Presets[provider.config.Decisions.Result]
+		if !exists {
+			return Decision{}, fmt.Errorf("Decisions returned no requested preset")
+		}
 	case "custom":
 		if result.Custom == nil {
 			return Decision{}, fmt.Errorf("Decisions returned no custom result")
 		}
 		selected = *result.Custom
 	}
+	if len(result.Routing.Unapplied) > 0 {
+		return Decision{}, fmt.Errorf("Decisions did not apply requested routing keys: %s", strings.Join(result.Routing.Unapplied, ", "))
+	}
+	if provider.valueUSD != nil {
+		value := result.Routing.ValueUSD
+		if value == nil || value.Status != "applied" || value.Requested == nil || *value.Requested != *provider.valueUSD {
+			return Decision{}, fmt.Errorf("Decisions did not apply the requested value_usd")
+		}
+	}
+	if selected.Identity == nil && provider.config.Decisions.apiMode() == DecisionsCurrent {
+		return provider.currentTopDecision(result, selected, routing)
+	}
 	identity := selected.Identity
-	if identity == nil || identity.PackageSHA256 != provider.config.PackageSHA256 || identity.RegistrySHA256 != provider.config.RegistrySHA256 || identity.OfferSHA256 != provider.config.Decisions.OfferSHA256 || identity.ActionID != identity.PolicyActionID || (selected.ActionID != "" && selected.ActionID != identity.ActionID) {
+	if identity == nil || identity.PackageSHA256 != provider.config.PackageSHA256 || identity.RegistrySHA256 != provider.config.RegistrySHA256 || (provider.config.Decisions.OfferSHA256 != "" && identity.OfferSHA256 != provider.config.Decisions.OfferSHA256) || identity.ActionID != identity.PolicyActionID || (selected.ActionID != "" && selected.ActionID != identity.ActionID) {
 		return Decision{}, fmt.Errorf("Decisions identity does not match the pinned execution package, registry and offer")
 	}
 	action, ok := provider.actions[identity.ActionID]
-	if !ok || identity.ControlID != action.ControlID || selected.Worker != action.Worker || selected.Model != action.Model || result.RouteID == "" {
+	if !ok || identity.ControlID != action.ControlID || selected.Worker != action.Worker || !provider.matchesActionModel(selected.Model, action) || result.RouteID == "" {
 		return Decision{}, fmt.Errorf("Decisions selected an unbound action or control")
 	}
-	echo := result.Routing.Execution
-	if echo == nil || echo.Status != "applied" || echo.Turn != external.Turn || len(result.Routing.Unapplied) > 0 {
-		return Decision{}, fmt.Errorf("Decisions did not apply this execution context")
-	}
-	for _, name := range []string{"package_sha256", "thinking_controls_sha256", "offer_sha256"} {
-		if echo.Pinned[name] != "matched" {
-			return Decision{}, fmt.Errorf("Decisions did not confirm pinned %s", name)
+	if provider.config.Decisions.apiMode() == DecisionsExecutionContextV1 {
+		echo := result.Routing.Execution
+		if echo == nil || echo.Status != "applied" || echo.Turn != external.Turn {
+			return Decision{}, fmt.Errorf("Decisions did not apply this execution context")
 		}
-	}
-	if err := validateCachePolicyEcho(echo.UserTurnCacheSource, echo.UserTurnCache, echo.EpisodeIdentity, echo.Multiwarm); err != nil {
-		return Decision{}, err
-	}
-	if err := validateWorkerEcho(external.Workers, echo.Workers, echo.Boundary, echo.UserTurnCache); err != nil {
-		return Decision{}, err
+		for _, name := range []string{"package_sha256", "thinking_controls_sha256", "offer_sha256"} {
+			if echo.Pinned[name] != "matched" {
+				return Decision{}, fmt.Errorf("Decisions did not confirm pinned %s", name)
+			}
+		}
+		if err := validateCachePolicyEcho(echo.UserTurnCacheSource, echo.UserTurnCache, echo.EpisodeIdentity, echo.Multiwarm); err != nil {
+			return Decision{}, err
+		}
+		if err := validateWorkerEcho(external.Workers, echo.Workers, echo.Boundary, echo.UserTurnCache); err != nil {
+			return Decision{}, err
+		}
+		slog.Info("execution context applied", "route_id", result.RouteID, "boundary", echo.Boundary, "cache_policy", echo.UserTurnCache, "cache_policy_source", echo.UserTurnCacheSource, "episode_identity", echo.EpisodeIdentity, "worker_evidence", len(echo.Workers))
 	}
 
 	if provider.config.Decisions.PriceSHA256 != "" {
 		prices := result.Routing.Prices
-		if prices == nil || prices.Status != "applied" || prices.SHA256 != provider.config.Decisions.PriceSHA256 || identity.Prices.Basis != "caller" || identity.Prices.SHA256 == nil || *identity.Prices.SHA256 != prices.SHA256 || identity.Prices.Exclusive != prices.Exclusive || prices.Exclusive != provider.exclusive {
+		if prices == nil || prices.Status != "applied" || prices.SHA256 != provider.config.Decisions.PriceSHA256 || identity.Prices.Basis != "caller" || identity.Prices.SHA256 == nil || *identity.Prices.SHA256 != prices.SHA256 || identity.Prices.Exclusive == nil || prices.Exclusive == nil || *identity.Prices.Exclusive != *prices.Exclusive || *prices.Exclusive != provider.exclusive {
 			return Decision{}, fmt.Errorf("Decisions did not apply the pinned caller price world")
 		}
-	} else if identity.Prices.Basis != "catalog" || identity.Prices.SHA256 != nil || identity.Prices.Exclusive != provider.exclusive {
+	} else if identity.Prices.Basis != "catalog" || identity.Prices.SHA256 != nil || identity.Prices.Exclusive == nil || *identity.Prices.Exclusive != provider.exclusive {
 		return Decision{}, fmt.Errorf("Decisions did not confirm the requested catalog price world")
 	}
-	slog.Info("execution context applied", "route_id", result.RouteID, "boundary", echo.Boundary, "cache_policy", echo.UserTurnCache, "cache_policy_source", echo.UserTurnCacheSource, "episode_identity", echo.EpisodeIdentity, "worker_evidence", len(echo.Workers))
-	return Decision{RouteID: result.RouteID, ActionID: identity.ActionID, Worker: selected.Worker, Model: selected.Model, PackageSHA256: identity.PackageSHA256, ControlID: identity.ControlID, ArmID: identity.ArmID, Result: provider.config.Decisions.Result}, nil
+	decision := Decision{RouteID: result.RouteID, ActionID: identity.ActionID, Worker: selected.Worker, Model: action.Model, ReportedModel: selected.Model, PackageSHA256: identity.PackageSHA256, ControlID: identity.ControlID, ArmID: identity.ArmID, Result: provider.config.Decisions.Result, IdentitySource: "response", AppliedValueUSD: provider.valueUSD}
+	provider.logDecision(decision, identity.Prices.Basis, identity.Prices.SHA256)
+	return decision, nil
+}
+
+// The deployed top-only API names an action but does not attest package,
+// registry, offer or prices. It can be used explicitly with empty routing;
+// the local manifest supplies control identity, clearly labeled in evidence.
+func (provider *HTTPDecisions) currentTopDecision(result decisionsResponse, selected publicDecision, routing map[string]json.RawMessage) (Decision, error) {
+	if provider.config.Decisions.Result != "top" || len(routing) != 0 || provider.config.Decisions.OfferSHA256 != "" {
+		return Decision{}, fmt.Errorf("this Decisions response only supports top with empty routing and no returned identity pins")
+	}
+	action, ok := provider.actions[selected.ActionID]
+	reason := ""
+	switch {
+	case !ok:
+		reason = "unbound_action"
+	case result.RouteID == "":
+		reason = "missing_route_id"
+	case selected.Worker != action.Worker:
+		reason = "worker_mismatch"
+	case !provider.matchesActionModel(selected.Model, action):
+		reason = "model_mismatch"
+	}
+	if reason != "" {
+		provider.logSelectionRefusal(result.RouteID, selected, action, reason)
+		return Decision{}, fmt.Errorf("Decisions selected an action, worker or model absent from the configured manifest")
+	}
+	decision := Decision{RouteID: result.RouteID, ActionID: action.ID, Worker: action.Worker, Model: action.Model, ReportedModel: selected.Model, PackageSHA256: provider.config.PackageSHA256, ControlID: action.ControlID, Result: "top", IdentitySource: "configured_manifest"}
+	provider.logDecision(decision, "unattested", nil)
+	return decision, nil
+}
+
+// Only selected identity metadata is logged. Provider request/response bodies,
+// prompts, credentials and transcript/session material never enter this event.
+func (provider *HTTPDecisions) logSelectionRefusal(routeID string, selected publicDecision, bound Action, reason string) {
+	var controlID any
+	if selected.Identity != nil {
+		controlID = selected.Identity.ControlID
+	}
+	slog.Warn("decision refused", "route_id", routeID, "selected_model", selected.Model, "selected_worker", selected.Worker, "selected_action_id", selected.ActionID, "selected_control_id", controlID, "reason", reason, "bound_model", bound.Model, "bound_worker", bound.Worker, "bound_control_id", bound.ControlID, "api_mode", provider.config.Decisions.apiMode())
+}
+
+func (provider *HTTPDecisions) matchesActionModel(model string, action Action) bool {
+	return model != "" && (model == action.Model || model == action.ReportedModel || model == provider.deployments[action.DeploymentID].RegistryModel)
+}
+
+func (provider *HTTPDecisions) logDecision(decision Decision, priceBasis string, priceSHA *string) {
+	slog.Info("decision selected", "route_id", decision.RouteID, "selected_model", decision.Model, "reported_model", decision.ReportedModel, "action_id", decision.ActionID, "control_id", decision.ControlID, "package_sha256", decision.PackageSHA256, "identity_source", decision.IdentitySource, "result", decision.Result, "applied_value_usd", decision.AppliedValueUSD, "price_basis", priceBasis, "price_sha256", priceSHA, "api_mode", provider.config.Decisions.apiMode())
 }
 
 func validateWorkerEcho(workers []externalWorker, echoed []workerEcho, boundary, cachePolicy string) error {

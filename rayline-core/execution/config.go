@@ -25,17 +25,21 @@ type Config struct {
 	Decisions                 DecisionsConfig `json:"decisions"`
 	Deployments               []Deployment    `json:"deployments"`
 	Bindings                  []ActionBinding `json:"bindings"`
+	TestAlias                 *TestAlias      `json:"test_alias,omitempty"`
+	MaxGenerationAttempts     int64           `json:"max_generation_attempts,omitempty"`
 	Actions                   []Action        `json:"-"`
 	PackageID                 string          `json:"-"`
 }
 
 type ActionBinding struct {
-	ActionID     string `json:"action_id"`
-	Worker       string `json:"worker"`
-	DeploymentID string `json:"deployment_id"`
+	ActionID      string `json:"action_id"`
+	Worker        string `json:"worker"`
+	DeploymentID  string `json:"deployment_id"`
+	ReportedModel string `json:"reported_model,omitempty"`
 }
 
 type DecisionsConfig struct {
+	APIMode     string          `json:"api_mode,omitempty"`
 	URL         string          `json:"url"`
 	AuthEnv     string          `json:"auth_env"`
 	Model       string          `json:"model"`
@@ -43,6 +47,26 @@ type DecisionsConfig struct {
 	Routing     json.RawMessage `json:"routing"`
 	PriceSHA256 string          `json:"price_sha256,omitempty"`
 	OfferSHA256 string          `json:"offer_sha256"`
+}
+
+const (
+	DecisionsCurrent            = "current"
+	DecisionsExecutionContextV1 = "execution_context_v1"
+)
+
+func (config DecisionsConfig) apiMode() string {
+	if config.APIMode == "" {
+		return DecisionsCurrent
+	}
+	return config.APIMode
+}
+
+// TestAlias is an explicit test-only substitution. The selected package action
+// remains recorded separately; only the named, independently admitted local
+// action executes. An omitted alias never substitutes a model.
+type TestAlias struct {
+	SelectedModel     string `json:"selected_model"`
+	ExecutionActionID string `json:"execution_action_id"`
 }
 
 // LoadConfig refuses unknown fields and mismatched registry pins. A sidecar
@@ -135,6 +159,7 @@ func (config *Config) loadActions(directory string) error {
 		}
 		action.Worker = binding.Worker
 		action.DeploymentID = binding.DeploymentID
+		action.ReportedModel = binding.ReportedModel
 		config.Actions = append(config.Actions, action)
 	}
 	return nil
