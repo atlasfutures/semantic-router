@@ -15,6 +15,10 @@ type policyDecider interface {
 	Decide(context.Context, raylinearc.PolicyDecisionRequest) (*raylinearc.PolicyDecisionResponse, error)
 }
 
+// policyReplicaReprobeInterval is how often a replica that failed its
+// readiness check is checked again.
+const policyReplicaReprobeInterval = 30 * time.Second
+
 // newRaylineARCPolicyServicePool builds the replica pool of a cell that
 // configures policy_service.replicas.
 func newRaylineARCPolicyServicePool(
