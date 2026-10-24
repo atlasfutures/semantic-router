@@ -744,3 +744,31 @@ def test_rayline_arc_cli_checks_routing_prices_urls():
         )
         errors = _validate_rayline_arc_decision(decision)
         assert any(error.field.endswith(field) for error in errors), (field, errors)
+
+
+def test_rayline_arc_policy_service_replicas_mirror_the_go_loader():
+    raw = _policy_service_decision().algorithm.rayline_arc.policy_service.model_dump()
+    replicas = [
+        {"id": "s1", "base_url": "https://s1.example", "state": "active"},
+        {"id": "s2", "base_url": "https://s2.example", "state": "draining"},
+    ]
+    failover = {
+        "schema_version": "rayline.arc.policy-failover.v1",
+        "unavailable_status_codes": [503],
+        "unavailable_cooldown_seconds": 30,
+        "max_remaps": 1,
+    }
+    pooled = RaylineARCPolicyServiceConfig.model_validate(
+        {**raw, "base_url": None, "replicas": replicas, "failover": failover}
+    )
+    assert [replica.id for replica in pooled.replicas] == ["s1", "s2"]
+    # The reference shape: base_url with empty replicas and failover blocks.
+    RaylineARCPolicyServiceConfig.model_validate({**raw, "replicas": [], "failover": {}})
+    for changed in (
+        {"replicas": replicas, "failover": failover},  # both modes
+        {"base_url": None, "replicas": replicas, "failover": None},
+        {"failover": failover},  # failover without replicas
+        {"base_url": None},  # neither mode
+    ):
+        with pytest.raises(ValidationError):
+            RaylineARCPolicyServiceConfig.model_validate({**raw, **changed})
