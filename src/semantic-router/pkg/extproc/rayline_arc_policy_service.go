@@ -369,10 +369,13 @@ func createRaylineARCPolicySelector(
 	probe := func(ctx context.Context) error {
 		if pool != nil {
 			// Ready once one active replica serves the package; a replica
-			// that does not cools down and takes no episode meanwhile.
+			// that does not takes no episode until a re-check passes.
 			return pool.Probe(ctx, check)
 		}
 		return check(ctx, client)
+	}
+	if pool != nil {
+		go pool.Reprobe(probeContext, check, policyReplicaReprobeInterval)
 	}
 	raylineARCArmInBackground(
 		probeContext,

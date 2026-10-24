@@ -543,8 +543,8 @@ the session.
   timeout or a transport error leaves the episode where it is, and the
   session_busy retries and re-asks of one turn stay on its replica.
 - **Readiness.** The cell arms once one active replica serves the package. A
-  replica that fails the readiness check cools down and is offered no
-  episode until the cooldown ends.
+  replica that fails the readiness check takes no episode, owned or new, and
+  is checked again every 30 s until it passes.
 
 ## Episode turns
 
