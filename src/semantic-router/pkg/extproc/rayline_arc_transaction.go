@@ -59,10 +59,17 @@ type raylineARCEpisodeTransaction struct {
 	serializedTokens int
 	encoderOwner     string
 	encoderVisited   []string
-	closeRequested   bool
-	sessionCloser    raylineARCSessionCloseFunc
-	sessionCloseWait time.Duration
-	selectionReady   bool
+	// policySession is the Modal sticky session this turn moved the episode
+	// to on a sessioned policy Server, committed only with the turn; nil
+	// keeps the stored session. Never logged.
+	policySession *raylinearc.PolicySession
+	// policySessionCleared drops the stored session: the cell no longer
+	// decides through sessions.
+	policySessionCleared bool
+	closeRequested       bool
+	sessionCloser        raylineARCSessionCloseFunc
+	sessionCloseWait     time.Duration
+	selectionReady       bool
 	// thinkingLedger is the lever ledger this turn staged, committed only
 	// with the turn; nil leaves the stored ledger as it was.
 	thinkingLedger *thinkinglever.Ledger
@@ -252,6 +259,22 @@ func (transaction *raylineARCEpisodeTransaction) markSelectionWithAffinity(
 		)
 	}
 	transaction.selectionReady = true
+}
+
+// markPolicySession records the session a sessioned policy Server decided
+// this turn on, when it is not the one the episode holds (nil leaves that
+// one), or, cleared, that the cell no longer uses sessions and the stored one
+// goes. A side call commits nothing, so its binding reports none.
+func (transaction *raylineARCEpisodeTransaction) markPolicySession(session *raylinearc.PolicySession, cleared bool) {
+	if transaction == nil {
+		return
+	}
+	transaction.policySessionCleared = cleared
+	if session == nil {
+		return
+	}
+	cloned := *session
+	transaction.policySession = &cloned
 }
 
 // takesHandovers reports whether this turn, leading a coalesced group, takes a
@@ -581,6 +604,12 @@ func (transaction *raylineARCEpisodeTransaction) nextState() (*raylinearc.Episod
 		[]string(nil),
 		transaction.encoderVisited...,
 	)
+	if transaction.policySessionCleared {
+		nextState.PolicySession = nil
+	} else if transaction.policySession != nil {
+		session := *transaction.policySession
+		nextState.PolicySession = &session
+	}
 	if transaction.policyNext != nil {
 		nextState.Policy = transaction.policyNext.Clone()
 	}
@@ -839,6 +868,10 @@ func cloneARCState(
 		ReasoningIssuers:     append([]string(nil), state.ReasoningIssuers...),
 		ReasoningProvenance:  append([]raylinearc.ReasoningProvenance(nil), state.ReasoningProvenance...),
 		PolicyBoundary:       raylinearc.ClonePolicyBoundary(state.PolicyBoundary),
+	}
+	if state.PolicySession != nil {
+		session := *state.PolicySession
+		cloned.PolicySession = &session
 	}
 	if state.PreviousArm != nil {
 		value := *state.PreviousArm

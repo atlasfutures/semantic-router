@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
@@ -44,7 +45,7 @@ func newRaylineARCPolicyServicePool(
 // policyServiceMode reports whether the cell decides through a policy
 // service, one client or a replica pool.
 func (armed *raylineARCArmedComponents) policyServiceMode() bool {
-	return armed != nil && (armed.policy != nil || armed.policyPool != nil)
+	return armed != nil && (armed.policy != nil || armed.policyPool != nil || armed.policySessions != nil)
 }
 
 // policyDeciderFor is the turn's decider. With replicas it is a binding to
@@ -89,4 +90,54 @@ func recordPolicyReplica(trace *selection.RaylineARCTrace, binding *raylinearc.P
 	trace.EncoderAttempts = routed.ReplicaAttempts
 	trace.EncoderFailover = routed.ReplicaFailover
 	trace.EncoderVisitedReplicaIDs = routed.VisitedReplicaIDs
+}
+
+// policySessionBindingFor is the turn's binding to the episode's Modal
+// session on a sessioned policy Server, nil for any other cell. A side call
+// commits nothing, so its binding is ephemeral: it decides on the episode's
+// session when there is one and never records one; a session it had to start
+// is ended once the call is done.
+func (armed *raylineARCArmedComponents) policySessionBindingFor(
+	state *raylinearc.EpisodeState,
+	sideCall bool,
+) *raylinearc.PolicySessionBinding {
+	if armed == nil || armed.policySessions == nil {
+		return nil
+	}
+	var persisted *raylinearc.PolicySession
+	if state != nil {
+		persisted = state.PolicySession
+	}
+	return armed.policySessions.Bind(persisted, sideCall)
+}
+
+// recordPolicySession puts the session this turn was decided on into its
+// trace, for the episode commit to persist (never logged), and logs a turn
+// that had to leave a session that was gone. A turn without sessions changes
+// nothing, except that it drops a session the state still holds.
+func recordPolicySession(
+	trace *selection.RaylineARCTrace,
+	binding *raylinearc.PolicySessionBinding,
+	state *raylinearc.EpisodeState,
+	episodeIDHash string,
+) {
+	if trace == nil {
+		return
+	}
+	if binding == nil {
+		// A cell without sessions drops one its episode still holds (sessions
+		// were turned off), so the record returns to its earlier schema.
+		trace.PolicySessionCleared = state != nil && state.PolicySession != nil
+		return
+	}
+	trace.PolicySessions, trace.PolicySessionMoved = binding.Sessions()
+	if session, changed := binding.Session(); changed {
+		trace.PolicySession = session
+	}
+	if trace.PolicySessionMoved {
+		logging.ComponentWarnEvent("extproc", "rayline_arc_policy_session_moved", map[string]interface{}{
+			"episode_id_hash": episodeIDHash,
+			"sessions":        trace.PolicySessions,
+		})
+	}
 }

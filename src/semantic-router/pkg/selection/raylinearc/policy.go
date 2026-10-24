@@ -73,6 +73,10 @@ type EpisodeState struct {
 	// schedule boundary, stored before dispatch so a retry reuses it; Commit
 	// clears it.
 	PolicyBoundary *PolicyBoundaryDecision
+	// PolicySession is the Modal sticky session that holds the episode on a
+	// sessioned policy Server (policy_service.sessions); nil otherwise. Its
+	// token is a credential: never logged.
+	PolicySession *PolicySession
 }
 
 // ControlPlacement is one placer's state. A placer governs one worker's
@@ -383,6 +387,11 @@ func validateEpisodeState(state *EpisodeState, workerCount int) error {
 		state.EncoderVisitedOwners,
 	); err != nil {
 		return err
+	}
+	if state.PolicySession != nil {
+		if err := ValidatePolicySession(*state.PolicySession); err != nil {
+			return err
+		}
 	}
 	if err := thinkinglever.ValidateLedger(state.Thinking); err != nil {
 		return err

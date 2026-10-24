@@ -73,9 +73,15 @@ const (
 	// carries, so every other episode keeps its earlier bytes and a v8
 	// reader refuses it by its schema rather than by a field it does not know.
 	episodeStateSchemaV9 = "rayline.arc.episode-state.v9"
-	maxFutureClockSkew   = 5 * time.Minute
-	episodeOwnerBytes    = 24
-	maxEpisodeStateBytes = 64 * 1024
+	// episodeStateSchemaV10 adds the episode's Modal sticky session on a
+	// sessioned policy Server (policy_service.sessions). It is written only
+	// for a record that carries one, whatever else it carries, so every other
+	// episode keeps its earlier bytes and a v9 reader refuses it by its
+	// schema rather than by a field it does not know.
+	episodeStateSchemaV10 = "rayline.arc.episode-state.v10"
+	maxFutureClockSkew    = 5 * time.Minute
+	episodeOwnerBytes     = 24
+	maxEpisodeStateBytes  = 64 * 1024
 	// maxEpisodeStateBytesV6 is a v6 record's size limit: up to
 	// MaxControlPlacements placers, each with its texts and ledger, need more
 	// than a v5 record's 64 KiB.
@@ -189,20 +195,27 @@ type EpisodeStoreReadiness interface {
 }
 
 type episodeStateWire struct {
-	SchemaVersion        string                  `json:"schema_version"`
-	Version              uint64                  `json:"version"`
-	PreviousArm          *int                    `json:"previous_arm"`
-	TurnIndex            uint64                  `json:"turn_index"`
-	Warmth               []*episodeWarmthWire    `json:"warmth"`
-	EncoderOwner         *string                 `json:"encoder_owner,omitempty"`
-	EncoderVisitedOwners *[]string               `json:"encoder_visited_owners,omitempty"`
-	Thinking             *episodeThinkingWire    `json:"thinking,omitempty"`
-	Upstream             []episodeUpstreamWire   `json:"upstream,omitempty"`
-	Policy               *PolicyEpisodeState     `json:"policy,omitempty"`
-	Controls             []episodeControlWire    `json:"controls,omitempty"`
-	ReasoningIssuers     []string                `json:"reasoning_issuers,omitempty"`
-	PolicyBoundary       *PolicyBoundaryDecision `json:"policy_boundary,omitempty"`
-	ReasoningProvenance  []ReasoningProvenance   `json:"reasoning_provenance,omitempty"`
+	SchemaVersion        string                    `json:"schema_version"`
+	Version              uint64                    `json:"version"`
+	PreviousArm          *int                      `json:"previous_arm"`
+	TurnIndex            uint64                    `json:"turn_index"`
+	Warmth               []*episodeWarmthWire      `json:"warmth"`
+	EncoderOwner         *string                   `json:"encoder_owner,omitempty"`
+	EncoderVisitedOwners *[]string                 `json:"encoder_visited_owners,omitempty"`
+	Thinking             *episodeThinkingWire      `json:"thinking,omitempty"`
+	Upstream             []episodeUpstreamWire     `json:"upstream,omitempty"`
+	Policy               *PolicyEpisodeState       `json:"policy,omitempty"`
+	Controls             []episodeControlWire      `json:"controls,omitempty"`
+	ReasoningIssuers     []string                  `json:"reasoning_issuers,omitempty"`
+	PolicyBoundary       *PolicyBoundaryDecision   `json:"policy_boundary,omitempty"`
+	ReasoningProvenance  []ReasoningProvenance     `json:"reasoning_provenance,omitempty"`
+	PolicySession        *episodePolicySessionWire `json:"policy_session,omitempty"`
+}
+
+// episodePolicySessionWire is a persisted Modal sticky session.
+type episodePolicySessionWire struct {
+	ID    string `json:"id"`
+	Token string `json:"token"`
 }
 
 // episodeControlWire is one thinking-control placer. Its ledger names each
@@ -294,7 +307,7 @@ func controlPlacementsToWire(placements []ControlPlacement) []episodeControlWire
 // episodeStateSizeLimit is the most bytes a record of schema may take.
 func episodeStateSizeLimit(schema string) int {
 	if schema == episodeStateSchemaV6 || schema == episodeStateSchemaV7 || schema == episodeStateSchemaV8 ||
-		schema == episodeStateSchemaV9 {
+		schema == episodeStateSchemaV9 || schema == episodeStateSchemaV10 {
 		return maxEpisodeStateBytesV6
 	}
 	return maxEpisodeStateBytes
@@ -497,6 +510,7 @@ func cloneEpisodeState(state *EpisodeState) *EpisodeState {
 		ReasoningIssuers:     append([]string(nil), state.ReasoningIssuers...),
 		PolicyBoundary:       clonePolicyBoundary(state.PolicyBoundary),
 		ReasoningProvenance:  append([]ReasoningProvenance(nil), state.ReasoningProvenance...),
+		PolicySession:        clonePolicySession(state.PolicySession),
 	}
 	for index, warmth := range state.Warmth {
 		if warmth == nil {
@@ -592,6 +606,10 @@ func marshalEpisodeState(
 	if carriesExplorationOrigin(state.Policy, state.PolicyBoundary) {
 		wire.SchemaVersion = episodeStateSchemaV9
 	}
+	if state.PolicySession != nil {
+		wire.SchemaVersion = episodeStateSchemaV10
+		wire.PolicySession = &episodePolicySessionWire{ID: state.PolicySession.ID, Token: state.PolicySession.Token}
+	}
 	owner := state.EncoderOwner
 	visited := append([]string{}, state.EncoderVisitedOwners...)
 	wire.EncoderOwner = &owner
@@ -660,6 +678,14 @@ func unmarshalEpisodeState(
 func decodeEpisodeStateAffinity(
 	wire episodeStateWire,
 ) (string, []string, error) {
+	// v10 is exactly the record that carries a policy session, whatever else
+	// it carries; it may hold anything v3 to v9 do.
+	if (wire.PolicySession != nil) != (wire.SchemaVersion == episodeStateSchemaV10) {
+		return "", nil, errors.New("ARC episode state contract mismatch")
+	}
+	if wire.PolicySession != nil {
+		return decodeEpisodeOwner(wire)
+	}
 	// v9 is exactly the record whose policy state or staged boundary carries
 	// an exploration origin, whatever else it carries; it may hold anything
 	// v3 to v8 do.
@@ -766,6 +792,9 @@ func episodeStateFromWire(
 		Policy:               wire.Policy.Clone(),
 		Thinking:             thinkingLedgerFromWire(wire.Thinking),
 		PolicyBoundary:       clonePolicyBoundary(wire.PolicyBoundary),
+	}
+	if wire.PolicySession != nil {
+		state.PolicySession = &PolicySession{ID: wire.PolicySession.ID, Token: wire.PolicySession.Token}
 	}
 	if len(wire.ReasoningIssuers) > 0 {
 		state.ReasoningIssuers = append([]string(nil), wire.ReasoningIssuers...)
