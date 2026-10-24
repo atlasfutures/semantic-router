@@ -228,6 +228,9 @@ type RequestContext struct {
 	// TTFT tracking
 	TTFTRecorded bool
 	TTFTSeconds  float64
+	// RoutingLatency is ProcessingStartTime to the routing decision (the
+	// policy decide included); zero until recordRoutingLatency runs.
+	RoutingLatency time.Duration
 
 	// InflightToken is the handle returned by inflight.Begin when this request
 	// was admitted to the in-flight tracker after model selection. Zero means

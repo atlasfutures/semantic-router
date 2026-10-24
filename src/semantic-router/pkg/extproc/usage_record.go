@@ -62,6 +62,12 @@ type llmUsageRecord struct {
 	TotalTokens         *int   `json:"total_tokens"`
 	ReasoningTokens     *int64 `json:"reasoning_tokens"`
 	CompletionLatencyMS *int64 `json:"completion_latency_ms"`
+	// TTFTMS is request-body start to the first upstream response byte
+	// (streamed) or headers (buffered); RoutingLatencyMS is the part of it
+	// spent before dispatch, the policy decide included. Their difference is
+	// the upstream's own time to first byte. Null when not observed.
+	TTFTMS           *int64 `json:"ttft_ms"`
+	RoutingLatencyMS *int64 `json:"routing_latency_ms"`
 	// UsageSource says whether the counts are the upstream's or the Router's
 	// own estimate of a turn it cut.
 	UsageSource string `json:"usage_source"`
@@ -259,6 +265,14 @@ func (r *OpenAIRouter) newLLMUsageRecord(ctx *RequestContext, usage responseUsag
 	record.FailureClass = nonEmpty(ctx.ResponseFailureClass)
 	record.ContentSentBeforeFailure = ctx.ContentSentBeforeFailure
 	record.FailureDetail = nonEmpty(ctx.ResponseFailureDetail)
+	if ctx.TTFTRecorded {
+		ttft := int64(ctx.TTFTSeconds * 1000)
+		record.TTFTMS = &ttft
+	}
+	if ctx.RoutingLatency > 0 {
+		routing := ctx.RoutingLatency.Milliseconds()
+		record.RoutingLatencyMS = &routing
+	}
 	if ctx.UpstreamAttempts > 0 {
 		attempts := ctx.UpstreamAttempts
 		complete := attempts == 1
