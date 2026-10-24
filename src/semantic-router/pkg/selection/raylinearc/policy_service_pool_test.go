@@ -18,11 +18,14 @@ type fakePolicyReplica struct {
 	calls  atomic.Int32
 	status atomic.Int32
 	sleep  atomic.Int64
+	// stale answers for another package while set.
+	stale atomic.Bool
 }
 
 func newFakePolicyReplica(t *testing.T) *fakePolicyReplica {
 	t.Helper()
 	body := readPolicyFixture(t, "decision_response.v1.json")
+	staleBody := []byte(strings.Replace(string(body), fixturePackage(t).PackageSHA256, strings.Repeat("f", 64), 1))
 	replica := &fakePolicyReplica{}
 	replica.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		replica.calls.Add(1)
@@ -32,6 +35,10 @@ func newFakePolicyReplica(t *testing.T) *fakePolicyReplica {
 		if status := int(replica.status.Load()); status != 0 {
 			w.WriteHeader(status)
 			_, _ = w.Write([]byte(`{"error":"backend_unavailable","detail":{}}`))
+			return
+		}
+		if replica.stale.Load() {
+			_, _ = w.Write(staleBody)
 			return
 		}
 		_, _ = w.Write(body)
@@ -64,6 +71,17 @@ func testPolicyPool(t *testing.T, states []EncoderReplicaState, timeout time.Dur
 	return pool, fakes
 }
 
+// fixturePackage is the package the decide fixture answers for, which the
+// test requests name.
+func fixturePackage(t *testing.T) PolicyPackageRef {
+	t.Helper()
+	response, err := DecodePolicyDecisionResponse(readPolicyFixture(t, "decision_response.v1.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return response.Package
+}
+
 func episodeHash(seed string) string {
 	return strings.Repeat(seed, 64)[:64]
 }
@@ -71,7 +89,7 @@ func episodeHash(seed string) string {
 func decideOnce(t *testing.T, pool *PolicyServicePool, episode string, affinity EncoderAffinity) (EncoderResult, error) {
 	t.Helper()
 	binding := pool.Bind(episode, affinity)
-	_, err := binding.Decide(context.Background(), PolicyDecisionRequest{SchemaVersion: PolicyDecisionRequestSchema, EpisodeIDHash: episode})
+	_, err := binding.Decide(context.Background(), PolicyDecisionRequest{SchemaVersion: PolicyDecisionRequestSchema, EpisodeIDHash: episode, Package: fixturePackage(t)})
 	var routed EncoderResult
 	binding.Annotate(&routed)
 	return routed, err
@@ -190,7 +208,7 @@ func TestPolicyPoolFailsClosedOnOtherFailures(t *testing.T) {
 			owner.sleep.Store(int64(tc.sleep))
 			otherCalls := other.calls.Load()
 			binding := pool.Bind(episode, EncoderAffinity{Owner: placed.ReplicaID, Visited: []string{placed.ReplicaID}})
-			if _, err := binding.Decide(context.Background(), PolicyDecisionRequest{SchemaVersion: PolicyDecisionRequestSchema}); err == nil {
+			if _, err := binding.Decide(context.Background(), PolicyDecisionRequest{SchemaVersion: PolicyDecisionRequestSchema, Package: fixturePackage(t)}); err == nil {
 				t.Fatal("decide succeeded")
 			}
 			if other.calls.Load() != otherCalls {
@@ -199,7 +217,7 @@ func TestPolicyPoolFailsClosedOnOtherFailures(t *testing.T) {
 			// A retry in the same turn stays on the owner.
 			owner.status.Store(0)
 			owner.sleep.Store(0)
-			if _, err := binding.Decide(context.Background(), PolicyDecisionRequest{SchemaVersion: PolicyDecisionRequestSchema}); err != nil {
+			if _, err := binding.Decide(context.Background(), PolicyDecisionRequest{SchemaVersion: PolicyDecisionRequestSchema, Package: fixturePackage(t)}); err != nil {
 				t.Fatal(err)
 			}
 			var routed EncoderResult
@@ -283,5 +301,31 @@ func TestPolicyPoolRefusesAnUnsafeContract(t *testing.T) {
 	}
 	if _, err := NewPolicyServicePool([]PolicyServiceReplica{replica}, valid); err != nil {
 		t.Errorf("valid pool refused: %v", err)
+	}
+}
+
+// An owner answering for another package (a replica still on the previous
+// build during a rollover) cools down, and the episode moves once. With no
+// replica left to move to, the stale answer is returned for the caller to
+// refuse.
+func TestPolicyPoolMovesOffAStaleOwner(t *testing.T) {
+	pool, fakes := testPolicyPool(t, []EncoderReplicaState{EncoderReplicaActive, EncoderReplicaActive}, time.Second)
+	episode := episodeHash("1")
+	placed, _ := decideOnce(t, pool, episode, EncoderAffinity{})
+	fakes[placed.ReplicaIndex].stale.Store(true)
+	moved, err := decideOnce(t, pool, episode, EncoderAffinity{Owner: placed.ReplicaID, Visited: []string{placed.ReplicaID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if moved.ReplicaID == placed.ReplicaID || !moved.ReplicaFailover || moved.ReplicaAttempts != 2 {
+		t.Fatalf("stale owner kept: %+v", moved)
+	}
+
+	single, singleFakes := testPolicyPool(t, []EncoderReplicaState{EncoderReplicaActive}, time.Second)
+	singleFakes[0].stale.Store(true)
+	binding := single.Bind(episode, EncoderAffinity{})
+	response, err := binding.Decide(context.Background(), PolicyDecisionRequest{SchemaVersion: PolicyDecisionRequestSchema, Package: fixturePackage(t)})
+	if err != nil || response == nil || response.Package == fixturePackage(t) {
+		t.Fatalf("lone stale replica: response %+v err %v", response, err)
 	}
 }
