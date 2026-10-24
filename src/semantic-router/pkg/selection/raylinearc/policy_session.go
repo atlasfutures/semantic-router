@@ -57,15 +57,15 @@ const (
 	// not be started: a timeout, a refusal or a malformed answer. The turn
 	// fails closed (policy_service_session_start) and commits nothing.
 	PolicySessionStartClass = "session_start"
-	// PolicySessionGoneClass, PolicySessionExpiredClass and
-	// PolicySessionUnauthorizedClass are Modal's own answers for a token,
-	// recognised by their verified signatures only: a 502 with an empty body
-	// (the session's container is gone), a 404 "Unknown or expired session"
-	// and a 401 (the token is not accepted). None reached a container that
-	// holds the episode, so the turn may move to a new session, once.
-	PolicySessionGoneClass         = "session_gone"
-	PolicySessionExpiredClass      = "session_expired"
-	PolicySessionUnauthorizedClass = "session_unauthorized"
+	// PolicySessionGoneClass and PolicySessionExpiredClass are Modal's own
+	// answers for a token, recognised by their verified signatures only: a
+	// 502 with an empty body (the session's container is gone) and a 404
+	// "Unknown or expired session". Neither reached a container that holds
+	// the episode, so the turn may move to a new session, once. A 401 is not
+	// among them: no token-rejection signature is verified, so it fails the
+	// turn closed like any other refusal.
+	PolicySessionGoneClass    = "session_gone"
+	PolicySessionExpiredClass = "session_expired"
 
 	maxPolicySessionIDBytes    = 128
 	maxPolicySessionTokenBytes = 8 * 1024
@@ -292,8 +292,9 @@ func (backend *PolicySessionBackend) Bind(persisted *PolicySession, ephemeral bo
 }
 
 // PolicySessionBinding routes every call of one turn to one session: the
-// persisted one, else one it starts. A call whose session is gone (502, 404 or
-// 401 on the token, so it never reached a container holding the episode)
+// persisted one, else one it starts. A call whose session is gone (Modal's
+// 502 or 404 for the token, so it never reached a container holding the
+// episode)
 // starts a new session and is retried there once; the turn moves at most once,
 // so a strict episode is never in flight on two containers within a turn. A
 // timeout or transport failure is returned as is: the container may have
@@ -383,8 +384,6 @@ func policySessionFailureClass(status int, body []byte) string {
 		return PolicySessionGoneClass
 	case status == http.StatusNotFound && strings.Contains(string(body), "Unknown or expired session"):
 		return PolicySessionExpiredClass
-	case status == http.StatusUnauthorized:
-		return PolicySessionUnauthorizedClass
 	default:
 		return ""
 	}
@@ -405,7 +404,7 @@ func policySessionLost(err error) bool {
 		return false
 	}
 	switch failure.Class {
-	case PolicySessionGoneClass, PolicySessionExpiredClass, PolicySessionUnauthorizedClass:
+	case PolicySessionGoneClass, PolicySessionExpiredClass:
 		return true
 	default:
 		return false
