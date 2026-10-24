@@ -48,16 +48,19 @@ const (
 
 var policyPrefixShapes = &policyPrefixShapeCache{episodes: map[string][]*raylinearc.PolicyPrefixShape{}}
 
-// recorded is the remembered shape of the prefix state records, or nil.
+// recorded is the newest remembered shape of the prefix state records, or
+// nil. Two requests can share a transcript and differ in system prompt or
+// tools (a retry); the newer one is what the service last encoded.
 func (cache *policyPrefixShapeCache) recorded(
 	episode string,
 	state *raylinearc.PolicyEpisodeState,
 ) *raylinearc.PolicyPrefixShape {
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
-	for _, shape := range cache.episodes[episode] {
-		if shape.Records(state) {
-			return shape
+	shapes := cache.episodes[episode]
+	for index := len(shapes) - 1; index >= 0; index-- {
+		if shapes[index].Records(state) {
+			return shapes[index]
 		}
 	}
 	return nil
