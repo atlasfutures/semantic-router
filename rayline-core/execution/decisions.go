@@ -226,11 +226,17 @@ type decisionIdentity struct {
 }
 
 type publicDecision struct {
-	Model    string            `json:"model"`
-	Provider string            `json:"provider"`
-	Worker   string            `json:"worker"`
-	ActionID string            `json:"policy_action_id"`
-	Identity *decisionIdentity `json:"identity"`
+	Model      string            `json:"model"`
+	Provider   string            `json:"provider"`
+	Worker     string            `json:"worker"`
+	ActionID   string            `json:"policy_action_id"`
+	Identity   *decisionIdentity `json:"identity"`
+	ValueUSD   *float64          `json:"value_usd"`
+	CostWeight *float64          `json:"cost_weight"`
+	Prices     *struct {
+		Basis  string  `json:"basis"`
+		SHA256 *string `json:"price_sha256"`
+	} `json:"prices"`
 }
 
 type notAdmittedEcho struct {
@@ -375,6 +381,9 @@ func (provider *HTTPDecisions) Decide(ctx context.Context, input DecisionInput) 
 		}
 	}
 	if selected.Identity == nil && provider.config.Decisions.apiMode() == DecisionsCurrent {
+		if provider.config.Decisions.Result != "top" {
+			return provider.currentTierDecision(result, selected, len(routing) != 0)
+		}
 		return provider.currentTopDecision(result, selected, routing)
 	}
 	identity := selected.Identity
@@ -404,13 +413,9 @@ func (provider *HTTPDecisions) Decide(ctx context.Context, input DecisionInput) 
 		slog.Info("execution context applied", "route_id", result.RouteID, "boundary", echo.Boundary, "cache_policy", echo.UserTurnCache, "cache_policy_source", echo.UserTurnCacheSource, "episode_identity", echo.EpisodeIdentity, "worker_evidence", len(echo.Workers))
 	}
 
-	var appliedProfile *AppliedPriceProfile
-	if provider.profileID != "" {
-		profile := result.Routing.PriceProfile
-		if profile == nil || profile.Status != "applied" || profile.ID != provider.profileID || profile.Version <= 0 || profile.Version > 9007199254740991 || (provider.profileVersion != 0 && profile.Version != provider.profileVersion) || !strings.HasPrefix(profile.ContentHash, "sha256:") || !validSHA256(strings.TrimPrefix(profile.ContentHash, "sha256:")) {
-			return Decision{}, fmt.Errorf("Decisions did not apply the requested price profile")
-		}
-		appliedProfile = &profile.AppliedPriceProfile
+	appliedProfile, err := provider.appliedPriceProfile(result)
+	if err != nil {
+		return Decision{}, err
 	}
 	if provider.config.Decisions.PriceSHA256 != "" || appliedProfile != nil {
 		prices := result.Routing.Prices
@@ -433,12 +438,22 @@ func (provider *HTTPDecisions) currentTopDecision(result decisionsResponse, sele
 	if provider.config.Decisions.Result != "top" || len(routing) != 0 || provider.config.Decisions.OfferSHA256 != "" {
 		return Decision{}, fmt.Errorf("this Decisions response only supports top with empty routing and no returned identity pins")
 	}
+	action, err := provider.bindCurrentAction(result.RouteID, selected)
+	if err != nil {
+		return Decision{}, err
+	}
+	decision := Decision{RouteID: result.RouteID, ActionID: action.ID, Worker: action.Worker, Model: action.Model, ReportedModel: selected.Model, PackageSHA256: provider.config.PackageSHA256, ControlID: action.ControlID, Result: "top", IdentitySource: "configured_manifest"}
+	provider.logDecision(decision, "unattested", nil)
+	return decision, nil
+}
+
+func (provider *HTTPDecisions) bindCurrentAction(routeID string, selected publicDecision) (Action, error) {
 	action, ok := provider.actions[selected.ActionID]
 	reason := ""
 	switch {
 	case !ok:
 		reason = "unbound_action"
-	case result.RouteID == "":
+	case routeID == "":
 		reason = "missing_route_id"
 	case selected.Worker != action.Worker:
 		reason = "worker_mismatch"
@@ -446,12 +461,10 @@ func (provider *HTTPDecisions) currentTopDecision(result decisionsResponse, sele
 		reason = "model_mismatch"
 	}
 	if reason != "" {
-		provider.logSelectionRefusal(result.RouteID, selected, action, reason)
-		return Decision{}, fmt.Errorf("Decisions selected an action, worker or model absent from the configured manifest")
+		provider.logSelectionRefusal(routeID, selected, action, reason)
+		return Action{}, fmt.Errorf("Decisions selected an action, worker or model absent from the configured manifest")
 	}
-	decision := Decision{RouteID: result.RouteID, ActionID: action.ID, Worker: action.Worker, Model: action.Model, ReportedModel: selected.Model, PackageSHA256: provider.config.PackageSHA256, ControlID: action.ControlID, Result: "top", IdentitySource: "configured_manifest"}
-	provider.logDecision(decision, "unattested", nil)
-	return decision, nil
+	return action, nil
 }
 
 // Only selected identity metadata is logged. Provider request/response bodies,
