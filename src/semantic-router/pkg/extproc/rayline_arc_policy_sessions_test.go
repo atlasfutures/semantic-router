@@ -210,3 +210,16 @@ func TestPolicyWithoutSessionsDropsAStoredSession(t *testing.T) {
 		t.Fatalf("stored-session trace %+v, %v", stale.RaylineARC, err)
 	}
 }
+
+// A session that could not be started never reached the policy, so the
+// attested-hold re-ask does not ask again on its account.
+func TestPolicySessionFailuresAreNotAnswers(t *testing.T) {
+	for _, class := range []string{raylinearc.PolicySessionStartClass, raylinearc.PolicySessionGoneClass, raylinearc.PolicySessionExpiredClass} {
+		if policyServiceAnswered(&raylinearc.PolicyServiceError{Class: class}) {
+			t.Fatalf("%s counts as an answer", class)
+		}
+	}
+	if !policyServiceAnswered(&raylinearc.PolicyServiceError{Class: "invalid_request", Status: 400}) {
+		t.Fatal("a service refusal no longer counts as an answer")
+	}
+}

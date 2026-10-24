@@ -57,6 +57,15 @@ const (
 	// not be started: a timeout, a refusal or a malformed answer. The turn
 	// fails closed (policy_service_session_start) and commits nothing.
 	PolicySessionStartClass = "session_start"
+	// PolicySessionGoneClass, PolicySessionExpiredClass and
+	// PolicySessionUnauthorizedClass are Modal's own answers for a token,
+	// recognised by their verified signatures only: a 502 with an empty body
+	// (the session's container is gone), a 404 "Unknown or expired session"
+	// and a 401 (the token is not accepted). None reached a container that
+	// holds the episode, so the turn may move to a new session, once.
+	PolicySessionGoneClass         = "session_gone"
+	PolicySessionExpiredClass      = "session_expired"
+	PolicySessionUnauthorizedClass = "session_unauthorized"
 
 	maxPolicySessionIDBytes    = 128
 	maxPolicySessionTokenBytes = 8 * 1024
@@ -135,9 +144,12 @@ type PolicySessionConfig struct {
 // policy Server, over the cell's one client (its URL and proxy key).
 type PolicySessionBackend struct {
 	client *PolicyServiceClient
-	config PolicySessionConfig
-	now    func() time.Time
-	newKey func() (string, error)
+	// controlHTTP sends session starts and terminates; it follows no
+	// redirect, so the proxy key and a token stay on the Server's origin.
+	controlHTTP *http.Client
+	config      PolicySessionConfig
+	now         func() time.Time
+	newKey      func() (string, error)
 }
 
 // NewPolicySessionBackend validates the configuration. The client must carry
@@ -152,7 +164,9 @@ func NewPolicySessionBackend(client *PolicyServiceClient, config PolicySessionCo
 	if config.StartTimeout <= 0 {
 		config.StartTimeout = DefaultPolicySessionStartTimeout
 	}
-	return &PolicySessionBackend{client: client, config: config, now: time.Now, newKey: idempotencyKey}, nil
+	return &PolicySessionBackend{
+		client: client, controlHTTP: noRedirectClient(client.http), config: config, now: time.Now, newKey: idempotencyKey,
+	}, nil
 }
 
 func idempotencyKey() (string, error) {
@@ -238,7 +252,7 @@ func (backend *PolicySessionBackend) control(
 	}
 	request.Header.Set("Modal-Key", config.ModalKey)
 	request.Header.Set("Modal-Secret", config.ModalSecret)
-	response, err := backend.client.http.Do(request)
+	response, err := backend.controlHTTP.Do(request)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -359,25 +373,54 @@ func (binding *PolicySessionBinding) terminate(ctx context.Context, session Poli
 	_ = binding.backend.Terminate(terminateCtx, session)
 }
 
-// policySessionLost reports a call whose session is gone before it reached a
-// container that holds the episode: Modal's own answers for a token whose
-// container is gone (502, empty body), an expired session (404 "Unknown or
-// expired session") or a token it does not accept (401). The service's own
-// refusals carry a JSON error code and keep their class, so a service 404
-// (package_not_loaded) is not a lost session.
+// policySessionFailureClass classifies Modal's own answer for a session
+// token by its verified signature, "" for anything else: the service's JSON
+// refusals (a 404 package_not_loaded among them), any other body, and any
+// other status keep their usual class.
+func policySessionFailureClass(status int, body []byte) string {
+	switch {
+	case status == http.StatusBadGateway && len(bytes.TrimSpace(body)) == 0:
+		return PolicySessionGoneClass
+	case status == http.StatusNotFound && strings.Contains(string(body), "Unknown or expired session"):
+		return PolicySessionExpiredClass
+	case status == http.StatusUnauthorized:
+		return PolicySessionUnauthorizedClass
+	default:
+		return ""
+	}
+}
+
+// policySessionLost reports a call Modal answered for its session token
+// without reaching a container that holds the episode. A timeout, a
+// transport failure or any other answer is not: the container may have
+// advanced its session, so the turn fails closed.
+//
+// One residual: Modal's 502 for a container that is gone is also what a
+// gateway failure in front of a live container would look like. A decide in
+// flight when its container stops answers it too (measured on a dev Server),
+// so it is taken as gone.
 func policySessionLost(err error) bool {
 	var failure *PolicyServiceError
 	if !errors.As(err, &failure) {
 		return false
 	}
-	switch failure.Status {
-	case http.StatusBadGateway, http.StatusNotFound:
-		return failure.Class == "status"
-	case http.StatusUnauthorized:
+	switch failure.Class {
+	case PolicySessionGoneClass, PolicySessionExpiredClass, PolicySessionUnauthorizedClass:
 		return true
 	default:
 		return false
 	}
+}
+
+// PolicySessionUnanswered reports a failure of the session layer itself (a
+// start that failed, or a session lost again after the turn's one move): the
+// policy never answered it, so a caller must not ask again on its account.
+func PolicySessionUnanswered(err error) bool {
+	var failure *PolicyServiceError
+	if !errors.As(err, &failure) {
+		return false
+	}
+	return failure.Class == PolicySessionStartClass || policySessionLost(err)
 }
 
 // Session is the session the episode should persist after this turn and

@@ -274,7 +274,17 @@ func (client *PolicyServiceClient) WithSessionToken(token string) *PolicyService
 	}
 	routed := *client
 	routed.config.SessionToken = token
+	routed.http = noRedirectClient(client.http)
 	return &routed
+}
+
+// noRedirectClient shares a client's connections but never follows a
+// redirect: a session token or proxy key must not reach another origin.
+func noRedirectClient(base *http.Client) *http.Client {
+	return &http.Client{
+		Transport:     base.Transport,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
 }
 
 // Packages reads the service's loaded packages, naming the pin it needs. A
@@ -396,6 +406,11 @@ func (client *PolicyServiceClient) do(
 	body, err := io.ReadAll(io.LimitReader(response.Body, maxPolicyServiceResponseBytes+1))
 	if err != nil || len(body) > maxPolicyServiceResponseBytes {
 		return nil, &PolicyServiceError{Class: "transport", Status: response.StatusCode}
+	}
+	if response.StatusCode != http.StatusOK && client.config.SessionToken != "" {
+		if class := policySessionFailureClass(response.StatusCode, body); class != "" {
+			return nil, &PolicyServiceError{Class: class, Status: response.StatusCode}
+		}
 	}
 	if response.StatusCode != http.StatusOK {
 		var failure PolicyErrorResponse
