@@ -30,10 +30,12 @@ func currentDecisionFixture(t *testing.T, config Config, response map[string]any
 		}
 		var expected, actual map[string]any
 		if err := json.Unmarshal(config.Decisions.Routing, &expected); err != nil {
-			t.Fatal(err)
+			t.Error(err)
+			return
 		}
 		if err := json.Unmarshal(body["routing"], &actual); err != nil {
-			t.Fatal(err)
+			t.Error(err)
+			return
 		}
 		if !reflect.DeepEqual(expected, actual) {
 			t.Error("current API routing preferences changed in transit")
