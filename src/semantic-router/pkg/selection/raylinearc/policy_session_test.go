@@ -501,3 +501,81 @@ func TestEpisodeStateCarriesAPolicySessionAsV10(t *testing.T) {
 		}
 	}
 }
+
+// Only Modal's verified signatures count as a lost session; any other 502 or
+// 404 keeps its usual class and fails the turn closed.
+func TestPolicySessionLossNeedsModalsSignature(t *testing.T) {
+	for _, tc := range []struct {
+		status int
+		body   string
+		want   string
+	}{
+		{http.StatusBadGateway, "", PolicySessionGoneClass},
+		{http.StatusBadGateway, "upstream connect error", ""},
+		{http.StatusNotFound, "Unknown or expired session", PolicySessionExpiredClass},
+		{http.StatusNotFound, "not found", ""},
+		{http.StatusUnauthorized, `{"error":"session token required"}`, PolicySessionUnauthorizedClass},
+		{http.StatusServiceUnavailable, "", ""},
+	} {
+		if got := policySessionFailureClass(tc.status, []byte(tc.body)); got != tc.want {
+			t.Fatalf("%d %q classed %q, want %q", tc.status, tc.body, got, tc.want)
+		}
+	}
+	if !PolicySessionUnanswered(&PolicyServiceError{Class: PolicySessionStartClass}) ||
+		!PolicySessionUnanswered(&PolicyServiceError{Class: PolicySessionGoneClass, Status: http.StatusBadGateway}) ||
+		PolicySessionUnanswered(&PolicyServiceError{Class: "selection_refused", Status: http.StatusUnprocessableEntity}) {
+		t.Fatal("PolicySessionUnanswered misclassifies")
+	}
+	// Without a session token the client classes Modal-looking answers as
+	// before: a base_url cell is unchanged.
+	plain := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer plain.Close()
+	client := NewPolicyServiceClient(PolicyServiceConfig{BaseURL: plain.URL, TotalTimeout: time.Second})
+	_, err := client.Decide(context.Background(), PolicyDecisionRequest{SchemaVersion: PolicyDecisionRequestSchema, EpisodeIDHash: episodeHash("b"), Package: fixturePackage(t)})
+	var failure *PolicyServiceError
+	if !errors.As(err, &failure) || failure.Class != "status" || failure.Status != http.StatusBadGateway {
+		t.Fatalf("base_url 502 classed %v", err)
+	}
+}
+
+// A redirect is never followed with a session token or the proxy key, so
+// neither reaches another origin.
+func TestPolicySessionNeverFollowsARedirect(t *testing.T) {
+	var leaked sync.Map
+	elsewhere := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Modal-Authorization") != "" || r.Header.Get("Modal-Key") != "" {
+			leaked.Store(r.URL.Path, true)
+		}
+	}))
+	defer elsewhere.Close()
+	fake := newFakeModalServer(t, 1)
+	redirecting := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == policySessionStartPath {
+			fake.serve(w, r)
+			return
+		}
+		http.Redirect(w, r, elsewhere.URL+r.URL.Path, http.StatusTemporaryRedirect)
+	}))
+	defer redirecting.Close()
+	client := NewPolicyServiceClient(PolicyServiceConfig{
+		BaseURL: redirecting.URL, ModalKey: fakeModalKey, ModalSecret: fakeModalSecret, TotalTimeout: time.Second,
+	})
+	backend, err := NewPolicySessionBackend(client, PolicySessionConfig{StartTimeout: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	turn := backend.Bind(nil, false)
+	if _, err := sessionDecide(t, turn); err == nil {
+		t.Fatal("a redirected decide succeeded")
+	}
+	session, _ := turn.Session()
+	if session != nil {
+		_ = backend.Terminate(context.Background(), *session)
+	}
+	leaked.Range(func(path, _ any) bool {
+		t.Fatalf("a credential followed the redirect to %v", path)
+		return true
+	})
+}
