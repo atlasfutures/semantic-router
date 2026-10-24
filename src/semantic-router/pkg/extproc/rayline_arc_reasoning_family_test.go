@@ -479,6 +479,8 @@ func TestClaudeReasoningDetailsReachClaudeOverMessagesAsThinking(t *testing.T) {
 	}
 
 	t.Run("a complete replay is restored", func(t *testing.T) {
+		seedOpaqueReasoningIssuer(t, router, "episode-claude-restore-1", "claude-off", "opaque-1")
+		seedOpaqueReasoningIssuer(t, router, "episode-claude-restore-1", "claude-off", "claude-signature")
 		logs := captureLogs(t)
 		body := dispatchPolicyClientRequest(t, router, "episode-claude-restore-1", "/v1/chat/completions", piChatHistory(
 			`"reasoning_content":"claude reasoning",`+

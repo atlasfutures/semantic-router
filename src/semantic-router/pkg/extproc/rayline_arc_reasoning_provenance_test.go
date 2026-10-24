@@ -2,6 +2,12 @@ package extproc
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"github.com/atlasfutures/semantic-router/rayline-core/protocolcodec"
+	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -37,7 +43,9 @@ func TestCommittedTurnRecordsOpaqueReasoningProvenance(t *testing.T) {
 	transaction := newRaylineARCEpisodeTransaction(store, lease, state, episode, time.Minute, nil)
 	transaction.markSelection(0, 10)
 	transaction.dispatchWorker = "gpt-worker"
-	if err := transaction.commit(context.Background(), &RequestContext{SemanticResponse: redactedResponse("gpt-blob")}); err != nil {
+	response := redactedResponse("gpt-blob")
+	response.Output[0].Content = append(response.Output[0].Content, llmprotocol.Content{Kind: llmprotocol.ContentReasoning, Signature: "gpt-signature", Reasoning: llmprotocol.ReasoningScopeText})
+	if err := transaction.commit(context.Background(), &RequestContext{SemanticResponse: response}); err != nil {
 		t.Fatalf("commit: %v", err)
 	}
 	next, reread, err := store.Prepare(context.Background(), episode, 2)
@@ -46,7 +54,8 @@ func TestCommittedTurnRecordsOpaqueReasoningProvenance(t *testing.T) {
 	}
 	defer func() { _ = store.Abort(context.Background(), next) }()
 	if !reasoning.ReasoningIssuedElsewhere(reread.ReasoningProvenance, "gpt-blob", "claude") ||
-		reasoning.ReasoningIssuedElsewhere(reread.ReasoningProvenance, "gpt-blob", "gpt-worker") {
+		reasoning.ReasoningIssuedElsewhere(reread.ReasoningProvenance, "gpt-blob", "gpt-worker") ||
+		!reasoning.ReasoningIssuedBy(reread.ReasoningProvenance, "gpt-signature", "gpt-worker") {
 		t.Fatalf("provenance after commit = %+v", reread.ReasoningProvenance)
 	}
 }
@@ -102,14 +111,11 @@ func seedOpaqueReasoningIssuer(t *testing.T, router *OpenAIRouter, episode, work
 		t.Fatalf("worker %s has no fixed issuer in the test config", worker)
 	}
 	store := router.RaylineARCEpisodeStore
-	lease, state, err := store.Prepare(context.Background(), raylinearc.HashEpisodeID(episode), 4)
+	lease, state, err := store.Prepare(context.Background(), raylinearc.HashEpisodeID(episode), len(router.Config.Decisions[0].ModelRefs))
 	if err != nil {
 		t.Fatal(err)
 	}
-	state.ReasoningProvenance = reasoning.WithReasoningProvenance(nil, issuer, []string{data})
-	if err := state.Commit(0, 10, time.Now().UTC()); err != nil {
-		t.Fatal(err)
-	}
+	state.ReasoningProvenance = reasoning.WithReasoningProvenance(state.ReasoningProvenance, issuer, []string{data})
 	if err := store.Commit(context.Background(), lease, lease.Version(), state); err != nil {
 		t.Fatal(err)
 	}
@@ -147,4 +153,257 @@ func routerConfigWithPin(model string, pin config.OpenRouterProviderPreferences)
 	cfg := &config.RouterConfig{}
 	cfg.ModelConfig = map[string]config.ModelParams{model: {ProviderPreferences: &pin}}
 	return cfg
+}
+
+// A Messages-compatible endpoint can serve GPT. The dispatched payload must
+// keep only that worker's recorded private reasoning, including when history
+// alternates Claude and GPT. Unknown ciphertext is never proof of compatibility.
+func TestMixedMessagesReasoningReachesOnlyItsRecordedIssuer(t *testing.T) {
+	t.Setenv("POLICY_E2E_PROVIDER_KEY", "public-e2e-provider-key")
+	fake := newRelaxedPolicyFake(t)
+	path := writeConsistentPolicyConfig(t, fake.URL(), config.RaylineARCConsistencyStrict)
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rendered := string(raw)
+	swaps := [][2]string{
+		{"    - name: claude-off\n      provider_model_id: anthropic/claude-opus-5\n      api_format: anthropic", "    - name: claude-off\n      provider_model_id: openai/gpt-6-luna\n      api_format: anthropic\n      provider_preferences:\n        order: [openai]\n        only: [openai]\n        allow_fallbacks: false"},
+		{"        - name: anthropic-claude-off\n          base_url: https://api.anthropic.com\n          provider: anthropic", "        - name: anthropic-claude-off\n          base_url: https://openrouter.ai/api/v1\n          provider: openrouter"},
+	}
+	for _, swap := range swaps {
+		if !strings.Contains(rendered, swap[0]) {
+			t.Fatalf("fixture missing %q", swap[0])
+		}
+		rendered = strings.Replace(rendered, swap[0], swap[1], 1)
+	}
+	if err := os.WriteFile(path, []byte(rendered), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	router, err := NewOpenAIRouter(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	awaitPolicySelectorArmed(t, router)
+	history := `{"model":"auto","max_tokens":4096,"messages":[
+  {"role":"user","content":"fix the test"},
+  {"role":"assistant","content":[{"type":"thinking","thinking":"","signature":"claude-signed"},{"type":"redacted_thinking","data":"claude-opaque"},{"type":"text","text":"Claude visible answer"}]},
+  {"role":"user","content":"continue"},
+  {"role":"assistant","content":[{"type":"thinking","thinking":"","signature":"gpt-signed"},{"type":"redacted_thinking","data":"gpt-opaque"},{"type":"text","text":"GPT visible answer"}]},
+  {"role":"assistant","content":[{"type":"thinking","thinking":"","signature":"claude-signed-alone"},{"type":"text","text":"Claude continuation"}]},
+  {"role":"assistant","content":[{"type":"thinking","thinking":"","signature":"gpt-signed-alone"},{"type":"text","text":"GPT continuation"}]},
+  {"role":"user","content":"continue"},
+  {"role":"assistant","content":[{"type":"thinking","thinking":"","signature":"unknown-signed"},{"type":"redacted_thinking","data":"unknown-opaque"},{"type":"text","text":"Unknown visible answer"},{"type":"tool_use","id":"tool_1","name":"read","input":{}}]},
+  {"role":"user","content":[{"type":"tool_result","tool_use_id":"tool_1","content":"tool output"}]}
+ ]}`
+	for _, tc := range []struct {
+		target, keep, drop string
+		unknownPrefix      bool
+	}{
+		{"claude", "claude", "gpt", false}, {"claude-off", "gpt", "claude", false},
+		{"claude", "claude", "gpt", true}, {"claude-off", "gpt", "claude", true},
+	} {
+		t.Run(fmt.Sprintf("%s/unknown-prefix=%v", tc.target, tc.unknownPrefix), func(t *testing.T) {
+			episode := fmt.Sprintf("mixed-reasoning-%s-%v", tc.target, tc.unknownPrefix)
+			for _, origin := range []struct{ worker, prefix string }{{"claude", "claude"}, {"claude-off", "gpt"}} {
+				for _, suffix := range []string{"signed", "opaque", "signed-alone"} {
+					seedOpaqueReasoningIssuer(t, router, episode, origin.worker, origin.prefix+"-"+suffix)
+				}
+			}
+			action := relaxedPolicyActions()[tc.target].ActionID
+			fake.chooseWith(func(raylinearc.PolicyDecisionRequest) string { return action })
+			request := history
+			if tc.unknownPrefix {
+				request = strings.Replace(request, `{"role":"user","content":"fix the test"},`, `{"role":"user","content":"fix the test"},{"role":"assistant","content":[{"type":"thinking","thinking":"","signature":"unknown-prefix"},{"type":"text","text":"older answer"}]},`, 1)
+			}
+			body := dispatchPolicyClientRequest(t, router, episode, "/v1/messages", request)
+			wire := string(body["messages"])
+			for _, suffix := range []string{"signed", "opaque", "signed-alone"} {
+				if kept := strings.Contains(wire, tc.keep+"-"+suffix); kept == tc.unknownPrefix {
+					t.Fatalf("compatible block kept=%v after unknown prefix=%v: %s", kept, tc.unknownPrefix, wire)
+				}
+				if strings.Contains(wire, tc.drop+"-"+suffix) {
+					t.Fatalf("foreign encrypted reasoning reached target: %s", wire)
+				}
+			}
+			if strings.Contains(wire, "unknown-signed") || strings.Contains(wire, "unknown-opaque") {
+				t.Fatalf("unrecorded ciphertext reached target: %s", wire)
+			}
+			for _, visible := range []string{"Claude visible answer", "GPT visible answer", "Unknown visible answer", "tool_1", "tool output"} {
+				if !strings.Contains(wire, visible) {
+					t.Fatalf("visible history or tool relationship lost %q: %s", visible, wire)
+				}
+			}
+		})
+	}
+}
+
+// The synthetic renderer corpus tests placement, so it declares a fixed
+// provider and the earlier issuance of its thinking instead of relying on
+// the old behavior that forwarded unrecorded ciphertext.
+func fixturePinnedBody(t *testing.T, body []byte) []byte {
+	t.Helper()
+	var wire map[string]json.RawMessage
+	if err := json.Unmarshal(body, &wire); err != nil {
+		t.Fatal(err)
+	}
+	wire["provider"] = json.RawMessage(`{"order":["fixture"],"allow_fallbacks":false,"only":["fixture"]}`)
+	encoded, err := json.Marshal(wire)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return encoded
+}
+
+func seedMessagesHistoryIssuer(t *testing.T, router *OpenAIRouter, episode, worker string, body []byte) {
+	t.Helper()
+	var history struct {
+		Messages []struct{ Content json.RawMessage }
+	}
+	if err := json.Unmarshal(body, &history); err != nil {
+		t.Fatal(err)
+	}
+	for _, message := range history.Messages {
+		var blocks []struct{ Type, Signature, Data string }
+		if len(message.Content) == 0 || message.Content[0] != '[' {
+			continue
+		}
+		if err := json.Unmarshal(message.Content, &blocks); err != nil {
+			t.Fatal(err)
+		}
+		for _, block := range blocks {
+			data := block.Signature
+			if block.Type == "redacted_thinking" {
+				data = block.Data
+			}
+			if data != "" {
+				seedOpaqueReasoningIssuer(t, router, episode, worker, data)
+			}
+		}
+	}
+}
+
+// Artifact turns must learn issuance from delivered responses, not headers.
+// No provenance is seeded: replay is authorized only by the first completion.
+func TestArtifactResponseCompletionRecordsReasoningForReplay(t *testing.T) {
+	cases := []struct {
+		name      string
+		format    llmprotocol.WireFormat
+		body      string
+		streaming bool
+	}{
+		{"messages", llmprotocol.AnthropicMessagesV1, `{"id":"msg_1","type":"message","role":"assistant","model":"claude-test","content":[{"type":"thinking","thinking":"readable","signature":"issued-signature"},{"type":"redacted_thinking","data":"issued-blob"},{"type":"text","text":"answer"}],"stop_reason":"end_turn","usage":{"input_tokens":2,"output_tokens":3}}`, false},
+		{"chat-carriers", llmprotocol.OpenAIChatV1, `{"id":"chat_1","object":"chat.completion","model":"claude-test","choices":[{"index":0,"message":{"role":"assistant","content":"answer","reasoning_content":"readable","reasoning_details":[{"type":"reasoning.text","text":"readable","signature":"issued-signature","format":"anthropic-claude-v1","index":0},{"type":"reasoning.encrypted","data":"issued-blob","format":"anthropic-claude-v1","index":1}]},"finish_reason":"stop"}],"usage":{"prompt_tokens":2,"completion_tokens":3,"total_tokens":5}}`, false},
+	}
+	cases = append(cases, struct {
+		name      string
+		format    llmprotocol.WireFormat
+		body      string
+		streaming bool
+	}{
+		"messages-stream", llmprotocol.AnthropicMessagesV1,
+		strings.NewReplacer("EqQBsigclaude", "issued-signature", "Done.", "answer").Replace(strings.Replace(claudeSignedThinkingStream,
+			"event: message_delta", "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":2,\"content_block\":{\"type\":\"redacted_thinking\",\"data\":\"issued-blob\"}}\n\nevent: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":2}\n\nevent: message_delta", 1)), true,
+	})
+
+	cases = append(cases, struct {
+		name      string
+		format    llmprotocol.WireFormat
+		body      string
+		streaming bool
+	}{
+		"chat-stream-carriers", llmprotocol.OpenAIChatV1, `data: {"id":"chat-stream-1","object":"chat.completion.chunk","model":"claude-test","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"readable","reasoning_details":[{"type":"reasoning.text","text":"readable","format":"anthropic-claude-v1","index":0}]},"finish_reason":null}]}
+
+data: {"id":"chat-stream-1","object":"chat.completion.chunk","model":"claude-test","choices":[{"index":0,"delta":{"reasoning_details":[{"type":"reasoning.text","signature":"issued-","format":"anthropic-claude-v1","index":0}]},"finish_reason":null}]}
+
+data: {"id":"chat-stream-1","object":"chat.completion.chunk","model":"claude-test","choices":[{"index":0,"delta":{"reasoning_details":[{"type":"reasoning.text","signature":"signature","format":"anthropic-claude-v1","index":0}]},"finish_reason":null}]}
+
+data: {"id":"chat-stream-1","object":"chat.completion.chunk","model":"claude-test","choices":[{"index":0,"delta":{"reasoning_details":[{"type":"reasoning.encrypted","data":"issued-","format":"anthropic-claude-v1","index":1}]},"finish_reason":null}]}
+
+data: {"id":"chat-stream-1","object":"chat.completion.chunk","model":"claude-test","choices":[{"index":0,"delta":{"reasoning_details":[{"type":"reasoning.encrypted","data":"blob","format":"anthropic-claude-v1","index":1}]},"finish_reason":null}]}
+
+data: {"id":"chat-stream-1","object":"chat.completion.chunk","model":"claude-test","choices":[{"index":0,"delta":{"content":"answer"},"finish_reason":null}]}
+
+data: {"id":"chat-stream-1","object":"chat.completion.chunk","model":"claude-test","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+data: [DONE]
+
+`, true,
+	})
+
+	for _, tc := range cases {
+		for _, outcome := range []string{"complete", "failed-send", "partial-stream"} {
+			if outcome == "partial-stream" && !tc.streaming {
+				continue
+			}
+			failed := outcome != "complete"
+			t.Run(tc.name+"/"+outcome, func(t *testing.T) {
+				store, episode := newLedgerTestStore(t)
+				lease, state, err := store.Prepare(context.Background(), episode, 2)
+				if err != nil {
+					t.Fatal(err)
+				}
+				tx := newRaylineARCEpisodeTransaction(store, lease, state, episode, time.Minute, nil)
+				tx.markSelection(0, 10)
+				tx.dispatchWorker = "pinned-worker"
+				ctx := &RequestContext{Headers: map[string]string{}, RaylineARCTransaction: tx,
+					SourceFormat: tc.format, TargetFormat: tc.format, TraceContext: context.Background(), RequestModel: "public-model"}
+				bindRaylineARCSelectionTransaction(ctx)
+				router := &OpenAIRouter{}
+				headers := arcResponseHeaders("200")
+				if tc.streaming {
+					headers = streamingResponseHeaders("200")
+				}
+				sendHeaders(t, router, ctx, headers)
+				if early := readLedgerTestStateNoWait(store, episode); early != nil {
+					t.Fatal("artifact turn committed before response body")
+				}
+				stream := NewMockStream(nil)
+				if outcome == "failed-send" {
+					stream.SendError = errors.New("cancelled final send")
+				}
+				body := tc.body
+				if outcome == "partial-stream" {
+					if tc.format == llmprotocol.OpenAIChatV1 {
+						body = strings.Split(body, `"finish_reason":"stop"`)[0]
+					} else {
+						body = strings.Split(body, "event: message_delta")[0]
+					}
+				}
+				err = router.processResponseBody(stream, &ext_proc.ProcessingRequest_ResponseBody{ResponseBody: &ext_proc.HttpBody{Body: []byte(body), EndOfStream: true}}, ctx)
+				finalizeSelectionProcessTerminal(ctx)
+				if outcome != "partial-stream" && (err != nil) != failed {
+					t.Fatalf("process response error=%v, failed=%v", err, failed)
+				}
+				committed := readLedgerTestState(t, store, episode)
+				if outcome == "partial-stream" {
+					if committed.TurnIndex != 0 || len(committed.ReasoningProvenance) != 0 {
+						t.Fatalf("partial response committed issuance: %+v", committed)
+					}
+					return
+				}
+				// Restore the exact Chat carriers the client can replay on a Messages turn.
+				response := ctx.SemanticResponse
+				if response == nil {
+					t.Fatal("response was not decoded")
+				}
+				var contents []llmprotocol.Content
+				for _, item := range response.Output {
+					contents = append(contents, item.Content...)
+				}
+				request := llmprotocol.Request{Messages: []llmprotocol.Message{{Role: llmprotocol.RoleAssistant, Content: contents}}}
+				protocolcodec.ClaudeThinkingFromReasoningDetails(&request)
+				reasoning.DropOpaqueReasoning(&request, committed.ReasoningProvenance, "pinned-worker", llmprotocol.AnthropicMessagesV1)
+				wire, _ := json.Marshal(request)
+				for _, data := range []string{"issued-signature", "issued-blob"} {
+					if strings.Contains(string(wire), data) == failed {
+						t.Fatalf("replay authorization failed for %s: %s", data, wire)
+					}
+				}
+				if !strings.Contains(string(wire), "answer") {
+					t.Fatalf("lost visible answer: %s", wire)
+				}
+			})
+		}
+	}
 }

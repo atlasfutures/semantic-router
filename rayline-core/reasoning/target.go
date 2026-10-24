@@ -40,10 +40,23 @@ func ApplyEncryptedReasoning(request *llmprotocol.Request, previous []string, is
 	return NextReasoningIssuers(previous, held, forwarded, issues, issuer)
 }
 
-// DropOpaqueReasoning removes only blocks recorded as unreadable by issuer.
-// Unknown blocks retain the codec's existing handling of client history.
-func DropOpaqueReasoning(request *llmprotocol.Request, provenance []ReasoningProvenance, issuer string) int {
+// DropOpaqueReasoning removes private Messages groups without recorded matching
+// issuance. An unrecorded earlier block invalidates later private groups too:
+// their signatures may bind the prefix being removed. Other wire formats retain
+// their existing disposition for unknown history.
+func DropOpaqueReasoning(request *llmprotocol.Request, provenance []ReasoningProvenance, issuer string, target llmprotocol.WireFormat) int {
+	unknownPrefix := false
 	return protocolcodec.DropOpaqueReasoning(request, func(data string) bool {
+		if target == llmprotocol.AnthropicMessagesV1 {
+			matches := ReasoningIssuedBy(provenance, data, issuer)
+			if !matches && !ReasoningIssuedElsewhere(provenance, data, issuer) {
+				// The missing record may be an older same-worker block. Removing it
+				// changes the prefix that later signatures could be bound to, so issuer
+				// equality alone cannot authorize replay after this point.
+				unknownPrefix = true
+			}
+			return unknownPrefix || !matches
+		}
 		return ReasoningIssuedElsewhere(provenance, data, issuer)
 	})
 }

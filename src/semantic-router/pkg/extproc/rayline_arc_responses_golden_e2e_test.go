@@ -152,7 +152,11 @@ func assertResponsesLeverThroughTheRouter(t *testing.T, dir string, c responsesG
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = os.WriteFile(path, []byte(strings.ReplaceAll(string(raw), "{{POLICY_URL}}", fake.URL())), 0o600); err != nil {
+	rendered := strings.ReplaceAll(string(raw), "{{POLICY_URL}}", fake.URL())
+	if c.Format == "messages" {
+		rendered = strings.Replace(rendered, "    - name: arm\n", "    - name: arm\n      provider_preferences: {order: [fixture], only: [fixture], allow_fallbacks: false}\n", 1)
+	}
+	if err = os.WriteFile(path, []byte(rendered), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	router, err := NewOpenAIRouter(path)
@@ -180,6 +184,12 @@ func assertResponsesLeverThroughTheRouter(t *testing.T, dir string, c responsesG
 			t.Fatalf("call %d names %d models, want 1", index, len(named))
 		}
 		routed := strings.Replace(string(client), named[0], `"model":"auto"`, 1)
+		// Renderer fixtures represent history from this fixed provider; the
+		// issuer guard must not change the independent placement oracle's bytes.
+		if c.Format == "messages" {
+			seedMessagesHistoryIssuer(t, router, episode, "arm", client)
+			want = fixturePinnedBody(t, want)
+		}
 		action := actionFor[*call.ControlID]
 		fake.chooseWith(func(raylinearc.PolicyDecisionRequest) string { return action })
 		got := dispatchLeverTurn(t, router, goldenClientPath(t, c.Format), fmt.Sprintf("%s-%d", episode, index), episode, routed)

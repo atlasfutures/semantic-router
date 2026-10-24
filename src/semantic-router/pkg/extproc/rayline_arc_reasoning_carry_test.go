@@ -102,6 +102,8 @@ func TestReasoningFromAnotherModelIsCarriedToTheNextWorker(t *testing.T) {
 		`{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Looking at it."}]},` +
 		`{"role":"user","content":"go on"}]}`
 	t.Run("a Responses client's signed thinking to a Messages worker", func(t *testing.T) {
+		seedOpaqueReasoningIssuer(t, router, "episode-carry-responses-messages", "claude", "claude-signature")
+		seedOpaqueReasoningIssuer(t, router, "episode-carry-responses-messages", "claude", "claude-redacted")
 		claude := actions["claude"].ActionID
 		fake.chooseWith(func(raylinearc.PolicyDecisionRequest) string { return claude })
 		body := dispatchPolicyClientRequest(t, router, "episode-carry-responses-messages", "/v1/responses", responsesHistory)

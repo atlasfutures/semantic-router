@@ -135,11 +135,17 @@ func modelPinEchoMatches(header http.Header, deployment Deployment) bool {
 // public model name. Keep readable reasoning, but never replay signatures or
 // opaque Chat reasoning_details under an unverified issuer identity.
 func stripModelPinReasoning(request *llmprotocol.Request) int {
-	dropped := protocolcodec.DropOpaqueReasoning(request, func(string) bool { return true })
+	dropped := 0
 	messages := make([]llmprotocol.Message, 0, len(request.Messages))
 	for _, message := range request.Messages {
 		contents := make([]llmprotocol.Content, 0, len(message.Content))
 		for _, content := range message.Content {
+			// A model pin cannot replay ciphertext, but readable thinking remains
+			// useful on Chat even when a redacted block shared its original turn.
+			if _, opaque := protocolcodec.OpaqueReasoningData(content); opaque {
+				dropped++
+				continue
+			}
 			if content.Kind == llmprotocol.ContentReasoning {
 				if content.Signature != "" {
 					content.Signature = ""
