@@ -38,7 +38,12 @@ var routesInconsistentClasses = map[string]bool{
 	arcFailureRoutesPricesNotApplied:        true,
 	arcFailureRoutesExplorationInconsistent: true,
 	arcFailureRoutesPredictionsInconsistent: true,
+	arcFailureRoutesExecutionTraceMissing:   true,
 }
+
+// arcFailureRoutesExecutionTraceMissing: a routing.execution lookup asked
+// for decision.cache_trace and the answer does not carry it.
+const arcFailureRoutesExecutionTraceMissing = "routes_execution_trace_missing"
 
 // routeExclusiveOffer keeps the offered actions whose arm serves a priced
 // model: with routing.exclusive, the priced models are the only candidates.
