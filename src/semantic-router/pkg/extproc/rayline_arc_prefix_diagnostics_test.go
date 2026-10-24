@@ -243,3 +243,31 @@ func TestPolicyPrefixShapeCacheBounds(t *testing.T) {
 		t.Fatalf("shapes = %v", shapes)
 	}
 }
+
+// Two remembered requests with the same transcript and different tools: the
+// newer one is compared, so a later turn with the newer tools is unchanged.
+func TestPrefixDiagnosticComparesTheNewestMatchingShape(t *testing.T) {
+	freshPolicyPrefixShapes(t)
+	logs := captureLogs(t)
+	first := []any{map[string]any{"role": "user", "content": "fix the bug"}}
+	_, state := prefixDiagnosticTurn(t, nil, diagMainTurn(first...), raylinearc.PolicyCallUnknown)
+	retried := diagMainTurn(first...)
+	retried["tools"] = []any{map[string]any{"name": "Write", "input_schema": map[string]any{"type": "object"}}}
+	raw, _ := json.Marshal(retried)
+	arcContext := &selection.RaylineARCSelectionContext{EpisodeIDHash: "episode", RawRequest: raw, RequestFormat: policyFormatAnthropic}
+	clientRequest, messages, _, err := policyClientRequestOf(arcContext)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policyPrefixShapes.remember("episode", raylinearc.NewPolicyPrefixShape(messages, clientRequest.System, clientRequest.Tools))
+	next := diagMainTurn(append(first,
+		map[string]any{"role": "assistant", "content": "done"},
+		map[string]any{"role": "user", "content": "now the tests"})...)
+	next["tools"] = retried["tools"]
+	if transition, _ := prefixDiagnosticTurn(t, state, next, raylinearc.PolicyCallUnknown); transition != raylinearc.PolicyTransitionExtends {
+		t.Fatalf("transition = %s", transition)
+	}
+	if events := prefixDiagnostics(logs); len(events) != 0 {
+		t.Fatalf("compared with the older tools: %v", events)
+	}
+}
