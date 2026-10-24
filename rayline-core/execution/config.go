@@ -41,6 +41,7 @@ type ActionBinding struct {
 type DecisionsConfig struct {
 	APIMode     string          `json:"api_mode,omitempty"`
 	URL         string          `json:"url"`
+	CellTag     string          `json:"cell_tag,omitempty"`
 	AuthEnv     string          `json:"auth_env"`
 	Model       string          `json:"model"`
 	Result      string          `json:"result"`

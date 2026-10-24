@@ -51,6 +51,13 @@ value acknowledgement. Missing custom results, mismatched identities or prices,
 and unapplied routing keys fail visibly. A harness cannot override these settings
 through its generation body.
 
+For an isolated development cell, `decisions.cell_tag` sends the gateway's
+`X-Rayline-Cell` selection header and requires the same tag in its response.
+Use a gateway/model that permits lab selection (for example, the dev gateway's
+`rayline-router` with VSR routing enabled). A fixed ARC tier can ignore this
+header; the adapter refuses that mismatch. Omitting the tag uses normal gateway
+selection. The setting never changes gateway configuration or standing traffic.
+
 The deployed top-only response may provide `policy_action_id`, model and worker
 without package or price identity. Current mode accepts that response only with
 `result: "top"`, empty `routing`, and no `offer_sha256` expectation. It binds the returned action and exact model

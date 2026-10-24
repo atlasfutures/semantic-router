@@ -9,6 +9,7 @@ import (
 	"math"
 	"net/http"
 	"os"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -30,7 +31,12 @@ type HTTPDecisions struct {
 	profileVersion int64
 }
 
+var decisionsCellTag = regexp.MustCompile(`^[a-z][a-z0-9-]{0,45}$`)
+
 func NewHTTPDecisions(config Config) (*HTTPDecisions, error) {
+	if config.Decisions.CellTag != "" && !decisionsCellTag.MatchString(config.Decisions.CellTag) {
+		return nil, fmt.Errorf("Decisions cell_tag must be a Cloud Run revision tag")
+	}
 	if err := validateEndpoint(config.Decisions.URL); err != nil {
 		return nil, fmt.Errorf("Decisions URL: %w", err)
 	}
@@ -323,6 +329,9 @@ func (provider *HTTPDecisions) Decide(ctx context.Context, input DecisionInput) 
 	request.Header.Set("X-Conversation-Id", fingerprint([]byte(input.SessionID)))
 	request.Header.Set("X-Rayline-Branch-Id", fingerprint([]byte(input.BranchID)))
 	request.Header.Set("X-Rayline-Wire-Format", string(input.Format))
+	if provider.config.Decisions.CellTag != "" {
+		request.Header.Set("X-Rayline-Cell", provider.config.Decisions.CellTag)
+	}
 	response, err := provider.client.Do(request)
 	if err != nil {
 		return Decision{}, fmt.Errorf("Decisions request failed")
@@ -330,6 +339,9 @@ func (provider *HTTPDecisions) Decide(ctx context.Context, input DecisionInput) 
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
 		return Decision{}, fmt.Errorf("Decisions request refused (HTTP %d)", response.StatusCode)
+	}
+	if tag := provider.config.Decisions.CellTag; tag != "" && response.Header.Get("X-Rayline-Cell") != tag {
+		return Decision{}, fmt.Errorf("Decisions did not use the configured cell_tag")
 	}
 	responseBytes, err := readBounded(response.Body, 8<<20)
 	if err != nil {
