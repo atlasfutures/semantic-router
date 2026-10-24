@@ -45,7 +45,8 @@ type semanticResponseStreamState struct {
 	failed      *llmprotocol.ProtocolError
 	// upstreamFailed is the provider's error as it said it, before the
 	// client's copy was made public; the failure is classed by it.
-	upstreamFailed *llmprotocol.ProtocolError
+	upstreamFailed    *llmprotocol.ProtocolError
+	reconstructionErr error
 }
 
 type semanticStreamItem struct {
@@ -55,10 +56,11 @@ type semanticStreamItem struct {
 	refusal string
 	// refused records a refusal part even when its text is empty, so the
 	// reconstructed response still says the model refused.
-	refused      bool
-	reasoning    string
-	reasoningSig string
-	toolCall     *llmprotocol.ToolCall
+	refused          bool
+	reasoning        string
+	reasoningSig     string
+	reasoningCarrier llmprotocol.Content
+	toolCall         *llmprotocol.ToolCall
 	// carried is a whole item the source format names and the contract does
 	// not, such as a Responses web_search_call; the settled response keeps it
 	// so a cache hit or a stored continuation shows it as the stream did.
@@ -389,6 +391,12 @@ func (state *semanticResponseStreamState) observe(events []llmprotocol.Event) {
 		case llmprotocol.EventReasoningDelta:
 			item := state.item(event.ItemIndex)
 			item.reasoning += event.Delta
+			if event.Content != nil {
+				item.reasoningCarrier.Kind = llmprotocol.ContentReasoning
+				if err := protocolcodec.AccumulateReasoningDetails(&item.reasoningCarrier, *event.Content); err != nil {
+					state.reconstructionErr = err
+				}
+			}
 			if event.Content != nil && event.Content.Signature != "" {
 				item.reasoningSig = event.Content.Signature
 			}
@@ -461,6 +469,9 @@ func (state *semanticResponseStreamState) item(index int) *semanticStreamItem {
 
 //nolint:cyclop // Response assembly validates every terminal stream invariant in one place.
 func (state *semanticResponseStreamState) response() (*llmprotocol.Response, error) {
+	if state != nil && state.reconstructionErr != nil {
+		return nil, state.reconstructionErr
+	}
 	if state == nil || state.failed != nil || !state.terminal {
 		return nil, fmt.Errorf("semantic stream did not complete successfully")
 	}
@@ -476,10 +487,10 @@ func (state *semanticResponseStreamState) response() (*llmprotocol.Response, err
 		if item.carried != nil {
 			contents = append(contents, *item.carried)
 		}
-		if item.reasoning != "" || item.reasoningSig != "" {
+		if item.reasoning != "" || item.reasoningSig != "" || item.reasoningCarrier.Extensions != nil {
 			contents = append(contents, llmprotocol.Content{
 				Kind: llmprotocol.ContentReasoning, Text: item.reasoning,
-				Signature: item.reasoningSig,
+				Signature: item.reasoningSig, Extensions: item.reasoningCarrier.Extensions,
 			})
 		}
 		if item.refusal != "" || item.refused {
@@ -550,9 +561,8 @@ func (r *OpenAIRouter) finalizeSemanticStreamingResponse(ctx *RequestContext, st
 	semanticResponse, responseErr := ctx.SemanticStreamState.response()
 	if responseErr == nil {
 		// The buffered copy (cache, replay) is not minted: the reconstruction
-		// keeps neither the reasoning_details that carried Claude's signature
-		// nor the stream's block boundaries, so a marker minted here could sign
-		// Claude's own thinking or differ from the one the client received.
+		// does not retain the stream's block boundaries, so a marker minted
+		// here could sign Claude's own thinking or differ from the client's.
 		ctx.SemanticResponse = semanticResponse
 	} else {
 		ctx.StreamingAborted = true

@@ -132,9 +132,26 @@ func (r *OpenAIRouter) dropRaylineARCOpaqueReasoningIssuedElsewhere(
 	if transaction.state != nil {
 		provenance = transaction.state.ReasoningProvenance
 	}
+	dropped := dropOpaqueReasoningForTarget(request, provenance, issuer, dispatch.targetFormat)
+	if dropped == 0 {
+		return false
+	}
+	logging.ComponentEvent("extproc", "rayline_arc_opaque_reasoning_dropped", map[string]interface{}{
+		"request_id": ctx.RequestID,
+		"worker":     dispatch.logicalModel,
+		"dropped":    dropped,
+	})
+	return true
+}
+
+// dropOpaqueReasoningForTarget removes private Messages groups without
+// recorded matching issuance. An unrecorded earlier block invalidates later
+// private groups too: their signatures may bind the prefix being removed.
+// Other wire formats retain their existing disposition for unknown history.
+func dropOpaqueReasoningForTarget(request *llmprotocol.Request, provenance []raylinearc.ReasoningProvenance, issuer string, target llmprotocol.WireFormat) int {
 	unknownPrefix := false
-	dropped := protocolcodec.DropOpaqueReasoning(request, func(data string) bool {
-		if dispatch.targetFormat == llmprotocol.AnthropicMessagesV1 {
+	return protocolcodec.DropOpaqueReasoning(request, func(data string) bool {
+		if target == llmprotocol.AnthropicMessagesV1 {
 			matches := raylinearc.ReasoningIssuedBy(provenance, data, issuer)
 			if !matches && !raylinearc.ReasoningIssuedElsewhere(provenance, data, issuer) {
 				// The missing record may be an older same-worker block. Removing it
@@ -146,15 +163,6 @@ func (r *OpenAIRouter) dropRaylineARCOpaqueReasoningIssuedElsewhere(
 		}
 		return raylinearc.ReasoningIssuedElsewhere(provenance, data, issuer)
 	})
-	if dropped == 0 {
-		return false
-	}
-	logging.ComponentEvent("extproc", "rayline_arc_opaque_reasoning_dropped", map[string]interface{}{
-		"request_id": ctx.RequestID,
-		"worker":     dispatch.logicalModel,
-		"dropped":    dropped,
-	})
-	return true
 }
 
 // opaqueReasoningIssuerFor names the effective issuer of a dispatch's opaque

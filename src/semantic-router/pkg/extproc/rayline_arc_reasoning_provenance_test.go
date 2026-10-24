@@ -3,7 +3,9 @@ package extproc
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 	"os"
 	"strings"
 	"testing"
@@ -11,6 +13,7 @@ import (
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/protocolcodec"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
 
@@ -275,6 +278,131 @@ func seedMessagesHistoryIssuer(t *testing.T, router *OpenAIRouter, episode, work
 			if data != "" {
 				seedOpaqueReasoningIssuer(t, router, episode, worker, data)
 			}
+		}
+	}
+}
+
+// Artifact turns must learn issuance from delivered responses, not headers.
+// No provenance is seeded: replay is authorized only by the first completion.
+func TestArtifactResponseCompletionRecordsReasoningForReplay(t *testing.T) {
+	cases := []struct {
+		name      string
+		format    llmprotocol.WireFormat
+		body      string
+		streaming bool
+	}{
+		{"messages", llmprotocol.AnthropicMessagesV1, `{"id":"msg_1","type":"message","role":"assistant","model":"claude-test","content":[{"type":"thinking","thinking":"readable","signature":"issued-signature"},{"type":"redacted_thinking","data":"issued-blob"},{"type":"text","text":"answer"}],"stop_reason":"end_turn","usage":{"input_tokens":2,"output_tokens":3}}`, false},
+		{"chat-carriers", llmprotocol.OpenAIChatV1, `{"id":"chat_1","object":"chat.completion","model":"claude-test","choices":[{"index":0,"message":{"role":"assistant","content":"answer","reasoning_content":"readable","reasoning_details":[{"type":"reasoning.text","text":"readable","signature":"issued-signature","format":"anthropic-claude-v1","index":0},{"type":"reasoning.encrypted","data":"issued-blob","format":"anthropic-claude-v1","index":1}]},"finish_reason":"stop"}],"usage":{"prompt_tokens":2,"completion_tokens":3,"total_tokens":5}}`, false},
+	}
+	cases = append(cases, struct {
+		name      string
+		format    llmprotocol.WireFormat
+		body      string
+		streaming bool
+	}{
+		"messages-stream", llmprotocol.AnthropicMessagesV1,
+		strings.NewReplacer("EqQBsigclaude", "issued-signature", "Done.", "answer").Replace(strings.Replace(claudeSignedThinkingStream,
+			"event: message_delta", "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":2,\"content_block\":{\"type\":\"redacted_thinking\",\"data\":\"issued-blob\"}}\n\nevent: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":2}\n\nevent: message_delta", 1)), true,
+	})
+
+	cases = append(cases, struct {
+		name      string
+		format    llmprotocol.WireFormat
+		body      string
+		streaming bool
+	}{
+		"chat-stream-carriers", llmprotocol.OpenAIChatV1, `data: {"id":"chat-stream-1","object":"chat.completion.chunk","model":"claude-test","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"readable","reasoning_details":[{"type":"reasoning.text","text":"readable","format":"anthropic-claude-v1","index":0}]},"finish_reason":null}]}
+
+data: {"id":"chat-stream-1","object":"chat.completion.chunk","model":"claude-test","choices":[{"index":0,"delta":{"reasoning_details":[{"type":"reasoning.text","signature":"issued-","format":"anthropic-claude-v1","index":0}]},"finish_reason":null}]}
+
+data: {"id":"chat-stream-1","object":"chat.completion.chunk","model":"claude-test","choices":[{"index":0,"delta":{"reasoning_details":[{"type":"reasoning.text","signature":"signature","format":"anthropic-claude-v1","index":0}]},"finish_reason":null}]}
+
+data: {"id":"chat-stream-1","object":"chat.completion.chunk","model":"claude-test","choices":[{"index":0,"delta":{"reasoning_details":[{"type":"reasoning.encrypted","data":"issued-","format":"anthropic-claude-v1","index":1}]},"finish_reason":null}]}
+
+data: {"id":"chat-stream-1","object":"chat.completion.chunk","model":"claude-test","choices":[{"index":0,"delta":{"reasoning_details":[{"type":"reasoning.encrypted","data":"blob","format":"anthropic-claude-v1","index":1}]},"finish_reason":null}]}
+
+data: {"id":"chat-stream-1","object":"chat.completion.chunk","model":"claude-test","choices":[{"index":0,"delta":{"content":"answer"},"finish_reason":null}]}
+
+data: {"id":"chat-stream-1","object":"chat.completion.chunk","model":"claude-test","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+data: [DONE]
+
+`, true,
+	})
+
+	for _, tc := range cases {
+		for _, outcome := range []string{"complete", "failed-send", "partial-stream"} {
+			if outcome == "partial-stream" && !tc.streaming {
+				continue
+			}
+			failed := outcome != "complete"
+			t.Run(tc.name+"/"+outcome, func(t *testing.T) {
+				store, episode := newLedgerTestStore(t)
+				lease, state, err := store.Prepare(context.Background(), episode, 2)
+				if err != nil {
+					t.Fatal(err)
+				}
+				tx := newRaylineARCEpisodeTransaction(store, lease, state, episode, time.Minute, nil)
+				tx.markSelection(0, 10)
+				tx.dispatchWorker = "pinned-worker"
+				ctx := &RequestContext{Headers: map[string]string{}, RaylineARCTransaction: tx,
+					SourceFormat: tc.format, TargetFormat: tc.format, TraceContext: context.Background(), RequestModel: "public-model"}
+				bindRaylineARCSelectionTransaction(ctx)
+				router := &OpenAIRouter{}
+				headers := arcResponseHeaders("200")
+				if tc.streaming {
+					headers = streamingResponseHeaders("200")
+				}
+				sendHeaders(t, router, ctx, headers)
+				if early := readLedgerTestStateNoWait(store, episode); early != nil {
+					t.Fatal("artifact turn committed before response body")
+				}
+				stream := NewMockStream(nil)
+				if outcome == "failed-send" {
+					stream.SendError = errors.New("cancelled final send")
+				}
+				body := tc.body
+				if outcome == "partial-stream" {
+					if tc.format == llmprotocol.OpenAIChatV1 {
+						body = strings.Split(body, `"finish_reason":"stop"`)[0]
+					} else {
+						body = strings.Split(body, "event: message_delta")[0]
+					}
+				}
+				err = router.processResponseBody(stream, &ext_proc.ProcessingRequest_ResponseBody{ResponseBody: &ext_proc.HttpBody{Body: []byte(body), EndOfStream: true}}, ctx)
+				finalizeSelectionProcessTerminal(ctx)
+				if outcome != "partial-stream" && (err != nil) != failed {
+					t.Fatalf("process response error=%v, failed=%v", err, failed)
+				}
+				committed := readLedgerTestState(t, store, episode)
+				if outcome == "partial-stream" {
+					if committed.TurnIndex != 0 || len(committed.ReasoningProvenance) != 0 {
+						t.Fatalf("partial response committed issuance: %+v", committed)
+					}
+					return
+				}
+				// Restore the exact Chat carriers the client can replay on a Messages turn.
+				response := ctx.SemanticResponse
+				if response == nil {
+					t.Fatal("response was not decoded")
+				}
+				var contents []llmprotocol.Content
+				for _, item := range response.Output {
+					contents = append(contents, item.Content...)
+				}
+				request := llmprotocol.Request{Messages: []llmprotocol.Message{{Role: llmprotocol.RoleAssistant, Content: contents}}}
+				protocolcodec.ClaudeThinkingFromReasoningDetails(&request)
+				dropOpaqueReasoningForTarget(&request, committed.ReasoningProvenance, "pinned-worker", llmprotocol.AnthropicMessagesV1)
+				wire, _ := json.Marshal(request)
+				for _, data := range []string{"issued-signature", "issued-blob"} {
+					if strings.Contains(string(wire), data) == failed {
+						t.Fatalf("replay authorization failed for %s: %s", data, wire)
+					}
+				}
+				if !strings.Contains(string(wire), "answer") {
+					t.Fatalf("lost visible answer: %s", wire)
+				}
+			})
 		}
 	}
 }

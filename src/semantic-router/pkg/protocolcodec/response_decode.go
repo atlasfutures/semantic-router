@@ -17,7 +17,6 @@ limitations under the License.
 package protocolcodec
 
 import (
-	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -270,24 +269,7 @@ func (accumulator *responseAccumulator) appendReasoning(event llmprotocol.Event)
 	if event.Content == nil {
 		return nil
 	}
-	fragment, _ := reasoningDetailsOf(*event.Content)
-	if fragment == nil {
-		return nil
-	}
-	content := accumulator.items[event.ItemIndex].contents[event.ContentIndex]
-	var accumulated json.RawMessage
-	if existing, _ := reasoningDetailsOf(*content); existing != nil {
-		accumulated = existing
-	}
-	merged, err := mergeReasoningDetailsFragment(accumulated, fragment)
-	if err != nil {
-		return llmprotocol.NewError(
-			llmprotocol.ErrorUpstreamUnavailable, "invalid_reasoning_details",
-			"upstream stream sent malformed reasoning_details", err,
-		)
-	}
-	content.Extensions = reasoningDetailsFields(merged)
-	return nil
+	return AccumulateReasoningDetails(accumulator.items[event.ItemIndex].contents[event.ContentIndex], *event.Content)
 }
 
 func (accumulator *responseAccumulator) item(index int) (*responseAccumulatorItem, error) {
