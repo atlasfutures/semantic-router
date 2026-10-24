@@ -43,11 +43,13 @@ through the gateway; it cannot be combined with inline `prices`. Omit the versio
 to resolve the current version on each decision, or pin a positive version for a
 repeatable run. A profile may also pin `price_sha256`. The adapter requires an
 applied profile ID/version/content-hash receipt and matches the resolved price
-digest and exclusivity to the selected action's identity. Profile content hashes
+digest to the selected result's price receipt and exclusivity to the routing
+price echo. Profile content hashes
 and canonical price digests use different encodings and are not interchangeable.
 The resolved profile identity is recorded with each selection. A configured
 `value_usd` requires `result: "custom"`, a returned custom result, and an applied
-value acknowledgement. Missing custom results, mismatched identities or prices,
+value acknowledgement; the selected result must also report that value and its
+reciprocal cost weight. Missing custom results, mismatched identities or prices,
 and unapplied routing keys fail visibly. A harness cannot override these settings
 through its generation body.
 
@@ -65,6 +67,15 @@ aliases to the configured manifest and records `identity_source:
 "configured_manifest"`; it does not claim the server attested package, registry,
 offer or prices. Responses containing the full identity must match the configured
 pins and are recorded with `identity_source: "response"`.
+
+Current preset/custom results also name the action, model and worker without a
+package identity. The adapter binds those to the configured manifest and records
+`identity_source: "configured_manifest"`; a configured `offer_sha256` still
+requires a returned identity. Each selected result's own `prices` must match the
+applied routing receipt, independently of the top-level decision. These result
+prices contain `basis` and `price_sha256`; `exclusive` belongs to the routing
+echo. This does not change the requested result or relax the advanced mode's
+identity requirements.
 
 Each deployment specifies `id`, `kind` (`local` or `cloud`), full inference `url`,
 `protocol` (`anthropic.messages.v1`, `openai.chat.v1`, or `openai.responses.v1`),
