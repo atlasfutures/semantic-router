@@ -22,8 +22,10 @@ opt-in. The core reports facts and never picks or ranks a model.
 
 - **Policy.** `decisions.routing.policy` is required: `{"preset": ...}` with an
   optional `overrides.schedule` (`model`/`thinking` sets of `cache_boundaries`,
-  `user_messages`, `all_turns`) and, for `arc-policy.prefer-local.v1` only,
-  `overrides.selection.min_p_pass`. Rayline Local writes
+  `user_messages`, `all_turns`). The served presets are
+  `arc-policy.hybrid-default.v1` and `arc-policy.package-default.v1`
+  (pathfinder #5904); the spec's `arc-policy.prefer-local.v1` is refused until the
+  service implements it. At most 16 executable bindings fit `targets[]`. Rayline Local writes
   `arc-policy.hybrid-default.v1` when its user sets no override; the core never
   sends an absent policy in this mode. Allowed routing keys are `policy`,
   `value_usd`, `prices`, `exclusive` and the price-profile keys.
@@ -65,11 +67,14 @@ opt-in. The core reports facts and never picks or ranks a model.
   `fits: false`. The service reselects; a service that reselects an infeasible
   target fails visibly (`execution_no_feasible_target`).
 - **Response.** The selected result must carry a `receipt` naming the selected
-  action and control, with a known `decided_by` per dimension and an `excluded`
+  action, control and applied policy, with a known `decided_by` per dimension
+  (`decided_by.model` may be `held_unavailable`, or null for a one-stage
+  package) and an `excluded`
   entry, with the same reason, for every target the core reported as not
   fitting. `routing.execution` must echo `status: "applied"`, the version and the
-  exact turn; `routing.policy` must echo `status: "applied"` and the preset.
-  Identity pins are checked as in v1. Responses add `X-Rayline-Decided-By` and
+  exact turn, and `matched` for each sent identity pin when `pinned` is present;
+  `routing.policy` must echo `status: "applied"` and the preset. An
+  `unsupported` echo fails visibly; there is no fallback to another mode. Responses add `X-Rayline-Decided-By` and
   `X-Rayline-Event` headers, and logs record the receipt and capacity facts.
 
 ## Configuration

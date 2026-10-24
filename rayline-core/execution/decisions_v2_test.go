@@ -505,6 +505,12 @@ func TestV2ResponseChecksRefuseUnappliedOrUnexplainedDecisions(t *testing.T) {
 		"unknown decided_by": func(response map[string]any) {
 			response["receipt"].(map[string]any)["decided_by"] = map[string]string{"model": "periodic", "thinking": "schedule"}
 		},
+		"pin not matched": func(response map[string]any) {
+			response["routing"].(map[string]any)["execution"].(map[string]any)["pinned"] = map[string]any{"package_sha256": "mismatched", "thinking_controls_sha256": "matched", "offer_sha256": nil}
+		},
+		"execution unsupported": func(response map[string]any) {
+			response["routing"].(map[string]any)["execution"].(map[string]any)["status"] = "unsupported"
+		},
 		"policy not echoed": func(response map[string]any) {
 			delete(response["routing"].(map[string]any), "policy")
 		},
@@ -540,12 +546,14 @@ func TestV2ConfigRequiresAnExplicitPublishedPolicy(t *testing.T) {
 		ok      bool
 	}{
 		"default preset":             {DecisionsExecutionContextV2, `{"policy":{"preset":"arc-policy.hybrid-default.v1"}}`, true},
-		"prefer local with V":        {DecisionsExecutionContextV2, `{"policy":{"preset":"arc-policy.prefer-local.v1","overrides":{"schedule":{"model":["cache_boundaries","user_messages"]},"selection":{"min_p_pass":0.55}}},"value_usd":0.1}`, true},
+		"David's schedule with V":    {DecisionsExecutionContextV2, `{"policy":{"preset":"arc-policy.hybrid-default.v1","overrides":{"schedule":{"model":["cache_boundaries","user_messages"],"thinking":["all_turns"]}}},"value_usd":0.1}`, true},
+		"package default":            {DecisionsExecutionContextV2, `{"policy":{"preset":"arc-policy.package-default.v1"}}`, true},
+		"prefer local not served":    {DecisionsExecutionContextV2, `{"policy":{"preset":"arc-policy.prefer-local.v1"}}`, false},
 		"absent policy":              {DecisionsExecutionContextV2, `{}`, false},
 		"policy outside v2":          {DecisionsExecutionContextV1, `{"policy":{"preset":"arc-policy.hybrid-default.v1"}}`, false},
 		"unpublished preset":         {DecisionsExecutionContextV2, `{"policy":{"preset":"arc-policy.always-local.v1"}}`, false},
 		"unknown class":              {DecisionsExecutionContextV2, `{"policy":{"preset":"arc-policy.hybrid-default.v1","overrides":{"schedule":{"model":["every_5"]}}}}`, false},
-		"threshold outside prefer":   {DecisionsExecutionContextV2, `{"policy":{"preset":"arc-policy.hybrid-default.v1","overrides":{"selection":{"min_p_pass":0.5}}}}`, false},
+		"selection override":         {DecisionsExecutionContextV2, `{"policy":{"preset":"arc-policy.hybrid-default.v1","overrides":{"selection":{"min_p_pass":0.5}}}}`, false},
 		"unknown override":           {DecisionsExecutionContextV2, `{"policy":{"preset":"arc-policy.hybrid-default.v1","overrides":{"selector":"utility"}}}`, false},
 		"unacknowledged routing key": {DecisionsExecutionContextV2, `{"policy":{"preset":"arc-policy.hybrid-default.v1"},"lookahead":1}`, false},
 	} {
