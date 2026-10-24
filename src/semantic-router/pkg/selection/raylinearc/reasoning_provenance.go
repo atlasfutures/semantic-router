@@ -14,8 +14,8 @@ var reasoningProvenancePattern = regexp.MustCompile(`^[0-9a-f]{16}$`)
 const MaxReasoningProvenance = 32
 
 // ReasoningProvenance names the worker that produced one opaque reasoning
-// block (an Anthropic-format redacted_thinking). The block is readable only by
-// the model that issued it: resent to another worker it fails the turn, so a
+// block (a thinking signature or Anthropic-format redacted_thinking). Only
+// its issuing model can read the block: resent to another worker it fails the turn, so a
 // later turn drops the blocks whose issuer is known to be someone else. Both
 // fields are truncated digests, so the record holds neither reasoning nor
 // configuration names.
@@ -82,6 +82,22 @@ func ReasoningIssuedElsewhere(provenance []ReasoningProvenance, data, target str
 		if provenance[index].Block == block {
 			issuer := provenance[index].Worker
 			return issuer == unknown || target == ReasoningIssuerUnknown || issuer != ReasoningWorkerDigest(target)
+		}
+	}
+	return false
+}
+
+// ReasoningIssuedBy reports positive evidence that target issued this block.
+// An absent/evicted record or an unpinned provider is not evidence, so neither
+// may authorize replay of encrypted history to a Messages-compatible host.
+func ReasoningIssuedBy(provenance []ReasoningProvenance, data, target string) bool {
+	if target == ReasoningIssuerUnknown {
+		return false
+	}
+	block := ReasoningBlockDigest(data)
+	for index := len(provenance) - 1; index >= 0; index-- {
+		if provenance[index].Block == block {
+			return provenance[index].Worker == ReasoningWorkerDigest(target)
 		}
 	}
 	return false

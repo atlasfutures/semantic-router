@@ -2,6 +2,8 @@ package extproc
 
 import (
 	"context"
+	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -36,7 +38,9 @@ func TestCommittedTurnRecordsOpaqueReasoningProvenance(t *testing.T) {
 	transaction := newRaylineARCEpisodeTransaction(store, lease, state, episode, time.Minute, nil)
 	transaction.markSelection(0, 10)
 	transaction.dispatchWorker = "gpt-worker"
-	if err := transaction.commit(context.Background(), &RequestContext{SemanticResponse: redactedResponse("gpt-blob")}); err != nil {
+	response := redactedResponse("gpt-blob")
+	response.Output[0].Content = append(response.Output[0].Content, llmprotocol.Content{Kind: llmprotocol.ContentReasoning, Signature: "gpt-signature", Reasoning: llmprotocol.ReasoningScopeText})
+	if err := transaction.commit(context.Background(), &RequestContext{SemanticResponse: response}); err != nil {
 		t.Fatalf("commit: %v", err)
 	}
 	next, reread, err := store.Prepare(context.Background(), episode, 2)
@@ -45,7 +49,8 @@ func TestCommittedTurnRecordsOpaqueReasoningProvenance(t *testing.T) {
 	}
 	defer func() { _ = store.Abort(context.Background(), next) }()
 	if !raylinearc.ReasoningIssuedElsewhere(reread.ReasoningProvenance, "gpt-blob", "claude") ||
-		raylinearc.ReasoningIssuedElsewhere(reread.ReasoningProvenance, "gpt-blob", "gpt-worker") {
+		raylinearc.ReasoningIssuedElsewhere(reread.ReasoningProvenance, "gpt-blob", "gpt-worker") ||
+		!raylinearc.ReasoningIssuedBy(reread.ReasoningProvenance, "gpt-signature", "gpt-worker") {
 		t.Fatalf("provenance after commit = %+v", reread.ReasoningProvenance)
 	}
 }
@@ -101,14 +106,11 @@ func seedOpaqueReasoningIssuer(t *testing.T, router *OpenAIRouter, episode, work
 		t.Fatalf("worker %s has no fixed issuer in the test config", worker)
 	}
 	store := router.RaylineARCEpisodeStore
-	lease, state, err := store.Prepare(context.Background(), raylinearc.HashEpisodeID(episode), 4)
+	lease, state, err := store.Prepare(context.Background(), raylinearc.HashEpisodeID(episode), len(router.Config.Decisions[0].ModelRefs))
 	if err != nil {
 		t.Fatal(err)
 	}
-	state.ReasoningProvenance = raylinearc.WithReasoningProvenance(nil, issuer, []string{data})
-	if err := state.Commit(0, 10, time.Now().UTC()); err != nil {
-		t.Fatal(err)
-	}
+	state.ReasoningProvenance = raylinearc.WithReasoningProvenance(state.ReasoningProvenance, issuer, []string{data})
 	if err := store.Commit(context.Background(), lease, lease.Version(), state); err != nil {
 		t.Fatal(err)
 	}
@@ -146,4 +148,124 @@ func routerConfigWithPin(model string, pin config.OpenRouterProviderPreferences)
 	cfg := &config.RouterConfig{}
 	cfg.ModelConfig = map[string]config.ModelParams{model: {ProviderPreferences: &pin}}
 	return cfg
+}
+
+// A Messages-compatible endpoint can serve GPT. The dispatched payload must
+// keep only that worker's recorded private reasoning, including when history
+// alternates Claude and GPT. Unknown ciphertext is never proof of compatibility.
+func TestMixedMessagesReasoningReachesOnlyItsRecordedIssuer(t *testing.T) {
+	t.Setenv("POLICY_E2E_PROVIDER_KEY", "public-e2e-provider-key")
+	fake := newRelaxedPolicyFake(t)
+	path := writeConsistentPolicyConfig(t, fake.URL(), config.RaylineARCConsistencyStrict)
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rendered := string(raw)
+	swaps := [][2]string{
+		{"    - name: claude-off\n      provider_model_id: anthropic/claude-opus-5\n      api_format: anthropic", "    - name: claude-off\n      provider_model_id: openai/gpt-6-luna\n      api_format: anthropic\n      provider_preferences:\n        order: [openai]\n        only: [openai]\n        allow_fallbacks: false"},
+		{"        - name: anthropic-claude-off\n          base_url: https://api.anthropic.com\n          provider: anthropic", "        - name: anthropic-claude-off\n          base_url: https://openrouter.ai/api/v1\n          provider: openrouter"},
+	}
+	for _, swap := range swaps {
+		if !strings.Contains(rendered, swap[0]) {
+			t.Fatalf("fixture missing %q", swap[0])
+		}
+		rendered = strings.Replace(rendered, swap[0], swap[1], 1)
+	}
+	if err := os.WriteFile(path, []byte(rendered), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	router, err := NewOpenAIRouter(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	awaitPolicySelectorArmed(t, router)
+	history := `{"model":"auto","max_tokens":4096,"messages":[
+  {"role":"user","content":"fix the test"},
+  {"role":"assistant","content":[{"type":"thinking","thinking":"","signature":"claude-signed"},{"type":"redacted_thinking","data":"claude-opaque"},{"type":"text","text":"Claude visible answer"}]},
+  {"role":"user","content":"continue"},
+  {"role":"assistant","content":[{"type":"thinking","thinking":"","signature":"gpt-signed"},{"type":"redacted_thinking","data":"gpt-opaque"},{"type":"text","text":"GPT visible answer"}]},
+  {"role":"assistant","content":[{"type":"thinking","thinking":"","signature":"claude-signed-alone"},{"type":"text","text":"Claude continuation"}]},
+  {"role":"assistant","content":[{"type":"thinking","thinking":"","signature":"gpt-signed-alone"},{"type":"text","text":"GPT continuation"}]},
+  {"role":"user","content":"continue"},
+  {"role":"assistant","content":[{"type":"thinking","thinking":"","signature":"unknown-signed"},{"type":"redacted_thinking","data":"unknown-opaque"},{"type":"text","text":"Unknown visible answer"},{"type":"tool_use","id":"tool_1","name":"read","input":{}}]},
+  {"role":"user","content":[{"type":"tool_result","tool_use_id":"tool_1","content":"tool output"}]}
+ ]}`
+	for _, tc := range []struct{ target, keep, drop string }{
+		{"claude", "claude", "gpt"}, {"claude-off", "gpt", "claude"},
+	} {
+		t.Run(tc.target, func(t *testing.T) {
+			episode := "mixed-reasoning-" + tc.target
+			for _, origin := range []struct{ worker, prefix string }{{"claude", "claude"}, {"claude-off", "gpt"}} {
+				for _, suffix := range []string{"signed", "opaque", "signed-alone"} {
+					seedOpaqueReasoningIssuer(t, router, episode, origin.worker, origin.prefix+"-"+suffix)
+				}
+			}
+			action := relaxedPolicyActions()[tc.target].ActionID
+			fake.chooseWith(func(raylinearc.PolicyDecisionRequest) string { return action })
+			body := dispatchPolicyClientRequest(t, router, episode, "/v1/messages", history)
+			wire := string(body["messages"])
+			for _, suffix := range []string{"signed", "opaque", "signed-alone"} {
+				if !strings.Contains(wire, tc.keep+"-"+suffix) {
+					t.Fatalf("compatible reasoning was lost: %s", wire)
+				}
+				if strings.Contains(wire, tc.drop+"-"+suffix) {
+					t.Fatalf("foreign encrypted reasoning reached target: %s", wire)
+				}
+			}
+			if strings.Contains(wire, "unknown-signed") || strings.Contains(wire, "unknown-opaque") {
+				t.Fatalf("unrecorded ciphertext reached target: %s", wire)
+			}
+			for _, visible := range []string{"Claude visible answer", "GPT visible answer", "Unknown visible answer", "tool_1", "tool output"} {
+				if !strings.Contains(wire, visible) {
+					t.Fatalf("visible history or tool relationship lost %q: %s", visible, wire)
+				}
+			}
+		})
+	}
+}
+
+// The synthetic renderer corpus tests placement, so it declares a fixed
+// provider and the earlier issuance of its thinking instead of relying on
+// the old behavior that forwarded unrecorded ciphertext.
+func fixturePinnedBody(t *testing.T, body []byte) []byte {
+	t.Helper()
+	var wire map[string]json.RawMessage
+	if err := json.Unmarshal(body, &wire); err != nil {
+		t.Fatal(err)
+	}
+	wire["provider"] = json.RawMessage(`{"order":["fixture"],"allow_fallbacks":false,"only":["fixture"]}`)
+	encoded, err := json.Marshal(wire)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return encoded
+}
+
+func seedMessagesHistoryIssuer(t *testing.T, router *OpenAIRouter, episode, worker string, body []byte) {
+	t.Helper()
+	var history struct {
+		Messages []struct{ Content json.RawMessage }
+	}
+	if err := json.Unmarshal(body, &history); err != nil {
+		t.Fatal(err)
+	}
+	for _, message := range history.Messages {
+		var blocks []struct{ Type, Signature, Data string }
+		if len(message.Content) == 0 || message.Content[0] != '[' {
+			continue
+		}
+		if err := json.Unmarshal(message.Content, &blocks); err != nil {
+			t.Fatal(err)
+		}
+		for _, block := range blocks {
+			data := block.Signature
+			if block.Type == "redacted_thinking" {
+				data = block.Data
+			}
+			if data != "" {
+				seedOpaqueReasoningIssuer(t, router, episode, worker, data)
+			}
+		}
+	}
 }
