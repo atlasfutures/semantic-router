@@ -48,10 +48,13 @@ type RaylineARCPolicyServiceConfig struct {
 	// Failover moves an episode off its owner, once per turn, only after one
 	// of the configured statuses (404, 429 or 503: answered before the
 	// service touches the episode). Required with Replicas, refused without.
-	Failover            RaylineARCEncoderFailoverConfig `yaml:"failover,omitempty"`
-	ModalKeyEnv         string                          `yaml:"modal_key_env,omitempty"`
-	ModalSecretEnv      string                          `yaml:"modal_secret_env,omitempty"`
-	TotalTimeoutSeconds int                             `yaml:"total_timeout_seconds"`
+	Failover RaylineARCEncoderFailoverConfig `yaml:"failover,omitempty"`
+	// Sessions decides through a Modal Server with sticky sessions at
+	// BaseURL: each episode holds one Modal session. Exclusive with Replicas.
+	Sessions            RaylineARCPolicySessionsConfig `yaml:"sessions,omitempty"`
+	ModalKeyEnv         string                         `yaml:"modal_key_env,omitempty"`
+	ModalSecretEnv      string                         `yaml:"modal_secret_env,omitempty"`
+	TotalTimeoutSeconds int                            `yaml:"total_timeout_seconds"`
 	// ConnectTimeoutSeconds bounds the dial and TLS handshake to the
 	// service; zero selects 5 s, the encoder's.
 	ConnectTimeoutSeconds int `yaml:"connect_timeout_seconds,omitempty"`
@@ -366,6 +369,9 @@ var raylineARCSHA256Pattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
 
 func validateRaylineARCPolicyServiceConfig(cfg *RaylineARCPolicyServiceConfig) error {
 	if err := validateRaylineARCPolicyServiceEndpoints(cfg); err != nil {
+		return err
+	}
+	if err := validateRaylineARCPolicySessions(cfg); err != nil {
 		return err
 	}
 	if err := validateRaylineARCModalAuth(RaylineARCEncoderConfig{

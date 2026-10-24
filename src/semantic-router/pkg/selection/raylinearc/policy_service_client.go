@@ -42,6 +42,11 @@ type PolicyServiceConfig struct {
 	// ConnectTimeout bounds the dial and the TLS handshake; zero selects
 	// DefaultPolicyServiceConnectTimeout.
 	ConnectTimeout time.Duration
+	// SessionToken, when set, routes every call to one Modal sticky session
+	// (Modal-Authorization) instead of authenticating with the proxy key: a
+	// sessioned Server admits a session's requests by its token alone. Set
+	// only through WithSessionToken; never logged.
+	SessionToken string
 }
 
 // DefaultPolicyServiceConnectTimeout matches the encoder's shipped connect
@@ -260,6 +265,18 @@ func NewPolicyServiceClient(config PolicyServiceConfig) *PolicyServiceClient {
 	return &PolicyServiceClient{config: config, http: &http.Client{Transport: transport}}
 }
 
+// WithSessionToken is this client routed to one Modal sticky session: the
+// same connections and timeouts, the session's token instead of the proxy
+// key. An empty token is the client itself.
+func (client *PolicyServiceClient) WithSessionToken(token string) *PolicyServiceClient {
+	if client == nil || token == "" {
+		return client
+	}
+	routed := *client
+	routed.config.SessionToken = token
+	return &routed
+}
+
 // Packages reads the service's loaded packages, naming the pin it needs. A
 // store-mode service (one app hot-loading packages from a volume) loads and
 // lists a package only for the pin that names it, and a service that serves
@@ -362,7 +379,9 @@ func (client *PolicyServiceClient) do(
 	if payload != nil {
 		request.Header.Set("Content-Type", "application/json")
 	}
-	if client.config.ModalKey != "" {
+	if client.config.SessionToken != "" {
+		request.Header.Set("Modal-Authorization", "Bearer "+client.config.SessionToken)
+	} else if client.config.ModalKey != "" {
 		request.Header.Set("Modal-Key", client.config.ModalKey)
 		request.Header.Set("Modal-Secret", client.config.ModalSecret)
 	}

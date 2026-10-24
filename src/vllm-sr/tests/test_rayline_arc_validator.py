@@ -792,3 +792,43 @@ def test_rayline_arc_policy_service_replicas_mirror_the_go_loader():
     ):
         with pytest.raises(ValidationError):
             RaylineARCPolicyServiceConfig.model_validate({**raw, **changed})
+
+
+def test_rayline_arc_policy_service_sessions_mirror_the_go_loader():
+    raw = _policy_service_decision().algorithm.rayline_arc.policy_service.model_dump()
+    keyed = {
+        **raw,
+        "modal_key_env": "RAYLINE_ARC_MODAL_KEY",
+        "modal_secret_env": "RAYLINE_ARC_MODAL_SECRET",
+    }
+    sessioned = RaylineARCPolicyServiceConfig.model_validate(
+        {**keyed, "sessions": {"enabled": True, "start_timeout_seconds": 5}}
+    )
+    assert sessioned.sessions.enabled
+    # The reference shape: an empty sessions block is today's cell.
+    plain = RaylineARCPolicyServiceConfig.model_validate({**raw, "sessions": {}})
+    assert not plain.sessions.enabled
+    replicas = [{"id": "s1", "base_url": "https://s1.example", "state": "active"}]
+    failover = {
+        "schema_version": "rayline.arc.policy-failover.v1",
+        "unavailable_status_codes": [503],
+        "unavailable_cooldown_seconds": 30,
+        "max_remaps": 1,
+    }
+    for changed in (
+        {"sessions": {"start_timeout_seconds": 5}},  # settings without enabled
+        {"sessions": {"enabled": True, "start_timeout_seconds": 300}},
+        {"sessions": {"enabled": True, "unknown": 1}},
+        {
+            "sessions": {"enabled": True},
+            "base_url": None,
+            "replicas": replicas,
+            "failover": failover,
+        },
+    ):
+        with pytest.raises(ValidationError):
+            RaylineARCPolicyServiceConfig.model_validate({**keyed, **changed})
+    with pytest.raises(ValidationError):
+        RaylineARCPolicyServiceConfig.model_validate(
+            {**raw, "modal_key_env": "", "modal_secret_env": "", "sessions": {"enabled": True}}
+        )

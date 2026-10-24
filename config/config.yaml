@@ -1990,6 +1990,11 @@ recipes:
                 #              unavailable_cooldown_seconds: 30, max_remaps: 1}
                 replicas: []
                 failover: {}
+                # sessions: {enabled: true} decides through a Modal Server with
+                # sticky sessions at base_url instead: each episode holds one
+                # Modal session (idle_timeout_seconds 900, start_timeout_seconds
+                # 10 by default). Exclusive with replicas; needs the proxy key.
+                sessions: {}
                 modal_key_env: RAYLINE_ARC_MODAL_KEY
                 modal_secret_env: RAYLINE_ARC_MODAL_SECRET
                 total_timeout_seconds: 60
