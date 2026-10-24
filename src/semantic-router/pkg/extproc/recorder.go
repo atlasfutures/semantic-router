@@ -63,7 +63,8 @@ func (r *OpenAIRouter) emitRoutingDecision(ctx *RequestContext) {
 	appendOutboundParamFields(record, ctx.DispatchedOutbound)
 	appendRaylineARCThinkingFields(record, ctx)
 	appendRaylineARCUpstreamFields(record, ctx)
-	record["routing_latency_ms"] = time.Since(ctx.ProcessingStartTime).Milliseconds()
+	ctx.RoutingLatency = time.Since(ctx.ProcessingStartTime)
+	record["routing_latency_ms"] = ctx.RoutingLatency.Milliseconds()
 	logging.ComponentEvent("extproc", "routing_decision", record)
 }
 
@@ -128,6 +129,7 @@ func (r *OpenAIRouter) setClearRouteCache(response *ext_proc.ProcessingResponse)
 // recordRoutingLatency records the routing latency metric
 func (r *OpenAIRouter) recordRoutingLatency(ctx *RequestContext) {
 	routingLatency := time.Since(ctx.ProcessingStartTime)
+	ctx.RoutingLatency = routingLatency
 	metrics.RecordModelRoutingLatency(routingLatency.Seconds())
 }
 
