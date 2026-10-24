@@ -145,6 +145,37 @@ type RaylineARCRouteControls struct {
 	// Execution is the caller's own execution state (routing.execution,
 	// pathfinder #5874); nil without one.
 	Execution *RaylineARCRouteExecution
+	// Policy is routing.policy as sent (hybrid routing v2, pathfinder
+	// #5904) and ExecutionV2 the v2 envelope; each nil without one.
+	Policy      *raylinearc.PolicyMember
+	ExecutionV2 *RaylineARCRouteExecutionV2
+}
+
+// RaylineARCRouteExecutionV2 is a v2 routing.execution as decide-request
+// members (arc_execution_v2.decide_inputs_v2) plus what the package-side
+// checks need (arc_execution_v2.bind_v2). Never written back to any state.
+type RaylineARCRouteExecutionV2 struct {
+	ContextEpoch string
+	Attribution  []raylinearc.PolicyAttribution
+	// LastServedActionID (and the message it names, nil when none) is the
+	// executor's truthful record of what last ran: accepted whenever its
+	// action is in the package, offered or not.
+	LastServedActionID *string
+	LastServedMessage  *int
+	// HoldActionID is a mandatory action hold, nil without one.
+	HoldActionID *string
+	CacheContext *raylinearc.PolicyCacheContext
+	Event        raylinearc.PolicyExecutorEvent
+	Capacity     []raylinearc.PolicyActionCapacity
+	// Infeasible are the targets the request's own capacity marks fits:
+	// false (any provenance).
+	Infeasible []string
+	TurnKey    string
+	Reconsult  *string
+	// ActionIDs are every action the envelope names, checked against the
+	// serving package's catalog.
+	ActionIDs                                          []string
+	ExpectPackage, ExpectThinkingControls, ExpectOffer *string
 }
 
 // RaylineARCRouteExecution is a Decisions caller's execution context as
@@ -266,6 +297,10 @@ type RaylineARCTrace struct {
 	RouteIdentity         *RaylineARCRouteIdentity
 	RouteExecutionApplied bool
 	RouteCacheTrace       *raylinearc.PolicyCacheTrace
+	// RouteReceipt is the service's decision.receipt for a lookup that sent
+	// routing.policy or a v2 routing.execution (nil when the service sent
+	// none).
+	RouteReceipt *raylinearc.PolicyDecisionReceipt
 	// PolicyOperatingPoint is the operating point the service decided at, as
 	// it echoed it (point_id names its cost weight), and PolicyTierPicks the
 	// decision at each configured tier point. Both are set only for a cell

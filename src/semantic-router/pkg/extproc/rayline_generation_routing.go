@@ -113,6 +113,11 @@ func readRaylineGenerationRouting(
 	}
 	// routing.execution is a Decisions member (pathfinder #5874): a turn
 	// this router executes keeps its own execution state.
+	// routing.policy is a Decisions member too (pathfinder #5904).
+	if _, policy := members["policy"]; policy {
+		return nil, nil, routesInvalid("policy_not_supported",
+			"routing.policy is accepted on /v1/routes only.")
+	}
 	if _, execution := members["execution"]; execution {
 		return nil, nil, routesInvalid("execution_not_supported",
 			"routing.execution is accepted on /v1/routes only.")

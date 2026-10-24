@@ -107,6 +107,8 @@ type raylineRoutesResponse struct {
 	// Identity is the route's own identity (pathfinder #5874), on a
 	// policy-service lookup with routing controls.
 	Identity *raylineRoutesIdentity `json:"identity,omitempty"`
+	// Receipt is the route's own receipt (hybrid routing v2).
+	Receipt *raylineRoutesReceipt `json:"receipt,omitempty"`
 	// Presets, Custom and Routing are the Decisions results and the echo of
 	// the request's routing block (pathfinder#5664), on a cell that serves
 	// routing controls: presets always, custom exactly when routing.value_usd

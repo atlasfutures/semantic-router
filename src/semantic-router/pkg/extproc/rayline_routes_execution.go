@@ -386,13 +386,21 @@ func readRoutesExecutionWorker(raw json.RawMessage, path string) (routesExecutio
 	if worker.placement, failure = routesExecutionEnum(members["placement"], path+".placement", "cloud", "local"); failure != nil {
 		return worker, failure
 	}
+	return worker, readRoutesExecutionEvidence(&worker, members, path)
+}
+
+// readRoutesExecutionEvidence reads a worker's cache evidence (context_epoch,
+// gap_s, ttl, residency, usage, current_prefix) from members already checked
+// for their key set: v1's workers[] entry, or a v2 target's cache.
+func readRoutesExecutionEvidence(worker *routesExecutionWorker, members map[string]json.RawMessage, path string) *routesContractError {
+	var failure *routesContractError
 	if worker.contextEpoch, failure = routesExecutionNullableString(members["context_epoch"], routesExecutionOpaqueID, path+".context_epoch"); failure != nil {
-		return worker, failure
+		return failure
 	}
 	if !routesExecutionIsNull(members["gap_s"]) {
 		gap, finite := routesFiniteNumber(members["gap_s"])
 		if !finite || gap < 0 || gap > routesExecutionMaxGapS {
-			return worker, routesExecutionInvalid(path+".gap_s", fmt.Sprintf("must be null or a number in [0, %d]", routesExecutionMaxGapS))
+			return routesExecutionInvalid(path+".gap_s", fmt.Sprintf("must be null or a number in [0, %d]", routesExecutionMaxGapS))
 		}
 		worker.gapS = &gap
 	}
@@ -402,33 +410,33 @@ func readRoutesExecutionWorker(raw json.RawMessage, path string) (routesExecutio
 	if !routesExecutionIsNull(members["ttl"]) {
 		ttl, failure := routesExecutionObject(members["ttl"], path+".ttl", "seconds", "source", "basis")
 		if failure != nil {
-			return worker, failure
+			return failure
 		}
 		parsed := &routesExecutionTTL{}
 		seconds, finite := routesFiniteNumber(ttl["seconds"])
 		if !finite || seconds <= 0 || seconds > routesExecutionMaxTTLS {
-			return worker, routesExecutionInvalid(path+".ttl.seconds", fmt.Sprintf("must be a number in (0, %d]", routesExecutionMaxTTLS))
+			return routesExecutionInvalid(path+".ttl.seconds", fmt.Sprintf("must be a number in (0, %d]", routesExecutionMaxTTLS))
 		}
 		parsed.seconds = seconds
 		if parsed.source, failure = routesExecutionString(ttl["source"], routesExecutionTTLLabel, path+".ttl.source"); failure != nil {
-			return worker, failure
+			return failure
 		}
 		if parsed.basis, failure = routesExecutionEnum(ttl["basis"], path+".ttl.basis", "wire_declared", "provider_documented", "caller_estimated"); failure != nil {
-			return worker, failure
+			return failure
 		}
 		worker.ttl = parsed
 	}
 	if !routesExecutionIsNull(members["residency"]) {
 		residency, failure := routesExecutionObject(members["residency"], path+".residency", "state", "provenance")
 		if failure != nil {
-			return worker, failure
+			return failure
 		}
 		parsed := &routesExecutionResidency{}
 		if parsed.state, failure = routesExecutionEnum(residency["state"], path+".residency.state", "resident", "evicted"); failure != nil {
-			return worker, failure
+			return failure
 		}
 		if parsed.provenance, failure = provenance(residency["provenance"], path+".residency.provenance"); failure != nil {
-			return worker, failure
+			return failure
 		}
 		worker.residency = parsed
 	}
@@ -436,7 +444,7 @@ func readRoutesExecutionWorker(raw json.RawMessage, path string) (routesExecutio
 		usage, failure := routesExecutionObject(members["usage"], path+".usage",
 			"prompt_tokens", "cache_read_tokens", "cache_write_tokens", "units", "provenance")
 		if failure != nil {
-			return worker, failure
+			return failure
 		}
 		parsed := &routesExecutionUsage{}
 		for _, count := range []struct {
@@ -448,14 +456,14 @@ func readRoutesExecutionWorker(raw json.RawMessage, path string) (routesExecutio
 			{"cache_write_tokens", &parsed.cacheWriteTokens},
 		} {
 			if *count.target, failure = routesExecutionCount(usage[count.key], path+".usage."+count.key); failure != nil {
-				return worker, failure
+				return failure
 			}
 		}
 		if parsed.units, failure = routesExecutionString(usage["units"], routesExecutionUnits, path+".usage.units"); failure != nil {
-			return worker, failure
+			return failure
 		}
 		if parsed.provenance, failure = provenance(usage["provenance"], path+".usage.provenance"); failure != nil {
-			return worker, failure
+			return failure
 		}
 		worker.usage = parsed
 	}
@@ -463,24 +471,24 @@ func readRoutesExecutionWorker(raw json.RawMessage, path string) (routesExecutio
 		prefix, failure := routesExecutionObject(members["current_prefix"], path+".current_prefix",
 			"tokens", "overlap_tokens", "units", "provenance")
 		if failure != nil {
-			return worker, failure
+			return failure
 		}
 		parsed := &routesExecutionPrefix{}
 		if parsed.tokens, failure = routesExecutionInteger(prefix["tokens"], path+".current_prefix.tokens", 1, routesExecutionMaxCount); failure != nil {
-			return worker, failure
+			return failure
 		}
 		if parsed.overlapTokens, failure = routesExecutionCount(prefix["overlap_tokens"], path+".current_prefix.overlap_tokens"); failure != nil {
-			return worker, failure
+			return failure
 		}
 		if parsed.units, failure = routesExecutionString(prefix["units"], routesExecutionUnits, path+".current_prefix.units"); failure != nil {
-			return worker, failure
+			return failure
 		}
 		if parsed.provenance, failure = provenance(prefix["provenance"], path+".current_prefix.provenance"); failure != nil {
-			return worker, failure
+			return failure
 		}
 		worker.currentPrefix = parsed
 	}
-	return worker, nil
+	return nil
 }
 
 // checkRoutesExecutionCounts refuses counts that contradict each other: a

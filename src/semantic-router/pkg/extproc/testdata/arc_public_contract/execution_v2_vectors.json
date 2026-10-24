@@ -1,0 +1,1854 @@
+{
+  "package": {
+    "package_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "thinking_controls_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "offered_action_ids": [
+      "1111111111111111111111111111111111111111111111111111111111111111",
+      "2222222222222222222222222222222222222222222222222222222222222222"
+    ],
+    "action_models": {
+      "1111111111111111111111111111111111111111111111111111111111111111": "qwen/qwen3.8-27b",
+      "2222222222222222222222222222222222222222222222222222222222222222": "anthropic/claude-opus-5.5",
+      "3333333333333333333333333333333333333333333333333333333333333333": "anthropic/claude-opus-5.5"
+    }
+  },
+  "vectors": [
+    {
+      "name": "capacity_spill",
+      "execution": {
+        "version": "arc-execution-context.v2",
+        "turn": {
+          "id": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "attempt": 1,
+          "epoch": "e1",
+          "retry_of": null,
+          "reconsult": null
+        },
+        "event": {
+          "kind": "tool_result",
+          "basis": "marker_inferred",
+          "compaction": null
+        },
+        "last_served": {
+          "action_id": "1111111111111111111111111111111111111111111111111111111111111111",
+          "worker": "local-qwen",
+          "message": 3
+        },
+        "history": [
+          {
+            "message": 1,
+            "action_id": "1111111111111111111111111111111111111111111111111111111111111111"
+          },
+          {
+            "message": 3,
+            "action_id": "1111111111111111111111111111111111111111111111111111111111111111"
+          }
+        ],
+        "hold": null,
+        "expect": {
+          "package_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "thinking_controls_sha256": null,
+          "offer_sha256": null
+        },
+        "targets": [
+          {
+            "action_id": "1111111111111111111111111111111111111111111111111111111111111111",
+            "worker": "local-qwen",
+            "placement": "local",
+            "cache": {
+              "context_epoch": "e1",
+              "gap_s": 12.0,
+              "ttl": null,
+              "residency": {
+                "state": "resident",
+                "provenance": "local_measured"
+              },
+              "usage": {
+                "prompt_tokens": 61000,
+                "cache_read_tokens": null,
+                "cache_write_tokens": null,
+                "units": "hf:Qwen/Qwen3.8-27B@r1",
+                "provenance": "provider_reported"
+              },
+              "current_prefix": {
+                "tokens": 69800,
+                "overlap_tokens": 61000,
+                "units": "hf:Qwen/Qwen3.8-27B@r1",
+                "provenance": "local_measured"
+              }
+            },
+            "capacity": {
+              "fits": false,
+              "reason": "context_capacity",
+              "required": 70210,
+              "available": 65536,
+              "available_source": "configured",
+              "units": "hf:Qwen/Qwen3.8-27B@r1",
+              "provenance": "local_measured"
+            }
+          },
+          {
+            "action_id": "2222222222222222222222222222222222222222222222222222222222222222",
+            "worker": "cloud-opus",
+            "placement": "cloud",
+            "cache": null,
+            "capacity": null
+          }
+        ]
+      },
+      "expect": {
+        "pinned": {
+          "package_sha256": "matched",
+          "thinking_controls_sha256": "unpinned"
+        },
+        "decide": {
+          "context_epoch": "e1",
+          "attribution": [
+            {
+              "message": 1,
+              "action_id": "1111111111111111111111111111111111111111111111111111111111111111"
+            },
+            {
+              "message": 3,
+              "action_id": "1111111111111111111111111111111111111111111111111111111111111111"
+            }
+          ],
+          "selection": {
+            "last_served_action_id": "1111111111111111111111111111111111111111111111111111111111111111"
+          },
+          "cache_context": {
+            "actions": [
+              {
+                "action_id": "1111111111111111111111111111111111111111111111111111111111111111",
+                "gap_s": 12.0,
+                "ttl_s": null,
+                "ttl_source": null,
+                "prompt_tokens": 61000,
+                "cache_read_tokens": null,
+                "cache_write_tokens": null,
+                "context_epoch": "e1",
+                "current_prefix_tokens": 69800,
+                "overlap_tokens": 61000,
+                "residency": "resident"
+              }
+            ]
+          },
+          "event": {
+            "kind": "tool_result",
+            "basis": "marker_inferred",
+            "compaction": null
+          },
+          "capacity": [
+            {
+              "action_id": "1111111111111111111111111111111111111111111111111111111111111111",
+              "placement": "local",
+              "fits": false,
+              "reason": "context_capacity"
+            }
+          ],
+          "turn_key": "bd94e3265b157822cdd7df5ca96e6222726d67f71f6f2b0fbf9fb8ef71da8c7d",
+          "reconsult": null,
+          "not_admitted": []
+        }
+      }
+    },
+    {
+      "name": "estimated_fit_is_unknown",
+      "execution": {
+        "version": "arc-execution-context.v2",
+        "turn": {
+          "id": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "attempt": 1,
+          "epoch": "e1",
+          "retry_of": null,
+          "reconsult": null
+        },
+        "event": {
+          "kind": "tool_result",
+          "basis": "marker_inferred",
+          "compaction": null
+        },
+        "last_served": {
+          "action_id": "1111111111111111111111111111111111111111111111111111111111111111",
+          "worker": "local-qwen",
+          "message": 3
+        },
+        "history": [
+          {
+            "message": 1,
+            "action_id": "1111111111111111111111111111111111111111111111111111111111111111"
+          },
+          {
+            "message": 3,
+            "action_id": "1111111111111111111111111111111111111111111111111111111111111111"
+          }
+        ],
+        "hold": null,
+        "expect": {
+          "package_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "thinking_controls_sha256": null,
+          "offer_sha256": null
+        },
+        "targets": [
+          {
+            "action_id": "1111111111111111111111111111111111111111111111111111111111111111",
+            "worker": "local-qwen",
+            "placement": "local",
+            "cache": {
+              "context_epoch": "e1",
+              "gap_s": 12.0,
+              "ttl": null,
+              "residency": {
+                "state": "resident",
+                "provenance": "local_measured"
+              },
+              "usage": {
+                "prompt_tokens": 61000,
+                "cache_read_tokens": null,
+                "cache_write_tokens": null,
+                "units": "hf:Qwen/Qwen3.8-27B@r1",
+                "provenance": "provider_reported"
+              },
+              "current_prefix": {
+                "tokens": 69800,
+                "overlap_tokens": 61000,
+                "units": "hf:Qwen/Qwen3.8-27B@r1",
+                "provenance": "local_measured"
+              }
+            },
+            "capacity": {
+              "fits": true,
+              "reason": null,
+              "required": 1000,
+              "available": 65536,
+              "available_source": "configured",
+              "units": "hf:Qwen/Qwen3.8-27B@r1",
+              "provenance": "caller_estimated"
+            }
+          },
+          {
+            "action_id": "2222222222222222222222222222222222222222222222222222222222222222",
+            "worker": "cloud-opus",
+            "placement": "cloud",
+            "cache": null,
+            "capacity": null
+          }
+        ]
+      },
+      "expect": {
+        "pinned": {
+          "package_sha256": "matched",
+          "thinking_controls_sha256": "unpinned"
+        },
+        "decide": {
+          "context_epoch": "e1",
+          "attribution": [
+            {
+              "message": 1,
+              "action_id": "1111111111111111111111111111111111111111111111111111111111111111"
+            },
+            {
+              "message": 3,
+              "action_id": "1111111111111111111111111111111111111111111111111111111111111111"
+            }
+          ],
+          "selection": {
+            "last_served_action_id": "1111111111111111111111111111111111111111111111111111111111111111"
+          },
+          "cache_context": {
+            "actions": [
+              {
+                "action_id": "1111111111111111111111111111111111111111111111111111111111111111",
+                "gap_s": 12.0,
+                "ttl_s": null,
+                "ttl_source": null,
+                "prompt_tokens": 61000,
+                "cache_read_tokens": null,
+                "cache_write_tokens": null,
+                "context_epoch": "e1",
+                "current_prefix_tokens": 69800,
+                "overlap_tokens": 61000,
+                "residency": "resident"
+              }
+            ]
+          },
+          "event": {
+            "kind": "tool_result",
+            "basis": "marker_inferred",
+            "compaction": null
+          },
+          "capacity": [
+            {
+              "action_id": "1111111111111111111111111111111111111111111111111111111111111111",
+              "placement": "local",
+              "fits": null,
+              "reason": null
+            }
+          ],
+          "turn_key": "bd94e3265b157822cdd7df5ca96e6222726d67f71f6f2b0fbf9fb8ef71da8c7d",
+          "reconsult": null,
+          "not_admitted": [
+            {
+              "action_id": "1111111111111111111111111111111111111111111111111111111111111111",
+              "field": "capacity",
+              "reason": "estimated_not_admitted"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "veto_reconsult",
+      "execution": {
+        "version": "arc-execution-context.v2",
+        "turn": {
+          "id": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "attempt": 2,
+          "epoch": "e1",
+          "retry_of": "rt_7",
+          "reconsult": "veto"
+        },
+        "event": {
+          "kind": "tool_result",
+          "basis": "marker_inferred",
+          "compaction": null
+        },
+        "last_served": {
+          "action_id": "1111111111111111111111111111111111111111111111111111111111111111",
+          "worker": "local-qwen",
+          "message": 3
+        },
+        "history": [
+          {
+            "message": 1,
+            "action_id": "1111111111111111111111111111111111111111111111111111111111111111"
+          },
+          {
+            "message": 3,
+            "action_id": "1111111111111111111111111111111111111111111111111111111111111111"
+          }
+        ],
+        "hold": null,
+        "expect": {
+          "package_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "thinking_controls_sha256": null,
+          "offer_sha256": null
+        },
+        "targets": [
+          {
+            "action_id": "1111111111111111111111111111111111111111111111111111111111111111",
+            "worker": "local-qwen",
+            "placement": "local",
+            "cache": {
+              "context_epoch": "e1",
+              "gap_s": 12.0,
+              "ttl": null,
+              "residency": {
+                "state": "resident",
+                "provenance": "local_measured"
+              },
+              "usage": {
+                "prompt_tokens": 61000,
+                "cache_read_tokens": null,
+                "cache_write_tokens": null,
+                "units": "hf:Qwen/Qwen3.8-27B@r1",
+                "provenance": "provider_reported"
+              },
+              "current_prefix": {
+                "tokens": 69800,
+                "overlap_tokens": 61000,
+                "units": "hf:Qwen/Qwen3.8-27B@r1",
+                "provenance": "local_measured"
+              }
+            },
+            "capacity": {
+              "fits": false,
+              "reason": "context_capacity",
+              "required": 70210,
+              "available": 65536,
+              "available_source": "configured",
+              "units": "hf:Qwen/Qwen3.8-27B@r1",
+              "provenance": "local_measured"
+            }
+          },
+          {
+            "action_id": "2222222222222222222222222222222222222222222222222222222222222222",
+            "worker": "cloud-opus",
+            "placement": "cloud",
+            "cache": null,
+            "capacity": null
+          }
+        ]
+      },
+      "expect": {
+        "pinned": {
+          "package_sha256": "matched",
+          "thinking_controls_sha256": "unpinned"
+        },
+        "decide": {
+          "context_epoch": "e1",
+          "attribution": [
+            {
+              "message": 1,
+              "action_id": "1111111111111111111111111111111111111111111111111111111111111111"
+            },
+            {
+              "message": 3,
+              "action_id": "1111111111111111111111111111111111111111111111111111111111111111"
+            }
+          ],
+          "selection": {
+            "last_served_action_id": "1111111111111111111111111111111111111111111111111111111111111111"
+          },
+          "cache_context": {
+            "actions": [
+              {
+                "action_id": "1111111111111111111111111111111111111111111111111111111111111111",
+                "gap_s": 12.0,
+                "ttl_s": null,
+                "ttl_source": null,
+                "prompt_tokens": 61000,
+                "cache_read_tokens": null,
+                "cache_write_tokens": null,
+                "context_epoch": "e1",
+                "current_prefix_tokens": 69800,
+                "overlap_tokens": 61000,
+                "residency": "resident"
+              }
+            ]
+          },
+          "event": {
+            "kind": "tool_result",
+            "basis": "marker_inferred",
+            "compaction": null
+          },
+          "capacity": [
+            {
+              "action_id": "1111111111111111111111111111111111111111111111111111111111111111",
+              "placement": "local",
+              "fits": false,
+              "reason": "context_capacity"
+            }
+          ],
+          "turn_key": "bd94e3265b157822cdd7df5ca96e6222726d67f71f6f2b0fbf9fb8ef71da8c7d",
+          "reconsult": "veto",
+          "not_admitted": []
+        }
+      }
+    },
+    {
+      "name": "unoffered_last_served_kept",
+      "execution": {
+        "version": "arc-execution-context.v2",
+        "turn": {
+          "id": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "attempt": 1,
+          "epoch": "e1",
+          "retry_of": null,
+          "reconsult": null
+        },
+        "event": {
+          "kind": "tool_result",
+          "basis": "marker_inferred",
+          "compaction": null
+        },
+        "last_served": {
+          "action_id": "3333333333333333333333333333333333333333333333333333333333333333",
+          "worker": "local-qwen",
+          "message": 3
+        },
+        "history": [
+          {
+            "message": 1,
+            "action_id": "1111111111111111111111111111111111111111111111111111111111111111"
+          },
+          {
+            "message": 3,
+            "action_id": "3333333333333333333333333333333333333333333333333333333333333333"
+          }
+        ],
+        "hold": null,
+        "expect": {
+          "package_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "thinking_controls_sha256": null,
+          "offer_sha256": null
+        },
+        "targets": [
+          {
+            "action_id": "1111111111111111111111111111111111111111111111111111111111111111",
+            "worker": "local-qwen",
+            "placement": "local",
+            "cache": {
+              "context_epoch": "e1",
+              "gap_s": 12.0,
+              "ttl": null,
+              "residency": {
+                "state": "resident",
+                "provenance": "local_measured"
+              },
+              "usage": {
+                "prompt_tokens": 61000,
+                "cache_read_tokens": null,
+                "cache_write_tokens": null,
+                "units": "hf:Qwen/Qwen3.8-27B@r1",
+                "provenance": "provider_reported"
+              },
+              "current_prefix": {
+                "tokens": 69800,
+                "overlap_tokens": 61000,
+                "units": "hf:Qwen/Qwen3.8-27B@r1",
+                "provenance": "local_measured"
+              }
+            },
+            "capacity": {
+              "fits": false,
+              "reason": "context_capacity",
+              "required": 70210,
+              "available": 65536,
+              "available_source": "configured",
+              "units": "hf:Qwen/Qwen3.8-27B@r1",
+              "provenance": "local_measured"
+            }
+          },
+          {
+            "action_id": "2222222222222222222222222222222222222222222222222222222222222222",
+            "worker": "cloud-opus",
+            "placement": "cloud",
+            "cache": null,
+            "capacity": null
+          }
+        ]
+      },
+      "expect": {
+        "pinned": {
+          "package_sha256": "matched",
+          "thinking_controls_sha256": "unpinned"
+        },
+        "decide": {
+          "context_epoch": "e1",
+          "attribution": [
+            {
+              "message": 1,
+              "action_id": "1111111111111111111111111111111111111111111111111111111111111111"
+            },
+            {
+              "message": 3,
+              "action_id": "3333333333333333333333333333333333333333333333333333333333333333"
+            }
+          ],
+          "selection": {
+            "last_served_action_id": "3333333333333333333333333333333333333333333333333333333333333333"
+          },
+          "cache_context": {
+            "actions": [
+              {
+                "action_id": "1111111111111111111111111111111111111111111111111111111111111111",
+                "gap_s": 12.0,
+                "ttl_s": null,
+                "ttl_source": null,
+                "prompt_tokens": 61000,
+                "cache_read_tokens": null,
+                "cache_write_tokens": null,
+                "context_epoch": "e1",
+                "current_prefix_tokens": 69800,
+                "overlap_tokens": 61000,
+                "residency": "resident"
+              }
+            ]
+          },
+          "event": {
+            "kind": "tool_result",
+            "basis": "marker_inferred",
+            "compaction": null
+          },
+          "capacity": [
+            {
+              "action_id": "1111111111111111111111111111111111111111111111111111111111111111",
+              "placement": "local",
+              "fits": false,
+              "reason": "context_capacity"
+            }
+          ],
+          "turn_key": "bd94e3265b157822cdd7df5ca96e6222726d67f71f6f2b0fbf9fb8ef71da8c7d",
+          "reconsult": null,
+          "not_admitted": []
+        }
+      }
+    },
+    {
+      "name": "action_hold",
+      "execution": {
+        "version": "arc-execution-context.v2",
+        "turn": {
+          "id": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "attempt": 1,
+          "epoch": "e1",
+          "retry_of": null,
+          "reconsult": null
+        },
+        "event": {
+          "kind": "tool_result",
+          "basis": "marker_inferred",
+          "compaction": null
+        },
+        "last_served": {
+          "action_id": "1111111111111111111111111111111111111111111111111111111111111111",
+          "worker": "local-qwen",
+          "message": 3
+        },
+        "history": [
+          {
+            "message": 1,
+            "action_id": "1111111111111111111111111111111111111111111111111111111111111111"
+          },
+          {
+            "message": 3,
+            "action_id": "1111111111111111111111111111111111111111111111111111111111111111"
+          }
+        ],
+        "hold": {
+          "scope": "action",
+          "action_id": "2222222222222222222222222222222222222222222222222222222222222222"
+        },
+        "expect": {
+          "package_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "thinking_controls_sha256": null,
+          "offer_sha256": null
+        },
+        "targets": [
+          {
+            "action_id": "1111111111111111111111111111111111111111111111111111111111111111",
+            "worker": "local-qwen",
+            "placement": "local",
+            "cache": {
+              "context_epoch": "e1",
+              "gap_s": 12.0,
+              "ttl": null,
+              "residency": {
+                "state": "resident",
+                "provenance": "local_measured"
+              },
+              "usage": {
+                "prompt_tokens": 61000,
+                "cache_read_tokens": null,
+                "cache_write_tokens": null,
+                "units": "hf:Qwen/Qwen3.8-27B@r1",
+                "provenance": "provider_reported"
+              },
+              "current_prefix": {
+                "tokens": 69800,
+                "overlap_tokens": 61000,
+                "units": "hf:Qwen/Qwen3.8-27B@r1",
+                "provenance": "local_measured"
+              }
+            },
+            "capacity": null
+          },
+          {
+            "action_id": "2222222222222222222222222222222222222222222222222222222222222222",
+            "worker": "cloud-opus",
+            "placement": "cloud",
+            "cache": null,
+            "capacity": null
+          }
+        ]
+      },
+      "expect": {
+        "pinned": {
+          "package_sha256": "matched",
+          "thinking_controls_sha256": "unpinned"
+        },
+        "decide": {
+          "context_epoch": "e1",
+          "attribution": [
+            {
+              "message": 1,
+              "action_id": "1111111111111111111111111111111111111111111111111111111111111111"
+            },
+            {
+              "message": 3,
+              "action_id": "1111111111111111111111111111111111111111111111111111111111111111"
+            }
+          ],
+          "selection": {
+            "held_action_id": "2222222222222222222222222222222222222222222222222222222222222222",
+            "last_served_action_id": "1111111111111111111111111111111111111111111111111111111111111111"
+          },
+          "cache_context": {
+            "actions": [
+              {
+                "action_id": "1111111111111111111111111111111111111111111111111111111111111111",
+                "gap_s": 12.0,
+                "ttl_s": null,
+                "ttl_source": null,
+                "prompt_tokens": 61000,
+                "cache_read_tokens": null,
+                "cache_write_tokens": null,
+                "context_epoch": "e1",
+                "current_prefix_tokens": 69800,
+                "overlap_tokens": 61000,
+                "residency": "resident"
+              }
+            ]
+          },
+          "event": {
+            "kind": "tool_result",
+            "basis": "marker_inferred",
+            "compaction": null
+          },
+          "capacity": [],
+          "turn_key": "bd94e3265b157822cdd7df5ca96e6222726d67f71f6f2b0fbf9fb8ef71da8c7d",
+          "reconsult": null,
+          "not_admitted": []
+        }
+      }
+    },
+    {
+      "name": "hold_infeasible",
+      "execution": {
+        "version": "arc-execution-context.v2",
+        "turn": {
+          "id": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "attempt": 1,
+          "epoch": "e1",
+          "retry_of": null,
+          "reconsult": null
+        },
+        "event": {
+          "kind": "tool_result",
+          "basis": "marker_inferred",
+          "compaction": null
+        },
+        "last_served": {
+          "action_id": "1111111111111111111111111111111111111111111111111111111111111111",
+          "worker": "local-qwen",
+          "message": 3
+        },
+        "history": [
+          {
+            "message": 1,
+            "action_id": "1111111111111111111111111111111111111111111111111111111111111111"
+          },
+          {
+            "message": 3,
+            "action_id": "1111111111111111111111111111111111111111111111111111111111111111"
+          }
+        ],
+        "hold": {
+          "scope": "action",
+          "action_id": "1111111111111111111111111111111111111111111111111111111111111111"
+        },
+        "expect": {
+          "package_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "thinking_controls_sha256": null,
+          "offer_sha256": null
+        },
+        "targets": [
+          {
+            "action_id": "1111111111111111111111111111111111111111111111111111111111111111",
+            "worker": "local-qwen",
+            "placement": "local",
+            "cache": {
+              "context_epoch": "e1",
+              "gap_s": 12.0,
+              "ttl": null,
+              "residency": {
+                "state": "resident",
+                "provenance": "local_measured"
+              },
+              "usage": {
+                "prompt_tokens": 61000,
+                "cache_read_tokens": null,
+                "cache_write_tokens": null,
+                "units": "hf:Qwen/Qwen3.8-27B@r1",
+                "provenance": "provider_reported"
+              },
+              "current_prefix": {
+                "tokens": 69800,
+                "overlap_tokens": 61000,
+                "units": "hf:Qwen/Qwen3.8-27B@r1",
+                "provenance": "local_measured"
+              }
+            },
+            "capacity": {
+              "fits": false,
+              "reason": "context_capacity",
+              "required": 70210,
+              "available": 65536,
+              "available_source": "configured",
+              "units": "hf:Qwen/Qwen3.8-27B@r1",
+              "provenance": "local_measured"
+            }
+          },
+          {
+            "action_id": "2222222222222222222222222222222222222222222222222222222222222222",
+            "worker": "cloud-opus",
+            "placement": "cloud",
+            "cache": null,
+            "capacity": null
+          }
+        ]
+      },
+      "expect": {
+        "refused": "execution_hold_infeasible"
+      }
+    },
+    {
+      "name": "hold_unoffered",
+      "execution": {
+        "version": "arc-execution-context.v2",
+        "turn": {
+          "id": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "attempt": 1,
+          "epoch": "e1",
+          "retry_of": null,
+          "reconsult": null
+        },
+        "event": {
+          "kind": "tool_result",
+          "basis": "marker_inferred",
+          "compaction": null
+        },
+        "last_served": {
+          "action_id": "1111111111111111111111111111111111111111111111111111111111111111",
+          "worker": "local-qwen",
+          "message": 3
+        },
+        "history": [
+          {
+            "message": 1,
+            "action_id": "1111111111111111111111111111111111111111111111111111111111111111"
+          },
+          {
+            "message": 3,
+            "action_id": "1111111111111111111111111111111111111111111111111111111111111111"
+          }
+        ],
+        "hold": {
+          "scope": "action",
+          "action_id": "3333333333333333333333333333333333333333333333333333333333333333"
+        },
+        "expect": {
+          "package_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "thinking_controls_sha256": null,
+          "offer_sha256": null
+        },
+        "targets": [
+          {
+            "action_id": "1111111111111111111111111111111111111111111111111111111111111111",
+            "worker": "local-qwen",
+            "placement": "local",
+            "cache": {
+              "context_epoch": "e1",
+              "gap_s": 12.0,
+              "ttl": null,
+              "residency": {
+                "state": "resident",
+                "provenance": "local_measured"
+              },
+              "usage": {
+                "prompt_tokens": 61000,
+                "cache_read_tokens": null,
+                "cache_write_tokens": null,
+                "units": "hf:Qwen/Qwen3.8-27B@r1",
+                "provenance": "provider_reported"
+              },
+              "current_prefix": {
+                "tokens": 69800,
+                "overlap_tokens": 61000,
+                "units": "hf:Qwen/Qwen3.8-27B@r1",
+                "provenance": "local_measured"
+              }
+            },
+            "capacity": null
+          },
+          {
+            "action_id": "2222222222222222222222222222222222222222222222222222222222222222",
+            "worker": "cloud-opus",
+            "placement": "cloud",
+            "cache": null,
+            "capacity": null
+          }
+        ]
+      },
+      "expect": {
+        "refused": "execution_hold_unavailable"
+      }
+    },
+    {
+      "name": "last_served_conflict",
+      "execution": {
+        "version": "arc-execution-context.v2",
+        "turn": {
+          "id": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "attempt": 1,
+          "epoch": "e1",
+          "retry_of": null,
+          "reconsult": null
+        },
+        "event": {
+          "kind": "tool_result",
+          "basis": "marker_inferred",
+          "compaction": null
+        },
+        "last_served": {
+          "action_id": "2222222222222222222222222222222222222222222222222222222222222222",
+          "worker": "local-qwen",
+          "message": 3
+        },
+        "history": [
+          {
+            "message": 1,
+            "action_id": "1111111111111111111111111111111111111111111111111111111111111111"
+          },
+          {
+            "message": 3,
+            "action_id": "1111111111111111111111111111111111111111111111111111111111111111"
+          }
+        ],
+        "hold": null,
+        "expect": {
+          "package_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "thinking_controls_sha256": null,
+          "offer_sha256": null
+        },
+        "targets": [
+          {
+            "action_id": "1111111111111111111111111111111111111111111111111111111111111111",
+            "worker": "local-qwen",
+            "placement": "local",
+            "cache": {
+              "context_epoch": "e1",
+              "gap_s": 12.0,
+              "ttl": null,
+              "residency": {
+                "state": "resident",
+                "provenance": "local_measured"
+              },
+              "usage": {
+                "prompt_tokens": 61000,
+                "cache_read_tokens": null,
+                "cache_write_tokens": null,
+                "units": "hf:Qwen/Qwen3.8-27B@r1",
+                "provenance": "provider_reported"
+              },
+              "current_prefix": {
+                "tokens": 69800,
+                "overlap_tokens": 61000,
+                "units": "hf:Qwen/Qwen3.8-27B@r1",
+                "provenance": "local_measured"
+              }
+            },
+            "capacity": {
+              "fits": false,
+              "reason": "context_capacity",
+              "required": 70210,
+              "available": 65536,
+              "available_source": "configured",
+              "units": "hf:Qwen/Qwen3.8-27B@r1",
+              "provenance": "local_measured"
+            }
+          },
+          {
+            "action_id": "2222222222222222222222222222222222222222222222222222222222222222",
+            "worker": "cloud-opus",
+            "placement": "cloud",
+            "cache": null,
+            "capacity": null
+          }
+        ]
+      },
+      "expect": {
+        "refused": "execution_last_served_conflict"
+      }
+    },
+    {
+      "name": "unknown_action",
+      "execution": {
+        "version": "arc-execution-context.v2",
+        "turn": {
+          "id": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "attempt": 1,
+          "epoch": "e1",
+          "retry_of": null,
+          "reconsult": null
+        },
+        "event": {
+          "kind": "tool_result",
+          "basis": "marker_inferred",
+          "compaction": null
+        },
+        "last_served": {
+          "action_id": "1111111111111111111111111111111111111111111111111111111111111111",
+          "worker": "local-qwen",
+          "message": 3
+        },
+        "history": [
+          {
+            "message": 1,
+            "action_id": "9999999999999999999999999999999999999999999999999999999999999999"
+          },
+          {
+            "message": 3,
+            "action_id": "1111111111111111111111111111111111111111111111111111111111111111"
+          }
+        ],
+        "hold": null,
+        "expect": {
+          "package_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "thinking_controls_sha256": null,
+          "offer_sha256": null
+        },
+        "targets": [
+          {
+            "action_id": "1111111111111111111111111111111111111111111111111111111111111111",
+            "worker": "local-qwen",
+            "placement": "local",
+            "cache": {
+              "context_epoch": "e1",
+              "gap_s": 12.0,
+              "ttl": null,
+              "residency": {
+                "state": "resident",
+                "provenance": "local_measured"
+              },
+              "usage": {
+                "prompt_tokens": 61000,
+                "cache_read_tokens": null,
+                "cache_write_tokens": null,
+                "units": "hf:Qwen/Qwen3.8-27B@r1",
+                "provenance": "provider_reported"
+              },
+              "current_prefix": {
+                "tokens": 69800,
+                "overlap_tokens": 61000,
+                "units": "hf:Qwen/Qwen3.8-27B@r1",
+                "provenance": "local_measured"
+              }
+            },
+            "capacity": {
+              "fits": false,
+              "reason": "context_capacity",
+              "required": 70210,
+              "available": 65536,
+              "available_source": "configured",
+              "units": "hf:Qwen/Qwen3.8-27B@r1",
+              "provenance": "local_measured"
+            }
+          },
+          {
+            "action_id": "2222222222222222222222222222222222222222222222222222222222222222",
+            "worker": "cloud-opus",
+            "placement": "cloud",
+            "cache": null,
+            "capacity": null
+          }
+        ]
+      },
+      "expect": {
+        "refused": "execution_unknown_action"
+      }
+    },
+    {
+      "name": "identity_mismatch",
+      "execution": {
+        "version": "arc-execution-context.v2",
+        "turn": {
+          "id": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "attempt": 1,
+          "epoch": "e1",
+          "retry_of": null,
+          "reconsult": null
+        },
+        "event": {
+          "kind": "tool_result",
+          "basis": "marker_inferred",
+          "compaction": null
+        },
+        "last_served": {
+          "action_id": "1111111111111111111111111111111111111111111111111111111111111111",
+          "worker": "local-qwen",
+          "message": 3
+        },
+        "history": [
+          {
+            "message": 1,
+            "action_id": "1111111111111111111111111111111111111111111111111111111111111111"
+          },
+          {
+            "message": 3,
+            "action_id": "1111111111111111111111111111111111111111111111111111111111111111"
+          }
+        ],
+        "hold": null,
+        "expect": {
+          "package_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+          "thinking_controls_sha256": null,
+          "offer_sha256": null
+        },
+        "targets": [
+          {
+            "action_id": "1111111111111111111111111111111111111111111111111111111111111111",
+            "worker": "local-qwen",
+            "placement": "local",
+            "cache": {
+              "context_epoch": "e1",
+              "gap_s": 12.0,
+              "ttl": null,
+              "residency": {
+                "state": "resident",
+                "provenance": "local_measured"
+              },
+              "usage": {
+                "prompt_tokens": 61000,
+                "cache_read_tokens": null,
+                "cache_write_tokens": null,
+                "units": "hf:Qwen/Qwen3.8-27B@r1",
+                "provenance": "provider_reported"
+              },
+              "current_prefix": {
+                "tokens": 69800,
+                "overlap_tokens": 61000,
+                "units": "hf:Qwen/Qwen3.8-27B@r1",
+                "provenance": "local_measured"
+              }
+            },
+            "capacity": {
+              "fits": false,
+              "reason": "context_capacity",
+              "required": 70210,
+              "available": 65536,
+              "available_source": "configured",
+              "units": "hf:Qwen/Qwen3.8-27B@r1",
+              "provenance": "local_measured"
+            }
+          },
+          {
+            "action_id": "2222222222222222222222222222222222222222222222222222222222222222",
+            "worker": "cloud-opus",
+            "placement": "cloud",
+            "cache": null,
+            "capacity": null
+          }
+        ]
+      },
+      "expect": {
+        "refused": "execution_identity_mismatch"
+      }
+    },
+    {
+      "name": "measured_fit_admitted",
+      "execution": {
+        "version": "arc-execution-context.v2",
+        "turn": {
+          "id": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "attempt": 1,
+          "epoch": "e1",
+          "retry_of": null,
+          "reconsult": null
+        },
+        "event": {
+          "kind": "tool_result",
+          "basis": "marker_inferred",
+          "compaction": null
+        },
+        "last_served": {
+          "action_id": "1111111111111111111111111111111111111111111111111111111111111111",
+          "worker": "local-qwen",
+          "message": 3
+        },
+        "history": [
+          {
+            "message": 1,
+            "action_id": "1111111111111111111111111111111111111111111111111111111111111111"
+          },
+          {
+            "message": 3,
+            "action_id": "1111111111111111111111111111111111111111111111111111111111111111"
+          }
+        ],
+        "hold": null,
+        "expect": {
+          "package_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "thinking_controls_sha256": null,
+          "offer_sha256": null
+        },
+        "targets": [
+          {
+            "action_id": "1111111111111111111111111111111111111111111111111111111111111111",
+            "worker": "local-qwen",
+            "placement": "local",
+            "cache": {
+              "context_epoch": "e1",
+              "gap_s": 12.0,
+              "ttl": null,
+              "residency": {
+                "state": "resident",
+                "provenance": "local_measured"
+              },
+              "usage": {
+                "prompt_tokens": 61000,
+                "cache_read_tokens": null,
+                "cache_write_tokens": null,
+                "units": "hf:Qwen/Qwen3.8-27B@r1",
+                "provenance": "provider_reported"
+              },
+              "current_prefix": {
+                "tokens": 69800,
+                "overlap_tokens": 61000,
+                "units": "hf:Qwen/Qwen3.8-27B@r1",
+                "provenance": "local_measured"
+              }
+            },
+            "capacity": {
+              "fits": true,
+              "reason": null,
+              "required": 1000,
+              "available": 65536,
+              "available_source": "configured",
+              "units": "hf:Qwen/Qwen3.8-27B@r1",
+              "provenance": "local_measured"
+            }
+          },
+          {
+            "action_id": "2222222222222222222222222222222222222222222222222222222222222222",
+            "worker": "cloud-opus",
+            "placement": "cloud",
+            "cache": null,
+            "capacity": null
+          }
+        ]
+      },
+      "expect": {
+        "pinned": {
+          "package_sha256": "matched",
+          "thinking_controls_sha256": "unpinned"
+        },
+        "decide": {
+          "context_epoch": "e1",
+          "attribution": [
+            {
+              "message": 1,
+              "action_id": "1111111111111111111111111111111111111111111111111111111111111111"
+            },
+            {
+              "message": 3,
+              "action_id": "1111111111111111111111111111111111111111111111111111111111111111"
+            }
+          ],
+          "selection": {
+            "last_served_action_id": "1111111111111111111111111111111111111111111111111111111111111111"
+          },
+          "cache_context": {
+            "actions": [
+              {
+                "action_id": "1111111111111111111111111111111111111111111111111111111111111111",
+                "gap_s": 12.0,
+                "ttl_s": null,
+                "ttl_source": null,
+                "prompt_tokens": 61000,
+                "cache_read_tokens": null,
+                "cache_write_tokens": null,
+                "context_epoch": "e1",
+                "current_prefix_tokens": 69800,
+                "overlap_tokens": 61000,
+                "residency": "resident"
+              }
+            ]
+          },
+          "event": {
+            "kind": "tool_result",
+            "basis": "marker_inferred",
+            "compaction": null
+          },
+          "capacity": [
+            {
+              "action_id": "1111111111111111111111111111111111111111111111111111111111111111",
+              "placement": "local",
+              "fits": true,
+              "reason": null
+            }
+          ],
+          "turn_key": "bd94e3265b157822cdd7df5ca96e6222726d67f71f6f2b0fbf9fb8ef71da8c7d",
+          "reconsult": null,
+          "not_admitted": []
+        }
+      }
+    },
+    {
+      "name": "runtime_unavailable",
+      "execution": {
+        "version": "arc-execution-context.v2",
+        "turn": {
+          "id": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "attempt": 1,
+          "epoch": "e1",
+          "retry_of": null,
+          "reconsult": null
+        },
+        "event": {
+          "kind": "tool_result",
+          "basis": "marker_inferred",
+          "compaction": null
+        },
+        "last_served": {
+          "action_id": "1111111111111111111111111111111111111111111111111111111111111111",
+          "worker": "local-qwen",
+          "message": 3
+        },
+        "history": [
+          {
+            "message": 1,
+            "action_id": "1111111111111111111111111111111111111111111111111111111111111111"
+          },
+          {
+            "message": 3,
+            "action_id": "1111111111111111111111111111111111111111111111111111111111111111"
+          }
+        ],
+        "hold": null,
+        "expect": {
+          "package_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "thinking_controls_sha256": null,
+          "offer_sha256": null
+        },
+        "targets": [
+          {
+            "action_id": "1111111111111111111111111111111111111111111111111111111111111111",
+            "worker": "local-qwen",
+            "placement": "local",
+            "cache": {
+              "context_epoch": "e1",
+              "gap_s": 12.0,
+              "ttl": null,
+              "residency": {
+                "state": "resident",
+                "provenance": "local_measured"
+              },
+              "usage": {
+                "prompt_tokens": 61000,
+                "cache_read_tokens": null,
+                "cache_write_tokens": null,
+                "units": "hf:Qwen/Qwen3.8-27B@r1",
+                "provenance": "provider_reported"
+              },
+              "current_prefix": {
+                "tokens": 69800,
+                "overlap_tokens": 61000,
+                "units": "hf:Qwen/Qwen3.8-27B@r1",
+                "provenance": "local_measured"
+              }
+            },
+            "capacity": {
+              "fits": false,
+              "reason": "runtime_unavailable",
+              "required": null,
+              "available": null,
+              "available_source": null,
+              "units": null,
+              "provenance": "local_measured"
+            }
+          },
+          {
+            "action_id": "2222222222222222222222222222222222222222222222222222222222222222",
+            "worker": "cloud-opus",
+            "placement": "cloud",
+            "cache": null,
+            "capacity": null
+          }
+        ]
+      },
+      "expect": {
+        "pinned": {
+          "package_sha256": "matched",
+          "thinking_controls_sha256": "unpinned"
+        },
+        "decide": {
+          "context_epoch": "e1",
+          "attribution": [
+            {
+              "message": 1,
+              "action_id": "1111111111111111111111111111111111111111111111111111111111111111"
+            },
+            {
+              "message": 3,
+              "action_id": "1111111111111111111111111111111111111111111111111111111111111111"
+            }
+          ],
+          "selection": {
+            "last_served_action_id": "1111111111111111111111111111111111111111111111111111111111111111"
+          },
+          "cache_context": {
+            "actions": [
+              {
+                "action_id": "1111111111111111111111111111111111111111111111111111111111111111",
+                "gap_s": 12.0,
+                "ttl_s": null,
+                "ttl_source": null,
+                "prompt_tokens": 61000,
+                "cache_read_tokens": null,
+                "cache_write_tokens": null,
+                "context_epoch": "e1",
+                "current_prefix_tokens": 69800,
+                "overlap_tokens": 61000,
+                "residency": "resident"
+              }
+            ]
+          },
+          "event": {
+            "kind": "tool_result",
+            "basis": "marker_inferred",
+            "compaction": null
+          },
+          "capacity": [
+            {
+              "action_id": "1111111111111111111111111111111111111111111111111111111111111111",
+              "placement": "local",
+              "fits": false,
+              "reason": "runtime_unavailable"
+            }
+          ],
+          "turn_key": "bd94e3265b157822cdd7df5ca96e6222726d67f71f6f2b0fbf9fb8ef71da8c7d",
+          "reconsult": null,
+          "not_admitted": []
+        }
+      }
+    },
+    {
+      "name": "marker_inferred_retained_tail_compaction",
+      "execution": {
+        "version": "arc-execution-context.v2",
+        "turn": {
+          "id": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "attempt": 1,
+          "epoch": "e1",
+          "retry_of": null,
+          "reconsult": null
+        },
+        "event": {
+          "kind": "compaction",
+          "basis": "marker_inferred",
+          "compaction": {
+            "summary_message": 0,
+            "retained_from": 1,
+            "new": true
+          }
+        },
+        "last_served": {
+          "action_id": "1111111111111111111111111111111111111111111111111111111111111111",
+          "worker": "local-qwen",
+          "message": 3
+        },
+        "history": [
+          {
+            "message": 1,
+            "action_id": "1111111111111111111111111111111111111111111111111111111111111111"
+          },
+          {
+            "message": 3,
+            "action_id": "1111111111111111111111111111111111111111111111111111111111111111"
+          }
+        ],
+        "hold": null,
+        "expect": {
+          "package_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "thinking_controls_sha256": null,
+          "offer_sha256": null
+        },
+        "targets": [
+          {
+            "action_id": "1111111111111111111111111111111111111111111111111111111111111111",
+            "worker": "local-qwen",
+            "placement": "local",
+            "cache": {
+              "context_epoch": "e1",
+              "gap_s": 12.0,
+              "ttl": null,
+              "residency": {
+                "state": "resident",
+                "provenance": "local_measured"
+              },
+              "usage": {
+                "prompt_tokens": 61000,
+                "cache_read_tokens": null,
+                "cache_write_tokens": null,
+                "units": "hf:Qwen/Qwen3.8-27B@r1",
+                "provenance": "provider_reported"
+              },
+              "current_prefix": {
+                "tokens": 69800,
+                "overlap_tokens": 61000,
+                "units": "hf:Qwen/Qwen3.8-27B@r1",
+                "provenance": "local_measured"
+              }
+            },
+            "capacity": {
+              "fits": false,
+              "reason": "context_capacity",
+              "required": 70210,
+              "available": 65536,
+              "available_source": "configured",
+              "units": "hf:Qwen/Qwen3.8-27B@r1",
+              "provenance": "local_measured"
+            }
+          },
+          {
+            "action_id": "2222222222222222222222222222222222222222222222222222222222222222",
+            "worker": "cloud-opus",
+            "placement": "cloud",
+            "cache": null,
+            "capacity": null
+          }
+        ]
+      },
+      "expect": {
+        "pinned": {
+          "package_sha256": "matched",
+          "thinking_controls_sha256": "unpinned"
+        },
+        "decide": {
+          "context_epoch": "e1",
+          "attribution": [
+            {
+              "message": 1,
+              "action_id": "1111111111111111111111111111111111111111111111111111111111111111"
+            },
+            {
+              "message": 3,
+              "action_id": "1111111111111111111111111111111111111111111111111111111111111111"
+            }
+          ],
+          "selection": {
+            "last_served_action_id": "1111111111111111111111111111111111111111111111111111111111111111"
+          },
+          "cache_context": {
+            "actions": [
+              {
+                "action_id": "1111111111111111111111111111111111111111111111111111111111111111",
+                "gap_s": 12.0,
+                "ttl_s": null,
+                "ttl_source": null,
+                "prompt_tokens": 61000,
+                "cache_read_tokens": null,
+                "cache_write_tokens": null,
+                "context_epoch": "e1",
+                "current_prefix_tokens": 69800,
+                "overlap_tokens": 61000,
+                "residency": "resident"
+              }
+            ]
+          },
+          "event": {
+            "kind": "compaction",
+            "basis": "marker_inferred",
+            "compaction": {
+              "summary_message": 0,
+              "retained_from": 1,
+              "new": true
+            }
+          },
+          "capacity": [
+            {
+              "action_id": "1111111111111111111111111111111111111111111111111111111111111111",
+              "placement": "local",
+              "fits": false,
+              "reason": "context_capacity"
+            }
+          ],
+          "turn_key": "bd94e3265b157822cdd7df5ca96e6222726d67f71f6f2b0fbf9fb8ef71da8c7d",
+          "reconsult": null,
+          "not_admitted": []
+        }
+      }
+    },
+    {
+      "name": "unknown_basis_expect_null",
+      "execution": {
+        "version": "arc-execution-context.v2",
+        "turn": {
+          "id": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "attempt": 1,
+          "epoch": "e1",
+          "retry_of": null,
+          "reconsult": null
+        },
+        "event": {
+          "kind": null,
+          "basis": "unknown",
+          "compaction": null
+        },
+        "last_served": {
+          "action_id": "1111111111111111111111111111111111111111111111111111111111111111",
+          "worker": "local-qwen",
+          "message": 3
+        },
+        "history": [
+          {
+            "message": 1,
+            "action_id": "1111111111111111111111111111111111111111111111111111111111111111"
+          },
+          {
+            "message": 3,
+            "action_id": "1111111111111111111111111111111111111111111111111111111111111111"
+          }
+        ],
+        "hold": null,
+        "expect": null,
+        "targets": [
+          {
+            "action_id": "1111111111111111111111111111111111111111111111111111111111111111",
+            "worker": "local-qwen",
+            "placement": "local",
+            "cache": {
+              "context_epoch": "e1",
+              "gap_s": 12.0,
+              "ttl": null,
+              "residency": {
+                "state": "resident",
+                "provenance": "local_measured"
+              },
+              "usage": {
+                "prompt_tokens": 61000,
+                "cache_read_tokens": null,
+                "cache_write_tokens": null,
+                "units": "hf:Qwen/Qwen3.8-27B@r1",
+                "provenance": "provider_reported"
+              },
+              "current_prefix": {
+                "tokens": 69800,
+                "overlap_tokens": 61000,
+                "units": "hf:Qwen/Qwen3.8-27B@r1",
+                "provenance": "local_measured"
+              }
+            },
+            "capacity": {
+              "fits": false,
+              "reason": "context_capacity",
+              "required": 70210,
+              "available": 65536,
+              "available_source": "configured",
+              "units": "hf:Qwen/Qwen3.8-27B@r1",
+              "provenance": "local_measured"
+            }
+          },
+          {
+            "action_id": "2222222222222222222222222222222222222222222222222222222222222222",
+            "worker": "cloud-opus",
+            "placement": "cloud",
+            "cache": null,
+            "capacity": null
+          }
+        ]
+      },
+      "expect": {
+        "pinned": {
+          "package_sha256": "unpinned",
+          "thinking_controls_sha256": "unpinned"
+        },
+        "decide": {
+          "context_epoch": "e1",
+          "attribution": [
+            {
+              "message": 1,
+              "action_id": "1111111111111111111111111111111111111111111111111111111111111111"
+            },
+            {
+              "message": 3,
+              "action_id": "1111111111111111111111111111111111111111111111111111111111111111"
+            }
+          ],
+          "selection": {
+            "last_served_action_id": "1111111111111111111111111111111111111111111111111111111111111111"
+          },
+          "cache_context": {
+            "actions": [
+              {
+                "action_id": "1111111111111111111111111111111111111111111111111111111111111111",
+                "gap_s": 12.0,
+                "ttl_s": null,
+                "ttl_source": null,
+                "prompt_tokens": 61000,
+                "cache_read_tokens": null,
+                "cache_write_tokens": null,
+                "context_epoch": "e1",
+                "current_prefix_tokens": 69800,
+                "overlap_tokens": 61000,
+                "residency": "resident"
+              }
+            ]
+          },
+          "event": {
+            "kind": null,
+            "basis": "unknown",
+            "compaction": null
+          },
+          "capacity": [
+            {
+              "action_id": "1111111111111111111111111111111111111111111111111111111111111111",
+              "placement": "local",
+              "fits": false,
+              "reason": "context_capacity"
+            }
+          ],
+          "turn_key": "bd94e3265b157822cdd7df5ca96e6222726d67f71f6f2b0fbf9fb8ef71da8c7d",
+          "reconsult": null,
+          "not_admitted": []
+        }
+      }
+    },
+    {
+      "name": "last_served_same_message_other_action",
+      "execution": {
+        "version": "arc-execution-context.v2",
+        "turn": {
+          "id": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "attempt": 1,
+          "epoch": "e1",
+          "retry_of": null,
+          "reconsult": null
+        },
+        "event": {
+          "kind": "tool_result",
+          "basis": "marker_inferred",
+          "compaction": null
+        },
+        "last_served": {
+          "action_id": "1111111111111111111111111111111111111111111111111111111111111111",
+          "worker": "local-qwen",
+          "message": 3
+        },
+        "history": [
+          {
+            "message": 1,
+            "action_id": "1111111111111111111111111111111111111111111111111111111111111111"
+          },
+          {
+            "message": 3,
+            "action_id": "2222222222222222222222222222222222222222222222222222222222222222"
+          }
+        ],
+        "hold": null,
+        "expect": {
+          "package_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "thinking_controls_sha256": null,
+          "offer_sha256": null
+        },
+        "targets": [
+          {
+            "action_id": "1111111111111111111111111111111111111111111111111111111111111111",
+            "worker": "local-qwen",
+            "placement": "local",
+            "cache": {
+              "context_epoch": "e1",
+              "gap_s": 12.0,
+              "ttl": null,
+              "residency": {
+                "state": "resident",
+                "provenance": "local_measured"
+              },
+              "usage": {
+                "prompt_tokens": 61000,
+                "cache_read_tokens": null,
+                "cache_write_tokens": null,
+                "units": "hf:Qwen/Qwen3.8-27B@r1",
+                "provenance": "provider_reported"
+              },
+              "current_prefix": {
+                "tokens": 69800,
+                "overlap_tokens": 61000,
+                "units": "hf:Qwen/Qwen3.8-27B@r1",
+                "provenance": "local_measured"
+              }
+            },
+            "capacity": {
+              "fits": false,
+              "reason": "context_capacity",
+              "required": 70210,
+              "available": 65536,
+              "available_source": "configured",
+              "units": "hf:Qwen/Qwen3.8-27B@r1",
+              "provenance": "local_measured"
+            }
+          },
+          {
+            "action_id": "2222222222222222222222222222222222222222222222222222222222222222",
+            "worker": "cloud-opus",
+            "placement": "cloud",
+            "cache": null,
+            "capacity": null
+          }
+        ]
+      },
+      "expect": {
+        "refused": "execution_last_served_conflict"
+      }
+    }
+  ],
+  "policy_schedules": [
+    {
+      "policy": null,
+      "schedule": null
+    },
+    {
+      "policy": {
+        "preset": "arc-policy.package-default.v1"
+      },
+      "schedule": null
+    },
+    {
+      "policy": {
+        "preset": "arc-policy.hybrid-default.v1"
+      },
+      "schedule": {
+        "model": [
+          "cache_boundaries"
+        ],
+        "thinking": [
+          "all_turns"
+        ]
+      }
+    },
+    {
+      "policy": {
+        "preset": "arc-policy.hybrid-default.v1",
+        "overrides": {
+          "schedule": {
+            "model": [
+              "cache_boundaries",
+              "user_messages"
+            ]
+          }
+        }
+      },
+      "schedule": {
+        "model": [
+          "cache_boundaries",
+          "user_messages"
+        ],
+        "thinking": [
+          "all_turns"
+        ]
+      }
+    },
+    {
+      "policy": {
+        "preset": "arc-policy.hybrid-default.v1",
+        "overrides": {
+          "schedule": {
+            "thinking": [
+              "cache_boundaries"
+            ]
+          }
+        }
+      },
+      "schedule": {
+        "model": [
+          "cache_boundaries"
+        ],
+        "thinking": [
+          "cache_boundaries"
+        ]
+      }
+    }
+  ]
+}

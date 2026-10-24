@@ -105,7 +105,9 @@ type fakePolicyService struct {
 	// and points every tier pick at row predictionsRow.
 	predictionsRow *int
 	// cacheTrace, when set, answers response_fields cache_trace with it.
-	cacheTrace     *raylinearc.PolicyCacheTrace
+	cacheTrace *raylinearc.PolicyCacheTrace
+	// receipt, when set, answers a request carrying a v2 member with it.
+	receipt        *raylinearc.PolicyDecisionReceipt
 	tierPickAction string
 	tierPickModel  func(actionID string) string
 	// A decide that carries selection.exploration with tau > 0 gets the
@@ -443,6 +445,11 @@ func (fake *fakePolicyService) decision(request raylinearc.PolicyDecisionRequest
 	} else if explore != nil && explore.Tau > 0 && !omitExploration {
 		relaxed := request.EpisodeMode == raylinearc.PolicyEpisodeModeRelaxed && !ignoreEpisodeMode
 		response.Decision.StageOne = fake.explorationRecord(*explore, explorationHeld, relaxed, explorationChosen)
+	}
+	if fake.receipt != nil && (request.Policy != nil || request.Event != nil || len(request.Capacity) > 0 ||
+		request.TurnKey != "" || request.Selection.LastServedActionID != nil) {
+		receipt := *fake.receipt
+		response.Decision.Receipt = &receipt
 	}
 	if fake.cacheTrace != nil && slices.Contains(request.ResponseFields, "cache_trace") {
 		trace := *fake.cacheTrace
