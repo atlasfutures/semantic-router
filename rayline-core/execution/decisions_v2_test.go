@@ -631,3 +631,16 @@ func TestV2UnlabelledRequestOnAnExplicitBranchIsASidecall(t *testing.T) {
 		t.Fatalf("summary call advanced the main branch: completed=%d epoch=%d", state.completed, state.epoch)
 	}
 }
+
+func TestRemapRetainedAttributionPrefersTheRetainedCopyOfRepeatedContent(t *testing.T) {
+	// previous: user, A, tool, A, tool (A repeats). Retained tail is the last A, tool.
+	previous := []string{"u", "a", "t", "a", "t"}
+	current := []string{"summary", "a", "t", "reply", "next"}
+	roles := []string{"user", "assistant", "tool", "assistant", "user"}
+	ledger := []attributedTurn{{entry: Attribution{Message: 1, ActionID: "first"}}, {entry: Attribution{Message: 3, ActionID: "second"}}, {entry: Attribution{Message: 5, ActionID: "reply"}}}
+	retained := 1
+	got := remapRetainedAttribution(ledger, previous, current, roles, "", &CompactionEvent{SummaryMessage: 0, RetainedFrom: &retained, New: true})
+	if len(got) != 2 || got[0].entry.ActionID != "second" || got[0].entry.Message != 1 || got[1].entry.ActionID != "reply" || got[1].entry.Message != 3 {
+		t.Fatalf("remap %+v", got)
+	}
+}
