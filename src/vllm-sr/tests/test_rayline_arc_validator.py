@@ -766,10 +766,22 @@ def test_rayline_arc_policy_service_replicas_mirror_the_go_loader():
     decision.algorithm.rayline_arc.policy_service = pooled
     assert _validate_rayline_arc_decision(decision) == []
     pooled.replicas[0].base_url = "ftp://s1.example"
-    assert any(
-        error.field.endswith("replicas[0].base_url")
-        for error in _validate_rayline_arc_decision(decision)
-    )
+    assert _validate_rayline_arc_decision(decision)
+    # Each contract the Go loader refuses is refused here too.
+    for changed in (
+        {"replicas": [replicas[0], {**replicas[1], "id": "s1"}]},
+        {"replicas": [{**replicas[0], "state": "draining"}]},
+        {"failover": {**failover, "unavailable_status_codes": [409]}},
+        {"failover": {**failover, "schema_version": "rayline.arc.encoder-failover.v1"}},
+        {"failover": {**failover, "max_remaps": 2}},
+    ):
+        bad = _policy_service_decision()
+        bad.algorithm.rayline_arc.policy_service = (
+            RaylineARCPolicyServiceConfig.model_validate(
+                {**raw, "base_url": None, "replicas": replicas, "failover": failover, **changed}
+            )
+        )
+        assert _validate_rayline_arc_decision(bad), changed
     # The reference shape: base_url with empty replicas and failover blocks.
     RaylineARCPolicyServiceConfig.model_validate({**raw, "replicas": [], "failover": {}})
     for changed in (

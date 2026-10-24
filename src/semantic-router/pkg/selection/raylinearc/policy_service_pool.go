@@ -290,24 +290,44 @@ func (binding *PolicyServiceBinding) Decide(
 		binding.remapped = binding.persisted != "" && replica.ID != binding.persisted
 	}
 	response, err := binding.current.Client.Decide(ctx, request)
-	if err == nil || !pool.explicitlyUnavailable(err) {
+	stale := err == nil && staleOwner(request, response)
+	if !stale && (err == nil || !pool.explicitlyUnavailable(err)) {
 		return response, err
 	}
 	pool.markUnavailable(binding.current.ID)
+	if stale {
+		// The caller still refuses a stale answer if no remap replaces it.
+		err = nil
+	}
 	if len(binding.attempted) > pool.config.MaxRemaps {
-		return nil, err
+		return response, err
 	}
 	secondary, placeErr := pool.primaryReplica(binding.episode, "", binding.attempted)
 	if placeErr != nil {
-		return nil, err
+		return response, err
 	}
 	binding.place(secondary)
 	binding.remapped = true
 	response, err = secondary.Client.Decide(ctx, request)
-	if err != nil && pool.explicitlyUnavailable(err) {
+	if err != nil && pool.explicitlyUnavailable(err) || err == nil && staleOwner(request, response) {
 		pool.markUnavailable(secondary.ID)
 	}
 	return response, err
+}
+
+// staleOwner reports a replica that answered for another package than the
+// one the cell pins and the request names: during a Modal rollover a
+// replica can still run the previous build. Such an owner cools down and
+// the episode moves once. The answer itself is never served: the caller
+// refuses a decision whose package is not the request's
+// (policy_package_mismatch). A cell that pins an engine build would compare
+// encoding.engine_build_id here too; none does yet.
+//
+// A future owner that is a session token rather than a replica id (Modal
+// sticky sessions) would end and restart its session on the same rule. It
+// is a separate state field, not this one.
+func staleOwner(request PolicyDecisionRequest, response *PolicyDecisionResponse) bool {
+	return response != nil && response.Package != request.Package
 }
 
 func (binding *PolicyServiceBinding) place(replica *PolicyServiceReplica) {
