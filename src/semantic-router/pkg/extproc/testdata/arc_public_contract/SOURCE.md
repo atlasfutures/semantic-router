@@ -18,7 +18,7 @@ reference `src/rayline_router/serving/arc_execution_context.py`).
 
 The hybrid routing v2 fixtures (`execution_v2_vectors.json`,
 `request_*execution_v2*.json`, `request_*policy*.json`) are copied unchanged
-from pathfinder#5907 at `fc5033c607` (on #5904, merged as `0a3981eed8`): it
+from pathfinder#5915 at `c402de29ae` (on #5904, merged as `0a3981eed8`, and #5907): it
 admits a marker-inferred retained-tail compaction, so main's
 `request_invalid_execution_v2_retained_tail_inferred.json` is not carried.
 Refresh from main once #5907 merges.

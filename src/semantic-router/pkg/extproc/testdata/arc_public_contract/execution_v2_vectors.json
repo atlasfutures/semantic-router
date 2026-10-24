@@ -144,6 +144,12 @@
               "placement": "local",
               "fits": false,
               "reason": "context_capacity"
+            },
+            {
+              "action_id": "2222222222222222222222222222222222222222222222222222222222222222",
+              "placement": "cloud",
+              "fits": null,
+              "reason": null
             }
           ],
           "turn_key": "bd94e3265b157822cdd7df5ca96e6222726d67f71f6f2b0fbf9fb8ef71da8c7d",
@@ -281,6 +287,12 @@
             {
               "action_id": "1111111111111111111111111111111111111111111111111111111111111111",
               "placement": "local",
+              "fits": null,
+              "reason": null
+            },
+            {
+              "action_id": "2222222222222222222222222222222222222222222222222222222222222222",
+              "placement": "cloud",
               "fits": null,
               "reason": null
             }
@@ -428,6 +440,12 @@
               "placement": "local",
               "fits": false,
               "reason": "context_capacity"
+            },
+            {
+              "action_id": "2222222222222222222222222222222222222222222222222222222222222222",
+              "placement": "cloud",
+              "fits": null,
+              "reason": null
             }
           ],
           "turn_key": "bd94e3265b157822cdd7df5ca96e6222726d67f71f6f2b0fbf9fb8ef71da8c7d",
@@ -567,6 +585,12 @@
               "placement": "local",
               "fits": false,
               "reason": "context_capacity"
+            },
+            {
+              "action_id": "2222222222222222222222222222222222222222222222222222222222222222",
+              "placement": "cloud",
+              "fits": null,
+              "reason": null
             }
           ],
           "turn_key": "bd94e3265b157822cdd7df5ca96e6222726d67f71f6f2b0fbf9fb8ef71da8c7d",
@@ -696,7 +720,20 @@
             "basis": "marker_inferred",
             "compaction": null
           },
-          "capacity": [],
+          "capacity": [
+            {
+              "action_id": "1111111111111111111111111111111111111111111111111111111111111111",
+              "placement": "local",
+              "fits": null,
+              "reason": null
+            },
+            {
+              "action_id": "2222222222222222222222222222222222222222222222222222222222222222",
+              "placement": "cloud",
+              "fits": null,
+              "reason": null
+            }
+          ],
           "turn_key": "bd94e3265b157822cdd7df5ca96e6222726d67f71f6f2b0fbf9fb8ef71da8c7d",
           "reconsult": null,
           "not_admitted": []
@@ -1267,6 +1304,12 @@
               "placement": "local",
               "fits": true,
               "reason": null
+            },
+            {
+              "action_id": "2222222222222222222222222222222222222222222222222222222222222222",
+              "placement": "cloud",
+              "fits": null,
+              "reason": null
             }
           ],
           "turn_key": "bd94e3265b157822cdd7df5ca96e6222726d67f71f6f2b0fbf9fb8ef71da8c7d",
@@ -1406,6 +1449,12 @@
               "placement": "local",
               "fits": false,
               "reason": "runtime_unavailable"
+            },
+            {
+              "action_id": "2222222222222222222222222222222222222222222222222222222222222222",
+              "placement": "cloud",
+              "fits": null,
+              "reason": null
             }
           ],
           "turn_key": "bd94e3265b157822cdd7df5ca96e6222726d67f71f6f2b0fbf9fb8ef71da8c7d",
@@ -1553,6 +1602,12 @@
               "placement": "local",
               "fits": false,
               "reason": "context_capacity"
+            },
+            {
+              "action_id": "2222222222222222222222222222222222222222222222222222222222222222",
+              "placement": "cloud",
+              "fits": null,
+              "reason": null
             }
           ],
           "turn_key": "bd94e3265b157822cdd7df5ca96e6222726d67f71f6f2b0fbf9fb8ef71da8c7d",
@@ -1688,6 +1743,12 @@
               "placement": "local",
               "fits": false,
               "reason": "context_capacity"
+            },
+            {
+              "action_id": "2222222222222222222222222222222222222222222222222222222222222222",
+              "placement": "cloud",
+              "fits": null,
+              "reason": null
             }
           ],
           "turn_key": "bd94e3265b157822cdd7df5ca96e6222726d67f71f6f2b0fbf9fb8ef71da8c7d",
@@ -1781,6 +1842,143 @@
       },
       "expect": {
         "refused": "execution_last_served_conflict"
+      }
+    },
+    {
+      "name": "targets_bound_the_offer_no_fact_is_unknown",
+      "execution": {
+        "version": "arc-execution-context.v2",
+        "turn": {
+          "id": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "attempt": 1,
+          "epoch": "e1",
+          "retry_of": null,
+          "reconsult": null
+        },
+        "event": {
+          "kind": "tool_result",
+          "basis": "marker_inferred",
+          "compaction": null
+        },
+        "last_served": {
+          "action_id": "1111111111111111111111111111111111111111111111111111111111111111",
+          "worker": "local-qwen",
+          "message": 3
+        },
+        "history": [
+          {
+            "message": 1,
+            "action_id": "1111111111111111111111111111111111111111111111111111111111111111"
+          },
+          {
+            "message": 3,
+            "action_id": "1111111111111111111111111111111111111111111111111111111111111111"
+          }
+        ],
+        "hold": null,
+        "expect": {
+          "package_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "thinking_controls_sha256": null,
+          "offer_sha256": null
+        },
+        "targets": [
+          {
+            "action_id": "1111111111111111111111111111111111111111111111111111111111111111",
+            "worker": "local-qwen",
+            "placement": "local",
+            "cache": {
+              "context_epoch": "e1",
+              "gap_s": 12.0,
+              "ttl": null,
+              "residency": {
+                "state": "resident",
+                "provenance": "local_measured"
+              },
+              "usage": {
+                "prompt_tokens": 61000,
+                "cache_read_tokens": null,
+                "cache_write_tokens": null,
+                "units": "hf:Qwen/Qwen3.8-27B@r1",
+                "provenance": "provider_reported"
+              },
+              "current_prefix": {
+                "tokens": 69800,
+                "overlap_tokens": 61000,
+                "units": "hf:Qwen/Qwen3.8-27B@r1",
+                "provenance": "local_measured"
+              }
+            },
+            "capacity": null
+          },
+          {
+            "action_id": "2222222222222222222222222222222222222222222222222222222222222222",
+            "worker": "cloud-opus",
+            "placement": "cloud",
+            "cache": null,
+            "capacity": null
+          }
+        ]
+      },
+      "expect": {
+        "pinned": {
+          "package_sha256": "matched",
+          "thinking_controls_sha256": "unpinned"
+        },
+        "decide": {
+          "context_epoch": "e1",
+          "attribution": [
+            {
+              "message": 1,
+              "action_id": "1111111111111111111111111111111111111111111111111111111111111111"
+            },
+            {
+              "message": 3,
+              "action_id": "1111111111111111111111111111111111111111111111111111111111111111"
+            }
+          ],
+          "selection": {
+            "last_served_action_id": "1111111111111111111111111111111111111111111111111111111111111111"
+          },
+          "cache_context": {
+            "actions": [
+              {
+                "action_id": "1111111111111111111111111111111111111111111111111111111111111111",
+                "gap_s": 12.0,
+                "ttl_s": null,
+                "ttl_source": null,
+                "prompt_tokens": 61000,
+                "cache_read_tokens": null,
+                "cache_write_tokens": null,
+                "context_epoch": "e1",
+                "current_prefix_tokens": 69800,
+                "overlap_tokens": 61000,
+                "residency": "resident"
+              }
+            ]
+          },
+          "event": {
+            "kind": "tool_result",
+            "basis": "marker_inferred",
+            "compaction": null
+          },
+          "capacity": [
+            {
+              "action_id": "1111111111111111111111111111111111111111111111111111111111111111",
+              "placement": "local",
+              "fits": null,
+              "reason": null
+            },
+            {
+              "action_id": "2222222222222222222222222222222222222222222222222222222222222222",
+              "placement": "cloud",
+              "fits": null,
+              "reason": null
+            }
+          ],
+          "turn_key": "bd94e3265b157822cdd7df5ca96e6222726d67f71f6f2b0fbf9fb8ef71da8c7d",
+          "reconsult": null,
+          "not_admitted": []
+        }
       }
     }
   ],
