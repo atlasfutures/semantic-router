@@ -22,3 +22,7 @@ from pathfinder#5907 at `fc5033c607` (on #5904, merged as `0a3981eed8`): it
 admits a marker-inferred retained-tail compaction, so main's
 `request_invalid_execution_v2_retained_tail_inferred.json` is not carried.
 Refresh from main once #5907 merges.
+
+`selection_refusals_v2.v1.json` (from `tests/fixtures/arc_policy_service/`)
+is copied unchanged from pathfinder#5906 at `87b156e001`: the policy
+service's v2 refusal strings and their public codes.
