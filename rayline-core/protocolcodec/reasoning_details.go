@@ -436,3 +436,30 @@ func reasoningDetailsItemCount(message llmprotocol.Message) int {
 	}
 	return count
 }
+
+// AccumulateReasoningDetails merges a decoded reasoning delta's carrier into
+// a reconstructed reasoning content. Fragment indexes identify items; text,
+// signatures and encrypted data concatenate using the same codec rules as
+// buffered stream decoding. The result owns fresh carrier storage.
+func AccumulateReasoningDetails(content *llmprotocol.Content, fragmentContent llmprotocol.Content) error {
+	if content == nil {
+		return nil
+	}
+	fragment, _ := reasoningDetailsOf(fragmentContent)
+	if fragment == nil {
+		return nil
+	}
+	var accumulated json.RawMessage
+	if existing, _ := reasoningDetailsOf(*content); existing != nil {
+		accumulated = existing
+	}
+	merged, err := mergeReasoningDetailsFragment(accumulated, fragment)
+	if err != nil {
+		return llmprotocol.NewError(
+			llmprotocol.ErrorUpstreamUnavailable, "invalid_reasoning_details",
+			"upstream stream sent malformed reasoning_details", err,
+		)
+	}
+	content.Extensions = reasoningDetailsFields(merged)
+	return nil
+}

@@ -210,7 +210,14 @@ func newSideCallRaylineARCEpisodeTransaction(
 // selectionCommitsOnCompletion reports whether this request's turn commits
 // at the end of the response rather than at its headers.
 func selectionCommitsOnCompletion(ctx *RequestContext) bool {
-	return ctx != nil && ctx.RaylineARCTransaction != nil && ctx.RaylineARCTransaction.commitOnCompletion
+	if ctx == nil || ctx.RaylineARCTransaction == nil {
+		return false
+	}
+	transaction := ctx.RaylineARCTransaction
+	// Artifact dispatches also need the completed response to record private
+	// reasoning issuance. Keep their lease until delivery, rather than trying
+	// to amend state after a headers commit has released it to the next turn.
+	return transaction.commitOnCompletion || transaction.dispatchWorker != ""
 }
 
 func (transaction *raylineARCEpisodeTransaction) releaseHold() {

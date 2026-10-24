@@ -134,7 +134,14 @@ func ResponseOpaqueReasoning(response *llmprotocol.Response) []string {
 	}
 	var blocks []string
 	for _, item := range response.Output {
-		for _, content := range item.Content {
+		contents := item.Content
+		// Chat responses carry Claude signatures and redacted blocks inside
+		// reasoning_details. Use the same complete-carrier validation as replay,
+		// so partial or mixed-format arrays cannot mint issuance evidence.
+		if restored, _, ok := claudeThinkingFromMessage(llmprotocol.Message{Content: contents}); ok {
+			contents = restored
+		}
+		for _, content := range contents {
 			if data, ok := privateReasoningData(content); ok {
 				blocks = append(blocks, data)
 			}

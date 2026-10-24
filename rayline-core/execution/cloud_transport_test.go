@@ -155,6 +155,33 @@ func TestModelPinDropsUnverifiedReasoningDetailsKeepsToolsAndText(t *testing.T) 
 	}
 }
 
+// Signed Messages history must retain readable thinking on a Chat model pin.
+func TestModelPinSignedMessagesKeepsReadableThinking(t *testing.T) {
+	body := []byte(`{"model":"auto","max_tokens":100,"messages":[{"role":"assistant","content":[{"type":"thinking","thinking":"readable prior thinking","signature":"private-signature"},{"type":"redacted_thinking","data":"private-blob"},{"type":"text","text":"visible answer"}]}]}`)
+	engine := protocolcodec.NewBuiltinEngine()
+	request, envelope, _, err := engine.DecodeRequestForMutation(llmprotocol.AnthropicMessagesV1, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deployment := modelPinConfig(t, "https://gateway.example").Deployments[0]
+	prepareReasoning(&request, envelope.Format, deployment, &branchState{})
+	request.Generation++
+	encoded, err := engine.EncodeRequest(llmprotocol.OpenAIChatV1, request, envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, text := range []string{"readable prior thinking", "visible answer", "reasoning_content"} {
+		if !bytes.Contains(encoded.Body, []byte(text)) {
+			t.Fatalf("lost %s: %s", text, encoded.Body)
+		}
+	}
+	for _, private := range []string{"private-signature", "private-blob", "reasoning_details"} {
+		if bytes.Contains(encoded.Body, []byte(private)) {
+			t.Fatalf("replayed %s: %s", private, encoded.Body)
+		}
+	}
+}
+
 func TestModelPinMessagesControlAndTranscriptBoundaries(t *testing.T) {
 	deployment := modelPinConfig(t, "https://gateway.example").Deployments[0]
 	deployment.Protocol = llmprotocol.AnthropicMessagesV1
