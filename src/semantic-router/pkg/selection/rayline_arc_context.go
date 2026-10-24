@@ -263,6 +263,18 @@ type RaylineARCTrace struct {
 	// state. They must never be logged or exported as metric labels.
 	EncoderReplicaID         string
 	EncoderVisitedReplicaIDs []string
+	// PolicySession is the Modal sticky session a sessioned policy Server
+	// decided this turn on, which the episode commit persists; nil when the
+	// turn changes none. Internal transaction state: never logged.
+	PolicySession *raylinearc.PolicySession
+	// PolicySessions is how many sessions the turn's calls used, and
+	// PolicySessionMoved whether the turn left a session that was gone.
+	PolicySessions     int
+	PolicySessionMoved bool
+	// PolicySessionCleared drops a session the episode state holds from a
+	// cell that no longer decides through sessions, so a router that predates
+	// them can read the record again.
+	PolicySessionCleared bool
 	// TurnIndex is the episode position this selection was made at: the
 	// number of turns the episode had committed before it.
 	TurnIndex uint64

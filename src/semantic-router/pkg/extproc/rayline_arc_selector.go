@@ -138,6 +138,9 @@ type raylineARCArmedComponents struct {
 	// policyPool replaces policy when the cell configures replicas: each
 	// episode decides on its owner replica.
 	policyPool *raylinearc.PolicyServicePool
+	// policySessions replaces policy when the cell decides through a Modal
+	// Server with sticky sessions: each episode decides on its session.
+	policySessions *raylinearc.PolicySessionBackend
 	// prices is the routing price cache, set only in the policy-service
 	// mode with routing_prices configured.
 	prices *raylinearc.RoutingPriceCache
