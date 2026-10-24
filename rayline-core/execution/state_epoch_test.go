@@ -9,10 +9,11 @@ import (
 	"testing"
 )
 
-// Exercise a real completed history, a prefix rewrite and a failed dispatch.
-// The next Decisions request must retain the served-model attestation without
-// retaining evidence that belongs to the invalidated transcript.
-func TestPrefixRewritePreservesServedHoldWithoutOldContextEvidence(t *testing.T) {
+// Pins v1 behaviour (as at 66c84d4d): a prefix rewrite such as a compaction is
+// a model-switch boundary, so the next Decisions request carries no hold and
+// no evidence from the invalidated transcript. Only execution_context_v2 keeps
+// the served action, as last_served (TestV2ExplicitEventIsStrippedAndPrecedesMarkers).
+func TestV1PrefixRewriteClearsHoldAndOldContextEvidence(t *testing.T) {
 	for _, change := range []string{"instruction", "tools", "history"} {
 		t.Run(change, func(t *testing.T) {
 			var calls atomic.Int32
@@ -78,9 +79,8 @@ func TestPrefixRewritePreservesServedHoldWithoutOldContextEvidence(t *testing.T)
 				t.Fatal("initial and extending requests did not carry the expected execution history")
 			}
 			rewritten := contexts[2]
-			hold, ok := rewritten.Hold.(map[string]any)
-			if !ok || hold["action_id"] != config.Actions[0].ID || hold["scope"] != "model" {
-				t.Fatalf("prefix rewrite lost the successfully executed model: %#v", rewritten.Hold)
+			if rewritten.Hold != nil {
+				t.Fatalf("v1 prefix rewrite kept a model hold: %#v", rewritten.Hold)
 			}
 			if rewritten.ContextEpoch == contexts[1].ContextEpoch || len(rewritten.Attribution) != 0 || len(rewritten.Workers) != 0 {
 				t.Fatal("prefix rewrite retained old-epoch attribution or cache evidence")
@@ -89,12 +89,12 @@ func TestPrefixRewritePreservesServedHoldWithoutOldContextEvidence(t *testing.T)
 			if err != nil {
 				t.Fatal(err)
 			}
-			uncommitted := state.completed == 2 && state.held == config.Actions[0].ID && state.epoch == 1 &&
+			uncommitted := state.completed == 2 && state.held == "" && state.epoch == 1 &&
 				len(state.placements) == 0 && len(state.workers) == 0 && len(state.ledger) == 0 &&
 				len(state.issuers) == 0 && len(state.provenance) == 0 && state.pending != nil
 			state.release()
 			if !uncommitted {
-				t.Fatal("failed rewritten request replaced the served hold or committed context evidence")
+				t.Fatal("failed rewritten request kept the v1 hold or committed context evidence")
 			}
 			execute(http.StatusOK)
 			capture.mu.Lock()
@@ -112,5 +112,42 @@ func TestPrefixRewritePreservesServedHoldWithoutOldContextEvidence(t *testing.T)
 				t.Fatal("successful retry did not commit exactly once in the new context epoch")
 			}
 		})
+	}
+}
+
+// v1 ignores harness events (the Pi extension ships with every hybrid launch):
+// an explicit sidecall still advances state and an unlabelled follow-up is not
+// reclassified, exactly as before v2. The body member never reaches the provider.
+func TestV1IgnoresExplicitEventsButStripsThem(t *testing.T) {
+	var bodies []map[string]any
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		bodies = append(bodies, body)
+		_, _ = io.WriteString(w, `{"id":"msg_fixture","type":"message","role":"assistant","model":"qwen-fixture","content":[{"type":"text","text":"ready"}],"stop_reason":"end_turn","stop_sequence":null,"usage":{"input_tokens":30,"output_tokens":1}}`)
+	}))
+	defer upstream.Close()
+	config := testConfig(t, upstream.URL, true)
+	server, httpServer := executorWithHTTPDecisions(t, config, &decisionCapture{})
+	for _, body := range []string{
+		`{"model":"arc-1.0","max_tokens":64,"rayline_event":{"kind":"task_start"},"messages":[{"role":"user","content":"first"}]}`,
+		`{"model":"arc-1.0","max_tokens":64,"rayline_event":{"kind":"sidecall"},"messages":[{"role":"user","content":"title this"}]}`,
+	} {
+		if status, response := executeHTTP(t, httpServer.URL, "/v1/messages", body, "v1-events"); status != http.StatusOK {
+			t.Fatalf("status %d: %s", status, response)
+		}
+	}
+	for _, body := range bodies {
+		if _, leaked := body["rayline_event"]; leaked {
+			t.Fatal("event member reached the provider")
+		}
+	}
+	state, err := server.states.acquire(t.Context(), "v1-events", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.release()
+	if state.completed != 2 || state.epoch != 1 || state.explicitEvents {
+		t.Fatalf("v1 applied v2 event semantics: completed=%d epoch=%d explicit=%v", state.completed, state.epoch, state.explicitEvents)
 	}
 }

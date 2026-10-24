@@ -266,14 +266,18 @@ func extendsPrefix(previous, current []string) bool {
 }
 
 // resetEpoch invalidates transcript-dependent evidence after a prefix change.
-// It preserves the last successfully executed action and completion count: a
-// prefix change alone is not a model-switch boundary, and last_served must
-// stay truthful (from the Codex continuity work, codex/hybrid-model-continuity).
-func (state *branchState) resetEpoch() {
+// keepServed (execution_context_v2 only) preserves the last successfully
+// executed action so last_served stays truthful; the v2 policy decides from
+// the event whether this is a switch boundary. Current and v1 modes clear it,
+// exactly as before v2: there a compaction is a model-switch boundary.
+func (state *branchState) resetEpoch(keepServed bool) {
 	if state.wire != nil {
 		state.carried = &carriedTranscript{ledger: state.ledger, wire: state.wire}
 	}
 	state.epoch++
+	if !keepServed {
+		state.held, state.heldWorker = "", ""
+	}
 	state.placements = make(map[string]thinkingcontrol.PlacerState)
 	state.workers = make(map[string]WorkerEvidence)
 	state.pending = nil

@@ -53,7 +53,9 @@ opt-in. The core reports facts and never picks or ranks a model.
   Retained attribution survives a failed compaction request and its retry.
 - **Continuity.** A prefix change starts a new epoch and clears
   transcript-dependent evidence but keeps the last successfully executed action,
-  sent as `last_served` even when that target is not offered or does not fit.
+  sent as `last_served` even when that target is not offered or does not fit. Current and v1 modes are unchanged: a prefix
+  change clears the held action, and explicit events are removed from the body
+  and ignored.
 - **Capacity.** For each local action whose deployment has a qualified prompt
   counter, the core prepares the request exactly as dispatch would (tools,
   history, private append) and counts it with the runtime's own tokenizer:
@@ -239,8 +241,8 @@ At capacity, new sessions fail visibly instead of evicting an active ledger.
 
 A changed instruction, tool definition or historical message starts a new cache
 context epoch and clears transcript-dependent placement, attribution and worker
-evidence. It preserves the last successfully executed action and completion
-count: a prefix change alone does not establish a model-switch boundary.
+evidence. In current and v1 modes it also clears the held action; only
+`execution_context_v2` keeps it, as `last_served`.
 
 Cache evidence describes each previously completed deployment, including workers
 that were switched away from. It carries completion age, provider usage, declared

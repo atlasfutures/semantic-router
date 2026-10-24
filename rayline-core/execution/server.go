@@ -231,7 +231,13 @@ func (server *Server) execute(writer http.ResponseWriter, incoming *http.Request
 		server.writeError(writer, format, http.StatusConflict, "execution_state_not_found", "this session has assistant or tool history but no execution ledger; start a fresh session")
 		return
 	}
+	v2 := server.config.Decisions.apiMode() == DecisionsExecutionContextV2
 	event := inferEvent(request, fresh, branch)
+	if !v2 {
+		// Current and v1 modes keep their pre-v2 behaviour: an explicit event
+		// is removed from the body (it must never reach a provider) and ignored.
+		explicitEvent = nil
+	}
 	if explicitEvent != nil {
 		event = *explicitEvent
 	} else if state.explicitEvents {
@@ -243,7 +249,7 @@ func (server *Server) execute(writer http.ResponseWriter, incoming *http.Request
 	sidecall := event.is(EventSidecall)
 	wire := wireMessageFingerprints(format, body)
 	if !sidecall && len(state.prefix) > 0 && !extendsPrefix(state.prefix, prefix) {
-		state.resetEpoch()
+		state.resetEpoch(v2)
 		var retained []attributedTurn
 		if event.is(EventCompaction) && state.carried != nil {
 			retained = remapRetainedAttribution(state.carried.ledger, state.carried.wire, wire, roles, format, event.Compaction)
@@ -267,7 +273,6 @@ func (server *Server) execute(writer http.ResponseWriter, incoming *http.Request
 		server.writeError(writer, format, http.StatusConflict, "execution_already_observed", "this request already produced output; reconcile the transcript before retrying")
 		return
 	}
-	v2 := server.config.Decisions.apiMode() == DecisionsExecutionContextV2
 	reuse := make(map[string]*cachecontext.MeasuredPrompt)
 	var measuredEvidence ExecutionContext
 	if pending == nil || pending.fingerprint != requestFingerprint {
@@ -396,7 +401,7 @@ func (server *Server) execute(writer http.ResponseWriter, incoming *http.Request
 	if selection.Receipt != nil {
 		writer.Header().Set("X-Rayline-Decided-By", selection.Receipt.decidedBy())
 	}
-	if event.Kind != nil {
+	if v2 && event.Kind != nil {
 		writer.Header().Set("X-Rayline-Event", *event.Kind+"/"+event.Basis)
 	}
 	if aliasReason != "" {

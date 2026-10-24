@@ -172,7 +172,7 @@ func TestAttributionUsesExactOriginalWireIndexAndAssistantRole(t *testing.T) {
 	if len(state.evidenceForRequest("instance", llmprotocol.OpenAIResponsesV1, []string{"user", "assistant", "user", "assistant"}).Attribution) != 0 {
 		t.Fatal("Responses input indices were guessed")
 	}
-	state.resetEpoch()
+	state.resetEpoch(false)
 	if len(state.ledger) != 0 {
 		t.Fatal("compaction retained attribution from the previous epoch")
 	}
