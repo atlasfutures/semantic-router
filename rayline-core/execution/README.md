@@ -47,7 +47,10 @@ opt-in. The core reports facts and never picks or ranks a model.
   inferred. An explicit `compaction` with `retained_from` carries the retained
   messages' attribution to their new positions. A `sidecall` is decided with
   the held model and advances nothing: no epoch change, retained decision,
-  attribution, placement or cache evidence.
+  attribution, placement or cache evidence. Once a branch has completed a request with an
+  explicit event, a later request without one (for example Pi's compaction
+  summary call, which bypasses its extension hooks) is treated as a side call.
+  Retained attribution survives a failed compaction request and its retry.
 - **Continuity.** A prefix change starts a new epoch and clears
   transcript-dependent evidence but keeps the last successfully executed action,
   sent as `last_served` even when that target is not offered or does not fit.
@@ -65,7 +68,8 @@ opt-in. The core reports facts and never picks or ranks a model.
   with the same `turn.id` and event, `attempt + 1`, `retry_of` = the vetoed
   route, `reconsult: "veto"` or `"capacity"`, and that target's capacity
   `fits: false`. The service reselects; a service that reselects an infeasible
-  target fails visibly (`execution_no_feasible_target`).
+  target fails visibly (`execution_no_feasible_target`). A refusal recorded for the turn is kept, so a
+  client retry of the same request never re-dispatches the refused target.
 - **Response.** The selected result must carry a `receipt` naming the selected
   action, control and applied policy, with a known `decided_by` per dimension
   (`decided_by.model` may be `held_unavailable`, or null for a one-stage
