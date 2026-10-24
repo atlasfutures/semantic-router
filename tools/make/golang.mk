@@ -30,10 +30,13 @@ vet: $(if $(CI),rust-ci,rust) ## Run go vet for all Go modules (build Rust libra
 	@$(LOG_TARGET)
 	@cd candle-binding && go vet ./...
 	@cd src/semantic-router && go vet ./...
+	@cd rayline-core && CGO_ENABLED=0 go vet ./...
 
 check-go-mod-tidy: ## Check go mod tidy for all Go modules
 	@$(LOG_TARGET)
 	@echo "Checking go mod tidy for all Go modules..."
+	@echo "Checking rayline-core..."
+	@cd rayline-core && go mod tidy -diff
 	@echo "Checking candle-binding..."
 	@cd candle-binding && go mod tidy && \
 		(git diff --exit-code go.mod 2>/dev/null || (echo "ERROR: go.mod file is not tidy in candle-binding. Please run 'go mod tidy' in candle-binding directory and commit the changes." && git diff go.mod && exit 1)) && \

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"slices"
 
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/metrics"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
@@ -13,25 +12,6 @@ import (
 
 // selectionOutcomeRefusal is the outcome of a turn the provider refused.
 const selectionOutcomeRefusal = "refusal"
-
-// responseRefused reports a model refusal: a content_filter stop, or refusal
-// content whatever stop its source format gave it.
-func responseRefused(response *llmprotocol.Response) bool {
-	if response == nil {
-		return false
-	}
-	if response.StopReason == llmprotocol.StopContentFilter {
-		return true
-	}
-	for _, item := range response.Output {
-		for _, content := range item.Content {
-			if content.Kind == llmprotocol.ContentRefusal {
-				return true
-			}
-		}
-	}
-	return false
-}
 
 // declineRefusedTurn ends a refused policy-service turn without recording it.
 //

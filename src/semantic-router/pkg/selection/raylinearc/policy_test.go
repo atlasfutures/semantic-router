@@ -22,6 +22,8 @@ import (
 	"reflect"
 	"testing"
 	"time"
+
+	"github.com/atlasfutures/semantic-router/rayline-core/cachecontext"
 )
 
 func TestEpisodeStateAdvancesOnlyOnCommit(t *testing.T) {
@@ -82,7 +84,7 @@ func TestExpectedCacheHitRatioAndSwitchCostMatchRayline(t *testing.T) {
 	worker := syntheticWorker("worker", 0.00001, 0.000001)
 	miss, cost := switchCostForWorker(
 		&worker,
-		&WorkerWarmth{
+		&cachecontext.WorkerWarmth{
 			LastUsed:        now,
 			LastInputTokens: 1_000,
 		},
@@ -101,7 +103,7 @@ func TestPolicyAppliesColdAndStayMargins(t *testing.T) {
 	previous := 0
 	state := &EpisodeState{
 		PreviousArm: &previous,
-		Warmth: []*WorkerWarmth{
+		Warmth: []*cachecontext.WorkerWarmth{
 			{LastUsed: now, LastInputTokens: 1_000},
 			nil,
 			nil,
@@ -165,7 +167,7 @@ func TestPolicyStayMarginEqualityStays(t *testing.T) {
 	previous := 0
 	state := &EpisodeState{
 		PreviousArm: &previous,
-		Warmth:      make([]*WorkerWarmth, 2),
+		Warmth:      make([]*cachecontext.WorkerWarmth, 2),
 	}
 	policy := newPolicy(&Manifest{
 		Policy: PolicyManifest{
@@ -304,7 +306,7 @@ func TestPolicyExcludedPreviousArmIsAForcedSwitch(t *testing.T) {
 	previous := 0
 	state := &EpisodeState{
 		PreviousArm: &previous,
-		Warmth:      make([]*WorkerWarmth, 2),
+		Warmth:      make([]*cachecontext.WorkerWarmth, 2),
 	}
 	policy := newPolicy(&Manifest{
 		Policy: PolicyManifest{PreviousWorkerStayMargin: 10},
@@ -396,7 +398,7 @@ func TestPolicyExclusionBeatsTheScoreAndTheStayMarginTogether(t *testing.T) {
 	previous := 0
 	state := &EpisodeState{
 		PreviousArm: &previous,
-		Warmth:      make([]*WorkerWarmth, 2),
+		Warmth:      make([]*cachecontext.WorkerWarmth, 2),
 	}
 	policy := newPolicy(&Manifest{
 		Policy: PolicyManifest{PreviousWorkerStayMargin: 10},

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
+	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
 )
 
 // A Chat client streaming with include_usage from a Messages-only arm (as

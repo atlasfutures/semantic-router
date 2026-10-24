@@ -3,7 +3,7 @@ package extproc
 import (
 	"testing"
 
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
+	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
 )
 
 func TestProtocolMarkerNamesUsePublicWireTokens(t *testing.T) {

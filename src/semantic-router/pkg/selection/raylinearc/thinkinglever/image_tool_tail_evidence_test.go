@@ -23,9 +23,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/protocolcodec"
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc/thinkingcontrol"
+	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
+	"github.com/atlasfutures/semantic-router/rayline-core/protocolcodec"
+	"github.com/atlasfutures/semantic-router/rayline-core/thinkingcontrol"
 )
 
 type goldenCall struct {
@@ -92,7 +92,7 @@ func TestTheLeverSteersAnImageToolTailOnlyOnAnEvidencedCell(t *testing.T) {
 	}
 	for _, name := range []string{"image_tool_tail_evidenced_cell", "image_tool_tail"} {
 		t.Run(name, func(t *testing.T) {
-			dir := filepath.Join("..", "thinkingcontrol", "testdata", "golden", "chat", name)
+			dir := filepath.Join("../../../../../../rayline-core/thinkingcontrol", "testdata", "golden", "chat", name)
 			raw, err := os.ReadFile(filepath.Join(dir, "case.json"))
 			if err != nil {
 				t.Fatal(err)

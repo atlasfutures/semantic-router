@@ -20,7 +20,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
+	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
 )
 
 // The encoder wire schema pins a turn role to user or assistant, and the

@@ -6,8 +6,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
+	"github.com/atlasfutures/semantic-router/rayline-core/reasoning"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
 
@@ -44,8 +45,8 @@ func TestCommittedTurnRecordsOpaqueReasoningProvenance(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = store.Abort(context.Background(), next) }()
-	if !raylinearc.ReasoningIssuedElsewhere(reread.ReasoningProvenance, "gpt-blob", "claude") ||
-		raylinearc.ReasoningIssuedElsewhere(reread.ReasoningProvenance, "gpt-blob", "gpt-worker") {
+	if !reasoning.ReasoningIssuedElsewhere(reread.ReasoningProvenance, "gpt-blob", "claude") ||
+		reasoning.ReasoningIssuedElsewhere(reread.ReasoningProvenance, "gpt-blob", "gpt-worker") {
 		t.Fatalf("provenance after commit = %+v", reread.ReasoningProvenance)
 	}
 }
@@ -97,7 +98,7 @@ func seedOpaqueReasoningIssuer(t *testing.T, router *OpenAIRouter, episode, work
 		t.Fatal(err)
 	}
 	issuer := router.opaqueReasoningIssuerFor(dispatch)
-	if issuer == raylinearc.ReasoningIssuerUnknown {
+	if issuer == reasoning.ReasoningIssuerUnknown {
 		t.Fatalf("worker %s has no fixed issuer in the test config", worker)
 	}
 	store := router.RaylineARCEpisodeStore
@@ -105,7 +106,7 @@ func seedOpaqueReasoningIssuer(t *testing.T, router *OpenAIRouter, episode, work
 	if err != nil {
 		t.Fatal(err)
 	}
-	state.ReasoningProvenance = raylinearc.WithReasoningProvenance(nil, issuer, []string{data})
+	state.ReasoningProvenance = reasoning.WithReasoningProvenance(nil, issuer, []string{data})
 	if err := state.Commit(0, 10, time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +124,7 @@ func TestOpaqueReasoningIssuerOnOpenRouter(t *testing.T) {
 		logicalModel: "gpt", upstreamModel: "openai/gpt-5.6",
 		profile: &config.ProviderProfile{Type: "openrouter", BaseURL: "https://openrouter.ai/api/v1"},
 	}
-	if issuer := router.opaqueReasoningIssuerFor(dispatch); issuer != raylinearc.ReasoningIssuerUnknown {
+	if issuer := router.opaqueReasoningIssuerFor(dispatch); issuer != reasoning.ReasoningIssuerUnknown {
 		t.Fatalf("unpinned OpenRouter issuer = %q, want unknown", issuer)
 	}
 	for _, tc := range []struct {
@@ -135,7 +136,7 @@ func TestOpaqueReasoningIssuerOnOpenRouter(t *testing.T) {
 		{config.OpenRouterProviderPreferences{Order: []string{"openai", "azure"}, AllowFallbacks: &off}, false},
 	} {
 		router.Config = routerConfigWithPin("gpt", tc.pin)
-		known := router.opaqueReasoningIssuerFor(dispatch) != raylinearc.ReasoningIssuerUnknown
+		known := router.opaqueReasoningIssuerFor(dispatch) != reasoning.ReasoningIssuerUnknown
 		if known != tc.want {
 			t.Fatalf("pin %+v: issuer known = %v, want %v", tc.pin, known, tc.want)
 		}

@@ -275,6 +275,7 @@ COPY nlp-binding/go.mod nlp-binding/nlp_binding.go nlp-binding/nlp_binding_mock.
 COPY --from=nlp-builder /build/out/ /build/../nlp-binding/target/release/
 
 COPY src/semantic-router/ .
+COPY rayline-core/ /rayline-core/
 
 RUN if [ "$TARGETARCH" != "amd64" ]; then \
       echo "CUDA vllm-sr image only supports TARGETARCH=amd64, got: $TARGETARCH" && exit 1; \

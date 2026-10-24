@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
 	"github.com/openai/openai-go"
 
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 )
 

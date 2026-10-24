@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/protocolcodec"
+	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
+	"github.com/atlasfutures/semantic-router/rayline-core/protocolcodec"
 )
 
 // openRouterWebPlugin is OpenRouter's web search plugin with its defaults: the

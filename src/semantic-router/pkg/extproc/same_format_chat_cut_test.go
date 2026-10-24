@@ -8,9 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
 	"github.com/stretchr/testify/require"
-
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 )
 
 const sameFormatCutArguments = `{"command":"cat > /tmp/probe3.js <<'EOF'\n$(for i in $(seq 1 300); do`

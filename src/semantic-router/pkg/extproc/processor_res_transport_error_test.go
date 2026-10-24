@@ -3,8 +3,8 @@ package extproc
 import (
 	"testing"
 
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/protocolcodec"
+	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
+	"github.com/atlasfutures/semantic-router/rayline-core/protocolcodec"
 )
 
 func TestUpstreamTransportErrorMalformedBodyUsesNativeClientFallback(t *testing.T) {

@@ -83,3 +83,7 @@ replace github.com/vllm-project/semantic-router/nlp-binding => ../nlp-binding
 replace github.com/vllm-project/semantic-router/openvino-binding => ../openvino-binding
 
 exclude google.golang.org/genproto v0.0.0-20220503193339-ba3ae3f07e29
+
+require github.com/atlasfutures/semantic-router/rayline-core v0.0.0 // indirect
+
+replace github.com/atlasfutures/semantic-router/rayline-core => ../rayline-core

@@ -141,7 +141,7 @@ control. `package_manifest` points at the package's
   a mismatch;
 - requires each control in the compiled registry it serves from (pathfinder's
   `configs/thinking_controls.compiled.json`, embedded and pinned in
-  `pkg/selection/raylinearc/thinkingcontrol`);
+  `rayline-core/thinkingcontrol`);
 - requires every package action bound, and each bound control admitted on its
   worker's (served model, provider, format) cell for every format the worker
   accepts, since the target format is chosen per request. The served model is

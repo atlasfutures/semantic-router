@@ -166,41 +166,44 @@ func isLoggingCall(call *ast.CallExpr) bool {
 	return false
 }
 
-// forEachCall parses every non-test .go file under pkg/ and visits each call.
+// forEachCall parses cloud packages and the shared core, including moved codecs.
 func forEachCall(
 	t *testing.T,
 	visit func(t *testing.T, path string, call *ast.CallExpr, fset *token.FileSet),
 ) {
 	t.Helper()
-	root := pkgRoot(t)
-	fset := token.NewFileSet()
-	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		if info.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
-			return nil
-		}
-		file, parseErr := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution)
-		if parseErr != nil {
-			// A file this walker cannot parse is not a policy failure; the
-			// compiler is the authority on syntax.
-			return nil
-		}
-		rel, relErr := filepath.Rel(filepath.Dir(root), path)
-		if relErr != nil {
-			rel = path
-		}
-		ast.Inspect(file, func(node ast.Node) bool {
-			if call, ok := node.(*ast.CallExpr); ok {
-				visit(t, rel, call, fset)
+	cloudRoot := pkgRoot(t)
+	roots := []string{cloudRoot, filepath.Join(cloudRoot, "..", "..", "..", "rayline-core")}
+	for _, root := range roots {
+		fset := token.NewFileSet()
+		err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
 			}
-			return true
+			if info.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+				return nil
+			}
+			file, parseErr := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution)
+			if parseErr != nil {
+				// A file this walker cannot parse is not a policy failure; the
+				// compiler is the authority on syntax.
+				return nil
+			}
+			rel, relErr := filepath.Rel(filepath.Dir(root), path)
+			if relErr != nil {
+				rel = path
+			}
+			ast.Inspect(file, func(node ast.Node) bool {
+				if call, ok := node.(*ast.CallExpr); ok {
+					visit(t, rel, call, fset)
+				}
+				return true
+			})
+			return nil
 		})
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("walk pkg/: %v", err)
+		if err != nil {
+			t.Fatalf("walk %s: %v", root, err)
+		}
 	}
 }
 

@@ -29,7 +29,7 @@ import (
 // and the second must be refused where VSR refuses it, at load, with the
 // recorded message. The placement corpus is the renderer's oracle only and
 // is not read here.
-const responsesGoldenDir = "../selection/raylinearc/thinkingcontrol/testdata/golden/responses"
+const responsesGoldenDir = "../../../../rayline-core/thinkingcontrol/testdata/golden/responses"
 
 // responsesNativeDefaultControl is the registry's native-default control: no
 // budget, no instruction.
@@ -236,7 +236,7 @@ var clientModelMember = regexp.MustCompile(`"model":"[^"]*"`)
 // only base is high admits no default).
 func responsesSpareControl(t *testing.T, c responsesGoldenCase, controls map[string]any) string {
 	t.Helper()
-	raw, err := os.ReadFile("../selection/raylinearc/thinkingcontrol/thinking_controls.compiled.json")
+	raw, err := os.ReadFile("../../../../rayline-core/thinkingcontrol/thinking_controls.compiled.json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -394,7 +394,7 @@ func dispatchLeverTurn(t *testing.T, router *OpenAIRouter, path, requestID, epis
 // manifest states them.
 func registryControls(t *testing.T) map[string]any {
 	t.Helper()
-	raw, err := os.ReadFile("../selection/raylinearc/thinkingcontrol/thinking_controls.compiled.json")
+	raw, err := os.ReadFile("../../../../rayline-core/thinkingcontrol/thinking_controls.compiled.json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -573,7 +573,7 @@ global:
         mmbert_model_path: ""
 `
 
-const messagesGoldenDir = "../selection/raylinearc/thinkingcontrol/testdata/golden/messages"
+const messagesGoldenDir = "../../../../rayline-core/thinkingcontrol/testdata/golden/messages"
 
 // The Messages corpus's in-band system fold cases (pathfinder FOLD_RULES,
 // fold_before_unit_v1), through the router: every admitted case must reach

@@ -22,7 +22,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc/thinkingcontrol"
+	"github.com/atlasfutures/semantic-router/rayline-core/thinkingcontrol"
 )
 
 // A placer stored in the episode resumes the same episode: after a steer and

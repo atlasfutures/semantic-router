@@ -3,10 +3,9 @@ package extproc
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
+	"github.com/atlasfutures/semantic-router/rayline-core/protocolcodec"
 	modelcatalog "github.com/vllm-project/semantic-router/src/semantic-router/pkg/catalog"
-
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/protocolcodec"
 )
 
 // applyOpenRouterReasoningBound states how many tokens a reasoning turn may

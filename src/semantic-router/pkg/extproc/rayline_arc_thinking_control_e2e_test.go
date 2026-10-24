@@ -15,10 +15,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
+	"github.com/atlasfutures/semantic-router/rayline-core/thinkingcontrol"
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
 
@@ -30,7 +31,7 @@ const (
 	v5GLMUp      = "cf5bc08ecfab91cdc1e26c1c2b98e7256e4a9e64183210ceb619e9c4745ff055"
 	v5UpText     = "Until the next steering instruction, reason more thoroughly before acting."
 	v5Neutral    = "Until the next steering instruction, use your normal judgement."
-	v5Golden     = "../selection/raylinearc/thinkingcontrol/testdata/golden"
+	v5Golden     = "../../../../rayline-core/thinkingcontrol/testdata/golden"
 )
 
 // v5Router serves the v5 fixture with GLM on glmFormat (an api_format or an
@@ -222,13 +223,13 @@ func TestV5BudgetedBaseRaisesTheMessagesAllowance(t *testing.T) {
 	budget := int64(4096)
 	allowance := int64(1024)
 	request := &llmprotocol.Request{Sampling: llmprotocol.Sampling{MaxOutputTokens: &allowance}}
-	raised := raiseMessagesAllowance(request, &budget)
+	raised := thinkingcontrol.RaiseMessagesAllowance(request, &budget, dispatchFallbackMaxOutputTokens)
 	if !raised || *request.Sampling.MaxOutputTokens != budget+allowance {
 		t.Fatalf("allowance = %d, raised %v", *request.Sampling.MaxOutputTokens, raised)
 	}
 	roomy := int64(32000)
 	request.Sampling.MaxOutputTokens = &roomy
-	if raiseMessagesAllowance(request, &budget) || *request.Sampling.MaxOutputTokens != roomy {
+	if thinkingcontrol.RaiseMessagesAllowance(request, &budget, dispatchFallbackMaxOutputTokens) || *request.Sampling.MaxOutputTokens != roomy {
 		t.Fatal("an allowance above the budget was changed")
 	}
 }

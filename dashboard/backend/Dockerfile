@@ -10,6 +10,7 @@ ENV GOPROXY="https://proxy.golang.org|direct"
 
 COPY src/semantic-router/go.mod src/semantic-router/go.sum ./
 COPY src/semantic-router/ ./
+COPY rayline-core/ /app/rayline-core/
 
 # Local replace directives point at sibling bindings that are not needed for the
 # WASM build. Stub them under /app so `../../*-binding` resolves correctly.
@@ -83,6 +84,7 @@ RUN set -eux; \
 # Copy src/semantic-router first (required by dashboard/backend/go.mod replace directive)
 # Only copy the packages we actually need for dashboard backend builds - NOT pkg/cli which has extra deps
 COPY src/semantic-router/go.mod src/semantic-router/go.sum /app/src/semantic-router/
+COPY rayline-core/ /app/rayline-core/
 COPY src/vllm-sr/pyproject.toml /app/src/vllm-sr/pyproject.toml
 COPY src/semantic-router/pkg/catalog/ /app/src/semantic-router/pkg/catalog/
 COPY src/semantic-router/pkg/config/ /app/src/semantic-router/pkg/config/

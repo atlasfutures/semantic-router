@@ -34,6 +34,7 @@ languages:
   go:
     globs:
       - src/**/*.go
+      - rayline-core/**/*.go
       - dashboard/backend/**/*.go
       - e2e/**/*.go
       - deploy/**/*.go
@@ -67,6 +68,7 @@ dependency_rules:
   - name: prod-code-must-not-reference-e2e-docs-or-agent-tools
     applies_to:
       - src/semantic-router/**/*.go
+      - rayline-core/**/*.go
       - src/vllm-sr/**/*.py
       - candle-binding/src/**/*.rs
       - ml-binding/src/**/*.rs
@@ -77,6 +79,14 @@ dependency_rules:
       - tools/agent/docs/
       - tools/agent/
       - website/
+  - name: rayline-core-must-not-import-cloud-runtime
+    applies_to:
+      - rayline-core/**/*.go
+    forbidden_literals:
+      - github.com/vllm-project/semantic-router/src/semantic-router
+      - github.com/vllm-project/semantic-router/candle-binding
+      - github.com/vllm-project/semantic-router/ml-binding
+      - github.com/envoyproxy/
   - name: dashboard-backend-must-not-reference-frontend-source
     applies_to:
       - dashboard/backend/**/*.go

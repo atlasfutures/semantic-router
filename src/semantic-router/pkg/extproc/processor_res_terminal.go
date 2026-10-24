@@ -1,6 +1,6 @@
 package extproc
 
-import "github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
+import "github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
 
 // takeNeutralResponseUsage consumes provider-reported usage from the response
 // already decoded by the neutral protocol engine. Estimated request tokens are
