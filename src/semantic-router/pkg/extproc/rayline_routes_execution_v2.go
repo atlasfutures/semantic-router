@@ -560,6 +560,14 @@ func routesExecutionV2Controls(execution *routesExecutionV2) (*selection.Rayline
 			controls.CacheContext.Actions = append(controls.CacheContext.Actions, entry)
 			refused = append(refused, notAdmitted...)
 		}
+		// Every target is one capacity entry: the service bounds the offer
+		// to the targets, and a target with no fact is unknown (fits and
+		// reason null), carrying its placement (pathfinder #5915).
+		if target.capacity == nil {
+			controls.Capacity = append(controls.Capacity, raylinearc.PolicyActionCapacity{
+				ActionID: target.actionID, Placement: target.place,
+			})
+		}
 		if fact := target.capacity; fact != nil {
 			fits := fact.fits
 			if fits != nil && *fits && fact.provenance == provenanceCallerEstimated {
