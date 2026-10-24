@@ -67,6 +67,8 @@ const (
 	// the top-level tools on OpenRouter (req_filter_tool_changes.go). A
 	// system message that is left empty goes too.
 	transformToolChangesToTools = "tool_changes_to_tools"
+	// Imported captures start a fresh episode without reasoning issuance records.
+	transformDropUnrecordedThinking = "drop_unrecorded_thinking"
 )
 
 type continuityCase struct {
@@ -384,6 +386,18 @@ func conversationShape(raw []byte) ([]messageShape, error) {
 func expectedConversation(client []messageShape, transforms map[string]bool) []messageShape {
 	out := make([]messageShape, 0, len(client))
 	for _, message := range client {
+		if transforms[transformDropUnrecordedThinking] {
+			blocks := make([]blockShape, 0, len(message.Blocks))
+			for _, block := range message.Blocks {
+				if block.Type != "thinking" && block.Type != "redacted_thinking" {
+					blocks = append(blocks, block)
+				}
+			}
+			if len(blocks) == 0 {
+				continue
+			}
+			message.Blocks = blocks
+		}
 		if transforms[transformDeveloperAsSystem] && message.Role == "developer" {
 			message.Role = "system"
 		}
@@ -683,7 +697,7 @@ func TestConversationContinuityOfCapturedClients(t *testing.T) {
 				if result.Provider == nil {
 					t.Fatalf("refused with %d: %s", result.Status, result.Refusal)
 				}
-				transforms := fixture.Case.Transforms
+				transforms := append([]string{transformDropUnrecordedThinking}, fixture.Case.Transforms...)
 				if action.ID == v5GLMUp {
 					transforms = append([]string{transformSteerTailText}, transforms...)
 				}

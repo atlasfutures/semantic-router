@@ -123,20 +123,7 @@ func (r *OpenAIRouter) dropRaylineARCOpaqueReasoningIssuedElsewhere(
 	if transaction.state != nil {
 		provenance = transaction.state.ReasoningProvenance
 	}
-	unknownPrefix := false
-	dropped := protocolcodec.DropOpaqueReasoning(request, func(data string) bool {
-		if dispatch.targetFormat == llmprotocol.AnthropicMessagesV1 {
-			matches := reasoning.ReasoningIssuedBy(provenance, data, issuer)
-			if !matches && !reasoning.ReasoningIssuedElsewhere(provenance, data, issuer) {
-				// The missing record may be an older same-worker block. Removing it
-				// changes the prefix that later signatures could be bound to, so issuer
-				// equality alone cannot authorize replay after this point.
-				unknownPrefix = true
-			}
-			return unknownPrefix || !matches
-		}
-		return reasoning.ReasoningIssuedElsewhere(provenance, data, issuer)
-	})
+	dropped := reasoning.DropOpaqueReasoning(request, provenance, issuer, dispatch.targetFormat)
 	if dropped == 0 {
 		return false
 	}

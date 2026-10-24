@@ -72,7 +72,7 @@ func TestPolicyDecideRequestCarriesTheClientBytes(t *testing.T) {
 // capturedCorpusTransforms are the rewrites the corpus's bodies may see on
 // the way to the GLM "up" arm (conversation_continuity_test.go).
 var capturedCorpusTransforms = []string{
-	transformSteerTailText, transformDeveloperAsSystem, transformToolChangesToTools,
+	transformSteerTailText, transformDeveloperAsSystem, transformToolChangesToTools, transformDropUnrecordedThinking,
 }
 
 // clientModel is a capture's top-level model; a nested "model" key never

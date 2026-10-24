@@ -92,7 +92,9 @@ func TestClaudeSignedHistorySurvivesBothProtocolDirections(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			prepareReasoning(&request, tc.source, Deployment{Kind: "cloud", ID: "claude", RegistryModel: "claude-opus-4-6", Protocol: tc.target}, &branchState{})
+			deployment := Deployment{Kind: "cloud", ID: "claude", RegistryModel: "claude-opus-4-6", Protocol: tc.target}
+			state := &branchState{provenance: reasoning.WithReasoningProvenance(nil, opaqueDeploymentIssuer(deployment), []string{"sig-claude"})}
+			prepareReasoning(&request, tc.source, deployment, state)
 			request.Generation++
 			encoded, err := engine.EncodeRequest(tc.target, request, envelope)
 			if err != nil {
