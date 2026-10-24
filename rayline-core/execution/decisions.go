@@ -137,6 +137,17 @@ func NewHTTPDecisions(config Config) (*HTTPDecisions, error) {
 	for _, deployment := range config.Deployments {
 		provider.deployments[deployment.ID] = deployment
 	}
+	if mode == DecisionsExecutionContextV2 {
+		executable := 0
+		for _, action := range config.Actions {
+			if action.DeploymentID != "" {
+				executable++
+			}
+		}
+		if executable > maxTargetsV2 {
+			return nil, fmt.Errorf("execution_context_v2 carries at most %d executable bindings", maxTargetsV2)
+		}
+	}
 	return provider, nil
 }
 
@@ -447,7 +458,7 @@ func (provider *HTTPDecisions) Decide(ctx context.Context, input DecisionInput) 
 			return Decision{}, err
 		}
 		slog.Info("execution context applied", "route_id", result.RouteID, "version", executionContextV2, "event_kind", externalV2.Event.kindName(), "event_basis", externalV2.Event.Basis,
-			"attempt", externalV2.Turn.Attempt, "reconsult", stringOrNil(externalV2.Turn.Reconsult), "decided_by_model", receipt.DecidedBy.Model, "decided_by_thinking", receipt.DecidedBy.Thinking,
+			"attempt", externalV2.Turn.Attempt, "reconsult", stringOrNil(externalV2.Turn.Reconsult), "decided_by", receipt.decidedBy(),
 			"held_from", stringOrNil(receipt.HeldFrom), "excluded", receipt.Excluded, "receipt_basis", receipt.Basis, "capacity_basis", stringOrNil(receipt.CapacityBasis))
 	}
 

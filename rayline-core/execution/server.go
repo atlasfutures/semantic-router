@@ -384,7 +384,7 @@ func (server *Server) execute(writer http.ResponseWriter, incoming *http.Request
 	writer.Header().Set("X-Rayline-Executed-Control-Id", prepared.receipt.ControlID)
 	writer.Header().Set("X-Rayline-Executed-Worker", decision.Worker)
 	if selection.Receipt != nil {
-		writer.Header().Set("X-Rayline-Decided-By", selection.Receipt.DecidedBy.Model+"/"+selection.Receipt.DecidedBy.Thinking)
+		writer.Header().Set("X-Rayline-Decided-By", selection.Receipt.decidedBy())
 	}
 	if event.Kind != nil {
 		writer.Header().Set("X-Rayline-Event", *event.Kind+"/"+event.Basis)
@@ -438,7 +438,7 @@ func (server *Server) execute(writer http.ResponseWriter, incoming *http.Request
 	pending.completed = true
 	var decidedBy any
 	if selection.Receipt != nil {
-		decidedBy = selection.Receipt.DecidedBy
+		decidedBy = selection.Receipt.decidedBy()
 	}
 	slog.Info("execution completed", "route_id", decision.RouteID, "selected_model", selection.Model, "selected_action_id", selection.ActionID, "selected_control_id", selection.ControlID, "executed_model", decision.Model, "executed_action_id", decision.ActionID, "executed_control_id", prepared.receipt.ControlID, "worker", decision.Worker, "deployment", selected.deployment.ID, "deployment_kind", selected.deployment.Kind, "test_alias_reason", aliasReason, "context_epoch", call.ContextEpoch, "event_kind", event.kindName(), "event_basis", event.Basis, "decided_by", decidedBy, "consults", pending.consults+1, "cache", completionCacheEvidence(state, selected.deployment.ID, measuredEvidence, currentPrefix))
 }

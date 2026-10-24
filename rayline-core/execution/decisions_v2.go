@@ -15,9 +15,14 @@ const DecisionsExecutionContextV2 = "execution_context_v2"
 
 const executionContextV2 = "arc-execution-context.v2"
 
+// maxTargetsV2 is the contract's targets[] bound (pathfinder #5904 schema).
+const maxTargetsV2 = 16
+
+// policyPresets are the presets the policy service serves (pathfinder #5904,
+// the authoritative v2 names). arc-policy.prefer-local.v1 is in the spec but
+// not yet implemented by the service, which refuses it; it is not admitted here.
 var policyPresets = map[string]bool{
 	"arc-policy.hybrid-default.v1":  true,
-	"arc-policy.prefer-local.v1":    true,
 	"arc-policy.package-default.v1": true,
 }
 
@@ -28,9 +33,6 @@ type policyOverrides struct {
 		Model    []string `json:"model,omitempty"`
 		Thinking []string `json:"thinking,omitempty"`
 	} `json:"schedule,omitempty"`
-	Selection *struct {
-		MinPPass *float64 `json:"min_p_pass"`
-	} `json:"selection,omitempty"`
 }
 
 type routingPolicy struct {
@@ -39,14 +41,14 @@ type routingPolicy struct {
 }
 
 // validateRoutingPolicy admits only the published shape: a known preset and
-// overrides that set the schedule and the prefer_local threshold. Package
+// an optional schedule override. Package
 // admission of a class is the service's refusal, not a local guess.
 func validateRoutingPolicy(raw json.RawMessage) (routingPolicy, error) {
 	var policy routingPolicy
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&policy); err != nil {
-		return policy, fmt.Errorf("routing.policy must contain only preset and overrides.{schedule,selection}: %v", err)
+		return policy, fmt.Errorf("routing.policy must contain only preset and overrides.schedule: %v", err)
 	}
 	if !policyPresets[policy.Preset] {
 		return policy, fmt.Errorf("routing.policy.preset %q is not a published preset", policy.Preset)
@@ -67,14 +69,6 @@ func validateRoutingPolicy(raw json.RawMessage) (routingPolicy, error) {
 					}
 					seen[class] = true
 				}
-			}
-		}
-		if selection := overrides.Selection; selection != nil {
-			if selection.MinPPass == nil || *selection.MinPPass <= 0 || *selection.MinPPass >= 1 {
-				return policy, fmt.Errorf("routing.policy selection.min_p_pass must be in (0, 1)")
-			}
-			if policy.Preset != "arc-policy.prefer-local.v1" {
-				return policy, fmt.Errorf("routing.policy selection.min_p_pass applies only to arc-policy.prefer-local.v1")
 			}
 		}
 	}
@@ -200,11 +194,13 @@ func (provider *HTTPDecisions) projectV2(input DecisionInput) contextV2 {
 
 // DecisionReceipt is the service's per-result explanation (v2 only).
 type DecisionReceipt struct {
-	ActionID  string `json:"action_id"`
-	ControlID string `json:"control_id"`
+	ActionID  string  `json:"action_id"`
+	ControlID string  `json:"control_id"`
+	Policy    *string `json:"policy"`
 	DecidedBy struct {
-		Model    string `json:"model"`
-		Thinking string `json:"thinking"`
+		// Model is null for a one-stage package.
+		Model    *string `json:"model"`
+		Thinking string  `json:"thinking"`
 	} `json:"decided_by"`
 	Eligible      map[string]*string `json:"eligible"`
 	HeldFrom      *string            `json:"held_from"`
@@ -219,9 +215,10 @@ type excludedTarget struct {
 }
 
 type executionEchoV2 struct {
-	Status  string `json:"status"`
-	Version string `json:"version"`
-	Turn    turnV2 `json:"turn"`
+	Status  string            `json:"status"`
+	Version string            `json:"version"`
+	Turn    turnV2            `json:"turn"`
+	Pinned  map[string]string `json:"pinned"`
 }
 
 type policyEchoV2 struct {
@@ -251,17 +248,30 @@ func validateV2(raw []byte, selected publicDecision, identity *decisionIdentity,
 	if execution == nil || execution.Status != "applied" || execution.Version != executionContextV2 || !sameTurn(execution.Turn, sent.Turn) {
 		return nil, fmt.Errorf("Decisions did not apply this v2 execution context")
 	}
+	if execution.Pinned != nil {
+		pins := []string{"package_sha256", "thinking_controls_sha256"}
+		if sent.Expect.OfferSHA256 != nil {
+			pins = append(pins, "offer_sha256")
+		}
+		for _, name := range pins {
+			if execution.Pinned[name] != "matched" {
+				return nil, fmt.Errorf("Decisions did not confirm pinned %s", name)
+			}
+		}
+	}
 	if policy := echo.Routing.Policy; policy == nil || policy.Status != "applied" || policy.Preset != preset {
 		return nil, fmt.Errorf("Decisions did not apply the requested routing.policy preset")
 	}
 	receipt := selected.Receipt
-	if receipt == nil || receipt.ActionID != identity.ActionID || receipt.ControlID != identity.ControlID {
-		return nil, fmt.Errorf("Decisions result receipt does not name the selected action")
+	if receipt == nil || receipt.ActionID != identity.ActionID || receipt.ControlID != identity.ControlID || (receipt.Policy != nil && *receipt.Policy != preset) {
+		return nil, fmt.Errorf("Decisions result receipt does not name the selected action and applied policy")
 	}
-	switch receipt.DecidedBy.Model {
-	case "schedule", "held", "capacity_handoff":
-	default:
-		return nil, fmt.Errorf("Decisions receipt has unknown decided_by.model %q", receipt.DecidedBy.Model)
+	if model := receipt.DecidedBy.Model; model != nil {
+		switch *model {
+		case "schedule", "held", "capacity_handoff", "held_unavailable":
+		default:
+			return nil, fmt.Errorf("Decisions receipt has unknown decided_by.model %q", *model)
+		}
 	}
 	switch receipt.DecidedBy.Thinking {
 	case "schedule", "held":
@@ -292,4 +302,13 @@ func stringOrNil(value *string) any {
 		return nil
 	}
 	return *value
+}
+
+// decidedBy renders the receipt's per-dimension decision for headers and logs.
+func (receipt *DecisionReceipt) decidedBy() string {
+	model := "one_stage"
+	if receipt.DecidedBy.Model != nil {
+		model = *receipt.DecidedBy.Model
+	}
+	return model + "/" + receipt.DecidedBy.Thinking
 }
