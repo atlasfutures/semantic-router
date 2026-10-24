@@ -218,16 +218,27 @@ func remapRetainedAttribution(ledger []attributedTurn, previous, current, roles 
 	if compaction == nil || compaction.RetainedFrom == nil || len(previous) == 0 {
 		return nil
 	}
-	moved := make(map[int]int)
-	cursor := 0
-	for index := *compaction.RetainedFrom; index < len(current); index++ {
-		for search := cursor; search < len(previous); search++ {
-			if previous[search] == current[index] {
-				moved[search] = index
-				cursor = search + 1
+	// The retained messages are a contiguous run that ends where the previous
+	// transcript ended. Align the longest such run, so content that also
+	// appeared earlier in the transcript is never matched to the earlier copy.
+	start := *compaction.RetainedFrom
+	run := 0
+	for length := min(len(previous), len(current)-start); length > 0; length-- {
+		matched := true
+		for offset := 0; offset < length; offset++ {
+			if previous[len(previous)-length+offset] != current[start+offset] {
+				matched = false
 				break
 			}
 		}
+		if matched {
+			run = length
+			break
+		}
+	}
+	moved := make(map[int]int, run+1)
+	for offset := 0; offset < run; offset++ {
+		moved[len(previous)-run+offset] = start + offset
 	}
 	if last, ok := moved[len(previous)-1]; ok && last+1 < len(roles) && roles[last+1] == "assistant" {
 		moved[len(previous)] = last + 1
