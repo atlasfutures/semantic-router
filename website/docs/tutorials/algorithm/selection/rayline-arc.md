@@ -403,7 +403,9 @@ Claude or GPT, so its wire format does not establish compatibility. Successful
 turns record both thinking signatures and `redacted_thinking` data as digests;
 only blocks recorded for the selected worker and its fixed provider are replayed.
 A mixed history can therefore retain separate compatible assistant messages.
-Unknown, expired, pre-upgrade or evicted records cannot authorize replay. If one
+Unknown, expired, pre-upgrade or evicted records cannot authorize replay. Once
+an unrecorded private block is removed, later private groups are omitted too:
+they may be bound to the changed prefix, even when their issuer matches. If one
 private block is incompatible, the message's entire thinking group is removed,
 with its visible text, tool calls and tool results preserved. The source history
 is not mutated. Drops emit `rayline_arc_opaque_reasoning_dropped` without content.

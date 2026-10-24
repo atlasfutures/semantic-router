@@ -3,6 +3,7 @@ package extproc
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -192,11 +193,15 @@ func TestMixedMessagesReasoningReachesOnlyItsRecordedIssuer(t *testing.T) {
   {"role":"assistant","content":[{"type":"thinking","thinking":"","signature":"unknown-signed"},{"type":"redacted_thinking","data":"unknown-opaque"},{"type":"text","text":"Unknown visible answer"},{"type":"tool_use","id":"tool_1","name":"read","input":{}}]},
   {"role":"user","content":[{"type":"tool_result","tool_use_id":"tool_1","content":"tool output"}]}
  ]}`
-	for _, tc := range []struct{ target, keep, drop string }{
-		{"claude", "claude", "gpt"}, {"claude-off", "gpt", "claude"},
+	for _, tc := range []struct {
+		target, keep, drop string
+		unknownPrefix      bool
+	}{
+		{"claude", "claude", "gpt", false}, {"claude-off", "gpt", "claude", false},
+		{"claude", "claude", "gpt", true}, {"claude-off", "gpt", "claude", true},
 	} {
-		t.Run(tc.target, func(t *testing.T) {
-			episode := "mixed-reasoning-" + tc.target
+		t.Run(fmt.Sprintf("%s/unknown-prefix=%v", tc.target, tc.unknownPrefix), func(t *testing.T) {
+			episode := fmt.Sprintf("mixed-reasoning-%s-%v", tc.target, tc.unknownPrefix)
 			for _, origin := range []struct{ worker, prefix string }{{"claude", "claude"}, {"claude-off", "gpt"}} {
 				for _, suffix := range []string{"signed", "opaque", "signed-alone"} {
 					seedOpaqueReasoningIssuer(t, router, episode, origin.worker, origin.prefix+"-"+suffix)
@@ -204,11 +209,15 @@ func TestMixedMessagesReasoningReachesOnlyItsRecordedIssuer(t *testing.T) {
 			}
 			action := relaxedPolicyActions()[tc.target].ActionID
 			fake.chooseWith(func(raylinearc.PolicyDecisionRequest) string { return action })
-			body := dispatchPolicyClientRequest(t, router, episode, "/v1/messages", history)
+			request := history
+			if tc.unknownPrefix {
+				request = strings.Replace(request, `{"role":"user","content":"fix the test"},`, `{"role":"user","content":"fix the test"},{"role":"assistant","content":[{"type":"thinking","thinking":"","signature":"unknown-prefix"},{"type":"text","text":"older answer"}]},`, 1)
+			}
+			body := dispatchPolicyClientRequest(t, router, episode, "/v1/messages", request)
 			wire := string(body["messages"])
 			for _, suffix := range []string{"signed", "opaque", "signed-alone"} {
-				if !strings.Contains(wire, tc.keep+"-"+suffix) {
-					t.Fatalf("compatible reasoning was lost: %s", wire)
+				if kept := strings.Contains(wire, tc.keep+"-"+suffix); kept == tc.unknownPrefix {
+					t.Fatalf("compatible block kept=%v after unknown prefix=%v: %s", kept, tc.unknownPrefix, wire)
 				}
 				if strings.Contains(wire, tc.drop+"-"+suffix) {
 					t.Fatalf("foreign encrypted reasoning reached target: %s", wire)
