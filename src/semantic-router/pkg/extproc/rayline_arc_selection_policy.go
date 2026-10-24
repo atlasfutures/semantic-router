@@ -257,5 +257,8 @@ func observeRaylineARCSelection(
 	if trace.TokenCountsUnknown {
 		fields["serialized_tokens"], fields["full_history_tokens"] = nil, nil
 	}
+	if trace.PolicyActionID != "" {
+		fields["retained_prefix_tokens"], fields["appended_tokens"] = policyTokenSplit(trace)
+	}
 	logging.ComponentEvent("extproc", "rayline_arc_selection", fields)
 }
