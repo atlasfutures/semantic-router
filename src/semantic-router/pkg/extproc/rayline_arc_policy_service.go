@@ -310,13 +310,27 @@ func createRaylineARCPolicySelector(
 	if keyErr != nil || secretErr != nil {
 		return unavailable("policy_service_auth")
 	}
-	client := raylinearc.NewPolicyServiceClient(raylinearc.PolicyServiceConfig{
-		BaseURL:        policy.BaseURL,
-		ModalKey:       modalKey,
-		ModalSecret:    modalSecret,
-		TotalTimeout:   time.Duration(policy.TotalTimeoutSeconds) * time.Second,
-		ConnectTimeout: time.Duration(policy.ConnectTimeoutSeconds) * time.Second,
-	})
+	clientFor := func(baseURL string) *raylinearc.PolicyServiceClient {
+		return raylinearc.NewPolicyServiceClient(raylinearc.PolicyServiceConfig{
+			BaseURL:        baseURL,
+			ModalKey:       modalKey,
+			ModalSecret:    modalSecret,
+			TotalTimeout:   time.Duration(policy.TotalTimeoutSeconds) * time.Second,
+			ConnectTimeout: time.Duration(policy.ConnectTimeoutSeconds) * time.Second,
+		})
+	}
+	// A cell with replicas routes each episode to its owner (a pool); one
+	// without calls its base_url exactly as before.
+	var client *raylinearc.PolicyServiceClient
+	var pool *raylinearc.PolicyServicePool
+	if len(policy.Replicas) == 0 {
+		client = clientFor(policy.BaseURL)
+	} else {
+		var poolErr error
+		if pool, poolErr = newRaylineARCPolicyServicePool(policy, clientFor); poolErr != nil {
+			return unavailable("policy_service_replicas")
+		}
+	}
 	episodeStore, closeStore, err := createRaylineARCEpisodeStore(arcConfig.Episode)
 	if err != nil {
 		return unavailable("episode_store")
@@ -333,16 +347,17 @@ func createRaylineARCPolicySelector(
 	selector.recipe = recipe
 	selector.readinessWait = arcConfig.ReadinessWait()
 	armed := &raylineARCArmedComponents{
-		scorer:    newPolicyServiceScorer(cfg, decision),
-		admission: raylinearc.NewAdmissionGate(policy.MaxInflightCalls),
-		policy:    client,
-		prices:    newRoutingPriceCache(policy.RoutingPrices),
+		scorer:     newPolicyServiceScorer(cfg, decision),
+		admission:  raylinearc.NewAdmissionGate(policy.MaxInflightCalls),
+		policy:     client,
+		policyPool: pool,
+		prices:     newRoutingPriceCache(policy.RoutingPrices),
 	}
 	if armed.prices != nil {
 		go armed.prices.Run(probeContext)
 	}
 	scorer := armed.scorer.(*policyServiceScorer)
-	probe := func(ctx context.Context) error {
+	check := func(ctx context.Context, client *raylinearc.PolicyServiceClient) error {
 		if err := requireRaylineARCPolicyServing(ctx, client, policy); err != nil {
 			return err
 		}
@@ -350,6 +365,14 @@ func createRaylineARCPolicySelector(
 			return probeRelaxedPolicyDecide(ctx, client, scorer)
 		}
 		return nil
+	}
+	probe := func(ctx context.Context) error {
+		if pool != nil {
+			// Ready once one active replica serves the package; a replica
+			// that does not cools down and takes no episode meanwhile.
+			return pool.Probe(ctx, check)
+		}
+		return check(ctx, client)
 	}
 	raylineARCArmInBackground(
 		probeContext,
@@ -663,8 +686,11 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 			}
 		}
 	}
+	// Every call of this turn, busy retries and re-asks included, goes to
+	// the one replica the binding settles on.
+	decider, replicaBinding := armed.policyDeciderFor(arcContext.EpisodeIDHash, state)
 	started := selector.now()
-	response, err := decidePolicyThroughBusy(ctx, armed.policy, request, scorer.busyWait, admit, withCacheContext)
+	response, err := decidePolicyThroughBusy(ctx, decider, request, scorer.busyWait, admit, withCacheContext)
 	// A strict cell's relaxed side call that the service refused as
 	// unsupported is decided strict instead, as it was before side calls
 	// went relaxed.
@@ -673,7 +699,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		refused.Class == raylinearc.PolicyRelaxedUnsupportedClass {
 		scorer.sideCallsRelaxedUnsupported(selector.now(), "refused")
 		request.EpisodeMode = scorer.episodeMode
-		response, err = decidePolicyThroughBusy(ctx, armed.policy, request, scorer.busyWait, admit, withCacheContext)
+		response, err = decidePolicyThroughBusy(ctx, decider, request, scorer.busyWait, admit, withCacheContext)
 	}
 	var cold *raylinearc.PolicyServiceError
 	switch {
@@ -692,7 +718,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		request.Selection.AttestedHeldActionID = nil
 		narrow(derived.offer)
 		logRaylineARCDerivedHold(arcContext, derived, "re-ask")
-		response, err = decidePolicyThroughBusy(ctx, armed.policy, request, scorer.busyWait, admit, withCacheContext)
+		response, err = decidePolicyThroughBusy(ctx, decider, request, scorer.busyWait, admit, withCacheContext)
 	case derived.model == "" && held < 0 && errors.As(err, &cold) && cold.Class == raylinearc.PolicyStageOneHeldUnknownClass:
 		// A refusal the first ask did not anticipate: the recorded model is
 		// excluded this turn, or the package's manifest does not say it is
@@ -714,7 +740,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 			}
 			logRaylineARCDerivedHold(arcContext, derived, "re-ask")
 			narrow(derived.offer)
-			response, err = decidePolicyThroughBusy(ctx, armed.policy, request, scorer.busyWait, admit, withCacheContext)
+			response, err = decidePolicyThroughBusy(ctx, decider, request, scorer.busyWait, admit, withCacheContext)
 		}
 	}
 	// Any refusal to decide that stands -- a cold turn no record holds, or the
@@ -745,6 +771,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 					retained, available, workerIDs, latency,
 				); held != nil {
 					held.RaylineARC.OfferKind = offerKind
+					recordPolicyReplica(held.RaylineARC, replicaBinding)
 					held.RaylineARC.SettlementPrices = armed.prices
 					held.RaylineARC.EndpointFeed = arcContext.EndpointFeed
 					held.RaylineARC.MaskedArms = policyMaskedArms(scorer, workerIDs, excluded, fallback, turn, offeredRoutes)
@@ -852,6 +879,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	result := selector.selectionResult(armed, selCtx, arcContext, state, encoded, decision, encodeLatency)
 	result.RaylineARC.PolicyLatency = latency
 	result.RaylineARC.EncoderLatencyUnknown = response.TimingMillis.Encode == nil
+	recordPolicyReplica(result.RaylineARC, replicaBinding)
 	result.Reasoning = "policy-service ARC decision (" + response.Decision.Reason + ")"
 	result.RaylineARC.PolicyActionID = response.Decision.SelectedActionID
 	result.RaylineARC.PolicyArmID = response.Decision.SelectedArmID
@@ -1065,7 +1093,7 @@ func (err *policyAdmissionError) Error() string { return err.err.Error() }
 // slot and returns it before any backoff.
 func decidePolicyThroughBusy(
 	ctx context.Context,
-	client *raylinearc.PolicyServiceClient,
+	client policyDecider,
 	request raylinearc.PolicyDecisionRequest,
 	wait time.Duration,
 	admit func() (func(), error),

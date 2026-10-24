@@ -34,10 +34,24 @@ import (
 // (website/docs/proposals/rayline-arc-policy-service.md). The mounted v3
 // artifact and the in-process encoder are not used in this mode.
 type RaylineARCPolicyServiceConfig struct {
-	BaseURL             string `yaml:"base_url"`
-	ModalKeyEnv         string `yaml:"modal_key_env,omitempty"`
-	ModalSecretEnv      string `yaml:"modal_secret_env,omitempty"`
-	TotalTimeoutSeconds int    `yaml:"total_timeout_seconds"`
+	// BaseURL is the one policy service the cell decides with. A cell sets
+	// it or Replicas, never both.
+	BaseURL string `yaml:"base_url"`
+	// Replicas are policy-service deployments of the same package, each with
+	// a stable id. Each episode sticks to one replica: the owner its episode
+	// state persisted, else the rendezvous choice among the active ones. A
+	// replica keeps the episode's retained encoder session and strict
+	// episode memory in its own process, so a turn that lands elsewhere is
+	// correct but rebuilds. A draining replica keeps its episodes and takes
+	// no new ones. Absent (the default), the cell calls BaseURL as before.
+	Replicas []RaylineARCEncoderReplicaConfig `yaml:"replicas,omitempty"`
+	// Failover moves an episode off its owner, once per turn, only after one
+	// of the configured statuses (404, 429 or 503: answered before the
+	// service touches the episode). Required with Replicas, refused without.
+	Failover            RaylineARCEncoderFailoverConfig `yaml:"failover,omitempty"`
+	ModalKeyEnv         string                          `yaml:"modal_key_env,omitempty"`
+	ModalSecretEnv      string                          `yaml:"modal_secret_env,omitempty"`
+	TotalTimeoutSeconds int                             `yaml:"total_timeout_seconds"`
 	// ConnectTimeoutSeconds bounds the dial and TLS handshake to the
 	// service; zero selects 5 s, the encoder's.
 	ConnectTimeoutSeconds int `yaml:"connect_timeout_seconds,omitempty"`
@@ -351,7 +365,7 @@ const (
 var raylineARCSHA256Pattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
 
 func validateRaylineARCPolicyServiceConfig(cfg *RaylineARCPolicyServiceConfig) error {
-	if err := validateRaylineARCBaseURL(cfg.BaseURL); err != nil {
+	if err := validateRaylineARCPolicyServiceEndpoints(cfg); err != nil {
 		return err
 	}
 	if err := validateRaylineARCModalAuth(RaylineARCEncoderConfig{
