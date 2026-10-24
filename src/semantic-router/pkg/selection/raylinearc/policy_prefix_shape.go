@@ -158,7 +158,8 @@ func HasClaudeCodeBillingHeader(system json.RawMessage) bool {
 }
 
 // canonicalSystem is the system prompt without Claude Code's billing header
-// block, whose build suffix changes between requests of one conversation,
+// line, whose build suffix changes between requests of one conversation (a
+// block left empty without it is dropped),
 // and without cache_control (the service compares it the same way).
 func canonicalSystem(system json.RawMessage) []byte {
 	var blocks []map[string]any
@@ -167,10 +168,31 @@ func canonicalSystem(system json.RawMessage) []byte {
 	}
 	kept := make([]any, 0, len(blocks))
 	for _, block := range blocks {
-		if text, _ := block["text"].(string); strings.HasPrefix(strings.TrimSpace(text), billingHeaderPrefix) {
+		text, isText := block["text"].(string)
+		if !isText {
+			kept = append(kept, block)
 			continue
 		}
-		kept = append(kept, block)
+		// Only the header line goes; text after it in the same block stays.
+		lines := strings.Split(text, "\n")
+		rest := lines[:0]
+		for _, line := range lines {
+			if !strings.HasPrefix(strings.TrimSpace(line), billingHeaderPrefix) {
+				rest = append(rest, line)
+			}
+		}
+		if len(rest) == len(lines) {
+			kept = append(kept, block)
+			continue
+		}
+		if stripped := strings.Join(rest, "\n"); strings.TrimSpace(stripped) != "" {
+			copied := make(map[string]any, len(block))
+			for key, value := range block {
+				copied[key] = value
+			}
+			copied["text"] = stripped
+			kept = append(kept, copied)
+		}
 	}
 	raw, err := json.Marshal(kept)
 	if err != nil {
