@@ -572,9 +572,11 @@ session. It is exclusive with `replicas` and needs `modal_key_env` and
   default; Modal queues a start for capacity for minutes). A start that lapses
   or is refused fails the turn as `policy_service_session_start` (public
   class `unavailable`) and commits nothing.
-- **Lost session.** A 502 on a token (its container is gone), a 404 `Unknown
-  or expired session` or a 401 never reached a container holding the episode,
-  so the turn starts a new session and is retried there once; it rebuilds.
+- **Lost session.** Modal's 502 with an empty body (the token's container is
+  gone) and its 404 `Unknown or expired session` never reached a container
+  holding the episode, so the turn starts a new session and is retried there
+  once; it rebuilds. Only these verified signatures move a turn; any other
+  502, 404 or 401 fails it closed.
   A turn moves at most once. A timeout or transport failure leaves the session
   as it is and fails the turn closed. The service's own refusals (a JSON
   error code, such as a 404 `package_not_loaded`) keep their meaning.
