@@ -231,6 +231,26 @@ func TestPolicyPoolProbe(t *testing.T) {
 			t.Fatalf("episode placed on the replica that failed its probe")
 		}
 	}
+	// The cooldown ending does not return it: only a passing re-check does.
+	pool.now = func() time.Time { return time.Now().Add(time.Hour) }
+	if routed, _ := decideOnce(t, pool, episodeHash("1"), EncoderAffinity{Owner: "a-replica", Visited: []string{"a-replica"}}); routed.ReplicaID != "b-replica" {
+		t.Fatalf("unready owner used after its cooldown: %+v", routed)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		pool.Reprobe(ctx, func(context.Context, *PolicyServiceClient) error { return nil }, time.Millisecond)
+		close(done)
+	}()
+	deadline := time.Now().Add(2 * time.Second)
+	for !pool.isReady("a-replica") && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	cancel()
+	<-done
+	if routed, _ := decideOnce(t, pool, episodeHash("1"), EncoderAffinity{Owner: "a-replica", Visited: []string{"a-replica"}}); routed.ReplicaID != "a-replica" {
+		t.Fatalf("re-checked owner not used: %+v", routed)
+	}
 	all := pool.Probe(context.Background(), func(context.Context, *PolicyServiceClient) error {
 		return &PolicyServiceError{Class: "transport"}
 	})

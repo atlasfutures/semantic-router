@@ -280,13 +280,23 @@ def _validate_policy_service(name, policy) -> list[ValidationError]:
     """Mirror the Go loader's connection checks for the policy-service mode."""
     prefix = f"decisions.{name}.algorithm.rayline_arc.policy_service"
     errors: list[ValidationError] = []
-    if not _valid_service_url(policy.base_url):
-        errors.append(
-            ValidationError(
-                "base_url must be an absolute HTTP(S) URL without credentials, a query, or a fragment",
-                field=f"{prefix}.base_url",
+    # One service (base_url) or a replica pool; the schema allows exactly one.
+    urls = (
+        [(f"{prefix}.base_url", policy.base_url)]
+        if not policy.replicas
+        else [
+            (f"{prefix}.replicas[{index}].base_url", replica.base_url)
+            for index, replica in enumerate(policy.replicas)
+        ]
+    )
+    for field, url in urls:
+        if not _valid_service_url(url or ""):
+            errors.append(
+                ValidationError(
+                    "base_url must be an absolute HTTP(S) URL without credentials, a query, or a fragment",
+                    field=field,
+                )
             )
-        )
     errors.extend(_routing_prices_errors(prefix, policy.routing_prices))
     errors.extend(
         _modal_pair_errors(prefix, policy.modal_key_env, policy.modal_secret_env)

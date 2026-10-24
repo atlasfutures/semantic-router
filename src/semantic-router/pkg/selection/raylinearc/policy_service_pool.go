@@ -70,7 +70,10 @@ type PolicyServicePool struct {
 	config         PolicyServicePoolConfig
 	unavailableMu  sync.Mutex
 	unavailableTil map[string]time.Time
-	now            func() time.Time
+	// unready holds the replicas whose last readiness check failed. They
+	// take no episode, owned or new, until a check passes (Reprobe).
+	unready map[string]struct{}
+	now     func() time.Time
 }
 
 // NewPolicyServicePool validates the replicas and the failover contract.
@@ -89,6 +92,7 @@ func NewPolicyServicePool(replicas []PolicyServiceReplica, config PolicyServiceP
 		byID:           byID,
 		config:         config,
 		unavailableTil: make(map[string]time.Time),
+		unready:        make(map[string]struct{}),
 		now:            time.Now,
 	}, nil
 }
@@ -151,12 +155,10 @@ func validatePolicyServicePool(replicas []PolicyServiceReplica, config PolicySer
 	return nil
 }
 
-// Probe runs check against every replica. A replica that fails it cools down,
-// so no episode is placed on it until the cooldown ends. The pool is ready
-// when at least one active replica passes; otherwise Probe returns the first
-// failure. Readiness runs until the cell first arms; after that a replica
-// that failed rejoins when its cooldown ends, and the decide-time failover
-// covers it if it is still not serving.
+// Probe runs check against every replica. A replica that fails it is
+// unready: it takes no episode, owned or new, until a later check passes
+// (Reprobe). The pool is ready when at least one active replica passes;
+// otherwise Probe returns the first failure.
 func (pool *PolicyServicePool) Probe(
 	ctx context.Context,
 	check func(context.Context, *PolicyServiceClient) error,
@@ -166,13 +168,13 @@ func (pool *PolicyServicePool) Probe(
 	for index := range pool.replicas {
 		replica := &pool.replicas[index]
 		if err := check(ctx, replica.Client); err != nil {
-			pool.markUnavailable(replica.ID)
+			pool.setReady(replica.ID, false)
 			if first == nil {
 				first = err
 			}
 			continue
 		}
-		pool.clearUnavailable(replica.ID)
+		pool.setReady(replica.ID, true)
 		if replica.State == EncoderReplicaActive {
 			ready = true
 		}
@@ -184,6 +186,50 @@ func (pool *PolicyServicePool) Probe(
 		first = &PolicyServiceError{Class: "replica_set_unavailable"}
 	}
 	return first
+}
+
+// Reprobe checks the unready replicas every interval until ctx ends, and
+// returns each to service once its check passes.
+func (pool *PolicyServicePool) Reprobe(
+	ctx context.Context,
+	check func(context.Context, *PolicyServiceClient) error,
+	interval time.Duration,
+) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		for index := range pool.replicas {
+			replica := &pool.replicas[index]
+			if pool.isReady(replica.ID) {
+				continue
+			}
+			if check(ctx, replica.Client) == nil {
+				pool.setReady(replica.ID, true)
+			}
+		}
+	}
+}
+
+func (pool *PolicyServicePool) setReady(replicaID string, ready bool) {
+	pool.unavailableMu.Lock()
+	defer pool.unavailableMu.Unlock()
+	if ready {
+		delete(pool.unready, replicaID)
+		return
+	}
+	pool.unready[replicaID] = struct{}{}
+}
+
+func (pool *PolicyServicePool) isReady(replicaID string) bool {
+	pool.unavailableMu.Lock()
+	defer pool.unavailableMu.Unlock()
+	_, unready := pool.unready[replicaID]
+	return !unready
 }
 
 // Bind starts one turn's routing for an episode. affinity is the owner and
@@ -289,8 +335,8 @@ func (pool *PolicyServicePool) primaryReplica(
 	excluded []string,
 ) (*PolicyServiceReplica, error) {
 	now := pool.now().UTC()
-	// A persisted owner that is no longer configured, or is cooling down, is
-	// placed afresh among the active replicas and the turn records a
+	// A persisted owner that is no longer configured, unready or cooling
+	// down is placed afresh among the active replicas and the turn records a
 	// failover. Removing a replica from the list is how a deployment scales
 	// down; its episodes rebuild elsewhere.
 	if owner != "" && !slices.Contains(excluded, owner) {
@@ -333,15 +379,12 @@ func (pool *PolicyServicePool) markUnavailable(replicaID string) {
 	pool.unavailableTil[replicaID] = pool.now().UTC().Add(pool.config.UnavailableCooldown)
 }
 
-func (pool *PolicyServicePool) clearUnavailable(replicaID string) {
-	pool.unavailableMu.Lock()
-	defer pool.unavailableMu.Unlock()
-	delete(pool.unavailableTil, replicaID)
-}
-
 func (pool *PolicyServicePool) unavailable(replicaID string, now time.Time) bool {
 	pool.unavailableMu.Lock()
 	defer pool.unavailableMu.Unlock()
+	if _, unready := pool.unready[replicaID]; unready {
+		return true
+	}
 	until, exists := pool.unavailableTil[replicaID]
 	if !exists {
 		return false

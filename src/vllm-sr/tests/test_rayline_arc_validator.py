@@ -762,6 +762,14 @@ def test_rayline_arc_policy_service_replicas_mirror_the_go_loader():
         {**raw, "base_url": None, "replicas": replicas, "failover": failover}
     )
     assert [replica.id for replica in pooled.replicas] == ["s1", "s2"]
+    decision = _policy_service_decision()
+    decision.algorithm.rayline_arc.policy_service = pooled
+    assert _validate_rayline_arc_decision(decision) == []
+    pooled.replicas[0].base_url = "ftp://s1.example"
+    assert any(
+        error.field.endswith("replicas[0].base_url")
+        for error in _validate_rayline_arc_decision(decision)
+    )
     # The reference shape: base_url with empty replicas and failover blocks.
     RaylineARCPolicyServiceConfig.model_validate({**raw, "replicas": [], "failover": {}})
     for changed in (
