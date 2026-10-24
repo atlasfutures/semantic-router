@@ -382,7 +382,7 @@ func policySessionFailureClass(status int, body []byte) string {
 	switch {
 	case status == http.StatusBadGateway && len(bytes.TrimSpace(body)) == 0:
 		return PolicySessionGoneClass
-	case status == http.StatusNotFound && strings.Contains(string(body), "Unknown or expired session"):
+	case status == http.StatusNotFound && string(bytes.TrimSpace(body)) == "Unknown or expired session":
 		return PolicySessionExpiredClass
 	default:
 		return ""
