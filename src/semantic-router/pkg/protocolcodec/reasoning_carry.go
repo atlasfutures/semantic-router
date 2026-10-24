@@ -184,12 +184,15 @@ func DropOpaqueReasoning(request *llmprotocol.Request, drop func(data string) bo
 // holdsOpaqueReasoning reports whether a message holds private reasoning
 // that drop selects, including signed thinking with no redacted block beside it.
 func holdsOpaqueReasoning(message llmprotocol.Message, drop func(data string) bool) bool {
+	selected := false
 	for _, content := range message.Content {
+		// Inspect every private block: an unknown block after a foreign one may
+		// invalidate the prefix of later signatures even though this group drops.
 		if data, ok := privateReasoningData(content); ok && drop(data) {
-			return true
+			selected = true
 		}
 	}
-	return false
+	return selected
 }
 
 // reasoningDetailsFormatAnthropic is the format OpenRouter tags Claude's
