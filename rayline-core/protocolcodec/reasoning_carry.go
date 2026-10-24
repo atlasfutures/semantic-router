@@ -101,8 +101,17 @@ func CarryReasoningTo(request *llmprotocol.Request, target llmprotocol.WireForma
 	return carry
 }
 
-// OpaqueReasoningData returns the data of a carried Anthropic redacted_thinking
-// block: reasoning only its issuing model can read.
+// privateReasoningData identifies reasoning for the issuer ledger, including
+// signed thinking. Keep OpaqueReasoningData specific to redacted blocks: wire
+// encoders use it to distinguish redacted ciphertext from signed text.
+func privateReasoningData(content llmprotocol.Content) (string, bool) {
+	if content.Kind == llmprotocol.ContentReasoning && content.Signature != "" {
+		return content.Signature, true
+	}
+	return OpaqueReasoningData(content)
+}
+
+// OpaqueReasoningData returns the data of a carried redacted_thinking block.
 func OpaqueReasoningData(content llmprotocol.Content) (string, bool) {
 	block := content.Unmodeled
 	if content.Kind != llmprotocol.ContentUnmodeled || block == nil ||
@@ -126,7 +135,7 @@ func ResponseOpaqueReasoning(response *llmprotocol.Response) []string {
 	var blocks []string
 	for _, item := range response.Output {
 		for _, content := range item.Content {
-			if data, ok := OpaqueReasoningData(content); ok {
+			if data, ok := privateReasoningData(content); ok {
 				blocks = append(blocks, data)
 			}
 		}
@@ -172,11 +181,11 @@ func DropOpaqueReasoning(request *llmprotocol.Request, drop func(data string) bo
 	return dropped
 }
 
-// holdsOpaqueReasoning reports whether a message holds an opaque reasoning
-// block that drop selects.
+// holdsOpaqueReasoning reports whether a message holds private reasoning
+// that drop selects, including signed thinking with no redacted block beside it.
 func holdsOpaqueReasoning(message llmprotocol.Message, drop func(data string) bool) bool {
 	for _, content := range message.Content {
-		if data, ok := OpaqueReasoningData(content); ok && drop(data) {
+		if data, ok := privateReasoningData(content); ok && drop(data) {
 			return true
 		}
 	}

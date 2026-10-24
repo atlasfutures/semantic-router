@@ -397,6 +397,19 @@ algorithm:
     hold_family_in_tool_loop: true
 ```
 
+Private reasoning on an ARC Messages dispatch is additionally checked against
+its episode's per-block issuer ledger. A Messages-compatible endpoint may serve
+Claude or GPT, so its wire format does not establish compatibility. Successful
+turns record both thinking signatures and `redacted_thinking` data as digests;
+only blocks recorded for the selected worker and its fixed provider are replayed.
+A mixed history can therefore retain separate compatible assistant messages.
+Unknown, expired, pre-upgrade or evicted records cannot authorize replay. If one
+private block is incompatible, the message's entire thinking group is removed,
+with its visible text, tool calls and tool results preserved. The source history
+is not mutated. Drops emit `rayline_arc_opaque_reasoning_dropped` without content.
+This provenance check does not decrypt blobs or certify provider-specific prefix
+bindings; native Responses encrypted items retain their separate issuer policy.
+
 A switch mid-loop changes the reasoning the loop was built on, by target:
 
 - to a Claude arm, over any wire format (Messages, or Chat and Responses

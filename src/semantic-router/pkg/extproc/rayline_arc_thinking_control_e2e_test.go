@@ -130,7 +130,9 @@ func v5Turn(t *testing.T, router *OpenAIRouter, fake *fakePolicyService, action,
 // renderer renders: a captured Claude Code body, steered "up" on GLM at the
 // default base, reaches the provider as the golden corpus's bytes.
 func TestV5DispatchMatchesTheGoldenCorpusOnMessages(t *testing.T) {
-	router, fake := v5Router(t, "anthropic")
+	router, fake := v5RouterWith(t, "anthropic", func(raw string) string {
+		return strings.Replace(raw, "    - name: glm\n", "    - name: glm\n      provider_preferences: {order: [fixture], only: [fixture], allow_fallbacks: false}\n", 1)
+	})
 	dir := filepath.Join(v5Golden, "messages", "claude_code_body_default")
 	client, err := os.ReadFile(filepath.Join(dir, "client-00.json"))
 	if err != nil {
@@ -142,6 +144,8 @@ func TestV5DispatchMatchesTheGoldenCorpusOnMessages(t *testing.T) {
 	}
 	// The capture names a placeholder model; the route is the auto alias.
 	client = bytes.Replace(client, []byte(`"model":"MODEL"`), []byte(`"model":"auto"`), 1)
+	seedMessagesHistoryIssuer(t, router, "v5-golden", "glm", client)
+	want = fixturePinnedBody(t, want)
 	got, ctx := v5Turn(t, router, fake, v5GLMUp, "v5-golden", string(client))
 	if !bytes.Equal(got, want) {
 		t.Fatalf("provider body differs from the golden:\n got %s\nwant %s", got, want)
