@@ -86,6 +86,10 @@ type raylineRoutesRouting struct {
 	// passed on as unknown, for the echo.
 	execution            *routesExecution
 	executionNotAdmitted []routesExecutionNotAdmitted
+	// policy is routing.policy and executionV2 a v2 routing.execution
+	// (pathfinder #5904); nil when not sent.
+	policy      *raylinearc.PolicyMember
+	executionV2 *routesExecutionV2
 	// responseFields is routing.response_fields, nil when not sent.
 	responseFields []string
 }
@@ -136,12 +140,32 @@ func readRaylineRoutesRouting(
 	if failure := routesReadMembers(routing, members, envelope["model"]); failure != nil {
 		return nil, nil, failure
 	}
-	if raw, ok := members["execution"]; ok {
-		execution, failure := readRoutesExecution(raw, envelope)
+	if raw, ok := members["policy"]; ok {
+		policy, failure := readRoutesPolicy(raw)
 		if failure != nil {
 			return nil, nil, failure
 		}
-		routing.execution = execution
+		routing.policy = policy
+	}
+	if raw, ok := members["execution"]; ok {
+		// The envelope's version selects its contract: v1 (#5874) or v2
+		// (#5904). An unknown or missing version is v1's refusal.
+		var versioned struct {
+			Version string `json:"version"`
+		}
+		if json.Unmarshal(raw, &versioned) == nil && versioned.Version == routesExecutionVersionV2 {
+			execution, failure := readRoutesExecutionV2(raw, envelope)
+			if failure != nil {
+				return nil, nil, failure
+			}
+			routing.executionV2 = execution
+		} else {
+			execution, failure := readRoutesExecution(raw, envelope)
+			if failure != nil {
+				return nil, nil, failure
+			}
+			routing.execution = execution
+		}
 	}
 	stripped, refusal := stripRoutingMember(body)
 	if refusal != nil {
@@ -182,7 +206,7 @@ func routesReadMembers(
 	var unknown []string
 	for name := range members {
 		switch name {
-		case "value_usd", "temperature", "prices", "exclusive", "response_fields", "execution":
+		case "value_usd", "temperature", "prices", "exclusive", "response_fields", "execution", "policy":
 		default:
 			unknown = append(unknown, name)
 		}
@@ -531,6 +555,10 @@ func raylineRoutesControls(
 	if routing.execution != nil {
 		controls.Execution, routing.executionNotAdmitted = routesExecutionControls(routing.execution)
 	}
+	if routing.executionV2 != nil {
+		controls.ExecutionV2, routing.executionNotAdmitted = routesExecutionV2Controls(routing.executionV2)
+	}
+	controls.Policy = routing.policy
 	return controls
 }
 
@@ -546,9 +574,15 @@ func raylineRoutesRoutingControlsKey(controls *selection.RaylineARCRouteControls
 		Store       string                               `json:"store"`
 		Exclusive   bool                                 `json:"exclusive"`
 		Predictions bool                                 `json:"predictions"`
-		// Two lookups with different execution contexts decide differently.
-		Execution *selection.RaylineARCRouteExecution `json:"execution"`
-	}{controls.Points, controls.Exploration, routesStoreVersion(controls), controls.Exclusive, controls.Predictions, controls.Execution})
+		// Two lookups with different execution contexts or policies decide
+		// differently.
+		Execution   *selection.RaylineARCRouteExecution   `json:"execution"`
+		ExecutionV2 *selection.RaylineARCRouteExecutionV2 `json:"execution_v2"`
+		Policy      *raylinearc.PolicyMember              `json:"policy"`
+	}{
+		controls.Points, controls.Exploration, routesStoreVersion(controls), controls.Exclusive, controls.Predictions,
+		controls.Execution, controls.ExecutionV2, controls.Policy,
+	})
 	if err != nil {
 		return "unencodable"
 	}
@@ -604,6 +638,9 @@ type raylineRoutesResult struct {
 	// Identity is what the result was decided under and executes as
 	// (pathfinder #5874), on a policy-service lookup.
 	Identity *raylineRoutesIdentity `json:"identity,omitempty"`
+	// Receipt is how the result was decided (hybrid routing v2), only when
+	// the request sent routing.policy or a v2 routing.execution.
+	Receipt *raylineRoutesReceipt `json:"receipt,omitempty"`
 }
 
 // raylineRoutesIdentity is a result's identity: the serving package, the
@@ -637,7 +674,7 @@ func raylineRoutesIdentityOf(
 ) *raylineRoutesIdentity {
 	// Only a lookup that sent a new member carries the new answer blocks:
 	// one that sent none is answered byte for byte as before.
-	if decision.Identity == nil || routing == nil || routing.execution == nil {
+	if decision.Identity == nil || routing == nil || routing.execution == nil && routing.executionV2 == nil {
 		return nil
 	}
 	known := func(value string) *string {
@@ -684,7 +721,10 @@ type raylineRoutesRoutingEcho struct {
 	Prices         *raylineRoutesPricesEcho    `json:"prices,omitempty"`
 	ResponseFields *raylineRoutesFieldsEcho    `json:"response_fields,omitempty"`
 	Execution      *raylineRoutesExecutionEcho `json:"execution,omitempty"`
-	UnappliedKeys  []string                    `json:"unapplied_keys"`
+	// ExecutionV2 is a v2 envelope's echo, written under the same key.
+	ExecutionV2   *raylineRoutesExecutionEchoV2 `json:"-"`
+	Policy        *raylineRoutesPolicyEcho      `json:"policy,omitempty"`
+	UnappliedKeys []string                      `json:"unapplied_keys"`
 }
 
 type raylineRoutesFieldsEcho struct {
@@ -706,6 +746,9 @@ func raylineRoutesAddResults(
 	for _, result := range decision.Results {
 		rendered, supported := raylineRoutesResultOf(result, routing)
 		rendered.Identity = raylineRoutesIdentityOf(decision, routing, result.PolicyActionID, result.ControlID, result.ArmID)
+		if routing.wantsReceipt() {
+			rendered.Receipt = raylineRoutesReceiptOf(decision.Receipt, result.PolicyActionID, result.ControlID)
+		}
 		allSupported = allSupported && supported
 		results[result.Name] = rendered
 	}
@@ -731,6 +774,9 @@ func raylineRoutesAddResults(
 		}
 	}
 	payload.Identity = raylineRoutesIdentityOf(decision, routing, decision.PolicyActionID, decision.ControlID, decision.ArmID)
+	if routing.wantsReceipt() {
+		payload.Receipt = raylineRoutesReceiptOf(decision.Receipt, decision.PolicyActionID, decision.ControlID)
+	}
 	swift, haveSwift := results["swift"]
 	sage, haveSage := results["sage"]
 	if !haveSwift || !haveSage {
@@ -774,6 +820,18 @@ func raylineRoutesAddResults(
 		echo.Execution = raylineRoutesExecutionEchoOf(routing, decision)
 		if echo.Execution.Status == "unsupported" {
 			echo.UnappliedKeys = append(echo.UnappliedKeys, "execution")
+		}
+	}
+	if routing.executionV2 != nil {
+		echo.ExecutionV2 = raylineRoutesExecutionEchoV2Of(routing.executionV2, decision)
+		if echo.ExecutionV2.Status == "unsupported" {
+			echo.UnappliedKeys = append(echo.UnappliedKeys, "execution")
+		}
+	}
+	if routing.policy != nil {
+		echo.Policy = raylineRoutesPolicyEchoOf(routing.policy, decision)
+		if echo.Policy.Status == "unsupported" {
+			echo.UnappliedKeys = append(echo.UnappliedKeys, "policy")
 		}
 	}
 	if routing.prices != nil {
@@ -929,4 +987,29 @@ func raylineRoutesUnknownPriceModels(routing *raylineRoutesRouting, offered map[
 		}
 	}
 	return unknown
+}
+
+// wantsReceipt reports whether the request sent a member whose answer
+// carries receipts: routing.policy or a v2 routing.execution.
+func (routing *raylineRoutesRouting) wantsReceipt() bool {
+	return routing != nil && (routing.policy != nil || routing.executionV2 != nil)
+}
+
+// MarshalJSON writes the echo, a v2 envelope's under the execution key.
+func (echo raylineRoutesRoutingEcho) MarshalJSON() ([]byte, error) {
+	type plain raylineRoutesRoutingEcho
+	encoded, err := json.Marshal(plain(echo))
+	if err != nil || echo.ExecutionV2 == nil {
+		return encoded, err
+	}
+	var members map[string]json.RawMessage
+	if err = json.Unmarshal(encoded, &members); err != nil {
+		return nil, err
+	}
+	v2, err := json.Marshal(echo.ExecutionV2)
+	if err != nil {
+		return nil, err
+	}
+	members["execution"] = v2
+	return json.Marshal(members)
 }

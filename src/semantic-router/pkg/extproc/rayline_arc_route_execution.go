@@ -37,6 +37,12 @@ const (
 	arcFailureExecutionIdentityOffer    = "execution_identity_mismatch_offer_sha256"
 	arcFailureExecutionHoldConflict     = "execution_hold_conflict"
 	arcFailureExecutionHoldUnavailable  = "execution_hold_unavailable"
+	// Hybrid routing v2 (pathfinder #5904).
+	arcFailureExecutionLastServedConflict = "execution_last_served_conflict"
+	arcFailureExecutionHoldInfeasible     = "execution_hold_infeasible"
+	arcFailureExecutionNoFeasibleTarget   = "execution_no_feasible_target"
+	arcFailurePolicyPresetNotAdmitted     = "policy_preset_not_admitted"
+	arcFailurePolicyScheduleNotAdmitted   = "policy_schedule_not_admitted"
 	// arcFailureExecutionNotAdmitted is the cell's action_not_admitted
 	// without a hold: nothing it offers can serve this request (503).
 	arcFailureExecutionNotAdmitted = "execution_offer_not_admitted"
@@ -49,12 +55,17 @@ var routeExecutionClasses = map[string]struct {
 	status int
 	member string
 }{
-	arcFailureExecutionUnknownAction:    {"execution_unknown_action", 400, ""},
-	arcFailureExecutionIdentityPackage:  {"execution_identity_mismatch", 409, "package_sha256"},
-	arcFailureExecutionIdentityControls: {"execution_identity_mismatch", 409, "thinking_controls_sha256"},
-	arcFailureExecutionIdentityOffer:    {"execution_identity_mismatch", 409, "offer_sha256"},
-	arcFailureExecutionHoldConflict:     {"execution_hold_conflict", 409, ""},
-	arcFailureExecutionHoldUnavailable:  {"execution_hold_unavailable", 409, ""},
+	arcFailureExecutionUnknownAction:      {"execution_unknown_action", 400, ""},
+	arcFailureExecutionIdentityPackage:    {"execution_identity_mismatch", 409, "package_sha256"},
+	arcFailureExecutionIdentityControls:   {"execution_identity_mismatch", 409, "thinking_controls_sha256"},
+	arcFailureExecutionIdentityOffer:      {"execution_identity_mismatch", 409, "offer_sha256"},
+	arcFailureExecutionHoldConflict:       {"execution_hold_conflict", 409, ""},
+	arcFailureExecutionHoldUnavailable:    {"execution_hold_unavailable", 409, ""},
+	arcFailureExecutionLastServedConflict: {"execution_last_served_conflict", 400, ""},
+	arcFailureExecutionHoldInfeasible:     {"execution_hold_infeasible", 409, ""},
+	arcFailureExecutionNoFeasibleTarget:   {"execution_no_feasible_target", 409, ""},
+	arcFailurePolicyPresetNotAdmitted:     {"policy_preset_not_admitted", 400, ""},
+	arcFailurePolicyScheduleNotAdmitted:   {"policy_schedule_not_admitted", 400, ""},
 }
 
 // routeIdentity is the identity a lookup was decided under: the serving
@@ -148,7 +159,16 @@ const routesCacheTraceField = "cache_trace"
 // checkRouteExecutionOffer refuses an answer decided over another offer
 // than the caller pinned: it never reaches the caller.
 func checkRouteExecutionOffer(execution *selection.RaylineARCRouteExecution, identity selection.RaylineARCRouteIdentity) string {
-	if execution != nil && execution.ExpectOffer != nil && *execution.ExpectOffer != identity.OfferSHA256 {
+	if execution != nil {
+		return checkRouteOfferPin(execution.ExpectOffer, identity)
+	}
+	return ""
+}
+
+// checkRouteOfferPin refuses an answer decided over another offer than the
+// caller pinned (arc_execution_context.check_offer).
+func checkRouteOfferPin(expect *string, identity selection.RaylineARCRouteIdentity) string {
+	if expect != nil && *expect != identity.OfferSHA256 {
 		return arcFailureExecutionIdentityOffer
 	}
 	return ""
@@ -181,6 +201,14 @@ func routeExecutionServiceRefusal(err error) string {
 		return arcFailureExecutionHoldUnavailable
 	case reason == "attribution_out_of_catalog":
 		return arcFailureExecutionUnknownAction
+	case reason == "last_served_conflict", reason == arcFailureExecutionLastServedConflict:
+		return arcFailureExecutionLastServedConflict
+	case reason == "no_feasible_target", reason == arcFailureExecutionNoFeasibleTarget:
+		return arcFailureExecutionNoFeasibleTarget
+	case reason == arcFailurePolicyPresetNotAdmitted, failure.Class == arcFailurePolicyPresetNotAdmitted:
+		return arcFailurePolicyPresetNotAdmitted
+	case reason == arcFailurePolicyScheduleNotAdmitted, failure.Class == arcFailurePolicyScheduleNotAdmitted:
+		return arcFailurePolicyScheduleNotAdmitted
 	case reason == "action_not_admitted":
 		// The cell's offer admits nothing for this request, or not the
 		// held action: the hold's refusal when there is one, otherwise the
@@ -207,10 +235,98 @@ func (refusal *routeExecutionRefusal) Unwrap() error { return refusal.err }
 func (refusal *routeExecutionRefusal) contract() *routesContractError {
 	entry := routeExecutionClasses[refusal.class]
 	message := map[string]string{
-		"execution_unknown_action":    "routing.execution names an action or arm outside the serving package's catalog.",
-		"execution_identity_mismatch": "routing.execution.expect." + entry.member + " differs from the serving value.",
-		"execution_hold_conflict":     "routing.execution.hold names a model other than the last attributed message's.",
-		"execution_hold_unavailable":  "routing.execution.hold names an action this request's offer excludes.",
+		"execution_unknown_action":       "routing.execution names an action or arm outside the serving package's catalog.",
+		"execution_identity_mismatch":    "routing.execution.expect." + entry.member + " differs from the serving value.",
+		"execution_hold_conflict":        "routing.execution.hold names a model other than the last attributed message's.",
+		"execution_hold_unavailable":     "routing.execution.hold names an action this request's offer excludes.",
+		"execution_last_served_conflict": "routing.execution.last_served contradicts the history it should agree with.",
+		"execution_hold_infeasible":      "routing.execution.hold names an action the request's own capacity marks not to fit.",
+		"execution_no_feasible_target":   "No offered action can serve this request: the held model cannot run and the policy allows no handoff.",
+		"policy_preset_not_admitted":     "routing.policy.preset is not one this cell serves.",
+		"policy_schedule_not_admitted":   "routing.policy.overrides.schedule names a class the package does not admit for that dimension.",
 	}[entry.code]
 	return &routesContractError{status: entry.status, errType: "invalid_request_error", code: entry.code, message: message}
+}
+
+// applyRoutePolicyAndExecutionV2 writes routing.policy and a v2
+// routing.execution into the decide request after checking the envelope
+// against the serving package and the request's offer, in bind_v2's order:
+// every named action in the catalog; the package and controls pins;
+// last_served consistent with history; the hold feasible, then offered. The
+// offer pin is checked after the decide. It answers a failure class, or ""
+// once applied.
+func applyRoutePolicyAndExecutionV2(
+	request *raylinearc.PolicyDecisionRequest,
+	scorer *policyServiceScorer,
+	controls *selection.RaylineARCRouteControls,
+) string {
+	if controls == nil {
+		return ""
+	}
+	if policy := controls.Policy; policy != nil {
+		member := *policy
+		request.Policy = &member
+	}
+	v2 := controls.ExecutionV2
+	if v2 == nil {
+		return ""
+	}
+	for _, actionID := range v2.ActionIDs {
+		if _, bound := scorer.bindings[actionID]; !bound {
+			return arcFailureExecutionUnknownAction
+		}
+	}
+	if pin := v2.ExpectPackage; pin != nil && *pin != scorer.sha256 {
+		return arcFailureExecutionIdentityPackage
+	}
+	if pin := v2.ExpectThinkingControls; pin != nil && *pin != scorer.thinkingControls {
+		return arcFailureExecutionIdentityControls
+	}
+	if served := v2.LastServedActionID; served != nil && len(v2.Attribution) > 0 {
+		last := v2.Attribution[len(v2.Attribution)-1]
+		var same *raylinearc.PolicyAttribution
+		if message := v2.LastServedMessage; message != nil {
+			for index := range v2.Attribution {
+				if v2.Attribution[index].Message == *message {
+					same = &v2.Attribution[index]
+				}
+			}
+		}
+		if same != nil && same.ActionID != *served ||
+			same == nil && scorer.actionModel(last.ActionID) != scorer.actionModel(*served) {
+			return arcFailureExecutionLastServedConflict
+		}
+	}
+	if hold := v2.HoldActionID; hold != nil {
+		if slices.Contains(v2.Infeasible, *hold) {
+			return arcFailureExecutionHoldInfeasible
+		}
+		if !slices.Contains(request.Selection.AvailableActionIDs, *hold) {
+			return arcFailureExecutionHoldUnavailable
+		}
+		held := *hold
+		request.Selection.HeldActionID = &held
+	}
+	if served := v2.LastServedActionID; served != nil {
+		value := *served
+		request.Selection.LastServedActionID = &value
+	}
+	request.ContextEpoch = v2.ContextEpoch
+	request.Attribution = append([]raylinearc.PolicyAttribution{}, v2.Attribution...)
+	request.EpisodeMode = raylinearc.PolicyEpisodeModeRelaxed
+	event := v2.Event
+	request.Event = &event
+	request.Capacity = append([]raylinearc.PolicyActionCapacity(nil), v2.Capacity...)
+	request.TurnKey = v2.TurnKey
+	request.Reconsult = v2.Reconsult
+	return ""
+}
+
+// routeExecutionV2CacheContext is a v2 lookup's cache_context: the admitted
+// evidence of its targets; nil when none carried any.
+func routeExecutionV2CacheContext(v2 *selection.RaylineARCRouteExecutionV2) *raylinearc.PolicyCacheContext {
+	if v2 == nil || v2.CacheContext == nil {
+		return nil
+	}
+	return &raylinearc.PolicyCacheContext{Actions: append([]raylinearc.PolicyActionCache{}, v2.CacheContext.Actions...)}
 }

@@ -163,6 +163,9 @@ type RouteDecision struct {
 	// evidence (nil when the service did not say).
 	ExecutionApplied bool
 	CacheTrace       *raylinearc.PolicyCacheTrace
+	// Receipt is the service's decision.receipt for a lookup that sent
+	// routing.policy or a v2 routing.execution; nil otherwise.
+	Receipt *raylinearc.PolicyDecisionReceipt
 }
 
 // RouteIdentity is a Decisions answer's identity.

@@ -696,6 +696,16 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	}
 	// A caller's routing.execution stands in for VSR's own episode for this
 	// lookup only; it is checked against the package and offer first.
+	var executionV2 *selection.RaylineARCRouteExecutionV2
+	if routeControls != nil {
+		executionV2 = routeControls.ExecutionV2
+	}
+	if class := applyRoutePolicyAndExecutionV2(&request, scorer, routeControls); class != "" {
+		logging.ComponentErrorEvent("extproc", "rayline_arc_policy_service_failed", map[string]interface{}{
+			"class": class, "episode_id_hash": arcContext.EpisodeIDHash,
+		})
+		return nil, arcSelectionFailure(class)
+	}
 	if class := applyRouteExecution(&request, scorer, execution); class != "" {
 		logging.ComponentErrorEvent("extproc", "rayline_arc_policy_service_failed", map[string]interface{}{
 			"class": class, "episode_id_hash": arcContext.EpisodeIDHash,
@@ -709,6 +719,10 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	withCacheContext := func(request *raylinearc.PolicyDecisionRequest) {
 		if execution != nil {
 			request.CacheContext = routeExecutionCacheContext(execution)
+			return
+		}
+		if executionV2 != nil {
+			request.CacheContext = routeExecutionV2CacheContext(executionV2)
 			return
 		}
 		if !scorer.cacheContext {
@@ -758,7 +772,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		derivedOffer = true
 		request.Selection.AvailableActionIDs = offer
 	}
-	if held < 0 && scorer.twoStage && execution == nil {
+	if held < 0 && scorer.twoStage && execution == nil && executionV2 == nil {
 		if found, ok := derivedHoldOffer(scorer, arcContext, available); ok && len(found.offer) > 0 {
 			derived = found
 			logRaylineARCDerivedHold(arcContext, derived, "first")
@@ -850,9 +864,10 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		return nil, boundedARCEncoderFailure(shed.err)
 	}
 	latency := selector.now().Sub(started)
-	if err != nil && execution != nil {
+	if err != nil && (execution != nil || executionV2 != nil || routeControls != nil && routeControls.Policy != nil) {
 		if class := routeExecutionServiceRefusal(err); class != "" {
-			if class == arcFailureExecutionNotAdmitted && execution.HoldScope != "" {
+			if class == arcFailureExecutionNotAdmitted && (execution != nil && execution.HoldScope != "" ||
+				executionV2 != nil && executionV2.HoldActionID != nil) {
 				class = arcFailureExecutionHoldUnavailable
 			}
 			return nil, arcSelectionFailure(class)
@@ -1035,6 +1050,14 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		}
 		if execution != nil && routeExecutionTraceMissing(&request, response) {
 			return nil, arcSelectionFailure(arcFailureRoutesExecutionTraceMissing)
+		}
+		if executionV2 != nil {
+			if class := checkRouteOfferPin(executionV2.ExpectOffer, identity); class != "" {
+				return nil, arcSelectionFailure(class)
+			}
+		}
+		if executionV2 != nil || routeControls.Policy != nil {
+			result.RaylineARC.RouteReceipt = response.Decision.Receipt
 		}
 		result.RaylineARC.RouteIdentity = &identity
 		result.RaylineARC.RouteExecutionApplied = execution != nil

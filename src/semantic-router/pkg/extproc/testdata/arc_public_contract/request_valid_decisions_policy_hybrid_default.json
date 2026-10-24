@@ -1,0 +1,242 @@
+{
+  "surface": "decisions",
+  "body": {
+    "model": "arc-1.0",
+    "max_tokens": 1024,
+    "messages": [
+      {
+        "role": "user",
+        "content": "Refactor the parser."
+      },
+      {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "tool_use",
+            "id": "t1",
+            "name": "read",
+            "input": {}
+          }
+        ]
+      },
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "tool_result",
+            "tool_use_id": "t1",
+            "content": "ok"
+          }
+        ]
+      },
+      {
+        "role": "assistant",
+        "content": "Done; now the tests."
+      },
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "tool_result",
+            "tool_use_id": "t2",
+            "content": "ok"
+          }
+        ]
+      }
+    ],
+    "routing": {
+      "policy": {
+        "preset": "arc-policy.hybrid-default.v1"
+      },
+      "execution": {
+        "version": "arc-execution-context.v2",
+        "turn": {
+          "id": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "attempt": 1,
+          "epoch": "e1",
+          "retry_of": null,
+          "reconsult": null
+        },
+        "event": {
+          "kind": "tool_result",
+          "basis": "marker_inferred",
+          "compaction": null
+        },
+        "last_served": {
+          "action_id": "1111111111111111111111111111111111111111111111111111111111111111",
+          "worker": "local-qwen",
+          "message": 3
+        },
+        "history": [
+          {
+            "message": 1,
+            "action_id": "1111111111111111111111111111111111111111111111111111111111111111"
+          },
+          {
+            "message": 3,
+            "action_id": "1111111111111111111111111111111111111111111111111111111111111111"
+          }
+        ],
+        "hold": null,
+        "expect": {
+          "package_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "thinking_controls_sha256": null,
+          "offer_sha256": null
+        },
+        "targets": [
+          {
+            "action_id": "1111111111111111111111111111111111111111111111111111111111111111",
+            "worker": "local-qwen",
+            "placement": "local",
+            "cache": {
+              "context_epoch": "e1",
+              "gap_s": 12.0,
+              "ttl": null,
+              "residency": {
+                "state": "resident",
+                "provenance": "local_measured"
+              },
+              "usage": {
+                "prompt_tokens": 61000,
+                "cache_read_tokens": null,
+                "cache_write_tokens": null,
+                "units": "hf:Qwen/Qwen3.8-27B@r1",
+                "provenance": "provider_reported"
+              },
+              "current_prefix": {
+                "tokens": 69800,
+                "overlap_tokens": 61000,
+                "units": "hf:Qwen/Qwen3.8-27B@r1",
+                "provenance": "local_measured"
+              }
+            },
+            "capacity": {
+              "fits": false,
+              "reason": "context_capacity",
+              "required": 70210,
+              "available": 65536,
+              "available_source": "configured",
+              "units": "hf:Qwen/Qwen3.8-27B@r1",
+              "provenance": "local_measured"
+            }
+          },
+          {
+            "action_id": "2222222222222222222222222222222222222222222222222222222222222222",
+            "worker": "cloud-opus",
+            "placement": "cloud",
+            "cache": null,
+            "capacity": null
+          }
+        ]
+      }
+    }
+  },
+  "expect": {
+    "model": {
+      "requested": "arc-1.0",
+      "canonical": "arc-1.0",
+      "mode": "configurable",
+      "tier": null
+    },
+    "routing": {
+      "execution": {
+        "version": "arc-execution-context.v2",
+        "turn": {
+          "id": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "attempt": 1,
+          "epoch": "e1",
+          "retry_of": null,
+          "reconsult": null
+        },
+        "event": {
+          "kind": "tool_result",
+          "basis": "marker_inferred",
+          "compaction": null
+        },
+        "last_served": {
+          "action_id": "1111111111111111111111111111111111111111111111111111111111111111",
+          "worker": "local-qwen",
+          "message": 3
+        },
+        "history": [
+          {
+            "message": 1,
+            "action_id": "1111111111111111111111111111111111111111111111111111111111111111"
+          },
+          {
+            "message": 3,
+            "action_id": "1111111111111111111111111111111111111111111111111111111111111111"
+          }
+        ],
+        "hold": null,
+        "expect": {
+          "package_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "thinking_controls_sha256": null,
+          "offer_sha256": null
+        },
+        "targets": [
+          {
+            "action_id": "1111111111111111111111111111111111111111111111111111111111111111",
+            "worker": "local-qwen",
+            "placement": "local",
+            "cache": {
+              "context_epoch": "e1",
+              "gap_s": 12.0,
+              "ttl": null,
+              "residency": {
+                "state": "resident",
+                "provenance": "local_measured"
+              },
+              "usage": {
+                "prompt_tokens": 61000,
+                "cache_read_tokens": null,
+                "cache_write_tokens": null,
+                "units": "hf:Qwen/Qwen3.8-27B@r1",
+                "provenance": "provider_reported"
+              },
+              "current_prefix": {
+                "tokens": 69800,
+                "overlap_tokens": 61000,
+                "units": "hf:Qwen/Qwen3.8-27B@r1",
+                "provenance": "local_measured"
+              }
+            },
+            "capacity": {
+              "fits": false,
+              "reason": "context_capacity",
+              "required": 70210,
+              "available": 65536,
+              "available_source": "configured",
+              "units": "hf:Qwen/Qwen3.8-27B@r1",
+              "provenance": "local_measured"
+            }
+          },
+          {
+            "action_id": "2222222222222222222222222222222222222222222222222222222222222222",
+            "worker": "cloud-opus",
+            "placement": "cloud",
+            "cache": null,
+            "capacity": null
+          }
+        ]
+      },
+      "policy": {
+        "preset": "arc-policy.hybrid-default.v1",
+        "overrides": null
+      }
+    },
+    "price_sha256": null,
+    "result_points": [
+      {
+        "name": "swift",
+        "value_usd": 0.1,
+        "cost_weight": 10.0
+      },
+      {
+        "name": "sage",
+        "value_usd": 4.5,
+        "cost_weight": 0.2222222222222222
+      }
+    ]
+  }
+}

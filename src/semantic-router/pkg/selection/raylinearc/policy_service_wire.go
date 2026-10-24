@@ -77,6 +77,10 @@ type PolicySelection struct {
 	// action still offered, so the service decides a typed user turn or holds
 	// the model rather than VSR narrowing the offer. Omitted otherwise.
 	AttestedHeldActionID *string `json:"attested_held_action_id,omitempty"`
+	// LastServedActionID is an external executor's truthful record of the
+	// action that last executed (routing.execution v2 last_served): unlike
+	// attested_held_action_id it need not be offered. Omitted when absent.
+	LastServedActionID *string `json:"last_served_action_id,omitempty"`
 	// TierPoints are named cost weights the service also decides at
 	// (Decisions API v2, pathfinder#5443); the response's decision.tier_picks
 	// carries each. Omitted when none are configured.
@@ -267,12 +271,27 @@ type policyDecisionEnvelope struct {
 	CacheContext  *cachecontext.PolicyCacheContext `json:"cache_context,omitempty"`
 	// ResponseFields mirrors PolicyDecisionRequest.ResponseFields.
 	ResponseFields []string `json:"response_fields,omitempty"`
+	// Hybrid routing v2 (pathfinder #5904, arc_policy_contract
+	// DecisionRequest), each omitted when absent, so a request without them
+	// is byte-identical to one from before: the public routing.policy as
+	// sent, the executor's event, its admitted per-action capacity, the
+	// turn key its decision and draw derive from, and a re-consult's reason.
+	// Any of them (or selection.last_served_action_id) asks for
+	// decision.receipt.
+	Policy    *PolicyMember          `json:"policy,omitempty"`
+	Event     *PolicyExecutorEvent   `json:"event,omitempty"`
+	Capacity  []PolicyActionCapacity `json:"capacity,omitempty"`
+	TurnKey   string                 `json:"turn_key,omitempty"`
+	Reconsult *string                `json:"reconsult,omitempty"`
 }
 
 // EncodePolicyDecisionRequest is the decide body: every field as json.Marshal
 // writes it, without HTML escaping, and the request carrying the client's
 // bytes unchanged.
 func EncodePolicyDecisionRequest(request PolicyDecisionRequest) ([]byte, error) {
+	if len(request.Capacity) == 0 {
+		request.Capacity = nil
+	}
 	envelope, err := MarshalUnescaped(policyDecisionEnvelope(request))
 	if err != nil {
 		return nil, err
@@ -339,6 +358,58 @@ type PolicyDecisionRequest struct {
 	// (price_per_mtok, thinking; Decisions API v2). Omitted when none are
 	// configured, so the request is v1's.
 	ResponseFields []string `json:"response_fields,omitempty"`
+	// Hybrid routing v2 (pathfinder #5904, arc_policy_contract
+	// DecisionRequest), each omitted when absent, so a request without them
+	// is byte-identical to one from before: the public routing.policy as
+	// sent, the executor's event, its admitted per-action capacity, the
+	// turn key its decision and draw derive from, and a re-consult's reason.
+	// Any of them (or selection.last_served_action_id) asks for
+	// decision.receipt.
+	Policy    *PolicyMember          `json:"policy,omitempty"`
+	Event     *PolicyExecutorEvent   `json:"event,omitempty"`
+	Capacity  []PolicyActionCapacity `json:"capacity,omitempty"`
+	TurnKey   string                 `json:"turn_key,omitempty"`
+	Reconsult *string                `json:"reconsult,omitempty"`
+}
+
+// PolicyMember is the decide request's policy: the public routing.policy as
+// sent (a preset and overrides), nulls omitted.
+type PolicyMember struct {
+	Preset    string                `json:"preset"`
+	Overrides *PolicyMemberOverride `json:"overrides,omitempty"`
+}
+
+type PolicyMemberOverride struct {
+	Schedule *PolicyMemberSchedule `json:"schedule,omitempty"`
+}
+
+// PolicyMemberSchedule is, per dimension, the switch-point classes; an
+// omitted dimension keeps the preset's.
+type PolicyMemberSchedule struct {
+	Model    []string `json:"model,omitempty"`
+	Thinking []string `json:"thinking,omitempty"`
+}
+
+// PolicyExecutorEvent is the executor's event for this turn.
+type PolicyExecutorEvent struct {
+	Kind       *string                   `json:"kind"`
+	Basis      string                    `json:"basis"`
+	Compaction *PolicyExecutorCompaction `json:"compaction"`
+}
+
+type PolicyExecutorCompaction struct {
+	SummaryMessage *int `json:"summary_message"`
+	RetainedFrom   *int `json:"retained_from"`
+	New            bool `json:"new"`
+}
+
+// PolicyActionCapacity is one action's admitted capacity verdict: fits null
+// is unknown, false excludes it with its reason.
+type PolicyActionCapacity struct {
+	ActionID  string  `json:"action_id"`
+	Placement string  `json:"placement"`
+	Fits      *bool   `json:"fits"`
+	Reason    *string `json:"reason"`
 }
 
 // PolicyEpisodeModeRelaxed is the decide request's episode_mode for a relaxed
@@ -399,6 +470,37 @@ type PolicyDecision struct {
 	// ["cache_trace"]: how the decision priced cache warmth per Stage-1
 	// candidate. VSR copies it into the routing.execution echo.
 	CacheTrace *PolicyCacheTrace `json:"cache_trace,omitempty"`
+	// Receipt is how this decide was taken (hybrid routing v2,
+	// arc_policy_contract.DecisionReceipt), present exactly when the request
+	// carried a v2 member; every result of the decide shares it.
+	Receipt *PolicyDecisionReceipt `json:"receipt,omitempty"`
+}
+
+// PolicyDecisionReceipt is decision.receipt. VSR copies it onto each public
+// result with that result's action and control, never recomputed.
+type PolicyDecisionReceipt struct {
+	Policy          *string                 `json:"policy"`
+	DecidedBy       PolicyReceiptDecidedBy  `json:"decided_by"`
+	Eligible        PolicyReceiptEligible   `json:"eligible"`
+	HeldFrom        *string                 `json:"held_from"`
+	Excluded        []PolicyReceiptExcluded `json:"excluded"`
+	CapacityUnknown []string                `json:"capacity_unknown"`
+	Basis           *string                 `json:"basis"`
+}
+
+type PolicyReceiptDecidedBy struct {
+	Model    *string `json:"model"`
+	Thinking string  `json:"thinking"`
+}
+
+type PolicyReceiptEligible struct {
+	Model    *string `json:"model"`
+	Thinking *string `json:"thinking"`
+}
+
+type PolicyReceiptExcluded struct {
+	ActionID string `json:"action_id"`
+	Reason   string `json:"reason"`
 }
 
 // PolicyCacheTrace is decision.cache_trace: the boundary, the effective

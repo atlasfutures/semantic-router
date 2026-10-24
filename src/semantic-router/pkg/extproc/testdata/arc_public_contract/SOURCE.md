@@ -15,3 +15,10 @@ The predictions fixtures (`request_*response_fields*`, `request_valid_decisions_
 `execution_vectors.json` and `request_*execution*.json` are copied unchanged
 from pathfinder#5875 at `cefe836a48` (`routing.execution`, proposed;
 reference `src/rayline_router/serving/arc_execution_context.py`).
+
+The hybrid routing v2 fixtures (`execution_v2_vectors.json`,
+`request_*execution_v2*.json`, `request_*policy*.json`) are copied unchanged
+from pathfinder#5907 at `fc5033c607` (on #5904, merged as `0a3981eed8`): it
+admits a marker-inferred retained-tail compaction, so main's
+`request_invalid_execution_v2_retained_tail_inferred.json` is not carried.
+Refresh from main once #5907 merges.
