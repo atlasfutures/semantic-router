@@ -53,7 +53,7 @@ func NewPolicyPrefixShape(messages []json.RawMessage, system, tools json.RawMess
 		Digest:   MessagesDigest(messages, len(messages)),
 		Messages: make([]uint64, kept),
 		System:   shortDigest(canonicalSystem(system)),
-		Tools:    shortDigest(canonicalJSON(tools)),
+		Tools:    shortDigest(canonicalTools(tools)),
 	}
 	for index := range kept {
 		shape.Messages[index] = shortDigest(canonicalPrefixMessage(messages[index]))
@@ -162,6 +162,15 @@ func HasClaudeCodeBillingHeader(system json.RawMessage) bool {
 // block left empty without it is dropped),
 // and without cache_control (the service compares it the same way).
 func canonicalSystem(system json.RawMessage) []byte {
+	var text string
+	if json.Unmarshal(system, &text) == nil {
+		stripped, _ := withoutBillingHeaderLines(text)
+		raw, err := json.Marshal(stripped)
+		if err != nil {
+			return system
+		}
+		return raw
+	}
 	var blocks []map[string]any
 	if json.Unmarshal(system, &blocks) != nil {
 		return canonicalJSON(system)
@@ -174,18 +183,12 @@ func canonicalSystem(system json.RawMessage) []byte {
 			continue
 		}
 		// Only the header line goes; text after it in the same block stays.
-		lines := strings.Split(text, "\n")
-		rest := lines[:0]
-		for _, line := range lines {
-			if !strings.HasPrefix(strings.TrimSpace(line), billingHeaderPrefix) {
-				rest = append(rest, line)
-			}
-		}
-		if len(rest) == len(lines) {
+		stripped, changed := withoutBillingHeaderLines(text)
+		if !changed {
 			kept = append(kept, block)
 			continue
 		}
-		if stripped := strings.Join(rest, "\n"); strings.TrimSpace(stripped) != "" {
+		if strings.TrimSpace(stripped) != "" {
 			copied := make(map[string]any, len(block))
 			for key, value := range block {
 				copied[key] = value
@@ -201,9 +204,49 @@ func canonicalSystem(system json.RawMessage) []byte {
 	return canonicalJSON(raw)
 }
 
+// withoutBillingHeaderLines is text without Claude Code's billing header
+// lines, and whether it had any.
+func withoutBillingHeaderLines(text string) (string, bool) {
+	lines := strings.Split(text, "\n")
+	rest := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if !strings.HasPrefix(strings.TrimSpace(line), billingHeaderPrefix) {
+			rest = append(rest, line)
+		}
+	}
+	return strings.Join(rest, "\n"), len(rest) != len(lines)
+}
+
+// canonicalTools is the tool definitions without each tool's own
+// cache_control; a schema's contents, a property named cache_control
+// included, are compared as sent.
+func canonicalTools(tools json.RawMessage) []byte {
+	var list []map[string]json.RawMessage
+	if json.Unmarshal(tools, &list) != nil {
+		return canonicalJSON(tools)
+	}
+	for _, tool := range list {
+		delete(tool, "cache_control")
+	}
+	raw, err := json.Marshal(list)
+	if err != nil {
+		return tools
+	}
+	return canonicalJSONKeepingCacheControl(raw)
+}
+
 // canonicalJSON is raw without cache_control, with insignificant key order
 // and whitespace removed; raw that is not JSON is returned as is.
 func canonicalJSON(raw json.RawMessage) []byte {
+	return canonicalJSONValue(raw, true)
+}
+
+// canonicalJSONKeepingCacheControl is canonicalJSON with every member kept.
+func canonicalJSONKeepingCacheControl(raw json.RawMessage) []byte {
+	return canonicalJSONValue(raw, false)
+}
+
+func canonicalJSONValue(raw json.RawMessage, dropCacheControl bool) []byte {
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
 		return nil
@@ -214,7 +257,9 @@ func canonicalJSON(raw json.RawMessage) []byte {
 	if decoder.Decode(&value) != nil {
 		return trimmed
 	}
-	withoutCacheControl(value)
+	if dropCacheControl {
+		withoutCacheControl(value)
+	}
 	var canonical bytes.Buffer
 	encoder := json.NewEncoder(&canonical)
 	encoder.SetEscapeHTML(false)

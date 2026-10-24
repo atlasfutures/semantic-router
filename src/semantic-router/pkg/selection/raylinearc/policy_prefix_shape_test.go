@@ -120,3 +120,32 @@ func TestPolicyPrefixShapeSystemIgnoresOnlyTheBillingHeaderLine(t *testing.T) {
 		t.Fatal("a prompt sharing the header's block was ignored")
 	}
 }
+
+func TestPolicyPrefixShapeSystemStringAndToolSchemas(t *testing.T) {
+	str := func(text string) json.RawMessage { raw, _ := json.Marshal(text); return raw }
+	digest := func(raw json.RawMessage) uint64 { return NewPolicyPrefixShape(nil, raw, nil).System }
+	if digest(str("x-anthropic-billing-header: cc_version=1.a;\nPrompt A")) !=
+		digest(str("x-anthropic-billing-header: cc_version=1.b;\nPrompt A")) {
+		t.Fatal("a string system's header suffix changed the digest")
+	}
+	if digest(str("Prompt A")) == digest(str("Prompt B")) {
+		t.Fatal("a string system's prompt was ignored")
+	}
+	tools := func(description string, cached bool) json.RawMessage {
+		tool := map[string]any{"name": "Cache", "input_schema": map[string]any{"type": "object", "properties": map[string]any{
+			"cache_control": map[string]any{"type": "string", "description": description},
+		}}}
+		if cached {
+			tool["cache_control"] = map[string]any{"type": "ephemeral"}
+		}
+		raw, _ := json.Marshal([]any{tool})
+		return raw
+	}
+	toolDigest := func(raw json.RawMessage) uint64 { return NewPolicyPrefixShape(nil, nil, raw).Tools }
+	if toolDigest(tools("a", false)) != toolDigest(tools("a", true)) {
+		t.Fatal("a tool's own cache_control changed the digest")
+	}
+	if toolDigest(tools("a", false)) == toolDigest(tools("b", false)) {
+		t.Fatal("a schema property named cache_control was ignored")
+	}
+}
