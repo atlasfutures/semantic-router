@@ -551,6 +551,53 @@ the session.
   replica that fails the readiness check takes no episode, owned or new, and
   is checked again every 30 s until it passes.
 
+### Policy sessions on a Modal Server (opt-in)
+
+`sessions: {enabled: true}` decides through a policy service deployed as a
+Modal Server with sticky sessions (`@modal.sessioned`) at `base_url`. The
+Server autoscales its own containers, and each episode holds one Modal
+session, so its turns reach the one container that keeps its retained encoder
+session. It is exclusive with `replicas` and needs `modal_key_env` and
+`modal_secret_env`.
+
+- **Session.** A turn decides on the session its episode state persisted, else
+  on one it starts (`POST /_modal/sessions/start` with the proxy key, idle
+  timeout `idle_timeout_seconds`, 900 by default, matching the episode idle
+  TTL). Decides carry the session's token (`Modal-Authorization`) and not the
+  proxy key. The commit persists a session the turn changed, in the state's
+  `policy_session`, which makes the record `rayline.arc.episode-state.v10`;
+  an episode without one keeps its earlier bytes. The token is a credential:
+  never logged.
+- **Start bound.** A start is bounded by `start_timeout_seconds` (10 by
+  default; Modal queues a start for capacity for minutes). A start that lapses
+  or is refused fails the turn as `policy_service_session_start` (public
+  class `unavailable`) and commits nothing.
+- **Lost session.** Modal's 502 with an empty body (the token's container is
+  gone) and its 404 `Unknown or expired session` never reached a container
+  holding the episode, so the turn starts a new session and is retried there
+  once; it rebuilds. Only these verified signatures move a turn; any other
+  502, 404 or 401 fails it closed.
+  A turn moves at most once. A timeout or transport failure leaves the session
+  as it is and fails the turn closed. The service's own refusals (a JSON
+  error code, such as a 404 `package_not_loaded`) keep their meaning.
+- **Stale build.** A session that answers for another package than the
+  request's (a container still on the previous build: a Modal deploy does not
+  move live sessions) is ended (`/_modal/sessions/terminate`, with the proxy
+  key and the token), and the turn is retried once on a new session.
+- **Side calls.** A side call commits nothing: it decides on the episode's
+  session when there is one and never records one. If it has to start its own,
+  that session is ended once the call is done.
+- **Readiness.** Every request to a sessioned Server needs a token, so the
+  readiness check runs through a session of its own, which it ends. The start
+  also warms a container, which a new deployment needs before it serves turns.
+- **Episode close.** The policy-service mode has no close signal
+  (`close_header` is refused in this mode), so a session ends by Modal's idle
+  timeout.
+- **Rollback.** A router that predates v10 refuses a record that carries a
+  session. Turn sessions off first (the record drops `policy_session` at the
+  episode's next commit, or expires with its idle TTL), then roll the image
+  back.
+
 ## Episode turns
 
 A policy-service turn commits its ledger entry, turn count and held arm only
