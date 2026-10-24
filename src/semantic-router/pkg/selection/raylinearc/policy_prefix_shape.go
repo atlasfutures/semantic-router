@@ -52,11 +52,11 @@ func NewPolicyPrefixShape(messages []json.RawMessage, system, tools json.RawMess
 		Len:      len(messages),
 		Digest:   MessagesDigest(messages, len(messages)),
 		Messages: make([]uint64, kept),
-		System:   shortDigest(canonicalSystem(system)),
-		Tools:    shortDigest(canonicalTools(tools)),
+		System:   prefixShapeDigest(canonicalSystem(system)),
+		Tools:    prefixShapeDigest(canonicalTools(tools)),
 	}
 	for index := range kept {
-		shape.Messages[index] = shortDigest(canonicalPrefixMessage(messages[index]))
+		shape.Messages[index] = prefixShapeDigest(canonicalPrefixMessage(messages[index]))
 	}
 	return shape
 }
@@ -269,7 +269,7 @@ func canonicalJSONValue(raw json.RawMessage, dropCacheControl bool) []byte {
 	return bytes.TrimSuffix(canonical.Bytes(), []byte("\n"))
 }
 
-func shortDigest(data []byte) uint64 {
+func prefixShapeDigest(data []byte) uint64 {
 	sum := sha256.Sum256(data)
 	return binary.BigEndian.Uint64(sum[:8])
 }
