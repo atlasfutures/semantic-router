@@ -520,6 +520,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		signals.CallKind, signals.CallKindSource = arcContext.PolicyCallKind, arcContext.PolicyCallKindSource
 	}
 	turn, attribution, transition := raylinearc.PolicyTurn(state.Policy, messages, roles, state.TurnIndex, signals)
+	prefixShape := observePolicyPrefix(arcContext, clientRequest, messages, state.Policy, signals, transition)
 	sideCall := signals.CallKind == raylinearc.PolicyCallSide
 	scheduled := scorer.schedule != "" && !sideCall
 	// A two-stage package's service owns the model choice: it decides at the
@@ -887,6 +888,9 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	if !validARCDecision(decision, workerIDs) {
 		return nil, arcSelectionFailure("artifact_result")
 	}
+	// The service encoded this request; a later turn's prefix break is
+	// explained against it.
+	rememberPolicyPrefix(arcContext.EpisodeIDHash, prefixShape)
 	encoded := &raylinearc.EncoderResult{
 		SerializedTokens:  response.Encoding.TokenCount,
 		FullHistoryTokens: response.Encoding.TokenCount,
