@@ -969,6 +969,9 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		if class := checkRouteExecutionOffer(execution, identity); class != "" {
 			return nil, arcSelectionFailure(class)
 		}
+		if execution != nil && routeExecutionTraceMissing(&request, response) {
+			return nil, arcSelectionFailure(arcFailureRoutesExecutionTraceMissing)
+		}
 		result.RaylineARC.RouteIdentity = &identity
 		result.RaylineARC.RouteExecutionApplied = execution != nil
 		if execution != nil {

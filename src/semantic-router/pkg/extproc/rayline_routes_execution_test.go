@@ -1,6 +1,7 @@
 package extproc
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -83,6 +84,7 @@ func vectorScorer(vectors executionVectors) *policyServiceScorer {
 		sha256: vectors.Package.PackageSHA256, thinkingControls: vectors.Package.ThinkingControlsSHA256,
 		bindings: map[string]policyBinding{}, actionArms: vectors.Package.ActionArms,
 	}
+	scorer.setAdvertised([]string{raylinearc.PolicyCapabilityCacheTrace})
 	arm := 0
 	for actionID, model := range vectors.Package.ActionModels {
 		scorer.bindings[actionID] = policyBinding{arm: arm, model: model}
@@ -249,13 +251,31 @@ func TestRoutesExecutionResponsesAttribution(t *testing.T) {
 	}
 }
 
-// Through the selector: a lookup with an execution context sends the
-// caller's evidence in place of VSR's own and asks for the cache trace; an
-// expect.offer_sha256 the answer's offer does not match is refused.
-func TestRouteExecutionReachesTheDecideRequest(t *testing.T) {
+// executionFixture is a routes fixture whose service advertises the
+// capabilities a lookup uses, cache_trace included when traced.
+func executionFixture(t *testing.T, traced bool) *policySelectorFixture {
+	t.Helper()
 	fixture := routesFixture(t)
-	bindings := fixture.decision.Algorithm.RaylineARC.PolicyService.Bindings
-	think := bindings[0].ActionID
+	capabilities := []string{
+		raylinearc.PolicyCapabilityDecisionsV2, raylinearc.PolicyCapabilityTierPoints,
+		raylinearc.PolicyCapabilityResponseFields, raylinearc.PolicyCapabilityExploration,
+	}
+	if traced {
+		capabilities = append(capabilities, raylinearc.PolicyCapabilityCacheTrace)
+	}
+	fixture.fake.advertised = capabilities
+	armed := fixture.selector.armed.Load()
+	scorer := armed.scorer.(*policyServiceScorer)
+	if err := requireRaylineARCPolicyServing(context.Background(), armed.policy,
+		fixture.decision.Algorithm.RaylineARC.PolicyService, nil, scorer.setAdvertised); err != nil {
+		t.Fatalf("probe: %v", err)
+	}
+	return fixture
+}
+
+func executionControls(t *testing.T, fixture *policySelectorFixture) *selection.RaylineARCRouteControls {
+	t.Helper()
+	think := fixture.decision.Algorithm.RaylineARC.PolicyService.Bindings[0].ActionID
 	_, controls := routesControlsFor(t, fixture, `{"value_usd":1.0}`)
 	gap, prompt := 12.0, 4000
 	controls.Execution = &selection.RaylineARCRouteExecution{
@@ -264,30 +284,111 @@ func TestRouteExecutionReachesTheDecideRequest(t *testing.T) {
 			{ActionID: think, GapS: &gap, PromptTokens: &prompt},
 		}},
 	}
-	result, err := selectWithControls(t, fixture, controls)
-	if err != nil {
-		t.Fatalf("select: %v", err)
-	}
-	sent := fixture.fake.received()[0]
-	if sent.ContextEpoch != "e7" || sent.EpisodeMode != raylinearc.PolicyEpisodeModeRelaxed || sent.CacheContext == nil ||
-		len(sent.CacheContext.Actions) != 1 || *sent.CacheContext.Actions[0].PromptTokens != prompt ||
-		!slices.Contains(sent.ResponseFields, "cache_trace") {
-		t.Fatalf("decide request %+v", sent)
-	}
-	trace := result.RaylineARC
-	if trace.RouteIdentity == nil || trace.RouteIdentity.PackageSHA256 != policyTestPackage || !trace.RouteExecutionApplied {
-		t.Fatalf("trace identity %+v applied %v", trace.RouteIdentity, trace.RouteExecutionApplied)
-	}
+	return controls
+}
 
-	fixture = routesFixture(t)
-	_, controls = routesControlsFor(t, fixture, `{"value_usd":1.0}`)
-	other := strings.Repeat("c", 64)
-	controls.Execution = &selection.RaylineARCRouteExecution{ContextEpoch: "e7", ExpectOffer: &other}
-	_, err = selectWithControls(t, fixture, controls)
-	var refusal *routeExecutionRefusal
-	if !errors.As(selectionFailureError(err), &refusal) || refusal.contract().code != "execution_identity_mismatch" ||
-		refusal.contract().status != 409 {
-		t.Fatalf("err = %v", err)
+// Through the selector: a lookup with an execution context sends the
+// caller's evidence in place of VSR's own, and asks for the cache trace
+// only of a service that advertises it; a requested trace the answer lacks
+// fails visibly (502), and an expect.offer_sha256 the answer's offer does
+// not match is refused (409).
+func TestRouteExecutionReachesTheDecideRequest(t *testing.T) {
+	boundary := "user_message"
+	t.Run("traced", func(t *testing.T) {
+		fixture := executionFixture(t, true)
+		fixture.fake.cacheTrace = &raylinearc.PolicyCacheTrace{Boundary: &boundary, Candidates: []raylinearc.PolicyCacheTraceCandidate{}}
+		result, err := selectWithControls(t, fixture, executionControls(t, fixture))
+		if err != nil {
+			t.Fatalf("select: %v", err)
+		}
+		sent := fixture.fake.received()[0]
+		if sent.ContextEpoch != "e7" || sent.EpisodeMode != raylinearc.PolicyEpisodeModeRelaxed || sent.CacheContext == nil ||
+			len(sent.CacheContext.Actions) != 1 || *sent.CacheContext.Actions[0].PromptTokens != 4000 ||
+			!slices.Contains(sent.ResponseFields, "cache_trace") {
+			t.Fatalf("decide request %+v", sent)
+		}
+		trace := result.RaylineARC
+		if trace.RouteIdentity == nil || trace.RouteIdentity.PackageSHA256 != policyTestPackage || !trace.RouteExecutionApplied ||
+			trace.RouteCacheTrace == nil {
+			t.Fatalf("trace identity %+v applied %v cache %+v", trace.RouteIdentity, trace.RouteExecutionApplied, trace.RouteCacheTrace)
+		}
+	})
+	t.Run("not advertised: not asked", func(t *testing.T) {
+		fixture := executionFixture(t, false)
+		result, err := selectWithControls(t, fixture, executionControls(t, fixture))
+		if err != nil {
+			t.Fatalf("select: %v", err)
+		}
+		if slices.Contains(fixture.fake.received()[0].ResponseFields, "cache_trace") || result.RaylineARC.RouteCacheTrace != nil {
+			t.Fatal("cache_trace asked of a service that does not advertise it")
+		}
+	})
+	t.Run("asked and missing: visible failure", func(t *testing.T) {
+		fixture := executionFixture(t, true)
+		_, err := selectWithControls(t, fixture, executionControls(t, fixture))
+		if !errors.Is(selectionFailureError(err), routerruntime.ErrRouteDecisionInconsistent) {
+			t.Fatalf("err = %v, want inconsistent", err)
+		}
+	})
+	t.Run("offer pin mismatch", func(t *testing.T) {
+		fixture := executionFixture(t, true)
+		controls := executionControls(t, fixture)
+		other := strings.Repeat("c", 64)
+		controls.Execution.ExpectOffer = &other
+		_, err := selectWithControls(t, fixture, controls)
+		var refusal *routeExecutionRefusal
+		if !errors.As(selectionFailureError(err), &refusal) || refusal.contract().code != "execution_identity_mismatch" ||
+			refusal.contract().status != 409 {
+			t.Fatalf("err = %v", err)
+		}
+	})
+}
+
+// Absent new members, a Decisions lookup is decided and answered exactly
+// as before, for each preset and the custom point: the decide request
+// carries none of the execution members, and the answer no identity,
+// receipt or execution echo.
+func TestRoutesWithoutNewMembersAreUnchanged(t *testing.T) {
+	for _, routingJSON := range []string{`{}`, `{"value_usd":2.0}`} {
+		fixture := executionFixture(t, true)
+		boundary := "user_message"
+		fixture.fake.cacheTrace = &raylinearc.PolicyCacheTrace{Boundary: &boundary}
+		routing, controls := routesControlsFor(t, fixture, routingJSON)
+		result, err := selectWithControls(t, fixture, controls)
+		if err != nil {
+			t.Fatalf("%s: select: %v", routingJSON, err)
+		}
+		sent := fixture.fake.received()[0]
+		encoded := string(executionJSON(t, sent))
+		for _, member := range []string{"cache_trace", "current_prefix_tokens", "overlap_tokens", "residency", "last_served"} {
+			if strings.Contains(encoded, member) {
+				t.Fatalf("%s: decide request carries %s: %s", routingJSON, member, encoded)
+			}
+		}
+		if cell := fixture.selector.armed.Load().scorer.(*policyServiceScorer); sent.EpisodeMode != cell.episodeMode {
+			t.Fatalf("%s: a plain lookup was sent %q, not the cell's %q", routingJSON, sent.EpisodeMode, cell.episodeMode)
+		}
+		if result.RaylineARC.RouteExecutionApplied || result.RaylineARC.RouteCacheTrace != nil {
+			t.Fatalf("%s: execution recorded on a plain lookup", routingJSON)
+		}
+		decision := routerruntime.RouteDecision{
+			Results: []routerruntime.RouteResult{
+				{Name: "swift", CostWeight: 10, SelectedWorker: "w", WorkerModel: "m/a", ArmID: "a", ControlID: "c"},
+				{Name: "sage", CostWeight: 1 / 4.5, SelectedWorker: "w", WorkerModel: "m/a", ArmID: "a", ControlID: "c"},
+				{Name: "custom", CostWeight: 0.5, SelectedWorker: "w", WorkerModel: "m/a", ArmID: "a", ControlID: "c"},
+			},
+			Identity: &routerruntime.RouteIdentity{PackageSHA256: policyTestPackage, OfferSHA256: "o"},
+		}
+		var payload raylineRoutesResponse
+		if err := raylineRoutesAddResults(&payload, routing, decision); err != nil {
+			t.Fatal(err)
+		}
+		answer := string(executionJSON(t, payload))
+		for _, member := range []string{`"identity"`, `"receipt"`, `"execution"`} {
+			if strings.Contains(answer, member) {
+				t.Fatalf("%s: answer carries %s: %s", routingJSON, member, answer)
+			}
+		}
 	}
 }
 

@@ -635,7 +635,9 @@ func raylineRoutesIdentityOf(
 	routing *raylineRoutesRouting,
 	actionID, controlID, armID string,
 ) *raylineRoutesIdentity {
-	if decision.Identity == nil {
+	// Only a lookup that sent a new member carries the new answer blocks:
+	// one that sent none is answered byte for byte as before.
+	if decision.Identity == nil || routing == nil || routing.execution == nil {
 		return nil
 	}
 	known := func(value string) *string {
@@ -651,7 +653,7 @@ func raylineRoutesIdentityOf(
 		OfferSHA256:            decision.Identity.OfferSHA256,
 		Prices:                 raylineRoutesIdentityPrices{Basis: routesBasisCatalog},
 	}
-	if routing != nil && routing.prices != nil {
+	if routing.prices != nil {
 		hash := routing.priceSHA256
 		exclusive := routing.exclusive
 		identity.Prices = raylineRoutesIdentityPrices{Basis: routesBasisCaller, PriceSHA256: &hash, Exclusive: &exclusive}
@@ -677,12 +679,12 @@ type raylineRoutesPricesEcho struct {
 }
 
 type raylineRoutesRoutingEcho struct {
-	ValueUSD       *raylineRoutesEchoStatus `json:"value_usd,omitempty"`
-	Temperature    *raylineRoutesEchoStatus `json:"temperature,omitempty"`
-	Prices         *raylineRoutesPricesEcho `json:"prices,omitempty"`
-	ResponseFields *raylineRoutesFieldsEcho `json:"response_fields,omitempty"`
+	ValueUSD       *raylineRoutesEchoStatus    `json:"value_usd,omitempty"`
+	Temperature    *raylineRoutesEchoStatus    `json:"temperature,omitempty"`
+	Prices         *raylineRoutesPricesEcho    `json:"prices,omitempty"`
+	ResponseFields *raylineRoutesFieldsEcho    `json:"response_fields,omitempty"`
 	Execution      *raylineRoutesExecutionEcho `json:"execution,omitempty"`
-	UnappliedKeys  []string                 `json:"unapplied_keys"`
+	UnappliedKeys  []string                    `json:"unapplied_keys"`
 }
 
 type raylineRoutesFieldsEcho struct {

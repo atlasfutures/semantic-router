@@ -124,10 +124,20 @@ func applyRouteExecution(
 	request.ContextEpoch = execution.ContextEpoch
 	request.Attribution = append([]raylinearc.PolicyAttribution{}, execution.Attribution...)
 	request.EpisodeMode = raylinearc.PolicyEpisodeModeRelaxed
-	if !slices.Contains(request.ResponseFields, routesCacheTraceField) {
+	// The trace the echo copies is asked only of a service that advertises
+	// it; one that does not answers the echo unsupported, visibly.
+	if scorer.advertises(raylinearc.PolicyCapabilityCacheTrace) &&
+		!slices.Contains(request.ResponseFields, routesCacheTraceField) {
 		request.ResponseFields = append(append([]string(nil), request.ResponseFields...), routesCacheTraceField)
 	}
 	return ""
+}
+
+// routeExecutionTraceMissing is a requested cache_trace the answer does not
+// carry: the lookup fails as inconsistent (502), never answered with an
+// echo that hides it.
+func routeExecutionTraceMissing(request *raylinearc.PolicyDecisionRequest, response *raylinearc.PolicyDecisionResponse) bool {
+	return slices.Contains(request.ResponseFields, routesCacheTraceField) && response.Decision.CacheTrace == nil
 }
 
 // routesCacheTraceField elicits decision.cache_trace.
