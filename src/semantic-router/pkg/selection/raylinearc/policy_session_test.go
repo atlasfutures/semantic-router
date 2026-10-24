@@ -514,6 +514,8 @@ func TestPolicySessionLossNeedsModalsSignature(t *testing.T) {
 		{http.StatusBadGateway, "upstream connect error", ""},
 		{http.StatusNotFound, "Unknown or expired session", PolicySessionExpiredClass},
 		{http.StatusNotFound, "not found", ""},
+		{http.StatusNotFound, `{"error":"package_not_loaded","detail":{"message":"Unknown or expired session"}}`, ""},
+		{http.StatusNotFound, "Unknown or expired session\n", PolicySessionExpiredClass},
 		{http.StatusUnauthorized, `{"error":"session token required"}`, ""},
 		{http.StatusServiceUnavailable, "", ""},
 	} {
