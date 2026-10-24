@@ -7,10 +7,70 @@ private append, and completed-execution evidence.
 
 The default `decisions.api_mode: "current"` uses the deployed Decisions API and
 keeps execution/cache evidence in this process. It sends no `routing.execution`
-field. `"execution_context_v1"` explicitly selects the proposed advanced contract;
+field or executed-model attribution, so it cannot establish semantic-boundary
+model continuity. `"execution_context_v2"` (below) is the hybrid contract.
+`"execution_context_v1"` explicitly selects the earlier advanced contract;
 that mode requires the hosted cell to acknowledge the supplied evidence. There
 is no automatic change of mode after an unsupported response. The core executes
 the API's selected action rather than ranking marginal predictions locally.
+
+## Execution context v2
+
+`"execution_context_v2"` implements surfaces (B) and (C) of the hybrid v2 spec
+(pathfinder `docs/plans/2026-10-24-decisions-execution-context-v2.md`). It is
+opt-in. The core reports facts and never picks or ranks a model.
+
+- **Policy.** `decisions.routing.policy` is required: `{"preset": ...}` with an
+  optional `overrides.schedule` (`model`/`thinking` sets of `cache_boundaries`,
+  `user_messages`, `all_turns`) and, for `arc-policy.prefer-local.v1` only,
+  `overrides.selection.min_p_pass`. Rayline Local writes
+  `arc-policy.hybrid-default.v1` when its user sets no override; the core never
+  sends an absent policy in this mode. Allowed routing keys are `policy`,
+  `value_usd`, `prices`, `exclusive` and the price-profile keys.
+- **Envelope.** Each decision sends `routing.execution` version
+  `arc-execution-context.v2`: `turn` (`id`, `attempt`, `epoch`, `retry_of`,
+  `reconsult`), `event`, `last_served`, `history`, `hold` (null: the core has no
+  current mandatory-hold source), `expect` and one `targets[]` entry per bound
+  executable action. `turn.epoch` equals the `cache.context_epoch` string of
+  evidence from the current epoch. `cache` is v1's worker evidence without the
+  identity members; `capacity` is described below. Unknown is null.
+- **Events.** A harness adapter states the event explicitly, either in an
+  `X-Rayline-Event` JSON header or, for a harness that can only edit its provider
+  payload (Pi), in a top-level `rayline_event` member that the core removes
+  before decoding, Decisions and dispatch. Both at once are refused. Without one,
+  documented wire markers give `task_start` (first request of the main branch),
+  `subagent_start` (first request of another branch), `tool_result` or
+  `user_message` with `basis: marker_inferred`; anything else is
+  `basis: unknown` with a null kind. A retained-tail compaction is never
+  inferred. An explicit `compaction` with `retained_from` carries the retained
+  messages' attribution to their new positions. A `sidecall` is decided with
+  the held model and advances nothing: no epoch change, retained decision,
+  attribution, placement or cache evidence.
+- **Continuity.** A prefix change starts a new epoch and clears
+  transcript-dependent evidence but keeps the last successfully executed action,
+  sent as `last_served` even when that target is not offered or does not fit.
+- **Capacity.** For each local action whose deployment has a qualified prompt
+  counter, the core prepares the request exactly as dispatch would (tools,
+  history, private append) and counts it with the runtime's own tokenizer:
+  `required` = that count + the prepared output limit + the deployment's optional
+  `capacity_margin_tokens`; `available` = its configured `context_window`, with
+  `available_source: "configured"` (llama.cpp's per-slot allocation is not yet
+  observed); `units` = its `token_units`; `provenance: "local_measured"`. Other
+  targets send `capacity: null`.
+- **Pre-dispatch check and veto.** The final prepared request is checked again
+  before dispatch. If it does not fit the selected target, or the local runtime
+  refuses it for context before any output, the core re-consults once per cause
+  with the same `turn.id` and event, `attempt + 1`, `retry_of` = the vetoed
+  route, `reconsult: "veto"` or `"capacity"`, and that target's capacity
+  `fits: false`. The service reselects; a service that reselects an infeasible
+  target fails visibly (`execution_no_feasible_target`).
+- **Response.** The selected result must carry a `receipt` naming the selected
+  action and control, with a known `decided_by` per dimension and an `excluded`
+  entry, with the same reason, for every target the core reported as not
+  fitting. `routing.execution` must echo `status: "applied"`, the version and the
+  exact turn; `routing.policy` must echo `status: "applied"` and the preset.
+  Identity pins are checked as in v1. Responses add `X-Rayline-Decided-By` and
+  `X-Rayline-Event` headers, and logs record the receipt and capacity facts.
 
 ## Configuration
 
@@ -167,6 +227,11 @@ epoch. Historical assistant/tool input for an unknown session or branch is
 refused because its hidden instruction ledger cannot be reconstructed. Durable
 resume and inherited subagent histories require a later state-transfer contract.
 At capacity, new sessions fail visibly instead of evicting an active ledger.
+
+A changed instruction, tool definition or historical message starts a new cache
+context epoch and clears transcript-dependent placement, attribution and worker
+evidence. It preserves the last successfully executed action and completion
+count: a prefix change alone does not establish a model-switch boundary.
 
 Cache evidence describes each previously completed deployment, including workers
 that were switched away from. It carries completion age, provider usage, declared

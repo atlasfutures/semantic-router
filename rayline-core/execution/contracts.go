@@ -40,6 +40,9 @@ type Deployment struct {
 	// InbandSystem is an explicitly qualified role-changing compatibility
 	// rule, separate from the action's exact thinking-control identity.
 	InbandSystem string `json:"inband_system,omitempty"`
+	// CapacityMarginTokens is an explicit counting margin added to the exact
+	// prepared prompt and output limit in capacity admission (v2 only).
+	CapacityMarginTokens int64 `json:"capacity_margin_tokens,omitempty"`
 }
 
 // ProviderPin is part of the approved cloud dispatch profile. Exact dispatch
@@ -77,6 +80,8 @@ type Decision struct {
 	ControlID       string
 	ArmID           *string
 	Result          string
+	// Receipt is the v2 policy receipt; nil in current and v1 modes.
+	Receipt *DecisionReceipt
 }
 
 // AppliedPriceProfile records the immutable profile resolved by the gateway.
@@ -96,6 +101,19 @@ type DecisionInput struct {
 	BranchID  string
 	RequestID string
 	State     ExecutionContext
+	// v2 only: the turn's event, per-action capacity facts and, for a
+	// re-consult, the narrowing fact. Nil maps and events mean unknown.
+	Event     ExecutionEvent
+	Capacity  map[string]*CapacityFact
+	Reconsult *Reconsult
+}
+
+// Reconsult marks a decision that a new fact (capacity or a post-decision
+// veto) narrowed after an earlier route for the same turn.
+type Reconsult struct {
+	Kind    string // "capacity" or "veto"
+	RetryOf string // the route being retried
+	Attempt int
 }
 
 // DecisionProvider is implemented by the hosted public-contract adapter. It
@@ -114,6 +132,8 @@ type ExecutionContext struct {
 	CompletedTurns uint64
 	Workers        []WorkerEvidence
 	Attribution    []Attribution
+	// HeldWorker is the Decisions worker that last executed HeldActionID.
+	HeldWorker string
 }
 
 type Attribution struct {
