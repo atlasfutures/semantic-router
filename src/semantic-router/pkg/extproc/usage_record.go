@@ -265,7 +265,11 @@ func (r *OpenAIRouter) newLLMUsageRecord(ctx *RequestContext, usage responseUsag
 	record.FailureClass = nonEmpty(ctx.ResponseFailureClass)
 	record.ContentSentBeforeFailure = ctx.ContentSentBeforeFailure
 	record.FailureDetail = nonEmpty(ctx.ResponseFailureDetail)
-	if ctx.TTFTRecorded {
+	// A re-sent turn (flex twin or another endpoint) is read whole before the
+	// response pipeline sees it, and an unreachable re-send is answered with
+	// synthetic headers, so its "first byte" is not one: no TTFT is stated.
+	resent := (ctx.FlexResend != nil && ctx.FlexResend.served()) || len(ctx.RaylineARCEndpointsTried) > 1
+	if ctx.TTFTRecorded && !resent {
 		ttft := int64(ctx.TTFTSeconds * 1000)
 		record.TTFTMS = &ttft
 	}

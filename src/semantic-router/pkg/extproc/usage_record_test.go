@@ -435,6 +435,29 @@ func TestUsageRecordCarriesTTFTAndRoutingLatency(t *testing.T) {
 	}
 }
 
+// A re-sent turn is read whole before the pipeline sees it, so its first-byte
+// time is not a TTFT and is not stated.
+func TestUsageRecordStatesNoTTFTForAResentTurn(t *testing.T) {
+	logs := captureLogs(t)
+	ctx := &RequestContext{
+		RequestID: "rt_ttft-002", RequestModel: "priced-model",
+		TTFTRecorded: true, TTFTSeconds: 9, RoutingLatency: 900 * time.Millisecond,
+		RaylineARCEndpointsTried: []string{"first", "second"},
+	}
+
+	usageRecordRouter().reportNonStreamingUsage(ctx, 9*time.Second, responseUsageMetrics{
+		promptTokens: 10, promptTokensReported: true, completionTokens: 5, completionTokensReported: true,
+	})
+
+	fields := findLogEvent(t, logs, "llm_usage")
+	if value, present := fields["ttft_ms"]; !present || value != nil {
+		t.Fatalf("ttft_ms = %v (present %v), want null on a re-sent turn", value, present)
+	}
+	if fmt.Sprint(fields["routing_latency_ms"]) != "900" {
+		t.Fatalf("routing_latency_ms = %v, want 900", fields["routing_latency_ms"])
+	}
+}
+
 // A turn whose first byte was never seen states no TTFT rather than zero.
 func TestUsageRecordLeavesUnobservedTTFTNull(t *testing.T) {
 	logs := captureLogs(t)
