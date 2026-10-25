@@ -25,6 +25,7 @@ import (
 	"net/http/httptest"
 	"net/http/httputil"
 	"net/url"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -669,12 +670,12 @@ func requestMessages(t *testing.T, body []byte) []byte {
 	return request.Messages
 }
 
-// A reply with thinking is not appended: no capture shows its echo.
+// A reply with reasoning no capture shows the echo of is not appended.
 func TestDeltaThinkingReplyIsNotAppended(t *testing.T) {
 	fixture := newDeltaFixture(t, config.RaylineARCDecideModeDelta, nil)
 	_, ctx := fixture.turn(t, policyTestRequest(t, deltaUser))
 	reply, _ := json.Marshal(map[string]any{"type": "message", "role": "assistant", "content": []any{
-		map[string]any{"type": "thinking", "thinking": "", "signature": "sig"},
+		map[string]any{"type": "redacted_thinking", "data": "x"},
 		map[string]any{"type": "text", "text": "done"},
 	}})
 	complete(t, ctx, reply)
@@ -694,6 +695,9 @@ func TestPolicyReplyThinksInEveryFormat(t *testing.T) {
 	}{
 		{policyFormatAnthropic, `{"role":"assistant","content":[{"type":"redacted_thinking","data":"x"}]}`, true},
 		{policyFormatAnthropic, `{"role":"assistant","content":[{"type":"text","text":"a"}]}`, false},
+		{policyFormatAnthropic, `{"role":"assistant","content":[{"type":"thinking","thinking":"t","signature":"s"},{"type":"text","text":"a"}]}`, false},
+		{policyFormatAnthropic, `{"role":"assistant","content":[{"type":"thinking","thinking":"t","signature":""}]}`, true},
+		{policyFormatAnthropic, `{"role":"assistant","content":[{"type":"thinking","thinking":"t"}]}`, true},
 		{policyFormatOpenAI, `{"choices":[{"message":{"role":"assistant","content":"a","reasoning":"why"}}]}`, true},
 		{policyFormatOpenAI, `{"choices":[{"message":{"role":"assistant","content":"a","reasoning_details":[{"type":"reasoning.text"}]}}]}`, true},
 		{policyFormatOpenAI, `{"choices":[{"message":{"role":"assistant","content":"a","reasoning":null}}]}`, false},
@@ -825,4 +829,64 @@ func TestDeltaUnsettledAppendExtendsTheNextBusyWait(t *testing.T) {
 		t.Fatalf("turn 2 went %s", second.RaylineARC.PolicyDecisionMode)
 	}
 	complete(t, ctx, deltaReply(t))
+}
+
+// A signed thinking reply is appended as Claude Code 2.1.309 echoes it
+// (testdata/continuity, a tool turn with thinking), and the held turn after
+// it goes out as a delta that decides as the full request does.
+func TestDeltaReplayParityClaudeCodeThinkingTurn(t *testing.T) {
+	capture, err := os.ReadFile("testdata/continuity/cc-2.1.309-thread-create-thinking-tool-turn/client.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var body map[string]json.RawMessage
+	if err := json.Unmarshal(capture, &body); err != nil {
+		t.Fatal(err)
+	}
+	var messages []json.RawMessage
+	if err := json.Unmarshal(body["messages"], &messages); err != nil {
+		t.Fatal(err)
+	}
+	with := func(conversation []json.RawMessage) []byte {
+		changed := map[string]json.RawMessage{}
+		for key, value := range body {
+			changed[key] = value
+		}
+		changed["messages"], _ = json.Marshal(conversation)
+		request, _ := json.Marshal(changed)
+		return request
+	}
+	// Turn A ends at message 10 (a system message: cache-marked while last);
+	// its reply is message 11, thinking then tool_use, as an upstream states
+	// it (no caller).
+	var system struct {
+		Content string `json:"content"`
+	}
+	if err := json.Unmarshal(messages[10], &system); err != nil || system.Content == "" {
+		t.Fatalf("message 10 is not a string system message: %s", messages[10])
+	}
+	marked, _ := json.Marshal(map[string]any{"role": "system", "content": []any{
+		map[string]any{"type": "text", "text": system.Content, "cache_control": map[string]any{"type": "ephemeral"}},
+	}})
+	turnA := append(append([]json.RawMessage{}, messages[:10]...), marked)
+	var echoed struct {
+		Content []map[string]json.RawMessage `json:"content"`
+	}
+	if err := json.Unmarshal(messages[11], &echoed); err != nil {
+		t.Fatal(err)
+	}
+	for _, block := range echoed.Content {
+		delete(block, "caller")
+	}
+	reply, _ := json.Marshal(map[string]any{"type": "message", "role": "assistant", "content": echoed.Content})
+	if policyReplyThinks(policyFormatAnthropic, reply) {
+		t.Fatal("a signed thinking reply is not appended")
+	}
+	final, _ := json.Marshal(map[string]any{"type": "message", "role": "assistant", "content": []any{
+		map[string]any{"type": "text", "text": "Done."},
+	}})
+	modes := replayParity(t, []parityTurn{{with(turnA), reply}, {with(messages[:14]), final}})
+	if !slices_Equal(modes, []string{policyDecisionModeSync, policyDecisionModeDelta}) {
+		t.Fatalf("decision modes %v", modes)
+	}
 }
