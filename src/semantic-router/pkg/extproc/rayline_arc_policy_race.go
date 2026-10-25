@@ -315,7 +315,7 @@ func policyDeltaFor(
 	staged, ok := scorer.staged.get(episodeIDHash)
 	switch {
 	case !ok:
-		return policyStagedTurn{}, "none"
+		return policyStagedTurn{}, "not_staged"
 	case staged.turnIndex != state.TurnIndex:
 		return policyStagedTurn{}, "stale_turn"
 	case transition != raylinearc.PolicyTransitionExtends || turn == nil || staged.contextEpoch != turn.ContextEpoch():
