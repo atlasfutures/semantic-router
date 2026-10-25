@@ -107,6 +107,13 @@ var (
 		},
 		[]string{"outcome", "failure_class"},
 	)
+	RaylineARCPolicyStagedTurns = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "llm_rayline_arc_policy_staged_turns_total",
+			Help: "Rayline ARC racing-cell turns (ADR 0155), by whether a delta was sent or the bounded reason it was not, and the fallback lease's bounded outcome.",
+		},
+		[]string{"delta_mismatch_reason", "lease"},
+	)
 	RaylineARCThinkingLeverTurns = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "llm_rayline_arc_thinking_lever_turns_total",
@@ -292,6 +299,10 @@ func RecordRaylineARCEpisodeTransaction(
 		outcome,
 		failureClass,
 	).Inc()
+}
+
+func RecordRaylineARCPolicyStagedTurn(deltaMismatchReason, lease string) {
+	RaylineARCPolicyStagedTurns.WithLabelValues(deltaMismatchReason, lease).Inc()
 }
 
 func RecordRaylineARCThinkingLeverTurn(lever, outcome, reason string) {

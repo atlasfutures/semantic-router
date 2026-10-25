@@ -798,9 +798,17 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 			available, attestedFirst == "" && !derivedOffer && !forced, scheduleBoundary, selector.now())
 	}
 	if staging {
+		// delta_mismatch_reason is "none" when the delta went out; the soak
+		// reads the rest as the rate at which the client's echo of the
+		// appended reply missed VSR's (appended_mismatch) and why else.
+		mismatch := deltaOutcome
+		if mismatch == "delta" {
+			mismatch = "none"
+		}
+		metrics.RecordRaylineARCPolicyStagedTurn(mismatch, policyLeaseOutcome(leaseRefusal))
 		logging.ComponentEvent("extproc", "rayline_arc_policy_staged_turn", map[string]interface{}{
 			"request_id": arcContext.RequestID, "episode_id_hash": arcContext.EpisodeIDHash,
-			"delta": deltaOutcome, "lease": policyLeaseOutcome(leaseRefusal),
+			"delta_mismatch_reason": mismatch, "lease": policyLeaseOutcome(leaseRefusal),
 		})
 	}
 	var pending *policyPendingDecide

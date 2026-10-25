@@ -121,10 +121,18 @@ func complete(t *testing.T, ctx *RequestContext, reply []byte) {
 }
 
 var (
-	raceUser      = map[string]any{"role": "user", "content": "list the files"}
-	raceAssistant = map[string]any{"role": "assistant", "content": []any{
+	raceUser = map[string]any{"role": "user", "content": "list the files"}
+	// raceReplyContent is turn 1's reply as the upstream states it, and
+	// raceAssistant the same message as Claude Code echoes it in the next
+	// request (testdata/thread_continuation): citations [] on text, a direct
+	// caller on tool_use.
+	raceReplyContent = []any{
 		map[string]any{"type": "text", "text": "Listing them."},
 		map[string]any{"type": "tool_use", "id": "toolu_1", "name": "Bash", "input": map[string]any{"command": "ls"}},
+	}
+	raceAssistant = map[string]any{"role": "assistant", "content": []any{
+		map[string]any{"type": "text", "text": "Listing them.", "citations": []any{}},
+		map[string]any{"type": "tool_use", "id": "toolu_1", "caller": map[string]any{"type": "direct"}, "name": "Bash", "input": map[string]any{"command": "ls"}},
 	}}
 	raceToolResult = map[string]any{"role": "user", "content": []any{
 		map[string]any{"type": "tool_result", "tool_use_id": "toolu_1", "content": "README.md"},
@@ -136,7 +144,7 @@ func raceReply(t *testing.T) []byte {
 	t.Helper()
 	body, err := json.Marshal(map[string]any{
 		"id": "msg_1", "type": "message", "role": "assistant", "model": "think",
-		"content": raceAssistant["content"], "stop_reason": "tool_use", "stop_sequence": nil,
+		"content": raceReplyContent, "stop_reason": "tool_use", "stop_sequence": nil,
 		"usage": map[string]any{"input_tokens": 10, "output_tokens": 5},
 	})
 	if err != nil {
@@ -430,7 +438,8 @@ func TestRaceLeaseNeverServesAtAScheduleBoundary(t *testing.T) {
 			"stop_reason": "tool_use", "stop_sequence": nil, "usage": map[string]any{"input_tokens": 1, "output_tokens": 1},
 		})
 		complete(t, ctx, reply)
-		messages = append(messages, map[string]any{"role": "assistant", "content": content},
+		echoed := []any{map[string]any{"type": "tool_use", "id": id, "caller": map[string]any{"type": "direct"}, "name": "Bash", "input": map[string]any{"command": "ls"}}}
+		messages = append(messages, map[string]any{"role": "assistant", "content": echoed},
 			map[string]any{"role": "user", "content": []any{map[string]any{"type": "tool_result", "tool_use_id": id, "content": "ok"}}})
 	}
 	if served.RaylineARC.PolicyActionID != fixture.decided || served.RaylineARC.PolicyDecisionMode != policyDecisionModeSync {
@@ -544,5 +553,77 @@ func TestRaceExpiredConsultIsNotRecorded(t *testing.T) {
 	}
 	if state := readLedgerTestStateNoWait(fixture.store, fixture.episode); state == nil || state.TurnIndex != 1 {
 		t.Fatalf("the expired consult advanced the episode: %+v", state)
+	}
+}
+
+// Claude Code's continuation (testdata/thread_continuation, 2.1.309) follows
+// its tool result with a mid-conversation system message: the lease may
+// serve it. Its appended reply must reproduce the echo the client sends; one
+// echoed otherwise is told apart as the appended reply's mismatch.
+func TestRaceClaudeCodeContinuationShapes(t *testing.T) {
+	resend := readThreadFixture(t, "claude-code-2.1.309-thread-create-resend.request.json")
+	var body struct {
+		Messages []json.RawMessage `json:"messages"`
+	}
+	if err := json.Unmarshal(resend, &body); err != nil {
+		t.Fatal(err)
+	}
+	// The captured tool turn: assistant tool_use, user tool_result, system.
+	echoed, toolResult, system := body.Messages[8], body.Messages[9], body.Messages[10]
+	if !policyLeaseNewMessagesAllowed(policyFormatAnthropic, []json.RawMessage{toolResult, system}) {
+		t.Fatal("Claude Code's tool-result continuation is not lease-eligible")
+	}
+	if policyLeaseNewMessagesAllowed(policyFormatAnthropic, []json.RawMessage{system}) ||
+		policyLeaseNewMessagesAllowed(policyFormatAnthropic, []json.RawMessage{body.Messages[1]}) {
+		t.Fatal("a system message without a tool result, or with a tool_addition, is lease-eligible")
+	}
+	// The reply the captured tool_use came from, as an upstream states it.
+	var message struct {
+		Content []map[string]json.RawMessage `json:"content"`
+	}
+	_ = json.Unmarshal(echoed, &message)
+	delete(message.Content[0], "caller")
+	reply, _ := json.Marshal(map[string]any{"type": "message", "role": "assistant", "content": message.Content})
+	appended, ok := policyAssistantOutput(policyFormatAnthropic, reply)
+	if !ok || raylinearc.MessagesDigest(appended, 1) != raylinearc.MessagesDigest([]json.RawMessage{echoed}, 1) {
+		t.Fatalf("appended %s does not reproduce the echo %s", appended, echoed)
+	}
+	fixture := newRaceFixture(t, "", nil)
+	fixture.stagedFirstTurn(t)
+	bare := map[string]any{"role": "assistant", "content": raceReplyContent}
+	var messages []json.RawMessage
+	_ = json.Unmarshal(gjsonMessages(t, policyTestRequest(t, raceUser, bare, raceToolResult)), &messages)
+	_, reason := policyDeltaFor(fixture.scorer(), fixture.episode, &raylinearc.EpisodeState{TurnIndex: 1},
+		&raylinearc.PolicyEpisodeState{}, raylinearc.PolicyTransitionExtends, policyFormatAnthropic, messages)
+	if reason != "appended_mismatch" {
+		t.Fatalf("delta reason %q, want appended_mismatch", reason)
+	}
+}
+
+func gjsonMessages(t *testing.T, body []byte) []byte {
+	t.Helper()
+	var request struct {
+		Messages json.RawMessage `json:"messages"`
+	}
+	if err := json.Unmarshal(body, &request); err != nil {
+		t.Fatal(err)
+	}
+	return request.Messages
+}
+
+// A reply with thinking is not appended: no capture shows its echo.
+func TestRaceThinkingReplyIsNotAppended(t *testing.T) {
+	fixture := newRaceFixture(t, "", nil)
+	_, ctx := fixture.turn(t, policyTestRequest(t, raceUser))
+	reply, _ := json.Marshal(map[string]any{"type": "message", "role": "assistant", "content": []any{
+		map[string]any{"type": "thinking", "thinking": "", "signature": "sig"},
+		map[string]any{"type": "text", "text": "done"},
+	}})
+	complete(t, ctx, reply)
+	if len(fixture.fake.receivedAppends()) != 0 {
+		t.Fatal("a thinking reply was appended")
+	}
+	if _, ok := fixture.scorer().staged.get(fixture.episode); ok {
+		t.Fatal("a thinking reply left a staged turn")
 	}
 }

@@ -93,8 +93,13 @@ type policyStagedTurn struct {
 	count        int
 	prefixDigest string
 	digest       string
-	hold         *raylinearc.PolicyHold
-	holdExpires  time.Time
+	// appendedFrom is where the appended reply starts, and historyDigest
+	// VSR's digest of the messages before it: a mismatch is then told apart
+	// as the history's or the appended reply's.
+	appendedFrom  int
+	historyDigest string
+	hold          *raylinearc.PolicyHold
+	holdExpires   time.Time
 }
 
 // policyStagedTurns is the process's staged turns, keyed by episode. A
@@ -307,7 +312,10 @@ func policyDeltaFor(
 	case len(messages) <= staged.count:
 		return policyStagedTurn{}, "no_new_messages"
 	case raylinearc.MessagesDigest(messages, staged.count) != staged.digest:
-		return policyStagedTurn{}, "prefix_mismatch"
+		if raylinearc.MessagesDigest(messages, staged.appendedFrom) != staged.historyDigest {
+			return policyStagedTurn{}, "history_mismatch"
+		}
+		return policyStagedTurn{}, "appended_mismatch"
 	}
 	return staged, "delta"
 }
@@ -347,10 +355,16 @@ func policyDeltaRefused(err error) bool {
 // typed user message, a system message, an image the user attached -- may be
 // a stage-one boundary, which only a decide sees. Allow-list: an unknown
 // shape is not a tool result.
+//
+// Claude Code sends a mid-conversation system message after each tool result
+// (testdata/thread_continuation), so a system message of text only is
+// allowed beside at least one tool result; one that carries anything else
+// (a tool_addition, an image) is not.
 func policyLeaseNewMessagesAllowed(format string, messages []json.RawMessage) bool {
 	if len(messages) == 0 {
 		return false
 	}
+	toolResults := 0
 	for _, message := range messages {
 		var envelope struct {
 			Role    string          `json:"role"`
@@ -360,6 +374,13 @@ func policyLeaseNewMessagesAllowed(format string, messages []json.RawMessage) bo
 		if json.Unmarshal(message, &envelope) != nil {
 			return false
 		}
+		if envelope.Role == "system" && format != policyFormatResponses {
+			if !policyTextOnlyContent(envelope.Content) {
+				return false
+			}
+			continue
+		}
+		toolResults++
 		switch format {
 		case policyFormatOpenAI:
 			if envelope.Role != "tool" {
@@ -382,6 +403,27 @@ func policyLeaseNewMessagesAllowed(format string, messages []json.RawMessage) bo
 				}
 			}
 		default:
+			return false
+		}
+	}
+	return toolResults > 0
+}
+
+// policyTextOnlyContent is a message content that is a string or text
+// blocks only.
+func policyTextOnlyContent(raw json.RawMessage) bool {
+	var text string
+	if json.Unmarshal(raw, &text) == nil {
+		return true
+	}
+	var blocks []struct {
+		Type string `json:"type"`
+	}
+	if json.Unmarshal(raw, &blocks) != nil || len(blocks) == 0 {
+		return false
+	}
+	for _, block := range blocks {
+		if block.Type != "text" {
 			return false
 		}
 	}
@@ -636,6 +678,12 @@ func (transaction *raylineARCEpisodeTransaction) appendPolicyStagedTurn(parent c
 	if !ok {
 		return fail("no_assistant_output")
 	}
+	if policyReplyThinks(staging.requestFormat, assistant) {
+		// No captured client shows how a thinking block is echoed (its
+		// signature and display), so such a reply is not appended: the next
+		// turn decides in full rather than staging a guess.
+		return fail("thinking_turn")
+	}
 	roles := slices.Clone(staging.roles)
 	if staging.requestFormat == policyFormatResponses {
 		appended, err := policyResponsesRoles(assistant)
@@ -681,6 +729,8 @@ func (transaction *raylineARCEpisodeTransaction) appendPolicyStagedTurn(parent c
 		count:         response.Messages,
 		prefixDigest:  response.PrefixDigest,
 		digest:        raylinearc.MessagesDigest(messages, len(messages)),
+		appendedFrom:  len(staging.messages),
+		historyDigest: raylinearc.MessagesDigest(messages, len(staging.messages)),
 	}
 	if hold := response.Hold; hold != nil {
 		cloned := *hold
@@ -717,10 +767,14 @@ func policyAssistantOutput(format string, body []byte) ([]json.RawMessage, bool)
 		if json.Unmarshal(body, &reply) != nil || reply.Role != "assistant" || len(reply.Content) == 0 {
 			return nil, false
 		}
+		content, ok := anthropicEchoContent(reply.Content)
+		if !ok {
+			return nil, false
+		}
 		message, err := raylinearc.MarshalUnescaped(struct {
 			Role    string          `json:"role"`
 			Content json.RawMessage `json:"content"`
-		}{"assistant", reply.Content})
+		}{"assistant", content})
 		return []json.RawMessage{message}, err == nil
 	case policyFormatOpenAI:
 		var reply struct {
@@ -767,6 +821,73 @@ func policyAssistantOutput(format string, body []byte) ([]json.RawMessage, bool)
 	default:
 		return nil, false
 	}
+}
+
+// anthropicEchoContent is a Messages reply's content as Claude Code echoes
+// it in the next request's history (testdata/thread_continuation, Claude
+// Code 2.1.309): a text block carries "citations": [] where the reply had
+// none, and a tool_use block "caller": {"type":"direct"} where it named
+// none. Every other block and member is kept as the reply had it. The next
+// turn's digest check is what proves the echo matched; a client that echoes
+// otherwise costs only a full resend (delta_mismatch_reason
+// appended_mismatch).
+func anthropicEchoContent(raw json.RawMessage) (json.RawMessage, bool) {
+	var blocks []map[string]json.RawMessage
+	if json.Unmarshal(raw, &blocks) != nil {
+		return nil, false
+	}
+	for _, block := range blocks {
+		var kind string
+		_ = json.Unmarshal(block["type"], &kind)
+		switch kind {
+		case "text":
+			if citations, ok := block["citations"]; !ok || string(citations) == "null" {
+				block["citations"] = json.RawMessage(`[]`)
+			}
+		case "tool_use":
+			if _, ok := block["caller"]; !ok {
+				block["caller"] = json.RawMessage(`{"type":"direct"}`)
+			}
+		}
+	}
+	encoded, err := raylinearc.MarshalUnescaped(blocks)
+	return encoded, err == nil
+}
+
+// policyReplyThinks reports whether the appended reply holds reasoning:
+// Messages thinking or redacted_thinking blocks, Chat reasoning members.
+// (A Responses reasoning item is materialized by VSR itself for the next
+// turn, so it is appended as it will be read.)
+func policyReplyThinks(format string, messages []json.RawMessage) bool {
+	for _, message := range messages {
+		switch format {
+		case policyFormatAnthropic:
+			var reply struct {
+				Content []struct {
+					Type string `json:"type"`
+				} `json:"content"`
+			}
+			if json.Unmarshal(message, &reply) != nil {
+				return true
+			}
+			for _, block := range reply.Content {
+				if block.Type == "thinking" || block.Type == "redacted_thinking" {
+					return true
+				}
+			}
+		case policyFormatOpenAI:
+			var reply map[string]json.RawMessage
+			if json.Unmarshal(message, &reply) != nil {
+				return true
+			}
+			for _, member := range []string{"reasoning", "reasoning_content", "reasoning_details"} {
+				if value, ok := reply[member]; ok && string(value) != "null" {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 // stageRaylineARCAppendSource keeps the reply the client receives for the
