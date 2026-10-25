@@ -45,11 +45,15 @@ package extproc
 // drops it, so nothing outlives the turn that wrote it.
 
 import (
+	"bytes"
 	"container/list"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"slices"
+	"strconv"
 	"sync"
 	"time"
 
@@ -81,8 +85,8 @@ type policyStagedTurn struct {
 	requestFormat string
 	// count and prefixDigest are the service's: the staged message count and
 	// its digest, which a delta decide echoes. digest is VSR's own digest of
-	// the same messages (raylinearc.MessagesDigest), which the next request
-	// must reproduce over its first count messages.
+	// the same messages (policyDeltaDigest), which the next request must
+	// reproduce over its first count messages.
 	count        int
 	prefixDigest string
 	digest       string
@@ -91,6 +95,11 @@ type policyStagedTurn struct {
 	// as the history's or the appended reply's.
 	appendedFrom  int
 	historyDigest string
+	// unsettled is an append VSR stopped waiting for (a timeout or a
+	// transport failure): the service may still hold the episode busy, so the
+	// next turn sends in full and retries session_busy for the append's
+	// budget longer (policyServiceScorer.unsettledBusyWait).
+	unsettled bool
 }
 
 // policyStagedTurns is the process's staged turns, keyed by episode. A
@@ -230,19 +239,69 @@ func policyDeltaFor(
 		return policyStagedTurn{}, "not_staged"
 	case staged.turnIndex != state.TurnIndex:
 		return policyStagedTurn{}, "stale_turn"
+	case staged.unsettled:
+		return policyStagedTurn{}, "append_unsettled"
 	case transition != raylinearc.PolicyTransitionExtends || turn == nil || staged.contextEpoch != turn.ContextEpoch():
 		return policyStagedTurn{}, "new_context"
 	case staged.requestFormat != format:
 		return policyStagedTurn{}, "format"
 	case len(messages) <= staged.count:
 		return policyStagedTurn{}, "no_new_messages"
-	case raylinearc.MessagesDigest(messages, staged.count) != staged.digest:
-		if raylinearc.MessagesDigest(messages, staged.appendedFrom) != staged.historyDigest {
+	case policyDeltaDigest(messages, staged.count) != staged.digest:
+		if policyDeltaDigest(messages, staged.appendedFrom) != staged.historyDigest {
 			return policyStagedTurn{}, "history_mismatch"
 		}
 		return policyStagedTurn{}, "appended_mismatch"
 	}
 	return staged, "delta"
+}
+
+// policyDeltaDigest digests the first n messages as the delta check
+// compares them: what the service's projections (canonical-conversation.v1
+// and transcript-projection.v9) read the same. Only Claude Code's two
+// per-request rewrites of history are insignificant: a cache_control marker
+// on a message or on one of its top-level content blocks (never one nested
+// deeper, such as a tool's input), and a system message whose content is one
+// text block, which is its text. Object key order and whitespace are
+// insignificant. Anything else that differs makes the turn go in full.
+func policyDeltaDigest(messages []json.RawMessage, n int) string {
+	hash := sha256.New()
+	for _, message := range messages[:n] {
+		canonical := policyDeltaCanonical(message)
+		hash.Write([]byte(strconv.Itoa(len(canonical))))
+		hash.Write([]byte{':'})
+		hash.Write(canonical)
+	}
+	return hex.EncodeToString(hash.Sum(nil))
+}
+
+func policyDeltaCanonical(message json.RawMessage) []byte {
+	var object map[string]any
+	decoder := json.NewDecoder(bytes.NewReader(message))
+	decoder.UseNumber()
+	if decoder.Decode(&object) != nil || object == nil || decoder.More() {
+		return message
+	}
+	delete(object, "cache_control")
+	if blocks, ok := object["content"].([]any); ok {
+		for _, block := range blocks {
+			if fields, ok := block.(map[string]any); ok {
+				delete(fields, "cache_control")
+			}
+		}
+		if object["role"] == "system" && len(blocks) == 1 {
+			if fields, ok := blocks[0].(map[string]any); ok && len(fields) == 2 && fields["type"] == "text" {
+				if text, ok := fields["text"].(string); ok {
+					object["content"] = text
+				}
+			}
+		}
+	}
+	canonical, err := raylinearc.MarshalUnescaped(object)
+	if err != nil {
+		return message
+	}
+	return canonical
 }
 
 // policyShellOf is a full request's shell: everything but its conversation.
@@ -408,7 +467,12 @@ func (transaction *raylineARCEpisodeTransaction) appendPolicyStagedTurn(parent c
 		if errors.As(err, &failure) {
 			class = failure.Class
 		}
-		return fail(class)
+		fail(class)
+		if !policyServiceAnswered(err) && !raylinearc.PolicySessionUnanswered(err) {
+			// The service may still be appending under its episode lock.
+			return &policyStagedTurn{unsettled: true}
+		}
+		return nil
 	}
 	if response.Package != staging.pkg || response.Messages != len(messages) {
 		return fail("append_mismatch")
@@ -418,9 +482,9 @@ func (transaction *raylineARCEpisodeTransaction) appendPolicyStagedTurn(parent c
 		requestFormat: staging.requestFormat,
 		count:         response.Messages,
 		prefixDigest:  response.PrefixDigest,
-		digest:        raylinearc.MessagesDigest(messages, len(messages)),
+		digest:        policyDeltaDigest(messages, len(messages)),
 		appendedFrom:  len(staging.messages),
-		historyDigest: raylinearc.MessagesDigest(messages, len(staging.messages)),
+		historyDigest: policyDeltaDigest(messages, len(staging.messages)),
 	}
 	fields := map[string]interface{}{
 		"request_id": staging.requestID, "episode_id_hash": staging.episodeIDHash,
