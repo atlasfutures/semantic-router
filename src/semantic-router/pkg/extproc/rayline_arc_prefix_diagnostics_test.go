@@ -51,7 +51,7 @@ func prefixDiagnosticTurn(
 	signals := raylinearc.PolicyTurnSignals{CallKind: kind}
 	turn, _, transition := raylinearc.PolicyTurn(previous, messages, roles, 0, signals)
 	rememberPolicyPrefix(arcContext.EpisodeIDHash,
-		observePolicyPrefix(arcContext, clientRequest, messages, previous, signals, transition))
+		observePolicyPrefix(arcContext, clientRequest, raylinearc.NewPrefixDigests(messages), previous, signals, transition))
 	if kind == raylinearc.PolicyCallSide {
 		return transition, previous
 	}

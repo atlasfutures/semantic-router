@@ -304,9 +304,21 @@ func NewPolicyBoundaryDecision(
 	turn *PolicyEpisodeState,
 	messages []json.RawMessage,
 ) *PolicyBoundaryDecision {
+	return NewPolicyBoundaryDecisionFrom(arm, turnIndex, turn, NewPrefixDigests(messages))
+}
+
+// NewPolicyBoundaryDecisionFrom is NewPolicyBoundaryDecision over a request's
+// memoized digests.
+func NewPolicyBoundaryDecisionFrom(
+	arm int,
+	turnIndex uint64,
+	turn *PolicyEpisodeState,
+	digests *PrefixDigests,
+) *PolicyBoundaryDecision {
+	count := len(digests.Messages())
 	return &PolicyBoundaryDecision{
 		Arm: arm, TurnIndex: turnIndex, EpochStartTurn: turn.EpochStartTurn, CompactionCount: turn.CompactionCount,
-		PrefixLen: len(messages), PrefixDigest: MessagesDigest(messages, len(messages)),
+		PrefixLen: count, PrefixDigest: digests.Digest(count),
 	}
 }
 
@@ -319,12 +331,21 @@ func (boundary *PolicyBoundaryDecision) RetainedArm(
 	turnIndex uint64,
 	turn *PolicyEpisodeState,
 ) (int, bool) {
+	return boundary.RetainedArmFrom(NewPrefixDigests(messages), turnIndex, turn)
+}
+
+// RetainedArmFrom is RetainedArm over a request's memoized digests.
+func (boundary *PolicyBoundaryDecision) RetainedArmFrom(
+	digests *PrefixDigests,
+	turnIndex uint64,
+	turn *PolicyEpisodeState,
+) (int, bool) {
 	if boundary == nil || turn == nil {
 		return -1, false
 	}
 	if boundary.TurnIndex != turnIndex || boundary.EpochStartTurn != turn.EpochStartTurn ||
-		boundary.CompactionCount != turn.CompactionCount || boundary.PrefixLen > len(messages) ||
-		MessagesDigest(messages, boundary.PrefixLen) != boundary.PrefixDigest {
+		boundary.CompactionCount != turn.CompactionCount || boundary.PrefixLen > len(digests.Messages()) ||
+		digests.Digest(boundary.PrefixLen) != boundary.PrefixDigest {
 		return -1, false
 	}
 	return boundary.Arm, true
@@ -429,9 +450,44 @@ func (state *PolicyEpisodeState) ContextEpoch() string {
 // re-encodes a message it already sent. The bytes forwarded anywhere are
 // never changed; only this comparison is.
 func MessagesDigest(messages []json.RawMessage, n int) string {
+	return NewPrefixDigests(messages).Digest(n)
+}
+
+// PrefixDigests is one request's messages with each message's canonical form
+// (canonicalPrefixMessage) computed at most once. A turn digests its
+// transcript several times -- the recorded prefix it extends, its own prefix
+// for the next turn and a boundary, the diagnostic shape -- and the canonical
+// form, a full JSON decode and encode of every message, is the expensive part
+// of each. It is not safe for concurrent use.
+type PrefixDigests struct {
+	messages  []json.RawMessage
+	canonical [][]byte
+}
+
+// NewPrefixDigests memoizes messages' digests. It computes nothing until
+// asked.
+func NewPrefixDigests(messages []json.RawMessage) *PrefixDigests {
+	return &PrefixDigests{messages: messages, canonical: make([][]byte, len(messages))}
+}
+
+// Messages are the messages the digests are of.
+func (digests *PrefixDigests) Messages() []json.RawMessage {
+	return digests.messages
+}
+
+// Canonical is message index in canonical form.
+func (digests *PrefixDigests) Canonical(index int) []byte {
+	if digests.canonical[index] == nil {
+		digests.canonical[index] = canonicalPrefixMessage(digests.messages[index])
+	}
+	return digests.canonical[index]
+}
+
+// Digest is MessagesDigest of the first n messages.
+func (digests *PrefixDigests) Digest(n int) string {
 	hash := sha256.New()
-	for _, message := range messages[:n] {
-		canonical := canonicalPrefixMessage(message)
+	for index := range digests.messages[:n] {
+		canonical := digests.Canonical(index)
 		hash.Write([]byte(strconv.Itoa(len(canonical))))
 		hash.Write([]byte{':'})
 		hash.Write(canonical)
@@ -584,8 +640,20 @@ func PolicyTurn(
 	turnIndex uint64,
 	signals PolicyTurnSignals,
 ) (*PolicyEpisodeState, []PolicyAttribution, string) {
+	return PolicyTurnFrom(previous, NewPrefixDigests(messages), roles, turnIndex, signals)
+}
+
+// PolicyTurnFrom is PolicyTurn over a request's memoized digests.
+func PolicyTurnFrom(
+	previous *PolicyEpisodeState,
+	digests *PrefixDigests,
+	roles []string,
+	turnIndex uint64,
+	signals PolicyTurnSignals,
+) (*PolicyEpisodeState, []PolicyAttribution, string) {
+	messages := digests.Messages()
 	extends := previous != nil && previous.PrefixLen <= len(messages) &&
-		MessagesDigest(messages, previous.PrefixLen) == previous.PrefixDigest
+		digests.Digest(previous.PrefixLen) == previous.PrefixDigest
 	if signals.CallKind == PolicyCallSide {
 		if previous == nil {
 			return &PolicyEpisodeState{}, []PolicyAttribution{}, PolicyTransitionSideCall
@@ -691,6 +759,17 @@ func (state *PolicyEpisodeState) NextWithPrices(
 	armID string,
 	prices *PolicyPriceAudit,
 ) *PolicyEpisodeState {
+	return state.NextWithPricesFrom(NewPrefixDigests(messages), actionID, armID, prices)
+}
+
+// NextWithPricesFrom is NextWithPrices over a request's memoized digests.
+func (state *PolicyEpisodeState) NextWithPricesFrom(
+	digests *PrefixDigests,
+	actionID string,
+	armID string,
+	prices *PolicyPriceAudit,
+) *PolicyEpisodeState {
+	messages := digests.Messages()
 	next := state.Clone()
 	next.Exploration = nil
 	next.Ledger = append(next.Ledger, PolicyLedgerEntry{
@@ -709,7 +788,7 @@ func (state *PolicyEpisodeState) NextWithPrices(
 		}
 	}
 	next.PrefixLen = len(messages)
-	next.PrefixDigest = MessagesDigest(messages, len(messages))
+	next.PrefixDigest = digests.Digest(len(messages))
 	return next
 }
 

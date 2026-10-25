@@ -22,23 +22,54 @@ func recordDispatchedReasoningControls(ctx *RequestContext, body []byte) {
 	ctx.DispatchedReasoningEffort = ""
 	ctx.DispatchedReasoningBound = nil
 
+	var wire dispatchedReasoningWire
+	if json.Unmarshal(body, &wire) != nil {
+		return
+	}
+	wire.record(ctx)
+}
+
+// recordDispatchedControls is recordDispatchedReasoningControls and
+// recordDispatchedProviderPin over one decode of the final body, which is the
+// whole transcript: each read-back otherwise scans every message to find a
+// few top-level members.
+func recordDispatchedControls(ctx *RequestContext, body []byte) {
+	if ctx == nil {
+		return
+	}
+	ctx.DispatchedReasoningEffort = ""
+	ctx.DispatchedReasoningBound = nil
+	ctx.DispatchedProviderOrder = nil
+	ctx.DispatchedProviderPrivacy = dispatchedProviderPrivacy{}
+
 	var wire struct {
-		ReasoningEffort    string `json:"reasoning_effort"`
-		ChatTemplateKwargs struct {
-			ReasoningEffort string `json:"reasoning_effort"`
-		} `json:"chat_template_kwargs"`
-		Reasoning struct {
-			Effort    string `json:"effort"`
-			MaxTokens *int64 `json:"max_tokens"`
-		} `json:"reasoning"`
-		// Messages carries its effort in output_config (pathfinder #2655).
-		OutputConfig struct {
-			Effort string `json:"effort"`
-		} `json:"output_config"`
+		dispatchedReasoningWire
+		dispatchedProviderWire
 	}
 	if json.Unmarshal(body, &wire) != nil {
 		return
 	}
+	wire.dispatchedReasoningWire.record(ctx)
+	wire.dispatchedProviderWire.record(ctx)
+}
+
+// dispatchedReasoningWire is the body's reasoning controls.
+type dispatchedReasoningWire struct {
+	ReasoningEffort    string `json:"reasoning_effort"`
+	ChatTemplateKwargs struct {
+		ReasoningEffort string `json:"reasoning_effort"`
+	} `json:"chat_template_kwargs"`
+	Reasoning struct {
+		Effort    string `json:"effort"`
+		MaxTokens *int64 `json:"max_tokens"`
+	} `json:"reasoning"`
+	// Messages carries its effort in output_config (pathfinder #2655).
+	OutputConfig struct {
+		Effort string `json:"effort"`
+	} `json:"output_config"`
+}
+
+func (wire *dispatchedReasoningWire) record(ctx *RequestContext) {
 	ctx.DispatchedReasoningEffort = wire.ReasoningEffort
 	if ctx.DispatchedReasoningEffort == "" {
 		ctx.DispatchedReasoningEffort = wire.Reasoning.Effort
