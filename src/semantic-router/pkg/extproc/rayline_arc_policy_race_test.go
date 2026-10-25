@@ -114,6 +114,7 @@ func (fixture *raceFixture) turn(t *testing.T, body []byte) (*selection.Selectio
 func complete(t *testing.T, ctx *RequestContext, reply []byte) {
 	t.Helper()
 	stageRaylineARCAppendSource(ctx, reply)
+	ctx.RaylineARCTransaction.stageCallUsage(responseUsageMetrics{})
 	if err := ctx.RaylineARCTransaction.commit(context.Background(), ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -215,6 +216,7 @@ func TestRaceLostServesTheLeaseAndRecordsIt(t *testing.T) {
 	// The caller's finalize budget is shorter than the late decide: the
 	// store's commit still gets one of its own.
 	stageRaylineARCAppendSource(ctx, raceReply(t))
+	ctx.RaylineARCTransaction.stageCallUsage(responseUsageMetrics{})
 	short, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 	if err := ctx.RaylineARCTransaction.commit(short, ctx); err != nil {
@@ -494,4 +496,53 @@ func TestRaceDecideTheLeaseCannotReplaceKeepsTheSyncBudget(t *testing.T) {
 		t.Fatalf("served %s", second.RaylineARC.PolicyActionID)
 	}
 	complete(t, ctx, raceReply(t))
+}
+
+// An append never takes a slot a turn's decide needs: with one slot, an
+// append in flight leaves another episode's decide served.
+func TestRaceAppendTakesNoDecideSlot(t *testing.T) {
+	fixture := newRaceFixture(t, "", func(policy *config.RaylineARCPolicyServiceConfig) { policy.MaxInflightCalls = 1 })
+	fixture.selector.armedComponents().admission = raylinearc.NewAdmissionGate(1)
+	gate := make(chan struct{})
+	fixture.fake.appendGate = gate
+	_, ctx := fixture.turn(t, policyTestRequest(t, raceUser))
+	stageRaylineARCAppendSource(ctx, raceReply(t))
+	ctx.RaylineARCTransaction.stageCallUsage(responseUsageMetrics{})
+	committed := make(chan error, 1)
+	go func() { committed <- ctx.RaylineARCTransaction.commit(context.Background(), ctx) }()
+	deadline := time.Now().Add(2 * time.Second)
+	for len(fixture.fake.receivedAppends()) == 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	other, _ := raylinearc.NewEpisodeState(2)
+	if _, err := fixture.selector.Select(context.Background(), &selection.SelectionContext{
+		DecisionName: fixture.decision.Name, CandidateModels: fixture.decision.ModelRefs,
+		RaylineARC: &selection.RaylineARCSelectionContext{
+			EpisodeIDHash: strings.Repeat("f", 64), RequestID: "req-other", State: other,
+			RawRequest: policyTestRequest(t, raceUser), RequestFormat: policyFormatAnthropic,
+		},
+	}); err != nil {
+		t.Fatalf("another episode's decide was shed while an append ran: %v", err)
+	}
+	close(gate)
+	if err := <-committed; err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A decision-only consult (no reply delivered) keeps its caller's deadline:
+// one that expired while the late decide ran is not recorded.
+func TestRaceExpiredConsultIsNotRecorded(t *testing.T) {
+	fixture := newRaceFixture(t, "", nil)
+	fixture.stagedFirstTurn(t)
+	slowDeltas(fixture, 200*time.Millisecond)
+	_, ctx := fixture.turn(t, policyTestRequest(t, raceUser, raceAssistant, raceToolResult))
+	expired, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if err := ctx.RaylineARCTransaction.commit(expired, ctx); err == nil {
+		t.Fatal("an expired consult committed")
+	}
+	if state := readLedgerTestStateNoWait(fixture.store, fixture.episode); state == nil || state.TurnIndex != 1 {
+		t.Fatalf("the expired consult advanced the episode: %+v", state)
+	}
 }

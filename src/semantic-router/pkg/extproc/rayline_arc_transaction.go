@@ -516,11 +516,22 @@ func (transaction *raylineARCEpisodeTransaction) commit(
 			if transaction.selectionReady && !transaction.leaseLost.Load() {
 				staged = transaction.appendPolicyStagedTurn(ctx)
 			}
-			// The store's commit gets its own budget: the staging may have
-			// spent the caller's.
-			storeContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), transaction.finalizeTimeout())
-			defer cancel()
-			ctx = storeContext
+			// A delivered reply's commit gets its own budget: the staging may
+			// have spent the caller's. A decision-only consult keeps its
+			// caller's, whose deadline must still stop it.
+			if transaction.callCompleted {
+				storeContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), transaction.finalizeTimeout())
+				defer cancel()
+				ctx = storeContext
+			} else if err := ctx.Err(); err != nil {
+				// The consult's caller gave up while the late decide ran:
+				// nobody received this turn, so it is not recorded.
+				transaction.stopRenewal()
+				transaction.finalizeErr = err
+				transaction.dropPolicyStagedTurn()
+				transaction.abortStore(ctx)
+				return
+			}
 		}
 		transaction.stopRenewal()
 		if !transaction.selectionReady || transaction.leaseLost.Load() {

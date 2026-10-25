@@ -465,7 +465,6 @@ func (selector *raylineARCSelector) newPolicyStaging(
 	roles []string,
 	decider policyDecider,
 	session *raylinearc.PolicySessionBinding,
-	admit func() (func(), error),
 	pending *policyPendingDecide,
 ) *policyStaging {
 	var appender policyAppender
@@ -478,7 +477,7 @@ func (selector *raylineARCSelector) newPolicyStaging(
 		turns:         scorer.staged,
 		appender:      appender,
 		session:       session,
-		admit:         admit,
+		admit:         scorer.appendAdmit,
 		pkg:           raylinearc.PolicyPackageRef{Alias: scorer.alias, PackageSHA256: scorer.sha256},
 		episodeIDHash: arcContext.EpisodeIDHash,
 		requestID:     arcContext.RequestID,
@@ -489,6 +488,14 @@ func (selector *raylineARCSelector) newPolicyStaging(
 		pending:       pending,
 		appendTimeout: scorer.appendTimeout,
 	}
+}
+
+// appendAdmit takes a slot of the appends' own gate.
+func (scorer *policyServiceScorer) appendAdmit() (func(), error) {
+	if scorer.appendAdmission == nil {
+		return func() {}, nil
+	}
+	return scorer.appendAdmission.Acquire()
 }
 
 // policyEstimatedTokens is the character-based estimate the router routes

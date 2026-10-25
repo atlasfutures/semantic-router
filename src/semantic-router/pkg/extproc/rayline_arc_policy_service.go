@@ -113,7 +113,10 @@ type policyServiceScorer struct {
 	// has served.
 	lateDecideTimeout time.Duration
 	staged            *policyStagedTurns
-	deltaUnsupported  atomic.Bool
+	// appendAdmission is the appends' own admission gate: an append is
+	// optional work and never takes a slot a turn's decide could need.
+	appendAdmission  *raylinearc.AdmissionGate
+	deltaUnsupported atomic.Bool
 }
 
 // policySideCallStrictFor is how long a strict cell keeps its side calls
@@ -205,6 +208,7 @@ func newPolicyServiceScorer(
 			time.Duration(policy.TotalTimeoutSeconds)*time.Second, scorer.busyWait,
 		)
 		scorer.staged = newPolicyStagedTurns()
+		scorer.appendAdmission = raylinearc.NewAdmissionGate(policy.MaxInflightCalls)
 	}
 	index := make(map[string]int, len(decision.ModelRefs))
 	for arm, modelRef := range decision.ModelRefs {
@@ -845,7 +849,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 					recordPolicySession(leased.RaylineARC, nil, state, arcContext.EpisodeIDHash)
 				}
 				leased.RaylineARC.PolicyStaging = selector.newPolicyStaging(
-					armed, scorer, arcContext, request.RequestFormat, turn, messages, roles, decider, sessionBinding, admit, pending,
+					armed, scorer, arcContext, request.RequestFormat, turn, messages, roles, decider, sessionBinding, pending,
 				)
 				rememberPolicyPrefix(arcContext.EpisodeIDHash, prefixShape)
 				return leased, nil
@@ -1063,7 +1067,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	result.RaylineARC.PolicyRaceWait = raceWait
 	if staging && !sideCall {
 		result.RaylineARC.PolicyStaging = selector.newPolicyStaging(
-			armed, scorer, arcContext, request.RequestFormat, turn, messages, roles, decider, sessionBinding, admit, nil,
+			armed, scorer, arcContext, request.RequestFormat, turn, messages, roles, decider, sessionBinding, nil,
 		)
 	}
 	recordPolicyReplica(result.RaylineARC, replicaBinding)
