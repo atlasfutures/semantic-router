@@ -178,7 +178,7 @@ type RaylineARCRouteExecutionV2 struct {
 	LastServedMessage  *int
 	// HoldActionID is a mandatory action hold, nil without one.
 	HoldActionID *string
-	CacheContext *raylinearc.PolicyCacheContext
+	CacheContext *cachecontext.PolicyCacheContext
 	Event        raylinearc.PolicyExecutorEvent
 	Capacity     []raylinearc.PolicyActionCapacity
 	// Infeasible are the targets the request's own capacity marks fits:

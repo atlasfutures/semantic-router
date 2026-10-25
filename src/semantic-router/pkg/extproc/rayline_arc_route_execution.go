@@ -324,9 +324,9 @@ func applyRoutePolicyAndExecutionV2(
 
 // routeExecutionV2CacheContext is a v2 lookup's cache_context: the admitted
 // evidence of its targets; nil when none carried any.
-func routeExecutionV2CacheContext(v2 *selection.RaylineARCRouteExecutionV2) *raylinearc.PolicyCacheContext {
+func routeExecutionV2CacheContext(v2 *selection.RaylineARCRouteExecutionV2) *cachecontext.PolicyCacheContext {
 	if v2 == nil || v2.CacheContext == nil {
 		return nil
 	}
-	return &raylinearc.PolicyCacheContext{Actions: append([]raylinearc.PolicyActionCache{}, v2.CacheContext.Actions...)}
+	return &cachecontext.PolicyCacheContext{Actions: append([]cachecontext.PolicyActionCache{}, v2.CacheContext.Actions...)}
 }

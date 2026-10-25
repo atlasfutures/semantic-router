@@ -26,6 +26,8 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/atlasfutures/semantic-router/rayline-core/cachecontext"
+
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/routerruntime"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
@@ -592,7 +594,7 @@ func routesExecutionV2Controls(execution *routesExecutionV2) (*selection.Rayline
 		if target.evidence != nil {
 			entry, notAdmitted := admitRoutesExecutionWorker(*target.evidence)
 			if controls.CacheContext == nil {
-				controls.CacheContext = &raylinearc.PolicyCacheContext{}
+				controls.CacheContext = &cachecontext.PolicyCacheContext{}
 			}
 			controls.CacheContext.Actions = append(controls.CacheContext.Actions, entry)
 			refused = append(refused, notAdmitted...)
