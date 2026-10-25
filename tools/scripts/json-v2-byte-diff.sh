@@ -13,6 +13,9 @@ old=${1:-go1.25.3}
 new=${2:-go1.27.2}
 root=$(cd "$(dirname "$0")/../.." && pwd)
 out=$(mktemp -d)
+# The binding libraries carry no rpath; on Linux the test binary finds them
+# here, as the vsr-next CI router step does.
+export LD_LIBRARY_PATH="$root/candle-binding/target/release:$root/ml-binding/target/release:$root/nlp-binding/target/release${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 for toolchain in "$old" "$new"; do
 	(cd "$root/rayline-core" && CGO_ENABLED=0 GOTOOLCHAIN=$toolchain \
 		PROTOCOL_GOLDEN_BYTES_OUT="$out/$toolchain" go test -count=1 ./protocolcodec/ >/dev/null)
