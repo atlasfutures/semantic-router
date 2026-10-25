@@ -385,6 +385,11 @@ func (provider *HTTPDecisions) Decide(ctx context.Context, input DecisionInput) 
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
+		if provider.config.Decisions.apiMode() == DecisionsExecutionContextV2 {
+			// v2 refusals are contract codes (execution_*, policy_*): name the
+			// code so the harness and logs show why. Messages are not echoed.
+			return Decision{}, fmt.Errorf("Decisions request refused (HTTP %d%s)", response.StatusCode, refusalCode(response))
+		}
 		return Decision{}, fmt.Errorf("Decisions request refused (HTTP %d)", response.StatusCode)
 	}
 	if tag := provider.config.Decisions.CellTag; tag != "" && response.Header.Get("X-Rayline-Cell") != tag {
@@ -429,7 +434,11 @@ func (provider *HTTPDecisions) Decide(ctx context.Context, input DecisionInput) 
 	}
 	identity := selected.Identity
 	// A package-less profile pins no package: the response names it.
-	if identity == nil || (provider.config.PackageSHA256 != "" && identity.PackageSHA256 != provider.config.PackageSHA256) || identity.RegistrySHA256 != provider.config.RegistrySHA256 || (provider.config.Decisions.OfferSHA256 != "" && identity.OfferSHA256 != provider.config.Decisions.OfferSHA256) || identity.ActionID != identity.PolicyActionID || (selected.ActionID != "" && selected.ActionID != identity.ActionID) {
+	// A package-less profile pins no package or registry: control ids are
+	// content hashes, so the selected action's control id (checked below
+	// against the bound action) is what executor and service must share.
+	pinned := provider.config.PackageSHA256 != ""
+	if identity == nil || (pinned && identity.PackageSHA256 != provider.config.PackageSHA256) || (pinned && identity.RegistrySHA256 != provider.config.RegistrySHA256) || (provider.config.Decisions.OfferSHA256 != "" && identity.OfferSHA256 != provider.config.Decisions.OfferSHA256) || identity.ActionID != identity.PolicyActionID || (selected.ActionID != "" && selected.ActionID != identity.ActionID) {
 		return Decision{}, fmt.Errorf("Decisions identity does not match the pinned execution package, registry and offer")
 	}
 	action, ok := provider.actions[identity.ActionID]
@@ -671,4 +680,21 @@ func validateCachePolicyEcho(source, mode, episodeIdentity string, multiwarm *bo
 		return fmt.Errorf("Decisions returned an inconsistent multiwarm acknowledgement")
 	}
 	return nil
+}
+
+// refusalCode reads a contract error code from a refused response, if any.
+func refusalCode(response *http.Response) string {
+	raw, err := readBounded(response.Body, 64<<10)
+	if err != nil {
+		return ""
+	}
+	var body struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(raw, &body) != nil || body.Error.Code == "" || len(body.Error.Code) > 64 || strings.ContainsAny(body.Error.Code, " \r\n") {
+		return ""
+	}
+	return ", " + body.Error.Code
 }

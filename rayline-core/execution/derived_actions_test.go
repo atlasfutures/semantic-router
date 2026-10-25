@@ -2,6 +2,9 @@ package execution
 
 import (
 	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"sort"
@@ -74,9 +77,9 @@ func TestDerivedActionsUseARCActionIdentity(t *testing.T) {
 	if _, err := NewServer(config, registry, provider, testCoreToken); err != nil {
 		t.Fatal(err)
 	}
-	expect := provider.projectV2(DecisionInput{State: ExecutionContext{ContextEpoch: "e:0"}}).Expect
-	if expect == nil || expect.PackageSHA256 != nil || expect.ThinkingControlsSHA256 == nil || *expect.ThinkingControlsSHA256 != registry.SHA256 {
-		t.Fatalf("a package-less profile must pin the registry and no package: %+v", expect)
+	// The embedded registry may be newer than the serving one: no pin.
+	if expect := provider.projectV2(DecisionInput{State: ExecutionContext{ContextEpoch: "e:0"}}).Expect; expect != nil {
+		t.Fatalf("a package-less profile pinned %+v", expect)
 	}
 }
 
@@ -121,14 +124,36 @@ func TestDerivedProfileExecutesARequest(t *testing.T) {
 		t.Fatal(err)
 	}
 	qwen := "d6936db7073d3f30c663d504b7acbb124e8f752a9a766cfb5e3129050e26e0a6"
+	// The service serves another package and a different (older) registry.
 	fixture := &v2Decisions{choose: func(contextV2) string { return qwen }, mutate: func(response map[string]any) {
 		response["identity"].(map[string]any)["package_sha256"] = strings.Repeat("5", 64)
+		response["identity"].(map[string]any)["thinking_controls_sha256"] = strings.Repeat("3", 64)
 	}}
 	_, httpServer := v2Server(t, config, fixture)
 	if status, response := executeHTTP(t, httpServer.URL, "/v1/chat/completions", `{"model":"arc-1.0","max_tokens":64,"messages":[{"role":"user","content":"hi"}]}`, "derived"); status != 200 {
 		t.Fatalf("status %d: %s", status, response)
 	}
-	if local.count() != 1 || fixture.snapshot()[0].Execution.Expect.PackageSHA256 != nil {
+	if local.count() != 1 || fixture.snapshot()[0].Execution.Expect != nil {
 		t.Fatal("derived profile did not execute locally without a package pin")
+	}
+}
+
+func TestV2RefusalNamesTheContractCode(t *testing.T) {
+	local, cloud := &upstreamFixture{}, &upstreamFixture{}
+	config := hybridV2Config(t, chatUpstream(t, local, false).URL, chatUpstream(t, cloud, true).URL+"/v1/chat/completions")
+	refusing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusConflict)
+		_, _ = io.WriteString(w, `{"error":{"code":"execution_identity_mismatch","message":"secret detail","type":"invalid_request_error"},"type":"error"}`)
+	}))
+	defer refusing.Close()
+	t.Setenv("TEST_DECISIONS_KEY", "fixture")
+	config.Decisions.URL = refusing.URL
+	provider, err := NewHTTPDecisions(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = provider.Decide(t.Context(), DecisionInput{Body: []byte(`{"model":"arc-1.0","messages":[]}`), Format: "openai.chat.v1", SessionID: "s", BranchID: "main", RequestID: "r"})
+	if err == nil || !strings.Contains(err.Error(), "HTTP 409, execution_identity_mismatch") || strings.Contains(err.Error(), "secret") {
+		t.Fatalf("error %v", err)
 	}
 }

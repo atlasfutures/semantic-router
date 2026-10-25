@@ -157,13 +157,14 @@ func (provider *HTTPDecisions) projectV2(input DecisionInput) contextV2 {
 		kind, retryOf := reconsult.Kind, reconsult.RetryOf
 		external.Turn.Attempt, external.Turn.Reconsult, external.Turn.RetryOf = reconsult.Attempt, &kind, &retryOf
 	}
-	// A package-less profile pins the registry (and any offer), not a package.
-	if provider.config.PackageSHA256 != "" || provider.config.RegistrySHA256 != "" {
+	// A package-less profile pins neither package nor registry (its embedded
+	// registry may be newer than the serving one); only a configured offer.
+	if provider.config.PackageSHA256 != "" || provider.config.Decisions.OfferSHA256 != "" {
 		external.Expect = &expectV2{}
 		if provider.config.PackageSHA256 != "" {
 			external.Expect.PackageSHA256 = &provider.config.PackageSHA256
 		}
-		if provider.config.RegistrySHA256 != "" {
+		if provider.config.PackageSHA256 != "" && provider.config.RegistrySHA256 != "" {
 			registry := provider.config.RegistrySHA256
 			external.Expect.ThinkingControlsSHA256 = &registry
 		}
@@ -273,9 +274,12 @@ func validateV2(raw []byte, selected publicDecision, identity *decisionIdentity,
 		return nil, fmt.Errorf("Decisions applied the v2 execution context without confirming its pins")
 	}
 	if sent.Expect != nil {
-		pins := []string{"thinking_controls_sha256"}
+		var pins []string
 		if sent.Expect.PackageSHA256 != nil {
 			pins = append(pins, "package_sha256")
+		}
+		if sent.Expect.ThinkingControlsSHA256 != nil {
+			pins = append(pins, "thinking_controls_sha256")
 		}
 		if sent.Expect.OfferSHA256 != nil {
 			pins = append(pins, "offer_sha256")
