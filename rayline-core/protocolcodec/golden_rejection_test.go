@@ -415,6 +415,7 @@ func jsonEquivalent(expected, actual []byte) bool {
 
 func assertGoldenOutput(t *testing.T, expectedPath string, actual []byte, label string) {
 	t.Helper()
+	recordGoldenBytes(t, expectedPath, actual)
 	if os.Getenv(updateProtocolGoldensEnv) == "1" {
 		if err := os.WriteFile(expectedPath, actual, 0o644); err != nil {
 			t.Fatal(err)
@@ -442,4 +443,25 @@ func prettyJSON(t *testing.T, body []byte) []byte {
 		t.Fatal(err)
 	}
 	return append(formatted, '\n')
+}
+
+// goldenBytesOutEnv names a directory that receives every golden comparison's
+// actual bytes, at the golden's own testdata path. The goldens compare as
+// JSON; a byte-level diff of two runs (encoding/json v1 against
+// GOEXPERIMENT=jsonv2, tools/scripts/json-v2-byte-diff.sh) needs the bytes.
+const goldenBytesOutEnv = "PROTOCOL_GOLDEN_BYTES_OUT"
+
+func recordGoldenBytes(t *testing.T, goldenPath string, actual []byte) {
+	t.Helper()
+	root := os.Getenv(goldenBytesOutEnv)
+	if root == "" {
+		return
+	}
+	path := filepath.Join(root, "protocolcodec", goldenPath)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, actual, 0o644); err != nil {
+		t.Fatal(err)
+	}
 }
