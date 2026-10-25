@@ -22,10 +22,11 @@ opt-in. The core reports facts and never picks or ranks a model.
 
 - **Policy.** `decisions.routing.policy` is required: `{"preset": ...}` with an
   optional `overrides.schedule` (`model`/`thinking` sets of `cache_boundaries`,
-  `user_messages`, `all_turns`). The served presets are
-  `arc-policy.hybrid-default.v1` and `arc-policy.package-default.v1`
-  (pathfinder #5904); the spec's `arc-policy.prefer-local.v1` is refused until the
-  service implements it. At most 16 executable bindings fit `targets[]`. Rayline Local writes
+  `user_messages`, `all_turns`) and, for `arc-policy.prefer-local.v1` only,
+  `overrides.selection.min_p_pass` in (0, 1). Served presets:
+  `arc-policy.hybrid-default.v1`, `arc-policy.prefer-local.v1` (pathfinder
+  #5913) and `arc-policy.package-default.v1`. At most 16 executable bindings fit
+  `targets[]`. Rayline Local writes
   `arc-policy.hybrid-default.v1` when its user sets no override; the core never
   sends an absent policy in this mode. Allowed routing keys are `policy`,
   `value_usd`, `prices`, `exclusive` and the price-profile keys.

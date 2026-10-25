@@ -18,11 +18,11 @@ const executionContextV2 = "arc-execution-context.v2"
 // maxTargetsV2 is the contract's targets[] bound (pathfinder #5904 schema).
 const maxTargetsV2 = 16
 
-// policyPresets are the presets the policy service serves (pathfinder #5904,
-// the authoritative v2 names). arc-policy.prefer-local.v1 is in the spec but
-// not yet implemented by the service, which refuses it; it is not admitted here.
+// policyPresets are the presets the policy service serves (pathfinder #5904;
+// arc-policy.prefer-local.v1 since #5913).
 var policyPresets = map[string]bool{
 	"arc-policy.hybrid-default.v1":  true,
+	"arc-policy.prefer-local.v1":    true,
 	"arc-policy.package-default.v1": true,
 }
 
@@ -33,6 +33,9 @@ type policyOverrides struct {
 		Model    []string `json:"model,omitempty"`
 		Thinking []string `json:"thinking,omitempty"`
 	} `json:"schedule,omitempty"`
+	Selection *struct {
+		MinPPass *float64 `json:"min_p_pass"`
+	} `json:"selection,omitempty"`
 }
 
 type routingPolicy struct {
@@ -41,14 +44,14 @@ type routingPolicy struct {
 }
 
 // validateRoutingPolicy admits only the published shape: a known preset and
-// an optional schedule override. Package
+// optional schedule and prefer-local threshold overrides. Package
 // admission of a class is the service's refusal, not a local guess.
 func validateRoutingPolicy(raw json.RawMessage) (routingPolicy, error) {
 	var policy routingPolicy
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&policy); err != nil {
-		return policy, fmt.Errorf("routing.policy must contain only preset and overrides.schedule: %v", err)
+		return policy, fmt.Errorf("routing.policy must contain only preset and overrides.{schedule,selection}: %v", err)
 	}
 	if !policyPresets[policy.Preset] {
 		return policy, fmt.Errorf("routing.policy.preset %q is not a published preset", policy.Preset)
@@ -70,6 +73,15 @@ func validateRoutingPolicy(raw json.RawMessage) (routingPolicy, error) {
 					seen[class] = true
 				}
 			}
+		}
+	}
+	if overrides := policy.Overrides; overrides != nil && overrides.Selection != nil {
+		threshold := overrides.Selection.MinPPass
+		if threshold == nil || !(*threshold > 0 && *threshold < 1) {
+			return policy, fmt.Errorf("routing.policy selection.min_p_pass must be in (0, 1)")
+		}
+		if policy.Preset != "arc-policy.prefer-local.v1" {
+			return policy, fmt.Errorf("routing.policy selection.min_p_pass applies only to arc-policy.prefer-local.v1")
 		}
 	}
 	return policy, nil
