@@ -30,6 +30,13 @@ opt-in. The core reports facts and never picks or ranks a model.
   `arc-policy.hybrid-default.v1` when its user sets no override; the core never
   sends an absent policy in this mode. Allowed routing keys are `policy`,
   `value_usd`, `prices`, `exclusive` and the price-profile keys.
+- **Registry.** Without an explicit `registry_path`, v2 executes with the
+  embedded registry whatever registry the serving package names: controls are
+  content-hashed, every bound action's control must be admitted by the
+  embedded cells, and the selected control id is checked against the bound
+  action. `registry_sha256` then pins only the serving side (taken from the
+  package when omitted). An explicit `registry_path`, and current/v1 modes,
+  keep the exact pin.
 - **Package-less profile.** `derived_actions` (v2 only) replaces
   `package_path`, `package_sha256` and `bindings`: each entry
   `{model, worker, deployment_id, bases?}` binds every registry-admitted control
