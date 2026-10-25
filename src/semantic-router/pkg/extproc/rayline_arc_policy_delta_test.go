@@ -751,3 +751,61 @@ func TestDeltaOnlyOnStrictSingleServiceCells(t *testing.T) {
 		t.Fatal("a replica-pool cell stages")
 	}
 }
+
+// A cache_control key nested inside a tool's input is the tool's data, not a
+// cache marker: a history that changed it goes in full.
+func TestDeltaDigestKeepsNestedCacheControl(t *testing.T) {
+	marked := json.RawMessage(`{"role":"user","content":[{"type":"text","text":"hi","cache_control":{"type":"ephemeral"}}],"cache_control":{"type":"ephemeral"}}`)
+	bare := json.RawMessage(`{"content":[{"text":"hi","type":"text"}],"role":"user"}`)
+	if policyDeltaDigest([]json.RawMessage{marked}, 1) != policyDeltaDigest([]json.RawMessage{bare}, 1) {
+		t.Fatal("a moved cache marker changed the digest")
+	}
+	block := json.RawMessage(`{"role":"system","content":[{"type":"text","text":"note","cache_control":{"type":"ephemeral"}}]}`)
+	demoted := json.RawMessage(`{"role":"system","content":"note"}`)
+	if policyDeltaDigest([]json.RawMessage{block}, 1) != policyDeltaDigest([]json.RawMessage{demoted}, 1) {
+		t.Fatal("a demoted system message changed the digest")
+	}
+	old := json.RawMessage(`{"role":"assistant","content":[{"type":"tool_use","id":"t","name":"Edit","input":{"cache_control":"old"}}]}`)
+	changed := json.RawMessage(`{"role":"assistant","content":[{"type":"tool_use","id":"t","name":"Edit","input":{"cache_control":"new"}}]}`)
+	if policyDeltaDigest([]json.RawMessage{old}, 1) == policyDeltaDigest([]json.RawMessage{changed}, 1) {
+		t.Fatal("a changed tool input matched")
+	}
+	userBlock := json.RawMessage(`{"role":"user","content":[{"type":"text","text":"hi"}]}`)
+	userString := json.RawMessage(`{"role":"user","content":"hi"}`)
+	if policyDeltaDigest([]json.RawMessage{userBlock}, 1) == policyDeltaDigest([]json.RawMessage{userString}, 1) {
+		t.Fatal("only a system message's single text block is its text")
+	}
+}
+
+// An append VSR stopped waiting for may still hold the service's episode
+// lock: the next turn goes in full and retries session_busy for the
+// append's budget longer.
+func TestDeltaUnsettledAppendExtendsTheNextBusyWait(t *testing.T) {
+	fixture := newDeltaFixture(t, config.RaylineARCDecideModeDelta, nil)
+	scorer := fixture.scorer()
+	scorer.busyWait, scorer.appendTimeout = 0, 2*time.Second
+	gate := make(chan struct{})
+	t.Cleanup(func() {
+		select {
+		case <-gate:
+		default:
+			close(gate)
+		}
+	})
+	fixture.fake.appendGate = gate
+	_, ctx := fixture.turn(t, policyTestRequest(t, deltaUser))
+	ctx.RaylineARCTransaction.policyStaging.appendTimeout = 50 * time.Millisecond
+	complete(t, ctx, deltaReply(t))
+	staged, ok := scorer.staged.get(fixture.episode)
+	if !ok || !staged.unsettled {
+		t.Fatalf("a timed-out append left %+v (%v)", staged, ok)
+	}
+	close(gate)
+	fixture.fake.failFirstCalls("session_busy", 1)
+	second, ctx := fixture.turn(t, policyTestRequest(t, deltaUser, deltaAssistant, deltaToolResult))
+	sent := fixture.fake.received()
+	if second.RaylineARC.PolicyDecisionMode != policyDecisionModeSync || sent[len(sent)-1].TurnDelta != nil {
+		t.Fatalf("turn 2 went %s", second.RaylineARC.PolicyDecisionMode)
+	}
+	complete(t, ctx, deltaReply(t))
+}
