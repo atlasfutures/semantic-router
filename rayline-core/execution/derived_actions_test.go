@@ -85,8 +85,9 @@ func TestDerivedActionsUseARCActionIdentity(t *testing.T) {
 
 func TestDerivedActionsAreV2OnlyAndExclusiveOfAPackage(t *testing.T) {
 	for name, mutate := range map[string]func(map[string]any){
-		"current mode": func(config map[string]any) { config["decisions"].(map[string]any)["api_mode"] = "current" },
-		"with package": func(config map[string]any) { config["package_sha256"] = strings.Repeat("a", 64) },
+		"current mode":      func(config map[string]any) { config["decisions"].(map[string]any)["api_mode"] = "current" },
+		"with package":      func(config map[string]any) { config["package_sha256"] = strings.Repeat("a", 64) },
+		"with registry pin": func(config map[string]any) { config["registry_sha256"] = strings.Repeat("3", 64) },
 		"unknown deployment": func(config map[string]any) {
 			config["derived_actions"] = []any{map[string]any{"model": "qwen3.8-27b", "worker": "q", "deployment_id": "nowhere"}}
 		},

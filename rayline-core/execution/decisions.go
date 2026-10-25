@@ -682,6 +682,9 @@ func validateCachePolicyEcho(source, mode, episodeIdentity string, multiwarm *bo
 	return nil
 }
 
+// contractCode is the shape of every execution_*/policy_* contract code.
+var contractCode = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
+
 // refusalCode reads a contract error code from a refused response, if any.
 func refusalCode(response *http.Response) string {
 	raw, err := readBounded(response.Body, 64<<10)
@@ -693,7 +696,7 @@ func refusalCode(response *http.Response) string {
 			Code string `json:"code"`
 		} `json:"error"`
 	}
-	if json.Unmarshal(raw, &body) != nil || body.Error.Code == "" || len(body.Error.Code) > 64 || strings.ContainsAny(body.Error.Code, " \r\n") {
+	if json.Unmarshal(raw, &body) != nil || !contractCode.MatchString(body.Error.Code) {
 		return ""
 	}
 	return ", " + body.Error.Code

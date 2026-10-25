@@ -34,8 +34,9 @@ opt-in. The core reports facts and never picks or ranks a model.
   embedded registry whatever registry the serving package names: controls are
   content-hashed, every bound action's control must be admitted by the
   embedded cells, and the selected control id is checked against the bound
-  action. `registry_sha256` then pins only the serving side (taken from the
-  package when omitted). An explicit `registry_path`, and current/v1 modes,
+  action. For a packaged profile `registry_sha256` then pins only the serving
+  side (taken from the package when omitted); a `derived_actions` profile sets
+  none. An explicit `registry_path`, and current/v1 modes,
   keep the exact pin.
 - **Package-less profile.** `derived_actions` (v2 only) replaces
   `package_path`, `package_sha256` and `bindings`: each entry
