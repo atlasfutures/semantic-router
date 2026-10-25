@@ -394,8 +394,10 @@ type PolicyMemberSelection struct {
 // PolicyMemberSchedule is, per dimension, the switch-point classes; an
 // omitted dimension keeps the preset's.
 type PolicyMemberSchedule struct {
-	Model    []string `json:"model,omitempty"`
-	Thinking []string `json:"thinking,omitempty"`
+	// Pointers, so an explicitly empty set (no switch points) is sent as []
+	// and only an omitted dimension is left out.
+	Model    *[]string `json:"model,omitempty"`
+	Thinking *[]string `json:"thinking,omitempty"`
 }
 
 // PolicyExecutorEvent is the executor's event for this turn.

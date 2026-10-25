@@ -136,7 +136,7 @@ func readRoutesPolicy(raw json.RawMessage) (*raylinearc.PolicyMember, *routesCon
 	policy.Overrides.Schedule = &raylinearc.PolicyMemberSchedule{}
 	for _, dimension := range []struct {
 		key    string
-		target *[]string
+		target **[]string
 	}{{"model", &policy.Overrides.Schedule.Model}, {"thinking", &policy.Overrides.Schedule.Thinking}} {
 		classesRaw, ok := schedule[dimension.key]
 		if !ok {
@@ -157,7 +157,7 @@ func readRoutesPolicy(raw json.RawMessage) (*raylinearc.PolicyMember, *routesCon
 			}
 			seen[class] = true
 		}
-		*dimension.target = classes
+		*dimension.target = &classes
 	}
 	return policy, nil
 }

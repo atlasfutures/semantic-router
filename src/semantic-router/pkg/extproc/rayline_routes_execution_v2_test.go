@@ -418,3 +418,17 @@ func TestRouteExecutionV2ServiceRefusalThroughTheSelector(t *testing.T) {
 		}
 	}
 }
+
+// An explicitly empty switch-point set is kept as [] in the decide
+// request: it is not the omitted dimension (the preset's schedule).
+func TestRoutesPolicyEmptyScheduleIsKept(t *testing.T) {
+	routing, _, refusal := readRaylineRoutesRouting(executionV2Body(
+		`{"policy":{"preset":"arc-policy.hybrid-default.v1","overrides":{"schedule":{"model":[]}}}}`), nil)
+	if refusal != nil {
+		t.Fatal(refusal)
+	}
+	controls := raylineRoutesControls(routing, &config.RaylineARCRoutesRoutingConfig{}, time.Now())
+	if got := string(executionJSON(t, controls.Policy)); got != `{"preset":"arc-policy.hybrid-default.v1","overrides":{"schedule":{"model":[]}}}` {
+		t.Fatalf("policy member %s", got)
+	}
+}
