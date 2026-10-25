@@ -104,8 +104,10 @@ func LoadConfig(path string) (Config, *thinkingcontrol.Registry, error) {
 	}
 	derived := len(config.DerivedActions) > 0
 	if derived {
-		if config.PackagePath != "" || config.PackageSHA256 != "" || len(config.Bindings) > 0 || config.Decisions.apiMode() != DecisionsExecutionContextV2 {
-			return config, nil, fmt.Errorf("derived_actions replaces package_path, package_sha256 and bindings and requires execution_context_v2")
+		// A package-less profile pins no registry either: there is no package
+		// to name a serving registry, and the embedded one executes.
+		if config.PackagePath != "" || config.PackageSHA256 != "" || len(config.Bindings) > 0 || config.RegistrySHA256 != "" || config.Decisions.apiMode() != DecisionsExecutionContextV2 {
+			return config, nil, fmt.Errorf("derived_actions replaces package_path, package_sha256, registry_sha256 and bindings and requires execution_context_v2")
 		}
 	} else if !validSHA256(config.PackageSHA256) {
 		return config, nil, fmt.Errorf("package_sha256 must pin the decision package")
@@ -127,11 +129,20 @@ func LoadConfig(path string) (Config, *thinkingcontrol.Registry, error) {
 	if err != nil {
 		return config, nil, fmt.Errorf("load thinking registry: %w", err)
 	}
-	if derived && config.RegistryPath == "" && config.RegistrySHA256 == "" {
-		// The binary's own embedded registry; a derived profile names no package.
+	if derived {
+		// A derived profile names no package and pins no serving registry: its
+		// local identity is the registry it executes (embedded or registry_path).
 		config.RegistrySHA256 = registry.SHA256
 	}
-	if config.RegistrySHA256 != registry.SHA256 {
+	// v2 without an explicit registry_path executes with the embedded
+	// registry, whatever registry the serving package names: controls are
+	// content-hashed, every bound action's control must be admitted by the
+	// embedded cells (NewServer), and the selected control id is checked
+	// against the bound action. registry_sha256 then pins the serving side
+	// (expect, response identity); omitted, it is the package's registry.
+	// An explicit registry_path, and current/v1, keep the exact pin.
+	looseRegistry := config.Decisions.apiMode() == DecisionsExecutionContextV2 && config.RegistryPath == ""
+	if !looseRegistry && config.RegistrySHA256 != registry.SHA256 {
 		return config, nil, fmt.Errorf("thinking registry SHA256 does not match the execution config")
 	}
 	if derived {
@@ -170,7 +181,10 @@ func (config *Config) loadActions(directory string) error {
 	if err := json.Unmarshal(raw, &manifest); err != nil {
 		return fmt.Errorf("decode policy package: %w", err)
 	}
-	if manifest.Schema != "rayline.arc-policy-package.v6" || !validSHA256(manifest.PackageID) || manifest.ControlsSHA256 != config.RegistrySHA256 {
+	if config.RegistrySHA256 == "" && config.RegistryPath == "" && config.Decisions.apiMode() == DecisionsExecutionContextV2 {
+		config.RegistrySHA256 = manifest.ControlsSHA256
+	}
+	if manifest.Schema != "rayline.arc-policy-package.v6" || !validSHA256(manifest.PackageID) || !validSHA256(manifest.ControlsSHA256) || manifest.ControlsSHA256 != config.RegistrySHA256 {
 		return fmt.Errorf("policy package version, identity or thinking registry does not match")
 	}
 	config.PackageID = manifest.PackageID
