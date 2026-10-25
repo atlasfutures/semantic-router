@@ -766,7 +766,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		})
 	}
 	decisionMode := policyStagedFullMode(staging)
-	firstBusyWait := policyFirstBusyWait(scorer.busyWait, deltaOutcome)
+	firstBusyWait := policyFirstBusyWait(scorer.busyWait, scorer.policyAppendUnsettled(arcContext.EpisodeIDHash, state.TurnIndex))
 	var response *raylinearc.PolicyDecisionResponse
 	if deltaOutcome == policyDecisionModeDelta {
 		deltaRequest := request
