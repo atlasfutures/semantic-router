@@ -1,0 +1,25 @@
+{
+ "description": "no lever on the request: the client bytes except the model id",
+ "format": "messages",
+ "provider": "openrouter",
+ "model": "z-ai/glm-5.3-flash",
+ "wire_model": "z-ai/glm-5.3-flash",
+ "admission": "no_lever",
+ "allow_experimental": true,
+ "registry_pin": "eb0d014ac155443c9d8b95bcd6f6cc113224065e078a46332acd9cc9c5fad440",
+ "calls": [
+  {
+   "client_body": "client-00.json",
+   "control_id": null,
+   "expected_body": "provider-00.json",
+   "receipt": null
+  },
+  {
+   "client_body": "client-01.json",
+   "control_id": null,
+   "expected_body": "provider-01.json",
+   "receipt": null
+  }
+ ],
+ "refusal": null
+}

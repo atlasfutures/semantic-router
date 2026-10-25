@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"strings"
 
+	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
 	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/responseapi"
 )
@@ -58,6 +58,14 @@ func (r *OpenAIRouter) persistResponseObject(ctx *RequestContext) {
 	if r == nil || r.ResponseAPIFilter == nil || !r.ResponseAPIFilter.IsEnabled() ||
 		ctx == nil || ctx.SourceFormat != llmprotocol.OpenAIResponsesV1 ||
 		ctx.ResponseObjectState == nil || ctx.SemanticResponse == nil {
+		return
+	}
+	// A store that retains nothing (store_backend: none) accepts store: true
+	// and persists nothing: the turn keeps the response id it was minted, so
+	// a client sees the same object shape on every cell, and there is simply
+	// nothing to read back. Returning before the attempt is recorded keeps
+	// the state honest: no persistence was attempted.
+	if !r.ResponseAPIFilter.retains {
 		return
 	}
 	state := ctx.ResponseObjectState

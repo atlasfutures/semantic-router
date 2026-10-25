@@ -2,12 +2,13 @@ package extproc
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/usagerecords"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
 )
@@ -411,6 +412,63 @@ func TestCacheHitReportsNoProviderCharge(t *testing.T) {
 	} {
 		if fields[key] != nil {
 			t.Errorf("%s = %v on a cache hit, want null", key, fields[key])
+		}
+	}
+}
+
+// The line splits the turn's time to first byte: the part spent routing (the
+// policy decide included) and the rest, which is the upstream's own.
+func TestUsageRecordCarriesTTFTAndRoutingLatency(t *testing.T) {
+	logs := captureLogs(t)
+	ctx := &RequestContext{
+		RequestID: "rt_ttft-000", RequestModel: "priced-model",
+		TTFTRecorded: true, TTFTSeconds: 2.5, RoutingLatency: 900 * time.Millisecond,
+	}
+
+	usageRecordRouter().reportNonStreamingUsage(ctx, 3*time.Second, responseUsageMetrics{
+		promptTokens: 10, promptTokensReported: true, completionTokens: 5, completionTokensReported: true,
+	})
+
+	fields := findLogEvent(t, logs, "llm_usage")
+	if fmt.Sprint(fields["ttft_ms"]) != "2500" || fmt.Sprint(fields["routing_latency_ms"]) != "900" {
+		t.Fatalf("ttft_ms = %v, routing_latency_ms = %v; want 2500 and 900", fields["ttft_ms"], fields["routing_latency_ms"])
+	}
+}
+
+// A re-sent turn is read whole before the pipeline sees it, so its first-byte
+// time is not a TTFT and is not stated.
+func TestUsageRecordStatesNoTTFTForAResentTurn(t *testing.T) {
+	logs := captureLogs(t)
+	ctx := &RequestContext{
+		RequestID: "rt_ttft-002", RequestModel: "priced-model",
+		TTFTRecorded: true, TTFTSeconds: 9, RoutingLatency: 900 * time.Millisecond,
+		RaylineARCEndpointsTried: []string{"first", "second"},
+	}
+
+	usageRecordRouter().reportNonStreamingUsage(ctx, 9*time.Second, responseUsageMetrics{
+		promptTokens: 10, promptTokensReported: true, completionTokens: 5, completionTokensReported: true,
+	})
+
+	fields := findLogEvent(t, logs, "llm_usage")
+	if value, present := fields["ttft_ms"]; !present || value != nil {
+		t.Fatalf("ttft_ms = %v (present %v), want null on a re-sent turn", value, present)
+	}
+	if fmt.Sprint(fields["routing_latency_ms"]) != "900" {
+		t.Fatalf("routing_latency_ms = %v, want 900", fields["routing_latency_ms"])
+	}
+}
+
+// A turn whose first byte was never seen states no TTFT rather than zero.
+func TestUsageRecordLeavesUnobservedTTFTNull(t *testing.T) {
+	logs := captureLogs(t)
+	ctx := &RequestContext{RequestID: "rt_ttft-001", RequestModel: "priced-model"}
+
+	usageRecordRouter().reportNonStreamingUsage(ctx, time.Second, responseUsageMetrics{invalid: true})
+
+	fields := findLogEvent(t, logs, "llm_usage")
+	for _, key := range []string{"ttft_ms", "routing_latency_ms"} {
+		if value, present := fields[key]; !present || value != nil {
+			t.Errorf("%s = %v (present %v), want null", key, value, present)
 		}
 	}
 }

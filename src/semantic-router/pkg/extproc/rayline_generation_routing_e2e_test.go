@@ -30,7 +30,7 @@ func writeGenerationRoutingConfig(t *testing.T, policyURL string, actions map[st
 	}
 	rendered := strings.Replace(string(raw), anchor,
 		"            generation_routing:\n              caller_value: true\n"+anchor, 1)
-	if err := os.WriteFile(path, []byte(rendered), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(rendered), 0o600); err != nil { //nolint:gosec // a t.TempDir() path
 		t.Fatal(err)
 	}
 	return path

@@ -143,6 +143,10 @@ func TestPolicyCellSendsDecisionsV2MembersAndRecordsTheEcho(t *testing.T) {
 	if point == nil || point.Name != "keen" || point.PointID != "point-1" || point.CostWeight == nil || *point.CostWeight != 1 {
 		t.Fatalf("operating point %+v", point)
 	}
+	// The served identity carries the echoed weight (x-vsr-policy-cost-weight).
+	if weight := result.RaylineARC.PolicyCostWeight; weight == nil || *weight != 1 {
+		t.Fatalf("trace cost weight %v, want the echoed 1", weight)
+	}
 	picks := result.RaylineARC.PolicyTierPicks
 	if len(picks) != 3 || picks["sage"].SelectedActionID != served || result.RaylineARC.PolicyTierPicksMissing != nil {
 		t.Fatalf("tier picks %+v, want only swift, keen and sage", picks)

@@ -23,12 +23,14 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/atlasfutures/semantic-router/rayline-core/cachecontext"
+	"github.com/atlasfutures/semantic-router/rayline-core/protocolcodec"
+	"github.com/atlasfutures/semantic-router/rayline-core/reasoning"
+	"github.com/atlasfutures/semantic-router/rayline-core/thinkingcontrol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/metrics"
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/protocolcodec"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc/thinkingcontrol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc/thinkinglever"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/sessiontelemetry"
 )
@@ -59,10 +61,17 @@ type raylineARCEpisodeTransaction struct {
 	serializedTokens int
 	encoderOwner     string
 	encoderVisited   []string
-	closeRequested   bool
-	sessionCloser    raylineARCSessionCloseFunc
-	sessionCloseWait time.Duration
-	selectionReady   bool
+	// policySession is the Modal sticky session this turn moved the episode
+	// to on a sessioned policy Server, committed only with the turn; nil
+	// keeps the stored session. Never logged.
+	policySession *raylinearc.PolicySession
+	// policySessionCleared drops the stored session: the cell no longer
+	// decides through sessions.
+	policySessionCleared bool
+	closeRequested       bool
+	sessionCloser        raylineARCSessionCloseFunc
+	sessionCloseWait     time.Duration
+	selectionReady       bool
 	// thinkingLedger is the lever ledger this turn staged, committed only
 	// with the turn; nil leaves the stored ledger as it was.
 	thinkingLedger *thinkinglever.Ledger
@@ -75,7 +84,7 @@ type raylineARCEpisodeTransaction struct {
 	// action it served, the TTL its dispatched body stated and the
 	// provider's usage. It is recorded on the served arm's warmth with the
 	// turn, and only when the action is known.
-	call raylinearc.CallCache
+	call cachecontext.CallCache
 	// callCompleted is set once the provider's response to this turn was
 	// read; a turn without one (a decision-only consult) records no call.
 	callCompleted bool
@@ -254,6 +263,22 @@ func (transaction *raylineARCEpisodeTransaction) markSelectionWithAffinity(
 	transaction.selectionReady = true
 }
 
+// markPolicySession records the session a sessioned policy Server decided
+// this turn on, when it is not the one the episode holds (nil leaves that
+// one), or, cleared, that the cell no longer uses sessions and the stored one
+// goes. A side call commits nothing, so its binding reports none.
+func (transaction *raylineARCEpisodeTransaction) markPolicySession(session *raylinearc.PolicySession, cleared bool) {
+	if transaction == nil {
+		return
+	}
+	transaction.policySessionCleared = cleared
+	if session == nil {
+		return
+	}
+	cloned := *session
+	transaction.policySession = &cloned
+}
+
 // takesHandovers reports whether this turn, leading a coalesced group, takes a
 // refused resend's hand-over as it finishes: only a strict main turn holds the
 // lease and stages on commit or abort.
@@ -424,7 +449,7 @@ func (transaction *raylineARCEpisodeTransaction) committedControlPlacement(
 }
 
 // stageReasoningIssuers records the encrypted reasoning issuer set this turn
-// leaves behind (raylinearc.NextReasoningIssuers).
+// leaves behind (reasoning.NextReasoningIssuers).
 func (transaction *raylineARCEpisodeTransaction) stageReasoningIssuers(issuers []string) {
 	if transaction == nil {
 		return
@@ -581,6 +606,12 @@ func (transaction *raylineARCEpisodeTransaction) nextState() (*raylinearc.Episod
 		[]string(nil),
 		transaction.encoderVisited...,
 	)
+	if transaction.policySessionCleared {
+		nextState.PolicySession = nil
+	} else if transaction.policySession != nil {
+		session := *transaction.policySession
+		nextState.PolicySession = &session
+	}
 	if transaction.policyNext != nil {
 		nextState.Policy = transaction.policyNext.Clone()
 	}
@@ -594,7 +625,7 @@ func (transaction *raylineARCEpisodeTransaction) nextState() (*raylinearc.Episod
 		nextState.Controls = raylinearc.WithControlPlacement(nextState.Controls, *transaction.controlPlacement)
 	}
 	if len(transaction.opaqueReasoning) > 0 && transaction.dispatchWorker != "" {
-		nextState.ReasoningProvenance = raylinearc.WithReasoningProvenance(
+		nextState.ReasoningProvenance = reasoning.WithReasoningProvenance(
 			nextState.ReasoningProvenance, transaction.dispatchWorker, transaction.opaqueReasoning,
 		)
 	}
@@ -606,7 +637,7 @@ func (transaction *raylineARCEpisodeTransaction) nextState() (*raylinearc.Episod
 	nextState.ServedModel = transaction.servedModel
 	// The arm's last completed call outlives a commit that made none (a
 	// decision-only consult): Commit replaces the arm's warmth.
-	var previousCall *raylinearc.CallCache
+	var previousCall *cachecontext.CallCache
 	if arm := transaction.selectedArm; arm >= 0 && arm < len(nextState.Warmth) && nextState.Warmth[arm] != nil {
 		previousCall = nextState.Warmth[arm].Call
 	}
@@ -618,14 +649,9 @@ func (transaction *raylineARCEpisodeTransaction) nextState() (*raylinearc.Episod
 	); err != nil {
 		return nil, err
 	}
-	nextState.Warmth[transaction.selectedArm].Call = previousCall
-	if transaction.call.ActionID != "" && transaction.callCompleted {
-		call := transaction.call
-		if call.CompletedAt.IsZero() || call.CompletedAt.After(now) {
-			call.CompletedAt = now
-		}
-		nextState.Warmth[transaction.selectedArm].Call = &call
-	}
+	nextState.Warmth[transaction.selectedArm].Call = cachecontext.CommitCall(
+		previousCall, transaction.call, transaction.callCompleted, now,
+	)
 	return nextState, nil
 }
 
@@ -805,20 +831,18 @@ func (transaction *raylineARCEpisodeTransaction) stageCallUsage(usage responseUs
 	// The response is complete when its usage is read, before the reply is
 	// sent and the turn committed.
 	transaction.callCompleted = true
-	transaction.call.CompletedAt = time.Now().UTC()
-	transaction.call.PromptTokens, transaction.call.CacheReadTokens, transaction.call.CacheWriteTokens = nil, nil, nil
-	if usage.invalid || usage.estimated {
-		return
-	}
 	known := func(value int, reported bool) *int {
 		if !reported {
 			return nil
 		}
 		return &value
 	}
-	transaction.call.PromptTokens = known(usage.promptTokens, usage.promptTokensReported)
-	transaction.call.CacheReadTokens = known(usage.cachedPromptTokens, usage.cachedPromptTokensReported)
-	transaction.call.CacheWriteTokens = known(usage.cacheWriteTokens, usage.cacheWriteTokensReported)
+	transaction.call.RecordCompletion(time.Now().UTC(), cachecontext.Usage{
+		Invalid: usage.invalid, Estimated: usage.estimated,
+		PromptTokens:     known(usage.promptTokens, usage.promptTokensReported),
+		CacheReadTokens:  known(usage.cachedPromptTokens, usage.cachedPromptTokensReported),
+		CacheWriteTokens: known(usage.cacheWriteTokens, usage.cacheWriteTokensReported),
+	})
 }
 
 func cloneARCState(
@@ -829,7 +853,7 @@ func cloneARCState(
 	}
 	cloned := &raylinearc.EpisodeState{
 		TurnIndex:            state.TurnIndex,
-		Warmth:               make([]*raylinearc.WorkerWarmth, len(state.Warmth)),
+		Warmth:               make([]*cachecontext.WorkerWarmth, len(state.Warmth)),
 		EncoderOwner:         state.EncoderOwner,
 		EncoderVisitedOwners: append([]string(nil), state.EncoderVisitedOwners...),
 		Policy:               state.Policy.Clone(),
@@ -837,8 +861,12 @@ func cloneARCState(
 		Upstream:             append([]raylinearc.UpstreamPrefix(nil), state.Upstream...),
 		Controls:             raylinearc.CloneControlPlacements(state.Controls),
 		ReasoningIssuers:     append([]string(nil), state.ReasoningIssuers...),
-		ReasoningProvenance:  append([]raylinearc.ReasoningProvenance(nil), state.ReasoningProvenance...),
+		ReasoningProvenance:  append([]reasoning.ReasoningProvenance(nil), state.ReasoningProvenance...),
 		PolicyBoundary:       raylinearc.ClonePolicyBoundary(state.PolicyBoundary),
+	}
+	if state.PolicySession != nil {
+		session := *state.PolicySession
+		cloned.PolicySession = &session
 	}
 	if state.PreviousArm != nil {
 		value := *state.PreviousArm

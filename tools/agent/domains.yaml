@@ -105,6 +105,13 @@ domains:
     checks: [make test-semantic-router]
     ci_jobs: [core-tests]
 
+  rayline-core:
+    owner: router-core
+    paths:
+      - rayline-core/**
+    checks: [make test-rayline-core]
+    ci_jobs: [core-tests]
+
   rayline-encoder:
     owner: router-core
     paths:
@@ -483,8 +490,8 @@ profiles:
     paths:
       - e2e/profiles/streaming/**
       - deploy/kubernetes/streaming/**
-      - src/semantic-router/pkg/llmprotocol/**
-      - src/semantic-router/pkg/protocolcodec/**
+      - rayline-core/llmprotocol/**
+      - rayline-core/protocolcodec/**
       - src/semantic-router/pkg/extproc/processor_req_body_streamed*.go
       - src/semantic-router/pkg/extproc/processor_res_body_pipeline.go
       - src/semantic-router/pkg/extproc/processor_res_semantic_stream.go
@@ -498,8 +505,8 @@ profiles:
       - e2e/testcases/anthropic_*.go
       - e2e/testcases/protocol_codec_*.go
       - deploy/kubernetes/anthropic-backend/**
-      - src/semantic-router/pkg/llmprotocol/**
-      - src/semantic-router/pkg/protocolcodec/**
+      - rayline-core/llmprotocol/**
+      - rayline-core/protocolcodec/**
       - src/semantic-router/pkg/extproc/processor_protocol_contract.go
       - src/semantic-router/pkg/extproc/processor_res_body_pipeline.go
       - src/semantic-router/pkg/extproc/processor_res_semantic_stream.go
@@ -526,8 +533,8 @@ profiles:
       - deploy/kubernetes/response-api/gwapi-resources.yaml
       - deploy/kubernetes/response-api/mock-vllm.yaml
       - tools/mock-vllm/**
-      - src/semantic-router/pkg/llmprotocol/**
-      - src/semantic-router/pkg/protocolcodec/**
+      - rayline-core/llmprotocol/**
+      - rayline-core/protocolcodec/**
       - src/semantic-router/pkg/extproc/processor_protocol_contract.go
       - src/semantic-router/pkg/extproc/processor_req_body_response_object.go
       - src/semantic-router/pkg/extproc/processor_res_body_pipeline.go

@@ -25,7 +25,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc/thinkingcontrol"
+	"github.com/atlasfutures/semantic-router/rayline-core/cachecontext"
+	"github.com/atlasfutures/semantic-router/rayline-core/reasoning"
+	"github.com/atlasfutures/semantic-router/rayline-core/thinkingcontrol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc/thinkinglever"
 )
 
@@ -57,7 +59,7 @@ const (
 	// older router refuses a v6 record by its schema.
 	episodeStateSchemaV6 = "rayline.arc.episode-state.v6"
 	// episodeStateSchemaV7 adds the cache evidence of an arm's last
-	// policy-service call (WorkerWarmth.Call) and keeps v6's bounds. It is
+	// policy-service call (cachecontext.WorkerWarmth.Call) and keeps v6's bounds. It is
 	// written only for a record whose warmth carries one, whatever else it
 	// carries, so every other episode keeps its earlier bytes and an older
 	// router refuses a v7 record by its schema.
@@ -73,9 +75,15 @@ const (
 	// carries, so every other episode keeps its earlier bytes and a v8
 	// reader refuses it by its schema rather than by a field it does not know.
 	episodeStateSchemaV9 = "rayline.arc.episode-state.v9"
-	maxFutureClockSkew   = 5 * time.Minute
-	episodeOwnerBytes    = 24
-	maxEpisodeStateBytes = 64 * 1024
+	// episodeStateSchemaV10 adds the episode's Modal sticky session on a
+	// sessioned policy Server (policy_service.sessions). It is written only
+	// for a record that carries one, whatever else it carries, so every other
+	// episode keeps its earlier bytes and a v9 reader refuses it by its
+	// schema rather than by a field it does not know.
+	episodeStateSchemaV10 = "rayline.arc.episode-state.v10"
+	maxFutureClockSkew    = 5 * time.Minute
+	episodeOwnerBytes     = 24
+	maxEpisodeStateBytes  = 64 * 1024
 	// maxEpisodeStateBytesV6 is a v6 record's size limit: up to
 	// MaxControlPlacements placers, each with its texts and ledger, need more
 	// than a v5 record's 64 KiB.
@@ -189,20 +197,27 @@ type EpisodeStoreReadiness interface {
 }
 
 type episodeStateWire struct {
-	SchemaVersion        string                  `json:"schema_version"`
-	Version              uint64                  `json:"version"`
-	PreviousArm          *int                    `json:"previous_arm"`
-	TurnIndex            uint64                  `json:"turn_index"`
-	Warmth               []*episodeWarmthWire    `json:"warmth"`
-	EncoderOwner         *string                 `json:"encoder_owner,omitempty"`
-	EncoderVisitedOwners *[]string               `json:"encoder_visited_owners,omitempty"`
-	Thinking             *episodeThinkingWire    `json:"thinking,omitempty"`
-	Upstream             []episodeUpstreamWire   `json:"upstream,omitempty"`
-	Policy               *PolicyEpisodeState     `json:"policy,omitempty"`
-	Controls             []episodeControlWire    `json:"controls,omitempty"`
-	ReasoningIssuers     []string                `json:"reasoning_issuers,omitempty"`
-	PolicyBoundary       *PolicyBoundaryDecision `json:"policy_boundary,omitempty"`
-	ReasoningProvenance  []ReasoningProvenance   `json:"reasoning_provenance,omitempty"`
+	SchemaVersion        string                          `json:"schema_version"`
+	Version              uint64                          `json:"version"`
+	PreviousArm          *int                            `json:"previous_arm"`
+	TurnIndex            uint64                          `json:"turn_index"`
+	Warmth               []*episodeWarmthWire            `json:"warmth"`
+	EncoderOwner         *string                         `json:"encoder_owner,omitempty"`
+	EncoderVisitedOwners *[]string                       `json:"encoder_visited_owners,omitempty"`
+	Thinking             *episodeThinkingWire            `json:"thinking,omitempty"`
+	Upstream             []episodeUpstreamWire           `json:"upstream,omitempty"`
+	Policy               *PolicyEpisodeState             `json:"policy,omitempty"`
+	Controls             []episodeControlWire            `json:"controls,omitempty"`
+	ReasoningIssuers     []string                        `json:"reasoning_issuers,omitempty"`
+	PolicyBoundary       *PolicyBoundaryDecision         `json:"policy_boundary,omitempty"`
+	ReasoningProvenance  []reasoning.ReasoningProvenance `json:"reasoning_provenance,omitempty"`
+	PolicySession        *episodePolicySessionWire       `json:"policy_session,omitempty"`
+}
+
+// episodePolicySessionWire is a persisted Modal sticky session.
+type episodePolicySessionWire struct {
+	ID    string `json:"id"`
+	Token string `json:"token"`
 }
 
 // episodeControlWire is one thinking-control placer. Its ledger names each
@@ -294,7 +309,7 @@ func controlPlacementsToWire(placements []ControlPlacement) []episodeControlWire
 // episodeStateSizeLimit is the most bytes a record of schema may take.
 func episodeStateSizeLimit(schema string) int {
 	if schema == episodeStateSchemaV6 || schema == episodeStateSchemaV7 || schema == episodeStateSchemaV8 ||
-		schema == episodeStateSchemaV9 {
+		schema == episodeStateSchemaV9 || schema == episodeStateSchemaV10 {
 		return maxEpisodeStateBytesV6
 	}
 	return maxEpisodeStateBytes
@@ -459,7 +474,7 @@ type episodeWarmthWire struct {
 	Call            *episodeCallWire `json:"call,omitempty"`
 }
 
-// episodeCallWire is CallCache. Every member is omitted when unknown, so a
+// episodeCallWire is cachecontext.CallCache. Every member is omitted when unknown, so a
 // record from before it reads as unknown.
 type episodeCallWire struct {
 	ActionID         string `json:"action_id"`
@@ -487,7 +502,7 @@ func cloneEpisodeState(state *EpisodeState) *EpisodeState {
 	cloned := &EpisodeState{
 		PreviousArm:          cloneEpisodeArm(state.PreviousArm),
 		TurnIndex:            state.TurnIndex,
-		Warmth:               make([]*WorkerWarmth, len(state.Warmth)),
+		Warmth:               make([]*cachecontext.WorkerWarmth, len(state.Warmth)),
 		EncoderOwner:         state.EncoderOwner,
 		EncoderVisitedOwners: append([]string(nil), state.EncoderVisitedOwners...),
 		Policy:               state.Policy.Clone(),
@@ -496,7 +511,8 @@ func cloneEpisodeState(state *EpisodeState) *EpisodeState {
 		Controls:             cloneControlPlacements(state.Controls),
 		ReasoningIssuers:     append([]string(nil), state.ReasoningIssuers...),
 		PolicyBoundary:       clonePolicyBoundary(state.PolicyBoundary),
-		ReasoningProvenance:  append([]ReasoningProvenance(nil), state.ReasoningProvenance...),
+		ReasoningProvenance:  append([]reasoning.ReasoningProvenance(nil), state.ReasoningProvenance...),
+		PolicySession:        clonePolicySession(state.PolicySession),
 	}
 	for index, warmth := range state.Warmth {
 		if warmth == nil {
@@ -573,7 +589,7 @@ func marshalEpisodeState(
 	}
 	if len(state.ReasoningProvenance) > 0 {
 		wire.SchemaVersion = episodeStateSchema
-		wire.ReasoningProvenance = append([]ReasoningProvenance(nil), state.ReasoningProvenance...)
+		wire.ReasoningProvenance = append([]reasoning.ReasoningProvenance(nil), state.ReasoningProvenance...)
 	}
 	if state.Policy != nil && len(state.Policy.Exclusions) > 0 {
 		wire.SchemaVersion = episodeStateSchemaV4
@@ -591,6 +607,10 @@ func marshalEpisodeState(
 	}
 	if carriesExplorationOrigin(state.Policy, state.PolicyBoundary) {
 		wire.SchemaVersion = episodeStateSchemaV9
+	}
+	if state.PolicySession != nil {
+		wire.SchemaVersion = episodeStateSchemaV10
+		wire.PolicySession = &episodePolicySessionWire{ID: state.PolicySession.ID, Token: state.PolicySession.Token}
 	}
 	owner := state.EncoderOwner
 	visited := append([]string{}, state.EncoderVisitedOwners...)
@@ -660,6 +680,14 @@ func unmarshalEpisodeState(
 func decodeEpisodeStateAffinity(
 	wire episodeStateWire,
 ) (string, []string, error) {
+	// v10 is exactly the record that carries a policy session, whatever else
+	// it carries; it may hold anything v3 to v9 do.
+	if (wire.PolicySession != nil) != (wire.SchemaVersion == episodeStateSchemaV10) {
+		return "", nil, errors.New("ARC episode state contract mismatch")
+	}
+	if wire.PolicySession != nil {
+		return decodeEpisodeOwner(wire)
+	}
 	// v9 is exactly the record whose policy state or staged boundary carries
 	// an exploration origin, whatever else it carries; it may hold anything
 	// v3 to v8 do.
@@ -731,7 +759,7 @@ func carriesExplorationOrigin(policy *PolicyEpisodeState, boundary *PolicyBounda
 
 // warmthCarriesCalls reports whether any arm holds a call, and whether any
 // call holds a context epoch.
-func warmthCarriesCalls(warmth []*WorkerWarmth) (calls, epochs bool) {
+func warmthCarriesCalls(warmth []*cachecontext.WorkerWarmth) (calls, epochs bool) {
 	for _, value := range warmth {
 		if value != nil && value.Call != nil {
 			calls = true
@@ -760,18 +788,21 @@ func episodeStateFromWire(
 	state := &EpisodeState{
 		PreviousArm:          cloneEpisodeArm(wire.PreviousArm),
 		TurnIndex:            wire.TurnIndex,
-		Warmth:               make([]*WorkerWarmth, workerCount),
+		Warmth:               make([]*cachecontext.WorkerWarmth, workerCount),
 		EncoderOwner:         owner,
 		EncoderVisitedOwners: visited,
 		Policy:               wire.Policy.Clone(),
 		Thinking:             thinkingLedgerFromWire(wire.Thinking),
 		PolicyBoundary:       clonePolicyBoundary(wire.PolicyBoundary),
 	}
+	if wire.PolicySession != nil {
+		state.PolicySession = &PolicySession{ID: wire.PolicySession.ID, Token: wire.PolicySession.Token}
+	}
 	if len(wire.ReasoningIssuers) > 0 {
 		state.ReasoningIssuers = append([]string(nil), wire.ReasoningIssuers...)
 	}
 	if len(wire.ReasoningProvenance) > 0 {
-		state.ReasoningProvenance = append([]ReasoningProvenance(nil), wire.ReasoningProvenance...)
+		state.ReasoningProvenance = append([]reasoning.ReasoningProvenance(nil), wire.ReasoningProvenance...)
 	}
 	for _, prefix := range wire.Upstream {
 		state.Upstream = append(state.Upstream, UpstreamPrefix(prefix))
@@ -780,12 +811,12 @@ func episodeStateFromWire(
 		if warmth == nil {
 			continue
 		}
-		state.Warmth[index] = &WorkerWarmth{
+		state.Warmth[index] = &cachecontext.WorkerWarmth{
 			LastUsed:        time.UnixMilli(warmth.LastUsedUnixMS).UTC(),
 			LastInputTokens: warmth.LastInputTokens,
 		}
 		if call := warmth.Call; call != nil {
-			state.Warmth[index].Call = &CallCache{
+			state.Warmth[index].Call = &cachecontext.CallCache{
 				ActionID: call.ActionID, CompletedAt: time.UnixMilli(call.CompletedUnixMS).UTC(), ContextEpoch: call.ContextEpoch, TTLSeconds: call.TTLSeconds, TTLSource: call.TTLSource,
 				PromptTokens: call.PromptTokens, CacheReadTokens: call.CacheReadTokens, CacheWriteTokens: call.CacheWriteTokens,
 			}

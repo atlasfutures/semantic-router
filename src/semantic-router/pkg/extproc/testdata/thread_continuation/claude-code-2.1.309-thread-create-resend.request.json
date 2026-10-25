@@ -1,0 +1,760 @@
+{
+ "model": "auto",
+ "messages": [
+  {
+   "role": "user",
+   "content": [
+    {
+     "type": "text",
+     "text": "<text 1>"
+    },
+    {
+     "type": "text",
+     "text": "<text 2>"
+    },
+    {
+     "type": "text",
+     "text": "<text 3>"
+    }
+   ]
+  },
+  {
+   "role": "system",
+   "content": [
+    {
+     "type": "text",
+     "text": "<text 4>"
+    },
+    {
+     "type": "tool_addition",
+     "tool": {
+      "type": "tool_definition",
+      "definition": {
+       "name": "mcp__server__tool_1",
+       "description": "<description 5>",
+       "input_schema": {
+        "type": "object",
+        "properties": {
+         "batch": {
+          "type": "array"
+         },
+         "container": {
+          "type": "object",
+          "properties": {
+           "kind": {
+            "type": "string"
+           },
+           "id": {
+            "type": "string"
+           },
+           "create": {
+            "type": "object"
+           }
+          },
+          "required": [
+           "<required 6>"
+          ]
+         },
+         "verbose": {
+          "type": "boolean"
+         },
+         "opId": {
+          "type": "string"
+         }
+        }
+       },
+       "eager_input_streaming": true
+      }
+     }
+    },
+    {
+     "type": "tool_addition",
+     "tool": {
+      "type": "tool_definition",
+      "definition": {
+       "name": "mcp__server__tool_2",
+       "description": "<description 7>",
+       "input_schema": {
+        "type": "object",
+        "properties": {
+         "items": {
+          "type": "array",
+          "description": "<description 8>"
+         }
+        }
+       },
+       "eager_input_streaming": true
+      }
+     }
+    },
+    {
+     "type": "tool_addition",
+     "tool": {
+      "type": "tool_definition",
+      "definition": {
+       "name": "mcp__server__tool_3",
+       "description": "<description 9>",
+       "input_schema": {
+        "type": "object",
+        "properties": {
+         "ref": {
+          "type": "object",
+          "properties": {
+           "object": {
+            "type": "string",
+            "enum": [
+             "<enum 10>",
+             "<enum 11>",
+             "<enum 12>",
+             "<enum 13>",
+             "<enum 14>"
+            ]
+           },
+           "id": {
+            "type": "string"
+           }
+          },
+          "required": [
+           "<required 15>",
+           "<required 16>"
+          ]
+         },
+         "engine": {
+          "type": "string"
+         },
+         "payload": {
+          "anyOf": [
+           {
+            "type": "object"
+           },
+           {
+            "type": "string"
+           }
+          ]
+         },
+         "container": {
+          "type": "object",
+          "properties": {
+           "kind": {
+            "type": "string"
+           },
+           "id": {
+            "type": "string"
+           },
+           "version": {
+            "type": "string"
+           }
+          },
+          "required": [
+           "<required 17>",
+           "<required 18>"
+          ]
+         },
+         "verbose": {
+          "type": "boolean"
+         },
+         "opId": {
+          "type": "string"
+         },
+         "answering": {
+          "type": "string",
+          "maxLength": 64
+         }
+        },
+        "required": [
+         "<required 19>",
+         "<required 20>"
+        ]
+       },
+       "eager_input_streaming": true
+      }
+     }
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "content": [
+    {
+     "type": "text",
+     "text": "<text 21>",
+     "citations": []
+    }
+   ]
+  },
+  {
+   "role": "user",
+   "content": "<content 22>"
+  },
+  {
+   "role": "system",
+   "content": "<content 23>"
+  },
+  {
+   "role": "assistant",
+   "content": [
+    {
+     "type": "text",
+     "text": "<text 24>",
+     "citations": []
+    }
+   ]
+  },
+  {
+   "role": "user",
+   "content": "<content 25>"
+  },
+  {
+   "role": "system",
+   "content": "<content 26>"
+  },
+  {
+   "role": "assistant",
+   "content": [
+    {
+     "type": "tool_use",
+     "id": "toolu_8T5Tjzk60VwM6OPSeUGlBCij",
+     "caller": {
+      "type": "direct"
+     },
+     "name": "Bash",
+     "input": {
+      "command": "ls"
+     }
+    }
+   ]
+  },
+  {
+   "role": "user",
+   "content": [
+    {
+     "tool_use_id": "toolu_8T5Tjzk60VwM6OPSeUGlBCij",
+     "type": "tool_result",
+     "content": "<content 27>",
+     "is_error": false
+    }
+   ]
+  },
+  {
+   "role": "system",
+   "content": [
+    {
+     "type": "text",
+     "text": "<text 28>",
+     "cache_control": {
+      "type": "ephemeral",
+      "ttl": "1h"
+     }
+    }
+   ]
+  }
+ ],
+ "system": [
+  {
+   "type": "text",
+   "text": "<text 29>"
+  },
+  {
+   "type": "text",
+   "text": "<text 30>"
+  },
+  {
+   "type": "text",
+   "text": "<text 31>",
+   "cache_control": {
+    "type": "ephemeral",
+    "ttl": "1h",
+    "scope": "<scope 32>"
+   }
+  },
+  {
+   "type": "text",
+   "text": "<text 33>",
+   "cache_control": {
+    "type": "ephemeral",
+    "ttl": "1h"
+   }
+  }
+ ],
+ "tools": [
+  {
+   "name": "Agent",
+   "description": "<description 34>",
+   "input_schema": {
+    "$schema": "<$schema 35>",
+    "type": "object",
+    "properties": {
+     "description": {
+      "description": "<description 36>",
+      "type": "string"
+     },
+     "prompt": {
+      "description": "<description 37>",
+      "type": "string"
+     },
+     "subagent_type": {
+      "description": "<description 38>",
+      "type": "string"
+     },
+     "model": {
+      "description": "<description 39>",
+      "type": "string",
+      "enum": [
+       "<enum 40>",
+       "<enum 41>",
+       "<enum 42>",
+       "<enum 43>"
+      ]
+     },
+     "effort": {
+      "description": "<description 44>",
+      "type": "string",
+      "enum": [
+       "<enum 45>",
+       "<enum 46>",
+       "<enum 47>",
+       "<enum 48>",
+       "<enum 49>"
+      ]
+     },
+     "run_in_background": {
+      "description": "<description 50>",
+      "type": "boolean"
+     },
+     "name": {
+      "description": "<description 51>",
+      "type": "string",
+      "pattern": "<pattern 52>"
+     },
+     "team_name": {
+      "description": "<description 53>",
+      "type": "string"
+     },
+     "mode": {
+      "description": "<description 54>",
+      "type": "string",
+      "enum": [
+       "<enum 55>",
+       "<enum 56>",
+       "<enum 57>",
+       "<enum 58>",
+       "<enum 59>",
+       "<enum 60>"
+      ]
+     },
+     "isolation": {
+      "description": "<description 61>",
+      "type": "string",
+      "enum": [
+       "<enum 62>",
+       "<enum 63>"
+      ]
+     }
+    },
+    "required": [
+     "<required 64>",
+     "<required 65>"
+    ],
+    "additionalProperties": false
+   },
+   "eager_input_streaming": true
+  },
+  {
+   "name": "Bash",
+   "description": "<description 66>",
+   "input_schema": {
+    "$schema": "<$schema 67>",
+    "type": "object",
+    "properties": {
+     "command": {
+      "description": "<description 68>",
+      "type": "string"
+     },
+     "timeout": {
+      "description": "<description 69>",
+      "type": "number"
+     },
+     "description": {
+      "description": "<description 70>",
+      "type": "string"
+     },
+     "run_in_background": {
+      "description": "<description 71>",
+      "type": "boolean"
+     },
+     "dangerouslyDisableSandbox": {
+      "description": "<description 72>",
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "<required 73>"
+    ],
+    "additionalProperties": false
+   },
+   "eager_input_streaming": true
+  },
+  {
+   "name": "Edit",
+   "description": "<description 74>",
+   "input_schema": {
+    "$schema": "<$schema 75>",
+    "type": "object",
+    "properties": {
+     "file_path": {
+      "description": "<description 76>",
+      "type": "string"
+     },
+     "old_string": {
+      "description": "<description 77>",
+      "type": "string"
+     },
+     "new_string": {
+      "description": "<description 78>",
+      "type": "string"
+     },
+     "replace_all": {
+      "description": "<description 79>",
+      "default": false,
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "<required 80>",
+     "<required 81>",
+     "<required 82>"
+    ],
+    "additionalProperties": false
+   },
+   "eager_input_streaming": true
+  },
+  {
+   "name": "ListAgents",
+   "description": "<description 83>",
+   "input_schema": {
+    "$schema": "<$schema 84>",
+    "type": "object",
+    "properties": {
+     "channel": {
+      "description": "<description 85>",
+      "type": "string",
+      "maxLength": 256
+     },
+     "q": {
+      "description": "<description 86>",
+      "type": "string",
+      "maxLength": 256
+     }
+    },
+    "additionalProperties": false
+   },
+   "eager_input_streaming": true
+  },
+  {
+   "name": "Read",
+   "description": "<description 87>",
+   "input_schema": {
+    "$schema": "<$schema 88>",
+    "type": "object",
+    "properties": {
+     "file_path": {
+      "description": "<description 89>",
+      "type": "string"
+     },
+     "offset": {
+      "description": "<description 90>",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+     },
+     "limit": {
+      "description": "<description 91>",
+      "type": "integer",
+      "exclusiveMinimum": 0,
+      "maximum": 9007199254740991
+     },
+     "pages": {
+      "description": "<description 92>",
+      "type": "string"
+     },
+     "allow_large": {
+      "description": "<description 93>",
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "<required 94>"
+    ],
+    "additionalProperties": false
+   },
+   "eager_input_streaming": true
+  },
+  {
+   "name": "ReportFindings",
+   "description": "<description 95>",
+   "input_schema": {
+    "$schema": "<$schema 96>",
+    "type": "object",
+    "properties": {
+     "level": {
+      "description": "<description 97>",
+      "type": "string",
+      "enum": [
+       "<enum 98>",
+       "<enum 99>",
+       "<enum 100>",
+       "<enum 101>",
+       "<enum 102>"
+      ]
+     },
+     "findings": {
+      "description": "<description 103>",
+      "maxItems": 32,
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "file": {
+         "description": "<description 104>",
+         "type": "string"
+        },
+        "line": {
+         "description": "<description 105>",
+         "type": "integer",
+         "minimum": -9007199254740991,
+         "maximum": 9007199254740991
+        },
+        "summary": {
+         "description": "<description 106>",
+         "type": "string"
+        },
+        "short_summary": {
+         "description": "<description 107>",
+         "type": "string",
+         "maxLength": 60
+        },
+        "failure_scenario": {
+         "description": "<description 108>",
+         "type": "string"
+        },
+        "category": {
+         "description": "<description 109>",
+         "type": "string",
+         "maxLength": 40
+        },
+        "verdict": {
+         "description": "<description 110>",
+         "type": "string",
+         "enum": [
+          "<enum 111>",
+          "<enum 112>"
+         ]
+        },
+        "outcome": {
+         "description": "<description 113>",
+         "type": "string",
+         "enum": [
+          "<enum 114>",
+          "<enum 115>",
+          "<enum 116>"
+         ]
+        }
+       },
+       "required": [
+        "<required 117>",
+        "<required 118>",
+        "<required 119>"
+       ],
+       "additionalProperties": false
+      }
+     }
+    },
+    "required": [
+     "<required 120>"
+    ],
+    "additionalProperties": false
+   },
+   "eager_input_streaming": true
+  },
+  {
+   "name": "ScheduleWakeup",
+   "description": "<description 121>",
+   "input_schema": {
+    "$schema": "<$schema 122>",
+    "type": "object",
+    "properties": {
+     "delaySeconds": {
+      "description": "<description 123>",
+      "type": "number"
+     },
+     "reason": {
+      "description": "<description 124>",
+      "type": "string"
+     },
+     "prompt": {
+      "description": "<description 125>",
+      "type": "string"
+     },
+     "stop": {
+      "description": "<description 126>",
+      "type": "boolean"
+     },
+     "noop": {
+      "description": "<description 127>",
+      "type": "boolean"
+     }
+    },
+    "additionalProperties": false
+   },
+   "eager_input_streaming": true
+  },
+  {
+   "name": "Skill",
+   "description": "<description 128>",
+   "input_schema": {
+    "$schema": "<$schema 129>",
+    "type": "object",
+    "properties": {
+     "skill": {
+      "description": "<description 130>",
+      "type": "string"
+     },
+     "args": {
+      "description": "<description 131>",
+      "type": "string"
+     }
+    },
+    "required": [
+     "<required 132>"
+    ],
+    "additionalProperties": false
+   },
+   "eager_input_streaming": true
+  },
+  {
+   "name": "ToolSearch",
+   "description": "<description 133>",
+   "input_schema": {
+    "$schema": "<$schema 134>",
+    "type": "object",
+    "properties": {
+     "query": {
+      "description": "<description 135>",
+      "type": "string"
+     },
+     "max_results": {
+      "description": "<description 136>",
+      "default": 5,
+      "type": "number"
+     }
+    },
+    "required": [
+     "<required 137>",
+     "<required 138>"
+    ],
+    "additionalProperties": false
+   },
+   "eager_input_streaming": true
+  },
+  {
+   "name": "Workflow",
+   "description": "<description 139>",
+   "input_schema": {
+    "$schema": "<$schema 140>",
+    "type": "object",
+    "properties": {
+     "script": {
+      "description": "<description 141>",
+      "type": "string",
+      "maxLength": 524288
+     },
+     "name": {
+      "description": "<description 142>",
+      "type": "string"
+     },
+     "description": {
+      "description": "<description 143>",
+      "type": "string"
+     },
+     "title": {
+      "description": "<description 144>",
+      "type": "string"
+     },
+     "args": {
+      "description": "<description 145>"
+     },
+     "scriptPath": {
+      "description": "<description 146>",
+      "type": "string"
+     },
+     "resumeFromRunId": {
+      "description": "<description 147>",
+      "type": "string",
+      "pattern": "<pattern 148>"
+     }
+    },
+    "additionalProperties": false
+   },
+   "eager_input_streaming": true
+  },
+  {
+   "name": "DeferredToolPlaceholder",
+   "description": "<description 149>",
+   "input_schema": {
+    "type": "object",
+    "properties": {}
+   },
+   "defer_loading": true
+  },
+  {
+   "name": "Write",
+   "description": "<description 150>",
+   "input_schema": {
+    "$schema": "<$schema 151>",
+    "type": "object",
+    "properties": {
+     "file_path": {
+      "description": "<description 152>",
+      "type": "string"
+     },
+     "content": {
+      "description": "<description 153>",
+      "type": "string"
+     }
+    },
+    "required": [
+     "<required 154>",
+     "<required 155>"
+    ],
+    "additionalProperties": false
+   },
+   "eager_input_streaming": true
+  }
+ ],
+ "metadata": {
+  "user_id": "{\"device_id\": \"scrubbed-device\", \"account_uuid\": \"\", \"session_id\": \"00000000-0000-4000-8000-000000000000\"}"
+ },
+ "max_tokens": 32000,
+ "thinking": {
+  "type": "adaptive",
+  "display": "omitted"
+ },
+ "context_management": {
+  "edits": [
+   {
+    "type": "clear_thinking_20251015",
+    "keep": "all"
+   }
+  ]
+ },
+ "output_config": {
+  "effort": "xhigh"
+ },
+ "thread": {
+  "type": "create"
+ },
+ "diagnostics": {
+  "previous_message_id": "msg_GQ30dzDzpDbO8e1iipsrx4sT"
+ },
+ "stream": true
+}

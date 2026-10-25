@@ -1791,6 +1791,8 @@ class OpenRouterProviderPreferences(BaseModel):
     ignore: Optional[List[str]] = None
     require_parameters: Optional[bool] = None
     data_collection: Optional[Literal["allow", "deny"]] = None
+    # Zero-data-retention endpoints only; mirrors the Go loader's ZDR.
+    zdr: Optional[bool] = None
     # The price ceiling the route was vetted and trained under; mirrors the
     # Go loader's MaxPrice.
     max_price: Optional[Dict[str, float]] = None

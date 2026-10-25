@@ -1,0 +1,767 @@
+package protocolcodec
+
+import (
+	"encoding/json"
+	"strings"
+
+	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
+)
+
+func (OpenAIChatCodec) EncodeRequest(request llmprotocol.Request, envelope llmprotocol.Envelope, policy llmprotocol.Policy) ([]byte, llmprotocol.Diagnostics, error) {
+	if envelope.CanReplay(llmprotocol.OpenAIChatV1, request.Generation, policy, false) {
+		return append([]byte(nil), envelope.Request...), nil, nil
+	}
+	if request.Sampling.MaxOutputTokens != nil && *request.Sampling.MaxOutputTokens < 0 {
+		return nil, nil, llmprotocol.NewError(
+			llmprotocol.ErrorUnsupportedFeature,
+			"unsupported_chat_max_output_tokens",
+			"Chat Completions cannot represent a negative output token limit",
+			nil,
+		)
+	}
+	if len(request.Sampling.Stop) > 4 {
+		return nil, nil, llmprotocol.NewError(
+			llmprotocol.ErrorUnsupportedFeature,
+			"unsupported_chat_stop_sequence_limit",
+			"Chat Completions cannot represent more than four stop sequences",
+			nil,
+		)
+	}
+	diagnostics, validationErr := chatRequestDiagnostics(request, policy)
+	if validationErr != nil {
+		return nil, diagnostics, validationErr
+	}
+	wire := encodeChatBaseRequest(request)
+	encodeChatReasoningControls(&wire, request, &diagnostics, policy)
+	if encodeErr := appendChatMessages(&wire, request); encodeErr != nil {
+		return nil, diagnostics, encodeErr
+	}
+	if request.NamesToolResults {
+		nameChatToolMessages(wire.Messages, &diagnostics, policy, request.Trusted.SourceFormat)
+	}
+	if len(wire.Messages) == 0 {
+		return nil, diagnostics, llmprotocol.NewError(
+			llmprotocol.ErrorUnsupportedFeature,
+			"chat_messages_required",
+			"Chat Completions requires at least one conversation message",
+			nil,
+		)
+	}
+	appendChatTools(&wire, request.Tools)
+	appendUnchoosableToolChoiceDrop(&diagnostics, policy, request, llmprotocol.OpenAIChatV1, len(wire.Tools))
+	if encodeErr := encodeChatRequestOptions(&wire, request); encodeErr != nil {
+		return nil, diagnostics, encodeErr
+	}
+	body, encodeErr := marshalWire(wire)
+	if encodeErr != nil {
+		return nil, diagnostics, encodeErr
+	}
+	body, encodeErr = mergeUnmodeledFields(body, request, llmprotocol.OpenAIChatV1, &diagnostics, policy)
+	return body, diagnostics, encodeErr
+}
+
+func chatRequestDiagnostics(request llmprotocol.Request, policy llmprotocol.Policy) (llmprotocol.Diagnostics, error) {
+	var diagnostics llmprotocol.Diagnostics
+	// The members Chat cannot express come from the table, not from a branch
+	// per field. Only the two carriers stay here: they hold members no
+	// contract names, which no table can enumerate.
+	appendRequestDispositions(&diagnostics, request, llmprotocol.OpenAIChatV1, policy)
+	appendToolExtensionDrops(&diagnostics, request.Tools, llmprotocol.OpenAIChatV1, policy)
+	appendCarriedToolDrops(&diagnostics, request, llmprotocol.OpenAIChatV1, policy)
+	for _, instruction := range request.Instructions {
+		appendContentExtensionDrops(&diagnostics, instruction.Content, llmprotocol.OpenAIChatV1, policy)
+	}
+	for _, message := range request.Messages {
+		appendContentExtensionDrops(&diagnostics, message.Content, llmprotocol.OpenAIChatV1, policy)
+		appendCarriedBlockDrops(&diagnostics, message.Content, llmprotocol.OpenAIChatV1, policy)
+	}
+	if request.PreviousResponseID == "" && request.ConversationID == "" && request.Truncation == "" {
+		return diagnostics, nil
+	}
+	err := appendLossy(
+		&diagnostics, policy, request.Trusted.SourceFormat, llmprotocol.OpenAIChatV1,
+		"conversation_state", "Chat Completions has no stateful response reference",
+	)
+	return diagnostics, err
+}
+
+func encodeChatBaseRequest(request llmprotocol.Request) chatRequestWire {
+	wire := chatRequestWire{
+		Model: request.Model, Stream: request.Stream, Metadata: request.Metadata,
+		Store: request.Store, User: request.EndUserID,
+		ParallelToolCalls: request.ParallelToolCalls, CandidateCount: request.CandidateCount,
+		Temperature: request.Sampling.Temperature, TopP: request.Sampling.TopP,
+		MaxCompletionTokens: request.Sampling.MaxOutputTokens, Seed: request.Sampling.Seed,
+		FrequencyPenalty: request.Sampling.FrequencyPenalty, PresencePenalty: request.Sampling.PresencePenalty,
+		ReasoningEffort: request.ReasoningEffort, ReasoningBudget: request.ReasoningBudgetTokens,
+	}
+	if request.Stream && (request.StreamOptions.IncludeUsage != nil || request.StreamOptions.IncludeObfuscation != nil) {
+		wire.StreamOptions = &chatStreamOptionsWire{
+			IncludeUsage:       request.StreamOptions.IncludeUsage,
+			IncludeObfuscation: request.StreamOptions.IncludeObfuscation,
+		}
+	}
+	return wire
+}
+
+// encodeChatReasoningControls carries the thinking controls the Chat wire can
+// hold and records the one it cannot.
+//
+//   - adaptive: the model decides whether and how much to think, which is what
+//     Chat Completions does when the request names no reasoning control. It is
+//     represented by carrying nothing of its own.
+//   - bound: reasoning.max_tokens is the one control a bounded turn carries.
+//     OpenRouter folds a top-level reasoning_effort into the same object and
+//     refuses a body that states both, so an effort level the client sent
+//     gives way to the bound.
+//   - disabled: reasoning_effort "none" is the explicit off-signal. It replaces
+//     any effort the client sent, because the two collapse into one Chat knob
+//     and thinking-off is the stronger statement.
+//   - display: Chat Completions has no control over whether reasoning comes
+//     back or how it is summarized. The turn still runs and the drop is
+//     recorded, because losing a presentation preference is the routable
+//     outcome and refusing the conversation is not.
+func encodeChatReasoningControls(
+	wire *chatRequestWire,
+	request llmprotocol.Request,
+	diagnostics *llmprotocol.Diagnostics,
+	policy llmprotocol.Policy,
+) {
+	if request.ReasoningMode == llmprotocol.ReasoningModeDisabled {
+		wire.ReasoningEffort = "none"
+	}
+	if budget := ReasoningBoundForRequest(request); budget != nil {
+		wire.Reasoning = &chatReasoningWire{MaxTokens: budget}
+		// One control, not two. OpenRouter reads a top-level reasoning_effort
+		// as reasoning.effort, and its docs put "One of the following (not
+		// both):" above effort and max_tokens. A body carrying the pair is
+		// refused with `Only one of "reasoning.effort" and
+		// "reasoning.max_tokens" can be specified`, which answered every
+		// thinking-arm turn on the dev cell 2026-09-04. The bound is the
+		// number that stops the turn, so the bound is what travels.
+		wire.ReasoningEffort = ""
+	}
+	if request.ReasoningDisplay != "" {
+		appendPresentationDrop(
+			diagnostics, policy, request.Trusted.SourceFormat, llmprotocol.OpenAIChatV1,
+			"reasoning_display", "Chat Completions cannot control how reasoning is returned",
+		)
+	}
+}
+
+// minimumReasoningBudget is the smallest reasoning budget any documented
+// reasoning API accepts. Anthropic states it for thinking.budget_tokens, and a
+// bound below it would be refused rather than obeyed.
+const minimumReasoningBudget = 1024
+
+// ReasoningBoundForOutputAllowance is the bound a turn gets when it reasons
+// and states no budget of its own: what the client allowed for output, floored
+// at the smallest budget a provider accepts. It is exported because the
+// provider boundary derives the same bound for an arm that reasons by
+// configuration, and the two have to be one number.
+func ReasoningBoundForOutputAllowance(allowance int64) int64 {
+	if allowance < minimumReasoningBudget {
+		return minimumReasoningBudget
+	}
+	return allowance
+}
+
+// ReasoningBoundForRequest returns how many tokens the turn may spend on
+// reasoning, or nil to send no bound at all.
+//
+// It is exported because the request_params floor derives the same bound from
+// the allowance the client stated, before it raises the allowance itself, and
+// the two have to be one rule.
+//
+// max_completion_tokens does not bound reasoning: the models behind the
+// thinking arms do not count reasoning against it, so a turn that asks to
+// reason and states no budget runs until it finishes or until the platform
+// cuts the connection. OpenRouter's reasoning.max_tokens is the bound that
+// does apply.
+//
+// The rule:
+//
+//   - A stated thinking budget is the client's own number and travels
+//     verbatim, whatever the output allowance is.
+//   - A turn that asks to reason without stating a budget -- adaptive
+//     thinking, or an effort level on its own -- is bounded by what the client
+//     allowed for output, floored at the smallest budget a provider accepts.
+//     Reasoning plus output then cannot exceed twice the output allowance, and
+//     the output allowance itself is never reduced: the client gets everything
+//     it asked to be shown.
+//   - A turn that asks for no reasoning gets no bound. Sending one to a
+//     thinking-off arm would ask it to start reasoning, and thinking-off says
+//     so even when an effort level travels beside it: Claude Code sends
+//     thinking disabled with output_config.effort high, and the off-signal is
+//     the stronger statement of the two.
+//   - A request with no output allowance gets no bound either. There is
+//     nothing to derive one from, and capping a client that asked for no cap
+//     is not the Router's to do.
+func ReasoningBoundForRequest(request llmprotocol.Request) *int64 {
+	if request.ReasoningMode == llmprotocol.ReasoningModeDisabled {
+		return nil
+	}
+	if request.ReasoningBudgetTokens != nil {
+		return request.ReasoningBudgetTokens
+	}
+	reasoningAsked := request.ReasoningMode == llmprotocol.ReasoningModeAdaptive ||
+		request.ReasoningMode == llmprotocol.ReasoningModeEnabled ||
+		request.ReasoningEffort != "" && request.ReasoningEffort != "none"
+	allowance := ClientOutputAllowance(request)
+	if !reasoningAsked || allowance == nil {
+		return nil
+	}
+	bound := ReasoningBoundForOutputAllowance(*allowance)
+	return &bound
+}
+
+// ClientOutputAllowance is what the caller allowed the turn to write, which is
+// not always what the request dispatches: the request_params floor raises
+// max_completion_tokens so an answer has room beside the thinking, and records
+// the caller's own number here. A bound derived from the raised number would
+// bound nothing. A limit the Router set for a caller that stated none (a model
+// card's max_output_tokens) is no allowance of the caller's either.
+func ClientOutputAllowance(request llmprotocol.Request) *int64 {
+	if request.ClientMaxOutputTokens != nil {
+		return request.ClientMaxOutputTokens
+	}
+	if request.RouterSetMaxOutputTokens {
+		// The Router's own limit for a caller that stated none.
+		return nil
+	}
+	return request.Sampling.MaxOutputTokens
+}
+
+func appendChatMessages(wire *chatRequestWire, request llmprotocol.Request) error {
+	for _, instruction := range request.Instructions {
+		content := instructionContentFor(instruction.Content, llmprotocol.OpenAIChatV1)
+		if messageDropsWhole(content, llmprotocol.OpenAIChatV1) {
+			continue
+		}
+		encoded, err := encodeChatMessage(llmprotocol.Message{Role: instruction.Role, Content: content})
+		if err != nil {
+			return err
+		}
+		wire.Messages = append(wire.Messages, encoded)
+	}
+	// A Chat tool message carries text only, so the images a tool returned
+	// (a screenshot, an MCP image) are moved into user messages that follow
+	// the run of tool messages, one per result that held any, each led by a
+	// line naming its call: Chat requires every tool message to follow its
+	// assistant turn directly, with nothing between them. The spelling is
+	// pathfinder's request_to_chat (ADR 0129).
+	var toolMedia [][]chatContentWire
+	flushToolMedia := func() {
+		for _, parts := range toolMedia {
+			content, _ := json.Marshal(parts)
+			wire.Messages = append(wire.Messages, chatMessageWire{Role: "user", Content: content})
+		}
+		toolMedia = nil
+	}
+	for _, message := range request.Messages {
+		// A message dropped whole emits nothing, so it does not end the run
+		// of tool messages either.
+		if message.Configuration == nil && messageDropsWhole(message.Content, llmprotocol.OpenAIChatV1) {
+			continue
+		}
+		if message.JoinsToolMedia && message.Role == llmprotocol.RoleUser && len(toolMedia) > 0 {
+			// The router's steer after a tool run travels with the run's last
+			// hoisted images, not as a user message of its own.
+			parts, err := chatContentParts(message)
+			if err != nil {
+				return err
+			}
+			last := len(toolMedia) - 1
+			toolMedia[last] = append(toolMedia[last], parts...)
+			flushToolMedia()
+			continue
+		}
+		if message.JoinsToolMessage && message.Role == llmprotocol.RoleUser && len(toolMedia) == 0 &&
+			len(wire.Messages) > 0 && wire.Messages[len(wire.Messages)-1].Role == "tool" {
+			// ADR 0131: on a cell that states it, the steer after a text tool
+			// run is a text part of the run's last tool message.
+			parts, err := chatContentParts(message)
+			if err != nil {
+				return err
+			}
+			last := len(wire.Messages) - 1
+			joined, err := appendChatContentParts(wire.Messages[last].Content, parts)
+			if err != nil {
+				return err
+			}
+			wire.Messages[last].Content = joined
+			continue
+		}
+		if message.Role != llmprotocol.RoleTool {
+			flushToolMedia()
+		}
+		if message.Configuration != nil {
+			wire.Messages = append(wire.Messages, encodeChatConfigurationMessage(message))
+			continue
+		}
+		if message.Role == llmprotocol.RoleTool {
+			textOnly, media, err := splitChatToolResultMedia(message)
+			if err != nil {
+				return err
+			}
+			message = textOnly
+			if len(media) > 0 {
+				toolMedia = append(toolMedia, media)
+			}
+		}
+		encoded, err := encodeChatMessage(message)
+		if err != nil {
+			return err
+		}
+		if foldChatReasoningDetailsMessage(wire.Messages, &encoded) {
+			wire.Messages[len(wire.Messages)-1] = encoded
+			continue
+		}
+		wire.Messages = append(wire.Messages, encoded)
+	}
+	flushToolMedia()
+	return nil
+}
+
+// nameChatToolMessages writes, on each tool message, the name of the tool
+// whose call it answers (Request.NamesToolResults). The name is the call's
+// function.name as this encoder already wrote it on the assistant message
+// before it, so a namespaced tool is qualified the same way in both places.
+//
+// It is off by default: OpenAI's Chat schema defines no name on a tool
+// message, so a direct OpenAI dispatch stays exactly as before. The router
+// turns it on for OpenRouter, where Kimi refuses a tool message it cannot
+// match to a call, and matches by name or by the order of the calls, which a
+// history whose calls came from another model does not keep.
+//
+// A result whose call is not in the request (a truncated history) is sent
+// without a name and counted: the turn may still be accepted, and refusing
+// it here would lose it for certain.
+func nameChatToolMessages(
+	messages []chatMessageWire,
+	diagnostics *llmprotocol.Diagnostics,
+	policy llmprotocol.Policy,
+	source llmprotocol.WireFormat,
+) {
+	names := make(map[string]string)
+	for index := range messages {
+		message := &messages[index]
+		for _, call := range message.ToolCalls {
+			names[call.ID] = call.Function.Name
+		}
+		if message.Role != "tool" || message.ToolCallID == "" {
+			continue
+		}
+		name, found := names[message.ToolCallID]
+		if !found || name == "" {
+			appendPresentationDrop(
+				diagnostics, policy, source, llmprotocol.OpenAIChatV1,
+				"messages.tool.name", "no earlier tool call in the request answers to this tool result",
+			)
+			continue
+		}
+		message.Name, _ = json.Marshal(name)
+	}
+}
+
+// foldChatReasoningDetailsMessage moves an assistant message that holds only
+// reasoning (with reasoning_details) onto the assistant message that follows
+// it. A Responses history keeps reasoning as its own item, before the
+// function_call it led to; OpenRouter reads reasoning_details off the
+// assistant message whose tool calls they belong to (a Gemini thought
+// signature names its tool call), so on Chat they travel together. It reports
+// whether next now replaces the last message.
+func foldChatReasoningDetailsMessage(messages []chatMessageWire, next *chatMessageWire) bool {
+	if len(messages) == 0 || next.Role != "assistant" || next.Reasoning != nil || len(next.ReasoningDetails) > 0 {
+		return false
+	}
+	previous := messages[len(messages)-1]
+	if previous.Role != "assistant" || len(previous.ReasoningDetails) == 0 || len(previous.Content) > 0 ||
+		len(previous.ToolCalls) > 0 || previous.Refusal != nil || len(previous.Annotations) > 0 {
+		return false
+	}
+	next.Reasoning, next.ReasoningDetails = previous.Reasoning, previous.ReasoningDetails
+	return true
+}
+
+// splitChatToolResultMedia takes the images out of a tool message's result. It
+// returns the message with the rest alone, saying where the images went when
+// the result held no text, and the images as user-message parts led by a line
+// naming the call they came from. Only images move: an arm's
+// tool_result_images claim says its model takes image input, which says
+// nothing about a document or audio, so those stay where they were and fail
+// the encode as before.
+func splitChatToolResultMedia(message llmprotocol.Message) (llmprotocol.Message, []chatContentWire, error) {
+	if len(message.Content) != 1 || message.Content[0].Kind != llmprotocol.ContentToolResult || message.Content[0].ToolResult == nil {
+		return message, nil, nil
+	}
+	result := *message.Content[0].ToolResult
+	kept := make([]llmprotocol.Content, 0, len(result.Content))
+	mediaState := chatMessageEncodingState{wire: &chatMessageWire{}}
+	hasText := false
+	for _, part := range result.Content {
+		switch part.Kind {
+		case llmprotocol.ContentText:
+			kept = append(kept, part)
+			hasText = true
+		case llmprotocol.ContentImage:
+			if err := mediaState.appendImage(part); err != nil {
+				return message, nil, err
+			}
+		default:
+			kept = append(kept, part)
+		}
+	}
+	if len(mediaState.parts) == 0 {
+		return message, nil, nil
+	}
+	if !hasText {
+		// Each result's images get a message of their own, so the line
+		// names the one that carries this call's.
+		kept = append(kept, llmprotocol.Content{
+			Kind: llmprotocol.ContentText,
+			Text: "The tool returned images; they follow in the user message labelled " + chatToolMediaLabel(result.CallID) + ".",
+		})
+	}
+	result.Content = kept
+	content := message.Content[0]
+	content.ToolResult = &result
+	message.Content = []llmprotocol.Content{content}
+	label := chatContentWire{Type: "text", Text: chatToolMediaLabel(result.CallID)}
+	return message, append([]chatContentWire{label}, mediaState.parts...), nil
+}
+
+// appendChatContentParts appends parts to an encoded message's content. A
+// string becomes one text part first, as pathfinder's placer spells it; the
+// parts already there keep their bytes.
+func appendChatContentParts(content json.RawMessage, parts []chatContentWire) (json.RawMessage, error) {
+	var existing []json.RawMessage
+	if len(content) > 0 {
+		var text string
+		if err := json.Unmarshal(content, &text); err == nil {
+			part, err := json.Marshal(struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			}{Type: "text", Text: text})
+			if err != nil {
+				return nil, err
+			}
+			existing = []json.RawMessage{part}
+		} else if err := json.Unmarshal(content, &existing); err != nil {
+			return nil, llmprotocol.NewError(llmprotocol.ErrorUnsupportedFeature, "unsupported_content",
+				"a tool message's content is neither text nor parts", err)
+		}
+	}
+	for _, part := range parts {
+		encoded, err := json.Marshal(part)
+		if err != nil {
+			return nil, err
+		}
+		existing = append(existing, encoded)
+	}
+	return json.Marshal(existing)
+}
+
+// chatToolMediaLabel leads the user message carrying one tool call's images
+// (pathfinder's request_to_chat spelling, ADR 0129).
+func chatToolMediaLabel(callID string) string {
+	return "[images returned by tool call " + callID + "]"
+}
+
+// chatContentParts is a message's content as Chat content parts.
+func chatContentParts(message llmprotocol.Message) ([]chatContentWire, error) {
+	state := chatMessageEncodingState{wire: &chatMessageWire{}, parts: make([]chatContentWire, 0, len(message.Content))}
+	for _, content := range message.Content {
+		if err := state.appendContent(content); err != nil {
+			return nil, err
+		}
+	}
+	return state.parts, nil
+}
+
+// encodeChatConfigurationMessage writes the content-less system message that
+// carries a configuration update. The empty content string is part of the
+// documented shape, so it is written rather than omitted.
+func encodeChatConfigurationMessage(message llmprotocol.Message) chatMessageWire {
+	return chatMessageWire{
+		ID: message.ID, Role: "system", Content: json.RawMessage(`""`),
+		ConfigurationUpdate: &chatConfigurationUpdateWire{
+			Reasoning: chatConfigurationReasoningWire{Effort: message.Configuration.ReasoningEffort},
+		},
+	}
+}
+
+// refuseConfigurationUpdates stops a configuration update reaching a wire
+// whose encoding of it is not implemented yet. Dropping it would silently
+// serve the turn at the wrong reasoning effort.
+func refuseConfigurationUpdates(request llmprotocol.Request, wire string) error {
+	for _, message := range request.Messages {
+		if message.Configuration != nil {
+			return llmprotocol.NewError(
+				llmprotocol.ErrorUnsupportedFeature,
+				"unsupported_configuration_update",
+				wire+" encoding of a configuration update is not implemented",
+				nil,
+			)
+		}
+	}
+	return nil
+}
+
+// appendChatTools writes the tools Chat Completions can express. A server tool
+// is not one of them: the source API runs it, so there is no function for the
+// caller to implement and no shape a Chat tool array can hold. Emitting it as
+// a nameless function produced a body the provider refused, which turned a
+// declared web search into a failed turn instead of a routing decision. The
+// drop is counted in chatRequestDiagnostics; the capability gate is what sends
+// the turn to an arm that has the tool.
+//
+// An Anthropic-defined tool is one of them once its documented schema is
+// written out: the caller runs it, so the arm needs only the function shape.
+// The transform is counted in the same diagnostics.
+func appendChatTools(wire *chatRequestWire, tools []llmprotocol.Tool) {
+	for _, tool := range tools {
+		tool = tool.Materialized()
+		if tool.ServerTool() {
+			continue
+		}
+		wire.Tools = append(wire.Tools, chatToolWire{Type: "function", Function: chatFunctionDefinitionWire{
+			Name: llmprotocol.QualifiedToolName(tool.Namespace, tool.Name), Description: llmprotocol.FlattenedToolDescription(tool),
+			Parameters: tool.InputSchema, Strict: tool.Strict,
+		}, CacheControl: encodeAnthropicCacheControl(tool.Cache)})
+	}
+}
+
+func encodeChatRequestOptions(wire *chatRequestWire, request llmprotocol.Request) error {
+	// The choice is gated on the tools this target encoded, not on the tools
+	// the client declared. Ingress defaults tool choice to automatic whenever
+	// tools are present, and the table drops a server tool here, so a
+	// server-tool-only turn otherwise sends a choice with nothing to choose
+	// from -- which Chat Completions rejects, failing the turn at the provider
+	// rather than falling back.
+	if len(wire.Tools) > 0 {
+		wire.ToolChoice = encodeChatToolChoice(request.ToolChoice)
+	}
+	if len(request.Sampling.Stop) == 1 {
+		wire.Stop, _ = json.Marshal(request.Sampling.Stop[0])
+	} else if len(request.Sampling.Stop) > 1 {
+		wire.Stop, _ = json.Marshal(request.Sampling.Stop)
+	}
+	output, err := encodeChatOutputFormat(request.OutputFormat)
+	if err != nil {
+		return err
+	}
+	wire.ResponseFormat = output
+	return nil
+}
+
+func encodeChatMessage(message llmprotocol.Message) (chatMessageWire, error) {
+	role, err := wireRole(message.Role)
+	if err != nil {
+		return chatMessageWire{}, err
+	}
+	wire := chatMessageWire{ID: message.ID, Role: role}
+	state := chatMessageEncodingState{wire: &wire, parts: make([]chatContentWire, 0, len(message.Content))}
+	for _, content := range message.Content {
+		if err := state.appendContent(content); err != nil {
+			return chatMessageWire{}, err
+		}
+	}
+	if state.citationTextBlocks > 1 {
+		return chatMessageWire{}, llmprotocol.NewError(llmprotocol.ErrorUnsupportedFeature, "citation_text_ambiguous", "Chat Completions citations require one text block", nil)
+	}
+	if len(state.parts) == 1 && state.parts[0].Type == "text" && state.parts[0].CacheControl == nil {
+		wire.Content, _ = json.Marshal(state.parts[0].Text)
+	} else if len(state.parts) > 0 {
+		wire.Content, _ = json.Marshal(state.parts)
+	}
+	return wire, nil
+}
+
+type chatMessageEncodingState struct {
+	wire               *chatMessageWire
+	parts              []chatContentWire
+	citationTextBlocks int
+}
+
+func (state *chatMessageEncodingState) appendContent(content llmprotocol.Content) error {
+	switch content.Kind {
+	case llmprotocol.ContentText:
+		state.appendText(content)
+	case llmprotocol.ContentRefusal:
+		return appendChatTextField(&state.wire.Refusal, content)
+	case llmprotocol.ContentReasoning:
+		return state.appendReasoning(content)
+	case llmprotocol.ContentImage:
+		return state.appendImage(content)
+	case llmprotocol.ContentAudio:
+		state.parts = append(state.parts, chatContentWire{Type: "input_audio", InputAudio: &chatInputAudioWire{Data: content.Data, Format: content.MediaType}, CacheControl: encodeAnthropicCacheControl(content.Cache)})
+	case llmprotocol.ContentFile:
+		return state.appendFile(content)
+	case llmprotocol.ContentToolCall:
+		// The block's cache breakpoint and caller have no Chat field. Both are
+		// counted in chatRequestDiagnostics and go no further.
+		return state.appendToolCall(content.ToolCall)
+	case llmprotocol.ContentToolResult:
+		return state.appendToolResult(content.ToolResult)
+	case llmprotocol.ContentUnmodeled:
+		// A carried block belongs to the contract it came from, and Chat
+		// Completions names none of them, so the block is dropped here and the
+		// drop is recorded in chatRequestDiagnostics. The one exception is the
+		// table's transform row: a document whose source is text holds the
+		// text the turn is about, and it becomes a text part.
+		if text, transformed := carriedDocumentText(content); transformed {
+			state.parts = append(state.parts, chatContentWire{Type: "text", Text: text})
+		}
+	default:
+		return llmprotocol.NewError(llmprotocol.ErrorUnsupportedFeature, "unsupported_content", "content cannot be encoded as chat", nil)
+	}
+	return nil
+}
+
+// appendReasoning writes reasoning text as reasoning_content and the
+// reasoning_details an OpenRouter upstream returned beside it, which a Chat
+// target (and a Chat client) gets back unchanged. A content that holds only
+// reasoning_details writes no reasoning text.
+func (state *chatMessageEncodingState) appendReasoning(content llmprotocol.Content) error {
+	details, carrierOnly := reasoningDetailsOf(content)
+	if details != nil {
+		kept, err := withoutRouterSignedDetails(details, func(family string) {
+			reportRouterSignatureRefused(llmprotocol.OpenAIChatV1, family)
+		})
+		if err != nil {
+			return llmprotocol.NewError(llmprotocol.ErrorInvalidRequest, "invalid_reasoning_details", "reasoning_details cannot be encoded", err)
+		}
+		joined, err := concatReasoningDetails(state.wire.ReasoningDetails, kept)
+		if err != nil {
+			return llmprotocol.NewError(llmprotocol.ErrorInvalidRequest, "invalid_reasoning_details", "reasoning_details cannot be encoded", err)
+		}
+		state.wire.ReasoningDetails = joined
+		if carrierOnly {
+			return nil
+		}
+	}
+	return appendChatTextField(&state.wire.Reasoning, content)
+}
+
+func appendChatTextField(target **string, content llmprotocol.Content) error {
+	if content.Cache != nil {
+		return unsupportedChatCacheDirective(string(content.Kind))
+	}
+	if *target == nil {
+		*target = new(string)
+	}
+	**target += content.Text
+	return nil
+}
+
+func (state *chatMessageEncodingState) appendText(content llmprotocol.Content) {
+	state.parts = append(state.parts, chatContentWire{Type: "text", Text: content.Text, CacheControl: encodeAnthropicCacheControl(content.Cache)})
+	if len(content.Citations) > 0 {
+		state.citationTextBlocks++
+		state.wire.Annotations = append(state.wire.Annotations, encodeChatAnnotations(content.Citations)...)
+	}
+}
+
+func (state *chatMessageEncodingState) appendImage(content llmprotocol.Content) error {
+	if content.FileID != "" {
+		return llmprotocol.NewError(llmprotocol.ErrorUnsupportedFeature, "image_file_id", "Chat Completions cannot encode image file IDs", nil)
+	}
+	imageURL := content.URL
+	if content.Data != "" {
+		if !strings.HasPrefix(content.MediaType, "image/") {
+			return llmprotocol.NewError(llmprotocol.ErrorInvalidRequest, "image_media_type", "inline Chat images require an image media type", nil)
+		}
+		imageURL = "data:" + content.MediaType + ";base64," + content.Data
+	}
+	if imageURL == "" {
+		return llmprotocol.NewError(llmprotocol.ErrorInvalidRequest, "image_source", "Chat images require a URL or inline data", nil)
+	}
+	state.parts = append(state.parts, chatContentWire{Type: "image_url", ImageURL: &chatImageURLWire{URL: imageURL, Detail: content.Detail}, CacheControl: encodeAnthropicCacheControl(content.Cache)})
+	return nil
+}
+
+func (state *chatMessageEncodingState) appendFile(content llmprotocol.Content) error {
+	if content.Detail != "" {
+		return llmprotocol.NewError(llmprotocol.ErrorUnsupportedFeature, "file_detail", "Chat Completions cannot encode file detail", nil)
+	}
+	if content.URL != "" {
+		return llmprotocol.NewError(llmprotocol.ErrorUnsupportedFeature, "file_url", "Chat Completions cannot encode file URLs", nil)
+	}
+	file := &chatFileWire{Filename: content.Filename, FileID: content.FileID}
+	if content.Data != "" {
+		if content.MediaType == "" {
+			return llmprotocol.NewError(llmprotocol.ErrorInvalidRequest, "file_media_type", "inline Chat files require a media type", nil)
+		}
+		file.FileData = "data:" + content.MediaType + ";base64," + content.Data
+	}
+	state.parts = append(state.parts, chatContentWire{Type: "file", File: file, CacheControl: encodeAnthropicCacheControl(content.Cache)})
+	return nil
+}
+
+func (state *chatMessageEncodingState) appendToolCall(call *llmprotocol.ToolCall) error {
+	if call == nil {
+		return llmprotocol.NewError(llmprotocol.ErrorInvalidRequest, "invalid_tool_call", "tool call content is invalid", nil)
+	}
+	state.wire.ToolCalls = append(state.wire.ToolCalls, chatToolCallWire{
+		ID: call.ID, Type: "function",
+		Function: chatFunctionCallWire{Name: llmprotocol.QualifiedToolName(call.Namespace, call.Name), Arguments: call.Arguments},
+	})
+	return nil
+}
+
+func (state *chatMessageEncodingState) appendToolResult(result *llmprotocol.ToolResult) error {
+	if result == nil {
+		return llmprotocol.NewError(llmprotocol.ErrorInvalidRequest, "invalid_tool_result", "tool result content is invalid", nil)
+	}
+	state.wire.ToolCallID = result.CallID
+	for _, resultContent := range result.Content {
+		if resultContent.Kind == llmprotocol.ContentUnmodeled {
+			// The block belongs to the contract it came from. Dropping it keeps
+			// the tool result routable; refusing it would lose the whole turn.
+			continue
+		}
+		if resultContent.Kind != llmprotocol.ContentText {
+			return llmprotocol.NewError(llmprotocol.ErrorUnsupportedFeature, "tool_result_media", "chat tool results support text only", nil)
+		}
+		state.parts = append(state.parts, chatContentWire{
+			Type: "text", Text: resultContent.Text,
+			CacheControl: encodeAnthropicCacheControl(resultContent.Cache),
+		})
+	}
+	return nil
+}
+
+func encodeChatToolChoice(choice llmprotocol.ToolChoice) json.RawMessage {
+	switch choice.Mode {
+	case llmprotocol.ToolChoiceAuto, llmprotocol.ToolChoiceNone, llmprotocol.ToolChoiceRequired:
+		body, _ := json.Marshal(choice.Mode)
+		return body
+	case llmprotocol.ToolChoiceNamed:
+		body, _ := json.Marshal(map[string]any{"type": "function", "function": map[string]string{"name": choice.Name}})
+		return body
+	default:
+		return nil
+	}
+}
+
+func encodeChatOutputFormat(format llmprotocol.OutputFormat) (*chatOutputWire, error) {
+	switch format.Kind {
+	case "", llmprotocol.OutputText:
+		return nil, nil
+	case llmprotocol.OutputJSONObject:
+		return &chatOutputWire{Type: "json_object"}, nil
+	case llmprotocol.OutputJSONSchema:
+		schema := map[string]any{"name": format.Name, "schema": format.Schema}
+		if format.Description != "" {
+			schema["description"] = format.Description
+		}
+		if format.Strict != nil {
+			schema["strict"] = format.Strict
+		}
+		body, err := json.Marshal(schema)
+		return &chatOutputWire{Type: "json_schema", JSONObject: body}, err
+	default:
+		return nil, llmprotocol.NewError(llmprotocol.ErrorUnsupportedFeature, "unsupported_output_format", "output format cannot be encoded as chat", nil)
+	}
+}

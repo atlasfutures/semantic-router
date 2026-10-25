@@ -53,6 +53,23 @@ type RaylineARCSelectionContext struct {
 	// it holds for every turn until the card changes. Nil when no arm is
 	// marked, which is the unmarked default.
 	DisabledArms []bool
+	// PrivacyExcludedArms marks, by arm ordinal, the candidates outside a
+	// private request's allowed set, as its trusted gateway headers state it
+	// (extproc/rayline_arc_privacy.go). Nil for a standard request, which
+	// leaves selection exactly as it was.
+	PrivacyExcludedArms []bool
+	// PrivacyArmEndpoints is, by arm ordinal, each OpenRouter arm's endpoint
+	// constraint on a private request whose gateway listed the endpoints
+	// each allowed arm may use (x-rayline-privacy-allowed-endpoints); nil
+	// otherwise, and nil at an arm that is masked already or not on
+	// OpenRouter. The selector masks an arm none of whose reachable
+	// endpoints the gateway allows, once it holds the routing-price feed
+	// that says what the arm reaches.
+	PrivacyArmEndpoints []*raylinearc.ArmEndpoints
+	// EndpointFeed is the routing-price feed snapshot the selector read for
+	// the endpoint mask, nil when the cell has none; the decision carries it
+	// on (RaylineARCTrace.EndpointFeed) so the endpoint pick reads the same.
+	EndpointFeed *raylinearc.RoutingPriceSettlement
 	// ContextTokens is the request's conservative token estimate, the same
 	// number the generic context filter compares a card's window against.
 	// Zero when no estimate was made, which excludes nothing.
@@ -193,6 +210,10 @@ type RaylineARCTrace struct {
 	// turn's own cost weight (configurable ARC's routing.value_usd). False
 	// on a held turn, which decides nothing.
 	TurnCostWeightApplied bool
+	// PolicyCostWeight is the stage-one cost weight the service echoed for
+	// the decision, on every policy-service cell; nil when it echoed none,
+	// never read as 0.
+	PolicyCostWeight *float64
 	// PolicyOperatingPoint is the operating point the service decided at, as
 	// it echoed it (point_id names its cost weight), and PolicyTierPicks the
 	// decision at each configured tier point. Both are set only for a cell
@@ -234,6 +255,11 @@ type RaylineARCTrace struct {
 	// a capacity hold included: the feed then prices the call's usage
 	// record where it can (raylinearc.RoutingPriceSettlement).
 	SettlementPrices *raylinearc.RoutingPriceCache
+	// EndpointFeed is the feed snapshot the decision's endpoint mask read
+	// (RaylineARCSelectionContext.EndpointFeed): the endpoint pick, its
+	// re-sends and x-vsr-served-endpoint read this one, so a refresh between
+	// the mask and the dispatch cannot give the two different endpoints.
+	EndpointFeed *raylinearc.RoutingPriceSettlement
 	// ArtifactID and ArtifactRevision hold SHA256-derived hashes of the
 	// deployment-private artifact identity, never the raw pins.
 	ArtifactID          string
@@ -284,6 +310,18 @@ type RaylineARCTrace struct {
 	// state. They must never be logged or exported as metric labels.
 	EncoderReplicaID         string
 	EncoderVisitedReplicaIDs []string
+	// PolicySession is the Modal sticky session a sessioned policy Server
+	// decided this turn on, which the episode commit persists; nil when the
+	// turn changes none. Internal transaction state: never logged.
+	PolicySession *raylinearc.PolicySession
+	// PolicySessions is how many sessions the turn's calls used, and
+	// PolicySessionMoved whether the turn left a session that was gone.
+	PolicySessions     int
+	PolicySessionMoved bool
+	// PolicySessionCleared drops a session the episode state holds from a
+	// cell that no longer decides through sessions, so a router that predates
+	// them can read the record again.
+	PolicySessionCleared bool
 	// TurnIndex is the episode position this selection was made at: the
 	// number of turns the episode had committed before it.
 	TurnIndex uint64

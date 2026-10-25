@@ -1,0 +1,29 @@
+{
+ "description": "fold_before_unit_v1 keeps non-ASCII system text exact UTF-8",
+ "format": "chat",
+ "provider": "openrouter",
+ "model": "mistralai/mistral-large-4-0",
+ "wire_model": "mistralai/mistral-large-4-0",
+ "admission": "placement_only_not_admitted",
+ "allow_experimental": true,
+ "registry_pin": "eb0d014ac155443c9d8b95bcd6f6cc113224065e078a46332acd9cc9c5fad440",
+ "calls": [
+  {
+   "client_body": "client-00.json",
+   "control_id": "5a811ebd822ecec1444d421023a35ad2013f897790adb674fde82a1ec9b169db",
+   "expected_body": "provider-00.json",
+   "receipt": {
+    "call": 0,
+    "control_id": "5a811ebd822ecec1444d421023a35ad2013f897790adb674fde82a1ec9b169db",
+    "level_in_force": "down",
+    "instruction_state": "steered",
+    "written": "instruction",
+    "epoch": 0,
+    "epoch_reset_reason": null,
+    "retry": false
+   }
+  }
+ ],
+ "refusal": null,
+ "golden_refusal": "control 5a811ebd822e is not admitted for mistralai/mistral-large-4-0 on openrouterxchat"
+}

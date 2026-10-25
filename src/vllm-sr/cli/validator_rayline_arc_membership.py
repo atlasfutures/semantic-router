@@ -225,3 +225,48 @@ def _valid_encoder_url(value: str) -> bool:
 
 def _byte_length(value: str) -> int:
     return len(value.encode())
+
+
+_RAYLINE_ARC_POLICY_FAILOVER_V1 = "rayline.arc.policy-failover.v1"
+# Mirrors raylineARCPolicyFailoverStatuses in the Go loader: each is answered
+# before the service touches the episode.
+_RAYLINE_ARC_POLICY_FAILOVER_STATUSES = (404, 429, 503)
+
+
+def validate_policy_replicas(prefix, policy) -> list[ValidationError]:
+    """Validate a policy-service replica pool and its failover contract."""
+
+    errors = _validate_encoder_replicas(prefix, policy.replicas)
+    failover = policy.failover
+    if failover is None:
+        errors.append(
+            ValidationError(
+                "failover is required with replicas", field=f"{prefix}.failover"
+            )
+        )
+        return errors
+    if failover.schema_version != _RAYLINE_ARC_POLICY_FAILOVER_V1:
+        errors.append(
+            ValidationError(
+                f"failover.schema_version must be {_RAYLINE_ARC_POLICY_FAILOVER_V1!r}",
+                field=f"{prefix}.failover.schema_version",
+            )
+        )
+    if failover.max_remaps != 1:
+        errors.append(
+            ValidationError(
+                "failover.max_remaps must be 1",
+                field=f"{prefix}.failover.max_remaps",
+            )
+        )
+    statuses = failover.unavailable_status_codes
+    if len(statuses) != len(set(statuses)) or any(
+        status not in _RAYLINE_ARC_POLICY_FAILOVER_STATUSES for status in statuses
+    ):
+        errors.append(
+            ValidationError(
+                "failover unavailable statuses must be unique values among 404, 429 and 503",
+                field=f"{prefix}.failover.unavailable_status_codes",
+            )
+        )
+    return errors

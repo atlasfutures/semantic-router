@@ -2801,6 +2801,12 @@ func (m *MockResponseStore) IsEnabled() bool {
 	return true
 }
 
+// Retains is true: this double keeps what it is given in its map, so it
+// stands in for a retaining backend.
+func (m *MockResponseStore) Retains() bool {
+	return true
+}
+
 func (m *MockResponseStore) Close() error {
 	return nil
 }

@@ -1,0 +1,62 @@
+{
+ "model": "auto",
+ "messages": [
+  {
+   "role": "user",
+   "content": [
+    {
+     "tool_use_id": "toolu_9xzpFl8E45p9R34FscQ5K3Xa",
+     "type": "tool_result",
+     "content": "<content 1>",
+     "is_error": false
+    }
+   ]
+  },
+  {
+   "role": "system",
+   "content": [
+    {
+     "type": "text",
+     "text": "<text 2>",
+     "cache_control": {
+      "type": "ephemeral",
+      "ttl": "1h"
+     }
+    }
+   ]
+  }
+ ],
+ "system": [
+  {
+   "type": "text",
+   "text": "<text 3>"
+  }
+ ],
+ "metadata": {
+  "user_id": "{\"device_id\": \"scrubbed-device\", \"account_uuid\": \"\", \"session_id\": \"00000000-0000-4000-8000-000000000000\"}"
+ },
+ "max_tokens": 32000,
+ "thinking": {
+  "type": "adaptive",
+  "display": "omitted"
+ },
+ "context_management": {
+  "edits": [
+   {
+    "type": "clear_thinking_20251015",
+    "keep": "all"
+   }
+  ]
+ },
+ "output_config": {
+  "effort": "xhigh"
+ },
+ "thread": {
+  "type": "continue",
+  "previous_message_id": "msg_S43AM0tjSLEDBE2W7liDqLgo"
+ },
+ "diagnostics": {
+  "previous_message_id": "msg_S43AM0tjSLEDBE2W7liDqLgo"
+ },
+ "stream": true
+}

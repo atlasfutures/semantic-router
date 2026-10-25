@@ -13,12 +13,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 	typev3 "github.com/envoyproxy/go-control-plane/envoy/type/v3"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/metrics"
 )
@@ -165,11 +165,13 @@ func (r *OpenAIRouter) planFlexResend(
 		flexModel:    dispatch.logicalModel,
 		twinModel:    twin,
 		twinDispatch: twinDispatch,
-		twinPin:      pin,
-		twinTier:     r.Config.ServiceTierForModel(twin),
-		flexTier:     r.Config.ServiceTierForModel(dispatch.logicalModel),
-		clientTier:   ctx.ClientServiceTier,
-		dispatched:   body,
+		// The twin replaces the provider object, so a private turn's data mode
+		// travels with it.
+		twinPin:    privacyProviderPreferences(pin, ctx.RaylineARCPrivacyMode),
+		twinTier:   r.Config.ServiceTierForModel(twin),
+		flexTier:   r.Config.ServiceTierForModel(dispatch.logicalModel),
+		clientTier: ctx.ClientServiceTier,
+		dispatched: body,
 	}, ""
 }
 
@@ -193,19 +195,35 @@ func (r *OpenAIRouter) buildFlexTwinRequest(ctx *RequestContext, plan *flexResen
 		return nil, "twin_body_invalid"
 	}
 	plan.resentTier = dispatchedServiceTier(twinBody)
-	twin := plan.twinDispatch
-	state := &routeHeaderState{profile: twin.profile}
-	appendProfileHeaders(&state.setHeaders, twin.profile)
-	if refused := r.appendProviderCredential(state, plan.twinModel, twin.backendName, ctx); refused != nil {
+	call, unavailable := r.buildResendCall(ctx, plan.twinModel, plan.twinDispatch, twinBody)
+	if unavailable == "address_invalid" {
+		unavailable = "twin_address_invalid"
+	}
+	return call, unavailable
+}
+
+// buildResendCall addresses a re-send body to its dispatch's backend, with the
+// credential and profile headers the dispatch would set, or names why it
+// cannot. The flex twin and an arm's next endpoint (rayline_arc_endpoint_pick.go)
+// are both sent this way.
+func (r *OpenAIRouter) buildResendCall(
+	ctx *RequestContext,
+	model string,
+	dispatch *providerDispatch,
+	body []byte,
+) (*flexTwinCall, string) {
+	state := &routeHeaderState{profile: dispatch.profile}
+	appendProfileHeaders(&state.setHeaders, dispatch.profile)
+	if refused := r.appendProviderCredential(state, model, dispatch.backendName, ctx); refused != nil {
 		return nil, "credential_unavailable"
 	}
-	setProviderRequestPath(&state.setHeaders, twin.profile, twin.targetFormat)
+	setProviderRequestPath(&state.setHeaders, dispatch.profile, dispatch.targetFormat)
 	declareAutoCacheBeta(&state.setHeaders, ctx)
-	target, headers, err := flexResendRequestTarget(twin, state.setHeaders, ctx)
+	target, headers, err := flexResendRequestTarget(dispatch, state.setHeaders, ctx)
 	if err != nil {
-		return nil, "twin_address_invalid"
+		return nil, "address_invalid"
 	}
-	return &flexTwinCall{url: target, headers: headers, body: twinBody}, ""
+	return &flexTwinCall{url: target, headers: headers, body: body}, ""
 }
 
 // withProviderObject replaces the dispatched body's provider object with the
@@ -343,7 +361,9 @@ func (r *OpenAIRouter) flexResendOnResponseHeaders(
 	ctx.UpstreamStatusCode = status
 	captureRaylineARCProviderAttempts(v.ResponseHeaders.GetHeaders(), ctx, status)
 	finishUpstreamResponseSpan(ctx, outcome)
-	r.settleFlexAttempt(ctx, trigger, status)
+	r.settleRefusedAttempt(ctx, trigger, status, func(record *llmUsageRecord) {
+		record.FlexResend = nonEmpty(flexResendAttempt)
+	})
 
 	plan.trigger = trigger
 	started := time.Now()
@@ -369,11 +389,16 @@ func (r *OpenAIRouter) flexResendOnResponseHeaders(
 	return r.serveFlexTwin(ctx, plan, result)
 }
 
-// settleFlexAttempt writes the refused call's usage line. It states no usage,
-// so its counts are null and its cost unknown, never zero. The turn has not
-// failed (the re-send may yet serve it), so the turn's own failure state is
-// left for the re-send to set.
-func (r *OpenAIRouter) settleFlexAttempt(ctx *RequestContext, trigger string, status int) {
+// settleRefusedAttempt writes a refused call's usage line, which mark tags as
+// the re-sent kind it is. It states no usage, so its counts are null and its
+// cost unknown, never zero. The turn has not failed (the re-send may yet
+// serve it), so the turn's own failure state is left for the re-send to set.
+func (r *OpenAIRouter) settleRefusedAttempt(
+	ctx *RequestContext,
+	trigger string,
+	status int,
+	mark func(*llmUsageRecord),
+) {
 	latency := time.Duration(0)
 	if !ctx.StartTime.IsZero() {
 		latency = time.Since(ctx.StartTime)
@@ -386,10 +411,10 @@ func (r *OpenAIRouter) settleFlexAttempt(ctx *RequestContext, trigger string, st
 	record.FailureDetail = nonEmpty("upstream_status_" + strconv.Itoa(status))
 	contentSent := false
 	record.ContentSentBeforeFailure = &contentSent
-	record.FlexResend = nonEmpty(flexResendAttempt)
+	mark(&record)
 	r.priceUsageRecord(&record, ctx, ctx.RequestModel, usage)
 	emitLLMUsageRecord(record)
-	// The discount endpoint failed the call: it counts against it in the
+	// The endpoint failed the call: it counts against the arm in the
 	// load-balancing window, as any backend error does.
 	metrics.RecordModelWindowedRequest(
 		ctx.RequestModel, latency.Seconds(), 0, 0, true, trigger == turnFailureTimeout,
@@ -503,30 +528,47 @@ func terminalFlexTwinResult(ctx *RequestContext, result flexTwinResult) flexTwin
 	return flexTwinFailure(result.err)
 }
 
-// serveFlexTwin runs the twin's response through the ordinary response
-// pipeline, as if the cell's provider hop had returned it, and answers the
-// client with the result.
+// serveFlexTwin answers the client with the twin's response, the dispatch
+// facts now the twin's.
 func (r *OpenAIRouter) serveFlexTwin(
 	ctx *RequestContext,
 	plan *flexResendPlan,
 	result flexTwinResult,
 ) *ext_proc.ProcessingResponse {
+	ctx.DispatchedProviderOrder = append([]string(nil), plan.twinPin.Order...)
+	ctx.DispatchedProviderPrivacy = dispatchedProviderPrivacy{
+		dataCollection: plan.twinPin.DataCollection,
+		zdr:            plan.twinPin.ZDR,
+		allowFallbacks: plan.twinPin.AllowFallbacks,
+	}
+	ctx.DispatchedServiceTier = plan.resentTier
+	ctx.RaylineARCEndpointOrder, ctx.RaylineARCEndpointsTried = nil, nil
+	ctx.RaylineARCDispatchedEndpoint = dispatchedEndpoint(ctx, plan.twinPin, plan.twinDispatch.upstreamModel)
+	return r.serveResent(ctx, plan.twinModel, result)
+}
+
+// serveResent runs a re-send's response through the ordinary response
+// pipeline as model's call, as if the cell's provider hop had returned it,
+// and answers the client with the result.
+func (r *OpenAIRouter) serveResent(
+	ctx *RequestContext,
+	model string,
+	result flexTwinResult,
+) *ext_proc.ProcessingResponse {
 	result = terminalFlexTwinResult(ctx, result)
-	// The call in flight is now the twin's, priced at its rates and counted
-	// against it. The response body phase releases the count; a reply that
-	// ends before it does releases it here.
+	// The call in flight is now the re-send's, priced at its rates and
+	// counted against it. The response body phase releases the count; a
+	// reply that ends before it does releases it here.
 	metrics.DecrementModelActiveRequests(ctx.RequestModel)
-	metrics.IncrementModelActiveRequests(plan.twinModel)
+	metrics.IncrementModelActiveRequests(model)
 	bodyPhaseRan := false
 	defer func() {
 		if !bodyPhaseRan {
-			metrics.DecrementModelActiveRequests(plan.twinModel)
+			metrics.DecrementModelActiveRequests(model)
 		}
 	}()
-	ctx.RequestModel = plan.twinModel
-	ctx.DispatchedProviderOrder = append([]string(nil), plan.twinPin.Order...)
-	ctx.DispatchedServiceTier = plan.resentTier
-	// Nothing the refused call's hop said describes the twin's call.
+	ctx.RequestModel = model
+	// Nothing the refused call's hop said describes the re-send.
 	ctx.UpstreamStatusCode = 0
 	ctx.UpstreamAttemptCount, ctx.UpstreamRetryCount, ctx.UpstreamRetryExhausted = 0, 0, false
 	// One whole body, delivered as one reply.
@@ -547,7 +589,7 @@ func (r *OpenAIRouter) serveFlexTwin(
 		ResponseHeaders: &ext_proc.HttpHeaders{Headers: headerMap, EndOfStream: ended},
 	}, ctx)
 	if err != nil {
-		return r.createErrorResponse(http.StatusBadGateway, "The standard re-send could not be processed")
+		return r.createErrorResponse(http.StatusBadGateway, "The re-send could not be processed")
 	}
 	if headersResponse.GetImmediateResponse() != nil {
 		return headersResponse
@@ -560,7 +602,7 @@ func (r *OpenAIRouter) serveFlexTwin(
 			ResponseBody: &ext_proc.HttpBody{Body: result.body, EndOfStream: true},
 		}, ctx)
 		if err != nil {
-			return r.createErrorResponse(http.StatusBadGateway, "The standard re-send could not be processed")
+			return r.createErrorResponse(http.StatusBadGateway, "The re-send could not be processed")
 		}
 		if bodyResponse.GetImmediateResponse() != nil {
 			return bodyResponse

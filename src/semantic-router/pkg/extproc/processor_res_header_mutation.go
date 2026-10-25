@@ -7,11 +7,11 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/headers"
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/metrics"
 )
@@ -29,8 +29,9 @@ const lossinessHeaderSizeLimit = 4096
 const protocolDefault = "openai"
 
 type responseHeaderMutationBuilder struct {
-	setHeaders []*core.HeaderValueOption
-	seen       map[string]struct{}
+	setHeaders    []*core.HeaderValueOption
+	removeHeaders []string
+	seen          map[string]struct{}
 }
 
 func newResponseHeaderMutationBuilder() *responseHeaderMutationBuilder {
@@ -249,10 +250,30 @@ func normalizeProtocol(value string) string {
 }
 
 func (builder *responseHeaderMutationBuilder) mutation() *ext_proc.HeaderMutation {
-	if len(builder.setHeaders) == 0 {
+	if len(builder.setHeaders) == 0 && len(builder.removeHeaders) == 0 {
 		return nil
 	}
-	return &ext_proc.HeaderMutation{SetHeaders: builder.setHeaders}
+	return &ext_proc.HeaderMutation{SetHeaders: builder.setHeaders, RemoveHeaders: builder.removeHeaders}
+}
+
+// privacyModeRemoval strips x-vsr-privacy-mode and x-vsr-served-endpoint
+// from a response the router does not otherwise mutate: only the router
+// states them, and no ARC selection stands behind such a response.
+func privacyModeRemoval() *ext_proc.HeaderMutation {
+	return &ext_proc.HeaderMutation{RemoveHeaders: []string{headers.VSRPrivacyMode, headers.VSRServedEndpoint}}
+}
+
+// addPrivacyMode states the data mode an ARC turn was served under, replacing
+// any copy the upstream sent, and strips the header from every other
+// response: only the router states it.
+func (builder *responseHeaderMutationBuilder) addPrivacyMode(ctx *RequestContext) {
+	if ctx.VSRRaylineARC == nil {
+		builder.removeHeaders = append(builder.removeHeaders, headers.VSRPrivacyMode)
+		return
+	}
+	builder.addString(headers.VSRPrivacyMode, privacyModeLabel(ctx.RaylineARCPrivacyMode))
+	last := builder.setHeaders[len(builder.setHeaders)-1]
+	last.AppendAction = core.HeaderValueOption_OVERWRITE_IF_EXISTS_OR_ADD
 }
 
 func buildResponseHeaderMutation(
@@ -264,6 +285,8 @@ func buildResponseHeaderMutation(
 	}
 
 	builder := newResponseHeaderMutationBuilder()
+	builder.addPrivacyMode(ctx)
+	builder.addRaylineARCServedEndpoint(ctx, isSuccessful)
 
 	// The keystone headers, protocol markers, and protocol warnings ride on
 	// every non-cache-hit response (success or 4xx/5xx). Cache-hit responses
@@ -289,6 +312,7 @@ func buildResponseHeaderMutation(
 		// survive the cell's response scrub, while x-vsr-response-path does
 		// not.
 		builder.addString(headers.VSRSelectedModel, ctx.VSRSelectedModel)
+		builder.addRaylineARCServedIdentity(ctx)
 	}
 	if !isSuccessful || ctx.VSRCacheHit {
 		return builder.mutation()
@@ -303,6 +327,7 @@ func buildResponseHeaderMutation(
 	// so demoting the wire header does not change behavior.
 	addFinalDecisionHeaders(builder, ctx)
 	builder.addRaylineGenerationRoutingHeaders(ctx)
+	builder.addRaylineARCServedIdentity(ctx)
 	if debugHeadersRequested(ctx) {
 		addRetentionDirectiveHeaders(builder, ctx)
 		addDecisionDetailHeaders(builder, ctx)
