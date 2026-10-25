@@ -826,4 +826,3 @@ func TestDeltaUnsettledAppendExtendsTheNextBusyWait(t *testing.T) {
 	}
 	complete(t, ctx, deltaReply(t))
 }
-
