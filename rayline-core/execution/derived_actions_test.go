@@ -74,8 +74,9 @@ func TestDerivedActionsUseARCActionIdentity(t *testing.T) {
 	if _, err := NewServer(config, registry, provider, testCoreToken); err != nil {
 		t.Fatal(err)
 	}
-	if expect := provider.projectV2(DecisionInput{State: ExecutionContext{ContextEpoch: "e:0"}}).Expect; expect != nil {
-		t.Fatalf("a package-less profile pinned %+v", expect)
+	expect := provider.projectV2(DecisionInput{State: ExecutionContext{ContextEpoch: "e:0"}}).Expect
+	if expect == nil || expect.PackageSHA256 != nil || expect.ThinkingControlsSHA256 == nil || *expect.ThinkingControlsSHA256 != registry.SHA256 {
+		t.Fatalf("a package-less profile must pin the registry and no package: %+v", expect)
 	}
 }
 
@@ -95,5 +96,39 @@ func TestDerivedActionsAreV2OnlyAndExclusiveOfAPackage(t *testing.T) {
 				t.Fatal("accepted")
 			}
 		})
+	}
+}
+
+// A package-less profile executes end to end: the service names its serving
+// package, which the core records without a local pin.
+func TestDerivedProfileExecutesARequest(t *testing.T) {
+	local, cloud := &upstreamFixture{}, &upstreamFixture{}
+	localURL := chatUpstream(t, local, false).URL + "/v1/chat/completions"
+	cloudURL := chatUpstream(t, cloud, true).URL + "/v1/chat/completions"
+	path := writeDerivedConfig(t, func(config map[string]any) {
+		deployments := config["deployments"].([]any)
+		deployments[0].(map[string]any)["url"] = localURL
+		sonnet := deployments[1].(map[string]any)
+		sonnet["url"], sonnet["protocol"] = cloudURL, "openai.chat.v1"
+		sonnet["wire_model"], sonnet["registry_model"] = "moonshotai/kimi-k3", "moonshotai/kimi-k3"
+		config["derived_actions"] = []any{
+			map[string]any{"model": "qwen3.8-27b", "worker": "qwen3.8-27b", "deployment_id": "local"},
+			map[string]any{"model": "kimi-k3", "worker": "kimi-k3", "deployment_id": "cloud-sonnet", "bases": []string{"default"}},
+		}
+	})
+	config, _, err := LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	qwen := "d6936db7073d3f30c663d504b7acbb124e8f752a9a766cfb5e3129050e26e0a6"
+	fixture := &v2Decisions{choose: func(contextV2) string { return qwen }, mutate: func(response map[string]any) {
+		response["identity"].(map[string]any)["package_sha256"] = strings.Repeat("5", 64)
+	}}
+	_, httpServer := v2Server(t, config, fixture)
+	if status, response := executeHTTP(t, httpServer.URL, "/v1/chat/completions", `{"model":"arc-1.0","max_tokens":64,"messages":[{"role":"user","content":"hi"}]}`, "derived"); status != 200 {
+		t.Fatalf("status %d: %s", status, response)
+	}
+	if local.count() != 1 || fixture.snapshot()[0].Execution.Expect.PackageSHA256 != nil {
+		t.Fatal("derived profile did not execute locally without a package pin")
 	}
 }

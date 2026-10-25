@@ -253,7 +253,7 @@ func TestV2EnvelopeCarriesEventsLastServedHistoryAndTargets(t *testing.T) {
 		if got.Turn.Attempt != 1 || got.Turn.RetryOf != nil || got.Turn.Reconsult != nil || got.Turn.Epoch == "" {
 			t.Fatalf("turn %d identity %+v", index, got.Turn)
 		}
-		if got.Hold != nil || got.Expect.PackageSHA256 != config.PackageSHA256 || got.Expect.OfferSHA256 != nil {
+		if got.Hold != nil || got.Expect == nil || got.Expect.PackageSHA256 == nil || *got.Expect.PackageSHA256 != config.PackageSHA256 || got.Expect.OfferSHA256 != nil {
 			t.Fatalf("turn %d hold/expect %+v %+v", index, got.Hold, got.Expect)
 		}
 		if len(got.Targets) != 2 || got.Targets[0].ActionID != localActionID || got.Targets[0].Placement != "local" || got.Targets[1].Placement != "cloud" || got.Targets[1].Capacity != nil {

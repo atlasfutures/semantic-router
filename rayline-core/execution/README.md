@@ -36,8 +36,10 @@ opt-in. The core reports facts and never picks or ranks a model.
   of that model on that deployment (optionally only these native bases), with
   ARC's v5 action identity (sha256 of JCS `{"control_id","model"}`). With no
   `registry_path`, `registry_sha256` may be omitted and the embedded registry is
-  used. Such a profile pins no package: `expect` is null and the response names
-  the package. Rayline Local builds one by default, so a user needs no profile
+  used. Such a profile pins no package: `expect` pins only the registry (and
+  any offer), and the response names the package. Every derived action is a
+  target, and the service refuses a target its serving package lacks
+  (`execution_unknown_action`), so choose `bases` to match the served actions. Rayline Local builds one by default, so a user needs no profile
   file.
 - **Envelope.** Each decision sends `routing.execution` version
   `arc-execution-context.v2`: `turn` (`id`, `attempt`, `epoch`, `retry_of`,

@@ -250,6 +250,9 @@ func (server *Server) execute(writer http.ResponseWriter, incoming *http.Request
 	}
 	wire := wireMessageFingerprints(format, body)
 	rewrite := len(state.prefix) > 0 && !extendsPrefix(state.prefix, prefix)
+	// v2: a transition reset by an earlier attempt that never committed (its
+	// consult or dispatch failed) is still open; detect it again on this request.
+	uncommitted := v2 && state.carried != nil && len(state.prefix) == 0
 	var event ExecutionEvent
 	switch {
 	case !v2:
@@ -266,19 +269,17 @@ func (server *Server) execute(writer http.ResponseWriter, incoming *http.Request
 		if state.carried != nil {
 			previous = state.carried.wire
 		}
-		// A transition reset by an earlier attempt that never committed (its
-		// consult failed) is still this request's: detect it again.
-		uncommitted := state.carried != nil && len(state.prefix) == 0
 		event = inferV2Event(wireRequest, previous, wire, rewrite || uncommitted, fresh && branch != "main" && server.states.hasOtherBranch(session, branch))
 	}
 	// A side call is decided with the held model and never advances this
 	// branch: no epoch change, retained decision or committed evidence.
 	sidecall := event.is(EventSidecall)
-	// v2: a client retry of a rewriting request already reset this epoch;
-	// resetting again would drop its retained decision and recorded refusals.
-	retriedRewrite := v2 && state.pending != nil && state.pending.fingerprint == fingerprint(body)
-	if !sidecall && rewrite && !retriedRewrite {
-		state.resetEpoch(v2)
+	if !sidecall && (rewrite || uncommitted) {
+		// The epoch is bumped once per transition; an uncommitted retry
+		// recomputes the retained attribution for the transcript it carries.
+		if rewrite {
+			state.resetEpoch(v2)
+		}
 		var retained []attributedTurn
 		if event.is(EventCompaction) && state.carried != nil {
 			retained = remapRetainedAttribution(state.carried.ledger, state.carried.wire, wire, roles, format, event.Compaction)
