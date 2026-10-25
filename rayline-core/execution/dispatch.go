@@ -122,7 +122,7 @@ func prepareReasoning(request *llmprotocol.Request, source llmprotocol.WireForma
 		}
 	}
 	carry := protocolcodec.CarryReasoningTo(request, deployment.Protocol)
-	opaqueDropped := reasoning.DropOpaqueReasoning(request, state.provenance, opaqueIssuer)
+	opaqueDropped := reasoning.DropOpaqueReasoning(request, state.provenance, opaqueIssuer, deployment.Protocol)
 	if foreignDropped+opaqueDropped+carry.Dropped()+carry.SignaturesStripped > 0 {
 		slog.Info("reasoning disposition", "deployment", deployment.ID,
 			"removed", foreignDropped+opaqueDropped+carry.Dropped(), "signatures_removed", carry.SignaturesStripped)

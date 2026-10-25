@@ -100,14 +100,14 @@ func encryptedReasoningDropReason(previous []string, issuer string, issues bool)
 	}
 }
 
-// dropRaylineARCOpaqueReasoningIssuedElsewhere drops the opaque reasoning
-// (Anthropic-format redacted_thinking) in a request's history that the
-// episode recorded as issued by a worker other than this dispatch's. Such a
-// block is readable only by its issuer, so a conversation the policy moved
-// from, say, gpt-5.x to another Messages worker would otherwise fail its
-// turn. Blocks with no record, and every block on a route with no episode,
-// are left as the client sent them. It also notes the dispatch's worker so
-// the turn records which worker issued its own blocks.
+// dropRaylineARCOpaqueReasoningIssuedElsewhere filters private Messages
+// reasoning by its recorded worker, not by wire format. OpenRouter's Messages
+// endpoint can serve both Claude and GPT; both signatures and redacted blobs
+// are encrypted provider state. Unknown provenance (including pre-upgrade
+// signatures and evicted entries) cannot authorize replay. DropOpaqueReasoning
+// removes the whole thinking group of an incompatible assistant message while
+// preserving visible content and tool relationships. The source history is
+// untouched, so a later turn on its issuer may still replay compatible groups.
 func (r *OpenAIRouter) dropRaylineARCOpaqueReasoningIssuedElsewhere(
 	request *llmprotocol.Request,
 	dispatch *providerDispatch,
@@ -119,11 +119,11 @@ func (r *OpenAIRouter) dropRaylineARCOpaqueReasoningIssuedElsewhere(
 	transaction := ctx.RaylineARCTransaction
 	issuer := r.opaqueReasoningIssuerFor(dispatch)
 	transaction.dispatchWorker = issuer
-	if transaction.state == nil || len(transaction.state.ReasoningProvenance) == 0 {
-		return false
+	var provenance []reasoning.ReasoningProvenance
+	if transaction.state != nil {
+		provenance = transaction.state.ReasoningProvenance
 	}
-	provenance := transaction.state.ReasoningProvenance
-	dropped := reasoning.DropOpaqueReasoning(request, provenance, issuer)
+	dropped := reasoning.DropOpaqueReasoning(request, provenance, issuer, dispatch.targetFormat)
 	if dropped == 0 {
 		return false
 	}
