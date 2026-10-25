@@ -618,6 +618,7 @@ func (r *OpenAIRouter) finalizeSemanticStreamingResponse(ctx *RequestContext, st
 	// leave it unrecorded for good.
 	if commitDeferred {
 		deferSelectionCompletion(ctx, func() { r.updateResponseCache(ctx, encoded) })
+		stageRaylineARCAppendSource(ctx, encoded)
 	} else if !refused {
 		r.updateResponseCache(ctx, encoded)
 	}

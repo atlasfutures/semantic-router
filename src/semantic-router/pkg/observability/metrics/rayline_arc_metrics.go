@@ -107,6 +107,13 @@ var (
 		},
 		[]string{"outcome", "failure_class"},
 	)
+	RaylineARCPolicyStagedTurns = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "llm_rayline_arc_policy_staged_turns_total",
+			Help: "Rayline ARC delta-cell staged turns (ADR 0155), by whether a delta was sent (none) or the bounded reason it was not.",
+		},
+		[]string{"delta_mismatch_reason"},
+	)
 	RaylineARCThinkingLeverTurns = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "llm_rayline_arc_thinking_lever_turns_total",
@@ -292,6 +299,10 @@ func RecordRaylineARCEpisodeTransaction(
 		outcome,
 		failureClass,
 	).Inc()
+}
+
+func RecordRaylineARCPolicyStagedTurn(deltaMismatchReason string) {
+	RaylineARCPolicyStagedTurns.WithLabelValues(deltaMismatchReason).Inc()
 }
 
 func RecordRaylineARCThinkingLeverTurn(lever, outcome, reason string) {

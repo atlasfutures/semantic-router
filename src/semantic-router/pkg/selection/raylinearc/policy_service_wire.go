@@ -41,6 +41,8 @@ const (
 	PolicyDecisionRequestSchema  = "rayline.arc.policy-decision-request.v1"
 	PolicyDecisionResponseSchema = "rayline.arc.policy-decision-response.v1"
 	PolicyPackagesSchema         = "rayline.arc.policy-packages.v1"
+	PolicyAppendRequestSchema    = "rayline.arc.policy-append-request.v1"
+	PolicyAppendResponseSchema   = "rayline.arc.policy-append-response.v1"
 
 	policyDecisionModeFactored = "factored"
 )
@@ -112,6 +114,25 @@ type PolicyClientRequest struct {
 
 	Input        []json.RawMessage `json:"-"`
 	Instructions *string           `json:"-"`
+	// Shell is a delta decide's request (turn_delta, ADR 0155): the
+	// client's shell without its conversation, which is the staged turn's
+	// messages then the delta's. PolicyShellMessages writes system and
+	// tools; PolicyShellInput writes instructions and tools. Empty is a full
+	// request.
+	Shell string `json:"-"`
+}
+
+// The two shells a delta decide's request can be (PolicyClientRequest.Shell).
+const (
+	PolicyShellMessages = "messages"
+	PolicyShellInput    = "input"
+)
+
+// PolicyTurnDelta is a delta decide's conversation: the messages (Responses:
+// items) after the staged turn whose prefix digest is BasePrefixDigest.
+type PolicyTurnDelta struct {
+	BasePrefixDigest string            `json:"base_prefix_digest"`
+	Messages         []json.RawMessage `json:"messages"`
 }
 
 type policyChatRequestWire struct {
@@ -133,6 +154,20 @@ type policyResponsesRequestWire struct {
 // service would receive bytes the client never sent.
 func (request PolicyClientRequest) MarshalJSON() ([]byte, error) {
 	var buffer bytes.Buffer
+	switch request.Shell {
+	case PolicyShellMessages:
+		return request.marshalShell(&buffer, []rawJSONField{{"system", request.System}, {"tools", request.Tools}})
+	case PolicyShellInput:
+		instructions, err := MarshalUnescaped(request.Instructions)
+		if err != nil {
+			return nil, err
+		}
+		fields := []rawJSONField{{"instructions", instructions}}
+		if len(request.Tools) > 0 {
+			fields = append(fields, rawJSONField{"tools", request.Tools})
+		}
+		return request.marshalShell(&buffer, fields)
+	}
 	if request.Input != nil {
 		buffer.WriteString(`{"input":[`)
 		for index, item := range request.Input {
@@ -172,6 +207,30 @@ func (request PolicyClientRequest) MarshalJSON() ([]byte, error) {
 		buffer.WriteString(field.name)
 		buffer.WriteString(`":`)
 		if err := writeRawJSON(&buffer, field.raw); err != nil {
+			return nil, err
+		}
+	}
+	buffer.WriteByte('}')
+	return buffer.Bytes(), nil
+}
+
+type rawJSONField struct {
+	name string
+	raw  json.RawMessage
+}
+
+// marshalShell writes a delta decide's shell: the full request's members
+// without its conversation, each byte for byte as held.
+func (request PolicyClientRequest) marshalShell(buffer *bytes.Buffer, fields []rawJSONField) ([]byte, error) {
+	buffer.WriteByte('{')
+	for index, field := range fields {
+		if index > 0 {
+			buffer.WriteByte(',')
+		}
+		buffer.WriteByte('"')
+		buffer.WriteString(field.name)
+		buffer.WriteString(`":`)
+		if err := writeRawJSON(buffer, field.raw); err != nil {
 			return nil, err
 		}
 	}
@@ -283,6 +342,9 @@ type policyDecisionEnvelope struct {
 	Capacity  []PolicyActionCapacity `json:"capacity,omitempty"`
 	TurnKey   string                 `json:"turn_key,omitempty"`
 	Reconsult *string                `json:"reconsult,omitempty"`
+	Stage     *bool                  `json:"stage,omitempty"`
+	// TurnDelta is written after the request, its messages byte for byte.
+	TurnDelta *PolicyTurnDelta `json:"-"`
 }
 
 // EncodePolicyDecisionRequest is the decide body: every field as json.Marshal
@@ -304,7 +366,40 @@ func EncodePolicyDecisionRequest(request PolicyDecisionRequest) ([]byte, error) 
 	body = append(body, envelope[:len(envelope)-1]...)
 	body = append(body, `,"request":`...)
 	body = append(body, client...)
+	if delta := request.TurnDelta; delta != nil {
+		var buffer bytes.Buffer
+		digest, err := MarshalUnescaped(delta.BasePrefixDigest)
+		if err != nil {
+			return nil, err
+		}
+		buffer.WriteString(`,"turn_delta":{"base_prefix_digest":`)
+		buffer.Write(digest)
+		buffer.WriteString(`,"messages":`)
+		if err := writeRawJSONArray(&buffer, delta.Messages); err != nil {
+			return nil, err
+		}
+		buffer.WriteByte('}')
+		body = append(body, buffer.Bytes()...)
+	}
 	return append(body, '}'), nil
+}
+
+// writeRawJSONArray writes items as one JSON array, each byte for byte.
+func writeRawJSONArray(buffer *bytes.Buffer, items []json.RawMessage) error {
+	buffer.WriteByte('[')
+	for index, item := range items {
+		if index > 0 {
+			buffer.WriteByte(',')
+		}
+		if len(item) == 0 {
+			return errors.New("a forwarded message is empty")
+		}
+		if err := writeRawJSON(buffer, item); err != nil {
+			return err
+		}
+	}
+	buffer.WriteByte(']')
+	return nil
 }
 
 // UnmarshalJSON reads either shape strictly: a request with input carries
@@ -314,7 +409,32 @@ func (request *PolicyClientRequest) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &keys); err != nil {
 		return err
 	}
-	if _, responses := keys["input"]; responses {
+	_, hasMessages := keys["messages"]
+	_, hasInput := keys["input"]
+	if !hasMessages && !hasInput {
+		// A delta decide's shell: Responses' carries instructions.
+		if _, responses := keys["instructions"]; responses {
+			var wire struct {
+				Instructions *string         `json:"instructions"`
+				Tools        json.RawMessage `json:"tools,omitempty"`
+			}
+			if err := decodeStrict(data, &wire); err != nil {
+				return err
+			}
+			*request = PolicyClientRequest{Shell: PolicyShellInput, Instructions: wire.Instructions, Tools: wire.Tools}
+			return nil
+		}
+		var wire struct {
+			System json.RawMessage `json:"system"`
+			Tools  json.RawMessage `json:"tools"`
+		}
+		if err := decodeStrict(data, &wire); err != nil {
+			return err
+		}
+		*request = PolicyClientRequest{Shell: PolicyShellMessages, System: wire.System, Tools: wire.Tools}
+		return nil
+	}
+	if hasInput {
 		var wire policyResponsesRequestWire
 		if err := decodeStrict(data, &wire); err != nil {
 			return err
@@ -370,6 +490,13 @@ type PolicyDecisionRequest struct {
 	Capacity  []PolicyActionCapacity `json:"capacity,omitempty"`
 	TurnKey   string                 `json:"turn_key,omitempty"`
 	Reconsult *string                `json:"reconsult,omitempty"`
+	// Stage keeps this strict main turn staged for an off-path append and a
+	// delta decide (ADR 0155, pathfinder arc_serving_contract.md, "Staged
+	// turns"). Omitted unless the cell sends deltas (decide_mode delta).
+	Stage *bool `json:"stage,omitempty"`
+	// TurnDelta replaces the conversation with the messages after a staged
+	// turn; Request is then the shell only (Shell). Omitted otherwise.
+	TurnDelta *PolicyTurnDelta `json:"turn_delta,omitempty"`
 }
 
 // PolicyMember is the decide request's policy: the public routing.policy as
@@ -420,6 +547,81 @@ type PolicyActionCapacity struct {
 	Placement string  `json:"placement"`
 	Fits      *bool   `json:"fits"`
 	Reason    *string `json:"reason"`
+}
+
+// PolicyAppendRequest is the off-path append (POST
+// /v1/rayline/arc/policy/append): a strict episode's staged turn extended by
+// that turn's assistant output. Attribution is the whole ledger over the
+// extended conversation, authoritative for what served each assistant
+// message.
+type PolicyAppendRequest struct {
+	SchemaVersion string              `json:"schema_version"`
+	Package       PolicyPackageRef    `json:"package"`
+	EpisodeIDHash string              `json:"episode_id_hash"`
+	ContextEpoch  string              `json:"context_epoch"`
+	Messages      []json.RawMessage   `json:"messages"`
+	Attribution   []PolicyAttribution `json:"attribution"`
+	Profile       *string             `json:"profile,omitempty"`
+}
+
+// EncodePolicyAppendRequest is the append body, its messages byte for byte.
+func EncodePolicyAppendRequest(request PolicyAppendRequest) ([]byte, error) {
+	if len(request.Messages) == 0 {
+		return nil, errors.New("an append carries the turn's assistant output")
+	}
+	envelope := struct {
+		SchemaVersion string              `json:"schema_version"`
+		Package       PolicyPackageRef    `json:"package"`
+		EpisodeIDHash string              `json:"episode_id_hash"`
+		ContextEpoch  string              `json:"context_epoch"`
+		Attribution   []PolicyAttribution `json:"attribution"`
+		Profile       *string             `json:"profile,omitempty"`
+	}{request.SchemaVersion, request.Package, request.EpisodeIDHash, request.ContextEpoch, request.Attribution, request.Profile}
+	encoded, err := MarshalUnescaped(envelope)
+	if err != nil {
+		return nil, err
+	}
+	var buffer bytes.Buffer
+	buffer.Write(encoded[:len(encoded)-1])
+	buffer.WriteString(`,"messages":`)
+	if err := writeRawJSONArray(&buffer, request.Messages); err != nil {
+		return nil, err
+	}
+	buffer.WriteByte('}')
+	return buffer.Bytes(), nil
+}
+
+// PolicyAppendResponse is the append's reply. Hold, the service's fallback
+// lease for the next turn, is kept opaque and never read: VSR decides every
+// turn (ADR 0155's amendment parks the lease).
+type PolicyAppendResponse struct {
+	SchemaVersion string           `json:"schema_version"`
+	Package       PolicyPackageRef `json:"package"`
+	// PrefixDigest is the staged turn's digest after the append: the next
+	// delta decide's base_prefix_digest. VSR echoes it, never computes it.
+	PrefixDigest string `json:"prefix_digest"`
+	// Messages is the staged turn's message (item) count after the append:
+	// where the next delta's messages start.
+	Messages     int             `json:"messages"`
+	Encoding     PolicyEncoding  `json:"encoding"`
+	Hold         json.RawMessage `json:"hold,omitempty"`
+	TimingMillis PolicyTiming    `json:"timing_ms"`
+}
+
+// DecodePolicyAppendResponse refuses unknown fields, another schema and a
+// malformed prefix digest or count.
+func DecodePolicyAppendResponse(body []byte) (*PolicyAppendResponse, error) {
+	var response PolicyAppendResponse
+	if err := decodeStrict(body, &response); err != nil {
+		return nil, err
+	}
+	if response.SchemaVersion != PolicyAppendResponseSchema {
+		return nil, fmt.Errorf("policy append schema %q", response.SchemaVersion)
+	}
+	if !policySHA256Hex.MatchString(response.PrefixDigest) || response.Messages < 1 {
+		return nil, errors.New("policy append reply is malformed")
+	}
+	return &response, nil
 }
 
 // PolicyEpisodeModeRelaxed is the decide request's episode_mode for a relaxed

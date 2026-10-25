@@ -440,6 +440,19 @@ func (binding *PolicySessionBinding) Sessions() (int, bool) {
 	return binding.sessions, binding.moved || binding.persisted != nil && binding.sessions > 1
 }
 
+// Append extends the staged turn on the session this turn decided on (ADR
+// 0155). It never moves the turn: the append only prepares the next one, so
+// a session that is gone fails it.
+func (binding *PolicySessionBinding) Append(
+	ctx context.Context,
+	request PolicyAppendRequest,
+) (*PolicyAppendResponse, error) {
+	if binding == nil || binding.current == nil {
+		return nil, &PolicyServiceError{Class: PolicySessionGoneClass}
+	}
+	return binding.backend.client.WithSessionToken(binding.current.Token).Append(ctx, request)
+}
+
 // Release ends the sessions an ephemeral turn started; the episode keeps no
 // record of them. A persisting turn keeps its session for the next turn.
 func (binding *PolicySessionBinding) Release(ctx context.Context) {

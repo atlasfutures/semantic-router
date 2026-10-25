@@ -882,3 +882,13 @@ def test_rayline_arc_policy_service_sessions_mirror_the_go_loader():
         RaylineARCPolicyServiceConfig.model_validate(
             {**raw, "modal_key_env": "", "modal_secret_env": "", "sessions": {"enabled": True}}
         )
+
+
+def test_rayline_arc_cli_mirrors_decide_mode():
+    policy = _policy_service_decision().algorithm.rayline_arc.policy_service
+    raw = policy.model_dump()
+    for mode in ("", "sync", "delta"):
+        RaylineARCPolicyServiceConfig.model_validate({**raw, "decide_mode": mode})
+    for changed in ({"decide_mode": "race"}, {"decide_mode": "async"}, {"race_ms": 100}):
+        with pytest.raises(ValidationError):
+            RaylineARCPolicyServiceConfig.model_validate({**raw, **changed})
