@@ -1,0 +1,759 @@
+/*
+Copyright 2025 vLLM Semantic Router.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package extproc
+
+// Held turns race a prepared decide against a deadline (pathfinder ADR 0155,
+// proposed; arc_serving_contract.md, "Staged turns"). On a racing cell
+// (policy_service.decide_mode: race):
+//
+//  1. Every strict main turn's decide asks the service to stage the turn.
+//  2. When the turn commits -- the client has the whole 2xx reply -- and
+//     before its episode lease is released, VSR appends the reply's
+//     assistant output to the staged turn. The reply carries the service's
+//     pick for the next turn, a fallback lease, and the staged prefix digest.
+//  3. The next turn, if it extends that staged prefix, sends only its new
+//     messages (turn_delta). If its new messages are tool results only and
+//     the lease's action is in this turn's offer, the decide is raced
+//     against race_ms: a decide that lands serves its own action, as today;
+//     one that does not serves the lease's, and still completes inside the
+//     episode lease, its pick logged as provisional.
+//
+// Nothing here fails a turn. A delta the service cannot extend is sent in
+// full; a failed append leaves the next turn to decide synchronously.
+//
+// What a turn carries to the next is an allow-list: the staged entry holds
+// only the service's digest and count, VSR's own digest of the same
+// messages, the lease and the committed turn it belongs to. Every commit
+// replaces it or drops it, so nothing outlives the turn that wrote it.
+
+import (
+	"container/list"
+	"context"
+	"encoding/json"
+	"errors"
+	"slices"
+	"sync"
+	"time"
+
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
+)
+
+// Decision modes a racing cell records (selection.RaylineARCTrace.PolicyDecisionMode).
+const (
+	policyDecisionModeSync     = "sync"
+	policyDecisionModeRaceWon  = "race_won"
+	policyDecisionModeRaceLost = "race_lost"
+)
+
+// maxPolicyStagedTurns bounds the episodes a process keeps a staged turn for;
+// the least recently staged is dropped first, and its next turn decides in
+// full.
+const maxPolicyStagedTurns = 4096
+
+// policyStagedTurn is VSR's record of the service's staged turn after an
+// append. It belongs to the episode state committed at turnIndex: any other
+// turn count (another replica committed a turn, or this one failed to)
+// makes it stale.
+type policyStagedTurn struct {
+	turnIndex     uint64
+	contextEpoch  string
+	requestFormat string
+	// count and prefixDigest are the service's: the staged message count and
+	// its digest, which a delta decide echoes. digest is VSR's own digest of
+	// the same messages (raylinearc.MessagesDigest), which the next request
+	// must reproduce over its first count messages.
+	count        int
+	prefixDigest string
+	digest       string
+	hold         *raylinearc.PolicyHold
+	holdExpires  time.Time
+}
+
+// policyStagedTurns is the process's staged turns, keyed by episode. A
+// turn reads and writes its episode's entry only under the episode lease.
+type policyStagedTurns struct {
+	mu      sync.Mutex
+	entries map[string]*list.Element
+	order   *list.List
+}
+
+type policyStagedEntry struct {
+	episode string
+	turn    policyStagedTurn
+}
+
+func newPolicyStagedTurns() *policyStagedTurns {
+	return &policyStagedTurns{entries: map[string]*list.Element{}, order: list.New()}
+}
+
+func (turns *policyStagedTurns) get(episode string) (policyStagedTurn, bool) {
+	if turns == nil {
+		return policyStagedTurn{}, false
+	}
+	turns.mu.Lock()
+	defer turns.mu.Unlock()
+	element, ok := turns.entries[episode]
+	if !ok {
+		return policyStagedTurn{}, false
+	}
+	return element.Value.(*policyStagedEntry).turn, true
+}
+
+func (turns *policyStagedTurns) put(episode string, turn policyStagedTurn) {
+	if turns == nil {
+		return
+	}
+	turns.mu.Lock()
+	defer turns.mu.Unlock()
+	if element, ok := turns.entries[episode]; ok {
+		element.Value.(*policyStagedEntry).turn = turn
+		turns.order.MoveToFront(element)
+		return
+	}
+	turns.entries[episode] = turns.order.PushFront(&policyStagedEntry{episode: episode, turn: turn})
+	for turns.order.Len() > maxPolicyStagedTurns {
+		oldest := turns.order.Back()
+		turns.order.Remove(oldest)
+		delete(turns.entries, oldest.Value.(*policyStagedEntry).episode)
+	}
+}
+
+func (turns *policyStagedTurns) drop(episode string) {
+	if turns == nil {
+		return
+	}
+	turns.mu.Lock()
+	defer turns.mu.Unlock()
+	if element, ok := turns.entries[episode]; ok {
+		turns.order.Remove(element)
+		delete(turns.entries, episode)
+	}
+}
+
+// policyAppender posts an append to where the turn was decided.
+type policyAppender interface {
+	Append(context.Context, raylinearc.PolicyAppendRequest) (*raylinearc.PolicyAppendResponse, error)
+}
+
+// policyPendingDecide is a decide running on its own context, so it can
+// outlive the race and the request's stream. Its call holds its own
+// admission slot (decidePolicyThroughBusy) and is bounded by the client's
+// timeout and the busy wait.
+type policyPendingDecide struct {
+	done      chan struct{}
+	response  *raylinearc.PolicyDecisionResponse
+	err       error
+	usedDelta bool
+	latency   time.Duration
+	mu        sync.Mutex
+	after     []func(*policyPendingDecide)
+}
+
+func startPolicyPendingDecide(
+	run func() (*raylinearc.PolicyDecisionResponse, error, bool),
+) *policyPendingDecide {
+	pending := &policyPendingDecide{done: make(chan struct{})}
+	started := time.Now()
+	go func() {
+		response, err, usedDelta := run()
+		pending.mu.Lock()
+		pending.response, pending.err, pending.usedDelta = response, err, usedDelta
+		pending.latency = time.Since(started)
+		after := pending.after
+		pending.after = nil
+		close(pending.done)
+		pending.mu.Unlock()
+		for _, fn := range after {
+			fn(pending)
+		}
+	}()
+	return pending
+}
+
+// onDone runs fn once the decide has finished: now, if it already has.
+func (pending *policyPendingDecide) onDone(fn func(*policyPendingDecide)) {
+	pending.mu.Lock()
+	select {
+	case <-pending.done:
+		pending.mu.Unlock()
+		fn(pending)
+		return
+	default:
+	}
+	pending.after = append(pending.after, fn)
+	pending.mu.Unlock()
+}
+
+// wait blocks until the decide finishes or bound passes, reporting which.
+func (pending *policyPendingDecide) wait(bound time.Duration) bool {
+	if pending == nil {
+		return true
+	}
+	timer := time.NewTimer(bound)
+	defer timer.Stop()
+	select {
+	case <-pending.done:
+		return true
+	case <-timer.C:
+		return false
+	}
+}
+
+// policyStaging is what a racing cell's strict main turn hands its episode
+// transaction: the late decide to wait for, and what the append needs.
+type policyStaging struct {
+	turns         *policyStagedTurns
+	appender      policyAppender
+	session       *raylinearc.PolicySessionBinding
+	admit         func() (func(), error)
+	pkg           raylinearc.PolicyPackageRef
+	episodeIDHash string
+	requestID     string
+	requestFormat string
+	contextEpoch  string
+	// messages and roles are the conversation the turn was decided on.
+	messages []json.RawMessage
+	roles    []string
+	// pending is a raced decide whose race the lease won; nil otherwise.
+	pending *policyPendingDecide
+	// waitBound caps how long the transaction waits for pending.
+	waitBound time.Duration
+	// clientBody is the reply the client received, once it is complete.
+	clientBody []byte
+	// appendTimeout bounds the append.
+	appendTimeout time.Duration
+}
+
+// policyRaceEligible reports whether this cell's turn may stage and race at
+// all: a racing cell's strict main turn in a format the append can carry.
+func (scorer *policyServiceScorer) policyRaceEligible(request *raylinearc.PolicyDecisionRequest, sideCall bool) bool {
+	return scorer.race && !sideCall && request.EpisodeMode == "" &&
+		request.Selection.Exploration == nil && policyAppendFormat(request.RequestFormat)
+}
+
+func policyAppendFormat(format string) bool {
+	switch format {
+	case policyFormatAnthropic, policyFormatOpenAI, policyFormatResponses:
+		return true
+	default:
+		return false
+	}
+}
+
+// policyDeltaFor is the staged turn this request extends, when it extends
+// it: the same committed turn, epoch and format, more messages, and its
+// first count messages reproducing the staged ones in VSR's prefix form.
+func policyDeltaFor(
+	scorer *policyServiceScorer,
+	episodeIDHash string,
+	state *raylinearc.EpisodeState,
+	turn *raylinearc.PolicyEpisodeState,
+	transition string,
+	format string,
+	messages []json.RawMessage,
+) (policyStagedTurn, string) {
+	if scorer.deltaUnsupported.Load() {
+		return policyStagedTurn{}, "delta_unsupported"
+	}
+	staged, ok := scorer.staged.get(episodeIDHash)
+	switch {
+	case !ok:
+		return policyStagedTurn{}, "none"
+	case staged.turnIndex != state.TurnIndex:
+		return policyStagedTurn{}, "stale_turn"
+	case transition != raylinearc.PolicyTransitionExtends || turn == nil || staged.contextEpoch != turn.ContextEpoch():
+		return policyStagedTurn{}, "new_context"
+	case staged.requestFormat != format:
+		return policyStagedTurn{}, "format"
+	case len(messages) <= staged.count:
+		return policyStagedTurn{}, "no_new_messages"
+	case raylinearc.MessagesDigest(messages, staged.count) != staged.digest:
+		return policyStagedTurn{}, "prefix_mismatch"
+	}
+	return staged, "delta"
+}
+
+// policyShellOf is a full request's shell: everything but its conversation.
+func policyShellOf(request raylinearc.PolicyClientRequest) raylinearc.PolicyClientRequest {
+	if request.Input != nil {
+		return raylinearc.PolicyClientRequest{
+			Shell: raylinearc.PolicyShellInput, Instructions: request.Instructions, Tools: request.Tools,
+		}
+	}
+	return raylinearc.PolicyClientRequest{Shell: raylinearc.PolicyShellMessages, System: request.System, Tools: request.Tools}
+}
+
+// policyDeltaRefused reports a delta decide the service could not serve as
+// one, which is sent in full instead: no staged turn it extends, a package
+// that takes no delta, a request it read as malformed, a service that
+// predates the member, or an answer that did not decode.
+func policyDeltaRefused(err error) bool {
+	var failure *raylinearc.PolicyServiceError
+	if !errors.As(err, &failure) {
+		return false
+	}
+	switch failure.Class {
+	case raylinearc.PolicySessionMismatchClass, raylinearc.PolicyTurnDeltaUnsupportedClass,
+		"invalid_request", "decode":
+		return true
+	case "status":
+		return failure.Status == 404 || failure.Status == 405
+	default:
+		return false
+	}
+}
+
+// policyLeaseNewMessagesAllowed is the visible half of "not a boundary": the
+// messages after the leased prefix are tool results only. Anything else -- a
+// typed user message, a system message, an image the user attached -- may be
+// a stage-one boundary, which only a decide sees. Allow-list: an unknown
+// shape is not a tool result.
+func policyLeaseNewMessagesAllowed(format string, messages []json.RawMessage) bool {
+	if len(messages) == 0 {
+		return false
+	}
+	for _, message := range messages {
+		var envelope struct {
+			Role    string          `json:"role"`
+			Type    string          `json:"type"`
+			Content json.RawMessage `json:"content"`
+		}
+		if json.Unmarshal(message, &envelope) != nil {
+			return false
+		}
+		switch format {
+		case policyFormatOpenAI:
+			if envelope.Role != "tool" {
+				return false
+			}
+		case policyFormatResponses:
+			if envelope.Type != "function_call_output" && envelope.Type != "custom_tool_call_output" {
+				return false
+			}
+		case policyFormatAnthropic:
+			var blocks []struct {
+				Type string `json:"type"`
+			}
+			if envelope.Role != "user" || json.Unmarshal(envelope.Content, &blocks) != nil || len(blocks) == 0 {
+				return false
+			}
+			for _, block := range blocks {
+				if block.Type != "tool_result" {
+					return false
+				}
+			}
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// policyLeaseCheck is why a fallback lease may not serve this turn, "" when
+// it may: the turn is no boundary VSR can see, extends the leased prefix (the
+// delta matched it), and the lease is this package's and epoch's, unexpired,
+// and names a bound action this turn offers (bound, healthy, not excluded,
+// privacy-allowed, past the hard mask: the offer already removed the rest).
+func policyLeaseCheck(
+	scorer *policyServiceScorer,
+	staged policyStagedTurn,
+	signals raylinearc.PolicyTurnSignals,
+	format string,
+	newMessages []json.RawMessage,
+	available []string,
+	plainAsk bool,
+	now time.Time,
+) string {
+	hold := staged.hold
+	switch {
+	case hold == nil:
+		return "no_lease"
+	case !plainAsk:
+		return "derived_offer"
+	case signals.Compaction != nil || signals.Subagent != nil || signals.CallKind == raylinearc.PolicyCallSide:
+		return "boundary_signal"
+	case !policyLeaseNewMessagesAllowed(format, newMessages):
+		return "boundary_messages"
+	case hold.ValidWhile.PackageSHA256 != scorer.sha256 || hold.ValidWhile.ContextEpoch != staged.contextEpoch ||
+		hold.ValidWhile.PrefixDigest != staged.prefixDigest || hold.ValidWhile.Profile != nil:
+		return "lease_unbound"
+	case !now.Before(staged.holdExpires):
+		return "lease_expired"
+	}
+	if _, bound := scorer.bindings[hold.ActionID]; !bound || !slices.Contains(available, hold.ActionID) {
+		return "lease_not_offered"
+	}
+	return ""
+}
+
+// policyLeaseOutcome names a lease check's result for the staged-turn log.
+func policyLeaseOutcome(refusal string) string {
+	if refusal == "" {
+		return "eligible"
+	}
+	return refusal
+}
+
+// newPolicyStaging is what the turn's transaction needs to wait for its late
+// decide and append its reply: the append goes where the decide went, the
+// one client or the episode's session.
+func (selector *raylineARCSelector) newPolicyStaging(
+	armed *raylineARCArmedComponents,
+	scorer *policyServiceScorer,
+	arcContext *selection.RaylineARCSelectionContext,
+	format string,
+	turn *raylinearc.PolicyEpisodeState,
+	messages []json.RawMessage,
+	roles []string,
+	decider policyDecider,
+	session *raylinearc.PolicySessionBinding,
+	admit func() (func(), error),
+	pending *policyPendingDecide,
+) *policyStaging {
+	var appender policyAppender
+	if session != nil {
+		appender = session
+	} else if client, ok := decider.(*raylinearc.PolicyServiceClient); ok && client != nil {
+		appender = client
+	}
+	return &policyStaging{
+		turns:         scorer.staged,
+		appender:      appender,
+		session:       session,
+		admit:         admit,
+		pkg:           raylinearc.PolicyPackageRef{Alias: scorer.alias, PackageSHA256: scorer.sha256},
+		episodeIDHash: arcContext.EpisodeIDHash,
+		requestID:     arcContext.RequestID,
+		requestFormat: format,
+		contextEpoch:  turn.ContextEpoch(),
+		messages:      messages,
+		roles:         roles,
+		pending:       pending,
+		waitBound:     2*scorer.appendTimeout + scorer.busyWait,
+		appendTimeout: scorer.appendTimeout,
+	}
+}
+
+// policyEstimatedTokens is the character-based estimate the router routes
+// with, over the new messages' bytes.
+func policyEstimatedTokens(messages []json.RawMessage) int {
+	total := 0
+	for _, message := range messages {
+		total += len(message)
+	}
+	return estimatedTokensForBytes(total)
+}
+
+// policyLeaseResult is the turn served from the fallback lease: the lease's
+// action on its worker, recorded as the action that served, with no scores
+// (the policy scored nothing yet) and unknown token counts.
+func (selector *raylineARCSelector) policyLeaseResult(
+	armed *raylineARCArmedComponents,
+	selCtx *selection.SelectionContext,
+	arcContext *selection.RaylineARCSelectionContext,
+	state *raylinearc.EpisodeState,
+	scorer *policyServiceScorer,
+	hold *raylinearc.PolicyHold,
+	turn *raylinearc.PolicyEpisodeState,
+	messages []json.RawMessage,
+	atBoundary, retained bool,
+	workerIDs []string,
+) *selection.SelectionResult {
+	binding := scorer.bindings[hold.ActionID]
+	count := len(workerIDs)
+	if binding.arm < 0 || binding.arm >= count {
+		return nil
+	}
+	excludedArms := make([]bool, count)
+	for arm := range excludedArms {
+		excludedArms[arm] = arm != binding.arm
+	}
+	decision := raylinearc.Decision{
+		SelectedArm:                 binding.arm,
+		SelectedWorker:              workerIDs[binding.arm],
+		RawScores:                   make([]float32, count),
+		AdjustedScores:              make([]float32, count),
+		SwitchCostUSD:               make([]float64, count),
+		CacheMissTokens:             make([]int, count),
+		ColdSwitchUpgradeExemptions: make([]bool, count),
+		ExcludedArms:                excludedArms,
+	}
+	if !validARCDecision(decision, workerIDs) {
+		return nil
+	}
+	result := selector.selectionResult(armed, selCtx, arcContext, state, &raylinearc.EncoderResult{}, decision, 0)
+	result.RaylineARC.RawScores, result.RaylineARC.AdjustedScores = nil, nil
+	result.RaylineARC.EncoderLatencyUnknown = true
+	result.RaylineARC.TokenCountsUnknown = true
+	result.Reasoning = "policy-service ARC decision (fallback_lease)"
+	result.RaylineARC.PolicyActionID = hold.ActionID
+	result.RaylineARC.PolicyArmID = hold.ArmID
+	result.RaylineARC.ThinkingLevel = binding.level
+	result.RaylineARC.PolicyActionModel = binding.model
+	result.RaylineARC.WorkerProviderModel = scorer.workers[binding.arm].Model
+	result.RaylineARC.WorkerRoute = scorer.routes[binding.arm]
+	result.RaylineARC.PolicyPackageSHA256 = scorer.sha256
+	result.RaylineARC.OfferKind = "lease"
+	// The ledger records the action that served, whatever the late decide
+	// picks; the next request's attribution says so to the service.
+	result.RaylineARC.PolicyTurnState = turn.Clone()
+	result.RaylineARC.PolicyNextState = turn.Next(messages, hold.ActionID, hold.ArmID)
+	if atBoundary && !retained {
+		result.RaylineARC.PolicyBoundary = raylinearc.NewPolicyBoundaryDecision(binding.arm, state.TurnIndex, turn, messages)
+	}
+	return result
+}
+
+// logPolicyLateDecide records a lost race's decide once it lands: its pick is
+// provisional, the lease's action served, and the next append's attribution
+// tells the service which.
+func logPolicyLateDecide(requestID, episodeIDHash, served string, pending *policyPendingDecide) {
+	fields := map[string]interface{}{
+		"request_id":         requestID,
+		"episode_id_hash":    episodeIDHash,
+		"served_action_id":   served,
+		"latency_ms":         pending.latency.Milliseconds(),
+		"turn_delta":         pending.usedDelta,
+		"decided_action_id":  nil,
+		"lease_agrees":       nil,
+		"provisional":        true,
+		"failure_class":      nil,
+		"policy_decide_mode": policyDecisionModeRaceLost,
+	}
+	if pending.err != nil {
+		class := "transport"
+		var failure *raylinearc.PolicyServiceError
+		if errors.As(pending.err, &failure) {
+			class = failure.Class
+		}
+		fields["failure_class"] = class
+	} else if pending.response != nil {
+		decided := pending.response.Decision.SelectedActionID
+		fields["decided_action_id"] = decided
+		fields["lease_agrees"] = decided == served
+	}
+	logging.ComponentEvent("extproc", "rayline_arc_policy_late_decide", fields)
+}
+
+// awaitPolicyStaging waits for a lost race's late decide, so the episode
+// lease is released only once the service has finished the turn's call and
+// the next turn cannot meet it as session_busy. A turn on a sessioned
+// Server then persists the session the late decide ended on.
+func (transaction *raylineARCEpisodeTransaction) awaitPolicyStaging() {
+	staging := transaction.policyStaging
+	if staging == nil || staging.pending == nil {
+		return
+	}
+	if !staging.pending.wait(staging.waitBound) {
+		logging.ComponentWarnEvent("extproc", "rayline_arc_policy_late_decide_unfinished", map[string]interface{}{
+			"request_id": staging.requestID, "episode_id_hash": staging.episodeIDHash,
+		})
+		return
+	}
+	if staging.session != nil {
+		if session, changed := staging.session.Session(); changed {
+			transaction.markPolicySession(session, false)
+		}
+	}
+}
+
+// appendPolicyStagedTurn posts this committed turn's assistant output to the
+// staged turn and returns what the next turn may build on, or nil. It runs
+// inside the episode lease, after the reply was sent, on its own context,
+// timeout and admission slot. Every failure is logged and leaves nothing.
+func (transaction *raylineARCEpisodeTransaction) appendPolicyStagedTurn(parent context.Context) *policyStagedTurn {
+	staging := transaction.policyStaging
+	if staging == nil || staging.appender == nil || transaction.policyNext == nil {
+		return nil
+	}
+	fail := func(class string) *policyStagedTurn {
+		logging.ComponentWarnEvent("extproc", "rayline_arc_policy_append_failed", map[string]interface{}{
+			"request_id": staging.requestID, "episode_id_hash": staging.episodeIDHash, "class": class,
+		})
+		return nil
+	}
+	assistant, ok := policyAssistantOutput(staging.requestFormat, staging.clientBody)
+	if !ok {
+		return fail("no_assistant_output")
+	}
+	roles := slices.Clone(staging.roles)
+	if staging.requestFormat == policyFormatResponses {
+		appended, err := policyResponsesRoles(assistant)
+		if err != nil {
+			return fail("no_assistant_output")
+		}
+		roles = append(roles, appended...)
+	} else {
+		roles = append(roles, "assistant")
+	}
+	messages := append(slices.Clone(staging.messages), assistant...)
+	request := raylinearc.PolicyAppendRequest{
+		SchemaVersion: raylinearc.PolicyAppendRequestSchema,
+		Package:       staging.pkg,
+		EpisodeIDHash: staging.episodeIDHash,
+		ContextEpoch:  transaction.policyNext.ContextEpoch(),
+		Messages:      assistant,
+		Attribution:   transaction.policyNext.Attribution(messages, roles),
+	}
+	release, err := staging.admit()
+	if err != nil {
+		return fail("shed")
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), staging.appendTimeout)
+	started := time.Now()
+	response, err := staging.appender.Append(ctx, request)
+	cancel()
+	release()
+	if err != nil {
+		class := "transport"
+		var failure *raylinearc.PolicyServiceError
+		if errors.As(err, &failure) {
+			class = failure.Class
+		}
+		return fail(class)
+	}
+	if response.Package != staging.pkg || response.Messages != len(messages) {
+		return fail("append_mismatch")
+	}
+	staged := &policyStagedTurn{
+		contextEpoch:  request.ContextEpoch,
+		requestFormat: staging.requestFormat,
+		count:         response.Messages,
+		prefixDigest:  response.PrefixDigest,
+		digest:        raylinearc.MessagesDigest(messages, len(messages)),
+	}
+	if hold := response.Hold; hold != nil {
+		cloned := *hold
+		staged.hold = &cloned
+		staged.holdExpires = time.Now().Add(time.Duration(hold.TTLSeconds) * time.Second)
+	}
+	fields := map[string]interface{}{
+		"request_id": staging.requestID, "episode_id_hash": staging.episodeIDHash,
+		"messages": response.Messages, "latency_ms": time.Since(started).Milliseconds(),
+		"session_action":  boundedPolicySessionAction(response.Encoding.SessionAction),
+		"lease_action_id": nil,
+	}
+	if staged.hold != nil {
+		fields["lease_action_id"] = staged.hold.ActionID
+	}
+	logging.ComponentEvent("extproc", "rayline_arc_policy_append", fields)
+	return staged
+}
+
+// policyAssistantOutput is the reply's assistant output as the next request
+// will carry it: Messages and Chat one assistant message, Responses the
+// reply's output items. It is read from the reply the client received; the
+// next turn's digest check is what proves the client echoed it so.
+func policyAssistantOutput(format string, body []byte) ([]json.RawMessage, bool) {
+	if len(body) == 0 {
+		return nil, false
+	}
+	switch format {
+	case policyFormatAnthropic:
+		var reply struct {
+			Role    string          `json:"role"`
+			Content json.RawMessage `json:"content"`
+		}
+		if json.Unmarshal(body, &reply) != nil || reply.Role != "assistant" || len(reply.Content) == 0 {
+			return nil, false
+		}
+		message, err := raylinearc.MarshalUnescaped(struct {
+			Role    string          `json:"role"`
+			Content json.RawMessage `json:"content"`
+		}{"assistant", reply.Content})
+		return []json.RawMessage{message}, err == nil
+	case policyFormatOpenAI:
+		var reply struct {
+			Choices []struct {
+				Message struct {
+					Role      string          `json:"role"`
+					Content   json.RawMessage `json:"content"`
+					ToolCalls json.RawMessage `json:"tool_calls,omitempty"`
+				} `json:"message"`
+			} `json:"choices"`
+		}
+		if json.Unmarshal(body, &reply) != nil || len(reply.Choices) != 1 || reply.Choices[0].Message.Role != "assistant" {
+			return nil, false
+		}
+		chosen := reply.Choices[0].Message
+		if string(chosen.ToolCalls) == "null" {
+			chosen.ToolCalls = nil
+		}
+		if len(chosen.Content) == 0 {
+			chosen.Content = json.RawMessage("null")
+		}
+		message, err := raylinearc.MarshalUnescaped(chosen)
+		return []json.RawMessage{message}, err == nil
+	case policyFormatResponses:
+		var reply struct {
+			Output []json.RawMessage `json:"output"`
+		}
+		if json.Unmarshal(body, &reply) != nil || len(reply.Output) == 0 {
+			return nil, false
+		}
+		return reply.Output, true
+	default:
+		return nil, false
+	}
+}
+
+// stageRaylineARCAppendSource keeps the reply the client receives for the
+// turn's append; a turn that stages nothing keeps nothing.
+func stageRaylineARCAppendSource(ctx *RequestContext, clientBody []byte) {
+	if ctx == nil || ctx.RaylineARCTransaction == nil || ctx.RaylineARCTransaction.policyStaging == nil {
+		return
+	}
+	ctx.RaylineARCTransaction.policyStaging.clientBody = clientBody
+}
+
+// addPolicyDecisionModeFields records a racing cell's decision mode and race
+// wait on a dispatch-time record; a sync cell's records are unchanged.
+func addPolicyDecisionModeFields(fields map[string]interface{}, trace *selection.RaylineARCTrace) {
+	if trace == nil || trace.PolicyDecisionMode == "" {
+		return
+	}
+	fields["decision_mode"] = trace.PolicyDecisionMode
+	if trace.PolicyDecisionMode != policyDecisionModeSync {
+		fields["race_ms_observed"] = float64(trace.PolicyRaceWait.Microseconds()) / 1000
+	}
+}
+
+// recordPolicyStagedTurn keeps what this committed turn's append staged, as
+// of the committed turn count, or drops the episode's entry: a turn that
+// appended nothing leaves nothing for the next to build on.
+func (transaction *raylineARCEpisodeTransaction) recordPolicyStagedTurn(turnIndex uint64, staged *policyStagedTurn) {
+	staging := transaction.policyStaging
+	if staging == nil {
+		return
+	}
+	if staged == nil {
+		staging.turns.drop(staging.episodeIDHash)
+		return
+	}
+	staged.turnIndex = turnIndex
+	staging.turns.put(staging.episodeIDHash, *staged)
+}
+
+// dropPolicyStagedTurn forgets the episode's staged turn after a commit that
+// did not happen: the service may hold an append the episode never recorded.
+func (transaction *raylineARCEpisodeTransaction) dropPolicyStagedTurn() {
+	if staging := transaction.policyStaging; staging != nil {
+		staging.turns.drop(staging.episodeIDHash)
+	}
+}

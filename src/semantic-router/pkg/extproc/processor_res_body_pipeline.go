@@ -128,6 +128,7 @@ func (r *OpenAIRouter) handleNonStreamingResponseBody(
 			return response
 		}
 		deferSelectionCompletion(ctx, func() { r.updateResponseCache(ctx, clientBody) })
+		stageRaylineARCAppendSource(ctx, clientBody)
 	}
 	// A refusal is classed only once no response check blocked it, so one
 	// turn is one failure.

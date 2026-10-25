@@ -1,6 +1,8 @@
 package extproc
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -114,6 +116,126 @@ type fakePolicyService struct {
 	bounds        *raylinearc.PolicyAdjustableCostWeight
 	// listingQueries are the packages listings' queries, in order.
 	listingQueries []url.Values
+	// Staged turns (ADR 0155, pathfinder#5919): a decide with stage or
+	// turn_delta stages the episode's turn, an append extends it once, and a
+	// delta must name the staged prefix digest (session_mismatch otherwise).
+	// decideDelay holds a decide's answer; leaseAction names the append's
+	// lease (nil answers hold null) with leaseTTL; appendStatus, when set,
+	// answers every append with it; appendGate, when set, holds each append
+	// until it is closed. decidesFinished counts answered decides, and
+	// appendStartedAfter records how many had finished when each append
+	// arrived.
+	staged             map[string]*fakeStagedTurn
+	decideDelay        func(raylinearc.PolicyDecisionRequest) time.Duration
+	refuseDelta        bool
+	leaseAction        func(raylinearc.PolicyAppendRequest) *string
+	leaseTTL           int
+	appendStatus       int
+	appendGate         chan struct{}
+	appends            []raylinearc.PolicyAppendRequest
+	decidesFinished    int
+	appendStartedAfter []int
+}
+
+type fakeStagedTurn struct {
+	count        int
+	awaitsAppend bool
+}
+
+func fakePrefixDigest(episode string, count int) string {
+	sum := sha256.Sum256([]byte(fmt.Sprintf("%s:%d", episode, count)))
+	return hex.EncodeToString(sum[:])
+}
+
+// stageDecide applies a decide's staging and reports whether a delta is
+// refused as session_mismatch.
+func (fake *fakePolicyService) stageDecide(decide raylinearc.PolicyDecisionRequest) bool {
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if fake.staged == nil {
+		fake.staged = map[string]*fakeStagedTurn{}
+	}
+	count := 0
+	if delta := decide.TurnDelta; delta != nil {
+		base := fake.staged[decide.EpisodeIDHash]
+		if fake.refuseDelta || base == nil || fakePrefixDigest(decide.EpisodeIDHash, base.count) != delta.BasePrefixDigest {
+			return true
+		}
+		count = base.count + len(delta.Messages)
+	} else if decide.Request.Input != nil {
+		count = len(decide.Request.Input)
+	} else {
+		var messages []json.RawMessage
+		_ = json.Unmarshal(decide.Request.Messages, &messages)
+		count = len(messages)
+	}
+	if (decide.Stage != nil && *decide.Stage) || decide.TurnDelta != nil {
+		fake.staged[decide.EpisodeIDHash] = &fakeStagedTurn{count: count, awaitsAppend: true}
+	}
+	return false
+}
+
+func (fake *fakePolicyService) receivedAppends() []raylinearc.PolicyAppendRequest {
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	return append([]raylinearc.PolicyAppendRequest(nil), fake.appends...)
+}
+
+func (fake *fakePolicyService) serveAppend(writer http.ResponseWriter, request *http.Request) {
+	body, err := io.ReadAll(request.Body)
+	if err != nil {
+		http.Error(writer, err.Error(), http.StatusBadRequest)
+		return
+	}
+	var appended raylinearc.PolicyAppendRequest
+	if err := json.Unmarshal(body, &appended); err != nil {
+		http.Error(writer, err.Error(), http.StatusBadRequest)
+		return
+	}
+	fake.mu.Lock()
+	fake.appends = append(fake.appends, appended)
+	fake.appendStartedAfter = append(fake.appendStartedAfter, fake.decidesFinished)
+	gate, status, lease, ttl := fake.appendGate, fake.appendStatus, fake.leaseAction, fake.leaseTTL
+	staged := fake.staged[appended.EpisodeIDHash]
+	fake.mu.Unlock()
+	if gate != nil {
+		<-gate
+	}
+	if status != 0 {
+		fake.writeJSON(writer, status, map[string]any{"error": "backend_unavailable", "detail": map[string]any{}})
+		return
+	}
+	if staged == nil || !staged.awaitsAppend {
+		fake.writeJSON(writer, http.StatusUnprocessableEntity, map[string]any{
+			"error": "unsupported_request", "detail": map[string]any{"reason": "session_mismatch"},
+		})
+		return
+	}
+	var response raylinearc.PolicyAppendResponse
+	fake.readFixture("append_response.v1.json", &response)
+	fake.mu.Lock()
+	staged.count += len(appended.Messages)
+	staged.awaitsAppend = false
+	count := staged.count
+	fake.mu.Unlock()
+	response.Package = raylinearc.PolicyPackageRef{Alias: fake.alias, PackageSHA256: fake.sha256}
+	response.PrefixDigest = fakePrefixDigest(appended.EpisodeIDHash, count)
+	response.Messages = count
+	response.Hold = nil
+	if lease != nil {
+		if action := lease(appended); action != nil {
+			if ttl == 0 {
+				ttl = 120
+			}
+			response.Hold = &raylinearc.PolicyHold{
+				ActionID: *action, ArmID: "arm-" + (*action)[:8], TTLSeconds: ttl,
+				ValidWhile: raylinearc.PolicyHoldValidWhile{
+					PackageSHA256: fake.sha256, ContextEpoch: appended.ContextEpoch, PrefixDigest: response.PrefixDigest,
+				},
+			}
+		}
+	}
+	fake.writeJSON(writer, http.StatusOK, response)
 }
 
 func newFakePolicyService(t *testing.T, alias, sha256 string, catalog []string) *fakePolicyService {
@@ -248,7 +370,22 @@ func (fake *fakePolicyService) serve(writer http.ResponseWriter, request *http.R
 			})
 			return
 		}
+		if fake.stageDecide(decide) {
+			fake.writeJSON(writer, http.StatusUnprocessableEntity, map[string]any{
+				"error": "unsupported_request", "detail": map[string]any{"reason": "session_mismatch"},
+			})
+			return
+		}
+		fake.mu.Lock()
+		delay := fake.decideDelay
+		fake.mu.Unlock()
+		if delay != nil {
+			time.Sleep(delay(decide))
+		}
 		fake.awaitBarrier()
+		fake.mu.Lock()
+		fake.decidesFinished++
+		fake.mu.Unlock()
 		if failWith != "" {
 			if failDetail == nil {
 				failDetail = map[string]any{}
@@ -257,6 +394,8 @@ func (fake *fakePolicyService) serve(writer http.ResponseWriter, request *http.R
 			return
 		}
 		fake.writeJSON(writer, http.StatusOK, fake.decision(decide, choose(decide)))
+	case "/v1/rayline/arc/policy/append":
+		fake.serveAppend(writer, request)
 	default:
 		http.NotFound(writer, request)
 	}

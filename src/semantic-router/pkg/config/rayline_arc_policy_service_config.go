@@ -158,8 +158,47 @@ type RaylineARCPolicyServiceConfig struct {
 	// exploration, even when it is configured: its decisions must be the
 	// package's greedy ones.
 	EvalCell bool `yaml:"eval_cell,omitempty"`
+	// DecideMode is "sync" (the default: every turn waits for its decide) or
+	// "race" (ADR 0155, proposed): a strict main turn's decide stages the
+	// turn, its committed reply is appended off the user's path, and a held
+	// continuation races its delta decide against RaceMS, serving the
+	// append's fallback lease when the decide loses. It needs a service that
+	// serves staged turns (pathfinder#5919). A relaxed cell or one with
+	// replicas decides sync whatever this says.
+	DecideMode string `yaml:"decide_mode,omitempty"`
+	// RaceMS is how long a raced decide is waited for before the lease is
+	// served; zero selects DefaultRaylineARCRaceMS.
+	RaceMS int `yaml:"race_ms,omitempty"`
+	// RaceMaxNewTokens skips the race, serving an eligible lease at once,
+	// when the turn's new messages estimate above this many tokens (a decide
+	// that must encode them cannot win). Zero never skips.
+	RaceMaxNewTokens int `yaml:"race_max_new_tokens,omitempty"`
 
 	packageV5 *raylineARCPolicyPackageV5
+}
+
+// Policy-service decide modes (DecideMode).
+const (
+	RaylineARCDecideModeSync = "sync"
+	RaylineARCDecideModeRace = "race"
+	// DefaultRaylineARCRaceMS is ADR 0155's race deadline.
+	DefaultRaylineARCRaceMS = 100
+	// maxRaylineARCRaceMS bounds the race: past it the race costs more than
+	// the routing budget it exists for.
+	maxRaylineARCRaceMS = 5000
+)
+
+// RacesDecides reports whether the cell races its decides (DecideMode race).
+func (cfg *RaylineARCPolicyServiceConfig) RacesDecides() bool {
+	return cfg != nil && cfg.DecideMode == RaylineARCDecideModeRace
+}
+
+// RaceDeadline is how long a raced decide is waited for.
+func (cfg *RaylineARCPolicyServiceConfig) RaceDeadline() time.Duration {
+	if cfg == nil || cfg.RaceMS <= 0 {
+		return DefaultRaylineARCRaceMS * time.Millisecond
+	}
+	return time.Duration(cfg.RaceMS) * time.Millisecond
 }
 
 // RaylineARCPolicyFallbackConfig switches ADR 0120's fallback on for a cell.
@@ -394,6 +433,17 @@ func validateRaylineARCPolicyServiceConfig(cfg *RaylineARCPolicyServiceConfig) e
 	}
 	if !raylineARCSHA256Pattern.MatchString(cfg.PackageSHA256) {
 		return fmt.Errorf("package_sha256 must be 64 lowercase hex characters")
+	}
+	switch cfg.DecideMode {
+	case "", RaylineARCDecideModeSync, RaylineARCDecideModeRace:
+	default:
+		return fmt.Errorf("decide_mode must be %s or %s", RaylineARCDecideModeSync, RaylineARCDecideModeRace)
+	}
+	if cfg.RaceMS < 0 || cfg.RaceMS > maxRaylineARCRaceMS {
+		return fmt.Errorf("race_ms must be between 0 and %d", maxRaylineARCRaceMS)
+	}
+	if cfg.RaceMaxNewTokens < 0 {
+		return fmt.Errorf("race_max_new_tokens must not be negative")
 	}
 	if cfg.ModelSchedule != "" && cfg.ModelSchedule != RaylineARCModelScheduleTaskTurnCompaction {
 		return fmt.Errorf("model_schedule must be empty or %s", RaylineARCModelScheduleTaskTurnCompaction)

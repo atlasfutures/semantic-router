@@ -101,6 +101,16 @@ type policyServiceScorer struct {
 	// side calls strict after the service last showed it cannot serve them
 	// relaxed; zero or past means relaxed.
 	sideStrictUntil atomic.Int64
+	// race is a cell that races its strict main turns' decides (ADR 0155):
+	// raceDeadline long, skipped past raceMaxNewTokens new tokens. staged is
+	// the episodes' staged turns; deltaUnsupported is a package that refused
+	// a delta decide, whose turns are sent in full from then on.
+	race             bool
+	raceDeadline     time.Duration
+	raceMaxNewTokens int
+	appendTimeout    time.Duration
+	staged           *policyStagedTurns
+	deltaUnsupported atomic.Bool
 }
 
 // policySideCallStrictFor is how long a strict cell keeps its side calls
@@ -181,6 +191,18 @@ func newPolicyServiceScorer(
 	}
 	if decision.Algorithm.RaylineARC.Episode.RelaxedConsistency() {
 		scorer.episodeMode = raylinearc.PolicyEpisodeModeRelaxed
+	}
+	// Only a strict cell stages turns, and only one whose episodes stay on
+	// one service (no replica pool); an eval cell decides every turn.
+	if policy.RacesDecides() && scorer.episodeMode == "" && len(policy.Replicas) == 0 && !policy.EvalCell {
+		scorer.race = true
+		scorer.raceDeadline = policy.RaceDeadline()
+		scorer.raceMaxNewTokens = policy.RaceMaxNewTokens
+		scorer.appendTimeout = time.Duration(policy.TotalTimeoutSeconds) * time.Second
+		if scorer.appendTimeout <= 0 {
+			scorer.appendTimeout = episodeFinalizeTimeout
+		}
+		scorer.staged = newPolicyStagedTurns()
 	}
 	index := make(map[string]int, len(decision.ModelRefs))
 	for arm, modelRef := range decision.ModelRefs {
@@ -717,7 +739,115 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		defer sessionBinding.Release(ctx)
 	}
 	started := selector.now()
-	response, err := decidePolicyThroughBusy(ctx, decider, request, scorer.busyWait, admit, withCacheContext)
+	// A racing cell stages its strict main turns, sends a turn that extends
+	// the staged prefix as a delta, and races it against the fallback lease
+	// when one may serve (rayline_arc_policy_race.go).
+	staging := scorer.policyRaceEligible(&request, sideCall)
+	if staging {
+		staged := true
+		request.Stage = &staged
+	}
+	var deltaBase policyStagedTurn
+	deltaOutcome := ""
+	if staging {
+		deltaBase, deltaOutcome = policyDeltaFor(scorer, arcContext.EpisodeIDHash, state, turn, transition, request.RequestFormat, messages)
+	}
+	firstAsk := request
+	decideFirst := func(callCtx context.Context) (*raylinearc.PolicyDecisionResponse, error, bool) {
+		if deltaOutcome == "delta" {
+			deltaRequest := firstAsk
+			deltaRequest.Request = policyShellOf(firstAsk.Request)
+			deltaRequest.TurnDelta = &raylinearc.PolicyTurnDelta{
+				BasePrefixDigest: deltaBase.prefixDigest, Messages: messages[deltaBase.count:],
+			}
+			response, err := decidePolicyThroughBusy(callCtx, decider, deltaRequest, scorer.busyWait, admit, withCacheContext)
+			if !policyDeltaRefused(err) {
+				return response, err, true
+			}
+			var refusal *raylinearc.PolicyServiceError
+			_ = errors.As(err, &refusal)
+			if refusal.Class == raylinearc.PolicyTurnDeltaUnsupportedClass {
+				scorer.deltaUnsupported.Store(true)
+			}
+			logging.ComponentWarnEvent("extproc", "rayline_arc_policy_delta_resent", map[string]interface{}{
+				"request_id": arcContext.RequestID, "episode_id_hash": arcContext.EpisodeIDHash, "class": refusal.Class,
+			})
+		}
+		response, err := decidePolicyThroughBusy(callCtx, decider, firstAsk, scorer.busyWait, admit, withCacheContext)
+		return response, err, false
+	}
+	var response *raylinearc.PolicyDecisionResponse
+	decisionMode, raceWait := "", time.Duration(0)
+	if staging {
+		decisionMode = policyDecisionModeSync
+	}
+	leaseRefusal := "no_delta"
+	if deltaOutcome == "delta" {
+		leaseRefusal = policyLeaseCheck(scorer, deltaBase, signals, request.RequestFormat, messages[deltaBase.count:],
+			available, attestedFirst == "" && !derivedOffer && !forced, selector.now())
+	}
+	if staging {
+		logging.ComponentEvent("extproc", "rayline_arc_policy_staged_turn", map[string]interface{}{
+			"request_id": arcContext.RequestID, "episode_id_hash": arcContext.EpisodeIDHash,
+			"delta": deltaOutcome, "lease": policyLeaseOutcome(leaseRefusal),
+		})
+	}
+	var pending *policyPendingDecide
+	if leaseRefusal == "" {
+		// The decide runs on its own context: if the lease serves, it
+		// outlives this request's selection and finishes inside the lease.
+		detached := context.WithoutCancel(ctx)
+		pending = startPolicyPendingDecide(func() (*raylinearc.PolicyDecisionResponse, error, bool) {
+			return decideFirst(detached)
+		})
+		deadline := scorer.raceDeadline
+		if scorer.raceMaxNewTokens > 0 && policyEstimatedTokens(messages[deltaBase.count:]) > scorer.raceMaxNewTokens {
+			deadline = 0
+		}
+		won := deadline > 0 && pending.wait(deadline)
+		raceWait = selector.now().Sub(started)
+		// The TTL is checked as the lease would serve, after the wait.
+		if !won && selector.now().Before(deltaBase.holdExpires) {
+			if leased := selector.policyLeaseResult(
+				armed, selCtx, arcContext, state, scorer, deltaBase.hold, turn, messages, atBoundary, retained, workerIDs,
+			); leased != nil {
+				served := deltaBase.hold.ActionID
+				requestID, episode := arcContext.RequestID, arcContext.EpisodeIDHash
+				pending.onDone(func(late *policyPendingDecide) { logPolicyLateDecide(requestID, episode, served, late) })
+				leased.RaylineARC.PolicyLatency = raceWait
+				leased.RaylineARC.PolicyDecisionMode = policyDecisionModeRaceLost
+				leased.RaylineARC.PolicyRaceWait = raceWait
+				leased.RaylineARC.PolicySideCall = false
+				leased.RaylineARC.MaskedArms = policyMaskedArms(scorer, workerIDs, excluded, fallback, turn, offeredRoutes)
+				leased.RaylineARC.RoutingPricesStatus = pricesStatus
+				leased.RaylineARC.SettlementPrices = armed.prices
+				leased.RaylineARC.EndpointFeed = arcContext.EndpointFeed
+				// The late decide still uses the session binding, so the
+				// session it ends on is read once it has finished
+				// (awaitPolicyStaging); a cell without sessions records as
+				// any turn does.
+				if sessionBinding == nil {
+					recordPolicySession(leased.RaylineARC, nil, state, arcContext.EpisodeIDHash)
+				}
+				leased.RaylineARC.PolicyStaging = selector.newPolicyStaging(
+					armed, scorer, arcContext, request.RequestFormat, turn, messages, roles, decider, sessionBinding, admit, pending,
+				)
+				rememberPolicyPrefix(arcContext.EpisodeIDHash, prefixShape)
+				return leased, nil
+			}
+		}
+		// The decide landed in time, or the lease cannot serve: the turn is
+		// the decide's, as on a sync cell.
+		if !won {
+			<-pending.done
+		}
+		response, err = pending.response, pending.err
+		if won {
+			decisionMode = policyDecisionModeRaceWon
+		}
+	} else {
+		response, err, _ = decideFirst(ctx)
+	}
 	// A strict cell's relaxed side call that the service refused as
 	// unsupported is decided strict instead, as it was before side calls
 	// went relaxed.
@@ -907,6 +1037,13 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	result := selector.selectionResult(armed, selCtx, arcContext, state, encoded, decision, encodeLatency)
 	result.RaylineARC.PolicyLatency = latency
 	result.RaylineARC.EncoderLatencyUnknown = response.TimingMillis.Encode == nil
+	result.RaylineARC.PolicyDecisionMode = decisionMode
+	result.RaylineARC.PolicyRaceWait = raceWait
+	if staging && !sideCall {
+		result.RaylineARC.PolicyStaging = selector.newPolicyStaging(
+			armed, scorer, arcContext, request.RequestFormat, turn, messages, roles, decider, sessionBinding, admit, nil,
+		)
+	}
 	recordPolicyReplica(result.RaylineARC, replicaBinding)
 	recordPolicySession(result.RaylineARC, sessionBinding, state, arcContext.EpisodeIDHash)
 	result.Reasoning = "policy-service ARC decision (" + response.Decision.Reason + ")"

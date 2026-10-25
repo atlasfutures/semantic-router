@@ -2150,6 +2150,16 @@ recipes:
                 # eval_cell marks an eval or lab cell: it never sends
                 # exploration, so its decisions are the package's greedy ones.
                 eval_cell: false
+                # decide_mode race (ADR 0155, proposed; needs a policy service
+                # that serves staged turns, pathfinder#5919) stages each strict
+                # main turn, appends its reply off the user's path, sends the
+                # next turn's new messages only, and races that decide against
+                # race_ms, serving the append's fallback lease when it loses.
+                # race_max_new_tokens (0 never) serves the lease at once past
+                # that many new tokens. sync, the default, decides every turn.
+                decide_mode: sync
+                race_ms: 100
+                race_max_new_tokens: 0
                 # Each binding maps a package action to a worker. model, effort
                 # and reasoning_max_tokens declare what the action dispatches,
                 # as the package's catalog states it: model is the trained
