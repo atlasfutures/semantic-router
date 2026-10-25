@@ -750,14 +750,8 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	}
 	var deltaBase policyStagedTurn
 	deltaOutcome := ""
-	firstBusyWait := scorer.busyWait
 	if staging {
 		deltaBase, deltaOutcome = policyDeltaFor(scorer, arcContext.EpisodeIDHash, state, turn, transition, request.RequestFormat, messages)
-		if deltaOutcome == "append_unsettled" {
-			// The previous turn's append may still hold the service's
-			// episode lock: its budget is added to this turn's busy retries.
-			firstBusyWait += scorer.appendTimeout
-		}
 		// delta_mismatch_reason is "none" when the delta goes out; the soak
 		// reads the rest as the rate at which the client's echo of the
 		// appended reply missed VSR's (appended_mismatch) and why else.
@@ -771,10 +765,8 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 			"delta_mismatch_reason": mismatch,
 		})
 	}
-	decisionMode := ""
-	if staging {
-		decisionMode = policyDecisionModeSync
-	}
+	decisionMode := policyStagedFullMode(staging)
+	firstBusyWait := policyFirstBusyWait(scorer.busyWait, deltaOutcome)
 	var response *raylinearc.PolicyDecisionResponse
 	if deltaOutcome == policyDecisionModeDelta {
 		deltaRequest := request
@@ -809,6 +801,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		refused.Class == raylinearc.PolicyRelaxedUnsupportedClass {
 		scorer.sideCallsRelaxedUnsupported(selector.now(), "refused")
 		request.EpisodeMode = scorer.episodeMode
+		decisionMode = policyStagedFullMode(staging)
 		response, err = decidePolicyThroughBusy(ctx, decider, request, scorer.busyWait, admit, withCacheContext)
 	}
 	var cold *raylinearc.PolicyServiceError
@@ -828,6 +821,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		request.Selection.AttestedHeldActionID = nil
 		narrow(derived.offer)
 		logRaylineARCDerivedHold(arcContext, derived, "re-ask")
+		decisionMode = policyStagedFullMode(staging)
 		response, err = decidePolicyThroughBusy(ctx, decider, request, scorer.busyWait, admit, withCacheContext)
 	case derived.model == "" && held < 0 && errors.As(err, &cold) && cold.Class == raylinearc.PolicyStageOneHeldUnknownClass:
 		// A refusal the first ask did not anticipate: the recorded model is
@@ -850,6 +844,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 			}
 			logRaylineARCDerivedHold(arcContext, derived, "re-ask")
 			narrow(derived.offer)
+			decisionMode = policyStagedFullMode(staging)
 			response, err = decidePolicyThroughBusy(ctx, decider, request, scorer.busyWait, admit, withCacheContext)
 		}
 	}
