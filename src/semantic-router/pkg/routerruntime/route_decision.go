@@ -4,7 +4,8 @@ import (
 	"context"
 	"errors"
 
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
+	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
+
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
@@ -64,6 +65,11 @@ type RouteDecisionRequest struct {
 	// result points, caller prices, exclusivity and exploration. Nil asks
 	// for the lookup's own decision alone.
 	Routing *selection.RaylineARCRouteControls
+	// Headers are the request's headers, by lowercase name. The runtime reads
+	// only the gateway's privacy headers from them, and only on a cell that
+	// trusts its gateway's turn-signal headers, so a private consult is
+	// masked as a routed turn is.
+	Headers map[string]string
 }
 
 // RouteDecisionSurface names which endpoint a consult came from.
@@ -280,3 +286,9 @@ var ErrRouteDecisionUndecidable = errors.New("route decision undecidable")
 // contradicts the requested temperature. The answer is withheld rather than
 // shown as applied, so an adapter answers 502.
 var ErrRouteDecisionInconsistent = errors.New("route decision inconsistent")
+
+// ErrRouteDecisionNoPrivateArm marks an undecidable consult whose cause is
+// the request's privacy mode: none of the arms it allows can serve the turn.
+// It is always wrapped with ErrRouteDecisionUndecidable, so the status is
+// the same 422; an adapter reads it only to say why.
+var ErrRouteDecisionNoPrivateArm = errors.New("route decision has no private arm")

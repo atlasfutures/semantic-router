@@ -30,7 +30,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc/thinkingcontrol"
+	"github.com/atlasfutures/semantic-router/rayline-core/cachecontext"
+	"github.com/atlasfutures/semantic-router/rayline-core/thinkingcontrol"
 )
 
 const (
@@ -251,19 +252,19 @@ func UnescapeHTMLEscapes(value []byte) []byte {
 // EncodePolicyDecisionRequest writes itself: encoding/json compacts whatever
 // a MarshalJSON returns, so the client's bytes cannot pass through it intact.
 type policyDecisionEnvelope struct {
-	SchemaVersion string               `json:"schema_version"`
-	Package       PolicyPackageRef     `json:"package"`
-	EpisodeIDHash string               `json:"episode_id_hash"`
-	ContextEpoch  string               `json:"context_epoch"`
-	RequestFormat string               `json:"request_format"`
-	Request       PolicyClientRequest  `json:"-"`
-	Attribution   []PolicyAttribution  `json:"attribution"`
-	Selection     PolicySelection      `json:"selection"`
-	Evaluation    *PolicyEvaluation    `json:"evaluation"`
-	Shadow        []PolicyPackageRef   `json:"shadow"`
-	EpisodeMode   string               `json:"episode_mode,omitempty"`
-	RoutingPrices *PolicyRoutingPrices `json:"routing_prices,omitempty"`
-	CacheContext  *PolicyCacheContext  `json:"cache_context,omitempty"`
+	SchemaVersion string                           `json:"schema_version"`
+	Package       PolicyPackageRef                 `json:"package"`
+	EpisodeIDHash string                           `json:"episode_id_hash"`
+	ContextEpoch  string                           `json:"context_epoch"`
+	RequestFormat string                           `json:"request_format"`
+	Request       PolicyClientRequest              `json:"-"`
+	Attribution   []PolicyAttribution              `json:"attribution"`
+	Selection     PolicySelection                  `json:"selection"`
+	Evaluation    *PolicyEvaluation                `json:"evaluation"`
+	Shadow        []PolicyPackageRef               `json:"shadow"`
+	EpisodeMode   string                           `json:"episode_mode,omitempty"`
+	RoutingPrices *PolicyRoutingPrices             `json:"routing_prices,omitempty"`
+	CacheContext  *cachecontext.PolicyCacheContext `json:"cache_context,omitempty"`
 	// ResponseFields mirrors PolicyDecisionRequest.ResponseFields.
 	ResponseFields []string `json:"response_fields,omitempty"`
 }
@@ -332,8 +333,8 @@ type PolicyDecisionRequest struct {
 	// from before live prices.
 	RoutingPrices *PolicyRoutingPrices `json:"routing_prices,omitempty"`
 	// CacheContext is each recently served action's last call and its
-	// prompt cache (BuildPolicyCacheContext); nil omits it.
-	CacheContext *PolicyCacheContext `json:"cache_context,omitempty"`
+	// prompt cache (cachecontext.BuildPolicyCacheContext); nil omits it.
+	CacheContext *cachecontext.PolicyCacheContext `json:"cache_context,omitempty"`
 	// ResponseFields names the opt-in per-action response blocks
 	// (price_per_mtok, thinking; Decisions API v2). Omitted when none are
 	// configured, so the request is v1's.

@@ -30,9 +30,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
+	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
+	"github.com/atlasfutures/semantic-router/rayline-core/thinkingcontrol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc/thinkingcontrol"
 )
 
 // A v5 package (pathfinder docs/arc_serving_contract.md, "Policy package

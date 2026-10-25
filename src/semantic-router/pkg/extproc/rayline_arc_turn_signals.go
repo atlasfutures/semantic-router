@@ -48,6 +48,10 @@ const (
 	// reads the parent (pathfinder ADR 0117, rayline_arc_derived_hold.go).
 	raylineARCParentSessionHeader = "x-rayline-parent-session"
 	raylineARCParentAgentHeader   = "x-rayline-parent-agent"
+	// raylineARCSessionKeyHeader is the opaque key the gateway picks an
+	// arm's OpenRouter endpoint by (hex sha256 of user:conversation), so the
+	// cell picks the endpoint the gateway bills (rayline_arc_endpoint_pick.go).
+	raylineARCSessionKeyHeader = "x-rayline-session-key"
 )
 
 // raylineARCTrustedSignalHeaders returns the turn-signal headers this cell
@@ -78,6 +82,7 @@ func raylineARCTurnSignalHeadersForRemoval() []string {
 		raylineARCCallKindHeader, raylineARCCompactionHeader,
 		raylineARCAgentKeySourceHeader, raylineARCParentSessionHeader, raylineARCParentAgentHeader,
 		raylineARCPrivacyModeHeader, raylineARCTrainingDataHeader, raylineARCExplorationTemperatureHeader,
+		raylineARCPrivacyAllowedArmsHeader, raylineARCPrivacyAllowedEndpointsHeader, raylineARCSessionKeyHeader,
 	}
 }
 
@@ -90,6 +95,7 @@ const (
 	callKindSourceGatewaySubagent    = "gateway_subagent_shared_key"
 	callKindSourceClaudeCompactionRq = "claude_code_compaction_request"
 	callKindSourceClaudeTitle        = "claude_code_title"
+	callKindSourceClaudeSuggestion   = "claude_code_suggestion"
 	callKindSourceCodexCompactionRq  = "codex_compaction_request"
 )
 
@@ -179,6 +185,8 @@ func raylineARCPolicyCallKind(
 			return raylinearc.PolicyCallSide, callKindSourceClaudeTitle
 		case raylinearc.IsClaudeCodeCompactionRequest(messages):
 			return raylinearc.PolicyCallSide, callKindSourceClaudeCompactionRq
+		case raylinearc.IsClaudeCodeSuggestionRequest(messages):
+			return raylinearc.PolicyCallSide, callKindSourceClaudeSuggestion
 		case raylinearc.ClaudeCodeSubagentClaim(system):
 			// A subagent keyed on its own agent id is its own conversation:
 			// a main turn of its own episode, deciding its own model and

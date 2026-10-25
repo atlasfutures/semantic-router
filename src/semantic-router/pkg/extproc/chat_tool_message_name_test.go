@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/protocolcodec"
+	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
+	"github.com/atlasfutures/semantic-router/rayline-core/protocolcodec"
 )
 
 // A Responses history whose call came from a Claude worker, as it reads after

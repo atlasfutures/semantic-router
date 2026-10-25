@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
+	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
 )
 
 // emptyChatCompletionBody is the turn decision 30 named: an assistant message

@@ -3,10 +3,10 @@ package extproc
 import (
 	"testing"
 
+	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
+	"github.com/atlasfutures/semantic-router/rayline-core/protocolcodec"
 	"github.com/stretchr/testify/require"
 
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/protocolcodec"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/routerreplay"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/routerreplay/store"
 )

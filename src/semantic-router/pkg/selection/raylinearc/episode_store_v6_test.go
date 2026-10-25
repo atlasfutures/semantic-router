@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc/thinkingcontrol"
+	"github.com/atlasfutures/semantic-router/rayline-core/thinkingcontrol"
 )
 
 // A record past the 16 placers or upstream records a v5 reader keeps is v6,

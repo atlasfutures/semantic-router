@@ -626,7 +626,10 @@ function fieldsForKey(key: RouterSystemKey): FieldConfig[] {
           name: 'store_backend',
           label: 'Store Backend',
           type: 'select',
-          options: ['memory', 'milvus', 'redis'],
+          // 'none' keeps the Responses surface on and retains nothing (zero
+          // data retention); previous_response_id is then refused with 400
+          // stateless_path.
+          options: ['memory', 'milvus', 'redis', 'none'],
           required: true,
         },
         { name: 'ttl_seconds', label: 'TTL (seconds)', type: 'number', placeholder: '86400' },

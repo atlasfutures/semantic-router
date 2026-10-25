@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/atlasfutures/semantic-router/rayline-core/cachecontext"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
@@ -32,7 +33,7 @@ func TestPolicyDecideSendsCacheContextOnlyWhenTheCellOptsIn(t *testing.T) {
 		bindings := fixture.decision.Algorithm.RaylineARC.PolicyService.Bindings
 		fixture.fake.chooseWith(func(raylinearc.PolicyDecisionRequest) string { return bindings[0].ActionID })
 		state, _ := raylinearc.NewEpisodeState(2)
-		state.Warmth[0] = &raylinearc.WorkerWarmth{LastUsed: time.Now().UTC(), Call: &raylinearc.CallCache{
+		state.Warmth[0] = &cachecontext.WorkerWarmth{LastUsed: time.Now().UTC(), Call: &cachecontext.CallCache{
 			ActionID: bindings[0].ActionID, CompletedAt: time.Now().UTC(),
 		}}
 		if _, err := fixture.selectOn(t, state, policyTestRequest(t, map[string]any{"role": "user", "content": "go"})); err != nil {
@@ -58,11 +59,11 @@ func TestPolicyDecideCarriesTheEpisodeCacheContext(t *testing.T) {
 	now := time.Now().UTC()
 	prompt, read := 1000, 900
 	state, _ := raylinearc.NewEpisodeState(2)
-	state.Warmth[0] = &raylinearc.WorkerWarmth{LastUsed: now.Add(-30 * time.Second), LastInputTokens: 700, Call: &raylinearc.CallCache{
+	state.Warmth[0] = &cachecontext.WorkerWarmth{LastUsed: now.Add(-30 * time.Second), LastInputTokens: 700, Call: &cachecontext.CallCache{
 		ActionID: bindings[1].ActionID, CompletedAt: now.Add(-30 * time.Second), TTLSeconds: 300, TTLSource: "anthropic cache_control ephemeral 5m",
 		PromptTokens: &prompt, CacheReadTokens: &read,
 	}}
-	state.Warmth[1] = &raylinearc.WorkerWarmth{LastUsed: now.Add(-2 * time.Hour), LastInputTokens: 700, Call: &raylinearc.CallCache{
+	state.Warmth[1] = &cachecontext.WorkerWarmth{LastUsed: now.Add(-2 * time.Hour), LastInputTokens: 700, Call: &cachecontext.CallCache{
 		ActionID: bindings[2].ActionID, CompletedAt: now.Add(-2 * time.Hour),
 	}}
 
@@ -103,7 +104,7 @@ func TestPolicyDecideRetryRefreshesTheCacheContext(t *testing.T) {
 	bindings := fixture.decision.Algorithm.RaylineARC.PolicyService.Bindings
 	start := time.Now().UTC().Add(-time.Minute)
 	state, _ := raylinearc.NewEpisodeState(2)
-	state.Warmth[0] = &raylinearc.WorkerWarmth{LastUsed: start, Call: &raylinearc.CallCache{ActionID: bindings[0].ActionID, CompletedAt: start}}
+	state.Warmth[0] = &cachecontext.WorkerWarmth{LastUsed: start, Call: &cachecontext.CallCache{ActionID: bindings[0].ActionID, CompletedAt: start}}
 	if _, err := fixture.selectOn(t, state, policyTestRequest(t, map[string]any{"role": "user", "content": "go"})); err != nil {
 		t.Fatalf("select: %v", err)
 	}
@@ -200,9 +201,9 @@ func TestPolicyTurnCommitRecordsTheCall(t *testing.T) {
 	}
 	// ...and keeps the arm's last completed call, dated by its completion.
 	completed := time.Now().UTC().Add(-time.Minute)
-	earlier := &raylinearc.CallCache{ActionID: action, CompletedAt: completed, TTLSeconds: 300, TTLSource: "anthropic cache_control ephemeral 5m"}
+	earlier := &cachecontext.CallCache{ActionID: action, CompletedAt: completed, TTLSeconds: 300, TTLSource: "anthropic cache_control ephemeral 5m"}
 	transaction = newTransaction()
-	transaction.state.Warmth[1] = &raylinearc.WorkerWarmth{LastUsed: completed, Call: earlier}
+	transaction.state.Warmth[1] = &cachecontext.WorkerWarmth{LastUsed: completed, Call: earlier}
 	transaction.call.ActionID = action
 	next, err = transaction.nextState()
 	if err != nil {

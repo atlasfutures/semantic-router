@@ -7,14 +7,14 @@ import (
 	"sort"
 	"time"
 
+	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
+	"github.com/atlasfutures/semantic-router/rayline-core/protocolcodec"
 	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/inflight"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/latency"
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/metrics"
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/protocolcodec"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/ratelimit"
 )
 
@@ -561,7 +561,7 @@ func (r *OpenAIRouter) finalizeSemanticStreamingResponse(ctx *RequestContext, st
 	// commits once the response's final frame has been sent, and only then
 	// caches its reply.
 	commitDeferred := !ctx.StreamingAborted && selectionCommitsOnCompletion(ctx)
-	refused := commitDeferred && responseRefused(semanticResponse)
+	refused := commitDeferred && llmprotocol.ResponseRefused(semanticResponse)
 	if refused {
 		// A refused turn is delivered but never recorded, and never cached.
 		declineRefusedTurn(ctx)
@@ -645,7 +645,7 @@ func (r *OpenAIRouter) classStreamFailure(
 	}
 	var inBand *llmprotocol.ProtocolError
 	switch {
-	case responseErr == nil && responseRefused(semanticResponse):
+	case responseErr == nil && llmprotocol.ResponseRefused(semanticResponse):
 		recordTurnFailure(ctx, turnFailureRefusal, contentBeforeRefusal(semanticResponse))
 	case streamErr != nil && errors.As(streamErr, &inBand):
 		// An in-band stream error: the Router's own deadline cut, or a

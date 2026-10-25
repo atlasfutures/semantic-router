@@ -141,7 +141,7 @@ control. `package_manifest` points at the package's
   a mismatch;
 - requires each control in the compiled registry it serves from (pathfinder's
   `configs/thinking_controls.compiled.json`, embedded and pinned in
-  `pkg/selection/raylinearc/thinkingcontrol`);
+  `rayline-core/thinkingcontrol`);
 - requires every package action bound, and each bound control admitted on its
   worker's (served model, provider, format) cell for every format the worker
   accepts, since the target format is chosen per request. The served model is
@@ -517,6 +517,86 @@ integration fault rather than anything the caller sent.
 
 Their failure class comes from the contract's error codes only; any other
 value is `service_error`.
+
+### Policy replicas (opt-in)
+
+A cell sets either `base_url` (one service, the default) or `replicas` plus
+`failover`, to spread episodes over several deployments of the same package
+while keeping each episode on one of them. A replica holds the episode's
+retained encoder session and its strict episode memory in its own process, so
+a turn that reaches another replica is still decided correctly, but it rebuilds
+the session.
+
+- **Owner.** A turn decides on the owner its episode state persisted (the
+  state's `encoder_owner` and `encoder_visited_owners`, which this mode does
+  not otherwise use), else on the rendezvous choice among the `active`
+  replicas. The commit persists the owner of the turn. A side call commits
+  nothing, so it reads the owner but never moves it.
+- **Draining.** A `draining` replica keeps its episodes and takes no new ones.
+  Adding a replica moves no episode that already has an owner. Removing one
+  re-places its episodes, and each rebuilds once.
+- **Failover.** `failover` is `rayline.arc.policy-failover.v1` with
+  `max_remaps: 1`. Only `unavailable_status_codes` from 404, 429 and 503 move
+  an episode, once per turn. Each of these is answered before the service
+  touches the episode. The replica then cools down for
+  `unavailable_cooldown_seconds`. A 409 `session_busy`, any other status, a
+  timeout or a transport error leaves the episode where it is, and the
+  session_busy retries and re-asks of one turn stay on its replica.
+- **Stale owner.** A replica that answers for another package than the
+  request's (during a rollover a replica can still run the previous build)
+  cools down too, and the episode moves once. The stale answer is never
+  served: with no replica to move to, the turn fails as
+  `policy_package_mismatch`, as it does today.
+- **Readiness.** The cell arms once one active replica serves the package. A
+  replica that fails the readiness check takes no episode, owned or new, and
+  is checked again every 30 s until it passes.
+
+### Policy sessions on a Modal Server (opt-in)
+
+`sessions: {enabled: true}` decides through a policy service deployed as a
+Modal Server with sticky sessions (`@modal.sessioned`) at `base_url`. The
+Server autoscales its own containers, and each episode holds one Modal
+session, so its turns reach the one container that keeps its retained encoder
+session. It is exclusive with `replicas` and needs `modal_key_env` and
+`modal_secret_env`.
+
+- **Session.** A turn decides on the session its episode state persisted, else
+  on one it starts (`POST /_modal/sessions/start` with the proxy key, idle
+  timeout `idle_timeout_seconds`, 900 by default, matching the episode idle
+  TTL). Decides carry the session's token (`Modal-Authorization`) and not the
+  proxy key. The commit persists a session the turn changed, in the state's
+  `policy_session`, which makes the record `rayline.arc.episode-state.v10`;
+  an episode without one keeps its earlier bytes. The token is a credential:
+  never logged.
+- **Start bound.** A start is bounded by `start_timeout_seconds` (10 by
+  default; Modal queues a start for capacity for minutes). A start that lapses
+  or is refused fails the turn as `policy_service_session_start` (public
+  class `unavailable`) and commits nothing.
+- **Lost session.** Modal's 502 with an empty body (the token's container is
+  gone) and its 404 `Unknown or expired session` never reached a container
+  holding the episode, so the turn starts a new session and is retried there
+  once; it rebuilds. Only these verified signatures move a turn; any other
+  502, 404 or 401 fails it closed.
+  A turn moves at most once. A timeout or transport failure leaves the session
+  as it is and fails the turn closed. The service's own refusals (a JSON
+  error code, such as a 404 `package_not_loaded`) keep their meaning.
+- **Stale build.** A session that answers for another package than the
+  request's (a container still on the previous build: a Modal deploy does not
+  move live sessions) is ended (`/_modal/sessions/terminate`, with the proxy
+  key and the token), and the turn is retried once on a new session.
+- **Side calls.** A side call commits nothing: it decides on the episode's
+  session when there is one and never records one. If it has to start its own,
+  that session is ended once the call is done.
+- **Readiness.** Every request to a sessioned Server needs a token, so the
+  readiness check runs through a session of its own, which it ends. The start
+  also warms a container, which a new deployment needs before it serves turns.
+- **Episode close.** The policy-service mode has no close signal
+  (`close_header` is refused in this mode), so a session ends by Modal's idle
+  timeout.
+- **Rollback.** A router that predates v10 refuses a record that carries a
+  session. Turn sessions off first (the record drops `policy_session` at the
+  episode's next commit, or expires with its idle TTL), then roll the image
+  back.
 
 ## Episode turns
 

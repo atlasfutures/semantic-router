@@ -14,6 +14,7 @@ WORKDIR /workspace
 RUN mkdir -p deploy/operator src/semantic-router candle-binding ml-binding nlp-binding
 COPY deploy/operator/go.mod deploy/operator/go.sum deploy/operator/
 COPY src/semantic-router/go.mod src/semantic-router/go.sum src/semantic-router/
+COPY rayline-core/go.mod rayline-core/go.sum rayline-core/
 COPY candle-binding/go.mod candle-binding/semantic-router.go candle-binding/
 COPY ml-binding/go.mod ml-binding/ml_binding.go ml-binding/
 COPY nlp-binding/go.mod nlp-binding/nlp_binding.go nlp-binding/nlp_binding_mock.go nlp-binding/
@@ -29,6 +30,7 @@ RUN go mod download
 # Copy the go source
 COPY deploy/operator/ /workspace/deploy/operator/
 COPY src/semantic-router/ /workspace/src/semantic-router/
+COPY rayline-core/ /workspace/rayline-core/
 
 # Build
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -a -o /workspace/manager main.go

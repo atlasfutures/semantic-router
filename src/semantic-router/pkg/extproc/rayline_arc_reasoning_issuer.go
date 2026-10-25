@@ -1,14 +1,10 @@
 package extproc
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
-	"strings"
-
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
+	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
+	"github.com/atlasfutures/semantic-router/rayline-core/protocolcodec"
+	"github.com/atlasfutures/semantic-router/rayline-core/reasoning"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/protocolcodec"
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
 
 // applyRaylineARCReasoningIssuer decides whether this turn forwards the
@@ -33,11 +29,10 @@ func (r *OpenAIRouter) applyRaylineARCReasoningIssuer(
 	issuer := reasoningIssuerFor(dispatch, r.dispatchCredential(dispatch, ctx))
 	held := protocolcodec.HoldsEncryptedReasoning(*request)
 	issues := dispatch.targetFormat == llmprotocol.OpenAIResponsesV1
-	forwarded := held && issues && raylinearc.ReasoningIssuersAre(previous, issuer)
-	request.ForwardsEncryptedReasoning = forwarded
 	ctx.RaylineARCTransaction.stageReasoningIssuers(
-		raylinearc.NextReasoningIssuers(previous, held, forwarded, issues, issuer),
+		reasoning.ApplyEncryptedReasoning(request, previous, issuer, dispatch.targetFormat),
 	)
+	forwarded := request.ForwardsEncryptedReasoning
 	if held && !forwarded {
 		logging.ComponentEvent("extproc", "rayline_arc_encrypted_reasoning_dropped", map[string]interface{}{
 			"request_id": ctx.RequestID,
@@ -60,12 +55,8 @@ func (r *OpenAIRouter) applyRaylineARCReasoningIssuer(
 // unknown issuer: nothing is forwarded to it, and blobs it issues are never
 // forwarded anywhere.
 func reasoningIssuerFor(dispatch *providerDispatch, credential dispatchCredential) string {
-	if providerIsOpenRouter(dispatch.profile) || !credential.known {
-		return raylinearc.ReasoningIssuerUnknown
-	}
-	parts := []string{dispatch.logicalModel, dispatch.backendName, dispatch.upstreamModel, credential.key}
-	digest := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
-	return hex.EncodeToString(digest[:8])
+	return reasoning.EncryptedIssuer(dispatch.logicalModel, dispatch.backendName, dispatch.upstreamModel,
+		credential.key, credential.known, providerIsOpenRouter(dispatch.profile))
 }
 
 // dispatchCredential is the credential a dispatch will be sent with, resolved
@@ -98,11 +89,11 @@ func encryptedReasoningDropReason(previous []string, issuer string, issues bool)
 	switch {
 	case !issues:
 		return "target_not_responses"
-	case issuer == raylinearc.ReasoningIssuerUnknown:
+	case issuer == reasoning.ReasoningIssuerUnknown:
 		return "target_provider_varies"
 	case len(previous) > 1:
 		return "issuers_mixed"
-	case len(previous) == 0 || previous[0] == raylinearc.ReasoningIssuerUnknown:
+	case len(previous) == 0 || previous[0] == reasoning.ReasoningIssuerUnknown:
 		return "issuer_unknown"
 	default:
 		return "issuer_other_target"
@@ -132,9 +123,7 @@ func (r *OpenAIRouter) dropRaylineARCOpaqueReasoningIssuedElsewhere(
 		return false
 	}
 	provenance := transaction.state.ReasoningProvenance
-	dropped := protocolcodec.DropOpaqueReasoning(request, func(data string) bool {
-		return raylinearc.ReasoningIssuedElsewhere(provenance, data, issuer)
-	})
+	dropped := reasoning.DropOpaqueReasoning(request, provenance, issuer)
 	if dropped == 0 {
 		return false
 	}
@@ -155,17 +144,15 @@ func (r *OpenAIRouter) dropRaylineARCOpaqueReasoningIssuedElsewhere(
 // The credential does not enter: an Anthropic-format block is the model's,
 // not the account's.
 func (r *OpenAIRouter) opaqueReasoningIssuerFor(dispatch *providerDispatch) string {
-	if providerIsOpenRouter(dispatch.profile) {
-		if r.Config == nil {
-			return raylinearc.ReasoningIssuerUnknown
-		}
+	openRouter := providerIsOpenRouter(dispatch.profile)
+	pinnedProvider := ""
+	if openRouter && r.Config != nil {
 		pin := r.Config.ProviderPreferencesForModel(dispatch.logicalModel)
-		if pin == nil || pin.AllowFallbacks == nil || *pin.AllowFallbacks || len(pin.Order) != 1 {
-			return raylinearc.ReasoningIssuerUnknown
+		if pin != nil && pin.AllowFallbacks != nil && !*pin.AllowFallbacks && len(pin.Order) == 1 {
+			pinnedProvider = pin.Order[0]
 		}
-		return strings.Join([]string{dispatch.logicalModel, "openrouter", pin.Order[0], dispatch.upstreamModel}, "\x00")
 	}
-	return strings.Join([]string{dispatch.logicalModel, dispatch.backendName, dispatch.upstreamModel}, "\x00")
+	return reasoning.OpaqueIssuer(dispatch.logicalModel, dispatch.backendName, dispatch.upstreamModel, openRouter, pinnedProvider)
 }
 
 // anthropicFamily is the model family armFamily names for Claude: the card

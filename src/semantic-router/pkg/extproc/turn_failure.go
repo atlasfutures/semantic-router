@@ -6,10 +6,10 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/metrics"
 )

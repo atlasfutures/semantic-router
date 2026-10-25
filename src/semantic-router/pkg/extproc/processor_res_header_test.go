@@ -3,11 +3,10 @@ package extproc
 import (
 	"testing"
 
+	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	http_ext "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/ext_proc/v3"
 	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
-
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 )
 
 func TestGetStatusFromHeadersUsesRawValue(t *testing.T) {

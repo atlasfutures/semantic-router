@@ -62,6 +62,12 @@ type llmUsageRecord struct {
 	TotalTokens         *int   `json:"total_tokens"`
 	ReasoningTokens     *int64 `json:"reasoning_tokens"`
 	CompletionLatencyMS *int64 `json:"completion_latency_ms"`
+	// TTFTMS is request-body start to the first upstream response byte
+	// (streamed) or headers (buffered); RoutingLatencyMS is the part of it
+	// spent before dispatch, the policy decide included. Their difference is
+	// the upstream's own time to first byte. Null when not observed.
+	TTFTMS           *int64 `json:"ttft_ms"`
+	RoutingLatencyMS *int64 `json:"routing_latency_ms"`
 	// UsageSource says whether the counts are the upstream's or the Router's
 	// own estimate of a turn it cut.
 	UsageSource string `json:"usage_source"`
@@ -104,6 +110,18 @@ type llmUsageRecord struct {
 	// named it; ProviderOrder is the route the dispatched body pinned.
 	UpstreamProvider *string  `json:"upstream_provider"`
 	ProviderOrder    []string `json:"provider_order"`
+	// PrivacyMode is the data mode a Rayline ARC turn was served under
+	// (standard, privacy or zdr), null outside ARC; a private turn also
+	// carries its allowed set's size and digest, never the set
+	// (rayline_arc_privacy.go).
+	PrivacyMode             *string `json:"privacy_mode"`
+	PrivacyAllowedArmsCount *int    `json:"privacy_allowed_arms_count"`
+	PrivacyAllowedArmsHash  *string `json:"privacy_allowed_arms_hash"`
+	// The provider object's data-use members as the dispatched body carried
+	// them, null where it carried none.
+	ProviderDataCollection *string `json:"provider_data_collection"`
+	ProviderZDR            *bool   `json:"provider_zdr"`
+	ProviderAllowFallbacks *bool   `json:"provider_allow_fallbacks"`
 	// UpstreamServiceTier is the service tier the upstream says it served
 	// the call at (service_tier, or Anthropic's usage.service_tier), in its
 	// spelling; null when the response did not say.
@@ -117,6 +135,25 @@ type llmUsageRecord struct {
 	// re-sent on its standard twin: flex_attempt on the refused or timed-out
 	// call, standard_resend on the re-send. Null on every other call.
 	FlexResend *string `json:"flex_resend"`
+	// EndpointResend marks the calls of an ARC turn whose picked OpenRouter
+	// endpoint failed before any byte and was re-sent on the arm's next
+	// endpoints (rayline_arc_endpoint_pick.go): endpoint_attempt on each
+	// refused call the cell went on from, endpoint_resend on the last call,
+	// whose answer the client got whatever its status: a failed last call
+	// carries its failure_class like any failed call. Null on every other
+	// call.
+	EndpointResend *string `json:"endpoint_resend"`
+	// ProviderEndpoint is the endpoint tag the call is known to be served
+	// by, null when OpenRouter could choose; ProviderEndpointsTried are the
+	// turn's endpoints dispatched so far when it picked one of several;
+	// SessionKeySource is where the key that picks came from (header,
+	// fallback or none) and EndpointSource where the arm's endpoints did
+	// (feed, or none when no routing-price feed was in effect). Null outside
+	// ARC.
+	ProviderEndpoint       *string  `json:"provider_endpoint"`
+	ProviderEndpointsTried []string `json:"provider_endpoints_tried"`
+	SessionKeySource       *string  `json:"session_key_source"`
+	EndpointSource         *string  `json:"endpoint_source"`
 
 	// The rate-card price: Cost is cache-aware, from the rates beside it,
 	// which come from the table PricingSnapshot names. Cost is null whenever
@@ -182,6 +219,15 @@ type llmUsageRecord struct {
 	// a legacy tau record and when the decision carried none.
 	RouterTemperature  *float64 `json:"router_temperature"`
 	RouterFloorApplied *bool    `json:"router_floor_applied"`
+
+	// The served identity of an ARC call (x-vsr-served-model and
+	// x-vsr-policy-cost-weight), null outside ARC and when unknown:
+	// ServedModel is the provider model id the call was dispatched to, read
+	// back off the final provider body, which a pass-through bill resolves
+	// its card from; PolicyCostWeight is the stage-one cost weight the
+	// service echoed for the decision.
+	ServedModel      *string  `json:"served_model"`
+	PolicyCostWeight *float64 `json:"policy_cost_weight"`
 }
 
 // newLLMUsageRecord fills what the request context and the counts say. The
@@ -219,6 +265,18 @@ func (r *OpenAIRouter) newLLMUsageRecord(ctx *RequestContext, usage responseUsag
 	record.FailureClass = nonEmpty(ctx.ResponseFailureClass)
 	record.ContentSentBeforeFailure = ctx.ContentSentBeforeFailure
 	record.FailureDetail = nonEmpty(ctx.ResponseFailureDetail)
+	// A re-sent turn (flex twin or another endpoint) is read whole before the
+	// response pipeline sees it, and an unreachable re-send is answered with
+	// synthetic headers, so its "first byte" is not one: no TTFT is stated.
+	resent := (ctx.FlexResend != nil && ctx.FlexResend.served()) || len(ctx.RaylineARCEndpointsTried) > 1
+	if ctx.TTFTRecorded && !resent {
+		ttft := int64(ctx.TTFTSeconds * 1000)
+		record.TTFTMS = &ttft
+	}
+	if ctx.RoutingLatency > 0 {
+		routing := ctx.RoutingLatency.Milliseconds()
+		record.RoutingLatencyMS = &routing
+	}
 	if ctx.UpstreamAttempts > 0 {
 		attempts := ctx.UpstreamAttempts
 		complete := attempts == 1
@@ -228,9 +286,30 @@ func (r *OpenAIRouter) newLLMUsageRecord(ctx *RequestContext, usage responseUsag
 	if len(ctx.DispatchedProviderOrder) > 0 {
 		record.ProviderOrder = append([]string(nil), ctx.DispatchedProviderOrder...)
 	}
+	record.ProviderDataCollection = nonEmpty(ctx.DispatchedProviderPrivacy.dataCollection)
+	record.ProviderZDR = ctx.DispatchedProviderPrivacy.zdr
+	record.ProviderAllowFallbacks = ctx.DispatchedProviderPrivacy.allowFallbacks
+	if ctx.VSRRaylineARC != nil {
+		record.PrivacyMode = nonEmpty(privacyModeLabel(ctx.RaylineARCPrivacyMode))
+		if ctx.RaylineARCPrivacyMode != "" {
+			count := len(ctx.RaylineARCPrivacyAllowedArms)
+			record.PrivacyAllowedArmsCount = &count
+			record.PrivacyAllowedArmsHash = nonEmpty(privacyAllowedArmsHash(ctx.RaylineARCPrivacyAllowedArms))
+		}
+	}
 	record.RequestedServiceTier = nonEmpty(ctx.DispatchedServiceTier)
 	if ctx.FlexResend.served() {
 		record.FlexResend = nonEmpty(flexResendStandard)
+	}
+	record.ProviderEndpoint = nonEmpty(ctx.RaylineARCDispatchedEndpoint)
+	record.SessionKeySource = nonEmpty(ctx.RaylineARCSessionKeySource)
+	record.EndpointSource = nonEmpty(ctx.RaylineARCEndpointSource)
+	if len(ctx.RaylineARCEndpointsTried) > 0 {
+		record.ProviderEndpointsTried = append([]string(nil), ctx.RaylineARCEndpointsTried...)
+	}
+	if len(ctx.RaylineARCEndpointsTried) > 1 {
+		// A refused re-send overwrites this with endpoint_attempt.
+		record.EndpointResend = nonEmpty(endpointResendServed)
 	}
 	stop := responseStopTelemetry(ctx)
 	record.ProviderStopReason = nonEmpty(stop.providerStop)
@@ -265,6 +344,10 @@ func addUsageRecordARCAttribution(record *llmUsageRecord, ctx *RequestContext) {
 		record.ArtifactRevisionHash = nonEmpty(trace.ArtifactRevision)
 		record.PolicyActionID = nonEmpty(trace.PolicyActionID)
 		record.PolicyArmID = nonEmpty(trace.PolicyArmID)
+		if identity, ok := raylineARCServedIdentityOf(ctx); ok {
+			record.ServedModel = nonEmpty(identity.model)
+			record.PolicyCostWeight = identity.costWeight
+		}
 		if decision := ctx.VSRSelectedDecision; trace.PolicyActionID != "" && decision != nil &&
 			decision.Algorithm != nil && decision.Algorithm.RaylineARC != nil &&
 			decision.Algorithm.RaylineARC.PolicyService != nil {

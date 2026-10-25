@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
+	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
 )
 
 // toolEmbeddingText builds a phrase for embedding from a neutral function tool.

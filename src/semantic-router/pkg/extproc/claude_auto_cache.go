@@ -4,11 +4,11 @@ import (
 	"encoding/json"
 	"strings"
 
+	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
+	"github.com/atlasfutures/semantic-router/rayline-core/protocolcodec"
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/protocolcodec"
 )
 
 // Where an automatic-cache directive the Router supplies for a Claude worker

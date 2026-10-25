@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/protocolcodec"
+	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
+	"github.com/atlasfutures/semantic-router/rayline-core/protocolcodec"
 )
 
 // An upstream that keeps a quiet stream alive reaches the client as one

@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
+	"github.com/atlasfutures/semantic-router/rayline-core/protocolcodec"
+	"github.com/atlasfutures/semantic-router/rayline-core/thinkingcontrol"
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 	"go.opentelemetry.io/otel/attribute"
@@ -16,11 +19,9 @@ import (
 	modelcatalog "github.com/vllm-project/semantic-router/src/semantic-router/pkg/catalog"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/headers"
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/metrics"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/tracing"
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/protocolcodec"
 )
 
 type routeHeaderState struct {
@@ -292,7 +293,7 @@ func (r *OpenAIRouter) boundDispatchRequest(request *llmprotocol.Request, dispat
 	// since the output bound plans it; this raises only a limit the caller
 	// stated.
 	if planned := ctx.RaylineARCThinkingControl; planned != nil && dispatch.targetFormat == llmprotocol.AnthropicMessagesV1 {
-		changed = raiseMessagesAllowance(request, planned.control.BudgetTokens) || changed
+		changed = thinkingcontrol.RaiseMessagesAllowance(request, planned.control.BudgetTokens, dispatchFallbackMaxOutputTokens) || changed
 	}
 	return changed, nil
 }
@@ -450,6 +451,7 @@ func (r *OpenAIRouter) finalizeProviderDispatchResponse(
 	ctx.DispatchedOutbound = readDispatchedOutboundParams(body, dispatch)
 	ctx.DispatchedServiceTier = dispatchedServiceTier(body)
 	r.stageFlexResend(ctx, dispatch, body)
+	r.stageEndpointResend(ctx, dispatch, body)
 	r.auditRaylineARCUpstream(body, ctx)
 	common := response.GetRequestBody().GetResponse()
 	if common == nil {

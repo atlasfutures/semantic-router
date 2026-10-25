@@ -5,9 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
 	"go.uber.org/zap/zaptest/observer"
-
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 )
 
 // A stream the platform cuts is never finalized, so the turn leaves no usage

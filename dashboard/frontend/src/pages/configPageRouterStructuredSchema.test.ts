@@ -47,6 +47,30 @@ describe('router defaults structured schemas', () => {
     expect(patch.router).not.toHaveProperty('auto_model_names')
   })
 
+  it('offers the none response store and round-trips it', () => {
+    // store_backend: none is the zero-data-retention mode (surface on,
+    // nothing retained); an operator must be able to pick it here, not only
+    // in raw YAML.
+    const cards = buildRouterSectionCards({
+      config: null,
+      routerConfig: { response_api: { enabled: true, store_backend: 'none' } },
+      routerDefaults: null,
+      toolsData: [],
+      toolsLoading: false,
+      toolsError: null,
+    })
+    const responseAPI = cards.find((card) => card.key === 'response_api')
+    const backend = responseAPI?.editFields.find((field) => field.name === 'store_backend')
+
+    expect(backend?.type).toBe('select')
+    expect(backend?.options).toContain('none')
+    expect(responseAPI?.editData.store_backend).toBe('none')
+    const patch = responseAPI?.save(responseAPI.editData) as {
+      services?: { response_api?: Record<string, unknown> }
+    }
+    expect(patch.services?.response_api?.store_backend).toBe('none')
+  })
+
   it('round-trips nested provider and rule object arrays', () => {
     const normalized = normalizeRouterStructuredFields('ratelimit', {
       fail_open: false,

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
+	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
 )
 
 // A refused turn's diagnostics say why it was refused: the provider's own

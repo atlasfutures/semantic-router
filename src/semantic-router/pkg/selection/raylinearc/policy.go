@@ -22,7 +22,9 @@ import (
 	"math"
 	"time"
 
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc/thinkingcontrol"
+	"github.com/atlasfutures/semantic-router/rayline-core/cachecontext"
+	"github.com/atlasfutures/semantic-router/rayline-core/reasoning"
+	"github.com/atlasfutures/semantic-router/rayline-core/thinkingcontrol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc/thinkinglever"
 )
 
@@ -33,14 +35,6 @@ const (
 	cacheReturnColdHitRatio = 0.2
 )
 
-type WorkerWarmth struct {
-	LastUsed        time.Time
-	LastInputTokens int
-	// Call is the cache evidence of the arm's last policy-service call; nil
-	// when it was not recorded (another mode, or a record older than it).
-	Call *CallCache
-}
-
 type EpisodeState struct {
 	// ServedModel, when set on the state a turn commits, is recorded by the
 	// commit itself as the episode's served model (ServedModelStore). It is
@@ -48,7 +42,7 @@ type EpisodeState struct {
 	ServedModel          string
 	PreviousArm          *int
 	TurnIndex            uint64
-	Warmth               []*WorkerWarmth
+	Warmth               []*cachecontext.WorkerWarmth
 	EncoderOwner         string
 	EncoderVisitedOwners []string
 	// Policy is the policy-service mode's ledger and epoch; nil otherwise.
@@ -63,16 +57,20 @@ type EpisodeState struct {
 	// package's actions (ADR 0109); nil until the first such turn.
 	Controls []ControlPlacement
 	// ReasoningIssuers names the targets that issued the encrypted reasoning
-	// the client may still resend (see NextReasoningIssuers); nil when it
+	// the client may still resend (see reasoning.NextReasoningIssuers); nil when it
 	// holds none the episode knows of.
 	ReasoningIssuers []string
 	// ReasoningProvenance names the worker that issued each opaque reasoning
 	// block the client may still resend; nil when none was recorded.
-	ReasoningProvenance []ReasoningProvenance
+	ReasoningProvenance []reasoning.ReasoningProvenance
 	// PolicyBoundary is the model decision a policy-service turn took at a
 	// schedule boundary, stored before dispatch so a retry reuses it; Commit
 	// clears it.
 	PolicyBoundary *PolicyBoundaryDecision
+	// PolicySession is the Modal sticky session that holds the episode on a
+	// sessioned policy Server (policy_service.sessions); nil otherwise. Its
+	// token is a credential: never logged.
+	PolicySession *PolicySession
 }
 
 // ControlPlacement is one placer's state. A placer governs one worker's
@@ -181,7 +179,7 @@ func NewEpisodeState(workerCount int) (*EpisodeState, error) {
 		return nil, errors.New("worker count must be positive")
 	}
 	return &EpisodeState{
-		Warmth: make([]*WorkerWarmth, workerCount),
+		Warmth: make([]*cachecontext.WorkerWarmth, workerCount),
 	}, nil
 }
 
@@ -210,7 +208,7 @@ func (state *EpisodeState) Commit(
 	if state.TurnIndex < math.MaxUint64 {
 		state.TurnIndex++
 	}
-	state.Warmth[arm] = &WorkerWarmth{
+	state.Warmth[arm] = &cachecontext.WorkerWarmth{
 		LastUsed:        now,
 		LastInputTokens: inputTokens,
 	}
@@ -384,16 +382,21 @@ func validateEpisodeState(state *EpisodeState, workerCount int) error {
 	); err != nil {
 		return err
 	}
+	if state.PolicySession != nil {
+		if err := ValidatePolicySession(*state.PolicySession); err != nil {
+			return err
+		}
+	}
 	if err := thinkinglever.ValidateLedger(state.Thinking); err != nil {
 		return err
 	}
 	if err := validateUpstreamPrefixes(state.Upstream); err != nil {
 		return err
 	}
-	if err := validateReasoningIssuers(state.ReasoningIssuers); err != nil {
+	if err := reasoning.ValidateReasoningIssuers(state.ReasoningIssuers); err != nil {
 		return err
 	}
-	if err := validateReasoningProvenance(state.ReasoningProvenance); err != nil {
+	if err := reasoning.ValidateReasoningProvenance(state.ReasoningProvenance); err != nil {
 		return err
 	}
 	return validateWarmth(state.Warmth)
@@ -424,7 +427,7 @@ func validatePersistedEncoderAffinity(owner string, visited []string) error {
 	return nil
 }
 
-func validateWarmth(warmth []*WorkerWarmth) error {
+func validateWarmth(warmth []*cachecontext.WorkerWarmth) error {
 	for index, value := range warmth {
 		if value == nil {
 			continue
@@ -501,7 +504,7 @@ func (policy *Policy) applyStayMargin(
 
 func switchCostForWorker(
 	worker *WorkerManifest,
-	warmth *WorkerWarmth,
+	warmth *cachecontext.WorkerWarmth,
 	inputTokens int,
 	now time.Time,
 ) (int, float64) {

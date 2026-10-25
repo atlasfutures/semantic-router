@@ -45,6 +45,7 @@ func (r *OpenAIRouter) completeModelSelection(
 					result.RaylineARC.EncoderReplicaID,
 					result.RaylineARC.EncoderVisitedReplicaIDs,
 				)
+				ctx.RaylineARCTransaction.markPolicySession(result.RaylineARC.PolicySession, result.RaylineARC.PolicySessionCleared)
 				stageRaylineARCPolicySelection(ctx, result.RaylineARC, result.SelectedModel)
 				r.publishRaylineARCDecision(ctx, result)
 			}
@@ -233,6 +234,7 @@ func observeRaylineARCSelection(
 		"encoder_failover":       trace.EncoderFailover,
 		"recipe":                 raylineARCRecipeLabel(ctx.Routing.RecipeName()),
 	}
+	addPrivacyFields(fields, ctx)
 	// The policy-service facts exist only when a policy service decided; an
 	// artifact-mode selection carries none rather than zeros.
 	if trace.OfferKind != "" {
@@ -255,6 +257,9 @@ func observeRaylineARCSelection(
 	}
 	if trace.TokenCountsUnknown {
 		fields["serialized_tokens"], fields["full_history_tokens"] = nil, nil
+	}
+	if trace.PolicyActionID != "" {
+		fields["retained_prefix_tokens"], fields["appended_tokens"] = policyTokenSplit(trace)
 	}
 	logging.ComponentEvent("extproc", "rayline_arc_selection", fields)
 }

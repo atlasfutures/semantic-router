@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 )
 
 // A cell in the shape of the Rayline ARC data-plane cell: one alias, arms
@@ -389,5 +389,109 @@ func TestCandidateReadsToolsUnderTheCatalogSpelling(t *testing.T) {
 	misspelt := routingCandidateOf(cfg, config.ModelRef{Model: "misspelt"}, 0)
 	if !claims.Tools || misspelt.Tools {
 		t.Fatalf("tools = %v/%v, want true for the catalog spelling and false for any other", claims.Tools, misspelt.Tools)
+	}
+}
+
+// An OpenRouter arm lists the provider object its standard turns send, read
+// off the card as the dispatch filter reads it, and an unpinned one says it
+// is unpinned; a gateway computes a private request's allowed arms from it.
+func TestCandidatesListTheirOpenRouterProviderPin(t *testing.T) {
+	t.Setenv("PUBLICMODELS_CANDIDATES_TEST_KEY", "public-candidates-test-key")
+	cfg, err := config.ParseYAMLBytes([]byte(candidatesConfig))
+	if err != nil {
+		t.Fatalf("the candidates config did not load: %v", err)
+	}
+	pinned := cfg.ModelConfig["z-ai/glm-5.2@thinking-off"]
+	noFallbacks := false
+	zdr := true
+	pinned.ProviderPreferences = &config.OpenRouterProviderPreferences{
+		Order: []string{"z-ai"}, Only: []string{"z-ai"}, Ignore: []string{"baidu"}, AllowFallbacks: &noFallbacks,
+		RequireParameters: &zdr, DataCollection: config.ProviderDataCollectionDeny, ZDR: &zdr,
+		MaxPrice: map[string]float64{"prompt": 0.5},
+	}
+	cfg.ModelConfig["z-ai/glm-5.2@thinking-off"] = pinned
+	candidates := candidatesOf(t, marshalListing(t, NewOpenAIModelList(cfg, 123)), "rayline/arc-dev")
+
+	pin, _ := json.Marshal(candidates[0].(map[string]interface{})["provider_pin"])
+	if want := `{"allow_fallbacks":false,"data_collection":"deny","ignore":["baidu"],"max_price":{"prompt":0.5},"only":["z-ai"],"order":["z-ai"],"pinned":true,"require_parameters":true,"zdr":true}`; string(pin) != want {
+		t.Fatalf("pinned arm provider_pin = %s, want %s", pin, want)
+	}
+	unpinned, _ := json.Marshal(candidates[1].(map[string]interface{})["provider_pin"])
+	if want := `{"pinned":false}`; string(unpinned) != want {
+		t.Fatalf("unpinned arm provider_pin = %s, want %s", unpinned, want)
+	}
+}
+
+// A cell states whether it reads the gateway's turn-signal headers, the
+// privacy headers among them: an artifact-mode decision never does, and a
+// policy-service one does only with trust_turn_signal_headers. An arm that is
+// not dispatched through OpenRouter sends no provider object, so lists none.
+func TestAliasStatesWhetherItTrustsTurnSignalHeaders(t *testing.T) {
+	trustedDecision := arcDecision("trusted", config.ModelRef{Model: "arm-0"})
+	trustedDecision.Algorithm.RaylineARC.PolicyService = &config.RaylineARCPolicyServiceConfig{TrustTurnSignalHeaders: true}
+	untrustedDecision := arcDecision("untrusted", config.ModelRef{Model: "arm-0"})
+	untrustedDecision.Algorithm.RaylineARC.PolicyService = &config.RaylineARCPolicyServiceConfig{}
+	cfg := &config.RouterConfig{
+		RouterOptions: config.RouterOptions{AutoModelNames: []string{"router/auto"}},
+		Entrypoints: []config.EntrypointMapping{
+			{ModelNames: []string{"partner/trusted"}, Recipe: "trusted"},
+			{ModelNames: []string{"partner/untrusted"}, Recipe: "untrusted"},
+		},
+		Recipes: []config.RoutingRecipe{
+			{Name: "default", Profile: config.RoutingProfile{Decisions: []config.Decision{arcDecision("artifact", config.ModelRef{Model: "arm-0"})}}},
+			{Name: "trusted", Profile: config.RoutingProfile{Decisions: []config.Decision{trustedDecision}}},
+			{Name: "untrusted", Profile: config.RoutingProfile{Decisions: []config.Decision{untrustedDecision}}},
+		},
+		BackendModels: config.BackendModels{ModelConfig: map[string]config.ModelParams{"arm-0": {}}},
+	}
+	listing := marshalListing(t, NewOpenAIModelList(cfg, 123))
+	for id, want := range map[string]bool{"router/auto": false, "partner/trusted": true, "partner/untrusted": false} {
+		routing := modelEntry(t, listing, id)["routing"].(map[string]interface{})
+		if routing["trust_turn_signal_headers"] != want {
+			t.Fatalf("%s trust_turn_signal_headers = %v, want %v", id, routing["trust_turn_signal_headers"], want)
+		}
+		if _, present := candidatesOf(t, listing, id)[0].(map[string]interface{})["provider_pin"]; present {
+			t.Fatalf("%s lists a provider_pin for an arm not dispatched through OpenRouter", id)
+		}
+	}
+}
+
+// An ARC cell advertises served_endpoint_header only with the routing-price
+// feed configured, the records that make an endpoint a known leaf: a
+// feed-less ARC cell (artifact mode, or a policy service without the feed)
+// states false, and an alias with no ARC decision says nothing.
+func TestARCAliasAdvertisesTheServedEndpointHeaderOnlyWithTheFeed(t *testing.T) {
+	fed := arcDecision("fed", config.ModelRef{Model: "arm-0"})
+	fed.Algorithm.RaylineARC.PolicyService = &config.RaylineARCPolicyServiceConfig{
+		RoutingPrices: &config.RaylineARCRoutingPricesConfig{URL: "https://prices.example/feed"},
+	}
+	feedless := arcDecision("feedless", config.ModelRef{Model: "arm-0"})
+	feedless.Algorithm.RaylineARC.PolicyService = &config.RaylineARCPolicyServiceConfig{}
+	cfg := &config.RouterConfig{
+		RouterOptions: config.RouterOptions{AutoModelNames: []string{"router/auto"}},
+		Entrypoints: []config.EntrypointMapping{
+			{ModelNames: []string{"partner/fed"}, Recipe: "fed"},
+			{ModelNames: []string{"partner/feedless"}, Recipe: "feedless"},
+			{ModelNames: []string{"partner/plain"}, Recipe: "plain"},
+		},
+		Recipes: []config.RoutingRecipe{
+			{Name: "default", Profile: config.RoutingProfile{Decisions: []config.Decision{arcDecision("artifact", config.ModelRef{Model: "arm-0"})}}},
+			{Name: "fed", Profile: config.RoutingProfile{Decisions: []config.Decision{fed}}},
+			{Name: "feedless", Profile: config.RoutingProfile{Decisions: []config.Decision{feedless}}},
+			{Name: "plain"},
+		},
+		BackendModels: config.BackendModels{ModelConfig: map[string]config.ModelParams{"arm-0": {}}},
+	}
+	listing := marshalListing(t, NewOpenAIModelList(cfg, 123))
+	for id, want := range map[string]interface{}{
+		"partner/fed": true, "partner/feedless": false, "router/auto": false, "partner/plain": nil,
+	} {
+		routing := modelEntry(t, listing, id)["routing"].(map[string]interface{})
+		if routing["served_endpoint_header"] != want {
+			t.Fatalf("%s served_endpoint_header = %v, want %v", id, routing["served_endpoint_header"], want)
+		}
+		if _, camel := routing["servedEndpointHeader"]; camel {
+			t.Fatalf("%s still carries the camelCase field", id)
+		}
 	}
 }

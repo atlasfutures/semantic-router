@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
+	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
 )
 
 // A Messages provider reply whose text block cites -- an empty list, as

@@ -1,0 +1,173 @@
+{
+  "description": "OpenRouter's endpoint slug rule, shared by memex pinReach (firebase/shared/src/usage/eligibleBasket.ts) and VSR slugMatches. A slug reaches its own tag and every longer tag under it, except a service-tier endpoint (last segment flex, priority or fast), which only its full slug reaches. zdr is a variant, not a tier. Source: https://openrouter.ai/docs/guides/routing/provider-selection (slug matching).",
+  "endpoints": [
+    {
+      "tag": "xai",
+      "service_tier": "standard"
+    },
+    {
+      "tag": "xai/zdr",
+      "service_tier": "standard"
+    },
+    {
+      "tag": "xai/zdr/us",
+      "service_tier": "standard"
+    },
+    {
+      "tag": "xai/priority",
+      "service_tier": "priority"
+    },
+    {
+      "tag": "xai/zdr/priority",
+      "service_tier": "priority"
+    },
+    {
+      "tag": "openai",
+      "service_tier": "standard"
+    },
+    {
+      "tag": "openai/flex",
+      "service_tier": "flex"
+    },
+    {
+      "tag": "openai/fast",
+      "service_tier": "priority"
+    },
+    {
+      "tag": "deepinfra",
+      "service_tier": "standard"
+    },
+    {
+      "tag": "deepinfra/fp8",
+      "service_tier": "standard"
+    },
+    {
+      "tag": "deepinfra/fp8/flex",
+      "service_tier": "flex"
+    },
+    {
+      "tag": "deepinfra/turbo",
+      "service_tier": "standard"
+    },
+    {
+      "tag": "google-vertex",
+      "service_tier": "standard"
+    },
+    {
+      "tag": "google-vertex/global",
+      "service_tier": "standard"
+    },
+    {
+      "tag": "google-vertexai",
+      "service_tier": "standard"
+    }
+  ],
+  "cases": [
+    {
+      "name": "a base slug reaches its variants and regions",
+      "slugs": [
+        "xai"
+      ],
+      "reach": [
+        "xai",
+        "xai/zdr",
+        "xai/zdr/us"
+      ]
+    },
+    {
+      "name": "zdr is a variant, not a tier",
+      "slugs": [
+        "xai/zdr"
+      ],
+      "reach": [
+        "xai/zdr",
+        "xai/zdr/us"
+      ]
+    },
+    {
+      "name": "a region slug reaches only itself",
+      "slugs": [
+        "xai/zdr/us"
+      ],
+      "reach": [
+        "xai/zdr/us"
+      ]
+    },
+    {
+      "name": "a tier endpoint is reached by its full slug",
+      "slugs": [
+        "xai/zdr/priority"
+      ],
+      "reach": [
+        "xai/zdr/priority"
+      ]
+    },
+    {
+      "name": "a base slug never reaches a flex or fast tier",
+      "slugs": [
+        "openai"
+      ],
+      "reach": [
+        "openai"
+      ]
+    },
+    {
+      "name": "flex named exactly",
+      "slugs": [
+        "openai/flex"
+      ],
+      "reach": [
+        "openai/flex"
+      ]
+    },
+    {
+      "name": "dropping the tier never reaches it",
+      "slugs": [
+        "deepinfra/fp8"
+      ],
+      "reach": [
+        "deepinfra/fp8"
+      ]
+    },
+    {
+      "name": "turbo is a variant",
+      "slugs": [
+        "deepinfra"
+      ],
+      "reach": [
+        "deepinfra",
+        "deepinfra/fp8",
+        "deepinfra/turbo"
+      ]
+    },
+    {
+      "name": "prefix is per segment, not per character",
+      "slugs": [
+        "google-vertex"
+      ],
+      "reach": [
+        "google-vertex",
+        "google-vertex/global"
+      ]
+    },
+    {
+      "name": "several slugs, endpoint order kept",
+      "slugs": [
+        "google-vertex/global",
+        "xai/zdr"
+      ],
+      "reach": [
+        "xai/zdr",
+        "xai/zdr/us",
+        "google-vertex/global"
+      ]
+    },
+    {
+      "name": "an unknown slug reaches nothing",
+      "slugs": [
+        "anthropic"
+      ],
+      "reach": []
+    }
+  ]
+}

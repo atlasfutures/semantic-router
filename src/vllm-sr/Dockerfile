@@ -230,6 +230,7 @@ RUN mkdir -p /build/../openvino-binding && \
 # Copy Go source (go.mod has local replace directives, so go mod download
 # requires candle-binding and ml-binding to be present first)
 COPY src/semantic-router/ .
+COPY rayline-core/ /rayline-core/
 
 # Build router (cross-compile for arm64 when TARGETARCH=arm64)
 # arm64: need libssl-dev:arm64 because libcandle_semantic_router.so dynamically links OpenSSL

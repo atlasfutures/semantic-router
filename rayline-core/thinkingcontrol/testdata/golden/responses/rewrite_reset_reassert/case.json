@@ -1,0 +1,58 @@
+{
+ "description": "a rewrite of earlier history resets the epoch and re-asserts the held level",
+ "format": "responses",
+ "provider": "openrouter",
+ "model": "openai/gpt-5.6-terra",
+ "wire_model": "openai/gpt-5.6-terra",
+ "admission": "enforced",
+ "allow_experimental": true,
+ "registry_pin": "eb0d014ac155443c9d8b95bcd6f6cc113224065e078a46332acd9cc9c5fad440",
+ "calls": [
+  {
+   "client_body": "client-00.json",
+   "control_id": "81d08d646c9db5bbb2b10590c16064f63d8b39c7ce25a91744925a78d34855dd",
+   "expected_body": "provider-00.json",
+   "receipt": {
+    "call": 0,
+    "control_id": "81d08d646c9db5bbb2b10590c16064f63d8b39c7ce25a91744925a78d34855dd",
+    "level_in_force": "up",
+    "instruction_state": "steered",
+    "written": "instruction",
+    "epoch": 0,
+    "epoch_reset_reason": null,
+    "retry": false
+   }
+  },
+  {
+   "client_body": "client-01.json",
+   "control_id": "81d08d646c9db5bbb2b10590c16064f63d8b39c7ce25a91744925a78d34855dd",
+   "expected_body": "provider-01.json",
+   "receipt": {
+    "call": 1,
+    "control_id": "81d08d646c9db5bbb2b10590c16064f63d8b39c7ce25a91744925a78d34855dd",
+    "level_in_force": "up",
+    "instruction_state": "steered",
+    "written": null,
+    "epoch": 0,
+    "epoch_reset_reason": null,
+    "retry": false
+   }
+  },
+  {
+   "client_body": "client-02.json",
+   "control_id": "81d08d646c9db5bbb2b10590c16064f63d8b39c7ce25a91744925a78d34855dd",
+   "expected_body": "provider-02.json",
+   "receipt": {
+    "call": 2,
+    "control_id": "81d08d646c9db5bbb2b10590c16064f63d8b39c7ce25a91744925a78d34855dd",
+    "level_in_force": "up",
+    "instruction_state": "steered",
+    "written": "instruction",
+    "epoch": 1,
+    "epoch_reset_reason": "transcript_rewrite",
+    "retry": false
+   }
+  }
+ ],
+ "refusal": null
+}

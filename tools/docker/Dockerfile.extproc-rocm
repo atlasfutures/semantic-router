@@ -149,6 +149,7 @@ WORKDIR /app
 # Copy Go module files
 RUN mkdir -p src/semantic-router
 COPY src/semantic-router/go.mod src/semantic-router/go.sum src/semantic-router/
+COPY rayline-core/go.mod rayline-core/go.sum rayline-core/
 COPY src/semantic-router/go.onnx.mod src/semantic-router/go.onnx.sum src/semantic-router/
 COPY candle-binding/go.mod candle-binding/semantic-router.go candle-binding/
 COPY onnx-binding/go.mod onnx-binding/semantic-router.go onnx-binding/
@@ -161,6 +162,7 @@ ENV GOPROXY="https://proxy.golang.org|direct"
 RUN cd src/semantic-router && go mod download
 
 COPY src/semantic-router/ src/semantic-router/
+COPY rayline-core/ rayline-core/
 
 # Copy Rust libraries from builder stages (x86_64 only)
 COPY --from=candle-builder /app/candle-binding/target/x86_64-unknown-linux-gnu/release/libcandle_semantic_router.so /app/candle-binding/target/release/

@@ -479,12 +479,45 @@ class RaylineARCGenerationRoutingConfig(BaseModel):
     caller_value: bool = False
 
 
+class RaylineARCPolicySessionsConfig(BaseModel):
+    """A policy service deployed as a Modal Server with sticky sessions.
+
+    Mirrors the Go loader's policy_service.sessions: each episode holds one
+    Modal session at base_url. Exclusive with replicas; needs the proxy key.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    # 0 selects 900 s (the episode idle TTL) and 10 s in the Go loader.
+    idle_timeout_seconds: int = Field(default=0, ge=0, le=86400)
+    start_timeout_seconds: int = Field(default=0, ge=0, le=60)
+
+    @model_validator(mode="after")
+    def _settings_need_enabled(self):
+        if not self.enabled and (
+            self.idle_timeout_seconds or self.start_timeout_seconds
+        ):
+            raise ValueError("sessions settings require sessions.enabled")
+        return self
+
+
 class RaylineARCPolicyServiceConfig(BaseModel):
     """The policy-service mode: an external service returns the decision."""
 
     model_config = ConfigDict(extra="forbid")
 
-    base_url: str
+    # Exactly one of base_url (one service) or replicas (each episode sticks
+    # to one replica; mirrors the Go loader's policy replica pool).
+    base_url: str | None = None
+    replicas: list[RaylineARCEncoderReplicaConfig] = Field(
+        default_factory=list, max_length=8
+    )
+    # The policy failover contract (rayline.arc.policy-failover.v1); its
+    # statuses are limited to 404, 429 and 503 by the Go loader.
+    failover: RaylineARCEncoderFailoverConfig | None = None
+    # Decide through a Modal Server with sticky sessions at base_url.
+    sessions: RaylineARCPolicySessionsConfig | None = None
     modal_key_env: str = ""
     modal_secret_env: str = ""
     total_timeout_seconds: int = Field(ge=1, le=900)
@@ -547,6 +580,30 @@ class RaylineARCPolicyServiceConfig(BaseModel):
                 "generation_routing.caller_value serves configurable ARC: a cell "
                 "pinned to decisions_v2.cost_weight is a tier"
             )
+        return self
+
+    @field_validator("failover", mode="before")
+    @classmethod
+    def empty_failover_is_absent(cls, value):
+        # The reference config shows failover: {} beside base_url, as the
+        # encoder's does; the Go loader treats a zero block as omitted.
+        if value in (None, {}):
+            return None
+        return value
+
+    @model_validator(mode="after")
+    def _one_endpoint_mode(self):
+        if bool(self.base_url) == bool(self.replicas):
+            raise ValueError("exactly one of base_url or replicas must be configured")
+        if self.replicas and self.failover is None:
+            raise ValueError("replicas require failover")
+        if not self.replicas and self.failover is not None:
+            raise ValueError("failover requires replicas")
+        if self.sessions is not None and self.sessions.enabled:
+            if self.replicas:
+                raise ValueError("sessions require base_url and no replicas")
+            if not self.modal_key_env or not self.modal_secret_env:
+                raise ValueError("sessions require modal_key_env and modal_secret_env")
         return self
 
     @model_validator(mode="after")

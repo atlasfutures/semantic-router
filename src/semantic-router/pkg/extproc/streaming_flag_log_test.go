@@ -4,10 +4,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
-
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 )
 
 // Whether a turn streamed is a routing fact that never reached a live log.

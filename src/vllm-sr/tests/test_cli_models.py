@@ -164,6 +164,13 @@ def test_provider_preferences_carry_max_price():
     }
 
 
+def test_provider_preferences_carry_zdr():
+    config = UserConfig(
+        **_provider_model(order=["openai"], data_collection="deny", zdr=True)
+    )
+    assert config.providers.models[0].provider_preferences.zdr is True
+
+
 def test_standard_twin_parses_beside_the_discount_pin():
     raw = _provider_model(only=["openai/flex"], allow_fallbacks=False)
     raw["providers"]["models"][0]["standard_twin"] = "standard"

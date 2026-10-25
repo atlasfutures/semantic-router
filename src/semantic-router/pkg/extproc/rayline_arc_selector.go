@@ -135,9 +135,32 @@ type raylineARCArmedComponents struct {
 	// policy is set only in the policy-service mode, where it decides and
 	// encoder is nil.
 	policy *raylinearc.PolicyServiceClient
+	// policyPool replaces policy when the cell configures replicas: each
+	// episode decides on its owner replica.
+	policyPool *raylinearc.PolicyServicePool
+	// policySessions replaces policy when the cell decides through a Modal
+	// Server with sticky sessions: each episode decides on its session.
+	policySessions *raylinearc.PolicySessionBackend
 	// prices is the routing price cache, set only in the policy-service
 	// mode with routing_prices configured.
 	prices *raylinearc.RoutingPriceCache
+}
+
+// routingPriceSettlement is the routing-price feed in effect, or nil when the
+// cell has none configured or the one it has cannot be read.
+func (armed *raylineARCArmedComponents) routingPriceSettlement() *raylinearc.RoutingPriceSettlement {
+	if armed == nil {
+		return nil
+	}
+	return routingPriceSettlementOf(armed.prices)
+}
+
+func routingPriceSettlementOf(cache *raylinearc.RoutingPriceCache) *raylinearc.RoutingPriceSettlement {
+	if cache == nil {
+		return nil
+	}
+	settlement, _ := cache.Settlement()
+	return settlement
 }
 
 type raylineARCSelector struct {
@@ -311,12 +334,13 @@ func (selector *raylineARCSelector) Select(
 	if err != nil {
 		return nil, err
 	}
+	withPrivacyEndpointExclusions(arcContext, armed.routingPriceSettlement())
 	hard, err := hardExcludedArms(arcContext, len(workerIDs))
 	if err != nil {
 		return nil, err
 	}
 	excluded, hold := toolLoopFamilyMask(arcContext, len(workerIDs), hard)
-	if armed.policy != nil {
+	if armed.policyServiceMode() {
 		return selector.selectViaPolicyService(ctx, armed, selCtx, arcContext, workerIDs, state, excluded, hard, hold)
 	}
 	hold.log(arcContext)
@@ -360,6 +384,11 @@ func (selector *raylineARCSelector) Select(
 // and is the one constraint that yields: it is lifted rather than refusing a
 // turn.
 //
+// The privacy mask is applied last. A basket no arm of which can serve the
+// turn keeps the class that says why; one where only arms the request's
+// privacy mode rules out could serve it is refused as no_private_arm, which
+// the gateway does not replay, rather than as a 503 it would.
+//
 // The two hard constraints are not the same kind of fact. The vision flag answers
 // a question about this turn; the disabled flag is a standing operator verdict
 // that holds for every turn. They are applied in that order so that a basket
@@ -381,7 +410,11 @@ func hardExcludedArms(
 	if err != nil {
 		return nil, err
 	}
-	return withDisabledArms(arcContext, armCount, excluded)
+	excluded, err = withDisabledArms(arcContext, armCount, excluded)
+	if err != nil {
+		return nil, err
+	}
+	return withPrivacyExcludedArms(arcContext, armCount, excluded)
 }
 
 // withOverContextArms folds the context-window constraint into the mask. It

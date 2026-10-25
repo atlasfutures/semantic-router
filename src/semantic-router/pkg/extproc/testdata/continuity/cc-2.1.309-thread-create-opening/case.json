@@ -1,0 +1,8 @@
+{
+  "description": "The opening turn of a Claude Code session in rld proxy mode: thread.type create, the tool set announced by mid-conversation tool_addition blocks in a system message.",
+  "client": "claude-cli/2.1.309 (rld proxy mode)",
+  "captured": "2026-10-23",
+  "path": "/v1/messages?beta=true",
+  "expect": "served",
+  "transforms": ["tool_changes_to_tools"]
+}

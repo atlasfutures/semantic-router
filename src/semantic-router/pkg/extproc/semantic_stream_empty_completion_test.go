@@ -3,7 +3,7 @@ package extproc
 import (
 	"testing"
 
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
+	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
 )
 
 // An upstream completion that produces only a stop token is a legal outcome,
