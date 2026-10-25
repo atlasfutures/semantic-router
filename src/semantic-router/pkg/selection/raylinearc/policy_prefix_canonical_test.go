@@ -92,6 +92,12 @@ func TestMessagesDigestComparesTheCanonicalConversation(t *testing.T) {
 			false,
 		},
 		{
+			"an empty user text block is not an empty string",
+			`{"role":"user","content":[{"type":"text","text":""}]}`,
+			`{"role":"user","content":""}`,
+			false,
+		},
+		{
 			"an assistant message is not demoted",
 			`{"role":"assistant","content":[{"type":"text","text":"x"}]}`,
 			`{"role":"assistant","content":"x"}`,
