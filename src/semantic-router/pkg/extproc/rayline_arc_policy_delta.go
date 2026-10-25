@@ -433,9 +433,8 @@ func (transaction *raylineARCEpisodeTransaction) appendPolicyStagedTurn(parent c
 		return fail("no_assistant_output")
 	}
 	if policyReplyThinks(staging.requestFormat, staging.clientBody) {
-		// No captured client shows how a thinking block is echoed (its
-		// signature and display), so such a reply is not appended: the next
-		// turn decides in full rather than staging a guess.
+		// Reasoning no captured client shows the echo of is not appended:
+		// the next turn decides in full rather than staging a guess.
 		return fail("thinking_turn")
 	}
 	roles := slices.Clone(staging.roles)
@@ -605,23 +604,39 @@ func anthropicEchoContent(raw json.RawMessage) (json.RawMessage, bool) {
 }
 
 // policyReplyThinks reports whether the reply the client received holds
-// reasoning, read before any normalization: Messages thinking or
-// redacted_thinking blocks, a Chat message's reasoning members, a Responses
-// reasoning item. An unreadable reply counts as thinking.
+// reasoning whose echo no captured client shows, read before any
+// normalization: a Messages redacted_thinking block or a thinking block
+// that is anything but {type, thinking, signature} with a signature, a Chat
+// message's reasoning members, a Responses reasoning item. An unreadable
+// reply counts as thinking.
+//
+// A signed Messages thinking block is appended: Claude Code 2.1.309 echoes
+// it unchanged (testdata/continuity/cc-2.1.309-thread-create-thinking-tool-
+// turn, message 11). A client that echoes it otherwise costs only a full
+// resend (appended_mismatch).
 func policyReplyThinks(format string, body []byte) bool {
 	switch format {
 	case policyFormatAnthropic:
 		var reply struct {
-			Content []struct {
-				Type string `json:"type"`
-			} `json:"content"`
+			Content []map[string]json.RawMessage `json:"content"`
 		}
 		if json.Unmarshal(body, &reply) != nil {
 			return true
 		}
 		for _, block := range reply.Content {
-			if block.Type == "thinking" || block.Type == "redacted_thinking" {
+			var kind string
+			_ = json.Unmarshal(block["type"], &kind)
+			switch kind {
+			case "redacted_thinking":
 				return true
+			case "thinking":
+				var signature string
+				if len(block) != 3 || json.Unmarshal(block["signature"], &signature) != nil || signature == "" {
+					return true
+				}
+				if _, ok := block["thinking"]; !ok {
+					return true
+				}
 			}
 		}
 	case policyFormatOpenAI:
