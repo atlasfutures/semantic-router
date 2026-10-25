@@ -92,7 +92,8 @@ opt-in. The core reports facts and never picks or ranks a model.
   client retry of the same request never re-dispatches the refused target.
 - **Response.** The selected result must carry a `receipt` naming the selected
   action, control and applied policy, with a known `decided_by` per dimension
-  (`decided_by.model` may be `held_unavailable`, or null for a one-stage
+  (`decided_by.model` may also be `held_unavailable`, `prefer_local_threshold` or
+  `utility_fallback` (prefer-local), or null for a one-stage
   package) and an `excluded`
   entry, with the same reason, for every target the core reported as not
   fitting. `routing.execution` must echo `status: "applied"`, the version and the

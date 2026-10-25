@@ -282,7 +282,7 @@ func validateV2(raw []byte, selected publicDecision, identity *decisionIdentity,
 	}
 	if model := receipt.DecidedBy.Model; model != nil {
 		switch *model {
-		case "schedule", "held", "capacity_handoff", "held_unavailable":
+		case "schedule", "held", "capacity_handoff", "held_unavailable", "prefer_local_threshold", "utility_fallback":
 		default:
 			return nil, fmt.Errorf("Decisions receipt has unknown decided_by.model %q", *model)
 		}
