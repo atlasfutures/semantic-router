@@ -384,8 +384,10 @@ func runGoldenTranslationInput(
 			if err != nil {
 				t.Fatal(err)
 			}
+			golden := filepath.Join(directory, prefix+"-"+target.name+"-out.json")
+			recordGoldenBytes(t, golden+".wire", actual)
 			actual = prettyJSON(t, actual)
-			assertGoldenOutput(t, filepath.Join(directory, prefix+"-"+target.name+"-out.json"), actual, "protocol translation")
+			assertGoldenOutput(t, golden, actual, "protocol translation")
 		})
 	}
 }
@@ -446,8 +448,10 @@ func prettyJSON(t *testing.T, body []byte) []byte {
 }
 
 // goldenBytesOutEnv names a directory that receives every golden comparison's
-// actual bytes, at the golden's own testdata path. The goldens compare as
-// JSON; a byte-level diff of two runs (encoding/json v1 against
+// actual bytes, at the golden's own testdata path, and beside each translation
+// golden (.wire) the encoder's bytes as written, before the test normalizes
+// them: request and response bodies, and a stream's SSE frames concatenated.
+// The goldens compare as JSON; a byte-level diff of two runs (encoding/json v1 against
 // GOEXPERIMENT=jsonv2, tools/scripts/json-v2-byte-diff.sh) needs the bytes.
 const goldenBytesOutEnv = "PROTOCOL_GOLDEN_BYTES_OUT"
 

@@ -166,8 +166,10 @@ func assertGoldenStreamTarget(
 	t.Helper()
 	outputFrames := translateGoldenStream(t, engine, source, target.format, input, input.Chunks)
 	verifyGoldenTargetStream(t, engine, target.format, input, outputFrames)
+	golden := filepath.Join(directory, prefix+"-"+target.name+"-out.json")
+	recordGoldenBytes(t, golden+".wire", bytes.Join(outputFrames, nil))
 	actual := marshalGoldenStreamTranscript(t, outputFrames)
-	assertGoldenOutput(t, filepath.Join(directory, prefix+"-"+target.name+"-out.json"), actual, "stream protocol translation")
+	assertGoldenOutput(t, golden, actual, "stream protocol translation")
 }
 
 func TestGoldenStreamTranslationIsChunkBoundaryIndependent(t *testing.T) {

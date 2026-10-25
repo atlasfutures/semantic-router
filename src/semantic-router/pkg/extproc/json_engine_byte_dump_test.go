@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -35,6 +36,8 @@ func TestJSONEngineByteDump(t *testing.T) {
 	if len(corpus) == 0 {
 		t.Fatal("no corpus bodies found")
 	}
+	dispatched := 0
+	defer func() { t.Logf("%d of %d turns reached the policy decide", dispatched, 4*len(corpus)) }()
 	for _, glmFormat := range []string{"anthropic", "openai"} {
 		router, fake := v5RouterForCaptures(t)
 		if glmFormat != "anthropic" {
@@ -53,10 +56,20 @@ func TestJSONEngineByteDump(t *testing.T) {
 				if bodies := fake.receivedBodies(); len(bodies) > before {
 					writeJSONEngineDump(t, out, name+".decide", bodies[len(bodies)-1])
 				}
+				// A capture the router refuses as an unknown model never
+				// reached the dispatch path the dump is for.
+				if len(fake.receivedBodies()) == before && strings.Contains(string(written), "is not available") {
+					t.Errorf("%s: the capture's model was not routed on the auto alias: %.200s", name, written)
+				}
+				if len(fake.receivedBodies()) > before {
+					dispatched++
+				}
 			}
 		}
 	}
 }
+
+var jsonEngineModelMember = regexp.MustCompile(`"model"\s*:\s*"[^"]*"`)
 
 type jsonEngineCorpusEntry struct {
 	name, path string
@@ -74,7 +87,11 @@ func jsonEngineCorpus(t *testing.T) []jsonEngineCorpusEntry {
 		if err != nil {
 			t.Fatal(err)
 		}
-		body = clientModel.ReplaceAll(body, []byte(`{"model":"auto"`))
+		// The first model member, however the capture is formatted, names the
+		// auto alias.
+		if location := jsonEngineModelMember.FindIndex(body); location != nil {
+			body = append(append(append([]byte{}, body[:location[0]]...), `"model":"auto"`...), body[location[1]:]...)
+		}
 		corpus = append(corpus, jsonEngineCorpusEntry{name: name, path: path, body: body})
 	}
 	paths := map[string]string{"messages": "/v1/messages", "chat": "/v1/chat/completions", "responses": "/v1/responses"}
@@ -135,6 +152,9 @@ func jsonEngineTurn(t *testing.T, router *OpenAIRouter, fake *fakePolicyService,
 	if err != nil {
 		return []byte("headers error: " + err.Error())
 	}
+	// What the client receives: processRequestHeaders and processRequestBody
+	// encode an immediate response in the client's protocol before sending.
+	response = router.encodeImmediateResponseForClient(response, ctx)
 	if immediate := response.GetImmediateResponse(); immediate != nil {
 		return []byte(fmt.Sprintf("headers immediate %d\n%s", immediate.GetStatus().GetCode(), immediate.GetBody()))
 	}
@@ -142,8 +162,12 @@ func jsonEngineTurn(t *testing.T, router *OpenAIRouter, fake *fakePolicyService,
 		RequestBody: &ext_proc.HttpBody{Body: client, EndOfStream: true},
 	}, ctx)
 	if err != nil {
-		return []byte("body error: " + err.Error())
+		var ok bool
+		if response, ok = router.processBodyRoutingError(err, ctx); !ok {
+			return []byte("body error: " + err.Error())
+		}
 	}
+	response = router.encodeImmediateResponseForClient(response, ctx)
 	if immediate := response.GetImmediateResponse(); immediate != nil {
 		return []byte(fmt.Sprintf("immediate %d\n%s", immediate.GetStatus().GetCode(), immediate.GetBody()))
 	}
