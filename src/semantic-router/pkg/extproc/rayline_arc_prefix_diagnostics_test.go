@@ -295,3 +295,70 @@ func TestPolicySelectorRemembersOnlyDecidedShapes(t *testing.T) {
 		t.Fatalf("decided request remembered %d shapes, want 1", len(shapes))
 	}
 }
+
+// A rewritten earlier user message is described on both sides by layout
+// only: the form, block types, lengths, cache breakpoints and short text
+// digests show what changed, and no text reaches the log.
+func TestPrefixBreakLogsTheDivergentMessageLayouts(t *testing.T) {
+	freshPolicyPrefixShapes(t)
+	logs := captureLogs(t)
+	const prompt = "fix the secret bug"
+	reminder := map[string]any{"type": "text", "text": "<system-reminder>ide context</system-reminder>"}
+	history := []any{
+		map[string]any{"role": "user", "content": "hello"},
+		map[string]any{"role": "assistant", "content": "hi"},
+	}
+	asSent := map[string]any{"role": "user", "content": []any{
+		reminder,
+		map[string]any{"type": "text", "text": prompt, "cache_control": map[string]any{"type": "ephemeral"}},
+	}}
+	_, state := prefixDiagnosticTurn(t, nil, diagMainTurn(append(history, asSent,
+		map[string]any{"role": "system", "content": "<system-reminder>r</system-reminder>"})...), raylinearc.PolicyCallUnknown)
+	transition, _ := prefixDiagnosticTurn(t, state, diagMainTurn(append(history,
+		map[string]any{"role": "user", "content": prompt},
+		map[string]any{"role": "system", "content": "<system-reminder>r</system-reminder>"},
+		map[string]any{"role": "assistant", "content": "ok"},
+		map[string]any{"role": "user", "content": "go on"})...), raylinearc.PolicyCallUnknown)
+	events := prefixDiagnostics(logs)
+	if transition != raylinearc.PolicyTransitionPrefixBreak || len(events) != 1 || events[0]["first_divergent_index"] != int64(2) {
+		t.Fatalf("%s %v", transition, events)
+	}
+	raw, err := json.Marshal(events[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "secret") || strings.Contains(string(raw), "ide context") {
+		t.Fatalf("the diagnostic carries text: %s", raw)
+	}
+	var logged struct {
+		Current  layoutFields `json:"divergent_layout"`
+		Previous layoutFields `json:"previous_divergent_layout"`
+	}
+	if err := json.Unmarshal(raw, &logged); err != nil {
+		t.Fatal(err)
+	}
+	if logged.Previous.Form != "list" || logged.Previous.Count != 2 || len(logged.Previous.Blocks) != 2 ||
+		!logged.Previous.Blocks[0].Reminder || logged.Previous.Blocks[0].CacheControl ||
+		!logged.Previous.Blocks[1].CacheControl || logged.Previous.Blocks[1].TextLen != len(prompt) {
+		t.Fatalf("previous layout = %+v", logged.Previous)
+	}
+	if logged.Current.Role != "user" || logged.Current.Form != "string" || logged.Current.Count != 1 ||
+		logged.Current.Blocks[0].TextLen != len(prompt) || logged.Current.Blocks[0].Reminder ||
+		logged.Current.Blocks[0].SHA != logged.Previous.Blocks[1].SHA || len(logged.Current.Blocks[0].SHA) != 8 {
+		t.Fatalf("current layout = %+v", logged.Current)
+	}
+}
+
+type layoutFields struct {
+	Role   string `json:"role"`
+	Form   string `json:"content_form"`
+	Count  int    `json:"block_count"`
+	Blocks []struct {
+		Type         string   `json:"type"`
+		Keys         []string `json:"keys"`
+		TextLen      int      `json:"text_len"`
+		SHA          string   `json:"text_sha256_8"`
+		CacheControl bool     `json:"cache_control"`
+		Reminder     bool     `json:"system_reminder"`
+	} `json:"blocks"`
+}
