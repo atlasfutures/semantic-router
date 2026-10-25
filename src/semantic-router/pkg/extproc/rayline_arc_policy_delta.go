@@ -97,8 +97,8 @@ type policyStagedTurn struct {
 	historyDigest string
 	// unsettled is an append VSR stopped waiting for (a timeout or a
 	// transport failure): the service may still hold the episode busy, so the
-	// next turn sends in full and retries session_busy for the append's
-	// budget longer (policyServiceScorer.unsettledBusyWait).
+	// next turn sends in full and retries session_busy one acquire timeout
+	// longer (policyFirstBusyWait).
 	unsettled bool
 }
 
@@ -337,8 +337,13 @@ func policyDeltaRefused(err error) bool {
 // policyAppendTimeout bounds the append a delta turn posts inside its lease
 // after the client may already have its reply. A next turn can arrive then
 // and waits for the lease up to the episode's acquire timeout, so the append
-// stays well inside it: it never makes that turn contended where a sync cell
-// would have served it. It is also no longer than a decide may take.
+// takes at most half of it. It is also no longer than a decide may take.
+//
+// The bound is VSR's wait, not the service's work: an append the service
+// still runs past it holds the service's episode lock, so the next turn
+// retries session_busy one acquire timeout longer (append_unsettled). An
+// append that outlives even that leaves the next turn session_busy (429),
+// as a sync decide that timed out does.
 func policyAppendTimeout(total, acquire time.Duration) time.Duration {
 	if acquire <= 0 {
 		acquire = episodeFinalizeTimeout
@@ -346,7 +351,7 @@ func policyAppendTimeout(total, acquire time.Duration) time.Duration {
 	if total <= 0 {
 		total = episodeFinalizeTimeout
 	}
-	return raylineARCDurationMin(total, acquire/4)
+	return raylineARCDurationMin(total, acquire/2)
 }
 
 // armDelta reads, at readiness, whether the service serves staged turns. A
@@ -662,6 +667,26 @@ func stageRaylineARCAppendSource(ctx *RequestContext, clientBody []byte) {
 		return
 	}
 	ctx.RaylineARCTransaction.policyStaging.clientBody = clientBody
+}
+
+// policyFirstBusyWait is how long a turn's first decide retries
+// session_busy: one acquire timeout, two after an append VSR stopped waiting
+// for, whose work may still hold the service's episode lock.
+func policyFirstBusyWait(busyWait time.Duration, deltaOutcome string) time.Duration {
+	if deltaOutcome == "append_unsettled" {
+		return 2 * busyWait
+	}
+	return busyWait
+}
+
+// policyStagedFullMode is the decision mode of a turn sent in full: sync on
+// a staged turn, none on a turn that stages nothing. A re-ask after a delta
+// decide is sent in full, so it is recorded so.
+func policyStagedFullMode(staging bool) string {
+	if staging {
+		return policyDecisionModeSync
+	}
+	return ""
 }
 
 // addPolicyDecisionModeFields records a delta cell's decision mode on a
