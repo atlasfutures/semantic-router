@@ -129,6 +129,10 @@ func observePolicyPrefix(
 		"first_divergent_index":  nil,
 		"divergent_role":         nil,
 		"divergent_block_type":   nil,
+		// The divergent message's block layout in this request and in the
+		// recorded one: names, lengths and short digests, never content.
+		"divergent_layout":          nil,
+		"previous_divergent_layout": nil,
 	}
 	if recorded != nil {
 		fields["system_changed"] = recorded.System != current.System
@@ -140,6 +144,12 @@ func observePolicyPrefix(
 			if messages := digests.Messages(); index < len(messages) {
 				role, block := raylinearc.PolicyMessageKind(messages[index])
 				fields["divergent_role"], fields["divergent_block_type"] = role, block
+				fields["divergent_layout"] = raylinearc.NewPolicyMessageLayout(messages[index]).Fields()
+			}
+			// The same message as the recorded request sent it, when it was
+			// among the last ones that request kept the layout of.
+			if layout, kept := recorded.Layout(index); kept {
+				fields["previous_divergent_layout"] = layout.Fields()
 			}
 		}
 	}
