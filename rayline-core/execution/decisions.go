@@ -78,16 +78,21 @@ func NewHTTPDecisions(config Config) (*HTTPDecisions, error) {
 		}
 		policyPreset = policy.Preset
 		for key := range routing {
-			if key != "policy" && key != "value_usd" && key != "prices" && key != "exclusive" && key != "price_profile_id" && key != "price_profile_version" {
+			if key != "policy" && key != "value_usd" && key != "prices" && key != "exclusive" && key != "price_profile_id" && key != "price_profile_version" && key != "signals" {
 				return nil, fmt.Errorf("execution_context_v2 routing key %q has no supported applied acknowledgement", key)
 			}
 		}
 	}
 	if mode == DecisionsCurrent {
 		for key := range routing {
-			if key != "value_usd" && key != "prices" && key != "exclusive" && key != "price_profile_id" && key != "price_profile_version" {
+			if key != "value_usd" && key != "prices" && key != "exclusive" && key != "price_profile_id" && key != "price_profile_version" && key != "signals" {
 				return nil, fmt.Errorf("current Decisions routing key %q has no supported applied acknowledgement", key)
 			}
+		}
+	}
+	if raw, exists := routing["signals"]; exists {
+		if err := validateSignalNames(raw); err != nil {
+			return nil, err
 		}
 	}
 	if _, exists := routing["prices"]; exists && !validSHA256(config.Decisions.PriceSHA256) {
@@ -296,6 +301,7 @@ type decisionsResponse struct {
 	RouteID string                    `json:"route_id"`
 	Presets map[string]publicDecision `json:"presets"`
 	Custom  *publicDecision           `json:"custom"`
+	Signals json.RawMessage           `json:"signals"`
 	Routing struct {
 		ValueUSD *struct {
 			Status    string   `json:"status"`
@@ -336,6 +342,10 @@ func (provider *HTTPDecisions) Decide(ctx context.Context, input DecisionInput) 
 	var routing map[string]json.RawMessage
 	if err := json.Unmarshal(provider.config.Decisions.Routing, &routing); err != nil {
 		return Decision{}, err
+	}
+	if input.Signals != nil {
+		// The request's signal names replace any configured ones, unchanged.
+		routing["signals"] = input.Signals
 	}
 	var external externalContext
 	var externalV2 contextV2
@@ -427,10 +437,19 @@ func (provider *HTTPDecisions) Decide(ctx context.Context, input DecisionInput) 
 		}
 	}
 	if selected.Identity == nil && provider.config.Decisions.apiMode() == DecisionsCurrent {
-		if provider.config.Decisions.Result != "top" {
-			return provider.currentTierDecision(result, selected, len(routing) != 0)
+		// Signals change no route: they are not a routing preference here.
+		preferences := len(routing)
+		if _, exists := routing["signals"]; exists {
+			preferences--
 		}
-		return provider.currentTopDecision(result, selected, routing)
+		var decision Decision
+		if provider.config.Decisions.Result != "top" {
+			decision, err = provider.currentTierDecision(result, selected, preferences != 0)
+		} else {
+			decision, err = provider.currentTopDecision(result, selected, preferences != 0)
+		}
+		decision.Signals = result.Signals
+		return decision, err
 	}
 	identity := selected.Identity
 	// A package-less profile pins no package: the response names it.
@@ -489,6 +508,7 @@ func (provider *HTTPDecisions) Decide(ctx context.Context, input DecisionInput) 
 	decision := Decision{RouteID: result.RouteID, ActionID: identity.ActionID, Worker: selected.Worker, Model: action.Model, ReportedModel: selected.Model, PackageSHA256: identity.PackageSHA256, ControlID: identity.ControlID, ArmID: identity.ArmID, Result: provider.config.Decisions.Result, IdentitySource: "response", AppliedValueUSD: provider.valueUSD}
 	decision.PriceProfile = appliedProfile
 	decision.Receipt = receipt
+	decision.Signals = result.Signals
 	provider.logDecision(decision, identity.Prices.Basis, identity.Prices.SHA256)
 	return decision, nil
 }
@@ -496,8 +516,8 @@ func (provider *HTTPDecisions) Decide(ctx context.Context, input DecisionInput) 
 // The deployed top-only API names an action but does not attest package,
 // registry, offer or prices. It can be used explicitly with empty routing;
 // the local manifest supplies control identity, clearly labeled in evidence.
-func (provider *HTTPDecisions) currentTopDecision(result decisionsResponse, selected publicDecision, routing map[string]json.RawMessage) (Decision, error) {
-	if provider.config.Decisions.Result != "top" || len(routing) != 0 || provider.config.Decisions.OfferSHA256 != "" {
+func (provider *HTTPDecisions) currentTopDecision(result decisionsResponse, selected publicDecision, preferences bool) (Decision, error) {
+	if provider.config.Decisions.Result != "top" || preferences || provider.config.Decisions.OfferSHA256 != "" {
 		return Decision{}, fmt.Errorf("this Decisions response only supports top with empty routing and no returned identity pins")
 	}
 	action, err := provider.bindCurrentAction(result.RouteID, selected)
