@@ -392,7 +392,11 @@ func translateGoldenCapabilityStream(
 		frames = append(frames, output...)
 		diagnostics = appendDiagnostics(diagnostics, chunkDiagnostics, llmprotocol.DefaultPolicy().Limits.Diagnostics)
 		if pushErr != nil {
-			return frames, diagnostics, pushErr
+			// As production does, the failure is finalized into the
+			// client-facing error frames; they are kept for the byte diff
+			// only, and the outcome stays the push failure.
+			failure, _, _, _ := stream.Finalize(pushErr)
+			return append(frames, failure...), diagnostics, pushErr
 		}
 	}
 	output, _, finalDiagnostics, finalErr := stream.Finalize(nil)
