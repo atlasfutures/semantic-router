@@ -29,7 +29,7 @@ opt-in. The core reports facts and never picks or ranks a model.
   `targets[]`. Rayline Local writes
   `arc-policy.hybrid-default.v1` when its user sets no override; the core never
   sends an absent policy in this mode. Allowed routing keys are `policy`,
-  `value_usd`, `prices`, `exclusive` and the price-profile keys.
+  `value_usd`, `prices`, `exclusive`, `signals` and the price-profile keys.
 - **Registry.** Without an explicit `registry_path`, v2 executes with the
   embedded registry whatever registry the serving package names: controls are
   content-hashed, every bound action's control must be admitted by the
@@ -163,6 +163,17 @@ value acknowledgement; the selected result must also report that value and its
 reciprocal cost weight. Missing custom results, mismatched identities or prices,
 and unapplied routing keys fail visibly. A harness cannot override these settings
 through its generation body.
+
+**Typed signals** (pathfinder `docs/plans/2026-10-25-decisions-topic-signal-contract.md`)
+are caller metadata and change no route. In every mode a generation request may
+carry `"routing": {"signals": ["topic.operation", ...]}` and nothing else under
+`routing`; the core removes that member before dispatch, sends the names to
+Decisions unchanged (they replace any configured `routing.signals`), and returns
+the response's `signals` block as compact JSON in the `x-vsr-signals` response
+header, as cloud VSR does on generation turns. The service owns the vocabulary
+and refuses unknown or unadmitted names. A malformed list is `400
+invalid_routing_signals`; a request without `routing` is untouched, and no
+header is set.
 
 For an isolated development cell, `decisions.cell_tag` sends the gateway's
 `X-Rayline-Cell` selection header and requires the same tag in its response.

@@ -202,6 +202,13 @@ func (server *Server) execute(writer http.ResponseWriter, incoming *http.Request
 			return
 		}
 	}
+	// routing.signals (all modes) is caller metadata for Decisions, never sent
+	// upstream; a body without it is untouched.
+	body, signals, err := extractRoutingSignals(body)
+	if err != nil {
+		server.writeError(writer, format, http.StatusBadRequest, "invalid_routing_signals", err.Error())
+		return
+	}
 	wireRequest := parseWireRequest(format, body)
 	markerSidecall := v2 && explicitEvent == nil && wireRequest.isSidecall()
 	ephemeral := false
@@ -318,7 +325,7 @@ func (server *Server) execute(writer http.ResponseWriter, incoming *http.Request
 			reuse[deployment] = prompt
 		}
 		measuredEvidence = evidence
-		input := DecisionInput{Body: body, Format: format, SessionID: session, BranchID: branch, RequestID: requestID, State: evidence, Event: event}
+		input := DecisionInput{Body: body, Format: format, SessionID: session, BranchID: branch, RequestID: requestID, State: evidence, Event: event, Signals: signals}
 		if v2 {
 			facts, prompts, err := server.measureCapacity(ctx, body, format, state)
 			if err != nil {
@@ -441,6 +448,11 @@ func (server *Server) execute(writer http.ResponseWriter, incoming *http.Request
 		writer.Header().Set("X-Rayline-Test-Alias", aliasReason)
 	}
 	writer.Header().Set("X-Rayline-Instance-Id", server.instance)
+	// Every generation turn consults Decisions, local or cloud, so its signals
+	// block is the one cloud VSR would carry; routing never goes upstream.
+	if value := signalsHeaderValue(pending.decision.Signals); pending.input.Signals != nil && value != "" {
+		writer.Header().Set(signalsHeader, value)
+	}
 	var response llmprotocol.Response
 	if request.Stream {
 		response, err = server.forwardStream(writer, incoming, upstream, format, selected, prepared.response, pending)
