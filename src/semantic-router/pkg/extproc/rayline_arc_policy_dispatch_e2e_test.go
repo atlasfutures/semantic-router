@@ -536,7 +536,7 @@ func TestPolicyDispatchesACodexTurn(t *testing.T) {
 		t.Fatalf("build router: %v", err)
 	}
 	awaitPolicySelectorArmed(t, router)
-	codex, err := os.ReadFile("../protocolcodec/testdata/codex/turn2-request.json")
+	codex, err := os.ReadFile("../../../../rayline-core/protocolcodec/testdata/codex/turn2-request.json")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -42,6 +42,20 @@ type RoutingMetadata struct {
 	// on. Absent when the decision declares none, so a cell that has not
 	// declared a limit publishes no number rather than a zero.
 	MaxContextTokens *int `json:"max_context_tokens,omitempty"`
+	// TrustTurnSignalHeaders is the alias's Rayline ARC decision's
+	// trust_turn_signal_headers: whether the cell reads the gateway's
+	// turn-signal headers, x-rayline-privacy-mode and
+	// x-rayline-privacy-allowed-arms among them. False on an artifact-mode
+	// decision, which has no policy service. Absent where Candidates is.
+	TrustTurnSignalHeaders *bool `json:"trust_turn_signal_headers,omitempty"`
+	// ServedEndpointHeader says the cell states the OpenRouter endpoint that
+	// served a turn in x-vsr-served-endpoint whenever it is a known leaf of
+	// the routing-price feed, so a gateway may read a successful turn without
+	// the header as one OpenRouter routed freely. True only on a Rayline ARC
+	// decision with the feed configured (policy_service.routing_prices); a
+	// cell without it never states an endpoint, so it is false there. Absent
+	// where Candidates is.
+	ServedEndpointHeader *bool `json:"served_endpoint_header,omitempty"`
 }
 
 // OpenAIModel represents a single model in the OpenAI /v1/models response.
@@ -94,6 +108,8 @@ func (b *modelListBuilder) appendAutoAliases(cfg *config.RouterConfig) {
 	if cfg != nil {
 		routing.Candidates = routingCandidatesOf(cfg, cfg.DefaultRecipe())
 		routing.MaxContextTokens = routingContextLimitOf(cfg.DefaultRecipe())
+		routing.TrustTurnSignalHeaders = routingTrustsTurnSignalHeadersOf(cfg.DefaultRecipe())
+		routing.ServedEndpointHeader = routingStatesServedEndpointOf(cfg.DefaultRecipe())
 	}
 	b.appendAll(
 		autoModelNames,
@@ -113,6 +129,8 @@ func (b *modelListBuilder) appendEntrypointAliases(cfg *config.RouterConfig) {
 		if recipe, ok := cfg.RecipeByName(entrypoint.Recipe); ok {
 			routing.Candidates = routingCandidatesOf(cfg, recipe)
 			routing.MaxContextTokens = routingContextLimitOf(recipe)
+			routing.TrustTurnSignalHeaders = routingTrustsTurnSignalHeadersOf(recipe)
+			routing.ServedEndpointHeader = routingStatesServedEndpointOf(recipe)
 		}
 		b.appendAll(entrypoint.ModelNames, routerOwner, description, routing)
 	}

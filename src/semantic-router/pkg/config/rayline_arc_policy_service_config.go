@@ -34,10 +34,27 @@ import (
 // (website/docs/proposals/rayline-arc-policy-service.md). The mounted v3
 // artifact and the in-process encoder are not used in this mode.
 type RaylineARCPolicyServiceConfig struct {
-	BaseURL             string `yaml:"base_url"`
-	ModalKeyEnv         string `yaml:"modal_key_env,omitempty"`
-	ModalSecretEnv      string `yaml:"modal_secret_env,omitempty"`
-	TotalTimeoutSeconds int    `yaml:"total_timeout_seconds"`
+	// BaseURL is the one policy service the cell decides with. A cell sets
+	// it or Replicas, never both.
+	BaseURL string `yaml:"base_url"`
+	// Replicas are policy-service deployments of the same package, each with
+	// a stable id. Each episode sticks to one replica: the owner its episode
+	// state persisted, else the rendezvous choice among the active ones. A
+	// replica keeps the episode's retained encoder session and strict
+	// episode memory in its own process, so a turn that lands elsewhere is
+	// correct but rebuilds. A draining replica keeps its episodes and takes
+	// no new ones. Absent (the default), the cell calls BaseURL as before.
+	Replicas []RaylineARCEncoderReplicaConfig `yaml:"replicas,omitempty"`
+	// Failover moves an episode off its owner, once per turn, only after one
+	// of the configured statuses (404, 429 or 503: answered before the
+	// service touches the episode). Required with Replicas, refused without.
+	Failover RaylineARCEncoderFailoverConfig `yaml:"failover,omitempty"`
+	// Sessions decides through a Modal Server with sticky sessions at
+	// BaseURL: each episode holds one Modal session. Exclusive with Replicas.
+	Sessions            RaylineARCPolicySessionsConfig `yaml:"sessions,omitempty"`
+	ModalKeyEnv         string                         `yaml:"modal_key_env,omitempty"`
+	ModalSecretEnv      string                         `yaml:"modal_secret_env,omitempty"`
+	TotalTimeoutSeconds int                            `yaml:"total_timeout_seconds"`
 	// ConnectTimeoutSeconds bounds the dial and TLS handshake to the
 	// service; zero selects 5 s, the encoder's.
 	ConnectTimeoutSeconds int `yaml:"connect_timeout_seconds,omitempty"`
@@ -83,11 +100,14 @@ type RaylineARCPolicyServiceConfig struct {
 	// TrustTurnSignalHeaders reads the gateway's turn-signal headers from
 	// the request: x-rayline-call-kind, x-rayline-compaction,
 	// x-rayline-agent-key-source, x-rayline-parent-session and
-	// x-rayline-parent-agent, and the exploration eligibility headers
-	// x-rayline-privacy-mode and x-rayline-training-data. Set it only when a
-	// gateway in front of the router sets (or strips) every one of them,
-	// since a client could otherwise claim any turn is a side call or its own
-	// subagent episode, or consent to exploration.
+	// x-rayline-parent-agent, the exploration eligibility headers
+	// x-rayline-privacy-mode and x-rayline-training-data, the privacy arm
+	// mask x-rayline-privacy-allowed-arms, and x-rayline-session-key, the key
+	// an arm's OpenRouter endpoint is picked by (without it the cell derives
+	// the same key from the episode id). Set it only when a gateway in front
+	// of the router sets (or strips) every one of them, since a client could
+	// otherwise claim any turn is a side call or its own subagent episode,
+	// consent to exploration, or widen its own allowed arms.
 	// Off, they are ignored and the harness literals in the body decide.
 	// Either way none is forwarded upstream.
 	TrustTurnSignalHeaders bool `yaml:"trust_turn_signal_headers,omitempty"`
@@ -348,7 +368,10 @@ const (
 var raylineARCSHA256Pattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
 
 func validateRaylineARCPolicyServiceConfig(cfg *RaylineARCPolicyServiceConfig) error {
-	if err := validateRaylineARCBaseURL(cfg.BaseURL); err != nil {
+	if err := validateRaylineARCPolicyServiceEndpoints(cfg); err != nil {
+		return err
+	}
+	if err := validateRaylineARCPolicySessions(cfg); err != nil {
 		return err
 	}
 	if err := validateRaylineARCModalAuth(RaylineARCEncoderConfig{

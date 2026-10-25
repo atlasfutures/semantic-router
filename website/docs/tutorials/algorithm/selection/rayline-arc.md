@@ -676,6 +676,7 @@ candidates the alias may resolve to:
     "selectable": true,
     "default_route": true,
     "recipe": "default",
+    "trust_turn_signal_headers": true,
     "candidates": [
       {
         "model": "worker-id",
@@ -687,7 +688,8 @@ candidates the alias may resolve to:
         "context_window": 1048576,
         "max_output_tokens": 128000,
         "pricing": { "currency": "USD", "input_per_mtok": 0.56, "output_per_mtok": 1.76, "cache_read_per_mtok": 0.104, "cache_write_per_mtok": 0.56 },
-        "disabled": false
+        "disabled": false,
+        "provider_pin": { "pinned": true, "order": ["z-ai"], "allow_fallbacks": false }
       }
     ]
   }
@@ -719,14 +721,46 @@ and `max_output_tokens`, null where the card declares none. `pricing` is the
 card's rate card in the route lookup's spelling, and `disabled` is the card's
 out-of-service flag: a disabled arm is listed, so the arms keep their
 artifact ordinals, and marked, so the gateway leaves it out of what it
-derives.
+derives. `provider_pin` is present on an arm dispatched through OpenRouter:
+`{"pinned": false}` when the card sets no `provider_preferences`, so
+OpenRouter chooses the provider per request, and otherwise `pinned: true`
+beside the card's `provider_preferences` in their wire spelling (`order`,
+`only`, `ignore`, `allow_fallbacks`, `require_parameters`,
+`data_collection`, `zdr`, `max_price`; an unset member is absent). It is
+the provider object a Chat Completions or Messages body carries, and the one
+every private turn carries on any format, with its data mode added. A
+standard turn's native Responses body carries none.
 
 Beside the candidates, the alias carries `routing.max_context_tokens` when
 the decision declares `max_context_tokens` ("The cell's context limit"
 above): the longest context the cell promises to score, which bounds the
 window a gateway may advertise for the alias whatever the arms' windows are.
-It is absent when the decision declares none. Nothing else about the decision is
-published: the gateway derives its document from the candidates and that
+It is absent when the decision declares none. The alias also carries
+`routing.trust_turn_signal_headers`: whether the decision reads the
+gateway's turn-signal headers, the privacy headers
+(`x-rayline-privacy-mode`, `x-rayline-privacy-allowed-arms`) among them;
+false for an artifact-mode decision, which has no policy service. A gateway
+computes a private request's allowed arms from `provider_pin` and sends the
+privacy headers only to an alias that trusts them. Beside them it may send
+`x-rayline-privacy-allowed-endpoints: <arm>=<tag>|<tag>,...`, the endpoint
+tags each allowed arm may be served by: the cell keeps an arm's endpoints to
+the ones its pin reaches in the routing-price feed and the header lists, an
+arm the header leaves out or none of whose reachable endpoints it lists is
+excluded, and a header it cannot parse excludes every arm. An arm listed as
+`<arm>=`, with no tags, is allowed and goes out on its own pin, unpicked;
+an arm id may hold `@`. A private turn without the header is not picked:
+its arm's pin goes out with the data-use members. With no feed the
+cell masks by the arm names alone. A picked endpoint is sent as the
+gateway's pinned block: `only` and `order` the tag, no fallbacks, every
+endpoint the feed records under the tag in `ignore`, and `max_price` at the
+tag's recorded prompt and completion price (a lower configured cap stays). `routing.served_endpoint_header` is true
+on an ARC alias whose policy service has `routing_prices` configured, and
+false on one without it: the cell states the endpoint that served a turn in
+`x-vsr-served-endpoint` whenever it picked the endpoint or the feed records
+the arm's one tag as a leaf, so a gateway
+may treat a successful turn without the header as one OpenRouter routed
+freely, and a feed-less cell, which never sends it, does not claim to. Nothing else about the
+decision is published: the gateway derives its document from the candidates and that
 limit, and when the arm set changes the candidates change with it, so there
 is no artifact pin to key on.
 

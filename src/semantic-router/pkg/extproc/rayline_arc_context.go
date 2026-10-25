@@ -19,13 +19,13 @@ package extproc
 import (
 	"context"
 	"errors"
+	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
 	"github.com/google/uuid"
 	"strings"
 	"time"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/headers"
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/metrics"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
@@ -183,10 +183,14 @@ func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 	var signalHeaders map[string]string
 	if algorithm.RaylineARC.PolicyService != nil {
 		signalHeaders = raylineARCTrustedSignalHeaders(algorithm.RaylineARC.PolicyService, reqCtx.Headers)
+		reqCtx.RaylineARCPrivacyMode = raylineARCPrivacyMode(signalHeaders)
+		reqCtx.RaylineARCPrivacyAllowedArms = raylineARCPrivacyAllowedArms(reqCtx.RaylineARCPrivacyMode, signalHeaders)
+		reqCtx.RaylineARCPrivacyAllowedEndpoints = raylineARCPrivacyAllowedEndpoints(reqCtx.RaylineARCPrivacyMode, signalHeaders)
 		result.PolicyCallKind, result.PolicyCallKindSource = raylineARCPolicyCallKindOfBody(
 			signalHeaders, policyRequestFormat(reqCtx.SourceFormat), reqCtx.RaylineARCRawBody, result.EpisodeIDHash,
 		)
 	}
+	reqCtx.RaylineARCSessionKey, reqCtx.RaylineARCSessionKeySource = raylineARCSessionKey(signalHeaders, rawEpisodeID)
 	if rawEpisodeID != "" {
 		state, coalesced, failure := r.prepareOrJoinRaylineARCTurn(
 			algorithm.RaylineARC,
@@ -215,15 +219,29 @@ func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 			reqCtx.RaylineARCTransaction.commitOnCompletion = true
 		}
 	}
-	turns, imageBearing, err := r.projectRaylineARCTurns(
-		reqCtx,
-		raylinearc.TurnOptions{
-			IncludeSystemText: algorithm.RaylineARC.IncludeSystemText,
-			DropMidConversationSystemText: algorithm.RaylineARC.
-				DropMidConversationSystemText,
-			IncludeToolNames: algorithm.RaylineARC.IncludeToolNames,
-		},
+	// Only the artifact-mode encoder reads the projected turns. A policy
+	// service projects and encodes the raw request itself, so a policy-service
+	// cell does not project: the Go projection's refusals would otherwise
+	// refuse turns the service accepts. The image fact is still read here,
+	// since the vision mask is applied on both paths.
+	var (
+		turns        []raylinearc.Turn
+		imageBearing bool
+		err          error
 	)
+	if algorithm.RaylineARC.PolicyService != nil {
+		imageBearing, err = r.raylineARCImageBearing(reqCtx)
+	} else {
+		turns, imageBearing, err = r.projectRaylineARCTurns(
+			reqCtx,
+			raylinearc.TurnOptions{
+				IncludeSystemText: algorithm.RaylineARC.IncludeSystemText,
+				DropMidConversationSystemText: algorithm.RaylineARC.
+					DropMidConversationSystemText,
+				IncludeToolNames: algorithm.RaylineARC.IncludeToolNames,
+			},
+		)
+	}
 	if err != nil {
 		code := raylinearc.TurnNormalizationErrorCode(err)
 		if code == "" {
@@ -256,6 +274,10 @@ func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 	result.NonVisionArms = r.nonVisionArms(modelRefs)
 	result.OverContextArms = r.overContextArms(modelRefs, result.ContextTokens)
 	result.DisabledArms = r.disabledArms(modelRefs)
+	result.PrivacyExcludedArms = privacyExcludedArms(reqCtx.RaylineARCPrivacyMode, reqCtx.RaylineARCPrivacyAllowedArms, modelRefs)
+	result.PrivacyExcludedArms, result.PrivacyArmEndpoints = r.withPrivacyEndpointConstraints(
+		result.PrivacyExcludedArms, reqCtx.RaylineARCPrivacyAllowedEndpoints, modelRefs,
+	)
 	result.RequiredCapabilities = requestRoutingCapabilities(reqCtx)
 	result.IncapableArms = r.incapableArms(modelRefs, result.RequiredCapabilities)
 	result.ToolLoopForeignArms, result.ToolLoopArm, result.ToolLoopFamily = r.toolLoopForeignArms(
@@ -624,6 +646,16 @@ func (r *OpenAIRouter) projectRaylineARCTurns(
 	// covers instruction blocks, message blocks and the blocks nested inside
 	// a tool result, which is the whole of what the provider will receive.
 	return turns, requestCarriesImageInput(request), nil
+}
+
+// raylineARCImageBearing reads the image fact off the whole conversation,
+// stored Responses history included, without projecting it into turns.
+func (r *OpenAIRouter) raylineARCImageBearing(reqCtx *RequestContext) (bool, error) {
+	request, err := r.raylineARCConversation(reqCtx)
+	if err != nil {
+		return false, err
+	}
+	return requestCarriesImageInput(request), nil
 }
 
 func requestCarriesImageInput(request *llmprotocol.Request) bool {

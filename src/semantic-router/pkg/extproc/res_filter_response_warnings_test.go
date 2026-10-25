@@ -1,12 +1,12 @@
 package extproc
 
 import (
+	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/headers"
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 )
 
 // decisionWithHallucinationActions builds a decision whose hallucination plugin

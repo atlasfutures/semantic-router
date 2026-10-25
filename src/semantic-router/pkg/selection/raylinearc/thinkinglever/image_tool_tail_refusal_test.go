@@ -19,7 +19,7 @@ package thinkinglever
 import (
 	"testing"
 
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
+	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
 )
 
 func imageResult(id string) llmprotocol.Message {

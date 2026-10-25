@@ -5,13 +5,14 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
+	"github.com/atlasfutures/semantic-router/rayline-core/protocolcodec"
 	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 	typev3 "github.com/envoyproxy/go-control-plane/envoy/type/v3"
 
 	modelcatalog "github.com/vllm-project/semantic-router/src/semantic-router/pkg/catalog"
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/metrics"
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/protocolcodec"
 )
 
 func (r *OpenAIRouter) encodeSyntheticTextResponse(
@@ -109,15 +110,17 @@ func (r *OpenAIRouter) prepareProtocolRequest(
 	if err != nil {
 		return nil, r.createErrorResponse(503, "protocol runtime unavailable")
 	}
+	// A thread continuation is refused before it is decoded or routed: the
+	// cell keeps no thread, so the body is a fragment (req_thread_continuation.go).
+	if err := threadContinuationRefusal(engine, ctx.SourceFormat, body); err != nil {
+		logging.ComponentEvent("extproc", "thread_continuation_refused", map[string]interface{}{
+			"request_id": ctx.RequestID,
+		})
+		return nil, r.ingressProtocolErrorResponse(ctx, err)
+	}
 	request, envelope, diagnostics, err := engine.DecodeRequestForMutation(ctx.SourceFormat, body)
 	if err != nil {
-		recordIngressProtocolError(ctx, err)
-		var protocolError *llmprotocol.ProtocolError
-		if errors.As(err, &protocolError) {
-			copy := *protocolError
-			ctx.ImmediateProtocolError = &copy
-		}
-		return nil, r.createErrorResponse(400, "invalid inference request")
+		return nil, r.ingressProtocolErrorResponse(ctx, err)
 	}
 	logIngressBetaSet(ctx)
 	request.Trusted.SourceFormat = ctx.SourceFormat
@@ -132,9 +135,7 @@ func (r *OpenAIRouter) prepareProtocolRequest(
 		if stateErr != nil {
 			var protocolError *llmprotocol.ProtocolError
 			if errors.As(stateErr, &protocolError) {
-				copy := *protocolError
-				ctx.ImmediateProtocolError = &copy
-				return nil, r.createErrorResponse(responseObjectStateHTTPStatus(protocolError), protocolError.Message)
+				return nil, r.responseObjectStateResponse(ctx, protocolError)
 			}
 			return nil, r.createErrorResponse(503, "retained response history is unavailable")
 		}
@@ -144,11 +145,60 @@ func (r *OpenAIRouter) prepareProtocolRequest(
 	return &request, nil
 }
 
-func responseObjectStateHTTPStatus(protocolError *llmprotocol.ProtocolError) int {
-	if protocolError != nil && protocolError.Category == llmprotocol.ErrorNotFound {
-		return 404
+// ingressProtocolErrorResponse answers a request the ingress refused: the
+// protocol error is kept on the context so the client re-encode shows its
+// code and message.
+func (r *OpenAIRouter) ingressProtocolErrorResponse(ctx *RequestContext, err error) *ext_proc.ProcessingResponse {
+	recordIngressProtocolError(ctx, err)
+	var protocolError *llmprotocol.ProtocolError
+	if errors.As(err, &protocolError) {
+		copy := *protocolError
+		ctx.ImmediateProtocolError = &copy
 	}
-	return 503
+	return r.createErrorResponse(400, "invalid inference request")
+}
+
+// responseObjectStateResponse answers a Responses object-state refusal. The
+// protocol error is kept on the context so the client re-encode shows its code
+// and message rather than the canned text for the status.
+//
+// A stateless_path refusal also carries x-vsr-failure-class, the way the ARC
+// path's statelessPathResponse does, so a caller reads one answer whichever
+// gate refused it. It is not counted as a selection failure: this gate runs
+// before any decision, so no episode was opened, no policy was consulted and
+// no arm was dialled, and a selection-lifecycle or turn-failure record here
+// would attribute to Rayline ARC a refusal it never saw. The other
+// object-state refusals (404, 503) are not counted either, and this one is
+// answered like them.
+func (r *OpenAIRouter) responseObjectStateResponse(
+	ctx *RequestContext,
+	protocolError *llmprotocol.ProtocolError,
+) *ext_proc.ProcessingResponse {
+	refusal := *protocolError
+	ctx.ImmediateProtocolError = &refusal
+	response := r.createErrorResponse(responseObjectStateHTTPStatus(protocolError), protocolError.Message)
+	if protocolError.Code == selectionFailureStatelessPath {
+		appendImmediateHeader(response, selectionFailureHeader, selectionFailureStatelessPath)
+	}
+	return response
+}
+
+// responseObjectStateHTTPStatus maps an object-state refusal onto its status:
+// 400 for what the caller sent (a previous_response_id this cell can never
+// resolve), 404 for an id the store does not hold, and 503 for everything
+// else, which is the router failing to load history it does keep.
+func responseObjectStateHTTPStatus(protocolError *llmprotocol.ProtocolError) int {
+	if protocolError == nil {
+		return 503
+	}
+	switch protocolError.Category {
+	case llmprotocol.ErrorInvalidRequest:
+		return 400
+	case llmprotocol.ErrorNotFound:
+		return 404
+	default:
+		return 503
+	}
 }
 
 func recordIngressProtocolError(ctx *RequestContext, err error) {
@@ -190,18 +240,7 @@ func (r *OpenAIRouter) encodeDispatchRequest(ctx *RequestContext) ([]byte, error
 	dispatchRequest.HostedTools = ctx.DispatchHostedTools
 	applyDispatchAutoCache(&dispatchRequest, ctx)
 	applyDispatchToolResultNames(&dispatchRequest, ctx, format)
-	if format == llmprotocol.OpenAIChatV1 && dispatchRequest.Stream &&
-		!streamUsageAlreadyRequested(dispatchRequest.StreamOptions) {
-		// The Router always asks Chat backends for the final usage chunk so
-		// accounting observes authoritative tokens. Public stream rendering uses
-		// the original client preference retained in ctx.SemanticRequest.
-		includeUsage := true
-		dispatchRequest.StreamOptions.IncludeUsage = &includeUsage
-		// Source bytes no longer describe the dispatch request, so retire the
-		// replay claim on them. Without this the encoder forwards the original
-		// client bytes and the forced flag never reaches the backend.
-		dispatchRequest.Generation++
-	}
+	dispatchRequest = llmprotocol.WithUpstreamStreamUsage(dispatchRequest, format)
 	encoded, err := engine.EncodeRequest(format, dispatchRequest, ctx.ProtocolEnvelope)
 	if err != nil {
 		return nil, err
@@ -266,7 +305,7 @@ func (r *OpenAIRouter) decodeClientResponse(
 			if responseID != "" {
 				response.ID = responseID
 			}
-			restoreResponseToolNamespaces(response, namespaces)
+			llmprotocol.RestoreResponseToolNamespaces(response, namespaces)
 			return nil
 		}
 	}

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc/thinkingcontrol"
+	"github.com/atlasfutures/semantic-router/rayline-core/thinkingcontrol"
 )
 
 // A stored episode keeps its first control's rule set, so a fold episode's

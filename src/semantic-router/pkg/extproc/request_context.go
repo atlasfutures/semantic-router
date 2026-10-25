@@ -4,15 +4,15 @@ import (
 	"context"
 	"time"
 
+	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
+	"github.com/atlasfutures/semantic-router/rayline-core/protocolcodec"
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/cache"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/classification"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/decision"
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/projectiontrace"
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/protocolcodec"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/ratelimit"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/routerreplay"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
@@ -118,6 +118,42 @@ type RequestContext struct {
 	// It is set when preparation fails for want of it, so the refusal can
 	// tell the caller which header to send.
 	RaylineARCEpisodeIDHeader string
+	// RaylineARCPrivacyMode is the request's data mode from the trusted
+	// gateway headers: "" for a standard request, else privacy or zdr. It is
+	// decided once, when the ARC context is built, and the provider pin reads it.
+	RaylineARCPrivacyMode string
+	// RaylineARCPrivacyAllowedArms is a private request's allowed set as its
+	// trusted header states it, sorted and deduplicated; nil for a standard
+	// request. Logged only as a count and a digest.
+	RaylineARCPrivacyAllowedArms []string
+	// RaylineARCPrivacyAllowedEndpoints is a private request's per-arm
+	// endpoint allow list (x-rayline-privacy-allowed-endpoints); absent for
+	// a standard request or one whose gateway sent none.
+	RaylineARCPrivacyAllowedEndpoints privacyAllowedEndpoints
+	// RaylineARCSessionKey is the opaque key an arm's OpenRouter endpoint is
+	// picked by (rayline_arc_endpoint_pick.go): the gateway's
+	// x-rayline-session-key, or the cell's own digest of the episode's user
+	// and conversation when the header is absent; SessionKeySource says which
+	// (header, fallback, or none when the turn has no episode).
+	RaylineARCSessionKey       string
+	RaylineARCSessionKeySource string
+	// RaylineARCEndpointSource says where the arm's endpoints were read from:
+	// feed (the routing-price feed's rows) or none (no feed in effect, so no
+	// pick). RaylineARCEndpointOrder is the candidates in the session's
+	// rendezvous order, set only when the cell picked; the first is the pick
+	// and the rest the retry order. EndpointsTried are the ones dispatched so
+	// far this turn, and DispatchedEndpoint the one the call in flight is
+	// known to be served by (x-vsr-served-endpoint once it serves), empty
+	// when OpenRouter chooses. EndpointResend is the re-send staged on the
+	// next endpoints when the pick fails before any byte. EndpointFeed is the
+	// feed snapshot the pick read, so its re-sends and the served-endpoint
+	// header read the same records.
+	RaylineARCEndpointFeed       *raylinearc.RoutingPriceSettlement
+	RaylineARCEndpointSource     string
+	RaylineARCEndpointOrder      []string
+	RaylineARCEndpointsTried     []string
+	RaylineARCDispatchedEndpoint string
+	RaylineARCEndpointResend     *endpointResendPlan
 	// ContextRecoveryProviderCost is the charge for both calls of a turn
 	// context recovery answered. The recovered body is re-encoded for the
 	// client, which drops it, so the usage report reads it from here.
@@ -153,6 +189,9 @@ type RequestContext struct {
 	// DispatchedProviderOrder is the OpenRouter provider order the rendered
 	// upstream body carries, read back the same way and for the same reason.
 	DispatchedProviderOrder []string
+	// DispatchedProviderPrivacy is the provider object's data-use members the
+	// rendered upstream body carries, read back the same way.
+	DispatchedProviderPrivacy dispatchedProviderPrivacy
 	// DispatchedServiceTier is the service_tier the rendered upstream body
 	// carries, read back the same way: the arm's configured tier, or the
 	// client's own forwarded. ClientServiceTier is the client's raw value an
@@ -192,6 +231,9 @@ type RequestContext struct {
 	// TTFT tracking
 	TTFTRecorded bool
 	TTFTSeconds  float64
+	// RoutingLatency is ProcessingStartTime to the routing decision (the
+	// policy decide included); zero until recordRoutingLatency runs.
+	RoutingLatency time.Duration
 
 	// InflightToken is the handle returned by inflight.Begin when this request
 	// was admitted to the in-flight tracker after model selection. Zero means

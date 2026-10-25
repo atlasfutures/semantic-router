@@ -1,0 +1,8 @@
+{
+  "description": "A later text-only turn of the same session: a mid-conversation system message after every user turn.",
+  "client": "claude-cli/2.1.309 (rld proxy mode)",
+  "captured": "2026-10-23",
+  "path": "/v1/messages?beta=true",
+  "expect": "served",
+  "transforms": ["tool_changes_to_tools"]
+}

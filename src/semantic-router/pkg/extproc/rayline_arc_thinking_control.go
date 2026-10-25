@@ -20,12 +20,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strconv"
 
+	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
+	"github.com/atlasfutures/semantic-router/rayline-core/thinkingcontrol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc/thinkingcontrol"
 )
 
 // thinkingControlLever names the registry renderer on the routing record and
@@ -86,17 +85,6 @@ func registryFormatOf(format llmprotocol.WireFormat) string {
 	}
 }
 
-// controlPlacementKey names a placer: one worker's transcript in one format
-// under one control shape. Pathfinder fixes base, budget and lever presence
-// per episode, so a shape change on a worker starts its own placer.
-func controlPlacementKey(worker, format string, control thinkingcontrol.Control) string {
-	budget := "-"
-	if control.BudgetTokens != nil {
-		budget = strconv.FormatInt(*control.BudgetTokens, 10)
-	}
-	return fmt.Sprintf("%s|%s|%s|%s|%t", worker, format, control.Native, budget, control.Instruction != nil)
-}
-
 // planRaylineARCThinkingControl resolves this dispatch's v5 control: the
 // cell of the request's target format must admit it, and the episode's
 // placer is resumed. It returns nil outside a v5 turn. A budgeted base's
@@ -133,7 +121,7 @@ func planRaylineARCThinkingControl(
 	if err != nil {
 		return nil, false, err
 	}
-	key := controlPlacementKey(worker, format, action.Control)
+	key := thinkingcontrol.PlacementKey(worker, format, action.Control)
 	committed, found, hasEpisode := ctx.RaylineARCTransaction.committedControlPlacement(key)
 	if !hasEpisode {
 		return nil, false, errThinkingControlEpisode
@@ -146,27 +134,6 @@ func planRaylineARCThinkingControl(
 		return nil, false, err
 	}
 	return &plannedThinkingControl{key: key, control: action.Control, cell: cell, placer: placer}, false, nil
-}
-
-// raiseMessagesAllowance keeps the caller's output allowance on top of a
-// thinking budget: Messages counts thinking inside max_tokens and refuses a
-// budget that leaves no room below it.
-func raiseMessagesAllowance(request *llmprotocol.Request, budget *int64) bool {
-	if budget == nil {
-		return false
-	}
-	// The dispatch output bound has already set a limit on a Messages
-	// request; the fallback only keeps a direct caller valid.
-	allowance := dispatchFallbackMaxOutputTokens
-	if request.Sampling.MaxOutputTokens != nil {
-		allowance = *request.Sampling.MaxOutputTokens
-	}
-	if allowance > *budget {
-		return false
-	}
-	raised := *budget + allowance
-	request.Sampling.MaxOutputTokens = &raised
-	return true
 }
 
 // render places the planned control on the provider-bound body and stages

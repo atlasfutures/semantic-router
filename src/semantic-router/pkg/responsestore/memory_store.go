@@ -53,6 +53,12 @@ func NewMemoryStore(config StoreConfig) (*MemoryStore, error) {
 
 func (m *MemoryStore) IsEnabled() bool { return m.enabled }
 
+// Retains is true: what this store is given can be read back for as long as
+// the process lives and the entry stays within the configured bounds.
+// Retention ends at restart, which is a durability property, not a retention
+// one: while the router is up, a previous_response_id resolves.
+func (m *MemoryStore) Retains() bool { return true }
+
 func (m *MemoryStore) CheckConnection(ctx context.Context) error {
 	if !m.enabled {
 		return ErrStoreDisabled

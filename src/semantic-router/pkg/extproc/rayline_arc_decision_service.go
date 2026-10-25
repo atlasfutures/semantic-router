@@ -25,10 +25,10 @@ import (
 	"sort"
 	"time"
 
+	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
 	"github.com/google/uuid"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/metrics"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/routerruntime"
@@ -402,6 +402,7 @@ func (service *raylineARCDecisionService) resolveWorker(
 		result.RaylineARC.EncoderReplicaID,
 		result.RaylineARC.EncoderVisitedReplicaIDs,
 	)
+	requestContext.RaylineARCTransaction.markPolicySession(result.RaylineARC.PolicySession, result.RaylineARC.PolicySessionCleared)
 	stageRaylineARCPolicySelection(requestContext, result.RaylineARC, result.SelectedModel)
 	service.router.publishRaylineARCDecision(requestContext, result)
 	route := selectedRoute{worker: worker, result: result, catalog: provider}
@@ -660,6 +661,15 @@ func (service *raylineARCDecisionService) decisionOnlyRequestContext(
 	if wireFormat == "" {
 		wireFormat = defaultConsultWireFormat
 	}
+	// A thread continuation names history this cell does not hold, so a
+	// consult on it would route a fragment (req_thread_continuation.go).
+	if err := threadContinuationRefusal(engine, wireFormat, request.Body); err != nil {
+		return nil, fmt.Errorf(
+			"%w: decision-only routing refused a thread continuation: %w",
+			routerruntime.ErrRouteDecisionInvalidBody,
+			err,
+		)
+	}
 	decoded, envelope, _, err := engine.DecodeRequestForMutation(
 		wireFormat,
 		request.Body,
@@ -684,6 +694,13 @@ func (service *raylineARCDecisionService) decisionOnlyRequestContext(
 			episodeIdentity = "decision-only:" + uuid.NewString()
 		}
 		headers[algorithm.RaylineARC.Episode.IDHeader] = episodeIdentity
+	}
+	// The privacy headers alone: the builder reads them only on a cell that
+	// trusts them, and a consult must be masked as the routed turn would be.
+	for _, name := range []string{raylineARCPrivacyModeHeader, raylineARCPrivacyAllowedArmsHeader} {
+		if value, stated := request.Headers[name]; stated {
+			headers[name] = value
+		}
 	}
 	return &RequestContext{
 		Headers:              headers,
@@ -838,6 +855,12 @@ func selectionFailureError(err error) error {
 		if selectionShapeRefusalClasses[failure.class] {
 			return fmt.Errorf("%w: %w: %w",
 				routerruntime.ErrRouteDecisionInvalidBody, errRaylineRoutesRequestShape, err)
+		}
+		// A private turn with no allowed arm is refused the same way: no
+		// model is served in its place, and retrying cannot change that.
+		if failure.class == arcFailureNoPrivateArm {
+			return fmt.Errorf("%w: %w: %w",
+				routerruntime.ErrRouteDecisionUndecidable, routerruntime.ErrRouteDecisionNoPrivateArm, err)
 		}
 		if failure.class == arcFailurePolicyUndecidable {
 			return fmt.Errorf("%w: %w", routerruntime.ErrRouteDecisionUndecidable, err)

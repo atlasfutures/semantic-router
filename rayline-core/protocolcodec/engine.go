@@ -1,0 +1,686 @@
+package protocolcodec
+
+import (
+	"fmt"
+
+	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
+)
+
+type (
+	RequestMutation        func(*llmprotocol.Request) error
+	ResponseMutation       func(*llmprotocol.Response) error
+	TransportErrorMutation func(*llmprotocol.TransportError) error
+)
+
+type RequestResult struct {
+	Request     llmprotocol.Request
+	Envelope    llmprotocol.Envelope
+	Body        []byte
+	Diagnostics llmprotocol.Diagnostics
+}
+
+type ResponseResult struct {
+	Response    llmprotocol.Response
+	Envelope    llmprotocol.Envelope
+	Body        []byte
+	Diagnostics llmprotocol.Diagnostics
+}
+
+type TransportErrorResult struct {
+	TransportError llmprotocol.TransportError
+	Body           []byte
+	Diagnostics    llmprotocol.Diagnostics
+}
+
+type Engine struct {
+	registry *Registry
+	policy   llmprotocol.Policy
+}
+
+func NewEngine(registry *Registry, policy llmprotocol.Policy) (*Engine, error) {
+	if registry == nil || len(registry.codecs) == 0 {
+		return nil, fmt.Errorf("codec registry is required")
+	}
+	if err := validatePolicy(policy); err != nil {
+		return nil, err
+	}
+	return &Engine{registry: registry, policy: policy}, nil
+}
+
+func NewBuiltinEngine() *Engine {
+	engine, err := NewEngine(NewBuiltinRegistry(), llmprotocol.DefaultPolicy())
+	if err != nil {
+		panic(err)
+	}
+	return engine
+}
+
+func (engine *Engine) Registry() *Registry {
+	if engine == nil {
+		return nil
+	}
+	return engine.registry
+}
+
+func (engine *Engine) DecodeRequest(format llmprotocol.WireFormat, body []byte) (llmprotocol.Request, llmprotocol.Envelope, llmprotocol.Diagnostics, error) {
+	return engine.decodeRequest(format, body, engine.policy)
+}
+
+// DecodeRequestForMutation rejects wire fields that cannot survive neutral
+// translation. Router ingress uses this contract because model selection and
+// policy plugins necessarily mutate the request after decoding; accepting an
+// opaque field there would guarantee that it is silently erased on dispatch.
+func (engine *Engine) DecodeRequestForMutation(
+	format llmprotocol.WireFormat,
+	body []byte,
+) (llmprotocol.Request, llmprotocol.Envelope, llmprotocol.Diagnostics, error) {
+	return engine.decodeRequest(format, body, engine.translationDecodePolicy(format, format, true))
+}
+
+func (engine *Engine) decodeRequest(
+	format llmprotocol.WireFormat,
+	body []byte,
+	policy llmprotocol.Policy,
+) (llmprotocol.Request, llmprotocol.Envelope, llmprotocol.Diagnostics, error) {
+	pair, err := engine.codec(format)
+	if err != nil {
+		return llmprotocol.Request{}, llmprotocol.Envelope{}, nil, err
+	}
+	request, envelope, diagnostics, err := pair.buffered.DecodeRequest(body, policy)
+	if err != nil {
+		return llmprotocol.Request{}, llmprotocol.Envelope{}, diagnostics, err
+	}
+	applyRequestSemanticDefaults(&request)
+	llmprotocol.MarkDeferredToolLinks(&request)
+	if err := llmprotocol.ValidateRequest(request, engine.policy.Limits); err != nil {
+		return llmprotocol.Request{}, llmprotocol.Envelope{}, diagnostics, err
+	}
+	return request, envelope, diagnostics, nil
+}
+
+// applyRequestSemanticDefaults makes provider-documented defaults explicit in
+// the neutral contract. Tool choice defaults to automatic selection whenever
+// tools are present in all built-in request formats. Keeping that semantic fact
+// in one place prevents routing plugins from behaving differently based on
+// whether a client serialized the default explicitly.
+func applyRequestSemanticDefaults(request *llmprotocol.Request) {
+	if request != nil && (len(request.Tools) > 0 || request.ImageGeneration != nil) && request.ToolChoice.Mode == "" {
+		request.ToolChoice.Mode = llmprotocol.ToolChoiceAuto
+	}
+}
+
+// EncodeRequest validates and encodes an already-neutral request. Callers that
+// mutate semantic state do not need to manufacture an intermediate wire body.
+func (engine *Engine) EncodeRequest(format llmprotocol.WireFormat, request llmprotocol.Request, envelope llmprotocol.Envelope) (RequestResult, error) {
+	pair, encodeRequestErr := engine.codec(format)
+	if encodeRequestErr != nil {
+		return RequestResult{Request: request, Envelope: envelope}, encodeRequestErr
+	}
+	if err := llmprotocol.ValidateRequest(request, engine.policy.Limits); err != nil {
+		return RequestResult{Request: request, Envelope: envelope}, err
+	}
+	if err := llmprotocol.RequireCapabilities(format, pair.buffered.Capabilities(), llmprotocol.RequiredCapabilities(request)); err != nil {
+		return RequestResult{Request: request, Envelope: envelope}, err
+	}
+	body, diagnostics, encodeRequestErr := pair.buffered.EncodeRequest(request, envelope, engine.requestEncodePolicy())
+	return RequestResult{Request: request, Envelope: envelope, Body: body, Diagnostics: diagnostics}, encodeRequestErr
+}
+
+// EncodeResponse validates and encodes an already-neutral response. Settlement
+// retains the semantic response independently from client representation.
+func (engine *Engine) EncodeResponse(format llmprotocol.WireFormat, response llmprotocol.Response, envelope llmprotocol.Envelope) (ResponseResult, error) {
+	pair, encodeResponseErr := engine.codec(format)
+	if encodeResponseErr != nil {
+		return ResponseResult{Response: response, Envelope: envelope}, encodeResponseErr
+	}
+	if err := llmprotocol.ValidateResponse(response, engine.policy.Limits); err != nil {
+		return ResponseResult{Response: response, Envelope: envelope}, err
+	}
+	encodable, dropped := responseForTarget(response, format, pair.buffered.Capabilities(), engine.policy.Limits.Diagnostics)
+	if err := llmprotocol.RequireCapabilities(format, pair.buffered.Capabilities(), llmprotocol.RequiredResponseCapabilities(encodable)); err != nil {
+		return ResponseResult{Response: response, Envelope: envelope}, err
+	}
+	body, diagnostics, encodeResponseErr := pair.buffered.EncodeResponse(encodable, envelope, engine.policy)
+	diagnostics = appendDiagnostics(dropped, diagnostics, engine.policy.Limits.Diagnostics)
+	return ResponseResult{Response: response, Envelope: envelope, Body: body, Diagnostics: diagnostics}, encodeResponseErr
+}
+
+func (engine *Engine) TranslateRequest(source, target llmprotocol.WireFormat, body []byte, mutate RequestMutation) (RequestResult, error) {
+	decodePolicy := engine.translationDecodePolicy(source, target, mutate != nil)
+	sourcePair, translateRequestErr := engine.codec(source)
+	if translateRequestErr != nil {
+		return RequestResult{}, translateRequestErr
+	}
+	request, envelope, diagnostics, translateRequestErr := sourcePair.buffered.DecodeRequest(body, decodePolicy)
+	if translateRequestErr != nil {
+		return RequestResult{Diagnostics: diagnostics}, translateRequestErr
+	}
+	applyRequestSemanticDefaults(&request)
+	llmprotocol.MarkDeferredToolLinks(&request)
+	if err := llmprotocol.ValidateRequest(request, engine.policy.Limits); err != nil {
+		return RequestResult{Request: request, Envelope: envelope, Diagnostics: diagnostics}, err
+	}
+	targetPair, translateRequestErr := engine.codec(target)
+	if translateRequestErr != nil {
+		return RequestResult{Request: request, Envelope: envelope, Diagnostics: diagnostics}, translateRequestErr
+	}
+	if mutate != nil {
+		if err := mutate(&request); err != nil {
+			return RequestResult{Request: request, Envelope: envelope, Diagnostics: diagnostics}, err
+		}
+		request.Generation++
+	}
+	if err := llmprotocol.ValidateRequest(request, engine.policy.Limits); err != nil {
+		return RequestResult{Request: request, Envelope: envelope, Diagnostics: diagnostics}, err
+	}
+	if err := llmprotocol.RequireCapabilities(target, targetPair.buffered.Capabilities(), llmprotocol.RequiredCapabilities(request)); err != nil {
+		return RequestResult{Request: request, Envelope: envelope, Diagnostics: diagnostics}, err
+	}
+	encoded, encodeDiagnostics, translateRequestErr := targetPair.buffered.EncodeRequest(request, envelope, engine.requestEncodePolicy())
+	diagnostics = appendDiagnostics(diagnostics, encodeDiagnostics, engine.policy.Limits.Diagnostics)
+	return RequestResult{Request: request, Envelope: envelope, Body: encoded, Diagnostics: diagnostics}, translateRequestErr
+}
+
+func (engine *Engine) TranslateResponse(source, target llmprotocol.WireFormat, body []byte, mutate ResponseMutation) (ResponseResult, error) {
+	sourcePair, translateResponseErr := engine.codec(source)
+	if translateResponseErr != nil {
+		return ResponseResult{}, translateResponseErr
+	}
+	decodePolicy := engine.responseDecodePolicy(source, target, mutate != nil)
+	response, envelope, diagnostics, translateResponseErr := sourcePair.buffered.DecodeResponse(body, decodePolicy)
+	if translateResponseErr != nil {
+		return ResponseResult{Diagnostics: diagnostics}, translateResponseErr
+	}
+	if err := llmprotocol.ValidateResponse(response, engine.policy.Limits); err != nil {
+		return ResponseResult{Response: response, Envelope: envelope, Diagnostics: diagnostics}, err
+	}
+	targetPair, translateResponseErr := engine.codec(target)
+	if translateResponseErr != nil {
+		return ResponseResult{Response: response, Envelope: envelope, Diagnostics: diagnostics}, translateResponseErr
+	}
+	if mutate != nil {
+		if err := mutate(&response); err != nil {
+			return ResponseResult{Response: response, Envelope: envelope, Diagnostics: diagnostics}, err
+		}
+		response.Generation++
+	}
+	if err := llmprotocol.ValidateResponse(response, engine.policy.Limits); err != nil {
+		return ResponseResult{Response: response, Envelope: envelope, Diagnostics: diagnostics}, err
+	}
+	encodable, dropped := responseForTarget(response, target, targetPair.buffered.Capabilities(), engine.policy.Limits.Diagnostics)
+	diagnostics = appendDiagnostics(diagnostics, dropped, engine.policy.Limits.Diagnostics)
+	if err := llmprotocol.RequireCapabilities(target, targetPair.buffered.Capabilities(), llmprotocol.RequiredResponseCapabilities(encodable)); err != nil {
+		return ResponseResult{Response: response, Envelope: envelope, Diagnostics: diagnostics}, err
+	}
+	encoded, encodeDiagnostics, translateResponseErr := targetPair.buffered.EncodeResponse(encodable, envelope, engine.policy)
+	diagnostics = appendDiagnostics(diagnostics, encodeDiagnostics, engine.policy.Limits.Diagnostics)
+	return ResponseResult{Response: response, Envelope: envelope, Body: encoded, Diagnostics: diagnostics}, translateResponseErr
+}
+
+// TranslateTransportError translates an HTTP non-2xx body through the neutral
+// error contract. It intentionally does not use DecodeResponse: a failed model
+// Response resource and an API transport error are different wire objects.
+//
+// An error envelope is an upstream document like any other, and it is the one
+// document whose whole purpose is to tell the client what went wrong. Refusing
+// it for a member the contract does not name replaces that answer with a
+// generic failure, so it takes the same drop policy as the response leg.
+func (engine *Engine) TranslateTransportError(
+	source,
+	target llmprotocol.WireFormat,
+	body []byte,
+	mutate TransportErrorMutation,
+) (TransportErrorResult, error) {
+	sourcePair, err := engine.codec(source)
+	if err != nil {
+		return TransportErrorResult{}, err
+	}
+	decodePolicy := engine.policy
+	decodePolicy.UnknownFields = llmprotocol.UnknownDropUpstream
+	decodePolicy.SourcePreservation = llmprotocol.SourceDisabled
+	transportError, diagnostics, err := sourcePair.buffered.DecodeTransportError(body, decodePolicy)
+	if err != nil {
+		return TransportErrorResult{Diagnostics: diagnostics}, err
+	}
+	if validationErr := llmprotocol.ValidateTransportError(transportError, engine.policy.Limits); validationErr != nil {
+		return TransportErrorResult{TransportError: transportError, Diagnostics: diagnostics}, validationErr
+	}
+	targetPair, err := engine.codec(target)
+	if err != nil {
+		return TransportErrorResult{TransportError: transportError, Diagnostics: diagnostics}, err
+	}
+	if mutate != nil {
+		if mutationErr := mutate(&transportError); mutationErr != nil {
+			return TransportErrorResult{TransportError: transportError, Diagnostics: diagnostics}, mutationErr
+		}
+	}
+	if validationErr := llmprotocol.ValidateTransportError(transportError, engine.policy.Limits); validationErr != nil {
+		return TransportErrorResult{TransportError: transportError, Diagnostics: diagnostics}, validationErr
+	}
+	return TransportErrorResult{
+		TransportError: transportError,
+		Body:           targetPair.buffered.EncodeTransportError(transportError),
+		Diagnostics:    diagnostics,
+	}, nil
+}
+
+// DecodeTransportError decodes a provider-native HTTP error body without
+// conflating it with a failed model response resource. It is the symmetric
+// ingress operation for EncodeTransportError and uses the strict provider
+// boundary regardless of same-format source preservation policy.
+func (engine *Engine) DecodeTransportError(
+	format llmprotocol.WireFormat,
+	body []byte,
+) (llmprotocol.TransportError, llmprotocol.Diagnostics, error) {
+	pair, err := engine.codec(format)
+	if err != nil {
+		return llmprotocol.TransportError{}, nil, err
+	}
+	decodePolicy := engine.policy
+	decodePolicy.UnknownFields = llmprotocol.UnknownDropUpstream
+	decodePolicy.SourcePreservation = llmprotocol.SourceDisabled
+	transportError, diagnostics, err := pair.buffered.DecodeTransportError(body, decodePolicy)
+	if err != nil {
+		return llmprotocol.TransportError{}, diagnostics, err
+	}
+	if err := llmprotocol.ValidateTransportError(transportError, engine.policy.Limits); err != nil {
+		return transportError, diagnostics, err
+	}
+	return transportError, diagnostics, nil
+}
+
+// Preserve-same-format is legal only for byte-identical replay. Once a
+// translation crosses formats or a semantic mutation is possible, decoding is
+// strict so an unknown field can never disappear without an explicit error.
+func (engine *Engine) translationDecodePolicy(source, target llmprotocol.WireFormat, mutated bool) llmprotocol.Policy {
+	policy := engine.policy
+	if policy.UnknownFields == llmprotocol.UnknownPreserveSameFormat && (source != target || mutated) {
+		policy.UnknownFields = llmprotocol.UnknownReject
+		policy.SourcePreservation = llmprotocol.SourceDisabled
+	}
+	return policy
+}
+
+// requestEncodePolicy is the leg that dispatches a client request. It relaxes
+// exactly one rule: a feature the target cannot express is dropped and counted
+// rather than refused. A dropped request feature costs the caller fidelity on
+// a turn that still runs; refusing it costs the whole turn, and the gateway
+// does not replay a body-level 400.
+//
+// The response leg keeps LossyReject. An answer the Router cannot represent is
+// not the caller's request to degrade, and the response-side table is CP9v.
+func (engine *Engine) requestEncodePolicy() llmprotocol.Policy {
+	policy := engine.policy
+	if policy.LossyFeatures == llmprotocol.LossyReject {
+		policy.LossyFeatures = llmprotocol.LossyAllowWithDiagnostic
+	}
+	return policy
+}
+
+// responseDecodePolicy is translationDecodePolicy for the upstream leg. It
+// keeps every rule that one applies and then relaxes exactly one: a member the
+// provider names and the wire contract does not is dropped and reported rather
+// than failing the response. The Router routes the completion; it does not
+// author it, and refusing it loses work the user already paid for.
+func (engine *Engine) responseDecodePolicy(source, target llmprotocol.WireFormat, mutated bool) llmprotocol.Policy {
+	policy := engine.translationDecodePolicy(source, target, mutated)
+	if policy.UnknownFields == llmprotocol.UnknownReject ||
+		policy.UnknownFields == llmprotocol.UnknownCapture {
+		policy.UnknownFields = llmprotocol.UnknownDropUpstream
+	}
+	return policy
+}
+
+func (engine *Engine) EncodeError(format llmprotocol.WireFormat, protocolError *llmprotocol.ProtocolError) ([]byte, error) {
+	if protocolError == nil {
+		protocolError = llmprotocol.NewError(llmprotocol.ErrorInternal, "internal", "request failed", nil)
+	}
+	return engine.EncodeTransportError(format, llmprotocol.TransportError{Error: protocolError})
+}
+
+func (engine *Engine) EncodeTransportError(
+	format llmprotocol.WireFormat,
+	transportError llmprotocol.TransportError,
+) ([]byte, error) {
+	pair, err := engine.codec(format)
+	if err != nil {
+		return nil, err
+	}
+	if err := llmprotocol.ValidateTransportError(transportError, engine.policy.Limits); err != nil {
+		return nil, err
+	}
+	return pair.buffered.EncodeTransportError(transportError), nil
+}
+
+func (engine *Engine) NewStream(source, target llmprotocol.WireFormat, context llmprotocol.StreamContext) (*StreamEngine, error) {
+	return engine.NewStreamWithMutation(source, target, context, nil)
+}
+
+// StreamEventMutation applies request-scoped policy to decoded neutral events
+// before they reach a public wire encoder. It cannot observe provider bytes or
+// HTTP headers and therefore keeps protocol translation provider-neutral.
+type StreamEventMutation func(*llmprotocol.Event) error
+
+func (engine *Engine) NewStreamWithMutation(
+	source,
+	target llmprotocol.WireFormat,
+	context llmprotocol.StreamContext,
+	mutation StreamEventMutation,
+) (*StreamEngine, error) {
+	sourcePair, err := engine.codec(source)
+	if err != nil {
+		return nil, err
+	}
+	targetPair, err := engine.codec(target)
+	if err != nil {
+		return nil, err
+	}
+	if !sourcePair.buffered.Capabilities().Supports(llmprotocol.CapabilityStreaming) ||
+		!targetPair.buffered.Capabilities().Supports(llmprotocol.CapabilityStreaming) {
+		return nil, llmprotocol.NewError(llmprotocol.ErrorUnsupportedFeature, "streaming_unsupported", "source or target wire format does not support streaming", nil)
+	}
+	context.Source = source
+	context.Target = target
+	streamPolicy := engine.providerStreamPolicy()
+	return &StreamEngine{
+		decoder:            sourcePair.stream.NewDecoder(context, streamPolicy),
+		encoder:            targetPair.stream.NewEncoder(context, streamPolicy),
+		mutation:           mutation,
+		sourceFormat:       source,
+		targetFormat:       target,
+		targetCapabilities: targetPair.buffered.Capabilities(),
+		maxDiagnostics:     engine.policy.Limits.Diagnostics,
+	}, nil
+}
+
+// Streams are always decoded into neutral events before re-encoding or
+// accumulation. Unlike buffered same-format envelopes, they have no complete
+// byte-for-byte replay path, so a same-format stream cannot replay unnamed
+// members either. Every chunk is an upstream document, so the stream leg takes
+// the same response policy: drop what the contract does not name, and say so.
+func (engine *Engine) providerStreamPolicy() llmprotocol.Policy {
+	policy := engine.policy
+	if policy.UnknownFields == llmprotocol.UnknownPreserveSameFormat {
+		policy.SourcePreservation = llmprotocol.SourceDisabled
+	}
+	policy.UnknownFields = llmprotocol.UnknownDropUpstream
+	return policy
+}
+
+// EventStreamEncoder renders router-produced semantic events directly into a
+// public wire format. Synthetic responses never need to manufacture a Chat SSE
+// body merely to feed it back through a decoder.
+type EventStreamEncoder struct {
+	encoder      llmprotocol.StreamEncoder
+	format       llmprotocol.WireFormat
+	capabilities llmprotocol.CapabilitySet
+	terminal     bool
+	finalized    bool
+	failure      error
+}
+
+func (engine *Engine) NewEventStreamEncoder(
+	format llmprotocol.WireFormat,
+	context llmprotocol.StreamContext,
+) (*EventStreamEncoder, error) {
+	pair, err := engine.codec(format)
+	if err != nil {
+		return nil, err
+	}
+	if !pair.buffered.Capabilities().Supports(llmprotocol.CapabilityStreaming) {
+		return nil, llmprotocol.NewError(
+			llmprotocol.ErrorUnsupportedFeature,
+			"streaming_unsupported",
+			"wire format does not support streaming",
+			nil,
+		)
+	}
+	context.Source = format
+	context.Target = format
+	return &EventStreamEncoder{
+		encoder: pair.stream.NewEncoder(context, engine.policy),
+		format:  format, capabilities: pair.buffered.Capabilities(),
+	}, nil
+}
+
+func (stream *EventStreamEncoder) Push(
+	event llmprotocol.Event,
+) ([][]byte, llmprotocol.Diagnostics, error) {
+	if stream == nil || stream.encoder == nil {
+		return nil, nil, fmt.Errorf("event stream encoder is unavailable")
+	}
+	if stream.finalized || stream.terminal {
+		if stream.failure != nil {
+			return nil, nil, stream.failure
+		}
+		return nil, nil, llmprotocol.NewError(
+			llmprotocol.ErrorConflict,
+			"stream_terminal",
+			"stream is already terminal",
+			nil,
+		)
+	}
+	if err := llmprotocol.RequireCapabilities(
+		stream.format,
+		stream.capabilities,
+		llmprotocol.RequiredEventCapabilities(event),
+	); err != nil {
+		stream.failure = err
+		stream.terminal = true
+		return nil, nil, err
+	}
+	frames, diagnostics, err := stream.encoder.Push(event)
+	if err != nil {
+		stream.failure = err
+		stream.terminal = true
+		return frames, diagnostics, err
+	}
+	if event.Type == llmprotocol.EventResponseCompleted || event.Type == llmprotocol.EventResponseFailed {
+		stream.terminal = true
+	}
+	return frames, diagnostics, nil
+}
+
+func (stream *EventStreamEncoder) Finalize(
+	reason error,
+) ([][]byte, llmprotocol.Diagnostics, error) {
+	if stream == nil || stream.encoder == nil {
+		return nil, nil, fmt.Errorf("event stream encoder is unavailable")
+	}
+	if stream.finalized {
+		return nil, nil, nil
+	}
+	stream.finalized = true
+	if stream.failure != nil {
+		reason = stream.failure
+	}
+	if !stream.terminal && reason == nil {
+		reason = fmt.Errorf("semantic event stream ended without a terminal event")
+	}
+	return stream.encoder.Finalize(reason)
+}
+
+func (engine *Engine) codec(format llmprotocol.WireFormat) (codecPair, error) {
+	if engine == nil || engine.registry == nil {
+		return codecPair{}, fmt.Errorf("protocol codec engine is unavailable")
+	}
+	pair, ok := engine.registry.resolve(format)
+	if !ok {
+		return codecPair{}, llmprotocol.NewError(
+			llmprotocol.ErrorUnsupportedFeature, "wire_format_unavailable",
+			fmt.Sprintf("wire format %q is unavailable", format), nil,
+		)
+	}
+	return pair, nil
+}
+
+func validatePolicy(policy llmprotocol.Policy) error {
+	if policy.UnknownFields != llmprotocol.UnknownReject &&
+		policy.UnknownFields != llmprotocol.UnknownPreserveSameFormat &&
+		policy.UnknownFields != llmprotocol.UnknownCapture {
+		return fmt.Errorf("unknown-field policy is invalid")
+	}
+	if policy.LossyFeatures != llmprotocol.LossyReject && policy.LossyFeatures != llmprotocol.LossyAllowWithDiagnostic {
+		return fmt.Errorf("lossy-feature policy is invalid")
+	}
+	if policy.MissingStableIDs != llmprotocol.MissingIDReject && policy.MissingStableIDs != llmprotocol.MissingIDGenerateStable {
+		return fmt.Errorf("missing-ID policy is invalid")
+	}
+	if policy.SourcePreservation != llmprotocol.SourceDisabled && policy.SourcePreservation != llmprotocol.SourceBoundedSameFormat {
+		return fmt.Errorf("source-preservation policy is invalid")
+	}
+	if !positiveProtocolLimits(policy.Limits) {
+		return fmt.Errorf("protocol limits must be positive")
+	}
+	return nil
+}
+
+func positiveProtocolLimits(limits llmprotocol.Limits) bool {
+	values := []int{
+		limits.BodyBytes, limits.SourceEnvelopeBytes, limits.ModelBytes,
+		limits.Instructions, limits.Messages, limits.Candidates, limits.Alternatives,
+		limits.OutputItems, limits.ContentBlocks, limits.Citations,
+		limits.CitationURLBytes, limits.CitationTitleBytes, limits.JSONDepth,
+		limits.ToolResultDepth, limits.Tools, limits.ToolNameBytes,
+		limits.ToolDescriptionBytes, limits.IdentifierBytes, limits.SchemaBytes,
+		limits.MetadataBytes, limits.MetadataEntries, limits.MetadataKeyBytes,
+		limits.MetadataValueBytes, limits.ToolArgumentsBytes, limits.ReasoningEffortBytes,
+		limits.StopSequences, limits.StopBytes, limits.TextBytes,
+		limits.MediaReferenceBytes, limits.MediaDataBytes, limits.SSEFrameBytes,
+		limits.UnfinishedArguments, limits.Events, limits.Diagnostics,
+	}
+	for _, value := range values {
+		if value <= 0 {
+			return false
+		}
+	}
+	return true
+}
+
+func appendDiagnostics(left, right llmprotocol.Diagnostics, limit int) llmprotocol.Diagnostics {
+	result := append(append(llmprotocol.Diagnostics(nil), left...), right...)
+	if limit > 0 && len(result) > limit {
+		result = append(result[:limit-1], llmprotocol.Diagnostic{
+			Field: "diagnostics", Action: llmprotocol.DiagnosticTruncated,
+			Reason: "additional fidelity diagnostics were truncated",
+		})
+	}
+	return result
+}
+
+type StreamEngine struct {
+	decoder            llmprotocol.StreamDecoder
+	encoder            llmprotocol.StreamEncoder
+	mutation           StreamEventMutation
+	sourceFormat       llmprotocol.WireFormat
+	targetFormat       llmprotocol.WireFormat
+	targetCapabilities llmprotocol.CapabilitySet
+	maxDiagnostics     int
+	terminal           bool
+	finalized          bool
+	failure            error
+	pendingCompletion  *llmprotocol.Event
+}
+
+// truncationUsageCarrier is an encoder that can put a count on the failure it
+// writes for a turn the Router ended. Not every wire format has a place for
+// one, so it is an option rather than part of the encoder contract.
+type truncationUsageCarrier interface {
+	SetTruncationUsage(usage *llmprotocol.Usage, source string)
+}
+
+// SetTruncationUsage says what a turn the caller is about to end has cost.
+//
+// A stream the Router cuts never reaches its usage frame, so the terminal the
+// codec writes would otherwise carry no numbers and the turn would bill as
+// nothing. The caller owns the count and the word for where it came from; the
+// codec only writes them onto the failure it was already going to write.
+// Called before Finalize, and only for a turn the Router itself ended.
+func (engine *StreamEngine) SetTruncationUsage(usage *llmprotocol.Usage, source string) {
+	if engine == nil {
+		return
+	}
+	if carrier, ok := engine.encoder.(truncationUsageCarrier); ok {
+		carrier.SetTruncationUsage(usage, source)
+	}
+}
+
+func (engine *StreamEngine) Push(frame []byte) ([][]byte, []llmprotocol.Event, llmprotocol.Diagnostics, error) {
+	if err := engine.validatePushState(); err != nil {
+		return nil, nil, nil, err
+	}
+	events, diagnostics, decodeErr := engine.decoder.Push(frame)
+	if decodeErr != nil {
+		events = suppressSuccessfulTerminal(events)
+		engine.pendingCompletion = nil
+	} else {
+		events = engine.deferSuccessfulTerminal(events)
+	}
+	frames, acceptedEvents, diagnostics, encodeErr := engine.encodeEvents(events, diagnostics)
+	if encodeErr != nil {
+		engine.poison(encodeErr)
+		return frames, acceptedEvents, diagnostics, encodeErr
+	}
+	// A transport read may contain several complete SSE frames followed by a
+	// malformed one. The decoder deliberately returns the valid semantic prefix
+	// together with the trailing error; encode that prefix before surfacing the
+	// error so network chunk coalescing cannot erase already accepted output.
+	if decodeErr != nil {
+		engine.poison(decodeErr)
+		return frames, acceptedEvents, diagnostics, decodeErr
+	}
+	return frames, acceptedEvents, diagnostics, nil
+}
+
+func (engine *StreamEngine) validatePushState() error {
+	if engine == nil || engine.decoder == nil || engine.encoder == nil {
+		return fmt.Errorf("stream codec engine is unavailable")
+	}
+	if !engine.terminal {
+		return nil
+	}
+	if engine.failure != nil {
+		return engine.failure
+	}
+	return llmprotocol.NewError(llmprotocol.ErrorConflict, "stream_terminal", "stream is already terminal", nil)
+}
+
+func (engine *StreamEngine) encodeEvents(
+	events []llmprotocol.Event,
+	diagnostics llmprotocol.Diagnostics,
+) ([][]byte, []llmprotocol.Event, llmprotocol.Diagnostics, error) {
+	frames := make([][]byte, 0, len(events))
+	accepted := make([]llmprotocol.Event, 0, len(events))
+	for index := range events {
+		if err := engine.prepareEvent(&events[index]); err != nil {
+			return frames, accepted, diagnostics, err
+		}
+		if engine.targetFormat != llmprotocol.AnthropicMessagesV1 && uncarriedCitation(events[index].Content) {
+			diagnostics = appendDiagnostics(diagnostics, llmprotocol.Diagnostics{uncarriedCitationDiagnostic(
+				engine.sourceFormat, engine.targetFormat,
+			)}, engine.maxDiagnostics)
+		}
+		encoded, eventDiagnostics, err := engine.encoder.Push(events[index])
+		diagnostics = appendDiagnostics(diagnostics, eventDiagnostics, engine.maxDiagnostics)
+		if err != nil {
+			return frames, accepted, diagnostics, err
+		}
+		frames = append(frames, encoded...)
+		accepted = append(accepted, events[index])
+		engine.recordTerminalEvent(events[index])
+	}
+	return frames, accepted, diagnostics, nil
+}
+
+func (engine *StreamEngine) prepareEvent(event *llmprotocol.Event) error {
+	if engine.mutation != nil {
+		if err := engine.mutation(event); err != nil {
+			return err
+		}
+	}
+	return llmprotocol.RequireCapabilities(
+		engine.targetFormat,
+		engine.targetCapabilities,
+		llmprotocol.RequiredEventCapabilities(*event),
+	)
+}

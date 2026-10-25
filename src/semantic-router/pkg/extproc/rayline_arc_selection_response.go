@@ -5,11 +5,11 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/headers"
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 )
 
 // selectionContendedRetryAfterSeconds is the shortest honest wait. Both
@@ -69,6 +69,9 @@ const (
 	// conversation's own decisions could hold it, so no model serves it:
 	// resending it unchanged cannot succeed, and no backend was called.
 	selectionFailureUndecidable = "undecidable"
+	// The request's data mode allows none of the arms that could serve this
+	// turn: resending it unchanged cannot succeed, and no backend was called.
+	selectionFailureNoPrivateArm = arcFailureNoPrivateArm
 	// The turn asked to continue a stored conversation on a path that does
 	// not do stateful continuation: resend the items instead of the id.
 	selectionFailureStatelessPath = "stateless_path"
@@ -116,6 +119,8 @@ func publicSelectionFailureClass(class string) string {
 		return selectionFailureUndecidable
 	case arcFailureResponsesPreviousID:
 		return selectionFailureStatelessPath
+	case arcFailureNoPrivateArm:
+		return selectionFailureNoPrivateArm
 	default:
 		if selectionShapeRefusalClasses[class] {
 			return selectionFailureRequestShape
@@ -194,6 +199,28 @@ func (r *OpenAIRouter) undecidableResponse(
 	return r.createErrorResponse(http.StatusUnprocessableEntity, undecidableMessage)
 }
 
+// noPrivateArmMessage says the request's data mode allows no arm that could
+// serve the turn, without naming the arms or their providers.
+const noPrivateArmMessage = "No model this route may use under the request's privacy mode can serve this turn, and none is served in its place."
+
+// noPrivateArmResponse refuses a private turn none of whose allowed arms can
+// serve it. It is a 422 for the reason undecidable is: no backend was called,
+// the router is healthy, and the same request is refused identically every
+// time, so a 503 would read as an outage and invite a replay.
+func (r *OpenAIRouter) noPrivateArmResponse(
+	ctx *RequestContext,
+) *ext_proc.ProcessingResponse {
+	if ctx != nil {
+		ctx.ImmediateProtocolError = llmprotocol.NewError(
+			llmprotocol.ErrorInvalidRequest,
+			selectionFailureNoPrivateArm,
+			noPrivateArmMessage,
+			nil,
+		)
+	}
+	return r.createErrorResponse(http.StatusUnprocessableEntity, noPrivateArmMessage)
+}
+
 // requestShapeRefusalResponse refuses a request a decision service could not
 // represent. It is a 400 and not a 503 for the reason the status is read: no
 // arm was dialled, so no model service was unavailable, and a 503 both blames
@@ -264,6 +291,8 @@ func (r *OpenAIRouter) authoritativeSelectionFailureResponse(
 		response = r.requestShapeRefusalResponse(ctx)
 	case failure.class == arcFailurePolicyUndecidable:
 		response = r.undecidableResponse(ctx)
+	case failure.class == arcFailureNoPrivateArm:
+		response = r.noPrivateArmResponse(ctx)
 	case failure.class == arcFailureResponsesPreviousID:
 		response = r.statelessPathResponse(ctx)
 	case selectionFailureIsCallerError(failure.class):

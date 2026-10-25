@@ -10,10 +10,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
+	"github.com/atlasfutures/semantic-router/rayline-core/protocolcodec"
 	"go.uber.org/zap/zaptest/observer"
-
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/protocolcodec"
 )
 
 // maxTokensToolCutChunks loads a recorded Anthropic stream from the protocol
@@ -21,7 +20,7 @@ import (
 // control.
 func maxTokensToolCutChunks(t *testing.T, path string) []string {
 	t.Helper()
-	body, err := os.ReadFile(filepath.Join("..", "protocolcodec", "testdata", "golden", path))
+	body, err := os.ReadFile(filepath.Join("../../../../rayline-core/protocolcodec", "testdata", "golden", path))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -48,6 +48,8 @@ providers:
           - novita
         require_parameters: true
         data_collection: deny
+        # Zero-data-retention endpoints only.
+        zdr: true
         # The price ceiling the route was vetted and trained under (USD per
         # million prompt/completion tokens, per request, per image).
         max_price:
@@ -1992,6 +1994,21 @@ recipes:
               # are not used.
               policy_service:
                 base_url: http://rayline-arc-policy-service:8000
+                # Set base_url to empty and populate replicas + failover to
+                # keep each episode on one of several policy services: its
+                # persisted owner, else the rendezvous choice among the
+                # active ones, e.g.
+                #   replicas: [{id: s1, base_url: https://s1, state: active}, ...]
+                #   failover: {schema_version: rayline.arc.policy-failover.v1,
+                #              unavailable_status_codes: [404, 429, 503],
+                #              unavailable_cooldown_seconds: 30, max_remaps: 1}
+                replicas: []
+                failover: {}
+                # sessions: {enabled: true} decides through a Modal Server with
+                # sticky sessions at base_url instead: each episode holds one
+                # Modal session (idle_timeout_seconds 900, start_timeout_seconds
+                # 10 by default). Exclusive with replicas; needs the proxy key.
+                sessions: {}
                 modal_key_env: RAYLINE_ARC_MODAL_KEY
                 modal_secret_env: RAYLINE_ARC_MODAL_SECRET
                 total_timeout_seconds: 60

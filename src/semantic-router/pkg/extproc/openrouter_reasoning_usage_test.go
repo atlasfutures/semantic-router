@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
+	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
 )
 
 // Round-2 harness testing (2026-10-03) asked whether reasoning_tokens reaches
@@ -23,7 +23,7 @@ const openRouterMimoReasoningTokens = 13
 
 func openRouterCapture(t *testing.T, name string) []byte {
 	t.Helper()
-	body, err := os.ReadFile(filepath.Join("..", "protocolcodec", "testdata", "provider", "openrouter", name))
+	body, err := os.ReadFile(filepath.Join("../../../../rayline-core/protocolcodec", "testdata", "provider", "openrouter", name))
 	if err != nil {
 		t.Fatal(err)
 	}

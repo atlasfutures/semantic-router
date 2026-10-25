@@ -214,7 +214,9 @@ func policyServiceAnswered(err error) bool {
 	case "timeout", "transport", "request":
 		return false
 	}
-	return true
+	// A session that could not be started, or was lost again after the
+	// turn's one move, never reached the policy.
+	return !raylinearc.PolicySessionUnanswered(err)
 }
 
 // arcFailurePolicyUndecidable is the selection failure of a turn the policy

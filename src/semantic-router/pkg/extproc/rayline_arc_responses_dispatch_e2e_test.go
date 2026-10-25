@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/atlasfutures/semantic-router/rayline-core/reasoning"
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 
@@ -116,7 +117,7 @@ func writeResponsesPolicyConfig(t *testing.T, policyURL string, actions map[stri
 // returns the provider-bound body and the turn's context.
 func codexTurn(t *testing.T, router *OpenAIRouter, episode, fixture string) (string, *RequestContext) {
 	t.Helper()
-	codex, err := os.ReadFile("../protocolcodec/testdata/codex/" + fixture)
+	codex, err := os.ReadFile("../../../../rayline-core/protocolcodec/testdata/codex/" + fixture)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -352,13 +353,13 @@ func TestReasoningIssuerFollowsTheCredential(t *testing.T) {
 		profile: &config.ProviderProfile{Type: "openai", BaseURL: "https://api.openai.com/v1"},
 	}
 	first := reasoningIssuerFor(dispatch, dispatchCredential{key: "key-one", known: true})
-	if first == raylinearc.ReasoningIssuerUnknown || first != reasoningIssuerFor(dispatch, dispatchCredential{key: "key-one", known: true}) {
+	if first == reasoning.ReasoningIssuerUnknown || first != reasoningIssuerFor(dispatch, dispatchCredential{key: "key-one", known: true}) {
 		t.Fatalf("one target and key named issuer %q inconsistently", first)
 	}
 	if rotated := reasoningIssuerFor(dispatch, dispatchCredential{key: "key-two", known: true}); rotated == first {
 		t.Fatal("a rotated key is the same issuer")
 	}
-	if unresolved := reasoningIssuerFor(dispatch, dispatchCredential{}); unresolved != raylinearc.ReasoningIssuerUnknown {
+	if unresolved := reasoningIssuerFor(dispatch, dispatchCredential{}); unresolved != reasoning.ReasoningIssuerUnknown {
 		t.Fatalf("an unresolved credential named issuer %q", unresolved)
 	}
 	if strings.Contains(first, "key-one") {

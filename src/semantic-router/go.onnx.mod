@@ -139,3 +139,7 @@ require (
 	sigs.k8s.io/randfill v1.0.0 // indirect
 	sigs.k8s.io/structured-merge-diff/v6 v6.3.0 // indirect
 )
+
+require github.com/atlasfutures/semantic-router/rayline-core v0.0.0
+
+replace github.com/atlasfutures/semantic-router/rayline-core => ../../rayline-core

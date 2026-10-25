@@ -21,7 +21,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
+	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/routerruntime"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
@@ -44,6 +44,9 @@ func TestSelectionFailureCarriesPublicClass(t *testing.T) {
 		{"policy_service_session_capacity", 429, selectionFailureCapacity},
 		{"not_ready", 503, selectionFailureNotReady},
 		{arcFailureMissingEpisodeID, 400, selectionFailureMissingSession},
+		// A private turn with no allowed arm is refused identically every
+		// time, so it is never a replayable 503.
+		{arcFailureNoPrivateArm, 422, selectionFailureNoPrivateArm},
 		// A decision service that cannot represent what the request carries
 		// refused the request, not the turn: no arm was dialled, so the caller
 		// is told 400 and never that a model service was unavailable.

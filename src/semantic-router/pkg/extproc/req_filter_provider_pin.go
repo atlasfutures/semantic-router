@@ -26,6 +26,15 @@ const providerPreferencesField = "provider"
 // already chose the arm, and this states how that arm reaches a machine. So the
 // pin is read off the arm's model card and nothing here consults the request.
 //
+// A private turn (rayline_arc_privacy.go) is the one exception: its data mode
+// is added to the pin, or sent alone when the arm pins nothing, and either way
+// replaces the provider object the request carries.
+//
+// An ARC turn on an arm that pins more than one endpoint is pinned to one of
+// them, picked by its session (rayline_arc_endpoint_pick.go), so the
+// conversation keeps one endpoint's cache and the endpoint that served is
+// known.
+//
 // Two conditions gate it. The arm must carry the key, because an unpinned arm
 // keeps the bytes it sent before the key existed. And the backend must be
 // OpenRouter, because every other OpenAI-compatible backend would see an
@@ -34,18 +43,28 @@ func applyProviderPreferences(
 	body []byte,
 	dispatch *providerDispatch,
 	routerConfig *config.RouterConfig,
+	ctx *RequestContext,
 ) ([]byte, error) {
-	preferences := providerPreferencesForDispatch(dispatch, routerConfig)
-	if preferences == nil {
+	privacyMode := ""
+	if ctx != nil {
+		privacyMode = ctx.RaylineARCPrivacyMode
+	}
+	resetDispatchedEndpoint(ctx)
+	pin, openRouter := providerPreferencesForDispatch(dispatch, routerConfig)
+	if !openRouter || (pin == nil && privacyMode == "") {
 		return body, nil
 	}
-	encoded, err := json.Marshal(preferences)
-	if err != nil {
-		return nil, fmt.Errorf("failed to serialize provider preferences: %w", err)
+	sent := privacyProviderPreferences(pickArmEndpoint(ctx, dispatch, pin), privacyMode)
+	if ctx != nil {
+		ctx.RaylineARCDispatchedEndpoint = dispatchedEndpoint(ctx, sent, dispatch.upstreamModel)
 	}
 	var requestMap map[string]json.RawMessage
 	if err := json.Unmarshal(body, &requestMap); err != nil {
 		return nil, fmt.Errorf("failed to parse request body: %w", err)
+	}
+	encoded, err := json.Marshal(sent)
+	if err != nil {
+		return nil, fmt.Errorf("failed to serialize provider preferences: %w", err)
 	}
 	requestMap[providerPreferencesField] = encoded
 	mutated, err := json.Marshal(requestMap)
@@ -56,18 +75,17 @@ func applyProviderPreferences(
 }
 
 // providerPreferencesForDispatch answers both gates in one place, so the
-// mutation above reads as a mutation and the policy stays testable on its own.
+// mutation above reads as a mutation and the policy stays testable on its own:
+// whether the dispatch reaches OpenRouter, and the arm's pin, nil when it pins
+// nothing.
 func providerPreferencesForDispatch(
 	dispatch *providerDispatch,
 	routerConfig *config.RouterConfig,
-) *config.OpenRouterProviderPreferences {
-	if dispatch == nil || routerConfig == nil {
-		return nil
+) (*config.OpenRouterProviderPreferences, bool) {
+	if dispatch == nil || routerConfig == nil || !providerIsOpenRouter(dispatch.profile) {
+		return nil, false
 	}
-	if !providerIsOpenRouter(dispatch.profile) {
-		return nil
-	}
-	return routerConfig.ProviderPreferencesForModel(dispatch.logicalModel)
+	return routerConfig.ProviderPreferencesForModel(dispatch.logicalModel), true
 }
 
 // recordDispatchedProviderPin names the providers the request actually pinned,
@@ -79,14 +97,33 @@ func recordDispatchedProviderPin(ctx *RequestContext, body []byte) {
 		return
 	}
 	ctx.DispatchedProviderOrder = nil
+	ctx.DispatchedProviderPrivacy = dispatchedProviderPrivacy{}
 
 	var wire struct {
 		Provider struct {
-			Order []string `json:"order"`
+			Order          []string `json:"order"`
+			DataCollection string   `json:"data_collection"`
+			ZDR            *bool    `json:"zdr"`
+			AllowFallbacks *bool    `json:"allow_fallbacks"`
 		} `json:"provider"`
 	}
 	if json.Unmarshal(body, &wire) != nil {
 		return
 	}
 	ctx.DispatchedProviderOrder = wire.Provider.Order
+	ctx.DispatchedProviderPrivacy = dispatchedProviderPrivacy{
+		dataCollection: wire.Provider.DataCollection,
+		zdr:            wire.Provider.ZDR,
+		allowFallbacks: wire.Provider.AllowFallbacks,
+	}
+}
+
+// dispatchedProviderPrivacy is the provider object's data-use members as the
+// rendered upstream body carries them (llm_usage provider_data_collection,
+// provider_zdr, provider_allow_fallbacks): empty and nil where the body sent
+// none.
+type dispatchedProviderPrivacy struct {
+	dataCollection string
+	zdr            *bool
+	allowFallbacks *bool
 }

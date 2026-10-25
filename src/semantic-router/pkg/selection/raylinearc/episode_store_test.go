@@ -25,6 +25,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/atlasfutures/semantic-router/rayline-core/cachecontext"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc/thinkinglever"
 )
 
@@ -187,7 +188,7 @@ func TestEpisodeStateWireRejectsFutureAndUnknownFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	state.Warmth[0] = &WorkerWarmth{
+	state.Warmth[0] = &cachecontext.WorkerWarmth{
 		LastUsed:        now.Add(maxFutureClockSkew + time.Millisecond),
 		LastInputTokens: 1,
 	}

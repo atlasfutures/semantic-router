@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/atlasfutures/semantic-router/rayline-core/cachecontext"
 )
 
 func explorationCandidate(model string, effort *string) PolicyStageOneCandidate {
@@ -95,7 +97,7 @@ func TestEpisodeRecordKeepsTheExplorationOrigin(t *testing.T) {
 	if err := state.Commit(0, 10, now.Add(-time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	state.Warmth[0].Call = &CallCache{ActionID: actionIDFor(0), CompletedAt: now.Add(-time.Second), ContextEpoch: "0"}
+	state.Warmth[0].Call = &cachecontext.CallCache{ActionID: actionIDFor(0), CompletedAt: now.Add(-time.Second), ContextEpoch: "0"}
 	state.Policy = &PolicyEpisodeState{}
 	v8, err := marshalEpisodeState(state, 1, now)
 	if err != nil {

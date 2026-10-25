@@ -274,6 +274,7 @@ COPY --from=nlp-builder /build/out/ /build/../nlp-binding/target/release/
 # Copy Go source (go.mod has local replace directives, so go mod download
 # requires candle-binding and ml-binding to be present first)
 COPY src/semantic-router/ .
+COPY rayline-core/ /rayline-core/
 
 # Build ONNX router (ROCm image uses onnx-binding with dynamic ORT loading)
 RUN if [ "$TARGETARCH" != "amd64" ]; then \

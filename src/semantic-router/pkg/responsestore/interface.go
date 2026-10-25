@@ -44,6 +44,20 @@ type ResponseStore interface {
 	// IsEnabled returns whether the store is enabled.
 	IsEnabled() bool
 
+	// Retains reports whether what is written to this store can be read
+	// back. It is part of the contract, not an optional capability: a
+	// backend that keeps nothing has to say so, because the answer decides
+	// how a turn naming previous_response_id is refused. A store that
+	// retains nothing can never resolve any id, so that is the caller's to
+	// fix by resending the conversation's items (400 stateless_path); an id
+	// a retaining store does not hold is a lookup miss (404); and a store
+	// the cell configured and could not open, or one that fails to load
+	// history it keeps, is the router's own failure (503). Persistence
+	// reads it too, to skip a write the store would discard anyway.
+	// Retains is independent of IsEnabled: the none backend is enabled, so
+	// the Responses surface stays on, and retains nothing.
+	Retains() bool
+
 	// CheckConnection verifies the store connection is healthy.
 	CheckConnection(ctx context.Context) error
 }
@@ -120,6 +134,12 @@ const (
 
 	// RedisStoreType is the Redis store backend.
 	RedisStoreType StoreBackendType = "redis"
+
+	// NoneStoreType keeps the Responses surface on and retains nothing: zero
+	// data retention. Stateless generation works and every turn gets a
+	// response id, but nothing can be read back, so previous_response_id is
+	// refused as the caller's error and the object endpoints answer 404.
+	NoneStoreType StoreBackendType = "none"
 )
 
 // MemoryStoreConfig contains configuration for the in-memory store.

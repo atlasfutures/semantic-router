@@ -1,0 +1,432 @@
+{
+  "description": "pickEndpoint (firebase/shared/src/usage/endpointPick.ts): rendezvous hashing. Each tag is scored by sha256(utf8(key + \"\\n\" + tag)); the order is highest digest first, compared as unsigned big-endian bytes, ties by tag. Generated independently of the TypeScript; a port must produce the same order.",
+  "cases": [
+    {
+      "key": "conv_01J9ZK8Q3W",
+      "tags": [
+        "xai/zdr"
+      ],
+      "order": [
+        "xai/zdr"
+      ]
+    },
+    {
+      "key": "conv_01J9ZK8Q3W",
+      "tags": [
+        "xai/zdr",
+        "xai/zdr/us"
+      ],
+      "order": [
+        "xai/zdr/us",
+        "xai/zdr"
+      ]
+    },
+    {
+      "key": "conv_01J9ZK8Q3W",
+      "tags": [
+        "xai",
+        "xai/zdr",
+        "xai/zdr/us"
+      ],
+      "order": [
+        "xai/zdr/us",
+        "xai/zdr",
+        "xai"
+      ]
+    },
+    {
+      "key": "conv_01J9ZK8Q3W",
+      "tags": [
+        "amazon-bedrock",
+        "anthropic",
+        "azure/global",
+        "claude-on-aws",
+        "google-vertex/global"
+      ],
+      "order": [
+        "anthropic",
+        "claude-on-aws",
+        "amazon-bedrock",
+        "google-vertex/global",
+        "azure/global"
+      ]
+    },
+    {
+      "key": "conv_01J9ZK8Q3W",
+      "tags": [
+        "azure",
+        "azure/us"
+      ],
+      "order": [
+        "azure",
+        "azure/us"
+      ]
+    },
+    {
+      "key": "",
+      "tags": [
+        "xai/zdr"
+      ],
+      "order": [
+        "xai/zdr"
+      ]
+    },
+    {
+      "key": "",
+      "tags": [
+        "xai/zdr",
+        "xai/zdr/us"
+      ],
+      "order": [
+        "xai/zdr",
+        "xai/zdr/us"
+      ]
+    },
+    {
+      "key": "",
+      "tags": [
+        "xai",
+        "xai/zdr",
+        "xai/zdr/us"
+      ],
+      "order": [
+        "xai/zdr",
+        "xai/zdr/us",
+        "xai"
+      ]
+    },
+    {
+      "key": "",
+      "tags": [
+        "amazon-bedrock",
+        "anthropic",
+        "azure/global",
+        "claude-on-aws",
+        "google-vertex/global"
+      ],
+      "order": [
+        "azure/global",
+        "google-vertex/global",
+        "amazon-bedrock",
+        "anthropic",
+        "claude-on-aws"
+      ]
+    },
+    {
+      "key": "",
+      "tags": [
+        "azure",
+        "azure/us"
+      ],
+      "order": [
+        "azure",
+        "azure/us"
+      ]
+    },
+    {
+      "key": "5f2c9a1e-3b7d-4c8e-9a0f-1d2e3f4a5b6c",
+      "tags": [
+        "xai/zdr"
+      ],
+      "order": [
+        "xai/zdr"
+      ]
+    },
+    {
+      "key": "5f2c9a1e-3b7d-4c8e-9a0f-1d2e3f4a5b6c",
+      "tags": [
+        "xai/zdr",
+        "xai/zdr/us"
+      ],
+      "order": [
+        "xai/zdr/us",
+        "xai/zdr"
+      ]
+    },
+    {
+      "key": "5f2c9a1e-3b7d-4c8e-9a0f-1d2e3f4a5b6c",
+      "tags": [
+        "xai",
+        "xai/zdr",
+        "xai/zdr/us"
+      ],
+      "order": [
+        "xai",
+        "xai/zdr/us",
+        "xai/zdr"
+      ]
+    },
+    {
+      "key": "5f2c9a1e-3b7d-4c8e-9a0f-1d2e3f4a5b6c",
+      "tags": [
+        "amazon-bedrock",
+        "anthropic",
+        "azure/global",
+        "claude-on-aws",
+        "google-vertex/global"
+      ],
+      "order": [
+        "claude-on-aws",
+        "amazon-bedrock",
+        "anthropic",
+        "azure/global",
+        "google-vertex/global"
+      ]
+    },
+    {
+      "key": "5f2c9a1e-3b7d-4c8e-9a0f-1d2e3f4a5b6c",
+      "tags": [
+        "azure",
+        "azure/us"
+      ],
+      "order": [
+        "azure/us",
+        "azure"
+      ]
+    },
+    {
+      "key": "9b74c9897bac770ffc029102a200c5de",
+      "tags": [
+        "xai/zdr"
+      ],
+      "order": [
+        "xai/zdr"
+      ]
+    },
+    {
+      "key": "9b74c9897bac770ffc029102a200c5de",
+      "tags": [
+        "xai/zdr",
+        "xai/zdr/us"
+      ],
+      "order": [
+        "xai/zdr/us",
+        "xai/zdr"
+      ]
+    },
+    {
+      "key": "9b74c9897bac770ffc029102a200c5de",
+      "tags": [
+        "xai",
+        "xai/zdr",
+        "xai/zdr/us"
+      ],
+      "order": [
+        "xai/zdr/us",
+        "xai/zdr",
+        "xai"
+      ]
+    },
+    {
+      "key": "9b74c9897bac770ffc029102a200c5de",
+      "tags": [
+        "amazon-bedrock",
+        "anthropic",
+        "azure/global",
+        "claude-on-aws",
+        "google-vertex/global"
+      ],
+      "order": [
+        "amazon-bedrock",
+        "azure/global",
+        "google-vertex/global",
+        "claude-on-aws",
+        "anthropic"
+      ]
+    },
+    {
+      "key": "9b74c9897bac770ffc029102a200c5de",
+      "tags": [
+        "azure",
+        "azure/us"
+      ],
+      "order": [
+        "azure",
+        "azure/us"
+      ]
+    },
+    {
+      "key": "session ключ ü",
+      "tags": [
+        "xai/zdr"
+      ],
+      "order": [
+        "xai/zdr"
+      ]
+    },
+    {
+      "key": "session ключ ü",
+      "tags": [
+        "xai/zdr",
+        "xai/zdr/us"
+      ],
+      "order": [
+        "xai/zdr",
+        "xai/zdr/us"
+      ]
+    },
+    {
+      "key": "session ключ ü",
+      "tags": [
+        "xai",
+        "xai/zdr",
+        "xai/zdr/us"
+      ],
+      "order": [
+        "xai/zdr",
+        "xai",
+        "xai/zdr/us"
+      ]
+    },
+    {
+      "key": "session ключ ü",
+      "tags": [
+        "amazon-bedrock",
+        "anthropic",
+        "azure/global",
+        "claude-on-aws",
+        "google-vertex/global"
+      ],
+      "order": [
+        "claude-on-aws",
+        "azure/global",
+        "anthropic",
+        "google-vertex/global",
+        "amazon-bedrock"
+      ]
+    },
+    {
+      "key": "session ключ ü",
+      "tags": [
+        "azure",
+        "azure/us"
+      ],
+      "order": [
+        "azure",
+        "azure/us"
+      ]
+    },
+    {
+      "key": "a",
+      "tags": [
+        "xai/zdr"
+      ],
+      "order": [
+        "xai/zdr"
+      ]
+    },
+    {
+      "key": "a",
+      "tags": [
+        "xai/zdr",
+        "xai/zdr/us"
+      ],
+      "order": [
+        "xai/zdr/us",
+        "xai/zdr"
+      ]
+    },
+    {
+      "key": "a",
+      "tags": [
+        "xai",
+        "xai/zdr",
+        "xai/zdr/us"
+      ],
+      "order": [
+        "xai/zdr/us",
+        "xai/zdr",
+        "xai"
+      ]
+    },
+    {
+      "key": "a",
+      "tags": [
+        "amazon-bedrock",
+        "anthropic",
+        "azure/global",
+        "claude-on-aws",
+        "google-vertex/global"
+      ],
+      "order": [
+        "claude-on-aws",
+        "azure/global",
+        "google-vertex/global",
+        "anthropic",
+        "amazon-bedrock"
+      ]
+    },
+    {
+      "key": "a",
+      "tags": [
+        "azure",
+        "azure/us"
+      ],
+      "order": [
+        "azure",
+        "azure/us"
+      ]
+    },
+    {
+      "key": "b",
+      "tags": [
+        "xai/zdr"
+      ],
+      "order": [
+        "xai/zdr"
+      ]
+    },
+    {
+      "key": "b",
+      "tags": [
+        "xai/zdr",
+        "xai/zdr/us"
+      ],
+      "order": [
+        "xai/zdr/us",
+        "xai/zdr"
+      ]
+    },
+    {
+      "key": "b",
+      "tags": [
+        "xai",
+        "xai/zdr",
+        "xai/zdr/us"
+      ],
+      "order": [
+        "xai/zdr/us",
+        "xai",
+        "xai/zdr"
+      ]
+    },
+    {
+      "key": "b",
+      "tags": [
+        "amazon-bedrock",
+        "anthropic",
+        "azure/global",
+        "claude-on-aws",
+        "google-vertex/global"
+      ],
+      "order": [
+        "amazon-bedrock",
+        "anthropic",
+        "claude-on-aws",
+        "azure/global",
+        "google-vertex/global"
+      ]
+    },
+    {
+      "key": "b",
+      "tags": [
+        "azure",
+        "azure/us"
+      ],
+      "order": [
+        "azure",
+        "azure/us"
+      ]
+    }
+  ]
+}

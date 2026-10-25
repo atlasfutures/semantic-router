@@ -7,13 +7,13 @@ import (
 	"net/http"
 	"runtime/debug"
 
+	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
 	http_ext "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/ext_proc/v3"
 	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/inflight"
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/metrics"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/routerreplay"
@@ -347,9 +347,14 @@ func (r *OpenAIRouter) processResponseHeaders(
 	v *ext_proc.ProcessingRequest_ResponseHeaders,
 	ctx *RequestContext,
 ) error {
-	// A discount endpoint's refusal is answered by its standard re-send,
-	// which the ordinary pipeline has already settled.
-	if resent := r.flexResendOnResponseHeaders(v, ctx); resent != nil {
+	// A discount endpoint's refusal is answered by its standard re-send, and
+	// a picked endpoint's failure by the arm's next endpoints; the ordinary
+	// pipeline has already settled either re-send.
+	resent := r.flexResendOnResponseHeaders(v, ctx)
+	if resent == nil {
+		resent = r.endpointResendOnResponseHeaders(v, ctx)
+	}
+	if resent != nil {
 		if err := sendResponse(stream, resent, "response header"); err != nil {
 			return err
 		}

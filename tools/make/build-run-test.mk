@@ -85,7 +85,7 @@ rayline-encoder-test: ## Run the rayline_arc_io encoder service unit tests (no G
 
 # Example: make test-semantic-router SKIP_MILVUS_TESTS=false SKIP_QDRANT_TESTS=false SKIP_VALKEY_TESTS=false
 test-semantic-router: ## Run unit tests for semantic-router (set SKIP_MILVUS_TESTS=false / SKIP_QDRANT_TESTS=false to enable)
-test-semantic-router: build-router
+test-semantic-router: build-router test-rayline-core
 	@$(LOG_TARGET)
 	@export LD_LIBRARY_PATH=${PWD}/candle-binding/target/release:${PWD}/ml-binding/target/release:${PWD}/nlp-binding/target/release && \
 	export SKIP_MILVUS_TESTS=$${SKIP_MILVUS_TESTS:-true} && \
@@ -533,3 +533,7 @@ test-modality-routing:
 	@echo "=============================================="
 	@echo " Modality Routing Tests Complete"
 	@echo "=============================================="
+
+.PHONY: test-rayline-core
+test-rayline-core: ## Test shared protocol, thinking, cache and execution core without native libraries
+	@cd rayline-core && CGO_ENABLED=0 go test ./...

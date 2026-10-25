@@ -8,12 +8,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
+	"github.com/atlasfutures/semantic-router/rayline-core/protocolcodec"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/contextcompression"
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/looper"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/metrics"
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/protocolcodec"
 )
 
 type contextRecoveryCall struct {
@@ -283,7 +283,7 @@ func (r *OpenAIRouter) executeContextRecoveryFollowup(
 	}
 	// The follow-up is a Chat provider response, so a namespaced call in it
 	// comes back under its qualified name, like the first response did.
-	restoreResponseToolNamespaces(&decoded.Response, requestToolNamespaces(requestCtx))
+	llmprotocol.RestoreResponseToolNamespaces(&decoded.Response, requestToolNamespaces(requestCtx))
 	decoded.Response.Usage, err = mergeContextRecoveryUsage(initial.Usage, decoded.Response.Usage)
 	if err != nil {
 		return nil, err

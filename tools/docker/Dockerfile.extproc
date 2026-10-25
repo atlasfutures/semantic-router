@@ -353,6 +353,7 @@ WORKDIR /app
 # Copy Go module files first for better layer caching
 RUN mkdir -p src/semantic-router
 COPY src/semantic-router/go.mod src/semantic-router/go.sum src/semantic-router/
+COPY rayline-core/go.mod rayline-core/go.sum rayline-core/
 COPY src/semantic-router/go.onnx.mod src/semantic-router/go.onnx.sum src/semantic-router/
 COPY candle-binding/go.mod candle-binding/semantic-router.go candle-binding/
 COPY onnx-binding/go.mod onnx-binding/semantic-router.go onnx-binding/
@@ -369,6 +370,7 @@ RUN cd src/semantic-router && go mod download && \
 
 # Copy semantic-router source code
 COPY src/semantic-router/ src/semantic-router/
+COPY rayline-core/ rayline-core/
 
 # Copy the built candle Rust library from rust-cross-builder
 ARG TARGETARCH
