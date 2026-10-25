@@ -795,7 +795,8 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		scheduleBoundary := scheduled && !scorer.twoStage &&
 			raylinearc.ModelChangeAllowed(state.TurnIndex, turn.EpochStartTurn, turn.CompactionCount)
 		leaseRefusal = policyLeaseCheck(scorer, deltaBase, signals, request.RequestFormat, messages[deltaBase.count:],
-			available, attestedFirst == "" && !derivedOffer && !forced, scheduleBoundary, selector.now())
+			available, attestedFirst == "" && !derivedOffer && !forced, scheduleBoundary,
+			policyShellDigest(clientRequest), selector.now())
 	}
 	if staging {
 		// delta_mismatch_reason is "none" when the delta went out; the soak
@@ -864,7 +865,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 					recordPolicySession(leased.RaylineARC, nil, state, arcContext.EpisodeIDHash)
 				}
 				leased.RaylineARC.PolicyStaging = selector.newPolicyStaging(
-					armed, scorer, arcContext, request.RequestFormat, turn, messages, roles, decider, sessionBinding, pending,
+					armed, scorer, arcContext, request.RequestFormat, clientRequest, turn, messages, roles, decider, sessionBinding, pending,
 				)
 				rememberPolicyPrefix(arcContext.EpisodeIDHash, prefixShape)
 				return leased, nil
@@ -1082,7 +1083,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	result.RaylineARC.PolicyRaceWait = raceWait
 	if staging && !sideCall {
 		result.RaylineARC.PolicyStaging = selector.newPolicyStaging(
-			armed, scorer, arcContext, request.RequestFormat, turn, messages, roles, decider, sessionBinding, nil,
+			armed, scorer, arcContext, request.RequestFormat, clientRequest, turn, messages, roles, decider, sessionBinding, nil,
 		)
 	}
 	recordPolicyReplica(result.RaylineARC, replicaBinding)

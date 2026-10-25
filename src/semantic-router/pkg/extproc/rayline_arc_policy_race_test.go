@@ -652,3 +652,54 @@ func TestRaceCancelledDuringTheRaceServesNothing(t *testing.T) {
 		t.Fatalf("a cancelled race returned %v after %v", err, time.Since(started))
 	}
 }
+
+// A lease serves only the shell it was decided under; Claude Code's
+// per-request billing line and moved cache breakpoints are no change.
+func TestRaceLeaseNeedsTheSameShell(t *testing.T) {
+	billed := func(cch string) raylinearc.PolicyClientRequest {
+		system, _ := json.Marshal([]any{
+			map[string]any{"type": "text", "text": "x-anthropic-billing-header: cc_version=2.1.309; cch=" + cch + ";"},
+			map[string]any{"type": "text", "text": "You are Claude Code.", "cache_control": map[string]any{"type": "ephemeral"}},
+		})
+		return raylinearc.PolicyClientRequest{System: system, Tools: json.RawMessage(`[{"name":"Bash"}]`)}
+	}
+	if policyShellDigest(billed("1")) != policyShellDigest(billed("2")) {
+		t.Fatal("the billing line changed the shell")
+	}
+	other := billed("1")
+	other.Tools = json.RawMessage(`[{"name":"Bash"},{"name":"Read"}]`)
+	if policyShellDigest(billed("1")) == policyShellDigest(other) {
+		t.Fatal("a tool change kept the shell")
+	}
+	fixture := newRaceFixture(t, "", nil)
+	fixture.stagedFirstTurn(t)
+	slowDeltas(fixture, 150*time.Millisecond)
+	body, _ := json.Marshal(map[string]any{"model": "auto", "max_tokens": 1024, "system": "be thorough",
+		"messages": []any{raceUser, raceAssistant, raceToolResult}})
+	second, ctx := fixture.turn(t, body)
+	if second.RaylineARC.PolicyActionID != fixture.decided || second.RaylineARC.PolicyDecisionMode != policyDecisionModeSync {
+		t.Fatalf("a changed system prompt served %s (%s)", second.RaylineARC.PolicyActionID, second.RaylineARC.PolicyDecisionMode)
+	}
+	complete(t, ctx, raceReply(t))
+}
+
+// Every format's reasoning keeps a reply out of the append.
+func TestPolicyReplyThinksInEveryFormat(t *testing.T) {
+	for _, tc := range []struct {
+		format string
+		body   string
+		thinks bool
+	}{
+		{policyFormatAnthropic, `{"role":"assistant","content":[{"type":"redacted_thinking","data":"x"}]}`, true},
+		{policyFormatAnthropic, `{"role":"assistant","content":[{"type":"text","text":"a"}]}`, false},
+		{policyFormatOpenAI, `{"choices":[{"message":{"role":"assistant","content":"a","reasoning":"why"}}]}`, true},
+		{policyFormatOpenAI, `{"choices":[{"message":{"role":"assistant","content":"a","reasoning_details":[{"type":"reasoning.text"}]}}]}`, true},
+		{policyFormatOpenAI, `{"choices":[{"message":{"role":"assistant","content":"a","reasoning":null}}]}`, false},
+		{policyFormatResponses, `{"output":[{"type":"reasoning","summary":[]},{"type":"message","role":"assistant","content":[]}]}`, true},
+		{policyFormatResponses, `{"output":[{"type":"message","role":"assistant","content":[]}]}`, false},
+	} {
+		if got := policyReplyThinks(tc.format, []byte(tc.body)); got != tc.thinks {
+			t.Errorf("%s %s: thinks %v", tc.format, tc.body, got)
+		}
+	}
+}

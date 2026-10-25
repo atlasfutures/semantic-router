@@ -52,11 +52,16 @@ package extproc
 // replaces it or drops it, so nothing outlives the turn that wrote it.
 
 import (
+	"bytes"
 	"container/list"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"slices"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -100,6 +105,9 @@ type policyStagedTurn struct {
 	historyDigest string
 	hold          *raylinearc.PolicyHold
 	holdExpires   time.Time
+	// shellDigest is the decided turn's shell (policyShellDigest): a lease
+	// serves only a turn whose shell is the same.
+	shellDigest string
 }
 
 // policyStagedTurns is the process's staged turns, keyed by episode. A
@@ -263,6 +271,8 @@ type policyStaging struct {
 	// messages and roles are the conversation the turn was decided on.
 	messages []json.RawMessage
 	roles    []string
+	// shellDigest is the turn's shell (policyShellDigest).
+	shellDigest string
 	// pending is a raced decide whose race the lease won; nil otherwise.
 	pending *policyPendingDecide
 	// clientBody is the reply the client received, once it is complete.
@@ -447,6 +457,7 @@ func policyLeaseCheck(
 	available []string,
 	plainAsk bool,
 	scheduleBoundary bool,
+	shellDigest string,
 	now time.Time,
 ) string {
 	hold := staged.hold
@@ -465,6 +476,8 @@ func policyLeaseCheck(
 		return "lease_unbound"
 	case !now.Before(staged.holdExpires):
 		return "lease_expired"
+	case shellDigest != staged.shellDigest:
+		return "shell_changed"
 	}
 	if _, bound := scorer.bindings[hold.ActionID]; !bound || !slices.Contains(available, hold.ActionID) {
 		return "lease_not_offered"
@@ -505,6 +518,7 @@ func (selector *raylineARCSelector) newPolicyStaging(
 	scorer *policyServiceScorer,
 	arcContext *selection.RaylineARCSelectionContext,
 	format string,
+	shell raylinearc.PolicyClientRequest,
 	turn *raylinearc.PolicyEpisodeState,
 	messages []json.RawMessage,
 	roles []string,
@@ -527,6 +541,7 @@ func (selector *raylineARCSelector) newPolicyStaging(
 		episodeIDHash: arcContext.EpisodeIDHash,
 		requestID:     arcContext.RequestID,
 		requestFormat: format,
+		shellDigest:   policyShellDigest(shell),
 		contextEpoch:  turn.ContextEpoch(),
 		messages:      messages,
 		roles:         roles,
@@ -681,7 +696,7 @@ func (transaction *raylineARCEpisodeTransaction) appendPolicyStagedTurn(parent c
 	if !ok {
 		return fail("no_assistant_output")
 	}
-	if policyReplyThinks(staging.requestFormat, assistant) {
+	if policyReplyThinks(staging.requestFormat, staging.clientBody) {
 		// No captured client shows how a thinking block is echoed (its
 		// signature and display), so such a reply is not appended: the next
 		// turn decides in full rather than staging a guess.
@@ -733,6 +748,7 @@ func (transaction *raylineARCEpisodeTransaction) appendPolicyStagedTurn(parent c
 		prefixDigest:  response.PrefixDigest,
 		digest:        raylinearc.MessagesDigest(messages, len(messages)),
 		appendedFrom:  len(staging.messages),
+		shellDigest:   staging.shellDigest,
 		historyDigest: raylinearc.MessagesDigest(messages, len(staging.messages)),
 	}
 	if hold := response.Hold; hold != nil {
@@ -857,41 +873,121 @@ func anthropicEchoContent(raw json.RawMessage) (json.RawMessage, bool) {
 	return encoded, err == nil
 }
 
-// policyReplyThinks reports whether the appended reply holds reasoning:
-// Messages thinking or redacted_thinking blocks, Chat reasoning members.
-// (A Responses reasoning item is materialized by VSR itself for the next
-// turn, so it is appended as it will be read.)
-func policyReplyThinks(format string, messages []json.RawMessage) bool {
-	for _, message := range messages {
-		switch format {
-		case policyFormatAnthropic:
-			var reply struct {
-				Content []struct {
-					Type string `json:"type"`
-				} `json:"content"`
-			}
-			if json.Unmarshal(message, &reply) != nil {
+// policyReplyThinks reports whether the reply the client received holds
+// reasoning, read before any normalization: Messages thinking or
+// redacted_thinking blocks, a Chat message's reasoning members, a Responses
+// reasoning item. An unreadable reply counts as thinking.
+func policyReplyThinks(format string, body []byte) bool {
+	switch format {
+	case policyFormatAnthropic:
+		var reply struct {
+			Content []struct {
+				Type string `json:"type"`
+			} `json:"content"`
+		}
+		if json.Unmarshal(body, &reply) != nil {
+			return true
+		}
+		for _, block := range reply.Content {
+			if block.Type == "thinking" || block.Type == "redacted_thinking" {
 				return true
 			}
-			for _, block := range reply.Content {
-				if block.Type == "thinking" || block.Type == "redacted_thinking" {
-					return true
-				}
-			}
-		case policyFormatOpenAI:
-			var reply map[string]json.RawMessage
-			if json.Unmarshal(message, &reply) != nil {
-				return true
-			}
+		}
+	case policyFormatOpenAI:
+		var reply struct {
+			Choices []struct {
+				Message map[string]json.RawMessage `json:"message"`
+			} `json:"choices"`
+		}
+		if json.Unmarshal(body, &reply) != nil {
+			return true
+		}
+		for _, choice := range reply.Choices {
 			for _, member := range []string{"reasoning", "reasoning_content", "reasoning_details"} {
-				if value, ok := reply[member]; ok && string(value) != "null" {
+				if value, ok := choice.Message[member]; ok && string(value) != "null" && string(value) != `""` && string(value) != "[]" {
 					return true
 				}
 			}
 		}
+	case policyFormatResponses:
+		var reply struct {
+			Output []struct {
+				Type string `json:"type"`
+			} `json:"output"`
+		}
+		if json.Unmarshal(body, &reply) != nil {
+			return true
+		}
+		for _, item := range reply.Output {
+			if item.Type == "reasoning" {
+				return true
+			}
+		}
+	default:
+		return true
 	}
 	return false
 }
+
+// policyShellDigest is the request's shell (system and tools; Responses
+// instructions and tools) as the lease check compares it: cache_control
+// dropped everywhere, and Claude Code's per-request billing attribution
+// line dropped from system text, so only a shell that changed what the
+// encoder reads ahead of the conversation differs.
+func policyShellDigest(request raylinearc.PolicyClientRequest) string {
+	instructions, _ := json.Marshal(request.Instructions)
+	parts := []json.RawMessage{request.System, request.Tools, instructions}
+	hash := sha256.New()
+	for _, part := range parts {
+		var value any
+		decoder := json.NewDecoder(bytes.NewReader(part))
+		decoder.UseNumber()
+		if len(part) > 0 && decoder.Decode(&value) == nil {
+			value = policyShellCanonical(value)
+			if canonical, err := raylinearc.MarshalUnescaped(value); err == nil {
+				part = canonical
+			}
+		}
+		hash.Write([]byte(strconv.Itoa(len(part))))
+		hash.Write([]byte{':'})
+		hash.Write(part)
+	}
+	return hex.EncodeToString(hash.Sum(nil))
+}
+
+func policyShellCanonical(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		delete(typed, "cache_control")
+		for key, member := range typed {
+			typed[key] = policyShellCanonical(member)
+		}
+		return typed
+	case []any:
+		for index, element := range typed {
+			typed[index] = policyShellCanonical(element)
+		}
+		return typed
+	case string:
+		if !strings.Contains(typed, policyBillingHeaderPrefix) {
+			return typed
+		}
+		lines := strings.Split(typed, "\n")
+		kept := lines[:0]
+		for _, line := range lines {
+			if !strings.HasPrefix(strings.TrimSpace(line), policyBillingHeaderPrefix) {
+				kept = append(kept, line)
+			}
+		}
+		return strings.Join(kept, "\n")
+	default:
+		return value
+	}
+}
+
+// policyBillingHeaderPrefix starts Claude Code's per-request attribution
+// line in its system prompt.
+const policyBillingHeaderPrefix = "x-anthropic-billing-header:"
 
 // stageRaylineARCAppendSource keeps the reply the client receives for the
 // turn's append; a turn that stages nothing keeps nothing.
