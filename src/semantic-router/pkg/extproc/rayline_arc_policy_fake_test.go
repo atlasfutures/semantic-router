@@ -1,6 +1,8 @@
 package extproc
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -114,6 +116,129 @@ type fakePolicyService struct {
 	bounds        *raylinearc.PolicyAdjustableCostWeight
 	// listingQueries are the packages listings' queries, in order.
 	listingQueries []url.Values
+	// Staged turns (ADR 0155, pathfinder#5919): a decide with stage or
+	// turn_delta stages the episode's turn, an append extends it once, and a
+	// delta must name the staged prefix digest (session_mismatch otherwise).
+	// Like the service, a delta is decided as the full request it stands
+	// for: the staged messages then the delta's, under the delta's shell
+	// (resolved records each decide so). refuseDelta answers every delta
+	// session_mismatch; appendStatus, when set, answers every append with
+	// it; appendGate, when set, holds each append until it is closed;
+	// contentScores scores each action from the resolved request's content,
+	// so a parity test sees any difference in what was decided on.
+	staged        map[string]*fakeStagedTurn
+	refuseDelta   bool
+	appendStatus  int
+	appendGate    chan struct{}
+	appends       []raylinearc.PolicyAppendRequest
+	resolved      []raylinearc.PolicyDecisionRequest
+	contentScores bool
+}
+
+type fakeStagedTurn struct {
+	messages     []json.RawMessage
+	awaitsAppend bool
+}
+
+func fakePrefixDigest(episode string, count int) string {
+	sum := sha256.Sum256([]byte(fmt.Sprintf("%s:%d", episode, count)))
+	return hex.EncodeToString(sum[:])
+}
+
+// stageDecide applies a decide's staging and returns the full request it is
+// decided as, or false for a delta it refuses as session_mismatch.
+func (fake *fakePolicyService) stageDecide(decide raylinearc.PolicyDecisionRequest) (raylinearc.PolicyDecisionRequest, bool) {
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if fake.staged == nil {
+		fake.staged = map[string]*fakeStagedTurn{}
+	}
+	resolved := decide
+	var messages []json.RawMessage
+	if delta := decide.TurnDelta; delta != nil {
+		base := fake.staged[decide.EpisodeIDHash]
+		if fake.refuseDelta || base == nil || fakePrefixDigest(decide.EpisodeIDHash, len(base.messages)) != delta.BasePrefixDigest {
+			return resolved, false
+		}
+		messages = append(append([]json.RawMessage{}, base.messages...), delta.Messages...)
+		shell := decide.Request
+		resolved.TurnDelta = nil
+		if shell.Shell == raylinearc.PolicyShellInput {
+			resolved.Request = raylinearc.PolicyClientRequest{Input: messages, Instructions: shell.Instructions, Tools: shell.Tools}
+		} else {
+			joined, err := json.Marshal(messages)
+			if err != nil {
+				fake.t.Errorf("fake policy service: %v", err)
+			}
+			resolved.Request = raylinearc.PolicyClientRequest{System: shell.System, Tools: shell.Tools, Messages: joined}
+		}
+	} else if decide.Request.Input != nil {
+		messages = append([]json.RawMessage{}, decide.Request.Input...)
+	} else {
+		_ = json.Unmarshal(decide.Request.Messages, &messages)
+	}
+	if (decide.Stage != nil && *decide.Stage) || decide.TurnDelta != nil {
+		fake.staged[decide.EpisodeIDHash] = &fakeStagedTurn{messages: messages, awaitsAppend: true}
+	}
+	fake.resolved = append(fake.resolved, resolved)
+	return resolved, true
+}
+
+func (fake *fakePolicyService) receivedAppends() []raylinearc.PolicyAppendRequest {
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	return append([]raylinearc.PolicyAppendRequest(nil), fake.appends...)
+}
+
+// resolvedDecides are the full requests the fake decided, deltas resolved.
+func (fake *fakePolicyService) resolvedDecides() []raylinearc.PolicyDecisionRequest {
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	return append([]raylinearc.PolicyDecisionRequest(nil), fake.resolved...)
+}
+
+func (fake *fakePolicyService) serveAppend(writer http.ResponseWriter, request *http.Request) {
+	body, err := io.ReadAll(request.Body)
+	if err != nil {
+		http.Error(writer, err.Error(), http.StatusBadRequest)
+		return
+	}
+	var appended raylinearc.PolicyAppendRequest
+	if err := json.Unmarshal(body, &appended); err != nil {
+		http.Error(writer, err.Error(), http.StatusBadRequest)
+		return
+	}
+	fake.mu.Lock()
+	fake.appends = append(fake.appends, appended)
+	gate, status := fake.appendGate, fake.appendStatus
+	fake.mu.Unlock()
+	if gate != nil {
+		<-gate
+	}
+	if status != 0 {
+		fake.writeJSON(writer, status, map[string]any{"error": "backend_unavailable", "detail": map[string]any{}})
+		return
+	}
+	fake.mu.Lock()
+	staged := fake.staged[appended.EpisodeIDHash]
+	if staged == nil || !staged.awaitsAppend {
+		fake.mu.Unlock()
+		fake.writeJSON(writer, http.StatusUnprocessableEntity, map[string]any{
+			"error": "unsupported_request", "detail": map[string]any{"reason": "session_mismatch"},
+		})
+		return
+	}
+	staged.messages = append(staged.messages, appended.Messages...)
+	staged.awaitsAppend = false
+	count := len(staged.messages)
+	fake.mu.Unlock()
+	var response raylinearc.PolicyAppendResponse
+	fake.readFixture("append_response.v1.json", &response)
+	response.Package = raylinearc.PolicyPackageRef{Alias: fake.alias, PackageSHA256: fake.sha256}
+	response.PrefixDigest = fakePrefixDigest(appended.EpisodeIDHash, count)
+	response.Messages = count
+	// The fixture's hold stays: VSR never reads it (ADR 0155's amendment).
+	fake.writeJSON(writer, http.StatusOK, response)
 }
 
 func newFakePolicyService(t *testing.T, alias, sha256 string, catalog []string) *fakePolicyService {
@@ -177,6 +302,7 @@ func (fake *fakePolicyService) serve(writer http.ResponseWriter, request *http.R
 			listing.Capabilities = []string{
 				raylinearc.PolicyCapabilityDecisionsV2, raylinearc.PolicyCapabilityTierPoints,
 				raylinearc.PolicyCapabilityResponseFields, raylinearc.PolicyCapabilityExploration,
+				raylinearc.PolicyCapabilityStagedTurns,
 			}
 			if fake.advertised != nil {
 				listing.Capabilities = append([]string{}, fake.advertised...)
@@ -248,6 +374,14 @@ func (fake *fakePolicyService) serve(writer http.ResponseWriter, request *http.R
 			})
 			return
 		}
+		resolved, ok := fake.stageDecide(decide)
+		if !ok {
+			fake.writeJSON(writer, http.StatusUnprocessableEntity, map[string]any{
+				"error": "unsupported_request", "detail": map[string]any{"reason": "session_mismatch"},
+			})
+			return
+		}
+		decide = resolved
 		fake.awaitBarrier()
 		if failWith != "" {
 			if failDetail == nil {
@@ -257,6 +391,8 @@ func (fake *fakePolicyService) serve(writer http.ResponseWriter, request *http.R
 			return
 		}
 		fake.writeJSON(writer, http.StatusOK, fake.decision(decide, choose(decide)))
+	case "/v1/rayline/arc/policy/append":
+		fake.serveAppend(writer, request)
 	default:
 		http.NotFound(writer, request)
 	}
@@ -360,6 +496,12 @@ func (fake *fakePolicyService) decision(request raylinearc.PolicyDecisionRequest
 			ActionID: actionID, Available: available[actionID], Supported: true,
 			Selected: actionID == selected, Score: float64(index) / 10,
 		})
+	}
+	if fake.contentScores {
+		content := fakeContentDigest(fake.t, request.Request)
+		for index := range response.Actions {
+			response.Actions[index].Score = float64(content[index%len(content)]) / 255
+		}
 	}
 	response.Decision.SelectedActionID = selected
 	response.Decision.SelectedArmID = "arm-" + selected[:8]
@@ -484,4 +626,12 @@ func (fake *fakePolicyService) writeJSON(writer http.ResponseWriter, status int,
 	writer.Header().Set("Content-Type", "application/json")
 	writer.WriteHeader(status)
 	_, _ = writer.Write(encoded)
+}
+
+// fakeContentDigest digests a request's shell and conversation as the
+// service's projections read them (fakeCanonicalRequest), so it is the same
+// for the same content however it was sent.
+func fakeContentDigest(t *testing.T, request raylinearc.PolicyClientRequest) []byte {
+	sum := sha256.Sum256([]byte(fakeCanonicalRequest(t, request)))
+	return sum[:]
 }

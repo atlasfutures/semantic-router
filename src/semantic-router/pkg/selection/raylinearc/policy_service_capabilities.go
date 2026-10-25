@@ -39,6 +39,10 @@ const (
 	// temperature shape (pathfinder#5637). Proposed name: a service that
 	// does not advertise it is never sent that shape.
 	PolicyCapabilityExplorationTemperature = "exploration_temperature"
+	// PolicyCapabilityStagedTurns: the append operation and the decide's
+	// stage and turn_delta members (ADR 0155, pathfinder#5919). A delta
+	// cell whose service does not advertise it sends every turn in full.
+	PolicyCapabilityStagedTurns = "staged_turns"
 )
 
 // Readiness classes for a service that cannot serve what the cell sends.

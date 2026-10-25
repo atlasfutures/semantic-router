@@ -525,6 +525,11 @@ class RaylineARCPolicyServiceConfig(BaseModel):
     exploration: RaylineARCExplorationConfig | None = None
     # An eval or lab cell never sends exploration.
     eval_cell: bool = False
+    # Mirrors DecideMode in the Go loader (ADR 0155, proposed): delta stages
+    # strict main turns, appends each reply off the user's path and sends the
+    # next held turn's new messages only, still decided synchronously. sync
+    # sends every turn in full.
+    decide_mode: Literal["", "sync", "delta"] = ""
 
     @field_validator("failover", mode="before")
     @classmethod

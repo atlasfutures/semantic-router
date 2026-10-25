@@ -59,8 +59,8 @@ func TestPolicyFixturesMatchTheirPinnedDigests(t *testing.T) {
 		}
 		seen++
 	}
-	if seen != 17 {
-		t.Fatalf("SHA256SUMS pins %d fixtures, want 17", seen)
+	if seen != 20 {
+		t.Fatalf("SHA256SUMS pins %d fixtures, want 20", seen)
 	}
 }
 
@@ -94,6 +94,11 @@ func TestPolicyWireTypesRoundTripTheFixtures(t *testing.T) {
 		// pathfinder#5454: the listing asked for detail=capabilities.
 		"packages_response_capabilities.v1.json": &PolicyPackagesResponse{},
 		"error_responses.v1.json":                &[]PolicyErrorResponse{},
+		// Staged turns (ADR 0155, pathfinder#5919): the append and the
+		// delta decide, whose request is the client's shell only.
+		"append_request.v1.json":              &PolicyAppendRequest{},
+		"append_response.v1.json":             &PolicyAppendResponse{},
+		"decision_request_turn_delta.v1.json": &PolicyDecisionRequest{},
 	}
 	for name, target := range cases {
 		body := readPolicyFixture(t, name)
