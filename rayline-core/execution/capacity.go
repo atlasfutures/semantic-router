@@ -3,7 +3,7 @@ package execution
 import (
 	"bytes"
 	"context"
-	"fmt"
+	"log/slog"
 	"sort"
 
 	"github.com/atlasfutures/semantic-router/rayline-core/cachecontext"
@@ -92,7 +92,12 @@ func (server *Server) measureCapacity(ctx context.Context, body []byte, format l
 		}
 		prompt, err := server.measurePreparedPrompt(ctx, selected, prepared.body, state, nil)
 		if err != nil {
-			return nil, nil, fmt.Errorf("measure target capacity: %w", err)
+			// A runtime that cannot count is a fact about that target only:
+			// it is unavailable, never a reason to refuse the whole turn.
+			slog.Warn("capacity measurement failed", "action_id", id, "deployment", selected.deployment.ID, "error", err.Error())
+			reason := CapacityRuntimeUnavailable
+			facts[id] = &CapacityFact{Fits: false, Reason: &reason, Provenance: "local_measured"}
+			continue
 		}
 		measured[id] = prompt
 		facts[id] = capacityFact(selected.deployment, prompt, prepared.outputLimit)

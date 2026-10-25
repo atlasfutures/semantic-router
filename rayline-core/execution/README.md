@@ -80,8 +80,10 @@ opt-in. The core reports facts and never picks or ranks a model.
   `required` = that count + the prepared output limit + the deployment's optional
   `capacity_margin_tokens`; `available` = its configured `context_window`, with
   `available_source: "configured"` (llama.cpp's per-slot allocation is not yet
-  observed); `units` = its `token_units`; `provenance: "local_measured"`. Other
-  targets send `capacity: null`.
+  observed); `units` = its `token_units`; `provenance: "local_measured"`. A
+  counter that fails reports that target `fits: false` with
+  `reason: "runtime_unavailable"` instead of refusing the turn. Other targets
+  send `capacity: null`.
 - **Pre-dispatch check and veto.** The final prepared request is checked again
   before dispatch. If it does not fit the selected target, or the local runtime
   refuses it for context before any output, the core re-consults once per cause

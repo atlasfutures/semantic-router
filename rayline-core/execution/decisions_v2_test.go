@@ -606,32 +606,68 @@ func TestV2CompactionRetryAfterFailureKeepsRetainedAttribution(t *testing.T) {
 	}
 }
 
-func TestV2UnlabelledRequestOnAnExplicitBranchIsASidecall(t *testing.T) {
+func TestV2OptionalExplicitEventDoesNotStopWireInference(t *testing.T) {
 	local, cloud := &upstreamFixture{}, &upstreamFixture{}
 	config := hybridV2Config(t, chatUpstream(t, local, false).URL, chatUpstream(t, cloud, true).URL+"/v1/chat/completions")
 	fixture := &v2Decisions{choose: func(contextV2) string { return localActionID }}
 	server, httpServer := v2Server(t, config, fixture)
 	explicit := `{"rayline_event":{"kind":"task_start"},` + chatTurn(userTask)[1:]
-	if status, response := executeHTTP(t, httpServer.URL, "/v1/chat/completions", explicit, "pi-like"); status != 200 {
+	if status, response := executeHTTP(t, httpServer.URL, "/v1/chat/completions", explicit, "optional"); status != 200 {
 		t.Fatalf("status %d: %s", status, response)
 	}
-	// Pi's compaction summary call bypasses the extension: no event.
-	summary := `{"model":"arc-1.0","max_tokens":64,"messages":[{"role":"user","content":"Summarise this conversation: ..."}]}`
-	if status, response := executeHTTP(t, httpServer.URL, "/v1/chat/completions", summary, "pi-like"); status != 200 {
+	// A later request without an explicit event is read from the wire as usual.
+	if status, response := executeHTTP(t, httpServer.URL, "/v1/chat/completions", chatTurn(userTask, toolCall, toolResult), "optional"); status != 200 {
 		t.Fatalf("status %d: %s", status, response)
 	}
-	event := fixture.snapshot()[1].Execution.Event
-	if event.Kind == nil || *event.Kind != EventSidecall || event.Basis != BasisMarkerInferred {
-		t.Fatalf("unlabelled event %+v", event)
+	// A harness side call (Chat system prompt literal) is recognised without a label.
+	summary := `{"model":"arc-1.0","max_tokens":64,"messages":[{"role":"system","content":"` + piSummarizationSystem + `"},{"role":"user","content":"<conversation>...</conversation>"}]}`
+	if status, response := executeHTTP(t, httpServer.URL, "/v1/chat/completions", summary, "optional"); status != 200 {
+		t.Fatalf("status %d: %s", status, response)
 	}
-	state, err := server.states.acquire(t.Context(), "pi-like", "main")
+	lookups := fixture.snapshot()
+	if got := []string{lookups[1].Execution.Event.kindName(), lookups[2].Execution.Event.kindName()}; got[0] != EventToolResult || got[1] != EventSidecall {
+		t.Fatalf("events %v", got)
+	}
+	state, err := server.states.acquire(t.Context(), "optional", "main")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer state.release()
-	if state.completed != 1 || state.epoch != 0 {
+	if state.completed != 2 || state.epoch != 0 {
 		t.Fatalf("summary call advanced the main branch: completed=%d epoch=%d", state.completed, state.epoch)
 	}
+}
+
+func TestV2CounterFailureIsRuntimeUnavailableForThatTarget(t *testing.T) {
+	local, cloud := &upstreamFixture{}, &upstreamFixture{}
+	config := hybridV2Config(t, chatUpstream(t, local, false).URL, chatUpstream(t, cloud, true).URL+"/v1/chat/completions")
+	fixture := &v2Decisions{choose: func(sent contextV2) string {
+		if capacity := sent.Targets[0].Capacity; capacity != nil && !capacity.Fits {
+			return cloudActionID
+		}
+		return localActionID
+	}}
+	server, httpServer := v2Server(t, config, fixture)
+	if err := server.RegisterPromptCounter(config.Deployments[0].ID, failingCounter{identity: promptIdentity(config.Deployments[0])}); err != nil {
+		t.Fatal(err)
+	}
+	if status, response := executeHTTP(t, httpServer.URL, "/v1/chat/completions", chatTurn(userTask), "counter-down"); status != 200 {
+		t.Fatalf("status %d: %s", status, response)
+	}
+	capacity := fixture.snapshot()[0].Execution.Targets[0].Capacity
+	if capacity == nil || capacity.Fits || capacity.Reason == nil || *capacity.Reason != CapacityRuntimeUnavailable || capacity.Required != nil {
+		t.Fatalf("capacity %s", mustJSON(capacity))
+	}
+	if local.count() != 0 || cloud.count() != 1 {
+		t.Fatalf("dispatch local=%d cloud=%d", local.count(), cloud.count())
+	}
+}
+
+type failingCounter struct{ identity cachecontext.PromptIdentity }
+
+func (counter failingCounter) Identity() cachecontext.PromptIdentity { return counter.identity }
+func (failingCounter) Count(context.Context, cachecontext.PreparedPrompt) (cachecontext.PromptMeasurement, error) {
+	return cachecontext.PromptMeasurement{}, fmt.Errorf("llama.cpp /tokenize request failed: connection refused")
 }
 
 func TestRemapRetainedAttributionPrefersTheRetainedCopyOfRepeatedContent(t *testing.T) {

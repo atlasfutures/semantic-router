@@ -40,10 +40,6 @@ type branchState struct {
 	// epoch reset until the next commit, so a failed compaction request can be
 	// retried without losing retained attribution.
 	carried *carriedTranscript
-	// explicitEvents records that this branch's harness adapter states events.
-	// A later request without one (such as Pi's compaction summary call) is
-	// then a side call, never an advance of the main transcript.
-	explicitEvents bool
 	// seen fingerprints the wire messages of the last non-sidecall request
 	// this branch saw, committed or not: a compaction is detected against it.
 	seen []string

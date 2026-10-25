@@ -244,7 +244,7 @@ func (server *Server) execute(writer http.ResponseWriter, incoming *http.Request
 	}
 	defer state.release()
 	fresh := state.pending == nil && state.completed == 0
-	if fresh && hasExecutionHistory(request) && !markerSidecall {
+	if fresh && hasExecutionHistory(request) && !markerSidecall && !(explicitEvent != nil && explicitEvent.is(EventSidecall)) {
 		server.writeError(writer, format, http.StatusConflict, "execution_state_not_found", "this session has assistant or tool history but no execution ledger; start a fresh session")
 		return
 	}
@@ -257,10 +257,6 @@ func (server *Server) execute(writer http.ResponseWriter, incoming *http.Request
 	case explicitEvent != nil:
 		event = *explicitEvent
 	case markerSidecall:
-		sidecall := EventSidecall
-		event = ExecutionEvent{Kind: &sidecall, Basis: BasisMarkerInferred}
-	case state.explicitEvents:
-		// An adapter that states events left this one unlabelled.
 		sidecall := EventSidecall
 		event = ExecutionEvent{Kind: &sidecall, Basis: BasisMarkerInferred}
 	default:
@@ -481,7 +477,6 @@ func (server *Server) execute(writer http.ResponseWriter, incoming *http.Request
 	state.prefix = prefix
 	state.wire = wire
 	state.carried = nil
-	state.explicitEvents = state.explicitEvents || event.Basis == BasisExplicitClient
 	pending.completed = true
 	var decidedBy any
 	if selection.Receipt != nil {

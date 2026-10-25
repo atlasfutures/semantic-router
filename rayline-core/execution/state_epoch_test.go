@@ -147,7 +147,7 @@ func TestV1IgnoresExplicitEventsButStripsThem(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer state.release()
-	if state.completed != 2 || state.epoch != 1 || state.explicitEvents {
-		t.Fatalf("v1 applied v2 event semantics: completed=%d epoch=%d explicit=%v", state.completed, state.epoch, state.explicitEvents)
+	if state.completed != 2 || state.epoch != 1 {
+		t.Fatalf("v1 applied v2 event semantics: completed=%d epoch=%d", state.completed, state.epoch)
 	}
 }

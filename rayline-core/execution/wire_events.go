@@ -125,6 +125,10 @@ func parseWireRequest(format llmprotocol.WireFormat, body []byte) wireRequest {
 		}
 		_ = json.Unmarshal(wire["messages"], &messages)
 		for _, raw := range messages {
+			if isSystemRole(raw.Role) {
+				// Chat carries its system prompt as a message.
+				result.system = append(result.system, stringsOf(raw.Content)...)
+			}
 			message := wireMessage{role: raw.Role, toolResult: raw.Role == "tool"}
 			for _, call := range raw.ToolCalls {
 				message.toolCalls = append(message.toolCalls, call.Function.Name)
