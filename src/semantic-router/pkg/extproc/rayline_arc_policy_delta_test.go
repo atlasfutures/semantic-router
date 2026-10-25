@@ -890,3 +890,43 @@ func TestDeltaReplayParityClaudeCodeThinkingTurn(t *testing.T) {
 		t.Fatalf("decision modes %v", modes)
 	}
 }
+
+// A client that alters or strips an appended signed thinking block breaks
+// the digest gate: the held turn goes in full (appended_mismatch), and is
+// decided as the sync cell decides it.
+func TestDeltaAlteredThinkingEchoForcesAFullResend(t *testing.T) {
+	signed := []any{
+		map[string]any{"type": "thinking", "thinking": "list first", "signature": "sig-1"},
+		map[string]any{"type": "tool_use", "id": "toolu_1", "name": "Bash", "input": map[string]any{"command": "ls"}},
+	}
+	reply, _ := json.Marshal(map[string]any{"type": "message", "role": "assistant", "content": signed})
+	echo := func(thinking map[string]any) map[string]any {
+		content := []any{}
+		if thinking != nil {
+			content = append(content, thinking)
+		}
+		content = append(content, map[string]any{"type": "tool_use", "id": "toolu_1", "caller": map[string]any{"type": "direct"}, "name": "Bash", "input": map[string]any{"command": "ls"}})
+		return map[string]any{"role": "assistant", "content": content}
+	}
+	for _, tc := range []struct {
+		name string
+		echo map[string]any
+		mode string
+	}{
+		{"unchanged", echo(map[string]any{"type": "thinking", "thinking": "list first", "signature": "sig-1"}), policyDecisionModeDelta},
+		{"signature_changed", echo(map[string]any{"type": "thinking", "thinking": "list first", "signature": "sig-2"}), policyDecisionModeSync},
+		{"signature_stripped", echo(map[string]any{"type": "thinking", "thinking": "list first"}), policyDecisionModeSync},
+		{"text_changed", echo(map[string]any{"type": "thinking", "thinking": "list", "signature": "sig-1"}), policyDecisionModeSync},
+		{"block_stripped", echo(nil), policyDecisionModeSync},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			modes := replayParity(t, []parityTurn{
+				{policyTestRequest(t, deltaUser), reply},
+				{policyTestRequest(t, deltaUser, tc.echo, deltaToolResult), deltaReply(t)},
+			})
+			if modes[1] != tc.mode {
+				t.Fatalf("held turn went %s, want %s", modes[1], tc.mode)
+			}
+		})
+	}
+}
