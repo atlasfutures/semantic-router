@@ -20,7 +20,9 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
+	"sort"
 	"strings"
 )
 
@@ -37,7 +39,15 @@ type PolicyPrefixShape struct {
 	Messages []uint64
 	System   uint64
 	Tools    uint64
+	// Tail is the block layout of the last PolicyPrefixShapeTail messages
+	// (PolicyMessageLayout), so a divergence near the end of the transcript,
+	// where a client rewrites what it sent, can be described on both sides.
+	Tail []PolicyMessageLayout
 }
+
+// PolicyPrefixShapeTail is how many trailing messages a shape keeps the
+// layout of.
+const PolicyPrefixShapeTail = 8
 
 // MaxPolicyPrefixShapeMessages bounds the per-message digests a shape keeps;
 // a longer transcript keeps its first ones, and a divergence past them is
@@ -65,7 +75,19 @@ func NewPolicyPrefixShapeFrom(digests *PrefixDigests, system, tools json.RawMess
 	for index := range kept {
 		shape.Messages[index] = prefixShapeDigest(digests.Canonical(index))
 	}
+	for index := max(0, count-PolicyPrefixShapeTail); index < count; index++ {
+		shape.Tail = append(shape.Tail, NewPolicyMessageLayout(digests.Messages()[index]))
+	}
 	return shape
+}
+
+// Layout is the layout of message index, when the shape kept it.
+func (shape *PolicyPrefixShape) Layout(index int) (PolicyMessageLayout, bool) {
+	start := shape.Len - len(shape.Tail)
+	if index < start || index >= shape.Len {
+		return PolicyMessageLayout{}, false
+	}
+	return shape.Tail[index-start], true
 }
 
 // Records reports whether this shape is of the prefix the episode recorded.
@@ -279,4 +301,126 @@ func canonicalJSONValue(raw json.RawMessage, dropCacheControl bool) []byte {
 func prefixShapeDigest(data []byte) uint64 {
 	sum := sha256.Sum256(data)
 	return binary.BigEndian.Uint64(sum[:8])
+}
+
+// PolicyMessageLayout is how one message is laid out, as a prefix_break log
+// reports it: its member names, whether its content is a string or a list of
+// blocks, and each block's type, member names, text length, cache_control,
+// a short digest of its text and whether that text opens with a
+// <system-reminder>. It carries no content: a name outside the protocol's is
+// "other", and text appears only as a length and a 4-byte sha256 prefix.
+type PolicyMessageLayout struct {
+	Role        string
+	Keys        []string
+	ContentForm string
+	BlockCount  int
+	Blocks      []PolicyBlockLayout
+}
+
+// PolicyBlockLayout is one content block of a PolicyMessageLayout. TextLen
+// is -1 for a block without a text member.
+type PolicyBlockLayout struct {
+	Type           string
+	Keys           []string
+	TextLen        int
+	TextSHA256     string
+	CacheControl   bool
+	SystemReminder bool
+}
+
+// MaxPolicyLayoutBlocks bounds the blocks a layout describes; BlockCount is
+// the message's full count.
+const MaxPolicyLayoutBlocks = 16
+
+// policyLayoutKeys are the member names a layout reports as they are.
+var policyLayoutKeys = map[string]bool{
+	"role": true, "content": true, "type": true, "text": true, "cache_control": true, "citations": true,
+	"source": true, "id": true, "name": true, "input": true, "tool_use_id": true, "is_error": true,
+	"thinking": true, "signature": true, "data": true, "title": true, "context": true, "status": true,
+	"call_id": true, "arguments": true, "output": true, "summary": true, "tool_call_id": true, "tool_calls": true,
+}
+
+const systemReminderOpening = "<system-reminder>"
+
+// NewPolicyMessageLayout describes message; one that is not a JSON object
+// has form "other".
+func NewPolicyMessageLayout(message json.RawMessage) PolicyMessageLayout {
+	var members map[string]json.RawMessage
+	if json.Unmarshal(message, &members) != nil || members == nil {
+		return PolicyMessageLayout{ContentForm: "other"}
+	}
+	role, _ := PolicyMessageKind(message)
+	layout := PolicyMessageLayout{Role: role, Keys: policyLayoutKeyNames(members)}
+	content := bytes.TrimSpace(members["content"])
+	var text string
+	var blocks []json.RawMessage
+	switch {
+	case len(content) == 0:
+		layout.ContentForm = "absent"
+	case json.Unmarshal(content, &text) == nil:
+		layout.ContentForm = "string"
+		layout.BlockCount = 1
+		layout.Blocks = []PolicyBlockLayout{textLayout("text", nil, text, true, false)}
+	case json.Unmarshal(content, &blocks) == nil:
+		layout.ContentForm = "list"
+		layout.BlockCount = len(blocks)
+		for _, block := range blocks[:min(len(blocks), MaxPolicyLayoutBlocks)] {
+			layout.Blocks = append(layout.Blocks, blockLayout(block))
+		}
+	default:
+		layout.ContentForm = "other"
+	}
+	return layout
+}
+
+func blockLayout(block json.RawMessage) PolicyBlockLayout {
+	var members map[string]json.RawMessage
+	if json.Unmarshal(block, &members) != nil || members == nil {
+		return PolicyBlockLayout{Type: "other", TextLen: -1}
+	}
+	var kind string
+	_ = json.Unmarshal(members["type"], &kind)
+	var text string
+	hasText := json.Unmarshal(members["text"], &text) == nil && members["text"] != nil
+	_, cached := members["cache_control"]
+	return textLayout(policyKindValue(kind, policyBlockTypes), policyLayoutKeyNames(members), text, hasText, cached)
+}
+
+func textLayout(kind string, keys []string, text string, hasText, cached bool) PolicyBlockLayout {
+	layout := PolicyBlockLayout{Type: kind, Keys: keys, TextLen: -1, CacheControl: cached}
+	if hasText {
+		sum := sha256.Sum256([]byte(text))
+		layout.TextLen = len(text)
+		layout.TextSHA256 = hex.EncodeToString(sum[:4])
+		layout.SystemReminder = strings.HasPrefix(text, systemReminderOpening)
+	}
+	return layout
+}
+
+func policyLayoutKeyNames(members map[string]json.RawMessage) []string {
+	keys := make([]string, 0, len(members))
+	for key := range members {
+		keys = append(keys, policyKindValue(key, policyLayoutKeys))
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// Fields is the layout as log fields.
+func (layout PolicyMessageLayout) Fields() map[string]interface{} {
+	blocks := make([]interface{}, 0, len(layout.Blocks))
+	for _, block := range layout.Blocks {
+		fields := map[string]interface{}{
+			"type": block.Type, "keys": block.Keys, "text_len": block.TextLen,
+			"cache_control": block.CacheControl, "system_reminder": block.SystemReminder,
+		}
+		if block.TextSHA256 != "" {
+			fields["text_sha256_8"] = block.TextSHA256
+		}
+		blocks = append(blocks, fields)
+	}
+	return map[string]interface{}{
+		"role": layout.Role, "keys": layout.Keys, "content_form": layout.ContentForm,
+		"block_count": layout.BlockCount, "blocks": blocks,
+	}
 }
