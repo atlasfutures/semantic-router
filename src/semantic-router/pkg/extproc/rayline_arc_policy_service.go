@@ -753,8 +753,14 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	}
 	var deltaBase policyStagedTurn
 	deltaOutcome := ""
+	firstBusyWait := scorer.busyWait
 	if staging {
 		deltaBase, deltaOutcome = policyDeltaFor(scorer, arcContext.EpisodeIDHash, state, turn, transition, request.RequestFormat, messages)
+		if deltaOutcome == "append_unsettled" {
+			// The previous turn's append may still hold the service's
+			// episode lock: its budget is added to this turn's busy retries.
+			firstBusyWait += scorer.appendTimeout
+		}
 		// delta_mismatch_reason is "none" when the delta goes out; the soak
 		// reads the rest as the rate at which the client's echo of the
 		// appended reply missed VSR's (appended_mismatch) and why else.
@@ -779,7 +785,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		deltaRequest.TurnDelta = &raylinearc.PolicyTurnDelta{
 			BasePrefixDigest: deltaBase.prefixDigest, Messages: messages[deltaBase.count:],
 		}
-		response, err = decidePolicyThroughBusy(ctx, decider, deltaRequest, scorer.busyWait, admit, withCacheContext)
+		response, err = decidePolicyThroughBusy(ctx, decider, deltaRequest, firstBusyWait, admit, withCacheContext)
 		if policyDeltaRefused(err) {
 			// The service holds no staged turn this delta extends, or cannot
 			// read one: the turn is sent in full, as a sync cell sends it.
@@ -796,7 +802,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 			decisionMode = policyDecisionModeDelta
 		}
 	} else {
-		response, err = decidePolicyThroughBusy(ctx, decider, request, scorer.busyWait, admit, withCacheContext)
+		response, err = decidePolicyThroughBusy(ctx, decider, request, firstBusyWait, admit, withCacheContext)
 	}
 	// A strict cell's relaxed side call that the service refused as
 	// unsupported is decided strict instead, as it was before side calls
