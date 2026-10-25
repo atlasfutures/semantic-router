@@ -19,10 +19,12 @@ for toolchain in "$old" "$new"; do
 	(cd "$root/src/semantic-router" && CGO_ENABLED=1 GOTOOLCHAIN=$toolchain \
 		VSR_JSON_BYTE_DUMP_OUT="$out/$toolchain" go test -count=1 -run TestJSONEngineByteDump ./pkg/extproc/ >/dev/null)
 done
-# The one deliberately random member: OpenAI stream obfuscation padding is
-# drawn fresh per event, so two runs differ there under any toolchain. Its
-# value is masked; its presence and position still compare.
-find "$out" -type f -name '*.wire' -exec perl -pi -e 's/"obfuscation":"[^"]*"/"obfuscation":"<random>"/g' {} +
+# Two values are random by design, so two runs differ there under any
+# toolchain: OpenAI stream obfuscation padding, drawn fresh per event, and
+# the router-minted Responses id (resp_ and random hex). Their values are
+# masked; their presence and position still compare.
+find "$out" -type f \( -name '*.wire' -o -name '*.client*' \) -exec perl -pi -e \
+	's/"obfuscation":"[^"]*"/"obfuscation":"<random>"/g; s/\bresp_[0-9a-f]{16,}/resp_<random>/g' {} +
 files=$(find "$out/$old" -type f | wc -l | tr -d ' ')
 if diff -r "$out/$old" "$out/$new"; then
 	echo "identical: $files files under $old and $new ($out)"

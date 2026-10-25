@@ -3,6 +3,7 @@
 package extproc
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -16,6 +17,7 @@ import (
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 
+	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
 
@@ -37,7 +39,7 @@ func TestJSONEngineByteDump(t *testing.T) {
 		t.Fatal("no corpus bodies found")
 	}
 	dispatched := 0
-	defer func() { t.Logf("%d of %d turns reached the policy decide", dispatched, 4*len(corpus)) }()
+	defer func() { t.Logf("%d of %d requests reached the policy decide", dispatched, 4*len(corpus)) }()
 	for _, glmFormat := range []string{"anthropic", "openai"} {
 		router, fake := v5RouterForCaptures(t)
 		if glmFormat != "anthropic" {
@@ -51,8 +53,15 @@ func TestJSONEngineByteDump(t *testing.T) {
 				name := filepath.Join("glm-"+glmFormat, action.name, entry.name)
 				episode := strings.NewReplacer("/", "-", ".", "-").Replace(name)
 				before := len(fake.receivedBodies())
-				written := jsonEngineTurn(t, router, fake, action.id, episode, entry.path, entry.body)
+				written, client := jsonEngineTurn(t, router, fake, action.id, episode, entry.path, entry.body, "ok")
 				writeJSONEngineDump(t, out, name+".provider", written)
+				if client != nil {
+					writeJSONEngineDump(t, out, name+".client", client)
+					// The same turn on its own episode, answered by a
+					// provider error instead.
+					_, failed := jsonEngineTurn(t, router, fake, action.id, episode+"-error", entry.path, entry.body, "error")
+					writeJSONEngineDump(t, out, name+".client-error", failed)
+				}
 				if bodies := fake.receivedBodies(); len(bodies) > before {
 					writeJSONEngineDump(t, out, name+".decide", bodies[len(bodies)-1])
 				}
@@ -125,7 +134,7 @@ func jsonEngineCorpus(t *testing.T) []jsonEngineCorpusEntry {
 // jsonEngineTurn runs one request through the request phases and returns
 // what the router writes: the provider body, or an immediate response's
 // status and body.
-func jsonEngineTurn(t *testing.T, router *OpenAIRouter, fake *fakePolicyService, action, episode, path string, client []byte) []byte {
+func jsonEngineTurn(t *testing.T, router *OpenAIRouter, fake *fakePolicyService, action, episode, path string, client []byte, reply string) ([]byte, []byte) {
 	t.Helper()
 	fake.chooseWith(func(request raylinearc.PolicyDecisionRequest) string {
 		for _, offered := range request.Selection.AvailableActionIDs {
@@ -150,13 +159,13 @@ func jsonEngineTurn(t *testing.T, router *OpenAIRouter, fake *fakePolicyService,
 	}}
 	response, err := router.handleRequestHeaders(headers, ctx)
 	if err != nil {
-		return []byte("headers error: " + err.Error())
+		return []byte("headers error: " + err.Error()), nil
 	}
 	// What the client receives: processRequestHeaders and processRequestBody
 	// encode an immediate response in the client's protocol before sending.
 	response = router.encodeImmediateResponseForClient(response, ctx)
 	if immediate := response.GetImmediateResponse(); immediate != nil {
-		return []byte(fmt.Sprintf("headers immediate %d\n%s", immediate.GetStatus().GetCode(), immediate.GetBody()))
+		return []byte(fmt.Sprintf("headers immediate %d\n%s", immediate.GetStatus().GetCode(), immediate.GetBody())), nil
 	}
 	response, err = router.handleRequestBody(&ext_proc.ProcessingRequest_RequestBody{
 		RequestBody: &ext_proc.HttpBody{Body: client, EndOfStream: true},
@@ -164,19 +173,86 @@ func jsonEngineTurn(t *testing.T, router *OpenAIRouter, fake *fakePolicyService,
 	if err != nil {
 		var ok bool
 		if response, ok = router.processBodyRoutingError(err, ctx); !ok {
-			return []byte("body error: " + err.Error())
+			return []byte("body error: " + err.Error()), nil
 		}
 	}
 	response = router.encodeImmediateResponseForClient(response, ctx)
 	if immediate := response.GetImmediateResponse(); immediate != nil {
-		return []byte(fmt.Sprintf("immediate %d\n%s", immediate.GetStatus().GetCode(), immediate.GetBody()))
+		return []byte(fmt.Sprintf("immediate %d\n%s", immediate.GetStatus().GetCode(), immediate.GetBody())), nil
 	}
 	written := response.GetRequestBody().GetResponse().GetBodyMutation().GetBody()
-	if _, err := router.handleResponseHeaders(arcResponseHeaders("200"), ctx); err == nil {
-		completeTestResponse(t, ctx)
-		finalizeSelectionProcessTerminal(ctx)
+	return written, jsonEngineResponse(router, ctx, reply)
+}
+
+// jsonEngineResponse answers a dispatched turn with a provider reply in the
+// provider's wire format -- a success, buffered or streamed as the client
+// asked, or a rate-limit error -- and returns every body the router sends the
+// client for it.
+func jsonEngineResponse(router *OpenAIRouter, ctx *RequestContext, reply string) []byte {
+	var out bytes.Buffer
+	switch ctx.TargetFormat {
+	case llmprotocol.OpenAIChatV1, llmprotocol.OpenAIResponsesV1, llmprotocol.AnthropicMessagesV1:
+	default:
+		fmt.Fprintf(&out, "no fixture for provider format %q\n", ctx.TargetFormat)
+		return out.Bytes()
 	}
-	return written
+	headers, body := jsonEngineHeaders("200", "application/json"), extProcResponseFixture(ctx.TargetFormat)
+	switch {
+	case reply == "error":
+		headers, body = jsonEngineHeaders("429", "application/json"), extProcTransportErrorFixture(ctx.TargetFormat)
+	case ctx.ExpectStreamingResponse:
+		headers, body = jsonEngineHeaders("200", "text/event-stream"), extProcStreamFixture(ctx.TargetFormat)
+	}
+	response, err := router.handleResponseHeaders(headers, ctx)
+	if err != nil {
+		fmt.Fprintf(&out, "response headers error: %v\n", err)
+		return out.Bytes()
+	}
+	writeJSONEngineResponse(&out, "headers", response)
+	stream := NewMockStream(nil)
+	if err := router.processResponseBody(stream, &ext_proc.ProcessingRequest_ResponseBody{
+		ResponseBody: &ext_proc.HttpBody{Body: body, EndOfStream: true},
+	}, ctx); err != nil {
+		fmt.Fprintf(&out, "response body error: %v\n", err)
+	}
+	for _, sent := range stream.Responses {
+		writeJSONEngineResponse(&out, "body", sent)
+	}
+	finalizeSelectionProcessTerminal(ctx)
+	return out.Bytes()
+}
+
+func jsonEngineHeaders(status, contentType string) *ext_proc.ProcessingRequest_ResponseHeaders {
+	return &ext_proc.ProcessingRequest_ResponseHeaders{ResponseHeaders: &ext_proc.HttpHeaders{
+		Headers: &core.HeaderMap{Headers: []*core.HeaderValue{
+			{Key: ":status", Value: status}, {Key: "content-type", Value: contentType},
+		}},
+	}}
+}
+
+// writeJSONEngineResponse writes the bodies a processing response carries:
+// an immediate response, a body mutation, or a streamed chunk.
+func writeJSONEngineResponse(out *bytes.Buffer, phase string, response *ext_proc.ProcessingResponse) {
+	if response == nil {
+		return
+	}
+	if immediate := response.GetImmediateResponse(); immediate != nil {
+		fmt.Fprintf(out, "--- %s immediate %d\n%s\n", phase, immediate.GetStatus().GetCode(), immediate.GetBody())
+		return
+	}
+	common := response.GetResponseBody().GetResponse()
+	if common == nil {
+		common = response.GetResponseHeaders().GetResponse()
+	}
+	mutation := common.GetBodyMutation()
+	if mutation == nil {
+		return
+	}
+	if streamed := mutation.GetStreamedResponse(); streamed != nil {
+		fmt.Fprintf(out, "--- %s streamed eos=%v\n%s\n", phase, streamed.GetEndOfStream(), streamed.GetBody())
+		return
+	}
+	fmt.Fprintf(out, "--- %s body clear=%v\n%s\n", phase, mutation.GetClearBody(), mutation.GetBody())
 }
 
 func writeJSONEngineDump(t *testing.T, root, name string, body []byte) {

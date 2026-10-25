@@ -346,7 +346,8 @@ func runCapabilityStreamTranslation(
 	}
 	frames, diagnostics, err := translateGoldenCapabilityStream(engine, source, target, *input)
 	if err != nil {
-		return nil, nil, diagnostics, err
+		// A failing stream has still written its frames up to the failure.
+		return nil, bytes.Join(frames, nil), diagnostics, err
 	}
 	verifyGoldenTargetStream(t, engine, target, *input, frames)
 	return marshalGoldenStreamTranscript(t, frames), bytes.Join(frames, nil), diagnostics, nil
