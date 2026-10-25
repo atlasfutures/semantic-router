@@ -293,7 +293,9 @@ func policyDeltaCanonical(message json.RawMessage) []byte {
 		}
 		if role := object["role"]; (role == "system" || role == "user") && len(blocks) == 1 {
 			if fields, ok := blocks[0].(map[string]any); ok && len(fields) == 2 && fields["type"] == "text" {
-				if text, ok := fields["text"].(string); ok {
+				// canonical-conversation.v1 reads a user's "" as no block and
+				// an empty text block as one: those are not demoted.
+				if text, ok := fields["text"].(string); ok && (role == "system" || text != "") {
 					object["content"] = text
 				}
 			}
