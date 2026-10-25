@@ -1,0 +1,11 @@
+{
+  "status": 409,
+  "body": {
+    "type": "error",
+    "error": {
+      "type": "invalid_request_error",
+      "message": "This request names a model or a rules policy, which the semantic router does not decide, so there is no route to look up.",
+      "code": "non_arc_lookup"
+    }
+  }
+}

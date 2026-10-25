@@ -78,6 +78,11 @@ type PolicyPriceAudit struct {
 	// is how many models were filled in all.
 	FilledLegs       map[string][]string `json:"filled_legs,omitempty"`
 	FilledModelCount int                 `json:"filled_model_count,omitempty"`
+	// PricesSHA256 and Exclusive are a caller-mode decision's price world
+	// (pathfinder#5668): the public price_sha256 it was scored in and its
+	// exclusivity. Present exactly in caller mode.
+	PricesSHA256 string `json:"prices_sha256,omitempty"`
+	Exclusive    *bool  `json:"exclusive,omitempty"`
 }
 
 // BoundedFilledLegs is the first limit models of filled, in id order,
@@ -132,6 +137,13 @@ func NewPolicyPriceAudit(packageSHA256 string, used *PolicyRoutingPricesUsed, pr
 	}
 	audit.FilledLegs, audit.FilledModelCount = BoundedFilledLegs(
 		used.FilledLegs, maxPolicyAuditFilledModels, maxPolicyAuditFilledModelBytes)
+	if used.PricesSHA256 != nil {
+		audit.PricesSHA256 = *used.PricesSHA256
+	}
+	if used.Exclusive != nil {
+		exclusive := *used.Exclusive
+		audit.Exclusive = &exclusive
+	}
 	return audit
 }
 
@@ -139,8 +151,12 @@ func (audit *PolicyPriceAudit) validate() error {
 	if audit == nil {
 		return nil
 	}
+	caller := audit.Mode == RoutingPricesModeCaller
 	if !isLowerHex64(audit.PackageSHA256) ||
-		(audit.Mode != RoutingPricesModeLive && audit.Mode != RoutingPricesModePackage) ||
+		(audit.Mode != RoutingPricesModeLive && audit.Mode != RoutingPricesModePackage && !caller) ||
+		// A caller world names its hash and exclusivity; no other mode does.
+		caller != (audit.PricesSHA256 != "") || caller != (audit.Exclusive != nil) ||
+		(caller && !isLowerHex64(audit.PricesSHA256)) ||
 		len(audit.StoreVersion) > maxRoutingPriceStoreVersionBytes ||
 		len(audit.AsOf) > maxRoutingPriceTimestampBytes ||
 		(audit.Digest != "" && !isLowerHex64(audit.Digest)) ||

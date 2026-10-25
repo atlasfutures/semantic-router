@@ -1,0 +1,11 @@
+{
+  "status": 503,
+  "body": {
+    "type": "error",
+    "error": {
+      "type": "api_error",
+      "message": "Route lookup is not available.",
+      "code": "unavailable"
+    }
+  }
+}

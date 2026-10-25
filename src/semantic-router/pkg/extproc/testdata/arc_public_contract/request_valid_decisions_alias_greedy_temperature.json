@@ -1,0 +1,40 @@
+{
+  "surface": "decisions",
+  "body": {
+    "model": "rayline/arc-sage",
+    "max_tokens": 1024,
+    "messages": [
+      {
+        "role": "user",
+        "content": "Refactor the parser and add tests."
+      }
+    ],
+    "routing": {
+      "temperature": 0
+    }
+  },
+  "expect": {
+    "model": {
+      "requested": "rayline/arc-sage",
+      "canonical": "arc-sage",
+      "mode": "tier",
+      "tier": "sage"
+    },
+    "routing": {
+      "temperature": 0.0
+    },
+    "price_sha256": null,
+    "result_points": [
+      {
+        "name": "swift",
+        "value_usd": 0.1,
+        "cost_weight": 10.0
+      },
+      {
+        "name": "sage",
+        "value_usd": 4.5,
+        "cost_weight": 0.2222222222222222
+      }
+    ]
+  }
+}

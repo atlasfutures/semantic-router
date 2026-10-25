@@ -1,0 +1,30 @@
+{
+  "surface": "decisions",
+  "body": {
+    "model": "claude-sonnet-5",
+    "max_tokens": 1024,
+    "messages": [
+      {
+        "role": "user",
+        "content": "Refactor the parser and add tests."
+      }
+    ]
+  },
+  "expect": {
+    "model": null,
+    "routing": {},
+    "price_sha256": null,
+    "result_points": [
+      {
+        "name": "swift",
+        "value_usd": 0.1,
+        "cost_weight": 10.0
+      },
+      {
+        "name": "sage",
+        "value_usd": 4.5,
+        "cost_weight": 0.2222222222222222
+      }
+    ]
+  }
+}

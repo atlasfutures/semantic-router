@@ -1,0 +1,66 @@
+{
+  "surface": "decisions",
+  "body": {
+    "model": "rayline/arc-1.0",
+    "max_tokens": 1024,
+    "messages": [
+      {
+        "role": "user",
+        "content": "Refactor the parser and add tests."
+      }
+    ],
+    "routing": {
+      "prices": {
+        "anthropic/claude-sonnet-5": {
+          "input": 3,
+          "cache_read": 0.3,
+          "cache_write": 3.75,
+          "output": 15
+        },
+        "deepseek/deepseek-v4.1-flash": {
+          "input": 0.1,
+          "cache_read": 0,
+          "cache_write": 0,
+          "output": 0.4
+        }
+      }
+    }
+  },
+  "expect": {
+    "model": {
+      "requested": "rayline/arc-1.0",
+      "canonical": "arc-1.0",
+      "mode": "configurable",
+      "tier": null
+    },
+    "routing": {
+      "prices": {
+        "anthropic/claude-sonnet-5": {
+          "input": 3.0,
+          "cache_read": 0.3,
+          "cache_write": 3.75,
+          "output": 15.0
+        },
+        "deepseek/deepseek-v4.1-flash": {
+          "input": 0.1,
+          "cache_read": 0.0,
+          "cache_write": 0.0,
+          "output": 0.4
+        }
+      }
+    },
+    "price_sha256": "3abe1bbdf0242628534a98f82b917de91f29b93320c876891005afb993530b35",
+    "result_points": [
+      {
+        "name": "swift",
+        "value_usd": 0.1,
+        "cost_weight": 10.0
+      },
+      {
+        "name": "sage",
+        "value_usd": 4.5,
+        "cost_weight": 0.2222222222222222
+      }
+    ]
+  }
+}

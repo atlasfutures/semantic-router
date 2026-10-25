@@ -3,6 +3,7 @@ package extproc
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -488,6 +489,53 @@ func TestRouteDecisionKeepsEncoderBreakageUncontended(t *testing.T) {
 				t.Fatalf("encoder breakage %v classified as contended; a 429 would invite retries against a broken encoder", err)
 			}
 		})
+	}
+}
+
+// A Decisions draw never reaches the episode (GrayHorse P1 on #304): a lookup
+// carrying routing.temperature on a session-keyed consult joins no episode,
+// so the next tracked consult on that session finds nothing committed. A
+// lookup without a draw still commits, as before.
+func TestRouteDecisionKeepsADecisionsDrawOutOfTheEpisode(t *testing.T) {
+	selector := &stubARCSelector{arm: 1, workers: decisionServiceWorkers()}
+	router := decisionServiceRouter(t, selector)
+	service := router.routeDecisionRuntimeState()
+	drawing := &selection.RaylineARCRouteControls{Exploration: &raylinearc.PolicyExplorationRequest{
+		Salt: "s", Temperature: &raylinearc.PolicyExplorationTemperature{
+			Temperature: 0.7, Surface: "decisions", Source: "caller", TrainingData: "not_allowed",
+		},
+	}}
+
+	for range 2 {
+		decision, err := service.RouteDecision(context.Background(), routerruntime.RouteDecisionRequest{
+			Body: anthropicBody("hello"), SessionID: "session-1", Routing: drawing,
+		})
+		if err != nil {
+			t.Fatalf("RouteDecision() error = %v", err)
+		}
+		if decision.Episode != nil || !slices.Contains(decision.Warnings, raylineRoutesExplorationUntracked) {
+			t.Fatalf("a drawing lookup reported episode %+v, warnings %v", decision.Episode, decision.Warnings)
+		}
+	}
+	// The next tracked consult on the session sees no committed turn.
+	if _, err := service.RouteDecision(context.Background(), routerruntime.RouteDecisionRequest{
+		Body: anthropicBody("hello"), SessionID: "session-1",
+	}); err != nil {
+		t.Fatalf("RouteDecision() error = %v", err)
+	}
+	state := selector.contexts[2].RaylineARC.State
+	if state.TurnIndex != 0 || state.PreviousArm != nil {
+		t.Fatalf("after two drawing lookups the episode is at turn %d, previous arm %v: a draw was committed",
+			state.TurnIndex, state.PreviousArm)
+	}
+	// Control: a tracked consult without a draw commits.
+	if _, err := service.RouteDecision(context.Background(), routerruntime.RouteDecisionRequest{
+		Body: anthropicBody("hello"), SessionID: "session-1",
+	}); err != nil {
+		t.Fatalf("RouteDecision() error = %v", err)
+	}
+	if state := selector.contexts[3].RaylineARC.State; state.TurnIndex != 1 || state.PreviousArm == nil {
+		t.Fatalf("a tracked consult without a draw did not commit: turn %d", state.TurnIndex)
 	}
 }
 

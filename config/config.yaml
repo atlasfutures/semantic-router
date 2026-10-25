@@ -1741,6 +1741,20 @@ routing:
             # from artifact_revision because that pin is deployment-private.
             # Empty publishes the hash alone.
             checkpoint_label: ""
+            # routing (policy-service cells only; absent here) serves the
+            # public Decisions controls (pathfinder#5664): every answer
+            # carries presets.swift (V 0.1) and presets.sage (V 4.5), and a
+            # body's routing.{value_usd, temperature, prices, exclusive} adds
+            # the custom result at the caller's V, exploration at the caller's
+            # temperature (surface decisions, never training data, seeded by
+            # exploration_salt; empty echoes every temperature unsupported),
+            # and the caller's four-leg prices in place of the live feed's.
+            # The service must advertise decisions_v2 and tier_points (and
+            # exploration_temperature with a salt) and admit cost weights over
+            # [0.2, 10]. Without it, a body that carries routing is refused
+            # 503 unavailable.
+            #   routing:
+            #     exploration_salt: vsr-decisions-2026-10
           # thinking_lever moves a worker's reasoning depth per turn without
           # changing the request-level reasoning fields, which providers key
           # their prompt cache on. The router writes an item the client never

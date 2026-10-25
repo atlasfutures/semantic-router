@@ -32,6 +32,7 @@ import (
 
 	"github.com/atlasfutures/semantic-router/rayline-core/cachecontext"
 	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
+
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/metrics"
@@ -372,7 +373,7 @@ func createRaylineARCPolicySelector(
 	}
 	scorer := armed.scorer.(*policyServiceScorer)
 	check := func(ctx context.Context, client *raylinearc.PolicyServiceClient) error {
-		if err := requireRaylineARCPolicyServing(ctx, client, policy); err != nil {
+		if err := requireRaylineARCPolicyServing(ctx, client, policy, arcConfig.RoutesAPI.Routing); err != nil {
 			return err
 		}
 		if scorer.episodeMode == raylinearc.PolicyEpisodeModeRelaxed {
@@ -624,6 +625,16 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		})
 		return nil, arcSelectionFailure("policy_no_available_action")
 	}
+	routeControls := arcContext.RouteControls
+	if routeControls != nil && routeControls.Exclusive {
+		// routing.exclusive: only the priced models are candidates. None
+		// of them able to take this turn is a turn the lookup cannot
+		// decide, never one decided among the unpriced.
+		available = routeExclusiveOffer(scorer, available, routeControls.PricedModels)
+		if len(available) == 0 {
+			return nil, arcSelectionFailure(arcFailurePolicyUndecidable)
+		}
+	}
 	request := raylinearc.PolicyDecisionRequest{
 		SchemaVersion: raylinearc.PolicyDecisionRequestSchema,
 		Package:       raylinearc.PolicyPackageRef{Alias: scorer.alias, PackageSHA256: scorer.sha256},
@@ -646,6 +657,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	scorer.decisionsV2.apply(&request)
 	explorationExcluded := scorer.exploration.apply(&request, arcContext.PolicySignalHeaders, sideCall)
 	pricesStatus := attachRoutingPrices(armed.prices, &request)
+	applyRouteControls(&request, routeControls)
 	// The episode's cache evidence is read at each call, so a retry's gaps
 	// are as of that call, on the wall clock the commit dates warmth by.
 	withCacheContext := func(request *raylinearc.PolicyDecisionRequest) {
@@ -774,6 +786,10 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	// policy finding no supported selection, the held action unavailable and
 	// so on -- fails the turn as undecidable. The service no longer serves its
 	// package's fallback action in their place.
+	if errors.As(err, &cold) && cold.Class == raylinearc.PolicySelectionRefusedClass &&
+		raylinearc.PolicyRefusalReason(cold.Detail) == "unknown_price_model" {
+		return nil, arcSelectionFailure(arcFailureRoutesUnknownPriceModel)
+	}
 	if errors.As(err, &cold) && (cold.Class == raylinearc.PolicyStageOneHeldUnknownClass ||
 		cold.Class == raylinearc.PolicySelectionRefusedClass) {
 		logRaylineARCUndecidable(arcContext, raylinearc.PolicyRefusalReason(cold.Detail), derived.source, held >= 0, sideCall)
@@ -792,7 +808,12 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 			// pathfinder#3329: a context the service's encoder cannot hold
 			// keeps the episode's held action rather than failing the turn;
 			// so does media the projection cannot read (pathfinder#5281).
-			if offerKind, holds := policyHoldOfferKinds[class]; holds {
+			// A Decisions lookup with routing controls is not held: a hold
+			// asks the service nothing, so it has no tier pick at any
+			// requested point, and the lookup would commit its episode and
+			// then fail for want of a preset. It fails as an unheld turn
+			// does, before anything commits.
+			if offerKind, holds := policyHoldOfferKinds[class]; holds && routeControls == nil {
 				if held := selector.policyCapacityHold(
 					armed, selCtx, arcContext, state, scorer, failure, turn, messages, sideCall, atBoundary,
 					retained, available, workerIDs, latency,
@@ -872,6 +893,11 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	// The echo is recorded as the decision's price audit, so it must be the
 	// prices this request sent.
 	if class := routingPriceEchoMismatch(request.RoutingPrices, response.RoutingPricesUsed); class != "" {
+		// A lookup's own prices unechoed is the service not applying them:
+		// inconsistent (502), as recordRouteControls classes it.
+		if routeControls != nil && routeControls.Prices != nil {
+			class = arcFailureRoutesPricesNotApplied
+		}
 		logging.ComponentErrorEvent("extproc", "rayline_arc_policy_service_failed", map[string]interface{}{
 			"class": class, "episode_id_hash": arcContext.EpisodeIDHash,
 		})
@@ -930,7 +956,22 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		result.RaylineARC.PolicyCostWeight = &echoed
 	}
 	scorer.decisionsV2.record(result.RaylineARC, response, policyTierPickValid(scorer, available))
-	scorer.exploration.record(result.RaylineARC, &request, response, explorationExcluded)
+	// A lookup's exploration is the caller's, never the cell's: the cell's
+	// record keeps only what the cell itself sent (Decisions draws are
+	// never training data, so they reach neither llm_usage nor the episode).
+	cellExploration := &request
+	if routeControls != nil && routeControls.Exploration != nil {
+		withoutRoute := request
+		withoutRoute.Selection.Exploration = nil
+		cellExploration = &withoutRoute
+	}
+	scorer.exploration.record(result.RaylineARC, cellExploration, response, explorationExcluded)
+	if class := recordRouteControls(result.RaylineARC, scorer, routeControls, response, available); class != "" {
+		logging.ComponentErrorEvent("extproc", "rayline_arc_policy_service_failed", map[string]interface{}{
+			"class": class, "episode_id_hash": arcContext.EpisodeIDHash,
+		})
+		return nil, arcSelectionFailure(class)
+	}
 	if !sideCall {
 		// A side call commits no ledger entry, so its price audit is in the
 		// selection log only.

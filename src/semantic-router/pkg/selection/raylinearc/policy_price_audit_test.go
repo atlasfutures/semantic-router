@@ -215,3 +215,56 @@ func TestPolicyStateRefusesMalformedPriceAudits(t *testing.T) {
 		t.Error("a ledger keeping too many audits was accepted")
 	}
 }
+
+// A Decisions lookup scored in a caller's price world (pathfinder#5668) is
+// audited in caller mode, with its price_sha256 and exclusivity, and that
+// audit survives the episode's validation: a tracked lookup with caller
+// prices commits rather than failing after a good decide.
+func TestPolicyPriceAuditAdmitsACallerWorld(t *testing.T) {
+	store, asOf, digest := "caller:abc", "2026-10-21T00:00:00Z", strings.Repeat("d", 64)
+	hash, exclusive := strings.Repeat("e", 64), true
+	used := &PolicyRoutingPricesUsed{
+		Mode: RoutingPricesModeCaller, StoreVersion: &store, AsOf: &asOf, Digest: &digest,
+		PricesSHA256: &hash, Exclusive: &exclusive, ExcludedArms: []string{},
+	}
+	audit := NewPolicyPriceAudit(strings.Repeat("a", 64), used, nil)
+	if audit.Mode != RoutingPricesModeCaller || audit.PricesSHA256 != hash || audit.Exclusive == nil || !*audit.Exclusive {
+		t.Fatalf("audit = %+v", audit)
+	}
+	if err := audit.validate(); err != nil {
+		t.Fatalf("a caller-mode audit was refused: %v", err)
+	}
+	// Through the episode store's own codec, as a committed lookup is.
+	now := time.Date(2026, 10, 21, 5, 0, 0, 0, time.UTC)
+	old := `{"schema_version":"rayline.arc.episode-state.v3","version":3,"previous_arm":null,"turn_index":0,` +
+		`"warmth":[null],"encoder_owner":"","encoder_visited_owners":[],"policy":{"epoch":1,"epoch_start_turn":0,` +
+		`"prefix_len":2,"prefix_digest":"` + strings.Repeat("a", 64) + `","ledger":[{"message":1,"action_id":"` +
+		strings.Repeat("b", 64) + `","arm_id":"arm"}]}}`
+	decoded, _, err := unmarshalEpisodeState([]byte(old), 1, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded.Policy.Ledger[0].Prices = audit
+	payload, err := marshalEpisodeState(decoded, 4, now)
+	if err != nil {
+		t.Fatalf("an episode carrying a caller-mode audit was refused: %v", err)
+	}
+	back, _, err := unmarshalEpisodeState(payload, 1, now)
+	if err != nil || back.Policy.Ledger[0].Prices.PricesSHA256 != hash || !*back.Policy.Ledger[0].Prices.Exclusive {
+		t.Fatalf("round trip: %v %+v", err, back)
+	}
+
+	for name, broken := range map[string]func(*PolicyPriceAudit){
+		"caller without its hash":      func(a *PolicyPriceAudit) { a.PricesSHA256 = "" },
+		"caller without exclusivity":   func(a *PolicyPriceAudit) { a.Exclusive = nil },
+		"caller with a malformed hash": func(a *PolicyPriceAudit) { a.PricesSHA256 = "abc" },
+		"live claiming a caller hash":  func(a *PolicyPriceAudit) { a.Mode = RoutingPricesModeLive },
+		"an unknown mode":              func(a *PolicyPriceAudit) { a.Mode = "guessed" },
+	} {
+		copied := *audit
+		broken(&copied)
+		if copied.validate() == nil {
+			t.Errorf("%s: validated", name)
+		}
+	}
+}

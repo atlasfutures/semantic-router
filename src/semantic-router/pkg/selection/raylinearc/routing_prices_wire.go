@@ -40,6 +40,13 @@ const (
 
 	RoutingPricesModeLive    = "live"
 	RoutingPricesModePackage = "package"
+	// RoutingPricesModeCaller is a decision scored in a Decisions caller's
+	// own price world (routing_prices.basis: caller, pathfinder#5668).
+	RoutingPricesModeCaller = "caller"
+	// RoutingPricesBasisCaller marks a request's routing_prices as the
+	// caller's own: exactly four legs per model, applied as sent, never
+	// filled from the package.
+	RoutingPricesBasisCaller = "caller"
 
 	maxRoutingPriceStoreVersionBytes = 256
 	maxRoutingPriceTimestampBytes    = 64
@@ -119,6 +126,67 @@ type PolicyRoutingPrices struct {
 	StoreVersion string                       `json:"store_version"`
 	AsOf         string                       `json:"as_of"`
 	Rates        map[string]PolicyRoutingRate `json:"rates"`
+	// Basis is "caller" for a Decisions caller's own prices (pathfinder
+	// #5668), "" for the feed's. A caller's rates are sent as exactly their
+	// four legs, and Exclusive with them.
+	Basis     string `json:"-"`
+	Exclusive bool   `json:"-"`
+}
+
+type policyRoutingPricesFeedWire struct {
+	Schema       string                       `json:"schema"`
+	StoreVersion string                       `json:"store_version"`
+	AsOf         string                       `json:"as_of"`
+	Rates        map[string]PolicyRoutingRate `json:"rates"`
+}
+
+type policyCallerRateWire struct {
+	Input      *float64 `json:"input"`
+	CacheRead  *float64 `json:"cache_read"`
+	CacheWrite *float64 `json:"cache_write"`
+	Output     *float64 `json:"output"`
+}
+
+// UnmarshalJSON reads either form.
+func (prices *PolicyRoutingPrices) UnmarshalJSON(body []byte) error {
+	var wire struct {
+		policyRoutingPricesFeedWire
+		Basis     string `json:"basis"`
+		Exclusive *bool  `json:"exclusive"`
+	}
+	if err := json.Unmarshal(body, &wire); err != nil {
+		return err
+	}
+	*prices = PolicyRoutingPrices{
+		Schema: wire.Schema, StoreVersion: wire.StoreVersion, AsOf: wire.AsOf, Rates: wire.Rates, Basis: wire.Basis,
+	}
+	if wire.Exclusive != nil {
+		prices.Exclusive = *wire.Exclusive
+	}
+	return nil
+}
+
+// MarshalJSON writes the feed's rates unchanged, and a caller's as exactly
+// four legs beside basis and exclusive: the service refuses any other
+// member of a caller's rate.
+func (prices PolicyRoutingPrices) MarshalJSON() ([]byte, error) {
+	if prices.Basis == "" {
+		return json.Marshal(policyRoutingPricesFeedWire{
+			Schema: prices.Schema, StoreVersion: prices.StoreVersion, AsOf: prices.AsOf, Rates: prices.Rates,
+		})
+	}
+	rates := make(map[string]policyCallerRateWire, len(prices.Rates))
+	for model, rate := range prices.Rates {
+		rates[model] = policyCallerRateWire{Input: rate.Input, CacheRead: rate.CacheRead, CacheWrite: rate.CacheWrite, Output: rate.Output}
+	}
+	return json.Marshal(struct {
+		Schema       string                          `json:"schema"`
+		StoreVersion string                          `json:"store_version"`
+		AsOf         string                          `json:"as_of"`
+		Rates        map[string]policyCallerRateWire `json:"rates"`
+		Basis        string                          `json:"basis"`
+		Exclusive    bool                            `json:"exclusive"`
+	}{prices.Schema, prices.StoreVersion, prices.AsOf, rates, prices.Basis, prices.Exclusive})
 }
 
 // PolicyRoutingPricesUsed is the decision response's routing_prices_used:
@@ -133,6 +201,12 @@ type PolicyRoutingPricesUsed struct {
 	Digest       *string             `json:"digest"`
 	FallbackArms []string            `json:"fallback_arms"`
 	FilledLegs   map[string][]string `json:"filled_legs"`
+	// PricesSHA256, Exclusive and ExcludedArms are present exactly in
+	// caller mode (pathfinder#5668): the caller world's public price_sha256,
+	// its exclusivity, and the arms it left out.
+	PricesSHA256 *string  `json:"prices_sha256,omitempty"`
+	Exclusive    *bool    `json:"exclusive,omitempty"`
+	ExcludedArms []string `json:"excluded_arms,omitempty"`
 }
 
 // DecodeRoutingPriceFeed reads a feed response. Unknown fields are allowed,
@@ -285,8 +359,13 @@ func (used *PolicyRoutingPricesUsed) validate() error {
 	if used == nil {
 		return nil
 	}
-	if used.Mode != RoutingPricesModeLive && used.Mode != RoutingPricesModePackage {
+	if used.Mode != RoutingPricesModeLive && used.Mode != RoutingPricesModePackage && used.Mode != RoutingPricesModeCaller {
 		return fmt.Errorf("routing_prices_used mode %q", used.Mode)
+	}
+	caller := used.PricesSHA256 != nil || used.Exclusive != nil || used.ExcludedArms != nil
+	if (used.Mode == RoutingPricesModeCaller) != caller ||
+		used.Mode == RoutingPricesModeCaller && (used.PricesSHA256 == nil || !isLowerHex64(*used.PricesSHA256) || used.Exclusive == nil) {
+		return errors.New("routing_prices_used caller fields come with, and only with, caller mode")
 	}
 	if used.StoreVersion == nil || *used.StoreVersion == "" || used.AsOf == nil || *used.AsOf == "" {
 		return errors.New("routing_prices_used names no store_version or as_of")

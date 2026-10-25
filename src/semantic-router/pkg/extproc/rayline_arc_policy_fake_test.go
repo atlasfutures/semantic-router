@@ -53,6 +53,8 @@ type fakePolicyService struct {
 	// stage_one_held_unknown for every decide it holds true of, as a
 	// two-stage package does for a turn it would decide cold.
 	refuseCold func(raylinearc.PolicyDecisionRequest) bool
+	// coldReason replaces refuseCold's stage_one_held_unknown reason.
+	coldReason string
 	// rejectAttested, when set, answers every decide that carries
 	// attested_held_action_id with 400 invalid_request, as a service that
 	// rejects the field.
@@ -92,9 +94,12 @@ type fakePolicyService struct {
 	// omitTierPick, when set, leaves this tier point without a pick, and
 	// tierPickAction, when set, picks this action at every tier point.
 	// tierPickModel names a pick's model ("model-<action>" when nil).
-	omitTierPick   string
-	tierPickAction string
-	tierPickModel  func(actionID string) string
+	omitTierPick string
+	// tierPickExploration gives every tier pick its own temperature-shape
+	// record, as a service that draws per point (pathfinder#5664) does.
+	tierPickExploration bool
+	tierPickAction      string
+	tierPickModel       func(actionID string) string
 	// A decide that carries selection.exploration with tau > 0 gets the
 	// exploration fixture's record, with the request's tau, basis and salt
 	// (pathfinder#5436). explorationHeld answers it as a held turn's record;
@@ -243,8 +248,12 @@ func (fake *fakePolicyService) serve(writer http.ResponseWriter, request *http.R
 			return
 		}
 		if refuseCold != nil && refuseCold(decide) {
+			reason := "stage_one_held_unknown"
+			if fake.coldReason != "" {
+				reason = fake.coldReason
+			}
 			fake.writeJSON(writer, http.StatusUnprocessableEntity, map[string]any{
-				"error": "selection_refused", "detail": map[string]any{"reason": "stage_one_held_unknown"},
+				"error": "selection_refused", "detail": map[string]any{"reason": reason},
 			})
 			return
 		}
@@ -397,6 +406,14 @@ func (fake *fakePolicyService) decision(request raylinearc.PolicyDecisionRequest
 	}
 	if explore := request.Selection.Exploration; explore != nil && explore.Temperature != nil && !omitExploration {
 		response.Decision.StageOne = fake.temperatureExplorationRecord(*explore)
+		if fake.tierPickExploration {
+			for name, pick := range response.Decision.TierPicks {
+				pick.Exploration = fake.temperatureExplorationRecord(*explore).Exploration
+				result := name
+				pick.Exploration.Result = &result
+				response.Decision.TierPicks[name] = pick
+			}
+		}
 	} else if explore != nil && explore.Tau > 0 && !omitExploration {
 		relaxed := request.EpisodeMode == raylinearc.PolicyEpisodeModeRelaxed && !ignoreEpisodeMode
 		response.Decision.StageOne = fake.explorationRecord(*explore, explorationHeld, relaxed, explorationChosen)

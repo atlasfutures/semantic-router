@@ -150,6 +150,8 @@ var policyRefusalReasons = map[string]bool{
 	"exploration_tau_exceeds_ceiling":    true,
 	"exploration_basis_mismatch":         true,
 	"exploration_unsupported_by_package": true,
+	// A caller's own prices name a model no arm dispatches (pathfinder#5668).
+	"unknown_price_model": true,
 }
 
 // PolicyRefusalReason is a selection refusal's bounded reason.

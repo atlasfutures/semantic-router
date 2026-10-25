@@ -156,6 +156,25 @@ _CHECKPOINT_LABEL = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 _MAX_CONFIG_STRING_BYTES = 512
 
 
+class RaylineARCRoutesRoutingConfig(BaseModel):
+    """The public Decisions routing controls on /v1/routes (Go
+    RaylineARCRoutesRoutingConfig, pathfinder#5664): presets always, and a
+    body's routing.{value_usd, temperature, prices, exclusive}. Policy-service
+    cells only; exploration_salt seeds lookup draws (empty: every requested
+    temperature is echoed unsupported)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    exploration_salt: str = ""
+
+    @field_validator("exploration_salt")
+    @classmethod
+    def _salt_bytes(cls, value: str) -> str:
+        if len(value.encode()) > 128:
+            raise ValueError("routing.exploration_salt must be at most 128 bytes")
+        return value
+
+
 class RaylineARCRoutesAPIConfig(BaseModel):
     """POST /v1/routes: the selector's choice, returned without executing it.
 
@@ -178,6 +197,15 @@ class RaylineARCRoutesAPIConfig(BaseModel):
     # "<label>.<hash>". Separate from artifact_revision, which is
     # deployment-private and never reaches a caller.
     checkpoint_label: str = ""
+    # The Decisions routing controls; needs the endpoint enabled and a
+    # policy-service cell (the Go loader refuses it on an artifact cell).
+    routing: RaylineARCRoutesRoutingConfig | None = None
+
+    @model_validator(mode="after")
+    def _routing_needs_the_endpoint(self):
+        if self.routing is not None and not self.enabled:
+            raise ValueError("routes_api.routing needs the endpoint enabled")
+        return self
 
     @field_validator("deadline_ms")
     @classmethod
@@ -617,6 +645,20 @@ class RaylineARCAlgorithmConfig(BaseModel):
         ):
             raise ValueError(
                 "artifact_dir, artifact_revision and encoder are required without policy_service"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _routes_routing_only_with_policy_service(self):
+        # The Go loader refuses routes_api.routing on an artifact cell: its
+        # results are the policy service's tier points.
+        if (
+            self.policy_service is None
+            and self.routes_api is not None
+            and self.routes_api.routing is not None
+        ):
+            raise ValueError(
+                "routes_api.routing is served by a policy-service cell only"
             )
         return self
 
