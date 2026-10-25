@@ -137,6 +137,8 @@ type fakePolicyService struct {
 	knownSignals      []string
 	servedSignals     []string
 	signalHeadsBroken bool
+	// omitSignals answers a decide naming signals without the block.
+	omitSignals bool
 }
 
 // fakeSignalBlock is the fake's signals block: one opaque result per name.
@@ -507,7 +509,7 @@ func (fake *fakePolicyService) decision(request raylinearc.PolicyDecisionRequest
 		trace := *fake.cacheTrace
 		response.Decision.CacheTrace = &trace
 	}
-	if len(request.Signals) > 0 {
+	if len(request.Signals) > 0 && !fake.omitSignals {
 		response.Signals = fakeSignalBlock(request.Signals)
 	}
 	// A relaxed call advances no session (pathfinder#3068).

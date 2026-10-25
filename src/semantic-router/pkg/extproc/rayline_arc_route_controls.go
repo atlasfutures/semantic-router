@@ -39,6 +39,7 @@ var routesInconsistentClasses = map[string]bool{
 	arcFailureRoutesExplorationInconsistent: true,
 	arcFailureRoutesPredictionsInconsistent: true,
 	arcFailureRoutesExecutionTraceMissing:   true,
+	arcFailureRoutesSignalsMissing:          true,
 }
 
 // arcFailureRoutesExecutionTraceMissing: a routing.execution lookup asked

@@ -226,6 +226,14 @@ func TestRoutingSignalsServiceRefusals(t *testing.T) {
 			}
 		})
 	}
+	// A service that answers a signals lookup without the block fails it in
+	// the selector, before anything commits, as inconsistent.
+	fixture := signalsFixture(t)
+	fixture.fake.omitSignals = true
+	_, controls := signalsControls(t, "arc-1.0", `{"signals":["topic.domain"]}`)
+	if _, err := selectWithControls(t, fixture, controls); !errors.Is(selectionFailureError(err), routerruntime.ErrRouteDecisionInconsistent) {
+		t.Fatalf("a missing block: %v", err)
+	}
 	// An unsupported_request that is not about signals keeps its class.
 	other := &raylinearc.PolicyServiceError{Class: "unsupported_request", Detail: map[string]any{"reason": "projection_refused"}}
 	if signalRefusalClass(other) != "" {

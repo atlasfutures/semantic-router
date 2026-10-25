@@ -1065,6 +1065,11 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		if execution != nil && routeExecutionTraceMissing(&request, response) {
 			return nil, arcSelectionFailure(arcFailureRoutesExecutionTraceMissing)
 		}
+		// A lookup that asked for signals and got no block fails here,
+		// before anything commits, as inconsistent (502).
+		if len(routeControls.Signals) > 0 && response.Signals == nil {
+			return nil, arcSelectionFailure(arcFailureRoutesSignalsMissing)
+		}
 		if executionV2 != nil {
 			if class := checkRouteOfferPin(executionV2.ExpectOffer, identity); class != "" {
 				return nil, arcSelectionFailure(class)

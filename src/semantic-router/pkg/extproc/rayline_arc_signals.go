@@ -29,6 +29,10 @@ const maxRoutingSignals = 32
 // failure class; the rest is the service's bounded reason.
 const arcFailureSignalRefusedPrefix = "signal_refused."
 
+// arcFailureRoutesSignalsMissing: a lookup asked for signals and the
+// service's answer carries no signals block.
+const arcFailureRoutesSignalsMissing = "routes_signals_missing"
+
 // readRoutingSignals reads routing.signals: an array of distinct non-empty
 // strings. An empty array is no signals (nil): the answer is today's.
 func readRoutingSignals(raw json.RawMessage) ([]string, *routesContractError) {
