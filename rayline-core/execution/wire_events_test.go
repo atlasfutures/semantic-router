@@ -349,3 +349,13 @@ func TestV2InferredCompactionSurvivesAFailedConsult(t *testing.T) {
 		t.Fatalf("retry event %s history %+v", last.Event.kindName(), last.History)
 	}
 }
+
+func TestWireEventsResponsesStringInputIsNotIndexed(t *testing.T) {
+	body := []byte(`{"model":"m","input":"` + codexSummaryPrefix[:60] + `"}`)
+	request := parseWireRequest(llmprotocol.OpenAIResponsesV1, body)
+	if got := detectCompaction(request, []string{"a", "b", "c"}, wireMessageFingerprints(llmprotocol.OpenAIResponsesV1, body)); got != nil {
+		t.Fatalf("compaction %+v", got)
+	}
+	body = []byte(`{"model":"m","input":"` + piCompactionPrefix + ` summary"}`)
+	_ = inferV2Event(parseWireRequest(llmprotocol.OpenAIResponsesV1, body), []string{"a", "b", "c"}, wireMessageFingerprints(llmprotocol.OpenAIResponsesV1, body), true, false)
+}

@@ -400,7 +400,9 @@ func retainedRun(previous, current []string, first int) (int, int) {
 // the previous request. Any other rewrite is a new epoch with no boundary.
 func detectCompaction(request wireRequest, previous, current []string) *CompactionEvent {
 	first := request.firstNonSystem()
-	if first < 0 || len(previous) == 0 {
+	// Fingerprints and parsed messages must index the same wire messages (a
+	// Responses string input has none to compare); otherwise nothing is known.
+	if first < 0 || len(previous) == 0 || len(current) != len(request.messages) {
 		return nil
 	}
 	start, run := retainedRun(previous, current, first)
