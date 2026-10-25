@@ -263,6 +263,9 @@ func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 			weight := *routing.costWeight
 			result.TurnCostWeight = &weight
 		}
+		if routing := reqCtx.RaylineGenerationRouting; routing != nil && routing.signals != nil {
+			result.TurnSignals = append([]string(nil), routing.signals...)
+		}
 		if result.RequestFormat == policyFormatResponses {
 			input, instructions, err := r.raylineARCPolicyResponsesInput(reqCtx)
 			if err != nil {

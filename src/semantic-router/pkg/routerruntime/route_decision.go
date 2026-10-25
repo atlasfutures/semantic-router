@@ -2,6 +2,7 @@ package routerruntime
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 
 	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
@@ -166,6 +167,9 @@ type RouteDecision struct {
 	// Receipt is the service's decision.receipt for a lookup that sent
 	// routing.policy or a v2 routing.execution; nil otherwise.
 	Receipt *raylinearc.PolicyDecisionReceipt
+	// Signals is the service's signals block, opaque and keyed by signal
+	// name, for a lookup that sent routing.signals; nil otherwise.
+	Signals json.RawMessage
 }
 
 // RouteIdentity is a Decisions answer's identity.

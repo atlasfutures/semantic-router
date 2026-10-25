@@ -283,6 +283,12 @@ type policyDecisionEnvelope struct {
 	Capacity  []PolicyActionCapacity `json:"capacity,omitempty"`
 	TurnKey   string                 `json:"turn_key,omitempty"`
 	Reconsult *string                `json:"reconsult,omitempty"`
+	// Signals names the caller-facing content signals the response's
+	// signals block answers (pathfinder #5943, the public routing.signals
+	// as sent). Omitted when absent, so a request without it is
+	// byte-identical to one from before. The names are the service's to
+	// admit or refuse; they change no decision.
+	Signals []string `json:"signals,omitempty"`
 }
 
 // EncodePolicyDecisionRequest is the decide body: every field as json.Marshal
@@ -370,6 +376,12 @@ type PolicyDecisionRequest struct {
 	Capacity  []PolicyActionCapacity `json:"capacity,omitempty"`
 	TurnKey   string                 `json:"turn_key,omitempty"`
 	Reconsult *string                `json:"reconsult,omitempty"`
+	// Signals names the caller-facing content signals the response's
+	// signals block answers (pathfinder #5943, the public routing.signals
+	// as sent). Omitted when absent, so a request without it is
+	// byte-identical to one from before. The names are the service's to
+	// admit or refuse; they change no decision.
+	Signals []string `json:"signals,omitempty"`
 }
 
 // PolicyMember is the decide request's policy: the public routing.policy as
@@ -647,6 +659,10 @@ type PolicyDecisionResponse struct {
 	// RoutingPricesUsed echoes which prices scored the decision; the service
 	// sends it exactly when the request carried routing_prices.
 	RoutingPricesUsed *PolicyRoutingPricesUsed `json:"routing_prices_used,omitempty"`
+	// Signals is the service's signals block, keyed by signal name, present
+	// exactly when the request named signals. It is opaque here: the router
+	// passes it to the caller as the service wrote it.
+	Signals json.RawMessage `json:"signals,omitempty"`
 }
 
 type PolicyErrorResponse struct {
@@ -987,6 +1003,9 @@ func DecodePolicyDecisionResponse(body []byte) (*PolicyDecisionResponse, error) 
 	if err := response.RoutingPricesUsed.validate(); err != nil {
 		return nil, err
 	}
+	if response.Signals != nil && !isJSONObject(response.Signals) {
+		return nil, fmt.Errorf("policy decision signals is not an object")
+	}
 	for _, shadow := range response.Shadow {
 		if shadow.Scored == nil {
 			continue
@@ -1141,4 +1160,10 @@ func decodeStrict(body []byte, target any) error {
 		return err
 	}
 	return ensureJSONEOF(decoder)
+}
+
+// isJSONObject reports whether raw is a JSON object (not null).
+func isJSONObject(raw json.RawMessage) bool {
+	var members map[string]json.RawMessage
+	return json.Unmarshal(raw, &members) == nil && members != nil
 }

@@ -125,6 +125,10 @@ type raylineRoutesResponse struct {
 	// for predictions and the cell applied them: JSON null off a boundary.
 	Candidates        json.RawMessage `json:"candidates,omitempty"`
 	CandidatesContext json.RawMessage `json:"candidates_context,omitempty"`
+	// Signals is the policy service's signals block (pathfinder #5943),
+	// keyed by signal name and passed through as the service wrote it;
+	// present exactly when the request sent routing.signals.
+	Signals json.RawMessage `json:"signals,omitempty"`
 }
 
 type raylineRoutesThinking struct {
@@ -432,6 +436,11 @@ func (r *OpenAIRouter) raylineRoutesFailure(
 	var executionRefusal *routeExecutionRefusal
 	if errors.As(err, &executionRefusal) {
 		return r.createRaylineRoutesCodedError(ctx, executionRefusal.contract())
+	}
+	// So does a refused routing.signals, with the service's own reason.
+	var signalRefusal *routeSignalRefusal
+	if errors.As(err, &signalRefusal) {
+		return r.createRaylineRoutesCodedError(ctx, signalRefusal.contract())
 	}
 	expired := errors.Is(lookupContext.Err(), context.DeadlineExceeded)
 	logging.ComponentErrorEvent("extproc", "routing_decision_failed", map[string]interface{}{
