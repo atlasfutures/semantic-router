@@ -47,16 +47,23 @@ const MaxPolicyPrefixShapeMessages = 1024
 // NewPolicyPrefixShape summarizes messages (each in the canonical form
 // PolicyTurn compares) with the request's system prompt and tools.
 func NewPolicyPrefixShape(messages []json.RawMessage, system, tools json.RawMessage) *PolicyPrefixShape {
-	kept := min(len(messages), MaxPolicyPrefixShapeMessages)
+	return NewPolicyPrefixShapeFrom(NewPrefixDigests(messages), system, tools)
+}
+
+// NewPolicyPrefixShapeFrom is NewPolicyPrefixShape over a request's memoized
+// digests.
+func NewPolicyPrefixShapeFrom(digests *PrefixDigests, system, tools json.RawMessage) *PolicyPrefixShape {
+	count := len(digests.Messages())
+	kept := min(count, MaxPolicyPrefixShapeMessages)
 	shape := &PolicyPrefixShape{
-		Len:      len(messages),
-		Digest:   MessagesDigest(messages, len(messages)),
+		Len:      count,
+		Digest:   digests.Digest(count),
 		Messages: make([]uint64, kept),
 		System:   prefixShapeDigest(canonicalSystem(system)),
 		Tools:    prefixShapeDigest(canonicalTools(tools)),
 	}
 	for index := range kept {
-		shape.Messages[index] = prefixShapeDigest(canonicalPrefixMessage(messages[index]))
+		shape.Messages[index] = prefixShapeDigest(digests.Canonical(index))
 	}
 	return shape
 }

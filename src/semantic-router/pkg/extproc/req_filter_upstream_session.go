@@ -38,26 +38,91 @@ func applyUpstreamSessionID(
 	dispatch *providerDispatch,
 	ctx *RequestContext,
 ) ([]byte, error) {
+	encoded, err := upstreamSessionIDMember(dispatch, ctx)
+	if err != nil || encoded == nil {
+		return body, err
+	}
+	mutated, err := setTopLevelMembers(body, map[string]json.RawMessage{upstreamSessionIDField: encoded})
+	if err != nil {
+		return nil, err
+	}
+	recordUpstreamSessionIDApplied(dispatch, ctx)
+	return mutated, nil
+}
+
+// upstreamSessionIDMember is the session_id member a dispatch carries, nil
+// when it carries none.
+func upstreamSessionIDMember(dispatch *providerDispatch, ctx *RequestContext) (json.RawMessage, error) {
 	episodeIDHash, wanted := upstreamSessionIDForDispatch(dispatch, ctx)
 	if !wanted {
-		return body, nil
-	}
-	var requestMap map[string]json.RawMessage
-	if err := json.Unmarshal(body, &requestMap); err != nil {
-		return nil, fmt.Errorf("failed to parse request body: %w", err)
+		return nil, nil
 	}
 	encoded, err := json.Marshal(episodeIDHash)
 	if err != nil {
 		return nil, fmt.Errorf("failed to serialize upstream session id: %w", err)
 	}
-	requestMap[upstreamSessionIDField] = encoded
+	return encoded, nil
+}
+
+func recordUpstreamSessionIDApplied(dispatch *providerDispatch, ctx *RequestContext) {
+	decisionKey := config.RoutingDecisionKey(ctx.Routing.RecipeName(), dispatch.decisionName)
+	metrics.RecordUpstreamSessionIDApplied(decisionKey)
+	logging.Infof("Sent an upstream session id for provider affinity on decision %q", decisionKey)
+}
+
+// applyUpstreamRoutingMembers is applyUpstreamSessionID then
+// applyProviderPreferences in one rewrite of the body. Each rewrite decodes
+// and re-encodes the whole transcript to set one top-level member, and the
+// encoding is canonical (sorted members, compact values), so setting both in
+// one pass writes the bytes the two passes wrote.
+func applyUpstreamRoutingMembers(
+	body []byte,
+	dispatch *providerDispatch,
+	routerConfig *config.RouterConfig,
+	ctx *RequestContext,
+) ([]byte, error) {
+	session, err := upstreamSessionIDMember(dispatch, ctx)
+	if err != nil {
+		return nil, err
+	}
+	provider, err := providerPreferencesMember(dispatch, routerConfig, ctx)
+	if err != nil {
+		return nil, err
+	}
+	members := make(map[string]json.RawMessage, 2)
+	if session != nil {
+		members[upstreamSessionIDField] = session
+	}
+	if provider != nil {
+		members[providerPreferencesField] = provider
+	}
+	if len(members) == 0 {
+		return body, nil
+	}
+	mutated, err := setTopLevelMembers(body, members)
+	if err != nil {
+		return nil, err
+	}
+	if session != nil {
+		recordUpstreamSessionIDApplied(dispatch, ctx)
+	}
+	return mutated, nil
+}
+
+// setTopLevelMembers sets members on the body's top-level object, re-encoding
+// it as encoding/json does a map: members sorted, values compact.
+func setTopLevelMembers(body []byte, members map[string]json.RawMessage) ([]byte, error) {
+	var requestMap map[string]json.RawMessage
+	if err := json.Unmarshal(body, &requestMap); err != nil {
+		return nil, fmt.Errorf("failed to parse request body: %w", err)
+	}
+	for name, value := range members {
+		requestMap[name] = value
+	}
 	mutated, err := json.Marshal(requestMap)
 	if err != nil {
 		return nil, fmt.Errorf("failed to serialize modified request: %w", err)
 	}
-	decisionKey := config.RoutingDecisionKey(ctx.Routing.RecipeName(), dispatch.decisionName)
-	metrics.RecordUpstreamSessionIDApplied(decisionKey)
-	logging.Infof("Sent an upstream session id for provider affinity on decision %q", decisionKey)
 	return mutated, nil
 }
 

@@ -474,8 +474,11 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	if arcContext.PolicyCallKind != "" && arcContext.PolicyCallKind != raylinearc.PolicyCallUnknown {
 		signals.CallKind, signals.CallKindSource = arcContext.PolicyCallKind, arcContext.PolicyCallKindSource
 	}
-	turn, attribution, transition := raylinearc.PolicyTurn(state.Policy, messages, roles, state.TurnIndex, signals)
-	prefixShape := observePolicyPrefix(arcContext, clientRequest, messages, state.Policy, signals, transition)
+	// One request digests its transcript several times; each message is
+	// canonicalized once.
+	digests := raylinearc.NewPrefixDigests(messages)
+	turn, attribution, transition := raylinearc.PolicyTurnFrom(state.Policy, digests, roles, state.TurnIndex, signals)
+	prefixShape := observePolicyPrefix(arcContext, clientRequest, digests, state.Policy, signals, transition)
 	sideCall := signals.CallKind == raylinearc.PolicyCallSide
 	scheduled := scorer.schedule != "" && !sideCall
 	// A two-stage package's service owns the model choice: it decides at the
@@ -490,7 +493,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		raylinearc.ModelChangeAllowed(state.TurnIndex, turn.EpochStartTurn, turn.CompactionCount))
 	retainedArm, retained := -1, false
 	if atBoundary {
-		retainedArm, retained = state.PolicyBoundary.RetainedArm(messages, state.TurnIndex, turn)
+		retainedArm, retained = state.PolicyBoundary.RetainedArmFrom(digests, state.TurnIndex, turn)
 	}
 	held := -1
 	// A side call keeps the held arm whatever the schedule says; a turn holds
@@ -879,8 +882,8 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		// selection log only.
 		audit := raylinearc.NewPolicyPriceAudit(scorer.sha256, response.RoutingPricesUsed, result.RaylineARC.PolicyPredictedCostUSD)
 		result.RaylineARC.PolicyTurnState = turn.Clone()
-		result.RaylineARC.PolicyNextState = turn.NextWithPrices(
-			messages, response.Decision.SelectedActionID, response.Decision.SelectedArmID, audit,
+		result.RaylineARC.PolicyNextState = turn.NextWithPricesFrom(
+			digests, response.Decision.SelectedActionID, response.Decision.SelectedArmID, audit,
 		)
 		var retainedBoundary *raylinearc.PolicyBoundaryDecision
 		if retained {
@@ -889,7 +892,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		recordPolicyExplorationOrigin(result.RaylineARC, turn, retainedBoundary, servedRelaxed)
 	}
 	if atBoundary && !retained {
-		result.RaylineARC.PolicyBoundary = raylinearc.NewPolicyBoundaryDecision(binding.arm, state.TurnIndex, turn, messages)
+		result.RaylineARC.PolicyBoundary = raylinearc.NewPolicyBoundaryDecisionFrom(binding.arm, state.TurnIndex, turn, digests)
 	}
 	if fallback {
 		logRaylineARCFallbackDecision(arcContext.EpisodeIDHash, arcContext.RequestID, state.TurnIndex, turn, scorer.cellOutWorkers(loggedRoutes), forced, available, response)

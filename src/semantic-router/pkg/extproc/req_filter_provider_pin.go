@@ -45,6 +45,20 @@ func applyProviderPreferences(
 	routerConfig *config.RouterConfig,
 	ctx *RequestContext,
 ) ([]byte, error) {
+	encoded, err := providerPreferencesMember(dispatch, routerConfig, ctx)
+	if err != nil || encoded == nil {
+		return body, err
+	}
+	return setTopLevelMembers(body, map[string]json.RawMessage{providerPreferencesField: encoded})
+}
+
+// providerPreferencesMember is the provider member a dispatch carries, nil
+// when it carries none, and records the endpoint it pins.
+func providerPreferencesMember(
+	dispatch *providerDispatch,
+	routerConfig *config.RouterConfig,
+	ctx *RequestContext,
+) (json.RawMessage, error) {
 	privacyMode := ""
 	if ctx != nil {
 		privacyMode = ctx.RaylineARCPrivacyMode
@@ -52,26 +66,17 @@ func applyProviderPreferences(
 	resetDispatchedEndpoint(ctx)
 	pin, openRouter := providerPreferencesForDispatch(dispatch, routerConfig)
 	if !openRouter || (pin == nil && privacyMode == "") {
-		return body, nil
+		return nil, nil
 	}
 	sent := privacyProviderPreferences(pickArmEndpoint(ctx, dispatch, pin), privacyMode)
 	if ctx != nil {
 		ctx.RaylineARCDispatchedEndpoint = dispatchedEndpoint(ctx, sent, dispatch.upstreamModel)
 	}
-	var requestMap map[string]json.RawMessage
-	if err := json.Unmarshal(body, &requestMap); err != nil {
-		return nil, fmt.Errorf("failed to parse request body: %w", err)
-	}
 	encoded, err := json.Marshal(sent)
 	if err != nil {
 		return nil, fmt.Errorf("failed to serialize provider preferences: %w", err)
 	}
-	requestMap[providerPreferencesField] = encoded
-	mutated, err := json.Marshal(requestMap)
-	if err != nil {
-		return nil, fmt.Errorf("failed to serialize modified request: %w", err)
-	}
-	return mutated, nil
+	return encoded, nil
 }
 
 // providerPreferencesForDispatch answers both gates in one place, so the
@@ -99,17 +104,25 @@ func recordDispatchedProviderPin(ctx *RequestContext, body []byte) {
 	ctx.DispatchedProviderOrder = nil
 	ctx.DispatchedProviderPrivacy = dispatchedProviderPrivacy{}
 
-	var wire struct {
-		Provider struct {
-			Order          []string `json:"order"`
-			DataCollection string   `json:"data_collection"`
-			ZDR            *bool    `json:"zdr"`
-			AllowFallbacks *bool    `json:"allow_fallbacks"`
-		} `json:"provider"`
-	}
+	var wire dispatchedProviderWire
 	if json.Unmarshal(body, &wire) != nil {
 		return
 	}
+	wire.record(ctx)
+}
+
+// dispatchedProviderWire is the body's provider object, as far as the record
+// reads it.
+type dispatchedProviderWire struct {
+	Provider struct {
+		Order          []string `json:"order"`
+		DataCollection string   `json:"data_collection"`
+		ZDR            *bool    `json:"zdr"`
+		AllowFallbacks *bool    `json:"allow_fallbacks"`
+	} `json:"provider"`
+}
+
+func (wire *dispatchedProviderWire) record(ctx *RequestContext) {
 	ctx.DispatchedProviderOrder = wire.Provider.Order
 	ctx.DispatchedProviderPrivacy = dispatchedProviderPrivacy{
 		dataCollection: wire.Provider.DataCollection,
