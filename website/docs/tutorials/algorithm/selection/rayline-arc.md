@@ -657,6 +657,23 @@ record contradicting the requested temperature answers 502
 `inconsistent_upstream`. Without `routes_api.routing`, a body carrying the
 block answers 503 `unavailable`.
 
+### Routing on generation turns: arc-1.0's V and T
+
+A policy-service cell with `policy_service.generation_routing` reads a
+generation turn's `routing.{value_usd, temperature}` on `/v1/messages`,
+`/v1/chat/completions` and `/v1/responses`, and removes the block before the
+codec, the encoder or the provider sees the body. On the configurable cell
+(`caller_value: true`, `arc-1.0`) the turn is decided at
+`cost_weight = 1 / value_usd`, with `value_usd` in [0.1, 5], and a decision
+echoed at another weight is not served. A tier cell (Swift, Sage) accepts its
+own V restated and refuses any other with 400 `tier_value_immutable`.
+`routing.temperature` is the hosted caller T: it is sent only on a turn
+eligible to explore, on a cell whose `exploration_temperature` sets
+`caller_temperature`, and the service clamps it to the cell's cap.
+`routing.prices` and `routing.exclusive` are refused
+(`prices_not_supported`). `x-vsr-routing-applied` and
+`x-vsr-routing-unapplied` name what the turn applied.
+
 ### Describing the cell as one model
 
 A gateway that fronts this cell as one model needs to say what that model is:

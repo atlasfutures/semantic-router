@@ -39,6 +39,14 @@ func (r *OpenAIRouter) handleRequestBody(
 	if routesResponse := r.handleRaylineRoutesAPI(requestBody, ctx); routesResponse != nil {
 		return routesResponse, nil
 	}
+	// A generation turn's routing block is read and removed before anything
+	// else reads the body: it never reaches the codec, the encoder or the
+	// provider.
+	requestBody, routingRefusal := r.applyRaylineGenerationRouting(requestBody, ctx)
+	if routingRefusal != nil {
+		return routingRefusal, nil
+	}
+	ctx.RaylineARCRawBody = requestBody
 	request, earlyResponse := r.prepareProtocolRequest(requestBody, ctx)
 	if earlyResponse != nil {
 		return earlyResponse, nil

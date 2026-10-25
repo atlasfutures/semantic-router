@@ -655,6 +655,12 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		request.EpisodeMode = scorer.sideCallEpisodeMode(selector.now())
 	}
 	scorer.decisionsV2.apply(&request)
+	if weight := arcContext.TurnCostWeight; weight != nil {
+		// Configurable ARC: the turn's own V, within the bounds readiness
+		// checked the package admits.
+		turnWeight := *weight
+		request.Selection.OperatingPoint.CostWeight = &turnWeight
+	}
 	explorationExcluded := scorer.exploration.apply(&request, arcContext.PolicySignalHeaders, sideCall)
 	pricesStatus := attachRoutingPrices(armed.prices, &request)
 	applyRouteControls(&request, routeControls)
@@ -903,13 +909,14 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		})
 		return nil, arcSelectionFailure(class)
 	}
-	if scorer.decisionsV2.operatingPointMismatch(response) {
+	if scorer.decisionsV2.operatingPointMismatch(response) || turnOperatingPointMismatch(arcContext.TurnCostWeight, response) {
 		logging.ComponentErrorEvent("extproc", "rayline_arc_policy_service_failed", map[string]interface{}{
 			"class": arcFailurePolicyOperatingPointMismatch, "episode_id_hash": arcContext.EpisodeIDHash,
 		})
 		return nil, arcSelectionFailure(arcFailurePolicyOperatingPointMismatch)
 	}
 	recordRoutingPriceDecision(response.RoutingPricesUsed)
+	turnWeightApplied := arcContext.TurnCostWeight != nil
 	decision := policyDecision(scorer, response, binding, workerIDs, excluded)
 	if !validARCDecision(decision, workerIDs) {
 		return nil, arcSelectionFailure("artifact_result")
@@ -946,6 +953,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	result.RaylineARC.OfferKind = policyOfferKind(derivedOffer, forced, retained, held)
 	result.RaylineARC.MaskedArms = policyMaskedArms(scorer, workerIDs, excluded, fallback, turn, offeredRoutes)
 	result.RaylineARC.PolicyPackageSHA256 = scorer.sha256
+	result.RaylineARC.TurnCostWeightApplied = turnWeightApplied
 	result.RaylineARC.RoutingPricesStatus = pricesStatus
 	result.RaylineARC.SettlementPrices = armed.prices
 	result.RaylineARC.EndpointFeed = arcContext.EndpointFeed
@@ -1332,4 +1340,14 @@ func boundedPolicySessionAction(action string) string {
 		return action
 	}
 	return ""
+}
+
+// turnOperatingPointMismatch reports a decision taken at another cost weight
+// than the turn's own, or echoed with none: it is not the caller's V.
+func turnOperatingPointMismatch(weight *float64, response *raylinearc.PolicyDecisionResponse) bool {
+	if weight == nil {
+		return false
+	}
+	echoed := response.Decision.OperatingPoint.CostWeight
+	return echoed == nil || *echoed != *weight
 }

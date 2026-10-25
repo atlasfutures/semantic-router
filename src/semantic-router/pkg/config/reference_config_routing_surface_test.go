@@ -112,7 +112,10 @@ func assertReferenceRaylineARCCoverage(t testingT, root map[string]interface{}) 
 		// The legacy raw-tau exploration shape is exclusive with
 		// exploration_temperature, which the reference shows; the comment
 		// above that block states the legacy one.
-		"exploration")
+		"exploration",
+		// generation_routing is refused in a multi-recipe config such as the
+		// reference; the comment above eval_cell states it.
+		"generation_routing")
 	assertMapCoversStructFields(t, mustMapAt(t, policy, "policy_service", "routing_prices"), reflect.TypeOf(RaylineARCRoutingPricesConfig{}), "recipes[].routing.decisions[].algorithm.rayline_arc.policy_service.routing_prices",
 		// credential_env belongs to auth bearer; the example uses google_id_token, which refuses it.
 		"credential_env")
