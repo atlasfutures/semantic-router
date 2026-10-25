@@ -586,7 +586,7 @@ func TestPolicyAssistantOutputNormalizesResponsesItems(t *testing.T) {
 // The append stays well within the next turn's acquire timeout, so it never
 // makes that turn contended.
 func TestPolicyAppendTimeoutStaysInsideTheAcquireTimeout(t *testing.T) {
-	if got := policyAppendTimeout(30*time.Second, 8*time.Second); got != 2*time.Second {
+	if got := policyAppendTimeout(30*time.Second, 8*time.Second); got != 4*time.Second {
 		t.Fatalf("append timeout %v", got)
 	}
 	if got := policyAppendTimeout(time.Second, 8*time.Second); got != time.Second {
@@ -778,12 +778,11 @@ func TestDeltaDigestKeepsNestedCacheControl(t *testing.T) {
 }
 
 // An append VSR stopped waiting for may still hold the service's episode
-// lock: the next turn goes in full and retries session_busy for the
-// append's budget longer.
+// lock: the next turn goes in full and retries session_busy one acquire
+// timeout longer.
 func TestDeltaUnsettledAppendExtendsTheNextBusyWait(t *testing.T) {
 	fixture := newDeltaFixture(t, config.RaylineARCDecideModeDelta, nil)
 	scorer := fixture.scorer()
-	scorer.busyWait, scorer.appendTimeout = 0, 2*time.Second
 	gate := make(chan struct{})
 	t.Cleanup(func() {
 		select {
@@ -801,7 +800,12 @@ func TestDeltaUnsettledAppendExtendsTheNextBusyWait(t *testing.T) {
 		t.Fatalf("a timed-out append left %+v (%v)", staged, ok)
 	}
 	close(gate)
-	fixture.fake.failFirstCalls("session_busy", 1)
+	if got := policyFirstBusyWait(time.Second, "append_unsettled"); got != 2*time.Second {
+		t.Fatalf("unsettled busy wait %v", got)
+	}
+	if got := policyFirstBusyWait(time.Second, "delta"); got != time.Second {
+		t.Fatalf("busy wait %v", got)
+	}
 	second, ctx := fixture.turn(t, policyTestRequest(t, deltaUser, deltaAssistant, deltaToolResult))
 	sent := fixture.fake.received()
 	if second.RaylineARC.PolicyDecisionMode != policyDecisionModeSync || sent[len(sent)-1].TurnDelta != nil {
@@ -809,3 +813,4 @@ func TestDeltaUnsettledAppendExtendsTheNextBusyWait(t *testing.T) {
 	}
 	complete(t, ctx, deltaReply(t))
 }
+
