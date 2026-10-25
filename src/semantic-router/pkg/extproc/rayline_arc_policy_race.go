@@ -418,7 +418,7 @@ func policyLeaseCheck(
 
 // policyStagingBudgets bound the work a racing turn does inside its lease
 // after the client may already have its reply: the rest of a lost race's
-// decide (lateDecide, from the race's start: a delta, its full resend and
+// decide (lateDecide, from the lease serving: a delta, its full resend and
 // their busy retries) and the append. A next turn can arrive then and waits
 // for the lease up to the episode's acquire timeout, so together they stay
 // well inside it: the staging never makes that turn contended where a sync

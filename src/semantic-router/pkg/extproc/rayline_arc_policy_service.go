@@ -109,7 +109,8 @@ type policyServiceScorer struct {
 	raceDeadline     time.Duration
 	raceMaxNewTokens int
 	appendTimeout    time.Duration
-	// lateDecideTimeout bounds a raced decide's whole operation.
+	// lateDecideTimeout bounds the rest of a raced decide once its lease
+	// has served.
 	lateDecideTimeout time.Duration
 	staged            *policyStagedTurns
 	deltaUnsupported  atomic.Bool
@@ -802,9 +803,10 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	if leaseRefusal == "" {
 		// The decide runs on its own context: if the lease serves, it
 		// outlives this request's selection and finishes inside the lease.
-		// Its budget bounds the whole operation (a delta, a full resend,
-		// their busy retries), so the transaction can always wait it out.
-		detached, cancelDecide := context.WithTimeout(context.WithoutCancel(ctx), scorer.lateDecideTimeout)
+		// Until then it has a sync decide's budget; only once the lease has
+		// served is the rest of it bounded (lateDecideTimeout), so the
+		// transaction can always wait it out.
+		detached, cancelDecide := context.WithCancel(context.WithoutCancel(ctx))
 		pending = startPolicyPendingDecide(func() (*raylinearc.PolicyDecisionResponse, error, bool) {
 			defer cancelDecide()
 			return decideFirst(detached)
@@ -822,7 +824,11 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 			); leased != nil {
 				served := deltaBase.hold.ActionID
 				requestID, episode := arcContext.RequestID, arcContext.EpisodeIDHash
-				pending.onDone(func(late *policyPendingDecide) { logPolicyLateDecide(requestID, episode, served, late) })
+				bound := time.AfterFunc(scorer.lateDecideTimeout, cancelDecide)
+				pending.onDone(func(late *policyPendingDecide) {
+					bound.Stop()
+					logPolicyLateDecide(requestID, episode, served, late)
+				})
 				leased.RaylineARC.PolicyLatency = raceWait
 				leased.RaylineARC.PolicyDecisionMode = policyDecisionModeRaceLost
 				leased.RaylineARC.PolicyRaceWait = raceWait
@@ -848,7 +854,14 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		// The decide landed in time, or the lease cannot serve: the turn is
 		// the decide's, as on a sync cell.
 		if !won {
-			<-pending.done
+			// Waited for on the request path, as a sync decide is: it ends
+			// with the request's stream.
+			select {
+			case <-pending.done:
+			case <-ctx.Done():
+				cancelDecide()
+				<-pending.done
+			}
 		}
 		response, err = pending.response, pending.err
 		if won {

@@ -475,3 +475,23 @@ func TestPolicyStagingBudgetsStayInsideTheAcquireTimeout(t *testing.T) {
 		t.Fatalf("short decide budgets %v %v", appendTimeout, lateDecide)
 	}
 }
+
+// A raced decide the lease cannot replace keeps a sync decide's budget: the
+// staging bound applies only once a lease has served.
+func TestRaceDecideTheLeaseCannotReplaceKeepsTheSyncBudget(t *testing.T) {
+	fixture := newRaceFixture(t, "", nil)
+	fixture.stagedFirstTurn(t)
+	if fixture.scorer().lateDecideTimeout >= 3*time.Second {
+		t.Fatalf("late decide bound %v; the test needs it under the decide's 3 s", fixture.scorer().lateDecideTimeout)
+	}
+	slowDeltas(fixture, 3*time.Second)
+	// The lease expires during the race, so the turn waits for its decide.
+	staged, _ := fixture.scorer().staged.get(fixture.episode)
+	staged.holdExpires = time.Now().Add(20 * time.Millisecond)
+	fixture.scorer().staged.put(fixture.episode, staged)
+	second, ctx := fixture.turn(t, policyTestRequest(t, raceUser, raceAssistant, raceToolResult))
+	if second.RaylineARC.PolicyActionID != fixture.decided {
+		t.Fatalf("served %s", second.RaylineARC.PolicyActionID)
+	}
+	complete(t, ctx, raceReply(t))
+}
