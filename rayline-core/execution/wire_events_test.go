@@ -359,3 +359,10 @@ func TestWireEventsResponsesStringInputIsNotIndexed(t *testing.T) {
 	body = []byte(`{"model":"m","input":"` + piCompactionPrefix + ` summary"}`)
 	_ = inferV2Event(parseWireRequest(llmprotocol.OpenAIResponsesV1, body), []string{"a", "b", "c"}, wireMessageFingerprints(llmprotocol.OpenAIResponsesV1, body), true, false)
 }
+
+func TestWireEventsResponsesStringInputSidecall(t *testing.T) {
+	body, _ := json.Marshal(map[string]any{"model": "m", "input": codexCompactionPrompt})
+	if !parseWireRequest(llmprotocol.OpenAIResponsesV1, body).isSidecall() {
+		t.Fatal("Codex compaction prompt as string input was not a side call")
+	}
+}

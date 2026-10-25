@@ -86,7 +86,7 @@ func parseWireRequest(format llmprotocol.WireFormat, body []byte) wireRequest {
 		if json.Unmarshal(wire["input"], &input) != nil {
 			var whole string
 			if json.Unmarshal(wire["input"], &whole) == nil {
-				result.messages = []wireMessage{{role: "user", texts: []string{whole}}}
+				result.messages = []wireMessage{{role: "user", texts: []string{whole}, allTexts: []string{whole}}}
 			}
 			return result
 		}
