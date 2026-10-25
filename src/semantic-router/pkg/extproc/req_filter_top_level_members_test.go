@@ -4,6 +4,7 @@ package extproc
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 )
 
@@ -41,4 +42,46 @@ func TestOneRewriteOfTwoMembersIsTwoRewrites(t *testing.T) {
 	if _, err := setTopLevelMembers([]byte(`[1]`), map[string]json.RawMessage{"a": json.RawMessage(`1`)}); err == nil {
 		t.Fatal("a body that is not an object was rewritten")
 	}
+}
+
+// The joint read-back records what the two read-backs recorded, including
+// for a body where one group's member has the wrong type: that group records
+// nothing, and the other still records its own.
+func TestJointReadBackRecordsWhatTheTwoReadBacksRecorded(t *testing.T) {
+	for _, body := range []string{
+		`{"reasoning_effort":"high","provider":{"order":["deepinfra"],"zdr":true,"data_collection":"deny","allow_fallbacks":false}}`,
+		`{"reasoning_effort":"high","provider":{"order":123}}`,
+		`{"reasoning":{"max_tokens":"1024"},"provider":{"order":["deepinfra"],"zdr":true}}`,
+		`{"output_config":{"effort":"medium"},"reasoning":{"max_tokens":2048}}`,
+		`not json`,
+	} {
+		separate := &RequestContext{DispatchedReasoningEffort: "stale", DispatchedProviderOrder: []string{"stale"}}
+		recordDispatchedReasoningControls(separate, []byte(body))
+		recordDispatchedProviderPin(separate, []byte(body))
+		joint := &RequestContext{DispatchedReasoningEffort: "stale", DispatchedProviderOrder: []string{"stale"}}
+		recordDispatchedControls(joint, []byte(body))
+		if got, want := dispatchedRecord(joint), dispatchedRecord(separate); got != want {
+			t.Fatalf("%s: joint %s, separate %s", body, got, want)
+		}
+	}
+}
+
+func dispatchedRecord(ctx *RequestContext) string {
+	deref := func(value any) string {
+		switch typed := value.(type) {
+		case *int64:
+			if typed != nil {
+				return fmt.Sprint(*typed)
+			}
+		case *bool:
+			if typed != nil {
+				return fmt.Sprint(*typed)
+			}
+		}
+		return "nil"
+	}
+	return fmt.Sprintf("effort=%q bound=%s order=%v data=%q zdr=%s fallbacks=%s",
+		ctx.DispatchedReasoningEffort, deref(ctx.DispatchedReasoningBound), ctx.DispatchedProviderOrder,
+		ctx.DispatchedProviderPrivacy.dataCollection, deref(ctx.DispatchedProviderPrivacy.zdr),
+		deref(ctx.DispatchedProviderPrivacy.allowFallbacks))
 }

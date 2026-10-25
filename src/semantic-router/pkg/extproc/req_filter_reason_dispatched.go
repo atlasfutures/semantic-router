@@ -32,23 +32,26 @@ func recordDispatchedReasoningControls(ctx *RequestContext, body []byte) {
 // recordDispatchedControls is recordDispatchedReasoningControls and
 // recordDispatchedProviderPin over one decode of the final body, which is the
 // whole transcript: each read-back otherwise scans every message to find a
-// few top-level members.
+// few top-level members. A body the joint decode refuses -- a member of one
+// group of the wrong type -- is read by each read-back on its own, so one
+// group's error never clears the other's record.
 func recordDispatchedControls(ctx *RequestContext, body []byte) {
 	if ctx == nil {
+		return
+	}
+	var wire struct {
+		dispatchedReasoningWire
+		dispatchedProviderWire
+	}
+	if json.Unmarshal(body, &wire) != nil {
+		recordDispatchedReasoningControls(ctx, body)
+		recordDispatchedProviderPin(ctx, body)
 		return
 	}
 	ctx.DispatchedReasoningEffort = ""
 	ctx.DispatchedReasoningBound = nil
 	ctx.DispatchedProviderOrder = nil
 	ctx.DispatchedProviderPrivacy = dispatchedProviderPrivacy{}
-
-	var wire struct {
-		dispatchedReasoningWire
-		dispatchedProviderWire
-	}
-	if json.Unmarshal(body, &wire) != nil {
-		return
-	}
 	wire.dispatchedReasoningWire.record(ctx)
 	wire.dispatchedProviderWire.record(ctx)
 }
