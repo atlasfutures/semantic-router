@@ -809,10 +809,14 @@ func TestDeltaUnsettledAppendExtendsTheNextBusyWait(t *testing.T) {
 	}
 	scorer.deltaUnsupported.Store(false)
 	close(gate)
-	if got := policyFirstBusyWait(time.Second, "append_unsettled"); got != 2*time.Second {
+	// Read whether or not the next turn stages (an exploring turn does not).
+	if !scorer.policyAppendUnsettled(fixture.episode, 1) || scorer.policyAppendUnsettled(fixture.episode, 2) {
+		t.Fatal("the unsettled marker is not read for exactly the next turn")
+	}
+	if got := policyFirstBusyWait(time.Second, true); got != 2*time.Second {
 		t.Fatalf("unsettled busy wait %v", got)
 	}
-	if got := policyFirstBusyWait(time.Second, "delta"); got != time.Second {
+	if got := policyFirstBusyWait(time.Second, false); got != time.Second {
 		t.Fatalf("busy wait %v", got)
 	}
 	second, ctx := fixture.turn(t, policyTestRequest(t, deltaUser, deltaAssistant, deltaToolResult))

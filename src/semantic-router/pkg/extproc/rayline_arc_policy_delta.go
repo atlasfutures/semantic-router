@@ -671,12 +671,23 @@ func stageRaylineARCAppendSource(ctx *RequestContext, clientBody []byte) {
 
 // policyFirstBusyWait is how long a turn's first decide retries
 // session_busy: one acquire timeout, two after an append VSR stopped waiting
-// for, whose work may still hold the service's episode lock.
-func policyFirstBusyWait(busyWait time.Duration, deltaOutcome string) time.Duration {
-	if deltaOutcome == "append_unsettled" {
+// for (unsettled), whose work may still hold the service's episode lock.
+func policyFirstBusyWait(busyWait time.Duration, unsettled bool) time.Duration {
+	if unsettled {
 		return 2 * busyWait
 	}
 	return busyWait
+}
+
+// policyAppendUnsettled reports whether this episode's last committed turn,
+// in this process, left an append VSR stopped waiting for. It is read on
+// every turn of a delta cell, whether or not this one stages.
+func (scorer *policyServiceScorer) policyAppendUnsettled(episodeIDHash string, turnIndex uint64) bool {
+	if !scorer.delta {
+		return false
+	}
+	staged, ok := scorer.staged.get(episodeIDHash)
+	return ok && staged.turnIndex == turnIndex && staged.unsettled
 }
 
 // policyStagedFullMode is the decision mode of a turn sent in full: sync on
