@@ -230,8 +230,9 @@ func (pending *policyPendingDecide) onDone(fn func(*policyPendingDecide)) {
 	pending.mu.Unlock()
 }
 
-// wait blocks until the decide finishes or bound passes, reporting which.
-func (pending *policyPendingDecide) wait(bound time.Duration) bool {
+// wait blocks until the decide finishes, bound passes or ctx ends,
+// reporting whether the decide finished.
+func (pending *policyPendingDecide) wait(ctx context.Context, bound time.Duration) bool {
 	if pending == nil {
 		return true
 	}
@@ -241,6 +242,8 @@ func (pending *policyPendingDecide) wait(bound time.Duration) bool {
 	case <-pending.done:
 		return true
 	case <-timer.C:
+		return false
+	case <-ctx.Done():
 		return false
 	}
 }

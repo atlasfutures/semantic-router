@@ -525,6 +525,14 @@ class RaylineARCPolicyServiceConfig(BaseModel):
     exploration: RaylineARCExplorationConfig | None = None
     # An eval or lab cell never sends exploration.
     eval_cell: bool = False
+    # Mirrors DecideMode, RaceMS and RaceMaxNewTokens in the Go loader
+    # (ADR 0155, proposed): race stages strict main turns, appends each reply
+    # and races the next turn's delta decide against race_ms (0 selects 100),
+    # serving the append's fallback lease when it loses. sync decides every
+    # turn.
+    decide_mode: Literal["", "sync", "race"] = ""
+    race_ms: int = Field(default=0, ge=0, le=5000)
+    race_max_new_tokens: int = Field(default=0, ge=0)
 
     @field_validator("failover", mode="before")
     @classmethod

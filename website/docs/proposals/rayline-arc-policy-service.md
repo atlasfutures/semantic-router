@@ -453,6 +453,39 @@ Rollout: until the gateway sends both eligibility headers, an exploration
 cell explores no turn. Enable the block only for a service and package that
 serve exploration, with the service's ceiling set.
 
+## Racing held turns (opt-in, ADR 0155)
+
+`decide_mode: race` (default `sync`; needs a policy service that serves
+staged turns, pathfinder#5919) takes a held continuation's decide off the
+user's path:
+
+```yaml
+decide_mode: race
+race_ms: 100              # 0 selects 100
+race_max_new_tokens: 0    # 0 never skips the race
+```
+
+- **Stage and append.** Each strict main turn's decide carries
+  `stage: true`. When the turn commits, inside its episode lease, VSR posts
+  `append` with the reply's assistant output and the ledger's attribution.
+  The reply's fallback lease and prefix digest are kept in process for the
+  next turn. A reply with thinking is not appended.
+- **Delta.** A turn whose first messages reproduce the staged prefix sends
+  `turn_delta` with the shell only, and in full again on `session_mismatch`.
+- **Race.** The decide is waited for `race_ms`. A decide that lands serves as
+  on a sync cell; one that misses serves the lease when the turn's new
+  messages are tool results (and text-only system messages), no compaction,
+  subagent or schedule boundary applies, the lease is unexpired and bound to
+  this package and epoch, and its action is offered. Otherwise the turn
+  waits for its decide. The late decide finishes inside the lease; its pick
+  is logged as provisional and the ledger records the lease's action.
+- **Record.** `llm_usage`, `routing_decision` and `rayline_arc_selection`
+  carry `decision_mode` (`sync`, `race_won`, `race_lost`) and
+  `race_ms_observed`; `llm_rayline_arc_policy_staged_turns_total` counts
+  each racing turn by `delta_mismatch_reason` and lease outcome. A sync cell
+  logs neither.
+- **Scope.** Relaxed, replica-pool and eval cells decide sync.
+
 ## Request formats
 
 VSR sends the client's request in the format the service projects:

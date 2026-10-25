@@ -827,7 +827,14 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		if scorer.raceMaxNewTokens > 0 && policyEstimatedTokens(messages[deltaBase.count:]) > scorer.raceMaxNewTokens {
 			deadline = 0
 		}
-		won := deadline > 0 && pending.wait(deadline)
+		won := deadline > 0 && pending.wait(ctx, deadline)
+		if ctx.Err() != nil && !won {
+			// The request ended during the race: nothing is served, and the
+			// decide is not left running into the lease.
+			cancelDecide()
+			<-pending.done
+			return nil, arcSelectionFailure("policy_service_canceled")
+		}
 		raceWait = selector.now().Sub(started)
 		// The TTL is checked as the lease would serve, after the wait.
 		if !won && selector.now().Before(deltaBase.holdExpires) {

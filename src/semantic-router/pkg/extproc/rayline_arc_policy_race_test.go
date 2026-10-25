@@ -627,3 +627,28 @@ func TestRaceThinkingReplyIsNotAppended(t *testing.T) {
 		t.Fatal("a thinking reply left a staged turn")
 	}
 }
+
+// A request that ends during the race is served nothing, and its decide is
+// not left running.
+func TestRaceCancelledDuringTheRaceServesNothing(t *testing.T) {
+	fixture := newRaceFixture(t, "", func(policy *config.RaylineARCPolicyServiceConfig) { policy.RaceMS = 2000 })
+	fixture.stagedFirstTurn(t)
+	slowDeltas(fixture, 300*time.Millisecond)
+	_, state, err := fixture.store.Prepare(context.Background(), fixture.episode, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	_, err = fixture.selector.Select(ctx, &selection.SelectionContext{
+		DecisionName: fixture.decision.Name, CandidateModels: fixture.decision.ModelRefs,
+		RaylineARC: &selection.RaylineARCSelectionContext{
+			EpisodeIDHash: fixture.episode, RequestID: "req-cancel", State: state,
+			RawRequest: policyTestRequest(t, raceUser, raceAssistant, raceToolResult), RequestFormat: policyFormatAnthropic,
+		},
+	})
+	if err == nil || time.Since(started) > time.Second {
+		t.Fatalf("a cancelled race returned %v after %v", err, time.Since(started))
+	}
+}
