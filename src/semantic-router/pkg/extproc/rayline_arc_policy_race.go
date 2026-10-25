@@ -35,6 +35,17 @@ package extproc
 // Nothing here fails a turn. A delta the service cannot extend is sent in
 // full; a failed append leaves the next turn to decide synchronously.
 //
+// The fence is the service's, as for every decide. VSR waits for a call
+// until its own timeout and no longer: a sync decide that times out fails
+// its turn and releases the lease while the service may still be working.
+// What keeps a later call from overlapping a call VSR stopped waiting for is
+// the service's per-episode busy lock, which refuses the later call
+// session_busy: a decide retries it for the episode's acquire timeout, and
+// an append that meets it fails, which leaves nothing staged. So the staging
+// bounds its waits inside the lease (policyStagingBudgets) for the next
+// turn's sake, and a call it stops waiting for is fenced exactly as a timed
+// out sync decide is.
+//
 // What a turn carries to the next is an allow-list: the staged entry holds
 // only the service's digest and count, VSR's own digest of the same
 // messages, the lease and the committed turn it belongs to. Every commit
