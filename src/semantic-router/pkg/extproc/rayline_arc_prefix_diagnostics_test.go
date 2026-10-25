@@ -362,3 +362,71 @@ type layoutFields struct {
 		Reminder     bool     `json:"system_reminder"`
 	} `json:"blocks"`
 }
+
+// Claude Desktop's wire shape, as observed on dev (2026-10-25), with
+// synthetic text: each round adds an assistant message, a user message and
+// a mid-conversation system message. The newest prompt is one text block
+// carrying the cache breakpoint; once a tool round follows it, the same
+// prompt is a plain string and the breakpoint is on the last tool result.
+// Every turn after the first extends the prefix, so no turn is logged.
+func TestClaudeDesktopPromptDemotionExtendsThePrefix(t *testing.T) {
+	freshPolicyPrefixShapes(t)
+	logs := captureLogs(t)
+	cached := map[string]any{"type": "ephemeral"}
+	reminder := func(text string) map[string]any { return map[string]any{"role": "system", "content": text} }
+	newest := func(prompt string) map[string]any {
+		return map[string]any{"role": "user", "content": []any{map[string]any{"type": "text", "text": prompt, "cache_control": cached}}}
+	}
+	older := func(prompt string) map[string]any { return map[string]any{"role": "user", "content": prompt} }
+	toolRound := func(id string, last bool) (map[string]any, map[string]any) {
+		result := map[string]any{"type": "tool_result", "tool_use_id": id, "content": "ok"}
+		if last {
+			result["cache_control"] = cached
+		}
+		return map[string]any{"role": "assistant", "content": []any{
+				map[string]any{"type": "tool_use", "id": id, "name": "Read", "input": map[string]any{"path": "a"}},
+			}},
+			map[string]any{"role": "user", "content": []any{result}}
+	}
+	opening := []any{
+		map[string]any{"role": "user", "content": []any{
+			map[string]any{"type": "text", "text": "<system-reminder>context</system-reminder>"},
+			map[string]any{"type": "text", "text": "first prompt"},
+		}},
+		reminder("<system-reminder>skills</system-reminder>"),
+		map[string]any{"role": "assistant", "content": []any{map[string]any{"type": "text", "text": "hello", "citations": nil}}},
+	}
+	var history []any
+	history = append(history, opening...)
+	var state *raylinearc.PolicyEpisodeState
+	var transitions []string
+	for round := range 3 {
+		prompt := "prompt " + string(rune('a'+round))
+		transition, next := prefixDiagnosticTurn(t, state,
+			diagMainTurn(append(append([]any{}, history...), newest(prompt), reminder("r"))...), raylinearc.PolicyCallUnknown)
+		transitions, state = append(transitions, transition), next
+		history = append(history, older(prompt), reminder("r"))
+		for call := range 2 {
+			id := "toolu_" + string(rune('a'+round)) + string(rune('0'+call))
+			assistant, result := toolRound(id, true)
+			transition, next = prefixDiagnosticTurn(t, state,
+				diagMainTurn(append(append([]any{}, history...), assistant, result, reminder("r"))...), raylinearc.PolicyCallUnknown)
+			transitions, state = append(transitions, transition), next
+			_, settled := toolRound(id, false)
+			history = append(history, assistant, settled, reminder("r"))
+		}
+		history = append(history, map[string]any{"role": "assistant", "content": []any{map[string]any{"type": "text", "text": "done"}}})
+	}
+	for index, transition := range transitions {
+		want := raylinearc.PolicyTransitionExtends
+		if index == 0 {
+			want = raylinearc.PolicyTransitionStart
+		}
+		if transition != want {
+			t.Fatalf("turn %d = %s, want %s (all: %v)", index, transition, want, transitions)
+		}
+	}
+	if events := prefixDiagnostics(logs); len(events) != 0 {
+		t.Fatalf("logged %v", events)
+	}
+}
