@@ -114,7 +114,8 @@ func TestGoldenStreamRejectionsPoisonAndFailClosedAcrossProtocolMatrix(t *testin
 		}
 		for _, target := range goldenFormats {
 			t.Run(prefix+"_to_"+target.name, func(t *testing.T) {
-				assertGoldenRejectedStreamFailsClosed(t, inputEngine, source, target.format, input)
+				golden := filepath.Join(directory, prefix+"-"+target.name+"-out.json")
+				assertGoldenRejectedStreamFailsClosed(t, inputEngine, source, target.format, input, golden)
 			})
 		}
 	}
@@ -125,6 +126,7 @@ func assertGoldenRejectedStreamFailsClosed(
 	engine *Engine,
 	source, target llmprotocol.WireFormat,
 	input goldenRejectionInput,
+	golden string,
 ) {
 	t.Helper()
 	stream, err := engine.NewStream(source, target, llmprotocol.StreamContext{
@@ -139,6 +141,8 @@ func assertGoldenRejectedStreamFailsClosed(
 	}
 	finalFrames, _, _, finalErr := stream.Finalize(firstErr)
 	wire = appendGoldenWireFrames(wire, finalFrames)
+	// The client-facing failure frames, for the byte diff.
+	recordGoldenBytes(t, golden+".wire", wire)
 	firstErr = assertGoldenFinalErrorStable(t, firstErr, finalErr)
 	goldenProtocolErrorFrom(t, firstErr)
 	assertNoSuccessfulStreamTerminal(t, target, wire)
