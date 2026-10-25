@@ -109,8 +109,10 @@ type policyServiceScorer struct {
 	raceDeadline     time.Duration
 	raceMaxNewTokens int
 	appendTimeout    time.Duration
-	staged           *policyStagedTurns
-	deltaUnsupported atomic.Bool
+	// lateDecideTimeout bounds a raced decide's whole operation.
+	lateDecideTimeout time.Duration
+	staged            *policyStagedTurns
+	deltaUnsupported  atomic.Bool
 }
 
 // policySideCallStrictFor is how long a strict cell keeps its side calls
@@ -198,10 +200,9 @@ func newPolicyServiceScorer(
 		scorer.race = true
 		scorer.raceDeadline = policy.RaceDeadline()
 		scorer.raceMaxNewTokens = policy.RaceMaxNewTokens
-		scorer.appendTimeout = time.Duration(policy.TotalTimeoutSeconds) * time.Second
-		if scorer.appendTimeout <= 0 {
-			scorer.appendTimeout = episodeFinalizeTimeout
-		}
+		scorer.appendTimeout, scorer.lateDecideTimeout = policyStagingBudgets(
+			time.Duration(policy.TotalTimeoutSeconds)*time.Second, scorer.busyWait,
+		)
 		scorer.staged = newPolicyStagedTurns()
 	}
 	index := make(map[string]int, len(decision.ModelRefs))
@@ -803,7 +804,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		// outlives this request's selection and finishes inside the lease.
 		// Its budget bounds the whole operation (a delta, a full resend,
 		// their busy retries), so the transaction can always wait it out.
-		detached, cancelDecide := context.WithTimeout(context.WithoutCancel(ctx), scorer.lateDecideBudget())
+		detached, cancelDecide := context.WithTimeout(context.WithoutCancel(ctx), scorer.lateDecideTimeout)
 		pending = startPolicyPendingDecide(func() (*raylinearc.PolicyDecisionResponse, error, bool) {
 			defer cancelDecide()
 			return decideFirst(detached)

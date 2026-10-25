@@ -128,7 +128,6 @@ func (r *OpenAIRouter) handleNonStreamingResponseBody(
 			return response
 		}
 		deferSelectionCompletion(ctx, func() { r.updateResponseCache(ctx, clientBody) })
-		stageRaylineARCAppendSource(ctx, clientBody)
 	}
 	// A refusal is classed only once no response check blocked it, so one
 	// turn is one failure.
@@ -141,6 +140,11 @@ func (r *OpenAIRouter) handleNonStreamingResponseBody(
 	r.markUnverifiedFactualResponse(ctx)
 
 	response, finalBody := r.applySemanticResponseWarnings(ctx, semanticResponse, clientBody)
+	if cacheAfterCommit && !refused {
+		// The append carries the reply as the client received it, warnings
+		// included.
+		stageRaylineARCAppendSource(ctx, finalBody)
+	}
 	if rewriteClientBody && response.GetResponseBody().GetResponse().GetBodyMutation() == nil {
 		setResponseBodyMutation(response, clientBody)
 	}

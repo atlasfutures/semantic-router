@@ -104,6 +104,9 @@ func (fixture *raceFixture) turn(t *testing.T, body []byte) (*selection.Selectio
 	ctx.RaylineARCTransaction.commitOnCompletion = true
 	ctx.RaylineARCTransaction.markSelection(result.RaylineARC.SelectedArm, 10)
 	stageRaylineARCPolicySelection(ctx, result.RaylineARC, "")
+	// A turn a test leaves unfinished is aborted, which stops its renewal;
+	// after a commit the abort is a no-op.
+	t.Cleanup(func() { _ = ctx.RaylineARCTransaction.abort(context.Background(), "test_cleanup") })
 	return result, ctx
 }
 
@@ -458,5 +461,17 @@ func TestPolicyAssistantOutputNormalizesResponsesItems(t *testing.T) {
 	roles, err := policyResponsesRoles(items)
 	if err != nil || roles[0] != "assistant" || roles[1] != "assistant" {
 		t.Fatalf("roles %v %v", roles, err)
+	}
+}
+
+// The staging inside the lease stays well within the next turn's acquire
+// timeout, so it never makes that turn contended.
+func TestPolicyStagingBudgetsStayInsideTheAcquireTimeout(t *testing.T) {
+	appendTimeout, lateDecide := policyStagingBudgets(60*time.Second, 30*time.Second)
+	if appendTimeout != 7500*time.Millisecond || lateDecide != 15*time.Second || appendTimeout+lateDecide >= 30*time.Second {
+		t.Fatalf("budgets %v %v", appendTimeout, lateDecide)
+	}
+	if appendTimeout, lateDecide = policyStagingBudgets(2*time.Second, 30*time.Second); appendTimeout != 2*time.Second || lateDecide != 4*time.Second {
+		t.Fatalf("short decide budgets %v %v", appendTimeout, lateDecide)
 	}
 }

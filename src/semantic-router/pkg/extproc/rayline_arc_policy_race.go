@@ -416,10 +416,21 @@ func policyLeaseCheck(
 	return ""
 }
 
-// lateDecideBudget bounds a raced decide's whole operation: a delta and its
-// full resend, each one call and its busy retries.
-func (scorer *policyServiceScorer) lateDecideBudget() time.Duration {
-	return 2*(scorer.appendTimeout+scorer.busyWait) + time.Second
+// policyStagingBudgets bound the work a racing turn does inside its lease
+// after the client may already have its reply: the rest of a lost race's
+// decide (lateDecide, from the race's start: a delta, its full resend and
+// their busy retries) and the append. A next turn can arrive then and waits
+// for the lease up to the episode's acquire timeout, so together they stay
+// well inside it: the staging never makes that turn contended where a sync
+// cell would have served it. Each is also no longer than a decide may take.
+func policyStagingBudgets(total, acquire time.Duration) (appendTimeout, lateDecide time.Duration) {
+	if acquire <= 0 {
+		acquire = episodeFinalizeTimeout
+	}
+	if total <= 0 {
+		total = episodeFinalizeTimeout
+	}
+	return raylineARCDurationMin(total, acquire/4), raylineARCDurationMin(2*total, acquire/2)
 }
 
 // policyLeaseOutcome names a lease check's result for the staged-turn log.
