@@ -266,7 +266,10 @@ func (server *Server) execute(writer http.ResponseWriter, incoming *http.Request
 		if state.carried != nil {
 			previous = state.carried.wire
 		}
-		event = inferV2Event(wireRequest, previous, wire, rewrite, fresh && branch != "main" && server.states.hasOtherBranch(session, branch))
+		// A transition reset by an earlier attempt that never committed (its
+		// consult failed) is still this request's: detect it again.
+		uncommitted := state.carried != nil && len(state.prefix) == 0
+		event = inferV2Event(wireRequest, previous, wire, rewrite || uncommitted, fresh && branch != "main" && server.states.hasOtherBranch(session, branch))
 	}
 	// A side call is decided with the held model and never advances this
 	// branch: no epoch change, retained decision or committed evidence.

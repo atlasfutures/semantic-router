@@ -74,6 +74,8 @@ type v2Decisions struct {
 	choose func(contextV2) string
 	// mutate edits the response before it is written.
 	mutate func(map[string]any)
+	// failNext answers that many lookups with HTTP 500.
+	failNext int
 }
 
 func (fixture *v2Decisions) snapshot() []v2Lookup {
@@ -105,7 +107,15 @@ func v2Server(t *testing.T, config Config, fixture *v2Decisions, counts ...int) 
 		fixture.mu.Lock()
 		fixture.lookups = append(fixture.lookups, v2Lookup{Execution: body.Routing.Execution, Policy: body.Routing.Policy, Raw: rawBody})
 		index := len(fixture.lookups) - 1
+		fail := fixture.failNext > 0
+		if fail {
+			fixture.failNext--
+		}
 		fixture.mu.Unlock()
+		if fail {
+			http.Error(w, "unavailable", 500)
+			return
+		}
 		sent := body.Routing.Execution
 		id := fixture.choose(sent)
 		action := actions[id]

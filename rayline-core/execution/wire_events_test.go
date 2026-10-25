@@ -296,3 +296,56 @@ func TestWireEventsCarriedSummaryIsNotANewCompaction(t *testing.T) {
 		t.Fatalf("carried summary read as a new compaction: %s", mustJSON(events[2].Compaction))
 	}
 }
+
+// A compaction whose first consult fails is still a compaction on the retry.
+func TestV2InferredCompactionSurvivesAFailedConsult(t *testing.T) {
+	var mu sync.Mutex
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Stream bool `json:"stream"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		mu.Lock()
+		defer mu.Unlock()
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: {\"id\":\"c\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"f\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"ok\"},\"finish_reason\":null}]}\n\ndata: {\"id\":\"c\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":20,\"completion_tokens\":1,\"total_tokens\":21}}\n\ndata: [DONE]\n\n")
+	}))
+	defer upstream.Close()
+	cloud := &upstreamFixture{}
+	config := hybridV2Config(t, upstream.URL, chatUpstream(t, cloud, true).URL+"/v1/chat/completions")
+	config.Deployments[0].ContextWindow, config.Deployments[0].MaxOutputTokens = 65536, 4096
+	fixture := &v2Decisions{choose: func(contextV2) string { return localActionID }}
+	_, httpServer := v2Server(t, config, fixture)
+	send := func(request replayRequest) int {
+		httpRequest, _ := http.NewRequest(http.MethodPost, httpServer.URL+"/v1/messages", bytes.NewReader(request.body))
+		httpRequest.Header.Set("Authorization", "Bearer "+testCoreToken)
+		httpRequest.Header.Set("X-Session-Affinity", "pi-retry")
+		response, err := http.DefaultClient.Do(httpRequest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = io.Copy(io.Discard, response.Body)
+		response.Body.Close()
+		return response.StatusCode
+	}
+	pi := fixtureLines(t, "pi_0.80.2_overflow_retained_tail.jsonl")
+	for _, index := range []int{0, 1, 2} {
+		if status := send(pi[index]); status != 200 {
+			t.Fatalf("request %d status %d", index, status)
+		}
+	}
+	fixture.mu.Lock()
+	fixture.failNext = 1
+	fixture.mu.Unlock()
+	if status := send(pi[4]); status == 200 {
+		t.Fatal("consult failure was not surfaced")
+	}
+	if status := send(pi[4]); status != 200 {
+		t.Fatalf("retry status %d", status)
+	}
+	lookups := fixture.snapshot()
+	last := lookups[len(lookups)-1].Execution
+	if !last.Event.is(EventCompaction) || len(last.History) != 1 || last.History[0].Message != 1 {
+		t.Fatalf("retry event %s history %+v", last.Event.kindName(), last.History)
+	}
+}
