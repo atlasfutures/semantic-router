@@ -139,8 +139,8 @@ type contextV2 struct {
 	History    []historyV2    `json:"history"`
 	Hold       *holdV2        `json:"hold"`
 	// Expect is null for a package-less (derived_actions) profile: it pins nothing.
-	Expect *expectV2 `json:"expect"`
-	Targets    []targetV2     `json:"targets"`
+	Expect  *expectV2  `json:"expect"`
+	Targets []targetV2 `json:"targets"`
 }
 
 // holdV2 is a mandatory action-scope constraint. The core has no current

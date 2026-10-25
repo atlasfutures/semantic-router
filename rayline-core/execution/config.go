@@ -28,11 +28,11 @@ type Config struct {
 	// DerivedActions replaces package_path and bindings for a package-less
 	// execution_context_v2 profile: actions are the registry's admitted
 	// controls for each deployment, with ARC's v5 action identity.
-	DerivedActions []DerivedActions `json:"derived_actions,omitempty"`
-	TestAlias                 *TestAlias      `json:"test_alias,omitempty"`
-	MaxGenerationAttempts     int64           `json:"max_generation_attempts,omitempty"`
-	Actions                   []Action        `json:"-"`
-	PackageID                 string          `json:"-"`
+	DerivedActions        []DerivedActions `json:"derived_actions,omitempty"`
+	TestAlias             *TestAlias       `json:"test_alias,omitempty"`
+	MaxGenerationAttempts int64            `json:"max_generation_attempts,omitempty"`
+	Actions               []Action         `json:"-"`
+	PackageID             string           `json:"-"`
 }
 
 // DerivedActions binds every registry-admitted control of one model on one
