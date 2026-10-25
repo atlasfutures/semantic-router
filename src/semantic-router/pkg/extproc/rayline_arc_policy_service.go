@@ -822,7 +822,8 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		narrow(derived.offer)
 		logRaylineARCDerivedHold(arcContext, derived, "re-ask")
 		response, err = decidePolicyThroughBusy(ctx, decider, request, scorer.busyWait, admit, withCacheContext)
-	case derived.model == "" && held < 0 && errors.As(err, &cold) && cold.Class == raylinearc.PolicyStageOneHeldUnknownClass:
+	case derived.model == "" && held < 0 && execution == nil && executionV2 == nil &&
+		errors.As(err, &cold) && cold.Class == raylinearc.PolicyStageOneHeldUnknownClass:
 		// A refusal the first ask did not anticipate: the recorded model is
 		// excluded this turn, or the package's manifest does not say it is
 		// two-stage (an older or manifest-less package), so the record stayed
@@ -846,6 +847,19 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 			response, err = decidePolicyThroughBusy(ctx, decider, request, scorer.busyWait, admit, withCacheContext)
 		}
 	}
+	// A refusal of the caller's routing.execution or routing.policy answers
+	// its public code (selection_refused reasons such as no_feasible_target
+	// and policy_preset_not_admitted), ahead of the generic undecidable
+	// mapping below, which would otherwise swallow it.
+	if err != nil && (execution != nil || executionV2 != nil || routeControls != nil && routeControls.Policy != nil) {
+		if class := routeExecutionServiceRefusal(err); class != "" {
+			if class == arcFailureExecutionNotAdmitted && (execution != nil && execution.HoldScope != "" ||
+				executionV2 != nil && executionV2.HoldActionID != nil) {
+				class = arcFailureExecutionHoldUnavailable
+			}
+			return nil, arcSelectionFailure(class)
+		}
+	}
 	// Any refusal to decide that stands -- a cold turn no record holds, or the
 	// policy finding no supported selection, the held action unavailable and
 	// so on -- fails the turn as undecidable. The service no longer serves its
@@ -864,15 +878,6 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		return nil, boundedARCEncoderFailure(shed.err)
 	}
 	latency := selector.now().Sub(started)
-	if err != nil && (execution != nil || executionV2 != nil || routeControls != nil && routeControls.Policy != nil) {
-		if class := routeExecutionServiceRefusal(err); class != "" {
-			if class == arcFailureExecutionNotAdmitted && (execution != nil && execution.HoldScope != "" ||
-				executionV2 != nil && executionV2.HoldActionID != nil) {
-				class = arcFailureExecutionHoldUnavailable
-			}
-			return nil, arcSelectionFailure(class)
-		}
-	}
 	if err != nil {
 		class := "transport"
 		var failure *raylinearc.PolicyServiceError

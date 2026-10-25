@@ -152,6 +152,13 @@ var policyRefusalReasons = map[string]bool{
 	"exploration_unsupported_by_package": true,
 	// A caller's own prices name a model no arm dispatches (pathfinder#5668).
 	"unknown_price_model": true,
+	// The cell's action allow-list and operating-point bounds, and hybrid
+	// routing v2's refusals (pathfinder #5906, selection_refusals_v2.v1.json).
+	"action_not_admitted":           true,
+	"operating_point_out_of_bounds": true,
+	"no_feasible_target":            true,
+	"policy_preset_not_admitted":    true,
+	"policy_schedule_not_admitted":  true,
 }
 
 // PolicyRefusalReason is a selection refusal's bounded reason.

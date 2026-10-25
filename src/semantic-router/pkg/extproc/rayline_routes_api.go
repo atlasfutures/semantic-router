@@ -341,7 +341,7 @@ func (r *OpenAIRouter) handleRaylineRoutesAPI(
 	// execution state, so nothing is read from or written to an episode. An
 	// ephemeral consult decides under a fresh random episode id, so no two
 	// callers (nor two lookups) ever share an encoder session.
-	if controls != nil && controls.Execution != nil {
+	if controls != nil && (controls.Execution != nil || controls.ExecutionV2 != nil) {
 		ephemeral = true
 	}
 	started := time.Now()

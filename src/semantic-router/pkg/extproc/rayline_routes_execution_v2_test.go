@@ -348,6 +348,13 @@ func TestRouteExecutionV2ServiceRefusals(t *testing.T) {
 			t.Errorf("%s: class %q -> %+v, want %s %d", reason, class, entry, want.Code, want.Status)
 		}
 	}
+	// Every reason the service states survives the client's bounded reason
+	// set, so the mapping above can see it.
+	for _, reason := range pinned.SelectionRefused.Reasons {
+		if raylinearc.PolicyRefusalReason(map[string]any{"reason": reason}) != reason {
+			t.Errorf("service reason %s is bounded to other", reason)
+		}
+	}
 	for _, code := range pinned.ContractSide {
 		if class := routeExecutionServiceRefusal(&raylinearc.PolicyServiceError{Class: "selection_refused", Detail: map[string]any{"reason": code}}); class != "" &&
 			code != "execution_hold_unavailable" {
@@ -387,5 +394,27 @@ func TestRoutesPolicyPreferLocal(t *testing.T) {
 	}
 	if strings.Contains(string(executionJSON(t, raylineRoutesReceiptOf(&raylinearc.PolicyDecisionReceipt{}, strings.Repeat("2", 64), ""))), "selection") {
 		t.Fatal("a receipt without a comparison carries selection")
+	}
+}
+
+// A service refusal of a v2 member reaches the caller with its public code
+// through the selector, not the generic undecidable mapping.
+func TestRouteExecutionV2ServiceRefusalThroughTheSelector(t *testing.T) {
+	for reason, want := range map[string][2]any{
+		"policy_preset_not_admitted": {"policy_preset_not_admitted", 400},
+		"no_feasible_target":         {"execution_no_feasible_target", 409},
+	} {
+		fixture := executionFixture(t, false)
+		fixture.fake.mu.Lock()
+		fixture.fake.failWith = raylinearc.PolicySelectionRefusedClass
+		fixture.fake.failDetail = map[string]any{"reason": reason}
+		fixture.fake.mu.Unlock()
+		_, controls := routesControlsFor(t, fixture, `{}`)
+		controls.Policy = &raylinearc.PolicyMember{Preset: "arc-policy.hybrid-default.v1"}
+		_, err := selectWithControls(t, fixture, controls)
+		var refusal *routeExecutionRefusal
+		if !errors.As(selectionFailureError(err), &refusal) || refusal.contract().code != want[0] || refusal.contract().status != want[1] {
+			t.Fatalf("%s: err = %v", reason, err)
+		}
 	}
 }
