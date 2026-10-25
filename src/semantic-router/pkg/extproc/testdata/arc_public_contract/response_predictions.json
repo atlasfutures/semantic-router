@@ -1,0 +1,392 @@
+{
+  "status": 200,
+  "body": {
+    "route_id": "rte_01JBXK7Q3V9M2D8S4N6P0R5T1W",
+    "object": "route",
+    "model": "deepseek/deepseek-v4.1-flash",
+    "worker": "deepseek-flash-siliconflow",
+    "provider": "siliconflow",
+    "thinking": {
+      "mode": "adaptive",
+      "budget_tokens": null
+    },
+    "checkpoint": "arc-0.7.3@61ae11565f40",
+    "alternatives": [
+      {
+        "model": "deepseek/deepseek-v4.1-flash",
+        "worker": "deepseek-flash-siliconflow",
+        "provider": "siliconflow",
+        "score": 0.61,
+        "action_id": "21324c14b079ebff6d402361a26511bf7991107fe920ded73607361c3a1eba44",
+        "thinking_level": "default"
+      },
+      {
+        "model": "anthropic/claude-sonnet-5",
+        "worker": "sonnet-5-anthropic",
+        "provider": "anthropic",
+        "score": 0.58,
+        "action_id": "e8125a6d6e00df0bafbaf85796c433241de68d73b59af55c02c6a06ceae0bec2",
+        "thinking_level": "default"
+      }
+    ],
+    "selected_pricing": {
+      "input_per_mtok": 0.1,
+      "output_per_mtok": 0.4,
+      "cache_read_per_mtok": 0.01,
+      "cache_write_per_mtok": 0
+    },
+    "warnings": [],
+    "usage": {
+      "encoded_input_tokens": 1834,
+      "cache_read_tokens": 0
+    },
+    "latency_ms": 212,
+    "thinking_level": "high",
+    "policy_action_id": "3333333333333333333333333333333333333333333333333333333333333333",
+    "presets": {
+      "swift": {
+        "model": "deepseek/deepseek-v4.1-flash",
+        "worker": "deepseek-flash-siliconflow",
+        "provider": "siliconflow",
+        "thinking": {
+          "mode": "adaptive",
+          "budget_tokens": null
+        },
+        "thinking_level": "high",
+        "policy_action_id": "ce3d1dc3541c631339bb2e4ab4dc67a26588c1192d6a5ce6d3975a9dfb10dd01",
+        "value_usd": 0.1,
+        "cost_weight": 10.0,
+        "prices": {
+          "basis": "catalog",
+          "price_sha256": null
+        },
+        "model_choice": {
+          "model": "claude-haiku-5.5",
+          "effort": null,
+          "prediction": {
+            "success": 0.9387996064254507,
+            "success_head": "stage_one_p_pass",
+            "tokens": {
+              "input": 1407.4851886938711,
+              "cache_read": 0.9577844595576108,
+              "cache_write": 3.740859411750739e-06,
+              "output": 4909.861704204431
+            },
+            "cost_usd": 0.0025956889492838053,
+            "horizon": "rest_of_episode"
+          }
+        },
+        "provenance": {
+          "package_sha256": "61ae11565f404c64062ed379f34f20add70ce0c955a2a1056adcfb47468f423d",
+          "point_id": "cfe6516a906429df4d63c7ff0c787d1bffc66467fe104d8de8c4a7963c387e09"
+        }
+      },
+      "sage": {
+        "model": "anthropic/claude-sonnet-5",
+        "worker": "sonnet-5-anthropic",
+        "provider": "anthropic",
+        "thinking": {
+          "mode": "adaptive",
+          "budget_tokens": null
+        },
+        "thinking_level": "medium",
+        "policy_action_id": "d3662381186f551a1728552bde798458f27a0343e36259fcd0853fd94e319e85",
+        "value_usd": 4.5,
+        "cost_weight": 0.2222222222222222,
+        "prices": {
+          "basis": "catalog",
+          "price_sha256": null
+        },
+        "model_choice": {
+          "model": "gpt-6-luna",
+          "effort": null,
+          "prediction": {
+            "success": 0.9411599505388424,
+            "success_head": "stage_one_p_pass",
+            "tokens": {
+              "input": 77.23814255930805,
+              "cache_read": 171142.24232435465,
+              "cache_write": 10549.473721429138,
+              "output": 982.2146325423722
+            },
+            "cost_usd": 0.0035289377689493055,
+            "horizon": "rest_of_episode"
+          }
+        },
+        "provenance": {
+          "package_sha256": "61ae11565f404c64062ed379f34f20add70ce0c955a2a1056adcfb47468f423d",
+          "point_id": "a8a92267b42c4ae84e4899ede7c68feb094a97f3feddafc5a2e62854be9bd666"
+        }
+      }
+    },
+    "custom": {
+      "model": "anthropic/claude-sonnet-5",
+      "worker": "sonnet-5-anthropic",
+      "provider": "anthropic",
+      "thinking": {
+        "mode": "adaptive",
+        "budget_tokens": null
+      },
+      "thinking_level": "low",
+      "policy_action_id": "58ef08c498cf4acae27d5c47e12d2a1b3c6de84b36bcf3fe67396105ab216a73",
+      "value_usd": 2.0,
+      "cost_weight": 0.5,
+      "prices": {
+        "basis": "catalog",
+        "price_sha256": null
+      },
+      "model_choice": {
+        "model": "gpt-6-luna",
+        "effort": null,
+        "prediction": {
+          "success": 0.9411599505388424,
+          "success_head": "stage_one_p_pass",
+          "tokens": {
+            "input": 77.23814255930805,
+            "cache_read": 171142.24232435465,
+            "cache_write": 10549.473721429138,
+            "output": 982.2146325423722
+          },
+          "cost_usd": 0.0035289377689493055,
+          "horizon": "rest_of_episode"
+        }
+      },
+      "provenance": {
+        "package_sha256": "61ae11565f404c64062ed379f34f20add70ce0c955a2a1056adcfb47468f423d",
+        "point_id": "ee2938ebb2a3b6d549b550933a417f2880209f96b34d88b9b200a3d5c476597a"
+      }
+    },
+    "routing": {
+      "value_usd": {
+        "requested": 2.0,
+        "status": "applied"
+      },
+      "response_fields": {
+        "requested": [
+          "predictions"
+        ],
+        "status": "applied"
+      },
+      "unapplied_keys": []
+    },
+    "candidates": [
+      {
+        "model": "claude-haiku-5.5",
+        "effort": null,
+        "prediction": {
+          "success": 0.9387996064254507,
+          "success_head": "stage_one_p_pass",
+          "tokens": {
+            "input": 1407.4851886938711,
+            "cache_read": 0.9577844595576108,
+            "cache_write": 3.740859411750739e-06,
+            "output": 4909.861704204431
+          },
+          "cost_usd": 0.0025956889492838053,
+          "horizon": "rest_of_episode"
+        }
+      },
+      {
+        "model": "claude-opus-5.5",
+        "effort": null,
+        "prediction": {
+          "success": 0.9310796148285,
+          "success_head": "stage_one_p_pass",
+          "tokens": {
+            "input": 66.87382869617127,
+            "cache_read": 87454.64760410562,
+            "cache_write": 7174.604792031199,
+            "output": 1092.6321172712826
+          },
+          "cost_usd": 0.07548409114118745,
+          "horizon": "rest_of_episode"
+        }
+      },
+      {
+        "model": "claude-sonnet-5.5",
+        "effort": null,
+        "prediction": {
+          "success": 0.9010892098887522,
+          "success_head": "stage_one_p_pass",
+          "tokens": {
+            "input": 4210.609064138919,
+            "cache_read": 163538.26338031873,
+            "cache_write": 12460.754294053891,
+            "output": 3770.255724415808
+          },
+          "cost_usd": 0.10998331378363439,
+          "horizon": "rest_of_episode"
+        }
+      },
+      {
+        "model": "deepseek-v4.1-flash",
+        "effort": null,
+        "prediction": {
+          "success": 0.8882670568561487,
+          "success_head": "stage_one_p_pass",
+          "tokens": {
+            "input": 42003.22793700098,
+            "cache_read": 486192.0126810439,
+            "cache_write": 0.0,
+            "output": 9785.759337692416
+          },
+          "cost_usd": 0.027261031662417456,
+          "horizon": "rest_of_episode"
+        }
+      },
+      {
+        "model": "glm-5.3",
+        "effort": null,
+        "prediction": {
+          "success": 0.8599628161028254,
+          "success_head": "stage_one_p_pass",
+          "tokens": {
+            "input": 13923.551285212723,
+            "cache_read": 251584.86936653414,
+            "cache_write": 0.0,
+            "output": 29346.422819499458
+          },
+          "cost_usd": 0.21402929824039432,
+          "horizon": "rest_of_episode"
+        }
+      },
+      {
+        "model": "glm-5.3-flash",
+        "effort": null,
+        "prediction": {
+          "success": 0.8036312741865199,
+          "success_head": "stage_one_p_pass",
+          "tokens": {
+            "input": 3588.1562036284995,
+            "cache_read": 288898.47147163673,
+            "cache_write": 0.0,
+            "output": 711.4651003433344
+          },
+          "cost_usd": 0.009560910124865044,
+          "horizon": "rest_of_episode"
+        }
+      },
+      {
+        "model": "gpt-5.6-terra",
+        "effort": null,
+        "prediction": {
+          "success": 0.9355447262088663,
+          "success_head": "stage_one_p_pass",
+          "tokens": {
+            "input": 15.315094772996261,
+            "cache_read": 34542.20135933217,
+            "cache_write": 16973.831321022975,
+            "output": 2166.6129060634203
+          },
+          "cost_usd": 0.07537300363673091,
+          "horizon": "rest_of_episode"
+        }
+      },
+      {
+        "model": "gpt-6-astra",
+        "effort": null,
+        "prediction": {
+          "success": 0.9517828397837114,
+          "success_head": "stage_one_p_pass",
+          "tokens": {
+            "input": 115.89911185429874,
+            "cache_read": 382481.4486828207,
+            "cache_write": 22784.539152630892,
+            "output": 3512.668246041405
+          },
+          "cost_usd": 0.8440805915113201,
+          "horizon": "rest_of_episode"
+        }
+      },
+      {
+        "model": "gpt-6-luna",
+        "effort": null,
+        "prediction": {
+          "success": 0.9411599505388424,
+          "success_head": "stage_one_p_pass",
+          "tokens": {
+            "input": 77.23814255930805,
+            "cache_read": 171142.24232435465,
+            "cache_write": 10549.473721429138,
+            "output": 982.2146325423722
+          },
+          "cost_usd": 0.0035289377689493055,
+          "horizon": "rest_of_episode"
+        }
+      },
+      {
+        "model": "gpt-6.1-sol",
+        "effort": null,
+        "prediction": {
+          "success": 0.9374529059288597,
+          "success_head": "stage_one_p_pass",
+          "tokens": {
+            "input": 76.41864868393128,
+            "cache_read": 629635.0633855956,
+            "cache_write": 105954.45110484728,
+            "output": 17785.104817376705
+          },
+          "cost_usd": 0.5058535195718127,
+          "horizon": "rest_of_episode"
+        }
+      },
+      {
+        "model": "kimi-k3",
+        "effort": null,
+        "prediction": {
+          "success": 0.8764881397697477,
+          "success_head": "stage_one_p_pass",
+          "tokens": {
+            "input": 48432.962655488634,
+            "cache_read": 248770.3403971431,
+            "cache_write": 0.0,
+            "output": 9911.413325057752
+          },
+          "cost_usd": 0.3686011899614752,
+          "horizon": "rest_of_episode"
+        }
+      },
+      {
+        "model": "qwen3.8-27b",
+        "effort": null,
+        "prediction": {
+          "success": 0.8244549998606369,
+          "success_head": "stage_one_p_pass",
+          "tokens": {
+            "input": 429020.32140919863,
+            "cache_read": 259817.27769693252,
+            "cache_write": 8.612984888082676e-09,
+            "output": 32829.03255851504
+          },
+          "cost_usd": 0.2881321382273666,
+          "horizon": "rest_of_episode"
+        }
+      },
+      {
+        "model": "qwen3.8-max",
+        "effort": null,
+        "prediction": {
+          "success": 0.7324648698188151,
+          "success_head": "stage_one_p_pass",
+          "tokens": {
+            "input": 10339.516441686832,
+            "cache_read": 76665.42442531252,
+            "cache_write": 21255.659997210852,
+            "output": 9601.3672035975
+          },
+          "cost_usd": 0.15059274220431393,
+          "horizon": "rest_of_episode"
+        }
+      }
+    ],
+    "candidates_context": {
+      "boundary": "task_start",
+      "selector_id": "78914b01dca4e08b4b1525dd3d3d26a75f018380866fe10f15117e7daed89dc1",
+      "provenance": {
+        "package_sha256": "61ae11565f404c64062ed379f34f20add70ce0c955a2a1056adcfb47468f423d"
+      }
+    }
+  },
+  "projected_from": "tests/fixtures/arc_policy_service/decision_response_predictions.v1.json",
+  "points_value_usd": 2.0
+}

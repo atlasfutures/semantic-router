@@ -74,6 +74,9 @@ type policyServiceScorer struct {
 	// model names its held candidate, so a lost replica's turn is re-asked
 	// with that model attested. A model-effort package is re-asked narrowed.
 	attestable bool
+	// armOffered is, per arm, whether the package's stage one offers its
+	// model; nil when the package states no by-model offer.
+	armOffered []bool
 	// busyWait bounds how long a decision retries the service's
 	// session_busy (the episode's acquire timeout).
 	busyWait    time.Duration
@@ -96,6 +99,10 @@ type policyServiceScorer struct {
 	// decisionsV2 is the cell's Decisions API v2 request members; nil sends
 	// none.
 	decisionsV2 *policyDecisionsV2
+	// advertised is the service's capability list as its readiness listing
+	// stated it; a request uses an optional capability (predictions) only
+	// when it is here.
+	advertised atomic.Pointer[[]string]
 	// exploration is the cell's Stage-1 exploration member; nil sends none.
 	exploration *policyExploration
 	// sideStrictUntil (unix nanoseconds) is how long a strict cell sends its
@@ -207,6 +214,7 @@ func newPolicyServiceScorer(
 		scorer.bindings[binding.ActionID] = policyBinding{arm: index[binding.Worker], level: level, model: model}
 		scorer.actionOrder = append(scorer.actionOrder, binding.ActionID)
 	}
+	scorer.armOffered = policyArmOffered(policy.PackageStageOneOfferedModels(), scorer.bindings, len(scorer.workers))
 	return scorer
 }
 
@@ -373,7 +381,7 @@ func createRaylineARCPolicySelector(
 	}
 	scorer := armed.scorer.(*policyServiceScorer)
 	check := func(ctx context.Context, client *raylinearc.PolicyServiceClient) error {
-		if err := requireRaylineARCPolicyServing(ctx, client, policy, arcConfig.RoutesAPI.Routing); err != nil {
+		if err := requireRaylineARCPolicyServing(ctx, client, policy, arcConfig.RoutesAPI.Routing, scorer.setAdvertised); err != nil {
 			return err
 		}
 		if scorer.episodeMode == raylinearc.PolicyEpisodeModeRelaxed {
@@ -664,6 +672,13 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	explorationExcluded := scorer.exploration.apply(&request, arcContext.PolicySignalHeaders, sideCall)
 	pricesStatus := attachRoutingPrices(armed.prices, &request)
 	applyRouteControls(&request, routeControls)
+	predictionsAsked := false
+	if routeControls != nil && routeControls.Predictions && scorer.advertises(raylinearc.PolicyCapabilityPredictions) {
+		predictionsAsked = true
+		if !slices.Contains(request.ResponseFields, raylinearc.PolicyCapabilityPredictions) {
+			request.ResponseFields = append(append([]string(nil), request.ResponseFields...), raylinearc.PolicyCapabilityPredictions)
+		}
+	}
 	// The episode's cache evidence is read at each call, so a retry's gaps
 	// are as of that call, on the wall clock the commit dates warmth by.
 	withCacheContext := func(request *raylinearc.PolicyDecisionRequest) {
@@ -974,7 +989,9 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		cellExploration = &withoutRoute
 	}
 	scorer.exploration.record(result.RaylineARC, cellExploration, response, explorationExcluded)
-	if class := recordRouteControls(result.RaylineARC, scorer, routeControls, response, available); class != "" {
+	result.RaylineARC.PolicyArmActions = policyArmActions(scorer, response, len(workerIDs))
+	result.RaylineARC.PolicyArmOffered = scorer.armOffered
+	if class := recordRouteControls(result.RaylineARC, scorer, routeControls, response, available, predictionsAsked); class != "" {
 		logging.ComponentErrorEvent("extproc", "rayline_arc_policy_service_failed", map[string]interface{}{
 			"class": class, "episode_id_hash": arcContext.EpisodeIDHash,
 		})
@@ -1350,4 +1367,50 @@ func turnOperatingPointMismatch(weight *float64, response *raylinearc.PolicyDeci
 	}
 	echoed := response.Decision.OperatingPoint.CostWeight
 	return echoed == nil || *echoed != *weight
+}
+
+func (scorer *policyServiceScorer) setAdvertised(capabilities []string) {
+	copied := append([]string(nil), capabilities...)
+	scorer.advertised.Store(&copied)
+}
+
+// advertises reports whether the service's readiness listing stated
+// capability; false before any listing.
+func (scorer *policyServiceScorer) advertises(capability string) bool {
+	list := scorer.advertised.Load()
+	return list != nil && slices.Contains(*list, capability)
+}
+
+// policyArmActions is, per arm, the available action whose score the arm's
+// score is (policyDecision keeps each arm's best), with its level.
+// policyArmOffered marks, per arm, whether any of its actions is of a model
+// the package's stage one offers; nil when the package states no by-model
+// offer, so every arm stands.
+func policyArmOffered(offered []string, bindings map[string]policyBinding, arms int) []bool {
+	if offered == nil {
+		return nil
+	}
+	marks := make([]bool, arms)
+	for _, binding := range bindings {
+		if binding.arm >= 0 && binding.arm < arms && slices.Contains(offered, binding.model) {
+			marks[binding.arm] = true
+		}
+	}
+	return marks
+}
+
+func policyArmActions(scorer *policyServiceScorer, response *raylinearc.PolicyDecisionResponse, arms int) []selection.RaylineARCArmAction {
+	actions := make([]selection.RaylineARCArmAction, arms)
+	best := make([]float64, arms)
+	for _, action := range response.Actions {
+		binding, ok := scorer.bindings[action.ActionID]
+		if !ok || !action.Available || binding.arm < 0 || binding.arm >= arms {
+			continue
+		}
+		if actions[binding.arm].ActionID == "" || action.Score > best[binding.arm] {
+			actions[binding.arm] = selection.RaylineARCArmAction{ActionID: action.ActionID, ThinkingLevel: binding.level}
+			best[binding.arm] = action.Score
+		}
+	}
+	return actions
 }

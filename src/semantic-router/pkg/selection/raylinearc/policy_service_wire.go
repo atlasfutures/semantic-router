@@ -388,6 +388,9 @@ type PolicyDecision struct {
 	// TierPicks is present only when the request sent selection.tier_points
 	// (Decisions API v2, pathfinder#5443), keyed by tier point name.
 	TierPicks map[string]PolicyTierPick `json:"tier_picks,omitempty"`
+	// Predictions is present only when the request named response_fields:
+	// predictions (pathfinder#5717).
+	Predictions *PolicyDecisionPredictions `json:"predictions,omitempty"`
 	// StageOne is present only when the request sent selection.exploration
 	// with tau > 0 (pathfinder#5436); the service omits it, never nulls it.
 	StageOne *PolicyDecisionStageOne `json:"stage_one,omitempty"`

@@ -137,12 +137,18 @@ func requireRaylineARCPolicyServing(
 	client *raylinearc.PolicyServiceClient,
 	policy *config.RaylineARCPolicyServiceConfig,
 	routing *config.RaylineARCRoutesRoutingConfig,
+	advertised func([]string),
 ) error {
 	// The listing's fallback pair, when a service still states one, is not
 	// read: no model serves a turn the policy did not decide.
 	listing, loaded, err := client.ServedPackage(ctx, policy.PackageAlias, policy.PackageSHA256)
 	if err != nil {
 		return err
+	}
+	// The optional capabilities a request may use only where the service
+	// states them (predictions), kept for the cell's requests.
+	if advertised != nil && listing != nil {
+		advertised(listing.Capabilities)
 	}
 	required := raylineARCPolicyServiceRequirements(policy)
 	routesRequirements(&required, routing)

@@ -172,6 +172,9 @@ func (service *raylineARCDecisionService) RouteDecision(
 	if request.Routing != nil {
 		decisionFacts.Results = routeResults(request.Routing, trace, selected.catalog)
 		decisionFacts.Exploration = trace.RouteExploration
+		decisionFacts.Predictions = trace.RoutePredictions
+		decisionFacts.PredictionsApplied = trace.RoutePredictionsApplied
+		decisionFacts.PackageSHA256 = trace.PolicyPackageSHA256
 	}
 	// The episode is reported only when the caller joined one. An ephemeral
 	// consult scored against a fresh in-memory episode, so its turn index and
@@ -220,9 +223,10 @@ func routeResults(
 				Mode:         worker.ThinkingMode,
 				BudgetTokens: worker.ReasoningBudgetTokens,
 			},
-			ThinkingLevel:  picked.ThinkingLevel,
-			PolicyActionID: picked.Pick.SelectedActionID,
-			Exploration:    picked.Pick.Exploration,
+			ThinkingLevel:     picked.ThinkingLevel,
+			PolicyActionID:    picked.Pick.SelectedActionID,
+			Exploration:       picked.Pick.Exploration,
+			StageOneCandidate: picked.Pick.StageOneCandidate,
 		})
 	}
 	return results
@@ -280,11 +284,16 @@ func routeAlternatives(
 		if arm < len(trace.ExcludedArms) && trace.ExcludedArms[arm] {
 			continue
 		}
+		// A model the package's stage one does not offer is not one ARC
+		// can pick: its trained actions are scored, never an alternative.
+		if trace.PolicyArmOffered != nil && (arm >= len(trace.PolicyArmOffered) || !trace.PolicyArmOffered[arm]) {
+			continue
+		}
 		worker, found := catalog.Worker(arm)
 		if !found {
 			continue
 		}
-		alternatives = append(alternatives, routerruntime.RouteAlternative{
+		alternative := routerruntime.RouteAlternative{
 			Model: worker.Model,
 			// Same identity the selected arm publishes. Without it two arms
 			// serving one model through different providers print as two
@@ -293,7 +302,12 @@ func routeAlternatives(
 			Worker:   worker.ID,
 			Provider: worker.OpenRouterProviderSlug,
 			Score:    float64(score),
-		})
+		}
+		if arm < len(trace.PolicyArmActions) {
+			alternative.ActionID = trace.PolicyArmActions[arm].ActionID
+			alternative.ThinkingLevel = trace.PolicyArmActions[arm].ThinkingLevel
+		}
+		alternatives = append(alternatives, alternative)
 	}
 	sort.SliceStable(alternatives, func(first, second int) bool {
 		return alternatives[first].Score > alternatives[second].Score

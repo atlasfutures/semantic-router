@@ -48,6 +48,11 @@ func TestGenerationRoutingReadsTheContractFixtures(t *testing.T) {
 	if _, _, refusal := readRaylineGenerationRouting(prices.Body, generationPolicy(true, nil)); refusal == nil || refusal.code != prices.Expect.Code {
 		t.Fatalf("prices on generation: %+v", refusal)
 	}
+	// response_fields is a Decisions member (pathfinder#5717).
+	fields := readContractFixture(t, "request_invalid_response_fields_generation.json")
+	if _, _, refusal := readRaylineGenerationRouting(fields.Body, generationPolicy(true, nil)); refusal == nil || refusal.code != fields.Expect.Code {
+		t.Fatalf("response_fields on generation: %+v", refusal)
+	}
 	// The tier fixture names rayline/arc-sage; the gateway sends a tier's
 	// turns to the tier's own cell, which knows its V from its config.
 	tier := readContractFixture(t, "request_invalid_tier_value_override_generation.json")

@@ -38,7 +38,8 @@ func routeFactsCatalog() fixedWorkerCatalog {
 	return fixedWorkerCatalog{
 		{ID: "arm-0", Model: "deepseek/deepseek-v4-pro"},
 		{ID: "arm-1", Model: "z-ai/glm-5.3-flash"},
-		{ID: "arm-2", Model: "anthropic/claude-sonnet-5",
+		{
+			ID: "arm-2", Model: "anthropic/claude-sonnet-5",
 			EstimatedInputCostPerToken:  0.000003,
 			EstimatedOutputCostPerToken: 0.000015,
 		},
@@ -80,6 +81,32 @@ func TestRouteAlternativesLeaveOutExcludedArms(t *testing.T) {
 	got := routeAlternatives(trace, routeFactsCatalog())
 	if len(got) != 1 || got[0].Model != "anthropic/claude-sonnet-5" {
 		t.Fatalf("routeAlternatives() = %v, want only the one arm that competed", got)
+	}
+}
+
+// A model the package's stage one does not offer is not one ARC can pick:
+// its arm is scored but never listed as an alternative.
+func TestRouteAlternativesListOnlyOfferedModels(t *testing.T) {
+	t.Parallel()
+	trace := &selection.RaylineARCTrace{
+		SelectedArm:      0,
+		AdjustedScores:   []float32{0.9, 0.62, 0.41, 0.7},
+		ExcludedArms:     []bool{false, false, false, false},
+		PolicyArmOffered: []bool{true, false, true, false},
+	}
+	got := routeAlternatives(trace, routeFactsCatalog())
+	if len(got) != 1 || got[0].Worker != "arm-2" {
+		t.Fatalf("routeAlternatives() = %v, want only the offered arm-2", got)
+	}
+	bindings := map[string]policyBinding{
+		"a": {arm: 0, model: "glm-5.3-flash"}, "b": {arm: 1, model: "grok-4.7"},
+		"c": {arm: 2, model: "qwen3.8-max"}, "d": {arm: 2, model: "kimi-k3"},
+	}
+	if marks := policyArmOffered([]string{"glm-5.3-flash", "kimi-k3"}, bindings, 3); !reflect.DeepEqual(marks, []bool{true, false, true}) {
+		t.Fatalf("policyArmOffered = %v", marks)
+	}
+	if marks := policyArmOffered(nil, bindings, 3); marks != nil {
+		t.Fatalf("no by-model offer marked %v", marks)
 	}
 }
 

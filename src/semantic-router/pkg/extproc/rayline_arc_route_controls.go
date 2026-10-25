@@ -26,12 +26,18 @@ const (
 	// no arm of its package dispatches (selection_refused,
 	// unknown_price_model): the caller's to fix, a 400.
 	arcFailureRoutesUnknownPriceModel = "routes_unknown_price_model"
+	// arcFailureRoutesPredictionsInconsistent: the service answered a
+	// predictions request without its table, or a tier pick names a row
+	// that is not its model's offered candidate (or names one off a
+	// boundary).
+	arcFailureRoutesPredictionsInconsistent = "routes_predictions_inconsistent"
 )
 
 var routesInconsistentClasses = map[string]bool{
 	arcFailureRoutesResultMissing:           true,
 	arcFailureRoutesPricesNotApplied:        true,
 	arcFailureRoutesExplorationInconsistent: true,
+	arcFailureRoutesPredictionsInconsistent: true,
 }
 
 // routeExclusiveOffer keeps the offered actions whose arm serves a priced
@@ -88,9 +94,17 @@ func recordRouteControls(
 	controls *selection.RaylineARCRouteControls,
 	response *raylinearc.PolicyDecisionResponse,
 	available []string,
+	predictionsAsked bool,
 ) string {
 	if controls == nil {
 		return ""
+	}
+	if predictionsAsked {
+		if !routePredictionsConsistent(controls, response) {
+			return arcFailureRoutesPredictionsInconsistent
+		}
+		trace.RoutePredictions = response.Decision.Predictions
+		trace.RoutePredictionsApplied = true
 	}
 	if controls.Prices != nil && !routeCallerPricesApplied(controls, response.RoutingPricesUsed) {
 		return arcFailureRoutesPricesNotApplied
@@ -149,4 +163,32 @@ func routeExplorationConsistent(record *raylinearc.PolicyExplorationRecord, requ
 			record.Propensity != nil && *record.Propensity > 0 && *record.Propensity <= 1 && record.Explored != nil
 	}
 	return record.Reason != nil
+}
+
+// routePredictionsConsistent holds a predictions answer to the request: the
+// table is present, and each requested point's pick names an offered row of
+// its own model on a boundary, and none off one.
+func routePredictionsConsistent(controls *selection.RaylineARCRouteControls, response *raylinearc.PolicyDecisionResponse) bool {
+	predictions := response.Decision.Predictions
+	if predictions == nil {
+		return false
+	}
+	for _, point := range controls.Points {
+		pick, ok := response.Decision.TierPicks[point.Name]
+		if !ok {
+			return false
+		}
+		index := pick.StageOneCandidate
+		if predictions.StageOne == nil {
+			if index != nil {
+				return false
+			}
+			continue
+		}
+		rows := predictions.StageOne.Candidates
+		if index == nil || *index < 0 || *index >= len(rows) || rows[*index].Model != pick.Model || !rows[*index].Offered {
+			return false
+		}
+	}
+	return true
 }

@@ -115,6 +115,11 @@ type raylineRoutesResponse struct {
 	Custom      *raylineRoutesResult      `json:"custom,omitempty"`
 	Routing     *raylineRoutesRoutingEcho `json:"routing,omitempty"`
 	Exploration json.RawMessage           `json:"exploration,omitempty"`
+	// Candidates and CandidatesContext are the offered stage-one table and
+	// its context (pathfinder#5717), present exactly when the request asked
+	// for predictions and the cell applied them: JSON null off a boundary.
+	Candidates        json.RawMessage `json:"candidates,omitempty"`
+	CandidatesContext json.RawMessage `json:"candidates_context,omitempty"`
 }
 
 type raylineRoutesThinking struct {
@@ -133,6 +138,10 @@ type raylineRoutesScore struct {
 	Worker   string  `json:"worker"`
 	Provider string  `json:"provider,omitempty"`
 	Score    float64 `json:"score"`
+	// ActionID and ThinkingLevel are the exact action the arm's score came
+	// from (pathfinder#5717); absent from a cell that does not know it.
+	ActionID      string `json:"action_id,omitempty"`
+	ThinkingLevel string `json:"thinking_level,omitempty"`
 }
 
 type raylineRoutesPricing struct {
@@ -498,7 +507,7 @@ func raylineRoutesPayload(
 		Provider:     decision.Provider,
 		Thinking:     raylineRoutesThinkingOf(decision.Thinking),
 		Checkpoint:   checkpoint,
-		Alternatives: raylineRoutesAlternatives(decision.Alternatives),
+		Alternatives: raylineRoutesAlternatives(decision.Alternatives, decision.PredictionsApplied),
 		Pricing:      raylineRoutesPricingOf(decision.SelectedPricing),
 		Warnings:     append(warnings, decision.Warnings...),
 		Usage: raylineRoutesUsage{
@@ -549,17 +558,26 @@ func raylineRoutesThinkingOf(thinking routerruntime.RouteThinking) raylineRoutes
 	return rendered
 }
 
+// raylineRoutesAlternatives renders the alternatives. Each names its action
+// and thinking level only on an answer that carries predictions
+// (pathfinder#5717): the fields belong to that answer, and every other
+// answer is the one the contract states without them.
 func raylineRoutesAlternatives(
 	alternatives []routerruntime.RouteAlternative,
+	withActions bool,
 ) []raylineRoutesScore {
 	rendered := make([]raylineRoutesScore, 0, len(alternatives))
 	for _, alternative := range alternatives {
-		rendered = append(rendered, raylineRoutesScore{
+		score := raylineRoutesScore{
 			Model:    alternative.Model,
 			Worker:   alternative.Worker,
 			Provider: alternative.Provider,
 			Score:    alternative.Score,
-		})
+		}
+		if withActions {
+			score.ActionID, score.ThinkingLevel = alternative.ActionID, alternative.ThinkingLevel
+		}
+		rendered = append(rendered, score)
 	}
 	return rendered
 }
