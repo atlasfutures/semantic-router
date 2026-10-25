@@ -394,6 +394,39 @@ type PolicyDecision struct {
 	// StageOne is present only when the request sent selection.exploration
 	// with tau > 0 (pathfinder#5436); the service omits it, never nulls it.
 	StageOne *PolicyDecisionStageOne `json:"stage_one,omitempty"`
+	// CacheTrace is decision.cache_trace (pathfinder #5875,
+	// arc_policy_contract.DecisionCacheTrace), answered to response_fields
+	// ["cache_trace"]: how the decision priced cache warmth per Stage-1
+	// candidate. VSR copies it into the routing.execution echo.
+	CacheTrace *PolicyCacheTrace `json:"cache_trace,omitempty"`
+}
+
+// PolicyCacheTrace is decision.cache_trace: the boundary, the effective
+// user_turn_cache and where it came from, and one row per Stage-1
+// candidate (empty off a user message).
+type PolicyCacheTrace struct {
+	Boundary      *string                     `json:"boundary"`
+	UserTurnCache *string                     `json:"user_turn_cache"`
+	Source        *string                     `json:"source"`
+	Candidates    []PolicyCacheTraceCandidate `json:"candidates"`
+}
+
+// PolicyCacheTraceCandidate is one candidate's cache pricing: its package
+// actions, whether its model is held, the warmth basis and probability, the
+// evidence entry that priced it (null when none did), and the prefix count.
+type PolicyCacheTraceCandidate struct {
+	Model  string  `json:"model"`
+	Effort *string `json:"effort"`
+	Held   bool    `json:"held"`
+	// Offered: some arm of this candidate was available to this request
+	// (after the cell's allow-list and exclusive).
+	Offered          bool     `json:"offered"`
+	ActionIDs        []string `json:"action_ids"`
+	Basis            *string  `json:"basis"`
+	PWarm            *float64 `json:"p_warm"`
+	EvidenceActionID *string  `json:"evidence_action_id"`
+	PrefixTokens     *int     `json:"prefix_tokens"`
+	PrefixBasis      *string  `json:"prefix_basis"`
 }
 
 type PolicyScoredPackage struct {

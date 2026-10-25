@@ -90,6 +90,14 @@ type PolicyActionCache struct {
 	PromptTokens     *int    `json:"prompt_tokens"`
 	CacheReadTokens  *int    `json:"cache_read_tokens"`
 	CacheWriteTokens *int    `json:"cache_write_tokens"`
+	// CurrentPrefixTokens, OverlapTokens and Residency are a Decisions
+	// caller's admitted execution evidence (routing.execution, pathfinder
+	// #5874): this request's carried prefix in the worker's own units, its
+	// common prefix with the worker's last prompt, and observed KV residency
+	// ("resident" or "evicted"). VSR's own path never sends them.
+	CurrentPrefixTokens *int    `json:"current_prefix_tokens,omitempty"`
+	OverlapTokens       *int    `json:"overlap_tokens,omitempty"`
+	Residency           *string `json:"residency,omitempty"`
 }
 
 // BuildPolicyCacheContext is the cache_context for a decide at now: one

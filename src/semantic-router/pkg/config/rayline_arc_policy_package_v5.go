@@ -66,6 +66,9 @@ type RaylineARCPolicyActionV5 struct {
 	// and the action_id both key on it.
 	Model   string
 	Control thinkingcontrol.Control
+	// TrainedArmIDs are the action's trained arms, as the manifest lists
+	// them.
+	TrainedArmIDs []string
 }
 
 var raylineARCPolicyPackageV5Lock sync.Mutex
@@ -87,6 +90,17 @@ func (cfg *RaylineARCPolicyServiceConfig) PackageV5Action(actionID string) (Rayl
 	}
 	action, ok := pkg.actions[actionID]
 	return action, ok
+}
+
+// PackageThinkingControlsSHA256 is the v5 manifest's
+// thinking_controls_sha256 (the compiled registry its actions resolve
+// from); empty when the manifest does not load.
+func (cfg *RaylineARCPolicyServiceConfig) PackageThinkingControlsSHA256() string {
+	pkg, err := cfg.loadPackageV5()
+	if err != nil {
+		return ""
+	}
+	return pkg.manifest.ThinkingControlsSHA256
 }
 
 // PackageTwoStage reports whether the package is two-stage: its manifest
@@ -206,6 +220,7 @@ func (cfg *RaylineARCPolicyServiceConfig) loadPackageV5() (*raylineARCPolicyPack
 		}
 		pkg.actions[action.ActionID] = RaylineARCPolicyActionV5{
 			ActionID: action.ActionID, Model: action.Model, Control: control,
+			TrainedArmIDs: append([]string(nil), action.TrainedArmIDs...),
 		}
 	}
 	cfg.packageV5 = pkg

@@ -11,3 +11,7 @@ The predictions fixtures (`request_*response_fields*`, `request_valid_decisions_
 `response_predictions*.json`) and `decision_response_predictions.v1.json` (from
 `tests/fixtures/arc_policy_service/`) are copied unchanged from pathfinder#5717
 (`claude/arc-public-predictions`) at `b7b52ad1abadff1f2e0892fb18d604b77fb211d1`.
+
+`execution_vectors.json` and `request_*execution*.json` are copied unchanged
+from pathfinder#5875 at `cefe836a48` (`routing.execution`, proposed;
+reference `src/rayline_router/serving/arc_execution_context.py`).
