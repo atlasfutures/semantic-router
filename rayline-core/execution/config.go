@@ -129,8 +129,9 @@ func LoadConfig(path string) (Config, *thinkingcontrol.Registry, error) {
 	if err != nil {
 		return config, nil, fmt.Errorf("load thinking registry: %w", err)
 	}
-	if derived && config.RegistryPath == "" && config.RegistrySHA256 == "" {
-		// The binary's own embedded registry; a derived profile names no package.
+	if derived {
+		// A derived profile names no package and pins no serving registry: its
+		// local identity is the registry it executes (embedded or registry_path).
 		config.RegistrySHA256 = registry.SHA256
 	}
 	// v2 without an explicit registry_path executes with the embedded

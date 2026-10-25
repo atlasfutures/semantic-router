@@ -83,6 +83,28 @@ func TestDerivedActionsUseARCActionIdentity(t *testing.T) {
 	}
 }
 
+// An explicit registry_path executes that registry with no serving-side pin.
+func TestDerivedProfileTakesAnExplicitRegistryPath(t *testing.T) {
+	wd, _ := os.Getwd()
+	config, registry, err := LoadConfig(writeDerivedConfig(t, func(config map[string]any) {
+		config["registry_path"] = filepath.Join(wd, "..", "thinkingcontrol", "thinking_controls.compiled.json")
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.RegistrySHA256 != registry.SHA256 || len(config.Actions) == 0 {
+		t.Fatalf("registry %q actions %d", config.RegistrySHA256, len(config.Actions))
+	}
+	t.Setenv("TEST_DECISIONS_KEY", "fixture")
+	provider, err := NewHTTPDecisions(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if expect := provider.projectV2(DecisionInput{State: ExecutionContext{ContextEpoch: "e:0"}}).Expect; expect != nil {
+		t.Fatalf("a package-less profile pinned %+v", expect)
+	}
+}
+
 func TestDerivedActionsAreV2OnlyAndExclusiveOfAPackage(t *testing.T) {
 	for name, mutate := range map[string]func(map[string]any){
 		"current mode":      func(config map[string]any) { config["decisions"].(map[string]any)["api_mode"] = "current" },
