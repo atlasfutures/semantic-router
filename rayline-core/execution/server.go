@@ -297,6 +297,11 @@ func (server *Server) execute(writer http.ResponseWriter, incoming *http.Request
 		state.seen = wire
 	}
 	requestFingerprint := fingerprint(body)
+	if signals != nil {
+		// Signal names leave the body but still identify the request: a retry
+		// naming other signals consults Decisions again.
+		requestFingerprint = fingerprint(append(append(append([]byte(nil), body...), 0), signals...))
+	}
 	requestID := incoming.Header.Get("Idempotency-Key")
 	if requestID == "" {
 		requestID = requestFingerprint

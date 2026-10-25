@@ -143,3 +143,24 @@ func TestConfiguredRoutingSignalsAreAccepted(t *testing.T) {
 		}
 	}
 }
+
+// A retry naming other signals is a different request: Decisions is consulted
+// again rather than the pending turn's signals reused.
+func TestRetryWithOtherSignalsConsultsAgain(t *testing.T) {
+	fixture, local, url := signalsSetup(t)
+	local.fail = 1
+	base := `{"model":"arc-1.0","max_tokens":64,"messages":[{"role":"user","content":"hi"}],"routing":{"signals":`
+	if status, _, _ := executeWithHeaders(t, url, base+`["topic.domain"]}}`, "retry"); status == 200 {
+		t.Fatal("the failed upstream attempt succeeded")
+	}
+	status, header, response := executeWithHeaders(t, url, base+`["topic.operation"]}}`, "retry")
+	if status != 200 || header.Get(signalsHeader) == "" {
+		t.Fatalf("status %d: %s", status, response)
+	}
+	lookups := fixture.snapshot()
+	var routing map[string]json.RawMessage
+	_ = json.Unmarshal(lookups[len(lookups)-1].Raw["routing"], &routing)
+	if len(lookups) != 2 || string(routing["signals"]) != `["topic.operation"]` {
+		t.Fatalf("lookups %d, last signals %s", len(lookups), routing["signals"])
+	}
+}
