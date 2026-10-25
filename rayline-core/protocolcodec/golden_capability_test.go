@@ -63,9 +63,11 @@ func assertGoldenCapabilityTarget(
 ) {
 	t.Helper()
 	actualValue := runCapabilityCases(t, engine, source, target.format, input)
+	golden := filepath.Join(directory, prefix+"-"+target.name+"-out.json")
+	recordGoldenBytes(t, golden+".wire", capabilityWire(actualValue))
 	if fragmented, hasStream := fragmentGoldenCapabilityInput(input); hasStream {
 		fragmentedValue := runCapabilityCases(t, engine, source, target.format, fragmented)
-		if !reflect.DeepEqual(actualValue, fragmentedValue) {
+		if !reflect.DeepEqual(withoutCapabilityWire(actualValue), withoutCapabilityWire(fragmentedValue)) {
 			t.Fatalf("stream capability outcome changed with one-byte transport chunks\nbaseline: %#v\nfragmented: %#v", actualValue, fragmentedValue)
 		}
 	}
@@ -74,7 +76,43 @@ func assertGoldenCapabilityTarget(
 		t.Fatal(err)
 	}
 	actual = append(actual, '\n')
-	assertGoldenOutput(t, filepath.Join(directory, prefix+"-"+target.name+"-out.json"), actual, "capability outcome")
+	assertGoldenOutput(t, golden, actual, "capability outcome")
+}
+
+// capabilityWire is the encoder's bytes for a capability outcome as written,
+// each case's in turn: what the outcome golden normalizes away.
+func capabilityWire(value any) []byte {
+	switch typed := value.(type) {
+	case goldenCapabilityOutcome:
+		return typed.wire
+	case goldenCapabilityTranscript:
+		var wire []byte
+		for _, testCase := range typed.Cases {
+			wire = append(wire, "--- "+testCase.Name+"\n"...)
+			wire = append(wire, testCase.Outcome.wire...)
+			wire = append(wire, '\n')
+		}
+		return wire
+	}
+	return nil
+}
+
+// withoutCapabilityWire is value without its raw bytes, which a fragmented
+// stream may frame differently while the outcome stays the same.
+func withoutCapabilityWire(value any) any {
+	switch typed := value.(type) {
+	case goldenCapabilityOutcome:
+		typed.wire = nil
+		return typed
+	case goldenCapabilityTranscript:
+		cases := make([]goldenCapabilityCaseOutcome, len(typed.Cases))
+		for index, testCase := range typed.Cases {
+			testCase.Outcome.wire = nil
+			cases[index] = testCase
+		}
+		return goldenCapabilityTranscript{Cases: cases}
+	}
+	return value
 }
 
 func validateGoldenCapabilityInput(t *testing.T, path string, input goldenCapabilityInput) {
@@ -197,8 +235,8 @@ func runCapabilityOutcome(
 	input goldenCapabilityInput,
 ) goldenCapabilityOutcome {
 	t.Helper()
-	translated, diagnostics, translateErr := runCapabilityTranslation(t, engine, source, target, input)
-	outcome := goldenCapabilityOutcome{Status: "ok"}
+	translated, wire, diagnostics, translateErr := runCapabilityTranslation(t, engine, source, target, input)
+	outcome := goldenCapabilityOutcome{Status: "ok", wire: wire}
 	for _, diagnostic := range diagnostics {
 		outcome.Diagnostics = append(outcome.Diagnostics, goldenDiagnostic{Field: diagnostic.Field, Action: diagnostic.Action})
 	}
@@ -248,16 +286,18 @@ func runCapabilityTranslation(
 	source,
 	target llmprotocol.WireFormat,
 	input goldenCapabilityInput,
-) ([]byte, llmprotocol.Diagnostics, error) {
+) ([]byte, []byte, llmprotocol.Diagnostics, error) {
 	switch input.Operation {
 	case "request":
-		return runCapabilityRequestTranslation(engine, source, target, input.Body)
+		body, diagnostics, err := runCapabilityRequestTranslation(engine, source, target, input.Body)
+		return body, body, diagnostics, err
 	case "response":
-		return runCapabilityResponseTranslation(engine, source, target, input.Body)
+		body, diagnostics, err := runCapabilityResponseTranslation(engine, source, target, input.Body)
+		return body, body, diagnostics, err
 	case "stream":
 		return runCapabilityStreamTranslation(t, engine, source, target, input.Stream)
 	default:
-		return nil, nil, fmt.Errorf("unsupported capability operation %q", input.Operation)
+		return nil, nil, nil, fmt.Errorf("unsupported capability operation %q", input.Operation)
 	}
 }
 
@@ -300,16 +340,16 @@ func runCapabilityStreamTranslation(
 	engine *Engine,
 	source, target llmprotocol.WireFormat,
 	input *goldenStreamInput,
-) ([]byte, llmprotocol.Diagnostics, error) {
+) ([]byte, []byte, llmprotocol.Diagnostics, error) {
 	if input == nil || input.PublicModel == "" || input.ProviderModel == "" || len(input.Chunks) == 0 {
-		return nil, nil, fmt.Errorf("stream capability case requires public_model, provider_model, and chunks")
+		return nil, nil, nil, fmt.Errorf("stream capability case requires public_model, provider_model, and chunks")
 	}
 	frames, diagnostics, err := translateGoldenCapabilityStream(engine, source, target, *input)
 	if err != nil {
-		return nil, diagnostics, err
+		return nil, nil, diagnostics, err
 	}
 	verifyGoldenTargetStream(t, engine, target, *input, frames)
-	return marshalGoldenStreamTranscript(t, frames), diagnostics, nil
+	return marshalGoldenStreamTranscript(t, frames), bytes.Join(frames, nil), diagnostics, nil
 }
 
 func validateGoldenEncodedResponse(

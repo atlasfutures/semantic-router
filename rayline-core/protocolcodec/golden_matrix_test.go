@@ -350,6 +350,9 @@ type goldenCapabilityOutcome struct {
 	Body        any                  `json:"body,omitempty"`
 	Error       *goldenProtocolError `json:"error,omitempty"`
 	Diagnostics []goldenDiagnostic   `json:"diagnostics,omitempty"`
+	// wire is the encoder's bytes as written, before the outcome normalizes
+	// them; recorded for the byte diff, never compared to the golden.
+	wire []byte
 }
 
 type goldenDiagnostic struct {
