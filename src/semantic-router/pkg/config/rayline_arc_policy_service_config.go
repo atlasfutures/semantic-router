@@ -141,8 +141,28 @@ type RaylineARCPolicyServiceConfig struct {
 	// exploration, even when it is configured: its decisions must be the
 	// package's greedy ones.
 	EvalCell bool `yaml:"eval_cell,omitempty"`
+	// DecideMode is "sync" (the default: every turn sends its whole
+	// conversation) or "delta" (ADR 0155, proposed): a strict main turn's
+	// decide stages the turn, its committed reply is appended off the user's
+	// path, and the next held turn sends only its new messages (turn_delta),
+	// still decided synchronously on the same tokens. It needs a service that
+	// advertises staged_turns (pathfinder#5919). A relaxed cell or one with
+	// replicas sends every turn in full whatever this says.
+	DecideMode string `yaml:"decide_mode,omitempty"`
 
 	packageV5 *raylineARCPolicyPackageV5
+}
+
+// Policy-service decide modes (DecideMode).
+const (
+	RaylineARCDecideModeSync  = "sync"
+	RaylineARCDecideModeDelta = "delta"
+)
+
+// SendsTurnDeltas reports whether the cell stages its turns and sends held
+// turns as deltas (DecideMode delta).
+func (cfg *RaylineARCPolicyServiceConfig) SendsTurnDeltas() bool {
+	return cfg != nil && cfg.DecideMode == RaylineARCDecideModeDelta
 }
 
 // RaylineARCPolicyFallbackConfig switches ADR 0120's fallback on for a cell.
@@ -374,6 +394,11 @@ func validateRaylineARCPolicyServiceConfig(cfg *RaylineARCPolicyServiceConfig) e
 	}
 	if !raylineARCSHA256Pattern.MatchString(cfg.PackageSHA256) {
 		return fmt.Errorf("package_sha256 must be 64 lowercase hex characters")
+	}
+	switch cfg.DecideMode {
+	case "", RaylineARCDecideModeSync, RaylineARCDecideModeDelta:
+	default:
+		return fmt.Errorf("decide_mode must be %s or %s", RaylineARCDecideModeSync, RaylineARCDecideModeDelta)
 	}
 	if cfg.ModelSchedule != "" && cfg.ModelSchedule != RaylineARCModelScheduleTaskTurnCompaction {
 		return fmt.Errorf("model_schedule must be empty or %s", RaylineARCModelScheduleTaskTurnCompaction)

@@ -123,6 +123,10 @@ type raylineARCEpisodeTransaction struct {
 	// handedOver is a refusal the commit took from inflight and then could
 	// not commit; the abort that follows stages it.
 	handedOver *refusedTurn
+	// policyStaging is a delta cell's staged main turn (ADR 0155): the
+	// append posted at the commit, before the lease is released. nil
+	// otherwise.
+	policyStaging *policyStaging
 	// leaseReleased is set once the strict lease is given back unwritten: a
 	// refusal classed after that (a provider error's body, read after its
 	// headers aborted the turn) stages through a short lease of its own.
@@ -292,6 +296,10 @@ func stageRaylineARCPolicySelection(ctx *RequestContext, trace *selection.Raylin
 		return
 	}
 	transaction.markPolicyState(trace.PolicyNextState, trace.PolicySideCall)
+	if staging, ok := trace.PolicyStaging.(*policyStaging); ok && staging != nil &&
+		!transaction.borrowed && !transaction.relaxed && !transaction.sideCall && !transaction.leaseless {
+		transaction.policyStaging = staging
+	}
 	if trace.PolicyActionID != "" && !trace.PolicySideCall {
 		// The action's model, or, for a binding that declares none, its
 		// worker -- the model identity the scorer holds by (actionModel).
@@ -474,15 +482,31 @@ func (transaction *raylineARCEpisodeTransaction) commit(
 			transaction.commitRelaxed(ctx, requestContext)
 			return
 		}
+		// A delta cell's turn appends its reply inside the lease, while it is
+		// still renewed, to prepare the next turn. It cannot fail the turn.
+		var staged *policyStagedTurn
+		if transaction.policyStaging != nil && transaction.selectionReady && !transaction.leaseLost.Load() {
+			staged = transaction.appendPolicyStagedTurn(ctx)
+			// A delivered reply's commit gets its own budget: the append may
+			// have spent the caller's. A decision-only consult keeps its
+			// caller's, whose deadline must still stop it.
+			if transaction.callCompleted {
+				storeContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), transaction.finalizeTimeout())
+				defer cancel()
+				ctx = storeContext
+			}
+		}
 		transaction.stopRenewal()
 		if !transaction.selectionReady || transaction.leaseLost.Load() {
 			transaction.finalizeErr = ErrRaylineARCEpisodeLeaseLost
+			transaction.dropPolicyStagedTurn()
 			transaction.abortStore(ctx)
 			return
 		}
 		nextState, err := transaction.nextState()
 		if err != nil {
 			transaction.finalizeErr = err
+			transaction.dropPolicyStagedTurn()
 			transaction.abortStore(ctx)
 			return
 		}
@@ -500,6 +524,7 @@ func (transaction *raylineARCEpisodeTransaction) commit(
 			requestContext,
 			nextState,
 		)
+		transaction.publishPolicyStagedTurn(nextState.TurnIndex, staged)
 		transaction.finalizeErr = transaction.store.Commit(
 			ctx,
 			transaction.lease,
@@ -509,6 +534,7 @@ func (transaction *raylineARCEpisodeTransaction) commit(
 		if transaction.finalizeErr != nil {
 			// The abort stages the refusal instead.
 			transaction.handedOver = refused
+			transaction.retractPolicyStagedTurn(staged)
 			transaction.abortStore(ctx)
 			return
 		}
@@ -641,6 +667,9 @@ func (transaction *raylineARCEpisodeTransaction) abort(
 		if transaction.borrowed || transaction.relaxed || transaction.leaseless {
 			return
 		}
+		// An unrecorded turn leaves no staged turn to build on: the
+		// service's staged turn is now this attempt's.
+		transaction.dropPolicyStagedTurn()
 		transaction.stopRenewal()
 		transaction.applyHandedOverRefusal(ctx)
 		transaction.finalizeErr = transaction.store.Abort(

@@ -34,6 +34,13 @@
     "decisions_v2",
     "tier_points",
     "response_fields",
-    "exploration"
+    "exploration",
+    "caller_prices",
+    "predictions",
+    "user_turn_cache",
+    "tool_definitions_status",
+    "cache_trace",
+    "execution_context_v2",
+    "staged_turns"
   ]
 }

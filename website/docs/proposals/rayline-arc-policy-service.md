@@ -453,6 +453,38 @@ Rollout: until the gateway sends both eligibility headers, an exploration
 cell explores no turn. Enable the block only for a service and package that
 serve exploration, with the service's ceiling set.
 
+## Sending only the new turn (opt-in, ADR 0155)
+
+`decide_mode: delta` (default `sync`; needs a policy service that advertises
+`staged_turns`, pathfinder#5919) stops a held continuation from re-sending
+the whole conversation. Every turn is still decided synchronously, on exactly
+the conversation a full request carries:
+
+```yaml
+decide_mode: delta
+```
+
+- **Stage and append.** Each strict main turn's decide carries
+  `stage: true`. When the turn commits, inside its episode lease, VSR posts
+  `append` with the reply's assistant output (as Claude Code echoes it:
+  `citations: []` on text, a direct `caller` on `tool_use`) and the
+  ledger's attribution. The reply's prefix digest and message count are
+  kept in process for the next turn; any `hold` it carries is not read. A
+  reply with thinking or reasoning is not appended.
+- **Delta.** A turn whose first messages reproduce the staged ones (VSR's
+  prefix digest: `cache_control` and a demoted mid-conversation system
+  message are insignificant, as they are to the service's projections) sends
+  `turn_delta` with the shell only. It is sent in full again on
+  `session_mismatch`, a package that takes no delta, a 404/405 or an answer
+  that does not decode.
+- **Record.** `llm_usage`, `routing_decision` and `rayline_arc_selection`
+  carry `decision_mode` (`delta` or `sync`);
+  `llm_rayline_arc_policy_staged_turns_total` counts each staged turn by
+  `delta_mismatch_reason` (`none` when the delta went out). A sync cell logs
+  neither.
+- **Scope.** Relaxed and replica-pool cells, side calls and exploring turns
+  are sent in full.
+
 ## Request formats
 
 VSR sends the client's request in the format the service projects:

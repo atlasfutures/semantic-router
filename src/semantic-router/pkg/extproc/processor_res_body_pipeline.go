@@ -140,6 +140,11 @@ func (r *OpenAIRouter) handleNonStreamingResponseBody(
 	r.markUnverifiedFactualResponse(ctx)
 
 	response, finalBody := r.applySemanticResponseWarnings(ctx, semanticResponse, clientBody)
+	if cacheAfterCommit && !refused {
+		// The append carries the reply as the client received it, warnings
+		// included.
+		stageRaylineARCAppendSource(ctx, finalBody)
+	}
 	if rewriteClientBody && response.GetResponseBody().GetResponse().GetBodyMutation() == nil {
 		setResponseBodyMutation(response, clientBody)
 	}

@@ -3,6 +3,7 @@ package extproc
 import (
 	"encoding/json"
 	"reflect"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -213,6 +214,10 @@ type llmUsageRecord struct {
 	RouterTau              *float64 `json:"router_tau"`
 	RouterExplored         *bool    `json:"router_explored"`
 	ExplorationDecisionKey *string  `json:"exploration_decision_key"`
+	// DecisionMode is a delta cell's (ADR 0155): whether the call's action
+	// was decided on a turn_delta (delta) or a full request (sync). Absent
+	// on a sync cell.
+	DecisionMode *string `json:"decision_mode,omitempty"`
 	// RouterTemperature and RouterFloorApplied are a temperature-shape
 	// record's (pathfinder#5637): the softmax temperature the decision used,
 	// and whether the new-model floor put mass in its distribution. Null on
@@ -357,6 +362,11 @@ func addUsageRecordARCAttribution(record *llmUsageRecord, ctx *RequestContext) {
 		record.RouterPropensity, record.RouterTau = explored.propensity, explored.tau
 		record.RouterExplored, record.ExplorationDecisionKey = explored.explored, explored.decisionKey
 		record.RouterTemperature, record.RouterFloorApplied = explored.temperature, explored.floorApplied
+		decided := map[string]interface{}{}
+		addPolicyDecisionModeFields(decided, trace)
+		if mode, ok := decided["decision_mode"].(string); ok {
+			record.DecisionMode = &mode
+		}
 	}
 	if thinking := ctx.RaylineARCThinking; thinking != nil {
 		record.ThinkingLevelInForce = nonEmpty(thinking.LevelInForce)
@@ -460,9 +470,13 @@ func (record llmUsageRecord) fields() map[string]interface{} {
 	recordType := value.Type()
 	fields := make(map[string]interface{}, recordType.NumField())
 	for index := 0; index < recordType.NumField(); index++ {
-		name := strings.Split(recordType.Field(index).Tag.Get("json"), ",")[0]
+		tag := strings.Split(recordType.Field(index).Tag.Get("json"), ",")
+		name := tag[0]
 		member := value.Field(index)
 		switch {
+		case slices.Contains(tag[1:], "omitempty") && member.Kind() == reflect.Pointer && member.IsNil():
+			// A member that exists only on some cells is absent elsewhere,
+			// so their lines are as before it.
 		case member.Kind() == reflect.Pointer && member.IsNil(),
 			member.Kind() == reflect.Slice && member.IsNil():
 			fields[name] = nil
