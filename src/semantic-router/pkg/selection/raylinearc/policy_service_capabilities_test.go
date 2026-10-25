@@ -17,7 +17,10 @@ func TestDecodePolicyPackagesResponseWithCapabilities(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(response.Capabilities, []string{"decisions_v2", "tier_points", "response_fields", "exploration"}) {
+	if !slices.Equal(response.Capabilities, []string{
+		"decisions_v2", "tier_points", "response_fields", "exploration", "caller_prices", "predictions",
+		"user_turn_cache", "tool_definitions_status", "cache_trace", "execution_context_v2", PolicyCapabilityStagedTurns,
+	}) {
 		t.Fatalf("capabilities = %v", response.Capabilities)
 	}
 	if len(response.Packages) != 2 {
@@ -166,7 +169,7 @@ func TestPolicyServiceClientAsksForCapabilities(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(listing.Capabilities) != 4 || loaded.AdjustableCostWeight.Bounds == nil {
+	if len(listing.Capabilities) != 11 || loaded.AdjustableCostWeight.Bounds == nil {
 		t.Fatalf("served package = %+v in %+v", loaded, listing)
 	}
 	if len(queries) != 2 {
