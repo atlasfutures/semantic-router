@@ -336,7 +336,11 @@ RUN mkdir -p /app/openvino-runtime && \
 # Stage 5: Build Go application (candle on all platforms, onnx/openvino on amd64 only)
 # ============================================================================
 ARG BUILDPLATFORM
-FROM --platform=$BUILDPLATFORM golang:1.25 AS go-builder
+# Go 1.27 runs encoding/json on the v2 engine, 3-4x faster on request-sized
+# bodies; the router's own time is mostly JSON passes over the transcript.
+# Pinned to a patch release; tools/scripts/json-v2-byte-diff.sh checks that a
+# toolchain change moves no byte the router writes.
+FROM --platform=$BUILDPLATFORM golang:1.27.2 AS go-builder
 
 # Install cross-compilation tools for Go
 RUN dpkg --add-architecture arm64 && \
