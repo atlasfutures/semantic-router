@@ -136,11 +136,22 @@ func requireRaylineARCPolicyServing(
 	client *raylinearc.PolicyServiceClient,
 	policy *config.RaylineARCPolicyServiceConfig,
 ) error {
+	_, err := servedRaylineARCPolicyListing(ctx, client, policy)
+	return err
+}
+
+// servedRaylineARCPolicyListing is requireRaylineARCPolicyServing with the
+// listing it checked, whose capabilities say what else the cell may use.
+func servedRaylineARCPolicyListing(
+	ctx context.Context,
+	client *raylinearc.PolicyServiceClient,
+	policy *config.RaylineARCPolicyServiceConfig,
+) (*raylinearc.PolicyPackagesResponse, error) {
 	// The listing's fallback pair, when a service still states one, is not
 	// read: no model serves a turn the policy did not decide.
 	listing, loaded, err := client.ServedPackage(ctx, policy.PackageAlias, policy.PackageSHA256)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	err = raylinearc.CheckPolicyServiceRequirements(listing, loaded, raylineARCPolicyServiceRequirements(policy))
 	var failure *raylinearc.PolicyServiceError
@@ -151,5 +162,8 @@ func requireRaylineARCPolicyServing(
 		}
 		logging.ComponentErrorEvent("extproc", "rayline_arc_policy_service_unsupported", fields)
 	}
-	return err
+	if err != nil {
+		return nil, err
+	}
+	return listing, nil
 }

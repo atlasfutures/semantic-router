@@ -284,7 +284,7 @@ type policyStaging struct {
 // policyRaceEligible reports whether this cell's turn may stage and race at
 // all: a racing cell's strict main turn in a format the append can carry.
 func (scorer *policyServiceScorer) policyRaceEligible(request *raylinearc.PolicyDecisionRequest, sideCall bool) bool {
-	return scorer.race && !sideCall && request.EpisodeMode == "" &&
+	return scorer.race && scorer.stagedTurnsServed.Load() && !sideCall && request.EpisodeMode == "" &&
 		request.Selection.Exploration == nil && policyAppendFormat(request.RequestFormat)
 }
 
@@ -500,6 +500,24 @@ func policyStagingBudgets(total, acquire time.Duration) (appendTimeout, lateDeci
 		total = episodeFinalizeTimeout
 	}
 	return raylineARCDurationMin(total, acquire/4), raylineARCDurationMin(2*total, acquire/2)
+}
+
+// armRace reads, at readiness, whether the service serves staged turns. A
+// racing cell whose service does not advertise them decides sync, and says
+// so once per readiness check.
+func (scorer *policyServiceScorer) armRace(listing *raylinearc.PolicyPackagesResponse) {
+	if !scorer.race {
+		return
+	}
+	served := listing != nil && slices.Contains(listing.Capabilities, raylinearc.PolicyCapabilityStagedTurns)
+	scorer.stagedTurnsServed.Store(served)
+	if !served {
+		logging.ComponentWarnEvent("extproc", "rayline_arc_policy_race_unsupported", map[string]interface{}{
+			"package_alias": scorer.alias,
+			"capability":    raylinearc.PolicyCapabilityStagedTurns,
+			"decide_mode":   "sync",
+		})
+	}
 }
 
 // policyLeaseOutcome names a lease check's result for the staged-turn log.

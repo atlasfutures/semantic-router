@@ -299,6 +299,7 @@ func (fake *fakePolicyService) serve(writer http.ResponseWriter, request *http.R
 			listing.Capabilities = []string{
 				raylinearc.PolicyCapabilityDecisionsV2, raylinearc.PolicyCapabilityTierPoints,
 				raylinearc.PolicyCapabilityResponseFields, raylinearc.PolicyCapabilityExploration,
+				raylinearc.PolicyCapabilityStagedTurns,
 			}
 			if fake.advertised != nil {
 				listing.Capabilities = append([]string{}, fake.advertised...)

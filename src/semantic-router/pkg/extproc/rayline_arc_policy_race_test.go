@@ -54,8 +54,10 @@ func newRaceFixture(t *testing.T, schedule string, edit func(*config.RaylineARCP
 	bindings := policy.Bindings
 	fake := newFakePolicyService(t, policyTestAlias, policyTestPackage, policyTestActionIDs(bindings))
 	selector := newRaylineARCSelector(nil, nil, nil, policyTestPackage)
+	scorer := newPolicyServiceScorer(&config.RouterConfig{}, decision)
+	scorer.armRace(&raylinearc.PolicyPackagesResponse{Capabilities: []string{raylinearc.PolicyCapabilityStagedTurns}})
 	selector.arm(&raylineARCArmedComponents{
-		scorer:    newPolicyServiceScorer(&config.RouterConfig{}, decision),
+		scorer:    scorer,
 		admission: raylinearc.NewAdmissionGate(0),
 		policy:    raylinearc.NewPolicyServiceClient(raylinearc.PolicyServiceConfig{BaseURL: fake.URL(), TotalTimeout: 5 * time.Second}),
 	})
@@ -701,5 +703,41 @@ func TestPolicyReplyThinksInEveryFormat(t *testing.T) {
 		if got := policyReplyThinks(tc.format, []byte(tc.body)); got != tc.thinks {
 			t.Errorf("%s %s: thinks %v", tc.format, tc.body, got)
 		}
+	}
+}
+
+// A racing cell arms its race only on a service that advertises staged
+// turns; without the capability it stages nothing and decides sync.
+func TestRaceNeedsTheStagedTurnsCapability(t *testing.T) {
+	fixture := newRaceFixture(t, "", nil)
+	scorer := fixture.scorer()
+	listing, err := servedRaylineARCPolicyListing(context.Background(),
+		raylinearc.NewPolicyServiceClient(raylinearc.PolicyServiceConfig{BaseURL: fixture.fake.URL(), TotalTimeout: 5 * time.Second}),
+		fixture.decision.Algorithm.RaylineARC.PolicyService)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scorer.armRace(listing)
+	if !scorer.stagedTurnsServed.Load() {
+		t.Fatal("an advertised staged_turns did not arm the race")
+	}
+	fixture.fake.mu.Lock()
+	fixture.fake.advertised = []string{raylinearc.PolicyCapabilityDecisionsV2}
+	fixture.fake.mu.Unlock()
+	listing, err = servedRaylineARCPolicyListing(context.Background(),
+		raylinearc.NewPolicyServiceClient(raylinearc.PolicyServiceConfig{BaseURL: fixture.fake.URL(), TotalTimeout: 5 * time.Second}),
+		fixture.decision.Algorithm.RaylineARC.PolicyService)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scorer.armRace(listing)
+	if scorer.stagedTurnsServed.Load() {
+		t.Fatal("a service without staged_turns armed the race")
+	}
+	first, ctx := fixture.turn(t, policyTestRequest(t, raceUser))
+	complete(t, ctx, raceReply(t))
+	body := fixture.fake.receivedBodies()[0]
+	if bytes.Contains(body, []byte(`"stage"`)) || first.RaylineARC.PolicyDecisionMode != "" || len(fixture.fake.receivedAppends()) != 0 {
+		t.Fatalf("an unarmed racing cell staged: %s", body)
 	}
 }

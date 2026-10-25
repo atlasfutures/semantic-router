@@ -113,6 +113,9 @@ type policyServiceScorer struct {
 	// has served.
 	lateDecideTimeout time.Duration
 	staged            *policyStagedTurns
+	// stagedTurnsServed is set at readiness when the service advertises
+	// staged turns; until then, and without it, a racing cell decides sync.
+	stagedTurnsServed atomic.Bool
 	// appendAdmission is the appends' own admission gate: an append is
 	// optional work and never takes a slot a turn's decide could need.
 	appendAdmission  *raylinearc.AdmissionGate
@@ -400,9 +403,11 @@ func createRaylineARCPolicySelector(
 	}
 	scorer := armed.scorer.(*policyServiceScorer)
 	check := func(ctx context.Context, client *raylinearc.PolicyServiceClient) error {
-		if err := requireRaylineARCPolicyServing(ctx, client, policy); err != nil {
+		listing, err := servedRaylineARCPolicyListing(ctx, client, policy)
+		if err != nil {
 			return err
 		}
+		scorer.armRace(listing)
 		if scorer.episodeMode == raylinearc.PolicyEpisodeModeRelaxed {
 			return probeRelaxedPolicyDecide(ctx, client, scorer)
 		}
