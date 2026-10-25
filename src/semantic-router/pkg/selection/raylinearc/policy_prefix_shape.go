@@ -353,7 +353,6 @@ func NewPolicyMessageLayout(message json.RawMessage) PolicyMessageLayout {
 	layout := PolicyMessageLayout{Role: role, Keys: policyLayoutKeyNames(members)}
 	content := bytes.TrimSpace(members["content"])
 	var text string
-	var blocks []json.RawMessage
 	switch {
 	case len(content) == 0:
 		layout.ContentForm = "absent"
@@ -363,16 +362,58 @@ func NewPolicyMessageLayout(message json.RawMessage) PolicyMessageLayout {
 		layout.ContentForm = "string"
 		layout.BlockCount = 1
 		layout.Blocks = []PolicyBlockLayout{textLayout("text", nil, text, true, false)}
-	case json.Unmarshal(content, &blocks) == nil:
+	case content[0] == '[':
 		layout.ContentForm = "list"
-		layout.BlockCount = len(blocks)
-		for _, block := range blocks[:min(len(blocks), MaxPolicyLayoutBlocks)] {
-			layout.Blocks = append(layout.Blocks, blockLayout(block))
-		}
+		layout.BlockCount, layout.Blocks = listLayout(content)
 	default:
 		layout.ContentForm = "other"
 	}
 	return layout
+}
+
+// listLayout counts a content list's blocks and describes the first
+// MaxPolicyLayoutBlocks of them, decoding no block past those. A list that is
+// not well formed is described as far as it decodes.
+func listLayout(content json.RawMessage) (int, []PolicyBlockLayout) {
+	decoder := json.NewDecoder(bytes.NewReader(content))
+	if _, err := decoder.Token(); err != nil {
+		return 0, nil
+	}
+	count := 0
+	var blocks []PolicyBlockLayout
+	for decoder.More() {
+		var block json.RawMessage
+		if count < MaxPolicyLayoutBlocks {
+			if decoder.Decode(&block) != nil {
+				break
+			}
+			blocks = append(blocks, blockLayout(block))
+		} else if skipJSONValue(decoder) != nil {
+			break
+		}
+		count++
+	}
+	return count, blocks
+}
+
+// skipJSONValue reads one value from decoder without keeping it.
+func skipJSONValue(decoder *json.Decoder) error {
+	depth := 0
+	for {
+		token, err := decoder.Token()
+		if err != nil {
+			return err
+		}
+		switch token {
+		case json.Delim('['), json.Delim('{'):
+			depth++
+		case json.Delim(']'), json.Delim('}'):
+			depth--
+		}
+		if depth == 0 {
+			return nil
+		}
+	}
 }
 
 func blockLayout(block json.RawMessage) PolicyBlockLayout {

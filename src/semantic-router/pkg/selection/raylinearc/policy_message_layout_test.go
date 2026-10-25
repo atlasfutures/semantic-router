@@ -51,6 +51,15 @@ func TestPolicyMessageLayoutDescribesWithoutContent(t *testing.T) {
 	if null := NewPolicyMessageLayout(json.RawMessage(`{"role":"assistant","content":null}`)); null.ContentForm != "null" || null.BlockCount != 0 {
 		t.Fatalf("null content = %+v", null)
 	}
+	blocks := make([]any, MaxPolicyLayoutBlocks+5)
+	for index := range blocks {
+		blocks[index] = map[string]any{"type": "tool_result", "content": []any{map[string]any{"type": "text", "text": "x"}}}
+	}
+	raw, _ := json.Marshal(map[string]any{"role": "user", "content": blocks})
+	if long := NewPolicyMessageLayout(raw); long.ContentForm != "list" || long.BlockCount != len(blocks) ||
+		len(long.Blocks) != MaxPolicyLayoutBlocks || long.Blocks[0].Type != "tool_result" {
+		t.Fatalf("long list = %d blocks of %d", len(long.Blocks), long.BlockCount)
+	}
 	if bare := NewPolicyMessageLayout(json.RawMessage(`[1]`)); bare.ContentForm != "other" || bare.Role != "" {
 		t.Fatalf("not an object = %+v", bare)
 	}
