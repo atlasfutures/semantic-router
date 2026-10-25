@@ -45,11 +45,15 @@ package extproc
 // drops it, so nothing outlives the turn that wrote it.
 
 import (
+	"bytes"
 	"container/list"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"slices"
+	"strconv"
 	"sync"
 	"time"
 
@@ -81,8 +85,8 @@ type policyStagedTurn struct {
 	requestFormat string
 	// count and prefixDigest are the service's: the staged message count and
 	// its digest, which a delta decide echoes. digest is VSR's own digest of
-	// the same messages (raylinearc.MessagesDigest), which the next request
-	// must reproduce over its first count messages.
+	// the same messages (policyDeltaDigest), which the next request must
+	// reproduce over its first count messages.
 	count        int
 	prefixDigest string
 	digest       string
@@ -91,6 +95,11 @@ type policyStagedTurn struct {
 	// as the history's or the appended reply's.
 	appendedFrom  int
 	historyDigest string
+	// unsettled is an append VSR stopped waiting for (a timeout or a
+	// transport failure): the service may still hold the episode busy, so the
+	// next turn sends in full and retries session_busy one acquire timeout
+	// longer (policyFirstBusyWait).
+	unsettled bool
 }
 
 // policyStagedTurns is the process's staged turns, keyed by episode. A
@@ -221,11 +230,13 @@ func policyDeltaFor(
 	format string,
 	messages []json.RawMessage,
 ) (policyStagedTurn, string) {
-	if scorer.deltaUnsupported.Load() {
-		return policyStagedTurn{}, "delta_unsupported"
-	}
 	staged, ok := scorer.staged.get(episodeIDHash)
 	switch {
+	case ok && staged.turnIndex == state.TurnIndex && staged.unsettled:
+		// Ahead of every other reason: it widens the turn's busy wait.
+		return policyStagedTurn{}, "append_unsettled"
+	case scorer.deltaUnsupported.Load():
+		return policyStagedTurn{}, "delta_unsupported"
 	case !ok:
 		return policyStagedTurn{}, "not_staged"
 	case staged.turnIndex != state.TurnIndex:
@@ -236,13 +247,61 @@ func policyDeltaFor(
 		return policyStagedTurn{}, "format"
 	case len(messages) <= staged.count:
 		return policyStagedTurn{}, "no_new_messages"
-	case raylinearc.MessagesDigest(messages, staged.count) != staged.digest:
-		if raylinearc.MessagesDigest(messages, staged.appendedFrom) != staged.historyDigest {
+	case policyDeltaDigest(messages, staged.count) != staged.digest:
+		if policyDeltaDigest(messages, staged.appendedFrom) != staged.historyDigest {
 			return policyStagedTurn{}, "history_mismatch"
 		}
 		return policyStagedTurn{}, "appended_mismatch"
 	}
 	return staged, "delta"
+}
+
+// policyDeltaDigest digests the first n messages as the delta check
+// compares them: what the service's projections (canonical-conversation.v1
+// and transcript-projection.v9) read the same. Only Claude Code's two
+// per-request rewrites of history are insignificant: a cache_control marker
+// on a message or on one of its top-level content blocks (never one nested
+// deeper, such as a tool's input), and a system message whose content is one
+// text block, which is its text. Object key order and whitespace are
+// insignificant. Anything else that differs makes the turn go in full.
+func policyDeltaDigest(messages []json.RawMessage, n int) string {
+	hash := sha256.New()
+	for _, message := range messages[:n] {
+		canonical := policyDeltaCanonical(message)
+		hash.Write([]byte(strconv.Itoa(len(canonical))))
+		hash.Write([]byte{':'})
+		hash.Write(canonical)
+	}
+	return hex.EncodeToString(hash.Sum(nil))
+}
+
+func policyDeltaCanonical(message json.RawMessage) []byte {
+	var object map[string]any
+	decoder := json.NewDecoder(bytes.NewReader(message))
+	decoder.UseNumber()
+	if decoder.Decode(&object) != nil || object == nil || decoder.More() {
+		return message
+	}
+	delete(object, "cache_control")
+	if blocks, ok := object["content"].([]any); ok {
+		for _, block := range blocks {
+			if fields, ok := block.(map[string]any); ok {
+				delete(fields, "cache_control")
+			}
+		}
+		if object["role"] == "system" && len(blocks) == 1 {
+			if fields, ok := blocks[0].(map[string]any); ok && len(fields) == 2 && fields["type"] == "text" {
+				if text, ok := fields["text"].(string); ok {
+					object["content"] = text
+				}
+			}
+		}
+	}
+	canonical, err := raylinearc.MarshalUnescaped(object)
+	if err != nil {
+		return message
+	}
+	return canonical
 }
 
 // policyShellOf is a full request's shell: everything but its conversation.
@@ -278,8 +337,13 @@ func policyDeltaRefused(err error) bool {
 // policyAppendTimeout bounds the append a delta turn posts inside its lease
 // after the client may already have its reply. A next turn can arrive then
 // and waits for the lease up to the episode's acquire timeout, so the append
-// stays well inside it: it never makes that turn contended where a sync cell
-// would have served it. It is also no longer than a decide may take.
+// takes at most half of it. It is also no longer than a decide may take.
+//
+// The bound is VSR's wait, not the service's work: an append the service
+// still runs past it holds the service's episode lock, so the next turn
+// retries session_busy one acquire timeout longer (append_unsettled). An
+// append that outlives even that leaves the next turn session_busy (429),
+// as a sync decide that timed out does.
 func policyAppendTimeout(total, acquire time.Duration) time.Duration {
 	if acquire <= 0 {
 		acquire = episodeFinalizeTimeout
@@ -287,7 +351,7 @@ func policyAppendTimeout(total, acquire time.Duration) time.Duration {
 	if total <= 0 {
 		total = episodeFinalizeTimeout
 	}
-	return raylineARCDurationMin(total, acquire/4)
+	return raylineARCDurationMin(total, acquire/2)
 }
 
 // armDelta reads, at readiness, whether the service serves staged turns. A
@@ -368,9 +432,8 @@ func (transaction *raylineARCEpisodeTransaction) appendPolicyStagedTurn(parent c
 		return fail("no_assistant_output")
 	}
 	if policyReplyThinks(staging.requestFormat, staging.clientBody) {
-		// No captured client shows how a thinking block is echoed (its
-		// signature and display), so such a reply is not appended: the next
-		// turn decides in full rather than staging a guess.
+		// Reasoning no captured client shows the echo of is not appended:
+		// the next turn decides in full rather than staging a guess.
 		return fail("thinking_turn")
 	}
 	roles := slices.Clone(staging.roles)
@@ -407,7 +470,12 @@ func (transaction *raylineARCEpisodeTransaction) appendPolicyStagedTurn(parent c
 		if errors.As(err, &failure) {
 			class = failure.Class
 		}
-		return fail(class)
+		fail(class)
+		if !policyServiceAnswered(err) {
+			// The service may still be appending under its episode lock.
+			return &policyStagedTurn{unsettled: true}
+		}
+		return nil
 	}
 	if response.Package != staging.pkg || response.Messages != len(messages) {
 		return fail("append_mismatch")
@@ -417,9 +485,9 @@ func (transaction *raylineARCEpisodeTransaction) appendPolicyStagedTurn(parent c
 		requestFormat: staging.requestFormat,
 		count:         response.Messages,
 		prefixDigest:  response.PrefixDigest,
-		digest:        raylinearc.MessagesDigest(messages, len(messages)),
+		digest:        policyDeltaDigest(messages, len(messages)),
 		appendedFrom:  len(staging.messages),
-		historyDigest: raylinearc.MessagesDigest(messages, len(staging.messages)),
+		historyDigest: policyDeltaDigest(messages, len(staging.messages)),
 	}
 	fields := map[string]interface{}{
 		"request_id": staging.requestID, "episode_id_hash": staging.episodeIDHash,
@@ -535,23 +603,39 @@ func anthropicEchoContent(raw json.RawMessage) (json.RawMessage, bool) {
 }
 
 // policyReplyThinks reports whether the reply the client received holds
-// reasoning, read before any normalization: Messages thinking or
-// redacted_thinking blocks, a Chat message's reasoning members, a Responses
-// reasoning item. An unreadable reply counts as thinking.
+// reasoning whose echo no captured client shows, read before any
+// normalization: a Messages redacted_thinking block or a thinking block
+// that is anything but {type, thinking, signature} with a signature, a Chat
+// message's reasoning members, a Responses reasoning item. An unreadable
+// reply counts as thinking.
+//
+// A signed Messages thinking block is appended: Claude Code 2.1.309 echoes
+// it unchanged (testdata/continuity/cc-2.1.309-thread-create-thinking-tool-
+// turn, message 11). A client that echoes it otherwise costs only a full
+// resend (appended_mismatch).
 func policyReplyThinks(format string, body []byte) bool {
 	switch format {
 	case policyFormatAnthropic:
 		var reply struct {
-			Content []struct {
-				Type string `json:"type"`
-			} `json:"content"`
+			Content []map[string]json.RawMessage `json:"content"`
 		}
 		if json.Unmarshal(body, &reply) != nil {
 			return true
 		}
 		for _, block := range reply.Content {
-			if block.Type == "thinking" || block.Type == "redacted_thinking" {
+			var kind string
+			_ = json.Unmarshal(block["type"], &kind)
+			switch kind {
+			case "redacted_thinking":
 				return true
+			case "thinking":
+				var signature string
+				if len(block) != 3 || json.Unmarshal(block["signature"], &signature) != nil || signature == "" {
+					return true
+				}
+				if _, ok := block["thinking"]; !ok {
+					return true
+				}
 			}
 		}
 	case policyFormatOpenAI:
@@ -597,6 +681,37 @@ func stageRaylineARCAppendSource(ctx *RequestContext, clientBody []byte) {
 		return
 	}
 	ctx.RaylineARCTransaction.policyStaging.clientBody = clientBody
+}
+
+// policyFirstBusyWait is how long a turn's first decide retries
+// session_busy: one acquire timeout, two after an append VSR stopped waiting
+// for (unsettled), whose work may still hold the service's episode lock.
+func policyFirstBusyWait(busyWait time.Duration, unsettled bool) time.Duration {
+	if unsettled {
+		return 2 * busyWait
+	}
+	return busyWait
+}
+
+// policyAppendUnsettled reports whether this episode's last committed turn,
+// in this process, left an append VSR stopped waiting for. It is read on
+// every turn of a delta cell, whether or not this one stages.
+func (scorer *policyServiceScorer) policyAppendUnsettled(episodeIDHash string, turnIndex uint64) bool {
+	if !scorer.delta {
+		return false
+	}
+	staged, ok := scorer.staged.get(episodeIDHash)
+	return ok && staged.turnIndex == turnIndex && staged.unsettled
+}
+
+// policyStagedFullMode is the decision mode of a turn sent in full: sync on
+// a staged turn, none on a turn that stages nothing. A re-ask after a delta
+// decide is sent in full, so it is recorded so.
+func policyStagedFullMode(staging bool) string {
+	if staging {
+		return policyDecisionModeSync
+	}
+	return ""
 }
 
 // addPolicyDecisionModeFields records a delta cell's decision mode on a

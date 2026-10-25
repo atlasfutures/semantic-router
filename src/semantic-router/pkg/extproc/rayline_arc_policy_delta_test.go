@@ -25,6 +25,7 @@ import (
 	"net/http/httptest"
 	"net/http/httputil"
 	"net/url"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -586,7 +587,7 @@ func TestPolicyAssistantOutputNormalizesResponsesItems(t *testing.T) {
 // The append stays well within the next turn's acquire timeout, so it never
 // makes that turn contended.
 func TestPolicyAppendTimeoutStaysInsideTheAcquireTimeout(t *testing.T) {
-	if got := policyAppendTimeout(30*time.Second, 8*time.Second); got != 2*time.Second {
+	if got := policyAppendTimeout(30*time.Second, 8*time.Second); got != 4*time.Second {
 		t.Fatalf("append timeout %v", got)
 	}
 	if got := policyAppendTimeout(time.Second, 8*time.Second); got != time.Second {
@@ -669,12 +670,12 @@ func requestMessages(t *testing.T, body []byte) []byte {
 	return request.Messages
 }
 
-// A reply with thinking is not appended: no capture shows its echo.
+// A reply with reasoning no capture shows the echo of is not appended.
 func TestDeltaThinkingReplyIsNotAppended(t *testing.T) {
 	fixture := newDeltaFixture(t, config.RaylineARCDecideModeDelta, nil)
 	_, ctx := fixture.turn(t, policyTestRequest(t, deltaUser))
 	reply, _ := json.Marshal(map[string]any{"type": "message", "role": "assistant", "content": []any{
-		map[string]any{"type": "thinking", "thinking": "", "signature": "sig"},
+		map[string]any{"type": "redacted_thinking", "data": "x"},
 		map[string]any{"type": "text", "text": "done"},
 	}})
 	complete(t, ctx, reply)
@@ -694,6 +695,9 @@ func TestPolicyReplyThinksInEveryFormat(t *testing.T) {
 	}{
 		{policyFormatAnthropic, `{"role":"assistant","content":[{"type":"redacted_thinking","data":"x"}]}`, true},
 		{policyFormatAnthropic, `{"role":"assistant","content":[{"type":"text","text":"a"}]}`, false},
+		{policyFormatAnthropic, `{"role":"assistant","content":[{"type":"thinking","thinking":"t","signature":"s"},{"type":"text","text":"a"}]}`, false},
+		{policyFormatAnthropic, `{"role":"assistant","content":[{"type":"thinking","thinking":"t","signature":""}]}`, true},
+		{policyFormatAnthropic, `{"role":"assistant","content":[{"type":"thinking","thinking":"t"}]}`, true},
 		{policyFormatOpenAI, `{"choices":[{"message":{"role":"assistant","content":"a","reasoning":"why"}}]}`, true},
 		{policyFormatOpenAI, `{"choices":[{"message":{"role":"assistant","content":"a","reasoning_details":[{"type":"reasoning.text"}]}}]}`, true},
 		{policyFormatOpenAI, `{"choices":[{"message":{"role":"assistant","content":"a","reasoning":null}}]}`, false},
@@ -738,3 +742,177 @@ func TestDeltaNeedsTheStagedTurnsCapability(t *testing.T) {
 	}
 }
 
+// A cache_control key nested inside a tool's input is the tool's data, not a
+// cache marker: a history that changed it goes in full.
+func TestDeltaDigestKeepsNestedCacheControl(t *testing.T) {
+	marked := json.RawMessage(`{"role":"user","content":[{"type":"text","text":"hi","cache_control":{"type":"ephemeral"}}],"cache_control":{"type":"ephemeral"}}`)
+	bare := json.RawMessage(`{"content":[{"text":"hi","type":"text"}],"role":"user"}`)
+	if policyDeltaDigest([]json.RawMessage{marked}, 1) != policyDeltaDigest([]json.RawMessage{bare}, 1) {
+		t.Fatal("a moved cache marker changed the digest")
+	}
+	block := json.RawMessage(`{"role":"system","content":[{"type":"text","text":"note","cache_control":{"type":"ephemeral"}}]}`)
+	demoted := json.RawMessage(`{"role":"system","content":"note"}`)
+	if policyDeltaDigest([]json.RawMessage{block}, 1) != policyDeltaDigest([]json.RawMessage{demoted}, 1) {
+		t.Fatal("a demoted system message changed the digest")
+	}
+	old := json.RawMessage(`{"role":"assistant","content":[{"type":"tool_use","id":"t","name":"Edit","input":{"cache_control":"old"}}]}`)
+	changed := json.RawMessage(`{"role":"assistant","content":[{"type":"tool_use","id":"t","name":"Edit","input":{"cache_control":"new"}}]}`)
+	if policyDeltaDigest([]json.RawMessage{old}, 1) == policyDeltaDigest([]json.RawMessage{changed}, 1) {
+		t.Fatal("a changed tool input matched")
+	}
+	userBlock := json.RawMessage(`{"role":"user","content":[{"type":"text","text":"hi"}]}`)
+	userString := json.RawMessage(`{"role":"user","content":"hi"}`)
+	if policyDeltaDigest([]json.RawMessage{userBlock}, 1) == policyDeltaDigest([]json.RawMessage{userString}, 1) {
+		t.Fatal("only a system message's single text block is its text")
+	}
+}
+
+// An append VSR stopped waiting for may still hold the service's episode
+// lock: the next turn goes in full and retries session_busy one acquire
+// timeout longer.
+func TestDeltaUnsettledAppendExtendsTheNextBusyWait(t *testing.T) {
+	fixture := newDeltaFixture(t, config.RaylineARCDecideModeDelta, nil)
+	scorer := fixture.scorer()
+	gate := make(chan struct{})
+	t.Cleanup(func() {
+		select {
+		case <-gate:
+		default:
+			close(gate)
+		}
+	})
+	fixture.fake.appendGate = gate
+	_, ctx := fixture.turn(t, policyTestRequest(t, deltaUser))
+	ctx.RaylineARCTransaction.policyStaging.appendTimeout = 50 * time.Millisecond
+	complete(t, ctx, deltaReply(t))
+	staged, ok := scorer.staged.get(fixture.episode)
+	if !ok || !staged.unsettled {
+		t.Fatalf("a timed-out append left %+v (%v)", staged, ok)
+	}
+	// It is read even on a package that takes no delta.
+	scorer.deltaUnsupported.Store(true)
+	var history []json.RawMessage
+	_ = json.Unmarshal(requestMessages(t, policyTestRequest(t, deltaUser, deltaAssistant, deltaToolResult)), &history)
+	if _, reason := policyDeltaFor(scorer, fixture.episode, &raylinearc.EpisodeState{TurnIndex: 1},
+		&raylinearc.PolicyEpisodeState{}, raylinearc.PolicyTransitionExtends, policyFormatAnthropic, history); reason != "append_unsettled" {
+		t.Fatalf("reason %q", reason)
+	}
+	scorer.deltaUnsupported.Store(false)
+	close(gate)
+	// Read whether or not the next turn stages (an exploring turn does not).
+	if !scorer.policyAppendUnsettled(fixture.episode, 1) || scorer.policyAppendUnsettled(fixture.episode, 2) {
+		t.Fatal("the unsettled marker is not read for exactly the next turn")
+	}
+	if got := policyFirstBusyWait(time.Second, true); got != 2*time.Second {
+		t.Fatalf("unsettled busy wait %v", got)
+	}
+	if got := policyFirstBusyWait(time.Second, false); got != time.Second {
+		t.Fatalf("busy wait %v", got)
+	}
+	second, ctx := fixture.turn(t, policyTestRequest(t, deltaUser, deltaAssistant, deltaToolResult))
+	sent := fixture.fake.received()
+	if second.RaylineARC.PolicyDecisionMode != policyDecisionModeSync || sent[len(sent)-1].TurnDelta != nil {
+		t.Fatalf("turn 2 went %s", second.RaylineARC.PolicyDecisionMode)
+	}
+	complete(t, ctx, deltaReply(t))
+}
+
+// A signed thinking reply is appended as Claude Code 2.1.309 echoes it
+// (testdata/continuity, a tool turn with thinking), and the held turn after
+// it goes out as a delta that decides as the full request does.
+func TestDeltaReplayParityClaudeCodeThinkingTurn(t *testing.T) {
+	capture, err := os.ReadFile("testdata/continuity/cc-2.1.309-thread-create-thinking-tool-turn/client.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var body map[string]json.RawMessage
+	if err := json.Unmarshal(capture, &body); err != nil {
+		t.Fatal(err)
+	}
+	var messages []json.RawMessage
+	if err := json.Unmarshal(body["messages"], &messages); err != nil {
+		t.Fatal(err)
+	}
+	with := func(conversation []json.RawMessage) []byte {
+		changed := map[string]json.RawMessage{}
+		for key, value := range body {
+			changed[key] = value
+		}
+		changed["messages"], _ = json.Marshal(conversation)
+		request, _ := json.Marshal(changed)
+		return request
+	}
+	// Turn A ends at message 10 (a system message: cache-marked while last);
+	// its reply is message 11, thinking then tool_use, as an upstream states
+	// it (no caller).
+	var system struct {
+		Content string `json:"content"`
+	}
+	if err := json.Unmarshal(messages[10], &system); err != nil || system.Content == "" {
+		t.Fatalf("message 10 is not a string system message: %s", messages[10])
+	}
+	marked, _ := json.Marshal(map[string]any{"role": "system", "content": []any{
+		map[string]any{"type": "text", "text": system.Content, "cache_control": map[string]any{"type": "ephemeral"}},
+	}})
+	turnA := append(append([]json.RawMessage{}, messages[:10]...), marked)
+	var echoed struct {
+		Content []map[string]json.RawMessage `json:"content"`
+	}
+	if err := json.Unmarshal(messages[11], &echoed); err != nil {
+		t.Fatal(err)
+	}
+	for _, block := range echoed.Content {
+		delete(block, "caller")
+	}
+	reply, _ := json.Marshal(map[string]any{"type": "message", "role": "assistant", "content": echoed.Content})
+	if policyReplyThinks(policyFormatAnthropic, reply) {
+		t.Fatal("a signed thinking reply is not appended")
+	}
+	final, _ := json.Marshal(map[string]any{"type": "message", "role": "assistant", "content": []any{
+		map[string]any{"type": "text", "text": "Done."},
+	}})
+	modes := replayParity(t, []parityTurn{{with(turnA), reply}, {with(messages[:14]), final}})
+	if !slices_Equal(modes, []string{policyDecisionModeSync, policyDecisionModeDelta}) {
+		t.Fatalf("decision modes %v", modes)
+	}
+}
+
+// A client that alters or strips an appended signed thinking block breaks
+// the digest gate: the held turn goes in full (appended_mismatch), and is
+// decided as the sync cell decides it.
+func TestDeltaAlteredThinkingEchoForcesAFullResend(t *testing.T) {
+	signed := []any{
+		map[string]any{"type": "thinking", "thinking": "list first", "signature": "sig-1"},
+		map[string]any{"type": "tool_use", "id": "toolu_1", "name": "Bash", "input": map[string]any{"command": "ls"}},
+	}
+	reply, _ := json.Marshal(map[string]any{"type": "message", "role": "assistant", "content": signed})
+	echo := func(thinking map[string]any) map[string]any {
+		content := []any{}
+		if thinking != nil {
+			content = append(content, thinking)
+		}
+		content = append(content, map[string]any{"type": "tool_use", "id": "toolu_1", "caller": map[string]any{"type": "direct"}, "name": "Bash", "input": map[string]any{"command": "ls"}})
+		return map[string]any{"role": "assistant", "content": content}
+	}
+	for _, tc := range []struct {
+		name string
+		echo map[string]any
+		mode string
+	}{
+		{"unchanged", echo(map[string]any{"type": "thinking", "thinking": "list first", "signature": "sig-1"}), policyDecisionModeDelta},
+		{"signature_changed", echo(map[string]any{"type": "thinking", "thinking": "list first", "signature": "sig-2"}), policyDecisionModeSync},
+		{"signature_stripped", echo(map[string]any{"type": "thinking", "thinking": "list first"}), policyDecisionModeSync},
+		{"text_changed", echo(map[string]any{"type": "thinking", "thinking": "list", "signature": "sig-1"}), policyDecisionModeSync},
+		{"block_stripped", echo(nil), policyDecisionModeSync},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			modes := replayParity(t, []parityTurn{
+				{policyTestRequest(t, deltaUser), reply},
+				{policyTestRequest(t, deltaUser, tc.echo, deltaToolResult), deltaReply(t)},
+			})
+			if modes[1] != tc.mode {
+				t.Fatalf("held turn went %s, want %s", modes[1], tc.mode)
+			}
+		})
+	}
+}

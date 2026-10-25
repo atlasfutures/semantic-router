@@ -715,10 +715,8 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 			"delta_mismatch_reason": mismatch,
 		})
 	}
-	decisionMode := ""
-	if staging {
-		decisionMode = policyDecisionModeSync
-	}
+	decisionMode := policyStagedFullMode(staging)
+	firstBusyWait := policyFirstBusyWait(scorer.busyWait, scorer.policyAppendUnsettled(arcContext.EpisodeIDHash, state.TurnIndex))
 	var response *raylinearc.PolicyDecisionResponse
 	if deltaOutcome == policyDecisionModeDelta {
 		deltaRequest := request
@@ -726,7 +724,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		deltaRequest.TurnDelta = &raylinearc.PolicyTurnDelta{
 			BasePrefixDigest: deltaBase.prefixDigest, Messages: messages[deltaBase.count:],
 		}
-		response, err = decidePolicyThroughBusy(ctx, armed.policy, deltaRequest, scorer.busyWait, admit, withCacheContext)
+		response, err = decidePolicyThroughBusy(ctx, armed.policy, deltaRequest, firstBusyWait, admit, withCacheContext)
 		if policyDeltaRefused(err) {
 			// The service holds no staged turn this delta extends, or cannot
 			// read one: the turn is sent in full, as a sync cell sends it.
@@ -743,7 +741,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 			decisionMode = policyDecisionModeDelta
 		}
 	} else {
-		response, err = decidePolicyThroughBusy(ctx, armed.policy, request, scorer.busyWait, admit, withCacheContext)
+		response, err = decidePolicyThroughBusy(ctx, armed.policy, request, firstBusyWait, admit, withCacheContext)
 	}
 	// A strict cell's relaxed side call that the service refused as
 	// unsupported is decided strict instead, as it was before side calls
@@ -753,6 +751,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		refused.Class == raylinearc.PolicyRelaxedUnsupportedClass {
 		scorer.sideCallsRelaxedUnsupported(selector.now(), "refused")
 		request.EpisodeMode = scorer.episodeMode
+		decisionMode = policyStagedFullMode(staging)
 		response, err = decidePolicyThroughBusy(ctx, armed.policy, request, scorer.busyWait, admit, withCacheContext)
 	}
 	var cold *raylinearc.PolicyServiceError
@@ -772,6 +771,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		request.Selection.AttestedHeldActionID = nil
 		narrow(derived.offer)
 		logRaylineARCDerivedHold(arcContext, derived, "re-ask")
+		decisionMode = policyStagedFullMode(staging)
 		response, err = decidePolicyThroughBusy(ctx, armed.policy, request, scorer.busyWait, admit, withCacheContext)
 	case derived.model == "" && held < 0 && errors.As(err, &cold) && cold.Class == raylinearc.PolicyStageOneHeldUnknownClass:
 		// A refusal the first ask did not anticipate: the recorded model is
@@ -794,6 +794,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 			}
 			logRaylineARCDerivedHold(arcContext, derived, "re-ask")
 			narrow(derived.offer)
+			decisionMode = policyStagedFullMode(staging)
 			response, err = decidePolicyThroughBusy(ctx, armed.policy, request, scorer.busyWait, admit, withCacheContext)
 		}
 	}
