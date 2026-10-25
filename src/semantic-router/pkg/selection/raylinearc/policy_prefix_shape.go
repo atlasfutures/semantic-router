@@ -403,7 +403,7 @@ func textLayout(kind string, keys []string, text string, hasText, cached bool) P
 // policyLayoutKeyNames is members' names, each once: every name outside
 // policyLayoutKeys is one "other", so the list is bounded by that set.
 func policyLayoutKeyNames(members map[string]json.RawMessage) []string {
-	seen := make(map[string]bool, len(members))
+	seen := make(map[string]bool, len(policyLayoutKeys)+1)
 	keys := make([]string, 0, min(len(members), len(policyLayoutKeys)+1))
 	for key := range members {
 		name := policyKindValue(key, policyLayoutKeys)
