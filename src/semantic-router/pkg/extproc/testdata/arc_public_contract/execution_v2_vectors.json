@@ -1985,13 +1985,15 @@
   "policy_schedules": [
     {
       "policy": null,
-      "schedule": null
+      "schedule": null,
+      "selection": null
     },
     {
       "policy": {
         "preset": "arc-policy.package-default.v1"
       },
-      "schedule": null
+      "schedule": null,
+      "selection": null
     },
     {
       "policy": {
@@ -2004,7 +2006,8 @@
         "thinking": [
           "all_turns"
         ]
-      }
+      },
+      "selection": null
     },
     {
       "policy": {
@@ -2026,7 +2029,8 @@
         "thinking": [
           "all_turns"
         ]
-      }
+      },
+      "selection": null
     },
     {
       "policy": {
@@ -2046,6 +2050,47 @@
         "thinking": [
           "cache_boundaries"
         ]
+      },
+      "selection": null
+    },
+    {
+      "policy": {
+        "preset": "arc-policy.prefer-local.v1"
+      },
+      "schedule": {
+        "model": [
+          "cache_boundaries"
+        ],
+        "thinking": [
+          "all_turns"
+        ]
+      },
+      "selection": {
+        "min_p_pass": 0.65,
+        "max_rest_tokens": null
+      }
+    },
+    {
+      "policy": {
+        "preset": "arc-policy.prefer-local.v1",
+        "overrides": {
+          "selection": {
+            "min_p_pass": 0.55,
+            "max_rest_tokens": 400000
+          }
+        }
+      },
+      "schedule": {
+        "model": [
+          "cache_boundaries"
+        ],
+        "thinking": [
+          "all_turns"
+        ]
+      },
+      "selection": {
+        "min_p_pass": 0.55,
+        "max_rest_tokens": 400000
       }
     }
   ]

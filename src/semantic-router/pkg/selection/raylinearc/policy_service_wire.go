@@ -379,7 +379,15 @@ type PolicyMember struct {
 }
 
 type PolicyMemberOverride struct {
-	Schedule *PolicyMemberSchedule `json:"schedule,omitempty"`
+	Schedule  *PolicyMemberSchedule  `json:"schedule,omitempty"`
+	Selection *PolicyMemberSelection `json:"selection,omitempty"`
+}
+
+// PolicyMemberSelection is prefer-local's thresholds; an omitted one keeps
+// the preset's.
+type PolicyMemberSelection struct {
+	MinPPass      *float64 `json:"min_p_pass,omitempty"`
+	MaxRestTokens *int     `json:"max_rest_tokens,omitempty"`
 }
 
 // PolicyMemberSchedule is, per dimension, the switch-point classes; an
@@ -485,6 +493,9 @@ type PolicyDecisionReceipt struct {
 	Excluded        []PolicyReceiptExcluded `json:"excluded"`
 	CapacityUnknown []string                `json:"capacity_unknown"`
 	Basis           *string                 `json:"basis"`
+	// Selection is a prefer-local model decision's comparison (pathfinder
+	// #5913), kept as the service wrote it; absent otherwise.
+	Selection json.RawMessage `json:"selection,omitempty"`
 }
 
 type PolicyReceiptDecidedBy struct {

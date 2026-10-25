@@ -151,12 +151,15 @@ func TestRoutesPolicy(t *testing.T) {
 	if encoded != `{"preset":"arc-policy.hybrid-default.v1","overrides":{"schedule":{"model":["cache_boundaries","user_messages"]}}}` {
 		t.Fatalf("policy member %s", encoded)
 	}
-	for name, body := range map[string]string{
-		"null member":       `{"policy":{"preset":"arc-policy.hybrid-default.v1","overrides":null}}`,
-		"repeated class":    `{"policy":{"preset":"arc-policy.hybrid-default.v1","overrides":{"schedule":{"model":["all_turns","all_turns"]}}}}`,
-		"unknown member":    `{"policy":{"preset":"arc-policy.hybrid-default.v1","dsl":"x"}}`,
-		"missing preset":    `{"policy":{}}`,
-		"prefer_local (v1)": `{"policy":{"preset":"arc-policy.prefer-local.v1"}}`,
+	for name, body := range map[string]string{ //nolint:gosec // request bodies, not credentials
+		"null member":        `{"policy":{"preset":"arc-policy.hybrid-default.v1","overrides":null}}`,
+		"repeated class":     `{"policy":{"preset":"arc-policy.hybrid-default.v1","overrides":{"schedule":{"model":["all_turns","all_turns"]}}}}`,
+		"unknown member":     `{"policy":{"preset":"arc-policy.hybrid-default.v1","dsl":"x"}}`,
+		"missing preset":     `{"policy":{}}`,
+		"unknown preset":     `{"policy":{"preset":"arc-policy.prefer-local.v2"}}`,
+		"selection off rule": `{"policy":{"preset":"arc-policy.hybrid-default.v1","overrides":{"selection":{"min_p_pass":0.5}}}}`,
+		"p_pass above 1":     `{"policy":{"preset":"arc-policy.prefer-local.v1","overrides":{"selection":{"min_p_pass":1.5}}}}`,
+		"zero rest tokens":   `{"policy":{"preset":"arc-policy.prefer-local.v1","overrides":{"selection":{"max_rest_tokens":0}}}}`,
 	} {
 		if _, _, refusal := readRaylineRoutesRouting(executionV2Body(body), nil); refusal == nil || refusal.code != "policy_invalid" {
 			t.Errorf("%s: refusal %+v", name, refusal)
@@ -357,5 +360,32 @@ func TestRouteExecutionV2ServiceRefusals(t *testing.T) {
 		if !found {
 			t.Errorf("contract-side %s has no public refusal", code)
 		}
+	}
+}
+
+// prefer-local (pathfinder #5913): its selection thresholds pass through as
+// sent, and a receipt's selection comparison is copied verbatim.
+func TestRoutesPolicyPreferLocal(t *testing.T) {
+	routing, _, refusal := readRaylineRoutesRouting(executionV2Body(
+		`{"policy":{"preset":"arc-policy.prefer-local.v1","overrides":{"selection":{"min_p_pass":0.7,"max_rest_tokens":40000}}}}`), nil)
+	if refusal != nil {
+		t.Fatal(refusal)
+	}
+	controls := raylineRoutesControls(routing, &config.RaylineARCRoutesRoutingConfig{}, time.Now())
+	if got := string(executionJSON(t, controls.Policy)); got != `{"preset":"arc-policy.prefer-local.v1","overrides":{"selection":{"min_p_pass":0.7,"max_rest_tokens":40000}}}` {
+		t.Fatalf("policy member %s", got)
+	}
+	comparison := json.RawMessage(`{"rule":"prefer_local","min_p_pass":0.7,"max_rest_tokens":40000,"local":[],"outcome":"no_local_offered"}`)
+	receipt := &raylinearc.PolicyDecisionReceipt{
+		DecidedBy: raylinearc.PolicyReceiptDecidedBy{Thinking: "schedule"}, Selection: comparison,
+		Excluded: []raylinearc.PolicyReceiptExcluded{{ActionID: strings.Repeat("1", 64), Reason: "capacity_unknown_local"}},
+	}
+	rendered := raylineRoutesReceiptOf(receipt, strings.Repeat("2", 64), "")
+	encoded := string(executionJSON(t, rendered))
+	if !strings.Contains(encoded, `"selection":{"rule":"prefer_local"`) || !strings.Contains(encoded, `"reason":"capacity_unknown_local"`) {
+		t.Fatalf("receipt %s", encoded)
+	}
+	if strings.Contains(string(executionJSON(t, raylineRoutesReceiptOf(&raylinearc.PolicyDecisionReceipt{}, strings.Repeat("2", 64), ""))), "selection") {
+		t.Fatal("a receipt without a comparison carries selection")
 	}
 }
