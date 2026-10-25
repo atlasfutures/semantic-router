@@ -44,6 +44,13 @@ func TestPolicyMessageLayoutDescribesWithoutContent(t *testing.T) {
 		text.BlockCount != 1 || text.Blocks[0].TextSHA256 != layoutSHA("go") || text.Blocks[0].TextLen != 2 {
 		t.Fatalf("string content = %+v", text)
 	}
+	if many := NewPolicyMessageLayout(json.RawMessage(`{"role":"user","a":1,"b":2,"content":[{"type":"text","text":null,"c":1,"d":2}]}`)); !reflect.DeepEqual(many.Keys, []string{"content", "other", "role"}) ||
+		!reflect.DeepEqual(many.Blocks[0].Keys, []string{"other", "text", "type"}) || many.Blocks[0].TextLen != -1 || many.Blocks[0].TextSHA256 != "" {
+		t.Fatalf("unknown names and null text = %+v", many)
+	}
+	if null := NewPolicyMessageLayout(json.RawMessage(`{"role":"assistant","content":null}`)); null.ContentForm != "null" || null.BlockCount != 0 {
+		t.Fatalf("null content = %+v", null)
+	}
 	if bare := NewPolicyMessageLayout(json.RawMessage(`[1]`)); bare.ContentForm != "other" || bare.Role != "" {
 		t.Fatalf("not an object = %+v", bare)
 	}
