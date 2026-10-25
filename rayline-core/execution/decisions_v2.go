@@ -19,10 +19,12 @@ const executionContextV2 = "arc-execution-context.v2"
 const maxTargetsV2 = 16
 
 // policyPresets are the presets the policy service serves (pathfinder #5904;
-// arc-policy.prefer-local.v1 since #5913).
+// arc-policy.prefer-local.v1 since #5913; arc-policy.prefer-local.v2, the
+// relative rule, since docs/plans/2026-10-25-prefer-local-relative-rule.md).
 var policyPresets = map[string]bool{
 	"arc-policy.hybrid-default.v1":  true,
 	"arc-policy.prefer-local.v1":    true,
+	"arc-policy.prefer-local.v2":    true,
 	"arc-policy.package-default.v1": true,
 }
 
@@ -34,7 +36,8 @@ type policyOverrides struct {
 		Thinking []string `json:"thinking,omitempty"`
 	} `json:"schedule,omitempty"`
 	Selection *struct {
-		MinPPass *float64 `json:"min_p_pass"`
+		MinPPass *float64 `json:"min_p_pass,omitempty"`
+		Delta    *float64 `json:"delta,omitempty"`
 	} `json:"selection,omitempty"`
 }
 
@@ -76,12 +79,24 @@ func validateRoutingPolicy(raw json.RawMessage) (routingPolicy, error) {
 		}
 	}
 	if overrides := policy.Overrides; overrides != nil && overrides.Selection != nil {
-		threshold := overrides.Selection.MinPPass
-		if threshold == nil || !(*threshold > 0 && *threshold < 1) {
-			return policy, fmt.Errorf("routing.policy selection.min_p_pass must be in (0, 1)")
-		}
-		if policy.Preset != "arc-policy.prefer-local.v1" {
-			return policy, fmt.Errorf("routing.policy selection.min_p_pass applies only to arc-policy.prefer-local.v1")
+		selection := overrides.Selection
+		switch policy.Preset {
+		case "arc-policy.prefer-local.v1":
+			if selection.Delta != nil {
+				return policy, fmt.Errorf("routing.policy selection.delta applies only to arc-policy.prefer-local.v2")
+			}
+			if threshold := selection.MinPPass; threshold == nil || !(*threshold > 0 && *threshold < 1) {
+				return policy, fmt.Errorf("routing.policy selection.min_p_pass must be in (0, 1)")
+			}
+		case "arc-policy.prefer-local.v2":
+			if selection.MinPPass != nil {
+				return policy, fmt.Errorf("routing.policy selection.min_p_pass applies only to arc-policy.prefer-local.v1")
+			}
+			if delta := selection.Delta; delta == nil || !(*delta >= 0 && *delta <= 1) {
+				return policy, fmt.Errorf("routing.policy selection.delta must be in [0, 1]")
+			}
+		default:
+			return policy, fmt.Errorf("routing.policy selection applies only to arc-policy.prefer-local.v1 or v2")
 		}
 	}
 	return policy, nil

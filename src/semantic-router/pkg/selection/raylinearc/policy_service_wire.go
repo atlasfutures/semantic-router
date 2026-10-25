@@ -388,6 +388,7 @@ type PolicyMemberOverride struct {
 // the preset's.
 type PolicyMemberSelection struct {
 	MinPPass      *float64 `json:"min_p_pass,omitempty"`
+	Delta         *float64 `json:"delta,omitempty"`
 	MaxRestTokens *int     `json:"max_rest_tokens,omitempty"`
 }
 

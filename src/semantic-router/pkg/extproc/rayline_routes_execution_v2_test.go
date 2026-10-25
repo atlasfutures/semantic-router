@@ -156,7 +156,10 @@ func TestRoutesPolicy(t *testing.T) {
 		"repeated class":     `{"policy":{"preset":"arc-policy.hybrid-default.v1","overrides":{"schedule":{"model":["all_turns","all_turns"]}}}}`,
 		"unknown member":     `{"policy":{"preset":"arc-policy.hybrid-default.v1","dsl":"x"}}`,
 		"missing preset":     `{"policy":{}}`,
-		"unknown preset":     `{"policy":{"preset":"arc-policy.prefer-local.v2"}}`,
+		"unknown preset":     `{"policy":{"preset":"arc-policy.prefer-local.v3"}}`,
+		"delta on v1":        `{"policy":{"preset":"arc-policy.prefer-local.v1","overrides":{"selection":{"delta":0.1}}}}`,
+		"p_pass on v2":       `{"policy":{"preset":"arc-policy.prefer-local.v2","overrides":{"selection":{"min_p_pass":0.5}}}}`,
+		"delta above 1":      `{"policy":{"preset":"arc-policy.prefer-local.v2","overrides":{"selection":{"delta":1.5}}}}`,
 		"selection off rule": `{"policy":{"preset":"arc-policy.hybrid-default.v1","overrides":{"selection":{"min_p_pass":0.5}}}}`,
 		"p_pass above 1":     `{"policy":{"preset":"arc-policy.prefer-local.v1","overrides":{"selection":{"min_p_pass":1.5}}}}`,
 		"zero rest tokens":   `{"policy":{"preset":"arc-policy.prefer-local.v1","overrides":{"selection":{"max_rest_tokens":0}}}}`,
@@ -394,6 +397,27 @@ func TestRoutesPolicyPreferLocal(t *testing.T) {
 	}
 	if strings.Contains(string(executionJSON(t, raylineRoutesReceiptOf(&raylinearc.PolicyDecisionReceipt{}, strings.Repeat("2", 64), ""))), "selection") {
 		t.Fatal("a receipt without a comparison carries selection")
+	}
+}
+
+// prefer-local v2 (pathfinder docs/plans/2026-10-25-prefer-local-relative-rule.md):
+// its delta passes through as sent, and the relative comparison is copied
+// verbatim.
+func TestRoutesPolicyPreferLocalRelative(t *testing.T) {
+	routing, _, refusal := readRaylineRoutesRouting(executionV2Body(
+		`{"policy":{"preset":"arc-policy.prefer-local.v2","overrides":{"selection":{"delta":0.15,"max_rest_tokens":40000}}}}`), nil)
+	if refusal != nil {
+		t.Fatal(refusal)
+	}
+	controls := raylineRoutesControls(routing, &config.RaylineARCRoutesRoutingConfig{}, time.Now())
+	if got := string(executionJSON(t, controls.Policy)); got != `{"preset":"arc-policy.prefer-local.v2","overrides":{"selection":{"delta":0.15,"max_rest_tokens":40000}}}` {
+		t.Fatalf("policy member %s", got)
+	}
+	comparison := json.RawMessage(`{"rule":"prefer_local_relative","delta":0.15,"max_rest_tokens":40000,"p_cloud_best":0.7,"local":[],"outcome":"utility_fallback"}`)
+	rendered := raylineRoutesReceiptOf(&raylinearc.PolicyDecisionReceipt{
+		DecidedBy: raylinearc.PolicyReceiptDecidedBy{Thinking: "schedule"}, Selection: comparison}, strings.Repeat("2", 64), "")
+	if encoded := string(executionJSON(t, rendered)); !strings.Contains(encoded, `"selection":`+string(comparison)) {
+		t.Fatalf("receipt %s", encoded)
 	}
 }
 

@@ -2092,6 +2092,46 @@
         "min_p_pass": 0.55,
         "max_rest_tokens": 400000
       }
+    },
+    {
+      "policy": {
+        "preset": "arc-policy.prefer-local.v2"
+      },
+      "schedule": {
+        "model": [
+          "cache_boundaries"
+        ],
+        "thinking": [
+          "all_turns"
+        ]
+      },
+      "selection": {
+        "delta": 0.1,
+        "max_rest_tokens": null
+      }
+    },
+    {
+      "policy": {
+        "preset": "arc-policy.prefer-local.v2",
+        "overrides": {
+          "selection": {
+            "delta": 0.25,
+            "max_rest_tokens": 400000
+          }
+        }
+      },
+      "schedule": {
+        "model": [
+          "cache_boundaries"
+        ],
+        "thinking": [
+          "all_turns"
+        ]
+      },
+      "selection": {
+        "delta": 0.25,
+        "max_rest_tokens": 400000
+      }
     }
   ]
 }

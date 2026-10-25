@@ -24,3 +24,9 @@ prefer-local).
 `selection_refusals_v2.v1.json` (from `tests/fixtures/arc_policy_service/`)
 is copied unchanged from pathfinder#5906 at `87b156e001`: the policy
 service's v2 refusal strings and their public codes.
+
+`request_valid_decisions_policy_prefer_local_v2.json`,
+`request_invalid_policy_selection_foreign_threshold.json` and the two
+prefer-local v2 `policy_schedules` rows of `execution_v2_vectors.json` are
+copied unchanged from pathfinder#5934 at `7d38de38fa` (prefer-local v2, the
+relative rule; refresh from main once it merges).
