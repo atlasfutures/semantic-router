@@ -151,6 +151,28 @@ type RouteDecision struct {
 	Predictions        *raylinearc.PolicyDecisionPredictions
 	PredictionsApplied bool
 	PackageSHA256      string
+	// Identity is the package, thinking-controls registry and offer the
+	// lookup was decided under (pathfinder #5874), on a policy-service
+	// lookup with Routing; ArmID and ControlID are the decision's own arm and
+	// its action's control. Nil and empty otherwise.
+	Identity  *RouteIdentity
+	ArmID     string
+	ControlID string
+	// ExecutionApplied marks a decision taken with the caller's
+	// routing.execution, and CacheTrace is how the service read its cache
+	// evidence (nil when the service did not say).
+	ExecutionApplied bool
+	CacheTrace       *raylinearc.PolicyCacheTrace
+	// Receipt is the service's decision.receipt for a lookup that sent
+	// routing.policy or a v2 routing.execution; nil otherwise.
+	Receipt *raylinearc.PolicyDecisionReceipt
+}
+
+// RouteIdentity is a Decisions answer's identity.
+type RouteIdentity struct {
+	PackageSHA256          string
+	ThinkingControlsSHA256 string
+	OfferSHA256            string
 }
 
 // RouteResult is the decision at one Routing point.
@@ -163,6 +185,10 @@ type RouteResult struct {
 	Thinking       RouteThinking
 	ThinkingLevel  string
 	PolicyActionID string
+	// ArmID is the service's selected arm at this point and ControlID its
+	// action's control (sha256(JCS(control))); empty when unknown.
+	ArmID     string
+	ControlID string
 	// Exploration is the point's own draw when the service reported one.
 	Exploration *raylinearc.PolicyExplorationRecord
 	// StageOneCandidate is the point's row of Predictions' stage-one table;

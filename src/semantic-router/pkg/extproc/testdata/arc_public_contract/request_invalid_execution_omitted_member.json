@@ -1,0 +1,120 @@
+{
+  "surface": "decisions",
+  "body": {
+    "model": "arc-1.0",
+    "max_tokens": 1024,
+    "messages": [
+      {
+        "role": "user",
+        "content": "Refactor the parser."
+      },
+      {
+        "role": "assistant",
+        "content": "Done."
+      },
+      {
+        "role": "user",
+        "content": "Now add tests."
+      },
+      {
+        "role": "assistant",
+        "content": "Added."
+      },
+      {
+        "role": "user",
+        "content": "Run them."
+      }
+    ],
+    "routing": {
+      "execution": {
+        "version": "arc-execution-context.v1",
+        "context_epoch": "e3",
+        "turn": {
+          "id": "t-0007",
+          "attempt": 1
+        },
+        "expect": {
+          "package_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "thinking_controls_sha256": null,
+          "offer_sha256": null
+        },
+        "attribution": [
+          {
+            "message": 1,
+            "action_id": "1111111111111111111111111111111111111111111111111111111111111111",
+            "arm_id": null,
+            "worker": "local-qwen",
+            "route_id": "rt_1",
+            "result": "custom"
+          },
+          {
+            "message": 3,
+            "action_id": "2222222222222222222222222222222222222222222222222222222222222222",
+            "arm_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "worker": "cloud-opus",
+            "route_id": "rt_2",
+            "result": "custom"
+          }
+        ],
+        "workers": [
+          {
+            "action_id": "1111111111111111111111111111111111111111111111111111111111111111",
+            "worker": "local-qwen",
+            "placement": "local",
+            "context_epoch": "e3",
+            "gap_s": 412.5,
+            "ttl": null,
+            "residency": {
+              "state": "resident",
+              "provenance": "local_measured"
+            },
+            "usage": {
+              "prompt_tokens": 18210,
+              "cache_read_tokens": 17900,
+              "cache_write_tokens": null,
+              "units": "hf:Qwen/Qwen3.8-27B@r1",
+              "provenance": "provider_reported"
+            },
+            "current_prefix": {
+              "tokens": 21544,
+              "overlap_tokens": 18210,
+              "units": "hf:Qwen/Qwen3.8-27B@r1",
+              "provenance": "local_measured"
+            }
+          },
+          {
+            "action_id": "2222222222222222222222222222222222222222222222222222222222222222",
+            "worker": "cloud-opus",
+            "placement": "cloud",
+            "context_epoch": "e3",
+            "gap_s": 35.2,
+            "ttl": {
+              "seconds": 300,
+              "source": "anthropic cache_control ephemeral 5m",
+              "basis": "wire_declared"
+            },
+            "residency": null,
+            "usage": {
+              "prompt_tokens": 20977,
+              "cache_read_tokens": 18100,
+              "cache_write_tokens": 2877,
+              "units": "provider:cloud-opus",
+              "provenance": "provider_reported"
+            },
+            "current_prefix": {
+              "tokens": 21390,
+              "overlap_tokens": null,
+              "units": "provider:cloud-opus",
+              "provenance": "provider_reported"
+            }
+          }
+        ]
+      }
+    }
+  },
+  "expect": {
+    "status": 400,
+    "type": "invalid_request_error",
+    "code": "execution_invalid"
+  }
+}

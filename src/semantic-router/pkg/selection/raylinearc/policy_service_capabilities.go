@@ -47,6 +47,10 @@ const (
 	// (pathfinder#5717). Read at readiness; a lookup asking for predictions
 	// of a service without it is answered unsupported, never guessed.
 	PolicyCapabilityPredictions = "predictions"
+	// PolicyCapabilityCacheTrace: the service answers response_fields
+	// ["cache_trace"] with decision.cache_trace (pathfinder #5875). A
+	// routing.execution lookup asks for it only of a service that lists it.
+	PolicyCapabilityCacheTrace = "cache_trace"
 )
 
 // Readiness classes for a service that cannot serve what the cell sends.

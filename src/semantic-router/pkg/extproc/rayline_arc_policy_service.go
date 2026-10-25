@@ -77,6 +77,12 @@ type policyServiceScorer struct {
 	// armOffered is, per arm, whether the package's stage one offers its
 	// model; nil when the package states no by-model offer.
 	armOffered []bool
+	// thinkingControls is the package manifest's thinking_controls_sha256,
+	// part of a Decisions answer's identity; empty for a v4 package.
+	thinkingControls string
+	// actionArms are a v5 package's trained arms per action, for checking
+	// a Decisions caller's attribution; nil for a v4 package.
+	actionArms map[string][]string
 	// busyWait bounds how long a decision retries the service's
 	// session_busy (the episode's acquire timeout).
 	busyWait    time.Duration
@@ -174,14 +180,15 @@ func newPolicyServiceScorer(
 	policy := decision.Algorithm.RaylineARC.PolicyService
 	generation := strconv.FormatUint(raylineARCScorerGeneration.Add(1), 10)
 	scorer := &policyServiceScorer{
-		fallback:   policy.FallbackEnabled(),
-		schedule:   policy.ModelSchedule,
-		twoStage:   policy.PackageTwoStage(),
-		attestable: policy.PackageTwoStage() && policy.PackageStageOneByModel(),
-		busyWait:   time.Duration(decision.Algorithm.RaylineARC.Episode.AcquireTimeoutSeconds) * time.Second,
-		alias:      policy.PackageAlias,
-		sha256:     policy.PackageSHA256,
-		bindings:   make(map[string]policyBinding, len(policy.Bindings)),
+		fallback:         policy.FallbackEnabled(),
+		schedule:         policy.ModelSchedule,
+		twoStage:         policy.PackageTwoStage(),
+		attestable:       policy.PackageTwoStage() && policy.PackageStageOneByModel(),
+		thinkingControls: policy.PackageThinkingControlsSHA256(),
+		busyWait:         time.Duration(decision.Algorithm.RaylineARC.Episode.AcquireTimeoutSeconds) * time.Second,
+		alias:            policy.PackageAlias,
+		sha256:           policy.PackageSHA256,
+		bindings:         make(map[string]policyBinding, len(policy.Bindings)),
 		// Off, the decide request carries no cache_context, as before it.
 		cacheContext: policy.CacheContext,
 		decisionsV2:  newPolicyDecisionsV2(policy.DecisionsV2),
@@ -210,6 +217,10 @@ func newPolicyServiceScorer(
 			if action.Control.Instruction != nil {
 				level = action.Control.Instruction.Level
 			}
+			if scorer.actionArms == nil {
+				scorer.actionArms = map[string][]string{}
+			}
+			scorer.actionArms[binding.ActionID] = action.TrainedArmIDs
 		}
 		scorer.bindings[binding.ActionID] = policyBinding{arm: index[binding.Worker], level: level, model: model}
 		scorer.actionOrder = append(scorer.actionOrder, binding.ActionID)
@@ -679,9 +690,41 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 			request.ResponseFields = append(append([]string(nil), request.ResponseFields...), raylinearc.PolicyCapabilityPredictions)
 		}
 	}
+	var execution *selection.RaylineARCRouteExecution
+	if routeControls != nil {
+		execution = routeControls.Execution
+	}
+	// A caller's routing.execution stands in for VSR's own episode for this
+	// lookup only; it is checked against the package and offer first.
+	var executionV2 *selection.RaylineARCRouteExecutionV2
+	if routeControls != nil {
+		executionV2 = routeControls.ExecutionV2
+	}
+	if class := applyRoutePolicyAndExecutionV2(&request, scorer, routeControls); class != "" {
+		logging.ComponentErrorEvent("extproc", "rayline_arc_policy_service_failed", map[string]interface{}{
+			"class": class, "episode_id_hash": arcContext.EpisodeIDHash,
+		})
+		return nil, arcSelectionFailure(class)
+	}
+	if class := applyRouteExecution(&request, scorer, execution); class != "" {
+		logging.ComponentErrorEvent("extproc", "rayline_arc_policy_service_failed", map[string]interface{}{
+			"class": class, "episode_id_hash": arcContext.EpisodeIDHash,
+		})
+		return nil, arcSelectionFailure(class)
+	}
 	// The episode's cache evidence is read at each call, so a retry's gaps
-	// are as of that call, on the wall clock the commit dates warmth by.
+	// are as of that call, on the wall clock the commit dates warmth by. A
+	// lookup with an execution context sends the caller's admitted evidence
+	// instead: it has no episode warmth of its own.
 	withCacheContext := func(request *raylinearc.PolicyDecisionRequest) {
+		if execution != nil {
+			request.CacheContext = routeExecutionCacheContext(execution)
+			return
+		}
+		if executionV2 != nil {
+			request.CacheContext = routeExecutionV2CacheContext(executionV2)
+			return
+		}
 		if !scorer.cacheContext {
 			return
 		}
@@ -729,7 +772,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		derivedOffer = true
 		request.Selection.AvailableActionIDs = offer
 	}
-	if held < 0 && scorer.twoStage {
+	if held < 0 && scorer.twoStage && execution == nil && executionV2 == nil {
 		if found, ok := derivedHoldOffer(scorer, arcContext, available); ok && len(found.offer) > 0 {
 			derived = found
 			logRaylineARCDerivedHold(arcContext, derived, "first")
@@ -779,7 +822,8 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		narrow(derived.offer)
 		logRaylineARCDerivedHold(arcContext, derived, "re-ask")
 		response, err = decidePolicyThroughBusy(ctx, decider, request, scorer.busyWait, admit, withCacheContext)
-	case derived.model == "" && held < 0 && errors.As(err, &cold) && cold.Class == raylinearc.PolicyStageOneHeldUnknownClass:
+	case derived.model == "" && held < 0 && execution == nil && executionV2 == nil &&
+		errors.As(err, &cold) && cold.Class == raylinearc.PolicyStageOneHeldUnknownClass:
 		// A refusal the first ask did not anticipate: the recorded model is
 		// excluded this turn, or the package's manifest does not say it is
 		// two-stage (an older or manifest-less package), so the record stayed
@@ -801,6 +845,19 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 			logRaylineARCDerivedHold(arcContext, derived, "re-ask")
 			narrow(derived.offer)
 			response, err = decidePolicyThroughBusy(ctx, decider, request, scorer.busyWait, admit, withCacheContext)
+		}
+	}
+	// A refusal of the caller's routing.execution or routing.policy answers
+	// its public code (selection_refused reasons such as no_feasible_target
+	// and policy_preset_not_admitted), ahead of the generic undecidable
+	// mapping below, which would otherwise swallow it.
+	if err != nil && (execution != nil || executionV2 != nil || routeControls != nil && routeControls.Policy != nil) {
+		if class := routeExecutionServiceRefusal(err); class != "" {
+			if class == arcFailureExecutionNotAdmitted && (execution != nil && execution.HoldScope != "" ||
+				executionV2 != nil && executionV2.HoldActionID != nil) {
+				class = arcFailureExecutionHoldUnavailable
+			}
+			return nil, arcSelectionFailure(class)
 		}
 	}
 	// Any refusal to decide that stands -- a cold turn no record holds, or the
@@ -991,6 +1048,28 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	scorer.exploration.record(result.RaylineARC, cellExploration, response, explorationExcluded)
 	result.RaylineARC.PolicyArmActions = policyArmActions(scorer, response, len(workerIDs))
 	result.RaylineARC.PolicyArmOffered = scorer.armOffered
+	if routeControls != nil {
+		identity := routeIdentity(scorer, response)
+		if class := checkRouteExecutionOffer(execution, identity); class != "" {
+			return nil, arcSelectionFailure(class)
+		}
+		if execution != nil && routeExecutionTraceMissing(&request, response) {
+			return nil, arcSelectionFailure(arcFailureRoutesExecutionTraceMissing)
+		}
+		if executionV2 != nil {
+			if class := checkRouteOfferPin(executionV2.ExpectOffer, identity); class != "" {
+				return nil, arcSelectionFailure(class)
+			}
+		}
+		if executionV2 != nil || routeControls.Policy != nil {
+			result.RaylineARC.RouteReceipt = response.Decision.Receipt
+		}
+		result.RaylineARC.RouteIdentity = &identity
+		result.RaylineARC.RouteExecutionApplied = execution != nil
+		if execution != nil {
+			result.RaylineARC.RouteCacheTrace = response.Decision.CacheTrace
+		}
+	}
 	if class := recordRouteControls(result.RaylineARC, scorer, routeControls, response, available, predictionsAsked); class != "" {
 		logging.ComponentErrorEvent("extproc", "rayline_arc_policy_service_failed", map[string]interface{}{
 			"class": class, "episode_id_hash": arcContext.EpisodeIDHash,

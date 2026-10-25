@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/atlasfutures/semantic-router/rayline-core/cachecontext"
+
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
 
@@ -154,6 +156,70 @@ type RaylineARCRouteControls struct {
 	// (routing.response_fields: predictions, pathfinder#5717), sent only to
 	// a service that advertises the capability.
 	Predictions bool
+	// Execution is the caller's own execution state (routing.execution,
+	// pathfinder #5874); nil without one.
+	Execution *RaylineARCRouteExecution
+	// Policy is routing.policy as sent (hybrid routing v2, pathfinder
+	// #5904) and ExecutionV2 the v2 envelope; each nil without one.
+	Policy      *raylinearc.PolicyMember
+	ExecutionV2 *RaylineARCRouteExecutionV2
+}
+
+// RaylineARCRouteExecutionV2 is a v2 routing.execution as decide-request
+// members (arc_execution_v2.decide_inputs_v2) plus what the package-side
+// checks need (arc_execution_v2.bind_v2). Never written back to any state.
+type RaylineARCRouteExecutionV2 struct {
+	ContextEpoch string
+	Attribution  []raylinearc.PolicyAttribution
+	// LastServedActionID (and the message it names, nil when none) is the
+	// executor's truthful record of what last ran: accepted whenever its
+	// action is in the package, offered or not.
+	LastServedActionID *string
+	LastServedMessage  *int
+	// HoldActionID is a mandatory action hold, nil without one.
+	HoldActionID *string
+	CacheContext *cachecontext.PolicyCacheContext
+	Event        raylinearc.PolicyExecutorEvent
+	Capacity     []raylinearc.PolicyActionCapacity
+	// Infeasible are the targets the request's own capacity marks fits:
+	// false (any provenance).
+	Infeasible []string
+	TurnKey    string
+	Reconsult  *string
+	// ActionIDs are every action the envelope names, checked against the
+	// serving package's catalog.
+	ActionIDs                                          []string
+	ExpectPackage, ExpectThinkingControls, ExpectOffer *string
+}
+
+// RaylineARCRouteExecution is a Decisions caller's execution context as
+// decide-request members. It replaces what VSR would derive from its own
+// episode (epoch, attribution, held model, cache evidence) for this lookup
+// only, and is never written back to any state.
+type RaylineARCRouteExecution struct {
+	ContextEpoch string
+	Attribution  []raylinearc.PolicyAttribution
+	// HoldScope is "", "model" (attested_held_action_id) or "action"
+	// (held_action_id); HoldActionID names the action.
+	HoldScope    string
+	HoldActionID string
+	// CacheContext is the admitted cache evidence, nil when the caller sent
+	// no workers. The service decides the cache mode itself (its cell's
+	// ARC_CALLER_CACHE_MULTIWARM switch); the caller never forces it.
+	CacheContext *cachecontext.PolicyCacheContext
+	// ActionIDs are every action the context names (attribution, hold,
+	// workers), each checked against the serving package's catalog.
+	ActionIDs []string
+	// Expect* are the identity the caller pinned (nil: not pinned).
+	ExpectPackage, ExpectThinkingControls, ExpectOffer *string
+}
+
+// RaylineARCRouteIdentity is what a Decisions answer states about the
+// identity it was decided under (pathfinder #5874 "Result identity").
+type RaylineARCRouteIdentity struct {
+	PackageSHA256          string
+	ThinkingControlsSHA256 string
+	OfferSHA256            string
 }
 
 // RaylineARCArmAction is the action an arm's score comes from: its best
@@ -237,6 +303,18 @@ type RaylineARCTrace struct {
 	// the decision, on every policy-service cell; nil when it echoed none,
 	// never read as 0.
 	PolicyCostWeight *float64
+	// RouteIdentity is a Decisions lookup's identity (package, thinking
+	// controls, offer), set on every policy-service lookup with route
+	// controls; RouteExecutionApplied marks a decision taken with the
+	// caller's routing.execution, and RouteCacheTrace is the service's
+	// decision.cache_trace for it (nil when the service sent none).
+	RouteIdentity         *RaylineARCRouteIdentity
+	RouteExecutionApplied bool
+	RouteCacheTrace       *raylinearc.PolicyCacheTrace
+	// RouteReceipt is the service's decision.receipt for a lookup that sent
+	// routing.policy or a v2 routing.execution (nil when the service sent
+	// none).
+	RouteReceipt *raylinearc.PolicyDecisionReceipt
 	// PolicyOperatingPoint is the operating point the service decided at, as
 	// it echoed it (point_id names its cost weight), and PolicyTierPicks the
 	// decision at each configured tier point. Both are set only for a cell
