@@ -799,6 +799,15 @@ func TestDeltaUnsettledAppendExtendsTheNextBusyWait(t *testing.T) {
 	if !ok || !staged.unsettled {
 		t.Fatalf("a timed-out append left %+v (%v)", staged, ok)
 	}
+	// It is read even on a package that takes no delta.
+	scorer.deltaUnsupported.Store(true)
+	var history []json.RawMessage
+	_ = json.Unmarshal(requestMessages(t, policyTestRequest(t, deltaUser, deltaAssistant, deltaToolResult)), &history)
+	if _, reason := policyDeltaFor(scorer, fixture.episode, &raylinearc.EpisodeState{TurnIndex: 1},
+		&raylinearc.PolicyEpisodeState{}, raylinearc.PolicyTransitionExtends, policyFormatAnthropic, history); reason != "append_unsettled" {
+		t.Fatalf("reason %q", reason)
+	}
+	scorer.deltaUnsupported.Store(false)
 	close(gate)
 	if got := policyFirstBusyWait(time.Second, "append_unsettled"); got != 2*time.Second {
 		t.Fatalf("unsettled busy wait %v", got)

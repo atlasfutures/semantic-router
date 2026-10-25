@@ -230,17 +230,17 @@ func policyDeltaFor(
 	format string,
 	messages []json.RawMessage,
 ) (policyStagedTurn, string) {
-	if scorer.deltaUnsupported.Load() {
-		return policyStagedTurn{}, "delta_unsupported"
-	}
 	staged, ok := scorer.staged.get(episodeIDHash)
 	switch {
+	case ok && staged.turnIndex == state.TurnIndex && staged.unsettled:
+		// Ahead of every other reason: it widens the turn's busy wait.
+		return policyStagedTurn{}, "append_unsettled"
+	case scorer.deltaUnsupported.Load():
+		return policyStagedTurn{}, "delta_unsupported"
 	case !ok:
 		return policyStagedTurn{}, "not_staged"
 	case staged.turnIndex != state.TurnIndex:
 		return policyStagedTurn{}, "stale_turn"
-	case staged.unsettled:
-		return policyStagedTurn{}, "append_unsettled"
 	case transition != raylinearc.PolicyTransitionExtends || turn == nil || staged.contextEpoch != turn.ContextEpoch():
 		return policyStagedTurn{}, "new_context"
 	case staged.requestFormat != format:
