@@ -100,6 +100,21 @@ type policyServiceScorer struct {
 	// side calls strict after the service last showed it cannot serve them
 	// relaxed; zero or past means relaxed.
 	sideStrictUntil atomic.Int64
+	// delta is a cell that stages its strict main turns and sends held
+	// turns as deltas (ADR 0155, decide_mode delta). staged is the episodes'
+	// staged turns; deltaUnsupported is a package that refused a delta
+	// decide, whose turns are sent in full from then on.
+	delta         bool
+	appendTimeout time.Duration
+	staged        *policyStagedTurns
+	// stagedTurnsServed is set at readiness when the service advertises
+	// staged turns; until then, and without it, a delta cell sends every
+	// turn in full.
+	stagedTurnsServed atomic.Bool
+	// appendAdmission is the appends' own admission gate: an append is
+	// optional work and never takes a slot a turn's decide could need.
+	appendAdmission  *raylinearc.AdmissionGate
+	deltaUnsupported atomic.Bool
 }
 
 // policySideCallStrictFor is how long a strict cell keeps its side calls
@@ -180,6 +195,15 @@ func newPolicyServiceScorer(
 	}
 	if decision.Algorithm.RaylineARC.Episode.RelaxedConsistency() {
 		scorer.episodeMode = raylinearc.PolicyEpisodeModeRelaxed
+	}
+	// Only a strict cell stages turns, and only one whose episodes stay on
+	// one service (no replica pool). A delta decides on the same tokens as a
+	// full request, so an eval cell may send them too.
+	if policy.SendsTurnDeltas() && scorer.episodeMode == "" && len(policy.Replicas) == 0 {
+		scorer.delta = true
+		scorer.appendTimeout = policyAppendTimeout(time.Duration(policy.TotalTimeoutSeconds)*time.Second, scorer.busyWait)
+		scorer.staged = newPolicyStagedTurns()
+		scorer.appendAdmission = raylinearc.NewAdmissionGate(policy.MaxInflightCalls)
 	}
 	index := make(map[string]int, len(decision.ModelRefs))
 	for arm, modelRef := range decision.ModelRefs {
@@ -371,7 +395,7 @@ func createRaylineARCPolicySelector(
 	}
 	scorer := armed.scorer.(*policyServiceScorer)
 	check := func(ctx context.Context, client *raylinearc.PolicyServiceClient) error {
-		if err := requireRaylineARCPolicyServing(ctx, client, policy); err != nil {
+		if err := requireRaylineARCPolicyServing(ctx, client, policy, scorer.armDelta); err != nil {
 			return err
 		}
 		if scorer.episodeMode == raylinearc.PolicyEpisodeModeRelaxed {
@@ -719,7 +743,61 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		defer sessionBinding.Release(ctx)
 	}
 	started := selector.now()
-	response, err := decidePolicyThroughBusy(ctx, decider, request, scorer.busyWait, admit, withCacheContext)
+	// A delta cell stages its strict main turns and sends a turn that
+	// extends the staged prefix as a delta, decided synchronously like any
+	// other turn (rayline_arc_policy_delta.go).
+	staging := scorer.policyDeltaEligible(&request, sideCall)
+	if staging {
+		staged := true
+		request.Stage = &staged
+	}
+	var deltaBase policyStagedTurn
+	deltaOutcome := ""
+	if staging {
+		deltaBase, deltaOutcome = policyDeltaFor(scorer, arcContext.EpisodeIDHash, state, turn, transition, request.RequestFormat, messages)
+		// delta_mismatch_reason is "none" when the delta goes out; the soak
+		// reads the rest as the rate at which the client's echo of the
+		// appended reply missed VSR's (appended_mismatch) and why else.
+		mismatch := deltaOutcome
+		if mismatch == policyDecisionModeDelta {
+			mismatch = "none"
+		}
+		metrics.RecordRaylineARCPolicyStagedTurn(mismatch)
+		logging.ComponentEvent("extproc", "rayline_arc_policy_staged_turn", map[string]interface{}{
+			"request_id": arcContext.RequestID, "episode_id_hash": arcContext.EpisodeIDHash,
+			"delta_mismatch_reason": mismatch,
+		})
+	}
+	decisionMode := ""
+	if staging {
+		decisionMode = policyDecisionModeSync
+	}
+	var response *raylinearc.PolicyDecisionResponse
+	if deltaOutcome == policyDecisionModeDelta {
+		deltaRequest := request
+		deltaRequest.Request = policyShellOf(request.Request)
+		deltaRequest.TurnDelta = &raylinearc.PolicyTurnDelta{
+			BasePrefixDigest: deltaBase.prefixDigest, Messages: messages[deltaBase.count:],
+		}
+		response, err = decidePolicyThroughBusy(ctx, decider, deltaRequest, scorer.busyWait, admit, withCacheContext)
+		if policyDeltaRefused(err) {
+			// The service holds no staged turn this delta extends, or cannot
+			// read one: the turn is sent in full, as a sync cell sends it.
+			var refusal *raylinearc.PolicyServiceError
+			_ = errors.As(err, &refusal)
+			if refusal.Class == raylinearc.PolicyTurnDeltaUnsupportedClass {
+				scorer.deltaUnsupported.Store(true)
+			}
+			logging.ComponentWarnEvent("extproc", "rayline_arc_policy_delta_resent", map[string]interface{}{
+				"request_id": arcContext.RequestID, "episode_id_hash": arcContext.EpisodeIDHash, "class": refusal.Class,
+			})
+			response, err = decidePolicyThroughBusy(ctx, decider, request, scorer.busyWait, admit, withCacheContext)
+		} else {
+			decisionMode = policyDecisionModeDelta
+		}
+	} else {
+		response, err = decidePolicyThroughBusy(ctx, decider, request, scorer.busyWait, admit, withCacheContext)
+	}
 	// A strict cell's relaxed side call that the service refused as
 	// unsupported is decided strict instead, as it was before side calls
 	// went relaxed.
@@ -909,6 +987,12 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	result := selector.selectionResult(armed, selCtx, arcContext, state, encoded, decision, encodeLatency)
 	result.RaylineARC.PolicyLatency = latency
 	result.RaylineARC.EncoderLatencyUnknown = response.TimingMillis.Encode == nil
+	result.RaylineARC.PolicyDecisionMode = decisionMode
+	if staging {
+		result.RaylineARC.PolicyStaging = scorer.newPolicyStaging(
+			arcContext, request.RequestFormat, turn, messages, roles, decider, sessionBinding,
+		)
+	}
 	recordPolicyReplica(result.RaylineARC, replicaBinding)
 	recordPolicySession(result.RaylineARC, sessionBinding, state, arcContext.EpisodeIDHash)
 	result.Reasoning = "policy-service ARC decision (" + response.Decision.Reason + ")"

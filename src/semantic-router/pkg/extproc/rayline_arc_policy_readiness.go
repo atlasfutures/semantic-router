@@ -135,12 +135,18 @@ func requireRaylineARCPolicyServing(
 	ctx context.Context,
 	client *raylinearc.PolicyServiceClient,
 	policy *config.RaylineARCPolicyServiceConfig,
+	advertised func([]string),
 ) error {
 	// The listing's fallback pair, when a service still states one, is not
 	// read: no model serves a turn the policy did not decide.
 	listing, loaded, err := client.ServedPackage(ctx, policy.PackageAlias, policy.PackageSHA256)
 	if err != nil {
 		return err
+	}
+	// The optional capabilities the cell may use only where the service
+	// states them (staged_turns).
+	if advertised != nil && listing != nil {
+		advertised(listing.Capabilities)
 	}
 	err = raylinearc.CheckPolicyServiceRequirements(listing, loaded, raylineARCPolicyServiceRequirements(policy))
 	var failure *raylinearc.PolicyServiceError
