@@ -50,6 +50,7 @@ import (
 	"time"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/responseapi"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
@@ -131,6 +132,19 @@ func (turns *policyStagedTurns) put(episode string, turn policyStagedTurn) {
 		oldest := turns.order.Back()
 		turns.order.Remove(oldest)
 		delete(turns.entries, oldest.Value.(*policyStagedEntry).episode)
+	}
+}
+
+// dropIf drops the episode's entry when match holds of it.
+func (turns *policyStagedTurns) dropIf(episode string, match func(policyStagedTurn) bool) {
+	if turns == nil {
+		return
+	}
+	turns.mu.Lock()
+	defer turns.mu.Unlock()
+	if element, ok := turns.entries[episode]; ok && match(element.Value.(*policyStagedEntry).turn) {
+		turns.order.Remove(element)
+		delete(turns.entries, episode)
 	}
 }
 
@@ -232,8 +246,6 @@ type policyStaging struct {
 	roles    []string
 	// pending is a raced decide whose race the lease won; nil otherwise.
 	pending *policyPendingDecide
-	// waitBound caps how long the transaction waits for pending.
-	waitBound time.Duration
 	// clientBody is the reply the client received, once it is complete.
 	clientBody []byte
 	// appendTimeout bounds the append.
@@ -378,6 +390,7 @@ func policyLeaseCheck(
 	newMessages []json.RawMessage,
 	available []string,
 	plainAsk bool,
+	scheduleBoundary bool,
 	now time.Time,
 ) string {
 	hold := staged.hold
@@ -386,7 +399,8 @@ func policyLeaseCheck(
 		return "no_lease"
 	case !plainAsk:
 		return "derived_offer"
-	case signals.Compaction != nil || signals.Subagent != nil || signals.CallKind == raylinearc.PolicyCallSide:
+	case scheduleBoundary || signals.Compaction != nil || signals.Subagent != nil ||
+		signals.CallKind == raylinearc.PolicyCallSide:
 		return "boundary_signal"
 	case !policyLeaseNewMessagesAllowed(format, newMessages):
 		return "boundary_messages"
@@ -400,6 +414,12 @@ func policyLeaseCheck(
 		return "lease_not_offered"
 	}
 	return ""
+}
+
+// lateDecideBudget bounds a raced decide's whole operation: a delta and its
+// full resend, each one call and its busy retries.
+func (scorer *policyServiceScorer) lateDecideBudget() time.Duration {
+	return 2*(scorer.appendTimeout+scorer.busyWait) + time.Second
 }
 
 // policyLeaseOutcome names a lease check's result for the staged-turn log.
@@ -445,7 +465,6 @@ func (selector *raylineARCSelector) newPolicyStaging(
 		messages:      messages,
 		roles:         roles,
 		pending:       pending,
-		waitBound:     2*scorer.appendTimeout + scorer.busyWait,
 		appendTimeout: scorer.appendTimeout,
 	}
 }
@@ -560,12 +579,8 @@ func (transaction *raylineARCEpisodeTransaction) awaitPolicyStaging() {
 	if staging == nil || staging.pending == nil {
 		return
 	}
-	if !staging.pending.wait(staging.waitBound) {
-		logging.ComponentWarnEvent("extproc", "rayline_arc_policy_late_decide_unfinished", map[string]interface{}{
-			"request_id": staging.requestID, "episode_id_hash": staging.episodeIDHash,
-		})
-		return
-	}
+	// The decide runs under lateDecideBudget, so this wait ends.
+	<-staging.pending.done
 	if staging.session != nil {
 		if session, changed := staging.session.Session(); changed {
 			transaction.markPolicySession(session, false)
@@ -701,13 +716,25 @@ func policyAssistantOutput(format string, body []byte) ([]json.RawMessage, bool)
 		message, err := raylinearc.MarshalUnescaped(chosen)
 		return []json.RawMessage{message}, err == nil
 	case policyFormatResponses:
+		// Each item as the next turn materializes it (stored history and
+		// resent input alike): through the snapshot type, without the
+		// router's retention fields (raylineARCPolicyResponsesInput).
 		var reply struct {
-			Output []json.RawMessage `json:"output"`
+			Output []responseapi.OutputItem `json:"output"`
 		}
 		if json.Unmarshal(body, &reply) != nil || len(reply.Output) == 0 {
 			return nil, false
 		}
-		return reply.Output, true
+		items := make([]json.RawMessage, 0, len(reply.Output))
+		for _, output := range reply.Output {
+			output.ID, output.Status = "", ""
+			encoded, err := raylinearc.MarshalUnescaped(output)
+			if err != nil {
+				return nil, false
+			}
+			items = append(items, raylinearc.UnescapeHTMLEscapes(encoded))
+		}
+		return items, true
 	default:
 		return nil, false
 	}
@@ -734,10 +761,13 @@ func addPolicyDecisionModeFields(fields map[string]interface{}, trace *selection
 	}
 }
 
-// recordPolicyStagedTurn keeps what this committed turn's append staged, as
-// of the committed turn count, or drops the episode's entry: a turn that
-// appended nothing leaves nothing for the next to build on.
-func (transaction *raylineARCEpisodeTransaction) recordPolicyStagedTurn(turnIndex uint64, staged *policyStagedTurn) {
+// publishPolicyStagedTurn keeps what this turn's append staged, as of the
+// turn count its commit writes, or drops the episode's entry: a turn that
+// appended nothing leaves nothing for the next to build on. It runs before
+// the commit, under the lease, so the next turn's prepare cannot read the
+// committed state beside the previous entry; a commit that then fails takes
+// the entry back (retractPolicyStagedTurn).
+func (transaction *raylineARCEpisodeTransaction) publishPolicyStagedTurn(turnIndex uint64, staged *policyStagedTurn) {
 	staging := transaction.policyStaging
 	if staging == nil {
 		return
@@ -748,6 +778,18 @@ func (transaction *raylineARCEpisodeTransaction) recordPolicyStagedTurn(turnInde
 	}
 	staged.turnIndex = turnIndex
 	staging.turns.put(staging.episodeIDHash, *staged)
+}
+
+// retractPolicyStagedTurn drops the entry publishPolicyStagedTurn wrote
+// when its commit failed, unless a later turn has replaced it.
+func (transaction *raylineARCEpisodeTransaction) retractPolicyStagedTurn(staged *policyStagedTurn) {
+	staging := transaction.policyStaging
+	if staging == nil || staged == nil {
+		return
+	}
+	staging.turns.dropIf(staging.episodeIDHash, func(current policyStagedTurn) bool {
+		return current.turnIndex == staged.turnIndex && current.prefixDigest == staged.prefixDigest
+	})
 }
 
 // dropPolicyStagedTurn forgets the episode's staged turn after a commit that

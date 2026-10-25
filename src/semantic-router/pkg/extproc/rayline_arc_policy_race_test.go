@@ -209,7 +209,14 @@ func TestRaceLostServesTheLeaseAndRecordsIt(t *testing.T) {
 	if wait := second.RaylineARC.PolicyRaceWait; wait < 30*time.Millisecond || wait > 250*time.Millisecond {
 		t.Fatalf("race waited %v", wait)
 	}
-	complete(t, ctx, raceReply(t))
+	// The caller's finalize budget is shorter than the late decide: the
+	// store's commit still gets one of its own.
+	stageRaylineARCAppendSource(ctx, raceReply(t))
+	short, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if err := ctx.RaylineARCTransaction.commit(short, ctx); err != nil {
+		t.Fatal(err)
+	}
 	pending := ctx.RaylineARCTransaction.policyStaging.pending
 	select {
 	case <-pending.done:
@@ -396,5 +403,60 @@ func TestRaceDecisionModeReachesTheUsageRecord(t *testing.T) {
 	fields := record.fields()
 	if fields["decision_mode"] != policyDecisionModeRaceLost || fields["race_ms_observed"] != 100.0 {
 		t.Fatalf("usage fields %v %v", fields["decision_mode"], fields["race_ms_observed"])
+	}
+}
+
+// A scheduled package's schedule boundary may change the model, so no lease
+// holds through it, even on a tool-result continuation.
+func TestRaceLeaseNeverServesAtAScheduleBoundary(t *testing.T) {
+	fixture := newRaceFixture(t, config.RaylineARCModelScheduleTaskTurnCompaction, nil)
+	messages := []map[string]any{raceUser}
+	var served *selection.SelectionResult
+	for turn := 0; turn <= 5; turn++ {
+		if turn == 5 {
+			slowDeltas(fixture, 150*time.Millisecond)
+		}
+		result, ctx := fixture.turn(t, policyTestRequest(t, messages...))
+		served = result
+		id := "toolu_" + string(rune('a'+turn))
+		content := []any{map[string]any{"type": "tool_use", "id": id, "name": "Bash", "input": map[string]any{"command": "ls"}}}
+		reply, _ := json.Marshal(map[string]any{
+			"id": "msg", "type": "message", "role": "assistant", "model": "think", "content": content,
+			"stop_reason": "tool_use", "stop_sequence": nil, "usage": map[string]any{"input_tokens": 1, "output_tokens": 1},
+		})
+		complete(t, ctx, reply)
+		messages = append(messages, map[string]any{"role": "assistant", "content": content},
+			map[string]any{"role": "user", "content": []any{map[string]any{"type": "tool_result", "tool_use_id": id, "content": "ok"}}})
+	}
+	if served.RaylineARC.PolicyActionID != fixture.decided || served.RaylineARC.PolicyDecisionMode != policyDecisionModeSync {
+		t.Fatalf("turn 5 served %s (%s), want the decide's", served.RaylineARC.PolicyActionID, served.RaylineARC.PolicyDecisionMode)
+	}
+	sent := fixture.fake.received()
+	if sent[len(sent)-1].TurnDelta == nil || len(sent[len(sent)-1].Selection.AvailableActionIDs) != 3 {
+		t.Fatalf("turn 5 was not a delta at the boundary: %+v", sent[len(sent)-1])
+	}
+}
+
+// A Responses reply's output items are appended as the next turn
+// materializes them: without the router's retention fields.
+func TestPolicyAssistantOutputNormalizesResponsesItems(t *testing.T) {
+	body := []byte(`{"id":"resp_1","object":"response","status":"completed","output":[` +
+		`{"id":"msg_1","type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":"a <b>"}]},` +
+		`{"id":"fc_1","type":"function_call","status":"completed","call_id":"call_1","name":"ls","arguments":"{}"}]}`)
+	items, ok := policyAssistantOutput(policyFormatResponses, body)
+	if !ok || len(items) != 2 {
+		t.Fatalf("items %s", items)
+	}
+	for _, item := range items {
+		if bytes.Contains(item, []byte(`"status"`)) || bytes.Contains(item, []byte(`"id":"`)) {
+			t.Fatalf("retention fields kept: %s", item)
+		}
+	}
+	if !bytes.Contains(items[0], []byte(`"a <b>"`)) || !bytes.Contains(items[1], []byte(`"call_id":"call_1"`)) {
+		t.Fatalf("items %s", items)
+	}
+	roles, err := policyResponsesRoles(items)
+	if err != nil || roles[0] != "assistant" || roles[1] != "assistant" {
+		t.Fatalf("roles %v %v", roles, err)
 	}
 }

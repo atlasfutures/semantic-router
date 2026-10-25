@@ -783,8 +783,13 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	}
 	leaseRefusal := "no_delta"
 	if deltaOutcome == "delta" {
+		// A scheduled package's model may change at its schedule boundaries,
+		// which no lease may hold through; a two-stage package's service
+		// owns its boundaries and issues no lease across them.
+		scheduleBoundary := scheduled && !scorer.twoStage &&
+			raylinearc.ModelChangeAllowed(state.TurnIndex, turn.EpochStartTurn, turn.CompactionCount)
 		leaseRefusal = policyLeaseCheck(scorer, deltaBase, signals, request.RequestFormat, messages[deltaBase.count:],
-			available, attestedFirst == "" && !derivedOffer && !forced, selector.now())
+			available, attestedFirst == "" && !derivedOffer && !forced, scheduleBoundary, selector.now())
 	}
 	if staging {
 		logging.ComponentEvent("extproc", "rayline_arc_policy_staged_turn", map[string]interface{}{
@@ -796,8 +801,11 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	if leaseRefusal == "" {
 		// The decide runs on its own context: if the lease serves, it
 		// outlives this request's selection and finishes inside the lease.
-		detached := context.WithoutCancel(ctx)
+		// Its budget bounds the whole operation (a delta, a full resend,
+		// their busy retries), so the transaction can always wait it out.
+		detached, cancelDecide := context.WithTimeout(context.WithoutCancel(ctx), scorer.lateDecideBudget())
 		pending = startPolicyPendingDecide(func() (*raylinearc.PolicyDecisionResponse, error, bool) {
+			defer cancelDecide()
 			return decideFirst(detached)
 		})
 		deadline := scorer.raceDeadline

@@ -510,10 +510,17 @@ func (transaction *raylineARCEpisodeTransaction) commit(
 		// A racing cell's turn finishes its service calls inside the lease,
 		// while it is still renewed: a lost race's late decide, then the
 		// append that prepares the next turn. Neither can fail the turn.
-		transaction.awaitPolicyStaging()
 		var staged *policyStagedTurn
-		if transaction.policyStaging != nil && transaction.selectionReady && !transaction.leaseLost.Load() {
-			staged = transaction.appendPolicyStagedTurn(ctx)
+		if transaction.policyStaging != nil {
+			transaction.awaitPolicyStaging()
+			if transaction.selectionReady && !transaction.leaseLost.Load() {
+				staged = transaction.appendPolicyStagedTurn(ctx)
+			}
+			// The store's commit gets its own budget: the staging may have
+			// spent the caller's.
+			storeContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), transaction.finalizeTimeout())
+			defer cancel()
+			ctx = storeContext
 		}
 		transaction.stopRenewal()
 		if !transaction.selectionReady || transaction.leaseLost.Load() {
@@ -543,6 +550,7 @@ func (transaction *raylineARCEpisodeTransaction) commit(
 			requestContext,
 			nextState,
 		)
+		transaction.publishPolicyStagedTurn(nextState.TurnIndex, staged)
 		transaction.finalizeErr = transaction.store.Commit(
 			ctx,
 			transaction.lease,
@@ -552,11 +560,10 @@ func (transaction *raylineARCEpisodeTransaction) commit(
 		if transaction.finalizeErr != nil {
 			// The abort stages the refusal instead.
 			transaction.handedOver = refused
-			transaction.dropPolicyStagedTurn()
+			transaction.retractPolicyStagedTurn(staged)
 			transaction.abortStore(ctx)
 			return
 		}
-		transaction.recordPolicyStagedTurn(nextState.TurnIndex, staged)
 		transaction.state = nextState
 		metrics.RecordRaylineARCEpisodeTransaction("commit", "")
 		recordCommittedARCEpisodeTelemetry(requestContext, transaction)
@@ -690,8 +697,15 @@ func (transaction *raylineARCEpisodeTransaction) abort(
 		// A lost race's late decide finishes before the lease is released,
 		// and an unrecorded turn leaves no staged turn to build on: the
 		// service's staged turn is now this attempt's.
-		transaction.awaitPolicyStaging()
-		transaction.dropPolicyStagedTurn()
+		if transaction.policyStaging != nil {
+			transaction.awaitPolicyStaging()
+			transaction.dropPolicyStagedTurn()
+			// The release gets its own budget: the wait may have spent the
+			// caller's.
+			storeContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), episodeFinalizeTimeout)
+			defer cancel()
+			ctx = storeContext
+		}
 		transaction.stopRenewal()
 		transaction.applyHandedOverRefusal(ctx)
 		transaction.finalizeErr = transaction.store.Abort(
