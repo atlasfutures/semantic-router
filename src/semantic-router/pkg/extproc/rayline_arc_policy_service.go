@@ -686,6 +686,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	explorationExcluded := scorer.exploration.apply(&request, arcContext.PolicySignalHeaders, sideCall)
 	pricesStatus := attachRoutingPrices(armed.prices, &request)
 	applyRouteControls(&request, routeControls)
+	request.Signals = turnSignals(arcContext)
 	predictionsAsked := false
 	if routeControls != nil && routeControls.Predictions && scorer.advertises(raylinearc.PolicyCapabilityPredictions) {
 		predictionsAsked = true
@@ -849,6 +850,11 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 			narrow(derived.offer)
 			response, err = decidePolicyThroughBusy(ctx, decider, request, scorer.busyWait, admit, withCacheContext)
 		}
+	}
+	// A refusal of the caller's routing.signals answers the service's own
+	// reason as its public code, whatever else the request carried.
+	if class := signalRefusalClass(err); class != "" {
+		return nil, arcSelectionFailure(class)
 	}
 	// A refusal of the caller's routing.execution or routing.policy answers
 	// its public code (selection_refused reasons such as no_feasible_target
@@ -1072,6 +1078,9 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		if execution != nil {
 			result.RaylineARC.RouteCacheTrace = response.Decision.CacheTrace
 		}
+	}
+	if len(request.Signals) > 0 {
+		result.RaylineARC.Signals = response.Signals
 	}
 	if class := recordRouteControls(result.RaylineARC, scorer, routeControls, response, available, predictionsAsked); class != "" {
 		logging.ComponentErrorEvent("extproc", "rayline_arc_policy_service_failed", map[string]interface{}{

@@ -343,6 +343,13 @@ const (
 	VSRRoutingApplied   = "x-vsr-routing-applied"
 	VSRRoutingUnapplied = "x-vsr-routing-unapplied"
 
+	// VSRSignals is a generation turn's signals block (pathfinder #5943):
+	// the policy service's caller-facing signals, keyed by signal name, as
+	// one compact JSON object. Present only when the turn sent
+	// routing.signals and the service answered them; "signals" is then in
+	// x-vsr-routing-applied, and otherwise in x-vsr-routing-unapplied.
+	VSRSignals = "x-vsr-signals"
+
 	// VSRPrivacyMode is the data mode a Rayline ARC turn was served under:
 	// "standard", "privacy" or "zdr", as the cell applied it from its
 	// trusted gateway headers. Set on every upstream response to an ARC turn,

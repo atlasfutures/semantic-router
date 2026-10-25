@@ -674,6 +674,23 @@ eligible to explore, on a cell whose `exploration_temperature` sets
 (`prices_not_supported`). `x-vsr-routing-applied` and
 `x-vsr-routing-unapplied` name what the turn applied.
 
+### Caller-facing signals: routing.signals
+
+`routing.signals` (for example `["topic.operation", "topic.domain"]`) asks
+the policy service for caller-facing content signals. They are metadata for
+the caller's own policy and change no route, so the member is accepted on
+`/v1/routes` and on generation turns alike. The cell checks only its shape
+(an array of distinct, non-empty strings; `[]` is the same as absent) and
+forwards the names as the decide request's `signals`. It keeps no list of
+signal names: the service admits or refuses them, and a refusal answers the
+service's reason as `error.code` (`signal_not_supported` and
+`signal_not_admitted` as 400, `signal_heads_unavailable` as 503). A lookup
+answers the service's block, keyed by signal name, as the top-level `signals`
+member; a generation turn answers it in the `x-vsr-signals` header as one
+compact JSON object. A turn the service did not decide (a hold) has no block
+and lists `signals` in `x-vsr-routing-unapplied`. Without `routing.signals`
+nothing in the decide request or the answer changes.
+
 ### Describing the cell as one model
 
 A gateway that fronts this cell as one model needs to say what that model is:

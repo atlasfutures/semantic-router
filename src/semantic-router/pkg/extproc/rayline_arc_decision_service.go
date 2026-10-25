@@ -187,6 +187,7 @@ func (service *raylineARCDecisionService) RouteDecision(
 		decisionFacts.ExecutionApplied = trace.RouteExecutionApplied
 		decisionFacts.CacheTrace = trace.RouteCacheTrace
 		decisionFacts.Receipt = trace.RouteReceipt
+		decisionFacts.Signals = trace.Signals
 	}
 	// The episode is reported only when the caller joined one. An ephemeral
 	// consult scored against a fresh in-memory episode, so its turn index and
@@ -903,6 +904,10 @@ func selectionFailureError(err error) error {
 		}
 		if _, refused := routeExecutionClasses[failure.class]; refused {
 			return &routeExecutionRefusal{class: failure.class, err: err}
+		}
+		if refusal := signalRefusalOf(failure.class); refusal != nil {
+			refusal.err = err
+			return refusal
 		}
 	}
 	return err
