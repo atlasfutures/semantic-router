@@ -30,6 +30,15 @@ opt-in. The core reports facts and never picks or ranks a model.
   `arc-policy.hybrid-default.v1` when its user sets no override; the core never
   sends an absent policy in this mode. Allowed routing keys are `policy`,
   `value_usd`, `prices`, `exclusive` and the price-profile keys.
+- **Package-less profile.** `derived_actions` (v2 only) replaces
+  `package_path`, `package_sha256` and `bindings`: each entry
+  `{model, worker, deployment_id, bases?}` binds every registry-admitted control
+  of that model on that deployment (optionally only these native bases), with
+  ARC's v5 action identity (sha256 of JCS `{"control_id","model"}`). With no
+  `registry_path`, `registry_sha256` may be omitted and the embedded registry is
+  used. Such a profile pins no package: `expect` is null and the response names
+  the package. Rayline Local builds one by default, so a user needs no profile
+  file.
 - **Envelope.** Each decision sends `routing.execution` version
   `arc-execution-context.v2`: `turn` (`id`, `attempt`, `epoch`, `retry_of`,
   `reconsult`), `event`, `last_served`, `history`, `hold` (null: the core has no

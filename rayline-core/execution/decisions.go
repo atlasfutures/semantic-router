@@ -428,7 +428,8 @@ func (provider *HTTPDecisions) Decide(ctx context.Context, input DecisionInput) 
 		return provider.currentTopDecision(result, selected, routing)
 	}
 	identity := selected.Identity
-	if identity == nil || identity.PackageSHA256 != provider.config.PackageSHA256 || identity.RegistrySHA256 != provider.config.RegistrySHA256 || (provider.config.Decisions.OfferSHA256 != "" && identity.OfferSHA256 != provider.config.Decisions.OfferSHA256) || identity.ActionID != identity.PolicyActionID || (selected.ActionID != "" && selected.ActionID != identity.ActionID) {
+	// A package-less profile pins no package: the response names it.
+	if identity == nil || (provider.config.PackageSHA256 != "" && identity.PackageSHA256 != provider.config.PackageSHA256) || identity.RegistrySHA256 != provider.config.RegistrySHA256 || (provider.config.Decisions.OfferSHA256 != "" && identity.OfferSHA256 != provider.config.Decisions.OfferSHA256) || identity.ActionID != identity.PolicyActionID || (selected.ActionID != "" && selected.ActionID != identity.ActionID) {
 		return Decision{}, fmt.Errorf("Decisions identity does not match the pinned execution package, registry and offer")
 	}
 	action, ok := provider.actions[identity.ActionID]

@@ -138,7 +138,8 @@ type contextV2 struct {
 	LastServed *lastServedV2  `json:"last_served"`
 	History    []historyV2    `json:"history"`
 	Hold       *holdV2        `json:"hold"`
-	Expect     expectV2       `json:"expect"`
+	// Expect is null for a package-less (derived_actions) profile: it pins nothing.
+	Expect *expectV2 `json:"expect"`
 	Targets    []targetV2     `json:"targets"`
 }
 
@@ -156,14 +157,16 @@ func (provider *HTTPDecisions) projectV2(input DecisionInput) contextV2 {
 		kind, retryOf := reconsult.Kind, reconsult.RetryOf
 		external.Turn.Attempt, external.Turn.Reconsult, external.Turn.RetryOf = reconsult.Attempt, &kind, &retryOf
 	}
-	external.Expect.PackageSHA256 = provider.config.PackageSHA256
-	if provider.config.RegistrySHA256 != "" {
-		registry := provider.config.RegistrySHA256
-		external.Expect.ThinkingControlsSHA256 = &registry
-	}
-	if provider.config.Decisions.OfferSHA256 != "" {
-		offer := provider.config.Decisions.OfferSHA256
-		external.Expect.OfferSHA256 = &offer
+	if provider.config.PackageSHA256 != "" {
+		external.Expect = &expectV2{PackageSHA256: provider.config.PackageSHA256}
+		if provider.config.RegistrySHA256 != "" {
+			registry := provider.config.RegistrySHA256
+			external.Expect.ThinkingControlsSHA256 = &registry
+		}
+		if provider.config.Decisions.OfferSHA256 != "" {
+			offer := provider.config.Decisions.OfferSHA256
+			external.Expect.OfferSHA256 = &offer
+		}
 	}
 	if !input.Event.is(EventSidecall) {
 		for _, entry := range input.State.Attribution {
@@ -262,10 +265,10 @@ func validateV2(raw []byte, selected publicDecision, identity *decisionIdentity,
 	if execution == nil || execution.Status != "applied" || execution.Version != executionContextV2 || !sameTurn(execution.Turn, sent.Turn) {
 		return nil, fmt.Errorf("Decisions did not apply this v2 execution context")
 	}
-	if execution.Pinned == nil {
+	if sent.Expect != nil && execution.Pinned == nil {
 		return nil, fmt.Errorf("Decisions applied the v2 execution context without confirming its pins")
 	}
-	{
+	if sent.Expect != nil {
 		pins := []string{"package_sha256", "thinking_controls_sha256"}
 		if sent.Expect.OfferSHA256 != nil {
 			pins = append(pins, "offer_sha256")

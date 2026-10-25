@@ -25,10 +25,23 @@ type Config struct {
 	Decisions                 DecisionsConfig `json:"decisions"`
 	Deployments               []Deployment    `json:"deployments"`
 	Bindings                  []ActionBinding `json:"bindings"`
+	// DerivedActions replaces package_path and bindings for a package-less
+	// execution_context_v2 profile: actions are the registry's admitted
+	// controls for each deployment, with ARC's v5 action identity.
+	DerivedActions []DerivedActions `json:"derived_actions,omitempty"`
 	TestAlias                 *TestAlias      `json:"test_alias,omitempty"`
 	MaxGenerationAttempts     int64           `json:"max_generation_attempts,omitempty"`
 	Actions                   []Action        `json:"-"`
 	PackageID                 string          `json:"-"`
+}
+
+// DerivedActions binds every registry-admitted control of one model on one
+// deployment. Bases optionally limits the controls to these native bases.
+type DerivedActions struct {
+	Model        string   `json:"model"`
+	Worker       string   `json:"worker"`
+	DeploymentID string   `json:"deployment_id"`
+	Bases        []string `json:"bases,omitempty"`
 }
 
 type ActionBinding struct {
@@ -89,7 +102,12 @@ func LoadConfig(path string) (Config, *thinkingcontrol.Registry, error) {
 	if config.ContractVersion != ContractVersion {
 		return config, nil, fmt.Errorf("unsupported execution contract version %d", config.ContractVersion)
 	}
-	if !validSHA256(config.PackageSHA256) {
+	derived := len(config.DerivedActions) > 0
+	if derived {
+		if config.PackagePath != "" || config.PackageSHA256 != "" || len(config.Bindings) > 0 || config.Decisions.apiMode() != DecisionsExecutionContextV2 {
+			return config, nil, fmt.Errorf("derived_actions replaces package_path, package_sha256 and bindings and requires execution_context_v2")
+		}
+	} else if !validSHA256(config.PackageSHA256) {
 		return config, nil, fmt.Errorf("package_sha256 must pin the decision package")
 	}
 	var registry *thinkingcontrol.Registry
@@ -109,8 +127,18 @@ func LoadConfig(path string) (Config, *thinkingcontrol.Registry, error) {
 	if err != nil {
 		return config, nil, fmt.Errorf("load thinking registry: %w", err)
 	}
+	if derived && config.RegistryPath == "" && config.RegistrySHA256 == "" {
+		// The binary's own embedded registry; a derived profile names no package.
+		config.RegistrySHA256 = registry.SHA256
+	}
 	if config.RegistrySHA256 != registry.SHA256 {
 		return config, nil, fmt.Errorf("thinking registry SHA256 does not match the execution config")
+	}
+	if derived {
+		if err := config.deriveActions(registry); err != nil {
+			return config, nil, err
+		}
+		return config, registry, nil
 	}
 	if err := config.loadActions(filepath.Dir(path)); err != nil {
 		return config, nil, err
@@ -162,6 +190,66 @@ func (config *Config) loadActions(directory string) error {
 		action.DeploymentID = binding.DeploymentID
 		action.ReportedModel = binding.ReportedModel
 		config.Actions = append(config.Actions, action)
+	}
+	return nil
+}
+
+// deriveActions lists each deployment's registry-admitted controls as actions
+// with ARC's v5 identity, sha256 of JCS {"control_id","model"}.
+func (config *Config) deriveActions(registry *thinkingcontrol.Registry) error {
+	deployments := make(map[string]Deployment, len(config.Deployments))
+	for _, deployment := range config.Deployments {
+		deployments[deployment.ID] = deployment
+	}
+	seen := map[string]bool{}
+	for _, entry := range config.DerivedActions {
+		deployment, ok := deployments[entry.DeploymentID]
+		if !ok || entry.Model == "" || entry.Worker == "" {
+			return fmt.Errorf("derived_actions entry needs model, worker and a known deployment_id")
+		}
+		format, err := registryFormat(deployment.Protocol)
+		if err != nil {
+			return err
+		}
+		cell, err := registry.Cell(deployment.RegistryModel, deployment.RegistryProvider, format)
+		if err != nil {
+			return fmt.Errorf("derived_actions %s: %w", entry.Model, err)
+		}
+		bases := map[string]bool{}
+		for _, base := range entry.Bases {
+			bases[base] = true
+		}
+		count := 0
+		for _, controlID := range cell.ControlIDs() {
+			control, ok := registry.Control(controlID)
+			if !ok || (len(bases) > 0 && !bases[control.Native]) {
+				continue
+			}
+			if _, err := registry.Admit(deployment.RegistryModel, deployment.RegistryProvider, format, control, config.AllowExperimentalControls); err != nil {
+				continue
+			}
+			raw, err := control.Canonical()
+			if err != nil {
+				return err
+			}
+			identity, err := json.Marshal(struct {
+				ControlID string `json:"control_id"`
+				Model     string `json:"model"`
+			}{controlID, entry.Model})
+			if err != nil {
+				return err
+			}
+			action := Action{ID: fingerprint(identity), Worker: entry.Worker, Model: entry.Model, DeploymentID: entry.DeploymentID, ControlID: controlID, Control: raw}
+			if seen[action.ID] {
+				return fmt.Errorf("derived_actions bind action %s twice", action.ID)
+			}
+			seen[action.ID] = true
+			config.Actions = append(config.Actions, action)
+			count++
+		}
+		if count == 0 {
+			return fmt.Errorf("derived_actions %s: no admitted control on its deployment", entry.Model)
+		}
 	}
 	return nil
 }
