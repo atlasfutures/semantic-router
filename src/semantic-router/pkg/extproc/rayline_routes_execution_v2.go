@@ -40,7 +40,10 @@ import (
 const routesExecutionVersionV2 = "arc-execution-context.v2"
 
 var (
-	routesPolicyPresets        = []string{"arc-policy.package-default.v1", "arc-policy.hybrid-default.v1"}
+	routesPolicyPresets = []string{"arc-policy.package-default.v1", "arc-policy.hybrid-default.v1", "arc-policy.prefer-local.v1"}
+	// routesSelectionPresets are the presets with a selection rule, the only
+	// ones overrides.selection applies to.
+	routesSelectionPresets     = []string{"arc-policy.prefer-local.v1"}
 	routesScheduleClasses      = []string{"cache_boundaries", "user_messages", "all_turns"}
 	routesExecutorEventKinds   = []string{"task_start", "user_message", "tool_result", "compaction", "subagent_start", "sidecall"}
 	routesExecutorEventBases   = []string{"explicit_client", "marker_inferred", "unknown"}
@@ -106,11 +109,20 @@ func readRoutesPolicy(raw json.RawMessage) (*raylinearc.PolicyMember, *routesCon
 	if !ok {
 		return policy, nil
 	}
-	overrides, failure := routesPolicyObject(overridesRaw, ".overrides", "schedule")
+	overrides, failure := routesPolicyObject(overridesRaw, ".overrides", "schedule", "selection")
 	if failure != nil {
 		return nil, failure
 	}
 	policy.Overrides = &raylinearc.PolicyMemberOverride{}
+	if selectionRaw, hasSelection := overrides["selection"]; hasSelection {
+		if !contains(routesSelectionPresets, preset) {
+			return nil, routesPolicyInvalid(".overrides.selection", "applies only to a preset with a selection rule ("+
+				strings.Join(routesSelectionPresets, ", ")+")")
+		}
+		if policy.Overrides.Selection, failure = readRoutesPolicySelection(selectionRaw); failure != nil {
+			return nil, failure
+		}
+	}
 	scheduleRaw, ok := overrides["schedule"]
 	if !ok {
 		return policy, nil
@@ -146,6 +158,31 @@ func readRoutesPolicy(raw json.RawMessage) (*raylinearc.PolicyMember, *routesCon
 		*dimension.target = classes
 	}
 	return policy, nil
+}
+
+// readRoutesPolicySelection reads prefer-local's thresholds: min_p_pass in
+// [0, 1], max_rest_tokens an integer > 0, each optional, none null.
+func readRoutesPolicySelection(raw json.RawMessage) (*raylinearc.PolicyMemberSelection, *routesContractError) {
+	members, failure := routesPolicyObject(raw, ".overrides.selection", "min_p_pass", "max_rest_tokens")
+	if failure != nil {
+		return nil, failure
+	}
+	selection := &raylinearc.PolicyMemberSelection{}
+	if value, ok := members["min_p_pass"]; ok {
+		number, finite := routesFiniteNumber(value)
+		if !finite || number < 0 || number > 1 {
+			return nil, routesPolicyInvalid(".overrides.selection.min_p_pass", "must be a number in [0, 1]")
+		}
+		selection.MinPPass = &number
+	}
+	if value, ok := members["max_rest_tokens"]; ok {
+		tokens, failure := routesExecutionInteger(value, ".overrides.selection.max_rest_tokens", 1, math.MaxInt32)
+		if failure != nil {
+			return nil, routesPolicyInvalid(".overrides.selection.max_rest_tokens", "must be an integer > 0")
+		}
+		selection.MaxRestTokens = &tokens
+	}
+	return selection, nil
 }
 
 // --- the v2 envelope -----------------------------------------------------------
@@ -609,6 +646,9 @@ type raylineRoutesReceipt struct {
 	Excluded        []raylinearc.PolicyReceiptExcluded `json:"excluded"`
 	CapacityUnknown []string                           `json:"capacity_unknown"`
 	Basis           *string                            `json:"basis"`
+	// Selection is a prefer-local decision's comparison, copied verbatim;
+	// omitted otherwise.
+	Selection json.RawMessage `json:"selection,omitempty"`
 }
 
 func raylineRoutesReceiptOf(receipt *raylinearc.PolicyDecisionReceipt, actionID, controlID string) *raylineRoutesReceipt {
@@ -618,6 +658,7 @@ func raylineRoutesReceiptOf(receipt *raylinearc.PolicyDecisionReceipt, actionID,
 	rendered := &raylineRoutesReceipt{
 		ActionID: actionID, Policy: receipt.Policy, DecidedBy: receipt.DecidedBy, Eligible: receipt.Eligible,
 		HeldFrom: receipt.HeldFrom, Excluded: receipt.Excluded, CapacityUnknown: receipt.CapacityUnknown, Basis: receipt.Basis,
+		Selection: receipt.Selection,
 	}
 	if controlID != "" {
 		rendered.ControlID = &controlID

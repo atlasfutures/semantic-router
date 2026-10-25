@@ -1,0 +1,63 @@
+{
+  "surface": "decisions",
+  "body": {
+    "model": "arc-1.0",
+    "max_tokens": 1024,
+    "messages": [
+      {
+        "role": "user",
+        "content": "Refactor the parser."
+      },
+      {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "tool_use",
+            "id": "t1",
+            "name": "read",
+            "input": {}
+          }
+        ]
+      },
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "tool_result",
+            "tool_use_id": "t1",
+            "content": "ok"
+          }
+        ]
+      },
+      {
+        "role": "assistant",
+        "content": "Done; now the tests."
+      },
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "tool_result",
+            "tool_use_id": "t2",
+            "content": "ok"
+          }
+        ]
+      }
+    ],
+    "routing": {
+      "policy": {
+        "preset": "arc-policy.hybrid-default.v1",
+        "overrides": {
+          "selection": {
+            "min_p_pass": 0.5
+          }
+        }
+      }
+    }
+  },
+  "expect": {
+    "status": 400,
+    "type": "invalid_request_error",
+    "code": "policy_invalid"
+  }
+}

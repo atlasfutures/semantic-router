@@ -75,7 +75,8 @@
               "user_messages"
             ],
             "thinking": null
-          }
+          },
+          "selection": null
         }
       }
     },
