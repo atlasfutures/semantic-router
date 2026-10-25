@@ -262,7 +262,10 @@ func validateV2(raw []byte, selected publicDecision, identity *decisionIdentity,
 	if execution == nil || execution.Status != "applied" || execution.Version != executionContextV2 || !sameTurn(execution.Turn, sent.Turn) {
 		return nil, fmt.Errorf("Decisions did not apply this v2 execution context")
 	}
-	if execution.Pinned != nil {
+	if execution.Pinned == nil {
+		return nil, fmt.Errorf("Decisions applied the v2 execution context without confirming its pins")
+	}
+	{
 		pins := []string{"package_sha256", "thinking_controls_sha256"}
 		if sent.Expect.OfferSHA256 != nil {
 			pins = append(pins, "offer_sha256")

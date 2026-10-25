@@ -191,16 +191,16 @@ func (server *Server) execute(writer http.ResponseWriter, incoming *http.Request
 		server.writeError(writer, format, http.StatusBadRequest, "invalid_body", "request body exceeds limits or could not be read")
 		return
 	}
-	body, explicitEvent, err := extractExplicitEvent(incoming.Header, body)
-	if err != nil {
-		server.writeError(writer, format, http.StatusBadRequest, "invalid_execution_event", err.Error())
-		return
-	}
+	// Current and v1 modes keep their pre-v2 behaviour exactly: the request
+	// bytes are untouched and no event channel is read.
 	v2 := server.config.Decisions.apiMode() == DecisionsExecutionContextV2
-	if !v2 {
-		// Current and v1 modes keep their pre-v2 behaviour: an explicit event
-		// is removed from the body (it must never reach a provider) and ignored.
-		explicitEvent = nil
+	var explicitEvent *ExecutionEvent
+	if v2 {
+		body, explicitEvent, err = extractExplicitEvent(incoming.Header, body)
+		if err != nil {
+			server.writeError(writer, format, http.StatusBadRequest, "invalid_execution_event", err.Error())
+			return
+		}
 	}
 	wireRequest := parseWireRequest(format, body)
 	markerSidecall := v2 && explicitEvent == nil && wireRequest.isSidecall()
@@ -271,7 +271,10 @@ func (server *Server) execute(writer http.ResponseWriter, incoming *http.Request
 	// A side call is decided with the held model and never advances this
 	// branch: no epoch change, retained decision or committed evidence.
 	sidecall := event.is(EventSidecall)
-	if !sidecall && rewrite {
+	// v2: a client retry of a rewriting request already reset this epoch;
+	// resetting again would drop its retained decision and recorded refusals.
+	retriedRewrite := v2 && state.pending != nil && state.pending.fingerprint == fingerprint(body)
+	if !sidecall && rewrite && !retriedRewrite {
 		state.resetEpoch(v2)
 		var retained []attributedTurn
 		if event.is(EventCompaction) && state.carried != nil {

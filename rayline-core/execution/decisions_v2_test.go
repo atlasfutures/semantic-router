@@ -122,7 +122,7 @@ func v2Server(t *testing.T, config Config, fixture *v2Decisions, counts ...int) 
 		response := map[string]any{"route_id": fmt.Sprintf("route-%d", index), "model": action.Model, "worker": action.Worker, "policy_action_id": id,
 			"identity": map[string]any{"package_sha256": config.PackageSHA256, "action_id": id, "policy_action_id": id, "control_id": action.ControlID, "arm_id": nil, "thinking_controls_sha256": config.RegistrySHA256, "offer_sha256": nil, "prices": map[string]any{"basis": "catalog", "price_sha256": nil, "exclusive": nil}},
 			"receipt":  map[string]any{"action_id": id, "control_id": action.ControlID, "decided_by": map[string]string{"model": decidedBy, "thinking": "schedule"}, "eligible": map[string]any{"model": nil, "thinking": "all_turns"}, "held_from": nil, "excluded": excluded, "basis": sent.Event.Basis},
-			"routing":  map[string]any{"execution": map[string]any{"status": "applied", "version": executionContextV2, "turn": sent.Turn}, "policy": map[string]any{"status": "applied", "preset": body.Routing.Policy.Preset}, "unapplied_keys": []string{}}}
+			"routing":  map[string]any{"execution": map[string]any{"status": "applied", "version": executionContextV2, "turn": sent.Turn, "pinned": map[string]string{"package_sha256": "matched", "thinking_controls_sha256": "matched", "offer_sha256": "unpinned"}}, "policy": map[string]any{"status": "applied", "preset": body.Routing.Policy.Preset}, "unapplied_keys": []string{}}}
 		if fixture.mutate != nil {
 			fixture.mutate(response)
 		}
@@ -552,7 +552,8 @@ func TestV2ConfigRequiresAnExplicitPublishedPolicy(t *testing.T) {
 		"prefer local threshold":     {DecisionsExecutionContextV2, `{"policy":{"preset":"arc-policy.prefer-local.v1","overrides":{"selection":{"min_p_pass":0.65}}}}`, true},
 		"threshold out of range":     {DecisionsExecutionContextV2, `{"policy":{"preset":"arc-policy.prefer-local.v1","overrides":{"selection":{"min_p_pass":1}}}}`, false},
 		"absent policy":              {DecisionsExecutionContextV2, `{}`, false},
-		"policy outside v2":          {DecisionsExecutionContextV1, `{"policy":{"preset":"arc-policy.hybrid-default.v1"}}`, false},
+		"policy forwarded in v1":     {DecisionsExecutionContextV1, `{"policy":{"preset":"arc-policy.hybrid-default.v1"}}`, true},
+		"policy refused in current":  {DecisionsCurrent, `{"policy":{"preset":"arc-policy.hybrid-default.v1"}}`, false},
 		"unpublished preset":         {DecisionsExecutionContextV2, `{"policy":{"preset":"arc-policy.always-local.v1"}}`, false},
 		"unknown class":              {DecisionsExecutionContextV2, `{"policy":{"preset":"arc-policy.hybrid-default.v1","overrides":{"schedule":{"model":["every_5"]}}}}`, false},
 		"selection override":         {DecisionsExecutionContextV2, `{"policy":{"preset":"arc-policy.hybrid-default.v1","overrides":{"selection":{"min_p_pass":0.5}}}}`, false},
@@ -680,5 +681,17 @@ func TestRemapRetainedAttributionPrefersTheRetainedCopyOfRepeatedContent(t *test
 	got := remapRetainedAttribution(ledger, previous, current, roles, "", &CompactionEvent{SummaryMessage: 0, RetainedFrom: &retained, New: true})
 	if len(got) != 2 || got[0].entry.ActionID != "second" || got[0].entry.Message != 1 || got[1].entry.ActionID != "reply" || got[1].entry.Message != 3 {
 		t.Fatalf("remap %+v", got)
+	}
+}
+
+func TestV2AppliedEchoWithoutPinsIsRefused(t *testing.T) {
+	local, cloud := &upstreamFixture{}, &upstreamFixture{}
+	config := hybridV2Config(t, chatUpstream(t, local, false).URL, chatUpstream(t, cloud, true).URL+"/v1/chat/completions")
+	fixture := &v2Decisions{choose: func(contextV2) string { return localActionID }, mutate: func(response map[string]any) {
+		delete(response["routing"].(map[string]any)["execution"].(map[string]any), "pinned")
+	}}
+	_, httpServer := v2Server(t, config, fixture)
+	if status, _ := executeHTTP(t, httpServer.URL, "/v1/chat/completions", chatTurn(userTask), "no-pins"); status != http.StatusBadGateway || local.count() != 0 {
+		t.Fatalf("status %d local %d", status, local.count())
 	}
 }

@@ -72,8 +72,8 @@ opt-in. The core reports facts and never picks or ranks a model.
 - **Continuity.** A prefix change starts a new epoch and clears
   transcript-dependent evidence but keeps the last successfully executed action,
   sent as `last_served` even when that target is not offered or does not fit. Current and v1 modes are unchanged: a prefix
-  change clears the held action, and explicit events are removed from the body
-  and ignored.
+  change clears the held action, and request bytes are untouched: no event channel is read
+  in those modes.
 - **Capacity.** For each local action whose deployment has a qualified prompt
   counter, the core prepares the request exactly as dispatch would (tools,
   history, private append) and counts it with the runtime's own tokenizer:

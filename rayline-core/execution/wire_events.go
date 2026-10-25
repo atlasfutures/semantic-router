@@ -405,6 +405,13 @@ func detectCompaction(request wireRequest, previous, current []string) *Compacti
 	}
 	start, run := retainedRun(previous, current, first)
 	if summary := request.summaryMarker(); summary >= 0 {
+		// A summary the previous request already carried is not a new
+		// compaction: any other rewrite after it is a new epoch, no boundary.
+		for _, seen := range previous {
+			if seen == current[summary] {
+				return nil
+			}
+		}
 		event := &CompactionEvent{SummaryMessage: summary, New: true}
 		if run > 0 && start == summary+1 {
 			event.RetainedFrom = &start

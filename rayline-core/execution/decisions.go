@@ -64,11 +64,13 @@ func NewHTTPDecisions(config Config) (*HTTPDecisions, error) {
 		return nil, fmt.Errorf("execution context is owned by the sidecar, not static routing config")
 	}
 	var policyPreset string
-	if raw, exists := routing["policy"]; exists || mode == DecisionsExecutionContextV2 {
+	if mode == DecisionsExecutionContextV2 {
 		// Rayline Local never relies on an absent policy: its default is the
-		// hybrid preset, sent explicitly. v2 therefore requires one.
-		if !exists || mode != DecisionsExecutionContextV2 {
-			return nil, fmt.Errorf("execution_context_v2 requires an explicit routing.policy, and routing.policy requires execution_context_v2")
+		// hybrid preset, sent explicitly. v2 therefore requires one. Current
+		// and v1 modes keep their pre-v2 routing-key handling unchanged.
+		raw, exists := routing["policy"]
+		if !exists {
+			return nil, fmt.Errorf("execution_context_v2 requires an explicit routing.policy")
 		}
 		policy, err := validateRoutingPolicy(raw)
 		if err != nil {

@@ -278,3 +278,21 @@ func TestV2CoreReplaysStockPiCompaction(t *testing.T) {
 		t.Fatalf("completed %d, want 6 (overflow failed, summary call stateless)", state.completed)
 	}
 }
+
+// After a real compaction every request carries the summary; a later plain
+// rewrite is a new epoch, never a second compaction.
+func TestWireEventsCarriedSummaryIsNotANewCompaction(t *testing.T) {
+	pi := fixtureLines(t, "pi_0.80.2_overflow_retained_tail.jsonl")
+	edited := pi[6]
+	var body map[string]any
+	if err := json.Unmarshal(edited.body, &body); err != nil {
+		t.Fatal(err)
+	}
+	messages := body["messages"].([]any)
+	messages[2] = map[string]any{"role": "user", "content": []any{map[string]any{"type": "tool_result", "tool_use_id": "toolu_x", "content": "cleared"}}}
+	edited.body, _ = json.Marshal(body)
+	events := replayEvents([]replayRequest{pi[4], pi[5], edited})
+	if events[2].is(EventCompaction) {
+		t.Fatalf("carried summary read as a new compaction: %s", mustJSON(events[2].Compaction))
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 )
@@ -115,10 +116,9 @@ func TestV1PrefixRewriteClearsHoldAndOldContextEvidence(t *testing.T) {
 	}
 }
 
-// v1 ignores harness events (the Pi extension ships with every hybrid launch):
-// an explicit sidecall still advances state and an unlabelled follow-up is not
-// reclassified, exactly as before v2. The body member never reaches the provider.
-func TestV1IgnoresExplicitEventsButStripsThem(t *testing.T) {
+// v1 reads no event channel: an explicit sidecall member is ordinary request
+// content and the turn advances state exactly as before v2.
+func TestV1IgnoresExplicitEvents(t *testing.T) {
 	var bodies []map[string]any
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any
@@ -137,11 +137,6 @@ func TestV1IgnoresExplicitEventsButStripsThem(t *testing.T) {
 			t.Fatalf("status %d: %s", status, response)
 		}
 	}
-	for _, body := range bodies {
-		if _, leaked := body["rayline_event"]; leaked {
-			t.Fatal("event member reached the provider")
-		}
-	}
 	state, err := server.states.acquire(t.Context(), "v1-events", "main")
 	if err != nil {
 		t.Fatal(err)
@@ -149,5 +144,36 @@ func TestV1IgnoresExplicitEventsButStripsThem(t *testing.T) {
 	defer state.release()
 	if state.completed != 2 || state.epoch != 1 {
 		t.Fatalf("v1 applied v2 event semantics: completed=%d epoch=%d", state.completed, state.epoch)
+	}
+}
+
+// v1 configs keep forwarding routing.policy and leave request bytes untouched.
+func TestV1KeepsRoutingPolicyAndEventMembersUntouched(t *testing.T) {
+	t.Setenv("TEST_DECISIONS_KEY", "fixture")
+	config := testConfig(t, "http://127.0.0.1:1/v1/messages", true)
+	config.Decisions.URL = "http://127.0.0.1:2/v1/routes"
+	config.Decisions.Routing = json.RawMessage(`{"policy":{"preset":"arc-policy.hybrid-default.v1"}}`)
+	if _, err := NewHTTPDecisions(config); err != nil {
+		t.Fatalf("v1 refused routing.policy: %v", err)
+	}
+	var seen []byte
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen, _ = io.ReadAll(r.Body)
+		_, _ = io.WriteString(w, `{"id":"msg_fixture","type":"message","role":"assistant","model":"qwen-fixture","content":[{"type":"text","text":"ready"}],"stop_reason":"end_turn","stop_sequence":null,"usage":{"input_tokens":30,"output_tokens":1}}`)
+	}))
+	defer upstream.Close()
+	config = testConfig(t, upstream.URL, true)
+	_, httpServer := executorWithHTTPDecisions(t, config, &decisionCapture{})
+	request, _ := http.NewRequest(http.MethodPost, httpServer.URL+"/v1/messages", strings.NewReader(`{"model":"arc-1.0","max_tokens":64,"messages":[{"role":"user","content":"hi"}]}`))
+	request.Header.Set("Authorization", "Bearer "+testCoreToken)
+	request.Header.Set("X-Rayline-Session-Id", "v1-header")
+	request.Header.Set(eventHeader, `{"kind":"not-a-kind"}`)
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusOK || len(seen) == 0 {
+		t.Fatalf("v1 read the event header: status %d", response.StatusCode)
 	}
 }
