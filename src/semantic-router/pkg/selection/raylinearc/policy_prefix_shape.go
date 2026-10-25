@@ -357,7 +357,9 @@ func NewPolicyMessageLayout(message json.RawMessage) PolicyMessageLayout {
 	switch {
 	case len(content) == 0:
 		layout.ContentForm = "absent"
-	case json.Unmarshal(content, &text) == nil:
+	case bytes.Equal(content, []byte("null")):
+		layout.ContentForm = "null"
+	case content[0] == '"' && json.Unmarshal(content, &text) == nil:
 		layout.ContentForm = "string"
 		layout.BlockCount = 1
 		layout.Blocks = []PolicyBlockLayout{textLayout("text", nil, text, true, false)}
@@ -381,7 +383,8 @@ func blockLayout(block json.RawMessage) PolicyBlockLayout {
 	var kind string
 	_ = json.Unmarshal(members["type"], &kind)
 	var text string
-	hasText := json.Unmarshal(members["text"], &text) == nil && members["text"] != nil
+	raw := bytes.TrimSpace(members["text"])
+	hasText := len(raw) > 0 && raw[0] == '"' && json.Unmarshal(raw, &text) == nil
 	_, cached := members["cache_control"]
 	return textLayout(policyKindValue(kind, policyBlockTypes), policyLayoutKeyNames(members), text, hasText, cached)
 }
@@ -397,10 +400,17 @@ func textLayout(kind string, keys []string, text string, hasText, cached bool) P
 	return layout
 }
 
+// policyLayoutKeyNames is members' names, each once: every name outside
+// policyLayoutKeys is one "other", so the list is bounded by that set.
 func policyLayoutKeyNames(members map[string]json.RawMessage) []string {
-	keys := make([]string, 0, len(members))
+	seen := make(map[string]bool, len(members))
+	keys := make([]string, 0, min(len(members), len(policyLayoutKeys)+1))
 	for key := range members {
-		keys = append(keys, policyKindValue(key, policyLayoutKeys))
+		name := policyKindValue(key, policyLayoutKeys)
+		if !seen[name] {
+			seen[name] = true
+			keys = append(keys, name)
+		}
 	}
 	sort.Strings(keys)
 	return keys
