@@ -28,5 +28,5 @@ service's v2 refusal strings and their public codes.
 `request_valid_decisions_policy_prefer_local_v2.json`,
 `request_invalid_policy_selection_foreign_threshold.json` and the two
 prefer-local v2 `policy_schedules` rows of `execution_v2_vectors.json` are
-copied unchanged from pathfinder#5934 at `7d38de38fa` (prefer-local v2, the
-relative rule; refresh from main once it merges).
+copied unchanged from pathfinder#5934 (prefer-local v2, the relative rule),
+merged to pathfinder main at `5e37aed2a0`.
