@@ -459,7 +459,7 @@ func (provider *HTTPDecisions) Decide(ctx context.Context, input DecisionInput) 
 		}
 		slog.Info("execution context applied", "route_id", result.RouteID, "version", executionContextV2, "event_kind", externalV2.Event.kindName(), "event_basis", externalV2.Event.Basis,
 			"attempt", externalV2.Turn.Attempt, "reconsult", stringOrNil(externalV2.Turn.Reconsult), "decided_by", receipt.decidedBy(),
-			"held_from", stringOrNil(receipt.HeldFrom), "excluded", receipt.Excluded, "receipt_basis", receipt.Basis, "capacity_basis", stringOrNil(receipt.CapacityBasis))
+			"held_from", stringOrNil(receipt.HeldFrom), "eligible", receipt.Eligible, "capacity", capacitySummary(externalV2.Targets), "compaction", externalV2.Event.Compaction, "excluded", receipt.Excluded, "receipt_basis", receipt.Basis, "capacity_basis", stringOrNil(receipt.CapacityBasis), "capacity_unknown", len(receipt.CapacityUnknown))
 	}
 
 	appliedProfile, err := provider.appliedPriceProfile(result)

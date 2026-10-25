@@ -487,7 +487,7 @@ func (server *Server) execute(writer http.ResponseWriter, incoming *http.Request
 	if selection.Receipt != nil {
 		decidedBy = selection.Receipt.decidedBy()
 	}
-	slog.Info("execution completed", "route_id", decision.RouteID, "selected_model", selection.Model, "selected_action_id", selection.ActionID, "selected_control_id", selection.ControlID, "executed_model", decision.Model, "executed_action_id", decision.ActionID, "executed_control_id", prepared.receipt.ControlID, "worker", decision.Worker, "deployment", selected.deployment.ID, "deployment_kind", selected.deployment.Kind, "test_alias_reason", aliasReason, "context_epoch", call.ContextEpoch, "event_kind", event.kindName(), "event_basis", event.Basis, "decided_by", decidedBy, "consults", pending.consults+1, "cache", completionCacheEvidence(state, selected.deployment.ID, measuredEvidence, currentPrefix))
+	slog.Info("execution completed", "route_id", decision.RouteID, "selected_model", selection.Model, "selected_action_id", selection.ActionID, "selected_control_id", selection.ControlID, "executed_model", decision.Model, "executed_action_id", decision.ActionID, "executed_control_id", prepared.receipt.ControlID, "worker", decision.Worker, "deployment", selected.deployment.ID, "deployment_kind", selected.deployment.Kind, "test_alias_reason", aliasReason, "context_epoch", call.ContextEpoch, "event_kind", event.kindName(), "event_basis", event.Basis, "decided_by", decidedBy, "consults", pending.consults+1, "output_tokens", tokenCountOrNil(response.Usage.OutputTotal), "input_tokens", tokenCountOrNil(response.Usage.InputTotal), "cache", completionCacheEvidence(state, selected.deployment.ID, measuredEvidence, currentPrefix))
 }
 
 // maxReconsults bounds re-consults for one request: one post-decision veto and
@@ -584,4 +584,12 @@ func dispatchedCacheTTL(deployment Deployment, body []byte) (int, string) {
 		return 0, ""
 	}
 	return cachecontext.WireCacheTTL(body)
+}
+
+// tokenCountOrNil logs a provider token count only when it is known.
+func tokenCountOrNil(count llmprotocol.TokenCount) any {
+	if count.Value == nil {
+		return nil
+	}
+	return *count.Value
 }

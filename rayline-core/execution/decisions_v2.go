@@ -207,6 +207,8 @@ type DecisionReceipt struct {
 	Excluded      []excludedTarget   `json:"excluded"`
 	Basis         string             `json:"basis"`
 	CapacityBasis *string            `json:"capacity_basis,omitempty"`
+	// CapacityUnknown lists offered actions admitted with unknown capacity.
+	CapacityUnknown []string `json:"capacity_unknown,omitempty"`
 }
 
 type excludedTarget struct {
@@ -294,6 +296,17 @@ func validateV2(raw []byte, selected publicDecision, identity *decisionIdentity,
 		}
 	}
 	return receipt, nil
+}
+
+// capacitySummary is the known capacity facts for logs, keyed by action.
+func capacitySummary(targets []targetV2) map[string]*CapacityFact {
+	facts := map[string]*CapacityFact{}
+	for _, target := range targets {
+		if target.Capacity != nil {
+			facts[target.ActionID] = target.Capacity
+		}
+	}
+	return facts
 }
 
 // stringOrNil logs an optional string by value rather than by address.
