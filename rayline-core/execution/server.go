@@ -1,6 +1,8 @@
 package execution
 
 import (
+	"bytes"
+	"context"
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
@@ -189,10 +191,29 @@ func (server *Server) execute(writer http.ResponseWriter, incoming *http.Request
 		server.writeError(writer, format, http.StatusBadRequest, "invalid_body", "request body exceeds limits or could not be read")
 		return
 	}
+	// Current and v1 modes keep their pre-v2 behaviour exactly: the request
+	// bytes are untouched and no event channel is read.
+	v2 := server.config.Decisions.apiMode() == DecisionsExecutionContextV2
+	var explicitEvent *ExecutionEvent
+	if v2 {
+		body, explicitEvent, err = extractExplicitEvent(incoming.Header, body)
+		if err != nil {
+			server.writeError(writer, format, http.StatusBadRequest, "invalid_execution_event", err.Error())
+			return
+		}
+	}
+	wireRequest := parseWireRequest(format, body)
+	markerSidecall := v2 && explicitEvent == nil && wireRequest.isSidecall()
+	ephemeral := false
 	session, branch, err := requestIdentity(incoming.Header, body)
 	if err != nil {
-		server.writeError(writer, format, http.StatusBadRequest, "session_identity_required", err.Error())
-		return
+		// A harness's own auxiliary call (Pi's compaction summary call sends no
+		// session header) runs statelessly: it can advance nothing anyway.
+		if !(markerSidecall || explicitEvent != nil && explicitEvent.is(EventSidecall)) {
+			server.writeError(writer, format, http.StatusBadRequest, "session_identity_required", err.Error())
+			return
+		}
+		session, branch, ephemeral = "sidecall:"+fingerprint(body), "main", true
 	}
 	request, envelope, _, err := server.engine.DecodeRequestForMutation(format, body)
 	if err != nil {
@@ -204,84 +225,199 @@ func (server *Server) execute(writer http.ResponseWriter, incoming *http.Request
 		server.writeError(writer, format, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
+	if err := validateCompactionIndexes(explicitEvent, roles); err != nil {
+		server.writeError(writer, format, http.StatusBadRequest, "invalid_execution_event", err.Error())
+		return
+	}
 	prefix, err := requestPrefix(request)
 	if err != nil {
 		server.writeError(writer, format, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
-	state, err := server.states.acquire(ctx, session, branch)
-	if err != nil {
+	var state *branchState
+	if ephemeral {
+		state = newBranchState()
+		<-state.lease
+	} else if state, err = server.states.acquire(ctx, session, branch); err != nil {
 		server.writeError(writer, format, http.StatusServiceUnavailable, "execution_state_unavailable", err.Error())
 		return
 	}
 	defer state.release()
-	if state.pending == nil && state.completed == 0 && hasExecutionHistory(request) {
+	fresh := state.pending == nil && state.completed == 0
+	if fresh && hasExecutionHistory(request) && !markerSidecall && !(explicitEvent != nil && explicitEvent.is(EventSidecall)) {
 		server.writeError(writer, format, http.StatusConflict, "execution_state_not_found", "this session has assistant or tool history but no execution ledger; start a fresh session")
 		return
 	}
-	if len(state.prefix) > 0 && !extendsPrefix(state.prefix, prefix) {
-		state.resetEpoch()
+	wire := wireMessageFingerprints(format, body)
+	rewrite := len(state.prefix) > 0 && !extendsPrefix(state.prefix, prefix)
+	// v2: a transition reset by an earlier attempt that never committed (its
+	// consult or dispatch failed) is still open; detect it again on this request.
+	uncommitted := v2 && state.carried != nil && len(state.prefix) == 0
+	var event ExecutionEvent
+	switch {
+	case !v2:
+		event = inferEvent(request, fresh, branch)
+	case explicitEvent != nil:
+		event = *explicitEvent
+	case markerSidecall:
+		sidecall := EventSidecall
+		event = ExecutionEvent{Kind: &sidecall, Basis: BasisMarkerInferred}
+	default:
+		// The primary v2 source: what the unmodified harness already sends,
+		// compared with the last request this branch saw.
+		previous := state.seen
+		if state.carried != nil {
+			previous = state.carried.wire
+		}
+		event = inferV2Event(wireRequest, previous, wire, rewrite || uncommitted, fresh && branch != "main" && server.states.hasOtherBranch(session, branch))
+	}
+	// A side call is decided with the held model and never advances this
+	// branch: no epoch change, retained decision or committed evidence.
+	sidecall := event.is(EventSidecall)
+	if !sidecall && (rewrite || uncommitted) {
+		// The epoch is bumped once per transition; an uncommitted retry
+		// recomputes the retained attribution for the transcript it carries.
+		if rewrite {
+			state.resetEpoch(v2)
+		}
+		var retained []attributedTurn
+		if event.is(EventCompaction) && state.carried != nil {
+			retained = remapRetainedAttribution(state.carried.ledger, state.carried.wire, wire, roles, format, event.Compaction)
+		}
+		state.ledger = retained
+	}
+	if !sidecall {
+		state.seen = wire
 	}
 	requestFingerprint := fingerprint(body)
 	requestID := incoming.Header.Get("Idempotency-Key")
 	if requestID == "" {
 		requestID = requestFingerprint
 	}
-	if state.pending != nil && state.pending.requestID == requestID && state.pending.fingerprint != requestFingerprint {
+	pending := state.pending
+	if sidecall {
+		pending = nil
+	}
+	if pending != nil && pending.requestID == requestID && pending.fingerprint != requestFingerprint {
 		server.writeError(writer, format, http.StatusConflict, "retry_body_changed", "an idempotency key cannot name different requests")
 		return
 	}
-	if state.pending != nil && state.pending.fingerprint == requestFingerprint && (state.pending.delivered || state.pending.completed) {
+	if pending != nil && pending.fingerprint == requestFingerprint && (pending.delivered || pending.completed) {
 		server.writeError(writer, format, http.StatusConflict, "execution_already_observed", "this request already produced output; reconcile the transcript before retrying")
 		return
 	}
-	var measurements map[string]*cachecontext.MeasuredPrompt
+	reuse := make(map[string]*cachecontext.MeasuredPrompt)
 	var measuredEvidence ExecutionContext
-	if state.pending == nil || state.pending.fingerprint != requestFingerprint {
+	if pending == nil || pending.fingerprint != requestFingerprint {
 		evidence, measured, err := server.measureExecutionContext(ctx, body, format, roles, state)
 		if err != nil {
 			server.writeError(writer, format, http.StatusBadGateway, "prefix_measurement_failed", err.Error())
 			return
 		}
-		measurements = measured
+		for deployment, prompt := range measured {
+			reuse[deployment] = prompt
+		}
 		measuredEvidence = evidence
-		decision, err := server.provider.Decide(ctx, DecisionInput{Body: body, Format: format, SessionID: session, BranchID: branch, RequestID: requestID, State: evidence})
+		input := DecisionInput{Body: body, Format: format, SessionID: session, BranchID: branch, RequestID: requestID, State: evidence, Event: event}
+		if v2 {
+			facts, prompts, err := server.measureCapacity(ctx, body, format, state)
+			if err != nil {
+				server.writeError(writer, format, http.StatusBadGateway, "capacity_measurement_failed", err.Error())
+				return
+			}
+			input.Capacity = facts
+			for actionID, prompt := range prompts {
+				reuse["action:"+actionID] = prompt
+			}
+		}
+		decision, err := server.provider.Decide(ctx, input)
 		if err != nil {
 			server.writeError(writer, format, http.StatusBadGateway, "decision_failed", err.Error())
 			return
 		}
-		state.pending = &pendingTurn{fingerprint: requestFingerprint, requestID: requestID, decision: decision}
+		pending = &pendingTurn{fingerprint: requestFingerprint, requestID: requestID, decision: decision, input: input}
+		if !sidecall {
+			state.pending = pending
+		}
 	}
-	selection := state.pending.decision
-	selected, decision, aliasReason, err := server.executionFor(selection)
-	if err != nil {
-		server.writeError(writer, format, http.StatusBadGateway, "decision_identity_mismatch", err.Error())
-		return
-	}
-	prepared, err := server.prepare(request, envelope, selected, state)
-	if err != nil {
-		server.writeError(writer, format, http.StatusBadRequest, "execution_plan_failed", err.Error())
-		return
-	}
-	prompt, err := server.measurePreparedPrompt(ctx, selected, prepared.body, state, measurements)
-	if err != nil {
-		server.writeError(writer, format, http.StatusBadGateway, "prefix_measurement_failed", err.Error())
-		return
-	}
-	if !server.reserveGenerationAttempt() {
-		server.writeError(writer, format, http.StatusTooManyRequests, "generation_limit_reached", "execution process reached its configured generation-attempt limit")
-		return
-	}
-	upstream, err := server.upstream(ctx, selected, decision, session, branch, prepared.body)
-	if err != nil {
-		server.writeError(writer, format, http.StatusBadGateway, "upstream_unavailable", "selected endpoint request failed")
-		return
-	}
-	defer upstream.Body.Close()
-	if upstream.StatusCode < 200 || upstream.StatusCode >= 300 {
+	var (
+		selection   Decision
+		selected    admittedAction
+		decision    Decision
+		aliasReason string
+		prepared    *preparedDispatch
+		prompt      *cachecontext.MeasuredPrompt
+		upstream    *http.Response
+	)
+	for {
+		selection = pending.decision
+		selected, decision, aliasReason, err = server.executionFor(selection)
+		if err != nil {
+			server.writeError(writer, format, http.StatusBadGateway, "decision_identity_mismatch", err.Error())
+			return
+		}
+		prepared, err = server.prepare(request, envelope, selected, state)
+		if err != nil {
+			server.writeError(writer, format, http.StatusBadRequest, "execution_plan_failed", err.Error())
+			return
+		}
+		if previous := reuse["action:"+selected.action.ID]; previous != nil {
+			reuse[selected.deployment.ID] = previous
+		}
+		prompt, err = server.measurePreparedPrompt(ctx, selected, prepared.body, state, reuse)
+		if err != nil {
+			server.writeError(writer, format, http.StatusBadGateway, "prefix_measurement_failed", err.Error())
+			return
+		}
+		// The pre-dispatch capacity check. The core may veto the final
+		// prepared request with a reason; the service reselects. A refusal
+		// already recorded for this turn is never dispatched again.
+		if known := pending.input.Capacity[selected.action.ID]; v2 && known != nil && !known.Fits {
+			if !server.reconsult(ctx, writer, format, pending, selected.action.ID, decision.RouteID, "veto", known) {
+				return
+			}
+			continue
+		}
+		if v2 {
+			if fact := capacityFact(selected.deployment, prompt, prepared.outputLimit); fact != nil && !fact.Fits {
+				if !server.reconsult(ctx, writer, format, pending, selected.action.ID, decision.RouteID, "veto", fact) {
+					return
+				}
+				continue
+			}
+		}
+		if !server.reserveGenerationAttempt() {
+			server.writeError(writer, format, http.StatusTooManyRequests, "generation_limit_reached", "execution process reached its configured generation-attempt limit")
+			return
+		}
+		upstream, err = server.upstream(ctx, selected, decision, session, branch, prepared.body)
+		if err != nil {
+			server.writeError(writer, format, http.StatusBadGateway, "upstream_unavailable", "selected endpoint request failed")
+			return
+		}
+		if upstream.StatusCode >= 200 && upstream.StatusCode < 300 {
+			break
+		}
+		errorBody, readErr := readBounded(upstream.Body, 1<<20)
+		upstream.Body.Close()
+		// A runtime's own context refusal arrives before any output. It is a
+		// fact for the service, never a local reselection or truncation.
+		if v2 && readErr == nil && isRuntimeContextRejection(selected.deployment, upstream.StatusCode, errorBody) {
+			fact := runtimeContextRejection(selected.deployment, capacityFact(selected.deployment, prompt, prepared.outputLimit))
+			if !server.reconsult(ctx, writer, format, pending, selected.action.ID, decision.RouteID, "capacity", fact) {
+				return
+			}
+			continue
+		}
+		if readErr != nil {
+			server.writeError(writer, format, http.StatusBadGateway, "upstream_error", "selected endpoint returned an unreadable error")
+			return
+		}
+		upstream.Body = io.NopCloser(bytes.NewReader(errorBody))
 		server.forwardError(writer, format, selected.deployment.Protocol, upstream)
 		return
 	}
+	defer upstream.Body.Close()
 	if selected.deployment.Kind == "cloud" && !dispatchEchoMatches(upstream.Header, selected, decision) {
 		server.writeError(writer, format, http.StatusBadGateway, "dispatch_identity_mismatch", "cloud dispatch did not confirm the configured transport and model identity")
 		return
@@ -295,26 +431,38 @@ func (server *Server) execute(writer http.ResponseWriter, incoming *http.Request
 	writer.Header().Set("X-Rayline-Executed-Action-Id", decision.ActionID)
 	writer.Header().Set("X-Rayline-Executed-Control-Id", prepared.receipt.ControlID)
 	writer.Header().Set("X-Rayline-Executed-Worker", decision.Worker)
+	if selection.Receipt != nil {
+		writer.Header().Set("X-Rayline-Decided-By", selection.Receipt.decidedBy())
+	}
+	if v2 && event.Kind != nil {
+		writer.Header().Set("X-Rayline-Event", *event.Kind+"/"+event.Basis)
+	}
 	if aliasReason != "" {
 		writer.Header().Set("X-Rayline-Test-Alias", aliasReason)
 	}
 	writer.Header().Set("X-Rayline-Instance-Id", server.instance)
 	var response llmprotocol.Response
 	if request.Stream {
-		response, err = server.forwardStream(writer, incoming, upstream, format, selected, prepared.response, state.pending)
+		response, err = server.forwardStream(writer, incoming, upstream, format, selected, prepared.response, pending)
 	} else {
-		response, err = server.forwardBuffered(writer, upstream, format, selected, prepared.response, state.pending)
+		response, err = server.forwardBuffered(writer, upstream, format, selected, prepared.response, pending)
 	}
 	if err != nil {
-		slog.Warn("execution aborted", "route_id", decision.RouteID, "worker", decision.Worker, "output_observed", state.pending.delivered)
+		slog.Warn("execution aborted", "route_id", decision.RouteID, "worker", decision.Worker, "output_observed", pending.delivered)
 		return
 	}
 	if llmprotocol.ResponseRefused(&response) {
 		// Like cloud VSR, deliver a refusal without advancing private history,
 		// attribution, hold, completion clocks or cache evidence. An explicit
 		// client retry makes a fresh decision instead of retaining the refusal.
-		state.pending = nil
+		if !sidecall {
+			state.pending = nil
+		}
 		slog.Info("execution refused", "route_id", decision.RouteID, "worker", decision.Worker)
+		return
+	}
+	if sidecall {
+		slog.Info("execution completed", "route_id", decision.RouteID, "selected_action_id", selection.ActionID, "executed_action_id", decision.ActionID, "worker", decision.Worker, "deployment", selected.deployment.ID, "event", EventSidecall, "state_advanced", false)
 		return
 	}
 	// Both wire decoding and downstream delivery have completed. No failed
@@ -330,11 +478,56 @@ func (server *Server) execute(writer http.ResponseWriter, incoming *http.Request
 	state.provenance = reasoning.WithReasoningProvenance(state.provenance, prepared.opaqueIssuer, protocolcodec.ResponseOpaqueReasoning(&response))
 	state.workers[selected.deployment.ID] = WorkerEvidence{DeploymentID: selected.deployment.ID, SelectedActionID: selection.ActionID, SelectedModel: selection.Model, ExecutedModel: decision.Model, Call: *committed, prompt: prompt}
 	state.held = decision.ActionID
+	state.heldWorker = decision.Worker
 	state.completed++
 	state.recordAttribution(format, roles, decision)
 	state.prefix = prefix
-	state.pending.completed = true
-	slog.Info("execution completed", "route_id", decision.RouteID, "selected_model", selection.Model, "selected_action_id", selection.ActionID, "selected_control_id", selection.ControlID, "executed_model", decision.Model, "executed_action_id", decision.ActionID, "executed_control_id", prepared.receipt.ControlID, "worker", decision.Worker, "deployment", selected.deployment.ID, "deployment_kind", selected.deployment.Kind, "test_alias_reason", aliasReason, "context_epoch", call.ContextEpoch, "cache", completionCacheEvidence(state, selected.deployment.ID, measuredEvidence, currentPrefix))
+	state.wire = wire
+	state.carried = nil
+	pending.completed = true
+	var decidedBy any
+	if selection.Receipt != nil {
+		decidedBy = selection.Receipt.decidedBy()
+	}
+	slog.Info("execution completed", "route_id", decision.RouteID, "selected_model", selection.Model, "selected_action_id", selection.ActionID, "selected_control_id", selection.ControlID, "executed_model", decision.Model, "executed_action_id", decision.ActionID, "executed_control_id", prepared.receipt.ControlID, "worker", decision.Worker, "deployment", selected.deployment.ID, "deployment_kind", selected.deployment.Kind, "test_alias_reason", aliasReason, "context_epoch", call.ContextEpoch, "event_kind", event.kindName(), "event_basis", event.Basis, "decided_by", decidedBy, "consults", pending.consults+1, "output_tokens", tokenCountOrNil(response.Usage.OutputTotal), "input_tokens", tokenCountOrNil(response.Usage.InputTotal), "cache", completionCacheEvidence(state, selected.deployment.ID, measuredEvidence, currentPrefix))
+}
+
+// maxReconsults bounds re-consults for one request: one post-decision veto and
+// one runtime context refusal.
+const maxReconsults = 2
+
+// reconsult asks the service again for the same turn with one narrowing fact.
+// The core reports the fact and executes the service's new choice; it never
+// selects another action itself. It writes the visible error on failure.
+func (server *Server) reconsult(ctx context.Context, writer http.ResponseWriter, format llmprotocol.WireFormat, pending *pendingTurn, actionID, retryOf, kind string, fact *CapacityFact) bool {
+	if pending.consults >= maxReconsults {
+		server.writeError(writer, format, http.StatusConflict, "execution_no_feasible_target", "the selected target does not fit this request and the re-consult limit was reached")
+		return false
+	}
+	input := pending.input
+	capacity := make(map[string]*CapacityFact, len(input.Capacity)+1)
+	for id, existing := range input.Capacity {
+		capacity[id] = existing
+	}
+	capacity[actionID] = fact
+	input.Capacity = capacity
+	// Keep the fact even if this consult fails, so a client retry of the same
+	// request cannot dispatch the refused target again.
+	pending.input.Capacity = capacity
+	input.Reconsult = &Reconsult{Kind: kind, RetryOf: retryOf, Attempt: pending.consults + 2}
+	slog.Info("execution reconsult", "reconsult", kind, "retry_of", retryOf, "vetoed_action_id", actionID, "required", int64OrNil(fact.Required), "available", int64OrNil(fact.Available), "attempt", input.Reconsult.Attempt)
+	decision, err := server.provider.Decide(ctx, input)
+	if err != nil {
+		server.writeError(writer, format, http.StatusBadGateway, "decision_failed", err.Error())
+		return false
+	}
+	if decision.ActionID == actionID {
+		server.writeError(writer, format, http.StatusConflict, "execution_no_feasible_target", "Decisions reselected a target the core reported does not fit")
+		return false
+	}
+	pending.input, pending.decision = input, decision
+	pending.consults++
+	return true
 }
 
 // Failed and partial attempts consume the same process-wide admission as a
@@ -393,4 +586,12 @@ func dispatchedCacheTTL(deployment Deployment, body []byte) (int, string) {
 		return 0, ""
 	}
 	return cachecontext.WireCacheTTL(body)
+}
+
+// tokenCountOrNil logs a provider token count only when it is known.
+func tokenCountOrNil(count llmprotocol.TokenCount) any {
+	if count.Value == nil {
+		return nil
+	}
+	return *count.Value
 }

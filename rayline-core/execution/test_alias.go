@@ -30,7 +30,7 @@ func (server *Server) validateTestAlias() error {
 
 func (server *Server) executionFor(selection Decision) (admittedAction, Decision, string, error) {
 	selected, ok := server.actions[selection.ActionID]
-	if !ok || selected.action.Worker != selection.Worker || selected.action.Model != selection.Model || selected.action.ControlID != selection.ControlID || selection.PackageSHA256 != server.config.PackageSHA256 {
+	if !ok || selected.action.Worker != selection.Worker || selected.action.Model != selection.Model || selected.action.ControlID != selection.ControlID || (server.config.PackageSHA256 != "" && selection.PackageSHA256 != server.config.PackageSHA256) {
 		return admittedAction{}, Decision{}, "", fmt.Errorf("selected action does not match the pinned package and deployment")
 	}
 	alias := server.config.TestAlias

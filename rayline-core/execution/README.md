@@ -7,10 +7,113 @@ private append, and completed-execution evidence.
 
 The default `decisions.api_mode: "current"` uses the deployed Decisions API and
 keeps execution/cache evidence in this process. It sends no `routing.execution`
-field. `"execution_context_v1"` explicitly selects the proposed advanced contract;
+field or executed-model attribution, so it cannot establish semantic-boundary
+model continuity. `"execution_context_v2"` (below) is the hybrid contract.
+`"execution_context_v1"` explicitly selects the earlier advanced contract;
 that mode requires the hosted cell to acknowledge the supplied evidence. There
 is no automatic change of mode after an unsupported response. The core executes
 the API's selected action rather than ranking marginal predictions locally.
+
+## Execution context v2
+
+`"execution_context_v2"` implements surfaces (B) and (C) of the hybrid v2 spec
+(pathfinder `docs/plans/2026-10-24-decisions-execution-context-v2.md`). It is
+opt-in. The core reports facts and never picks or ranks a model.
+
+- **Policy.** `decisions.routing.policy` is required: `{"preset": ...}` with an
+  optional `overrides.schedule` (`model`/`thinking` sets of `cache_boundaries`,
+  `user_messages`, `all_turns`) and, for `arc-policy.prefer-local.v1` only,
+  `overrides.selection.min_p_pass` in (0, 1). Served presets:
+  `arc-policy.hybrid-default.v1`, `arc-policy.prefer-local.v1` (pathfinder
+  #5913) and `arc-policy.package-default.v1`. At most 16 executable bindings fit
+  `targets[]`. Rayline Local writes
+  `arc-policy.hybrid-default.v1` when its user sets no override; the core never
+  sends an absent policy in this mode. Allowed routing keys are `policy`,
+  `value_usd`, `prices`, `exclusive` and the price-profile keys.
+- **Package-less profile.** `derived_actions` (v2 only) replaces
+  `package_path`, `package_sha256` and `bindings`: each entry
+  `{model, worker, deployment_id, bases?}` binds every registry-admitted control
+  of that model on that deployment (optionally only these native bases), with
+  ARC's v5 action identity (sha256 of JCS `{"control_id","model"}`). With no
+  `registry_path`, `registry_sha256` may be omitted and the embedded registry is
+  used. Such a profile pins no package: `expect` pins only the registry (and
+  any offer), and the response names the package. Every derived action is a
+  target, and the service refuses a target its serving package lacks
+  (`execution_unknown_action`), so choose `bases` to match the served actions. Rayline Local builds one by default, so a user needs no profile
+  file.
+- **Envelope.** Each decision sends `routing.execution` version
+  `arc-execution-context.v2`: `turn` (`id`, `attempt`, `epoch`, `retry_of`,
+  `reconsult`), `event`, `last_served`, `history`, `hold` (null: the core has no
+  current mandatory-hold source), `expect` and one `targets[]` entry per bound
+  executable action. `turn.epoch` equals the `cache.context_epoch` string of
+  evidence from the current epoch. `cache` is v1's worker evidence without the
+  identity members; `capacity` is described below. Unknown is null.
+- **Events.** Harnesses are unmodified: the primary source is what they
+  already send, read by the core and labelled `basis: marker_inferred`
+  (`wire_events.go`; replay tests over real Pi 0.80.2, Claude Code 2.1.280 and
+  2.1.309, and Codex 0.154.0 captures in `testdata/wire_events`).
+  - `task_start`: no assistant message yet; `subagent_start` instead when
+    Claude Code's billing block claims `cc_is_subagent=true` or the request
+    opens a new branch of a session that already has another branch.
+  - `tool_result` versus `user_message`: the last message's tool results versus
+    the user's own words. Injected `<system-reminder>`/project context, command
+    expansions, compaction summaries and Codex's `<environment_context>` are not
+    typed words (pathfinder's `typed_user_turn` rule), and a subagent's report
+    after an `Agent`/`Task` call is tool output.
+  - `sidecall`: a harness's own auxiliary call, recognized by its literal
+    (Pi's summarization system prompt, Claude Code's summarize directive,
+    title and suggestion prompts, Codex's compaction prompt). It advances
+    nothing, and one sent without a session header (Pi's summary call) runs
+    statelessly instead of being refused.
+  - `compaction`: a request that rewrites the prefix is compared with the last
+    request this branch saw (committed or not). A harness summary literal (Pi,
+    Claude Code, Codex) or, without one, a new first user message replacing at
+    least two messages and followed by a retained run that ends where the
+    previous request ended, is a compaction with `summary_message`,
+    `retained_from` (null without a retained run) and `new: true`; the retained
+    messages keep their attribution at their new positions. Any other rewrite
+    is a new epoch with no boundary.
+  - Anything else is `basis: unknown` with a null kind, which holds.
+
+  A harness may optionally state the event itself, in an `X-Rayline-Event`
+  JSON header or a top-level `rayline_event` member that the core removes
+  before decoding, Decisions and dispatch (both at once are refused). An
+  explicit event takes precedence. No default or acceptance path depends on
+  it.
+- **Continuity.** A prefix change starts a new epoch and clears
+  transcript-dependent evidence but keeps the last successfully executed action,
+  sent as `last_served` even when that target is not offered or does not fit. Current and v1 modes are unchanged: a prefix
+  change clears the held action, and request bytes are untouched: no event channel is read
+  in those modes.
+- **Capacity.** For each local action whose deployment has a qualified prompt
+  counter, the core prepares the request exactly as dispatch would (tools,
+  history, private append) and counts it with the runtime's own tokenizer:
+  `required` = that count + the prepared output limit + the deployment's optional
+  `capacity_margin_tokens`; `available` = its configured `context_window`, with
+  `available_source: "configured"` (llama.cpp's per-slot allocation is not yet
+  observed); `units` = its `token_units`; `provenance: "local_measured"`. A
+  counter that fails reports that target `fits: false` with
+  `reason: "runtime_unavailable"` instead of refusing the turn. Other targets
+  send `capacity: null`.
+- **Pre-dispatch check and veto.** The final prepared request is checked again
+  before dispatch. If it does not fit the selected target, or the local runtime
+  refuses it for context before any output, the core re-consults once per cause
+  with the same `turn.id` and event, `attempt + 1`, `retry_of` = the vetoed
+  route, `reconsult: "veto"` or `"capacity"`, and that target's capacity
+  `fits: false`. The service reselects; a service that reselects an infeasible
+  target fails visibly (`execution_no_feasible_target`). A refusal recorded for the turn is kept, so a
+  client retry of the same request never re-dispatches the refused target.
+- **Response.** The selected result must carry a `receipt` naming the selected
+  action, control and applied policy, with a known `decided_by` per dimension
+  (`decided_by.model` may also be `held_unavailable`, `prefer_local_threshold` or
+  `utility_fallback` (prefer-local), or null for a one-stage
+  package) and an `excluded`
+  entry, with the same reason, for every target the core reported as not
+  fitting. `routing.execution` must echo `status: "applied"`, the version and the
+  exact turn, and `matched` for each sent identity pin when `pinned` is present;
+  `routing.policy` must echo `status: "applied"` and the preset. An
+  `unsupported` echo fails visibly; there is no fallback to another mode. Responses add `X-Rayline-Decided-By` and
+  `X-Rayline-Event` headers, and logs record the receipt and capacity facts.
 
 ## Configuration
 
@@ -167,6 +270,11 @@ epoch. Historical assistant/tool input for an unknown session or branch is
 refused because its hidden instruction ledger cannot be reconstructed. Durable
 resume and inherited subagent histories require a later state-transfer contract.
 At capacity, new sessions fail visibly instead of evicting an active ledger.
+
+A changed instruction, tool definition or historical message starts a new cache
+context epoch and clears transcript-dependent placement, attribution and worker
+evidence. In current and v1 modes it also clears the held action; only
+`execution_context_v2` keeps it, as `last_served`.
 
 Cache evidence describes each previously completed deployment, including workers
 that were switched away from. It carries completion age, provider usage, declared

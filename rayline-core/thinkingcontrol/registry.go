@@ -21,6 +21,7 @@ import (
 	"crypto/sha256"
 	_ "embed"
 	"encoding/hex"
+	"sort"
 	"sync"
 )
 
@@ -308,6 +309,18 @@ func (r *Registry) Admit(model, provider, format string, control Control, allowE
 		return nil, refuse("%s on %sx%s: the instruction is experimental only", model, provider, format)
 	}
 	return cell, nil
+}
+
+// ControlIDs lists the cell's admitted control ids in sorted order.
+func (c *Cell) ControlIDs() []string {
+	ids := make([]string, 0, len(c.controls))
+	for id, admitted := range c.controls {
+		if admitted {
+			ids = append(ids, id)
+		}
+	}
+	sort.Strings(ids)
+	return ids
 }
 
 // Admits reports whether the cell admits the control with this id.

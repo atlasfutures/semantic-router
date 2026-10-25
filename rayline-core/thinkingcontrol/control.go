@@ -160,6 +160,10 @@ func (c Control) json() *value {
 	)
 }
 
+// Canonical is the control's RFC 8785 JSON, the form ParseControl reads and
+// ID hashes.
+func (c Control) Canonical() ([]byte, error) { return jcs(c.json()) }
+
 // ID is sha256 of the control's RFC 8785 form, every string as raw UTF-8.
 func (c Control) ID() string {
 	canonical, err := jcs(c.json())

@@ -25,6 +25,7 @@ type branchState struct {
 	epoch      uint64
 	completed  uint64
 	held       string
+	heldWorker string
 	placements map[string]thinkingcontrol.PlacerState
 	workers    map[string]WorkerEvidence
 	prefix     []string
@@ -32,6 +33,21 @@ type branchState struct {
 	issuers    []string
 	provenance []reasoning.ReasoningProvenance
 	ledger     []attributedTurn
+	// wire fingerprints the last committed request's wire messages, so an
+	// explicit compaction can carry retained attribution to new positions.
+	wire []string
+	// carried keeps the last committed transcript's ledger and wire across an
+	// epoch reset until the next commit, so a failed compaction request can be
+	// retried without losing retained attribution.
+	carried *carriedTranscript
+	// seen fingerprints the wire messages of the last non-sidecall request
+	// this branch saw, committed or not: a compaction is detected against it.
+	seen []string
+}
+
+type carriedTranscript struct {
+	ledger []attributedTurn
+	wire   []string
 }
 
 // attributedTurn uses the original client wire's message index, as VSR's
@@ -47,6 +63,10 @@ type pendingTurn struct {
 	decision    Decision
 	delivered   bool
 	completed   bool
+	// input is the turn's original decision input; a re-consult keeps its
+	// event and history and narrows only the stated capacity fact.
+	input    DecisionInput
+	consults int
 }
 
 type stateStore struct {
@@ -69,8 +89,7 @@ func (store *stateStore) acquire(ctx context.Context, session, branch string) (*
 			store.mu.Unlock()
 			return nil, fmt.Errorf("execution session capacity reached; restart with fresh sessions")
 		}
-		state = &branchState{lease: make(chan struct{}, 1), placements: make(map[string]thinkingcontrol.PlacerState), workers: make(map[string]WorkerEvidence)}
-		state.lease <- struct{}{}
+		state = newBranchState()
 		store.branches[key] = state
 	}
 	store.mu.Unlock()
@@ -82,10 +101,30 @@ func (store *stateStore) acquire(ctx context.Context, session, branch string) (*
 	}
 }
 
+func newBranchState() *branchState {
+	state := &branchState{lease: make(chan struct{}, 1), placements: make(map[string]thinkingcontrol.PlacerState), workers: make(map[string]WorkerEvidence)}
+	state.lease <- struct{}{}
+	return state
+}
+
+// hasOtherBranch reports whether this session already has another branch: a
+// new branch of it with no assistant turn is a child session or subagent.
+func (store *stateStore) hasOtherBranch(session, branch string) bool {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	for key := range store.branches {
+		var identity []string
+		if json.Unmarshal([]byte(key), &identity) == nil && len(identity) == 2 && identity[0] == session && identity[1] != branch {
+			return true
+		}
+	}
+	return false
+}
+
 func (state *branchState) release() { state.lease <- struct{}{} }
 
 func (state *branchState) evidence(instance string) ExecutionContext {
-	result := ExecutionContext{InstanceID: instance, ContextEpoch: instance + ":" + strconv.FormatUint(state.epoch, 10), HeldActionID: state.held, CompletedTurns: state.completed, Workers: make([]WorkerEvidence, 0, len(state.workers))}
+	result := ExecutionContext{InstanceID: instance, ContextEpoch: instance + ":" + strconv.FormatUint(state.epoch, 10), HeldActionID: state.held, HeldWorker: state.heldWorker, CompletedTurns: state.completed, Workers: make([]WorkerEvidence, 0, len(state.workers))}
 	for _, worker := range state.workers {
 		result.Workers = append(result.Workers, worker)
 	}
@@ -244,9 +283,19 @@ func extendsPrefix(previous, current []string) bool {
 	return true
 }
 
-func (state *branchState) resetEpoch() {
+// resetEpoch invalidates transcript-dependent evidence after a prefix change.
+// keepServed (execution_context_v2 only) preserves the last successfully
+// executed action so last_served stays truthful; the v2 policy decides from
+// the event whether this is a switch boundary. Current and v1 modes clear it,
+// exactly as before v2: there a compaction is a model-switch boundary.
+func (state *branchState) resetEpoch(keepServed bool) {
+	if state.carried == nil {
+		state.carried = &carriedTranscript{ledger: state.ledger, wire: state.seen}
+	}
 	state.epoch++
-	state.held = ""
+	if !keepServed {
+		state.held, state.heldWorker = "", ""
+	}
 	state.placements = make(map[string]thinkingcontrol.PlacerState)
 	state.workers = make(map[string]WorkerEvidence)
 	state.pending = nil
@@ -254,6 +303,7 @@ func (state *branchState) resetEpoch() {
 	state.issuers = nil
 	state.provenance = nil
 	state.ledger = nil
+	state.wire = nil
 }
 
 var legacySession = regexp.MustCompile(`(?i)_session_([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$`)
