@@ -484,12 +484,18 @@ func (digests *PrefixDigests) Digest(n int) string {
 //
 //   - cache_control is removed wherever it appears: a client moves its cache
 //     breakpoints between turns without changing the conversation;
-//   - a system message whose content is one {"type":"text","text":X} block,
-//     with nothing else but cache_control, is the string X. Claude Code sends
-//     a mid-conversation system message that way while it is the last
-//     message and as a plain string once it is not, which read as a new
-//     context on about 70% of real turns. Text is compared exactly; a block
-//     with any other member, or more than one block, stays a list;
+//   - a system or user message whose content is one
+//     {"type":"text","text":X} block, with nothing else but cache_control,
+//     is the string X: the same content, which the service's projections
+//     read as one text block either way. Claude Code sends a
+//     mid-conversation system message that way while it is the last message
+//     and as a plain string once it is not, which read as a new context on
+//     about 70% of real turns; Claude Desktop does the same with the user's
+//     prompt (the cache breakpoint sits on it while it is the newest), which
+//     broke the prefix on every Desktop prompt. Text is compared exactly; a
+//     block with any other member, or more than one block, stays a list, an
+//     empty user text block is not demoted (the service projects "" as no
+//     block), and an assistant message is never demoted;
 //   - object key order and whitespace are insignificant.
 //
 // A message that is not a JSON object is compared as received.
@@ -501,10 +507,12 @@ func canonicalPrefixMessage(message json.RawMessage) []byte {
 		return message
 	}
 	withoutCacheControl(value)
-	if role, _ := value["role"].(string); role == "system" {
+	if role, _ := value["role"].(string); role == "system" || role == "user" {
 		if blocks, ok := value["content"].([]any); ok && len(blocks) == 1 {
 			if block, ok := blocks[0].(map[string]any); ok && len(block) == 2 && block["type"] == "text" {
-				if text, ok := block["text"].(string); ok {
+				// An empty user text block is not demoted: the service's
+				// projection drops empty string content but keeps the block.
+				if text, ok := block["text"].(string); ok && (role == "system" || text != "") {
 					value["content"] = text
 				}
 			}
