@@ -43,20 +43,19 @@ type Deployment struct {
 	// CapacityMarginTokens is an explicit counting margin added to the exact
 	// prepared prompt and output limit in capacity admission (v2 only).
 	CapacityMarginTokens int64 `json:"capacity_margin_tokens,omitempty"`
-	// CapacityEstimate tunes the conservative byte-based estimate used when
-	// this deployment has no registered prompt counter (v2 only). Absent
-	// members take the documented defaults.
+	// CapacityEstimate tunes the conservative estimate used when this local
+	// deployment has no registered prompt counter (v2 only). Absent members
+	// take the documented defaults.
 	CapacityEstimate *CapacityEstimate `json:"capacity_estimate,omitempty"`
 }
 
-// CapacityEstimate overrides the estimator constants for one deployment.
+// CapacityEstimate overrides the estimator constants for one deployment
+// (capacity_estimate.go).
 type CapacityEstimate struct {
-	// BytesPerToken divides the prepared request's UTF-8 bytes (default 3).
-	BytesPerToken *float64 `json:"bytes_per_token,omitempty"`
-	// HeadroomRatio inflates the estimate (default 0.15 = +15%).
+	// HeadroomRatio raises the character-class estimate (default 0.10).
 	HeadroomRatio *float64 `json:"headroom_ratio,omitempty"`
-	// MediaTokens is charged per inline base64 image/document instead of its
-	// bytes (default 4096).
+	// MediaTokens is charged per inline base64 image instead of its bytes
+	// (default 8192).
 	MediaTokens *int64 `json:"media_tokens,omitempty"`
 }
 

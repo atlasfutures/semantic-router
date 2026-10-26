@@ -268,8 +268,8 @@ func TestV2EnvelopeCarriesEventsLastServedHistoryAndTargets(t *testing.T) {
 		if len(got.Targets) != 2 || got.Targets[0].ActionID != localActionID || got.Targets[0].Placement != "local" || got.Targets[1].Placement != "cloud" {
 			t.Fatalf("turn %d targets %+v", index, got.Targets)
 		}
-		// No counter on the cloud target: its fact is a byte estimate, never measured.
-		if cloudFact := got.Targets[1].Capacity; cloudFact == nil || !cloudFact.Fits || cloudFact.Provenance != "caller_estimated" || *cloudFact.Available != 65536 || *cloudFact.AvailableSource != "configured" {
+		// A cloud target without a counter is never estimated: unknown.
+		if cloudFact := got.Targets[1].Capacity; cloudFact != nil {
 			t.Fatalf("turn %d cloud capacity %+v", index, cloudFact)
 		}
 		capacity := got.Targets[0].Capacity

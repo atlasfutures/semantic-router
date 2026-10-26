@@ -347,7 +347,7 @@ func (server *Server) execute(writer http.ResponseWriter, incoming *http.Request
 			}
 			// A prompt no deployment can hold is refused before Decisions or
 			// any runtime is contacted; it can only be compacted.
-			if server.exceedsAllDeployments(facts) && server.writeContextExceeded(writer, format, facts) {
+			if server.writeContextExceeded(writer, format, facts) {
 				return
 			}
 		}
@@ -587,8 +587,8 @@ func (server *Server) reserveGenerationAttempt() bool {
 }
 
 // writeDecisionError reports a failed consult. A service that finds no
-// feasible target while the core reported context shortfalls gets the same
-// compaction message as the core's own refusal, not a generic failure.
+// feasible target while every target has a known context shortfall gets the
+// same compaction message as the core's own refusal, not a generic failure.
 func (server *Server) writeDecisionError(writer http.ResponseWriter, format llmprotocol.WireFormat, err error, capacity map[string]*CapacityFact) {
 	var refusal *DecisionsRefusal
 	noFeasible := errors.Is(err, errSelectedInfeasible) || errors.As(err, &refusal) && (refusal.Code == "execution_no_feasible_target" || refusal.Code == "no_feasible_target")
@@ -598,14 +598,13 @@ func (server *Server) writeDecisionError(writer http.ResponseWriter, format llmp
 	server.writeError(writer, format, http.StatusBadGateway, "decision_failed", err.Error())
 }
 
-// writeContextExceeded writes the compaction refusal when this turn's facts
-// show a context shortfall and no target that fits.
+// writeContextExceeded writes the compaction refusal when every target has a
+// measured or provider-reported context shortfall.
 func (server *Server) writeContextExceeded(writer http.ResponseWriter, format llmprotocol.WireFormat, capacity map[string]*CapacityFact) bool {
-	message := server.contextExceededMessage(capacity)
-	if message == "" {
+	if !server.exceedsAllDeployments(capacity) {
 		return false
 	}
-	server.writeError(writer, format, http.StatusBadRequest, CodeContextExceedsAllDeployments, message)
+	server.writeError(writer, format, http.StatusBadRequest, CodeContextExceedsAllDeployments, server.contextExceededMessage(capacity))
 	return true
 }
 

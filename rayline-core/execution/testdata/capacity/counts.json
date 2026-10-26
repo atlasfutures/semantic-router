@@ -1,0 +1,42 @@
+{
+ "fixtures": {
+  "base64": {
+   "bytes": 60790,
+   "qwen_tokens": 45037
+  },
+  "code_30k": {
+   "bytes": 112136,
+   "qwen_tokens": 29990
+  },
+  "float_logs": {
+   "bytes": 85890,
+   "qwen_tokens": 63890
+  },
+  "hex_sha256": {
+   "bytes": 72000,
+   "qwen_tokens": 55665
+  },
+  "json_catalog": {
+   "bytes": 59966,
+   "qwen_tokens": 16780
+  },
+  "multilingual": {
+   "bytes": 80697,
+   "qwen_tokens": 15746
+  },
+  "numeric_csv": {
+   "bytes": 65716,
+   "qwen_tokens": 64485
+  },
+  "prose": {
+   "bytes": 119993,
+   "qwen_tokens": 31297
+  },
+  "uvlock_120k": {
+   "bytes": 122586,
+   "qwen_tokens": 80068
+  }
+ },
+ "tokenizer": "Qwen/Qwen3.8-27B tokenizer.json",
+ "tokenizer_sha256": "0997f410c57a1f4e53b09e4be8f4a172d90edd9564368fb0847030937229b9f3"
+}
