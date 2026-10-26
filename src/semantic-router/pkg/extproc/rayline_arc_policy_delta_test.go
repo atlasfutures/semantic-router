@@ -761,6 +761,13 @@ func TestDeltaDigestKeepsNestedCacheControl(t *testing.T) {
 		t.Fatal("a changed tool input matched")
 	}
 	// Claude Desktop's newest prompt, demoted once a tool round follows it.
+	for _, role := range []string{"system", "user"} {
+		empty := json.RawMessage(`{"role":"` + role + `","content":[{"type":"text","text":""}]}`)
+		emptyString := json.RawMessage(`{"role":"` + role + `","content":""}`)
+		if policyDeltaDigest([]json.RawMessage{empty}, 1) == policyDeltaDigest([]json.RawMessage{emptyString}, 1) {
+			t.Fatalf("an empty %s text block matched an empty string", role)
+		}
+	}
 	userBlock := json.RawMessage(`{"role":"user","content":[{"type":"text","text":"hi","cache_control":{"type":"ephemeral"}}]}`)
 	userString := json.RawMessage(`{"role":"user","content":"hi"}`)
 	if policyDeltaDigest([]json.RawMessage{userBlock}, 1) != policyDeltaDigest([]json.RawMessage{userString}, 1) {
