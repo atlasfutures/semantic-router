@@ -726,6 +726,15 @@ func newCompaction(
 	return count + 1, summary, true
 }
 
+// Attribution is the ledger's attribution of messages, as a decide or an
+// append carries it.
+func (state *PolicyEpisodeState) Attribution(messages []json.RawMessage, roles []string) []PolicyAttribution {
+	if state == nil {
+		return []PolicyAttribution{}
+	}
+	return state.attribution(messages, roles)
+}
+
 func (state *PolicyEpisodeState) attribution(messages []json.RawMessage, roles []string) []PolicyAttribution {
 	attribution := make([]PolicyAttribution, 0, len(state.Ledger))
 	for _, entry := range state.Ledger {

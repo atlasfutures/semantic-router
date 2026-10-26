@@ -253,6 +253,15 @@ type RaylineARCTrace struct {
 	// PolicyLatency is the decide call's round trip as the router timed it;
 	// EncoderLatency stays the encode alone.
 	PolicyLatency time.Duration
+	// PolicyDecisionMode is how a delta cell's staged turn was decided (ADR
+	// 0155): delta (on a turn_delta) or sync (sent in full). Empty on a sync
+	// cell, whose records are as before.
+	PolicyDecisionMode string
+	// PolicyStaging is what a delta cell's strict main turn hands its
+	// episode transaction: the append to post before the lease is released.
+	// Opaque here (extproc's *policyStaging); never copied to a coalesced
+	// resend.
+	PolicyStaging any
 	// EncoderLatencyUnknown marks an encode time the policy service did not
 	// report: EncoderLatency is then not a measurement, and is neither
 	// logged nor observed.

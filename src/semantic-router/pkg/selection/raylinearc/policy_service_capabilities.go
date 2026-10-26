@@ -51,6 +51,10 @@ const (
 	// ["cache_trace"] with decision.cache_trace (pathfinder #5875). A
 	// routing.execution lookup asks for it only of a service that lists it.
 	PolicyCapabilityCacheTrace = "cache_trace"
+	// PolicyCapabilityStagedTurns: the append operation and the decide's
+	// stage and turn_delta members (ADR 0155, pathfinder#5919). A delta
+	// cell whose service does not advertise it sends every turn in full.
+	PolicyCapabilityStagedTurns = "staged_turns"
 )
 
 // Readiness classes for a service that cannot serve what the cell sends.

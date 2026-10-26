@@ -242,6 +242,19 @@ var policyExplorationRefusalReasons = map[string]bool{
 	"exploration_unsupported_by_package": true,
 }
 
+// PolicySessionMismatchClass is a staged-turn refusal (unsupported_request /
+// session_mismatch, ADR 0155): the service holds no staged turn this delta or
+// append extends. The turn is sent in full instead.
+const PolicySessionMismatchClass = "session_mismatch"
+
+// PolicyTurnDeltaUnsupportedClass is a package that takes no delta decide
+// (unsupported_request / turn_delta_unsupported_by_package).
+const PolicyTurnDeltaUnsupportedClass = "turn_delta_unsupported"
+
+// PolicyAppendUnsupportedClass is a service that predates the append: it
+// answers the operation 404 or 405.
+const PolicyAppendUnsupportedClass = "append_unsupported"
+
 // PolicySignalRefusedClass is the service's refusal of a request's
 // caller-facing signals (pathfinder #5943: unsupported_request with a
 // detail.reason such as signal_not_supported, signal_not_admitted or
@@ -273,6 +286,12 @@ func policyFailureClass(failure PolicyErrorResponse) string {
 		}
 		if reason == PolicyMediaRefusedClass {
 			return PolicyMediaRefusedClass
+		}
+		switch reason {
+		case "session_mismatch":
+			return PolicySessionMismatchClass
+		case "turn_delta_unsupported_by_package":
+			return PolicyTurnDeltaUnsupportedClass
 		}
 	}
 	return PolicyServiceErrorClass(failure.Error)
@@ -387,6 +406,33 @@ func (client *PolicyServiceClient) Decide(
 		return nil, err
 	}
 	response, err := DecodePolicyDecisionResponse(body)
+	if err != nil {
+		return nil, &PolicyServiceError{Class: "decode"}
+	}
+	return response, nil
+}
+
+// Append extends the episode's staged turn by its assistant output (ADR
+// 0155). A service that predates the operation fails with
+// PolicyAppendUnsupportedClass.
+func (client *PolicyServiceClient) Append(
+	ctx context.Context,
+	request PolicyAppendRequest,
+) (*PolicyAppendResponse, error) {
+	payload, err := EncodePolicyAppendRequest(request)
+	if err != nil {
+		return nil, &PolicyServiceError{Class: "request"}
+	}
+	body, err := client.do(ctx, http.MethodPost, "/v1/rayline/arc/policy/append", payload)
+	if err != nil {
+		var failure *PolicyServiceError
+		if errors.As(err, &failure) && failure.Class == "status" &&
+			(failure.Status == http.StatusNotFound || failure.Status == http.StatusMethodNotAllowed) {
+			return nil, &PolicyServiceError{Class: PolicyAppendUnsupportedClass, Status: failure.Status}
+		}
+		return nil, err
+	}
+	response, err := DecodePolicyAppendResponse(body)
 	if err != nil {
 		return nil, &PolicyServiceError{Class: "decode"}
 	}
