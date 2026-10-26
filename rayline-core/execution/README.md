@@ -101,8 +101,85 @@ opt-in. The core reports facts and never picks or ranks a model.
   `available_source: "configured"` (llama.cpp's per-slot allocation is not yet
   observed); `units` = its `token_units`; `provenance: "local_measured"`. A
   counter that fails reports that target `fits: false` with
-  `reason: "runtime_unavailable"` instead of refusing the turn. Other targets
-  send `capacity: null`.
+  `reason: "runtime_unavailable"` instead of refusing the turn. A **local**
+  target without a registered counter is sized from the same prepared request:
+  - **Qwen3.8-27B** (`registry_model: "qwen/qwen3.8-27b"`, Chat wire; the
+    Rayline Local default) is rendered with the model's chat template as
+    vLLM's Chat path feeds it (`qwen_capacity.go`: arguments and tools
+    re-spelt by Python's `tojson`, floats by `repr`; each tool as
+    `model_dump()` spells it, declared fields first with null
+    `description`/`parameters`; text parts joined with "\n" in the rendered
+    text, and a plain concatenation charged too where it costs more) and
+    counted in-process with the embedded tokenizer (`tokencount`, pure Go:
+    the snapshot's `merges.txt`, its added tokens, NFC and its
+    pre-tokenizer), `provenance: "local_measured"`. The rendering takes the
+    template's most expensive branch where the request does not pin one and
+    adds 16 tokens, 2 per message and 8 per tool. A message the counter can
+    only bound by its bytes (text x/text cannot normalize as the reference
+    does: a supplementary character in non-NFC text, or one of the combining
+    marks the reference's older Unicode tables lack) makes the fact
+    `caller_estimated`. This assumes the runtime serves Qwen3.8-27B with that
+    template; the core does not verify the served model. An operator serving
+    Qwen with a custom template should register a llama.cpp counter instead.
+  - **Any other model** gets the UTF-8 byte count of a worst-case
+    re-serialization of the prepared request (values re-encoded with
+    `indent=4`, Python separators and float `repr`, non-ASCII and `<`, `>`,
+    `&` escaped, each tool call's arguments reloaded and re-encoded beside
+    it), a proven upper bound for byte-level BPE whatever a template does to
+    the request's JSON, raised by `headroom_ratio` and 512 tokens for a
+    template preamble, `provenance: "caller_estimated"`.
+  - An inline base64 image is charged `media_tokens` instead of its bytes, and
+    a fact that includes one is `caller_estimated`.
+  - **`context_overflow`** (local deployments, `"refuses"` or
+    `"truncates"`, default `"truncates"`) states what the runtime does with a
+    prompt over its window. On a `"truncates"` deployment (Ollama,
+    `mlx_lm.server`) an estimated shortfall always stands, so such a prompt is
+    never sent to be silently cut; if that leaves every target short, the turn
+    gets the compaction 400. On a `"refuses"` deployment (llama.cpp, vLLM),
+    when every executable target falls short, its estimated facts are sent as
+    unknown for all its actions: the turn dispatches there and the runtime's
+    own context refusal decides.
+    A missing `context_overflow` means `"truncates"`; Rayline Local's CLI
+    sets `"refuses"` when it detects llama.cpp. The rule is part of the
+    all-short decision itself: an estimated shortfall on a `"refuses"`
+    deployment counts as unknown there, so the turn start, a re-consult, the
+    re-consult limit and a service refusal all agree.
+  - **A runtime context refusal covers its whole deployment.** It is recorded
+    as `provider_reported` for every action bound to that deployment, so no
+    sibling control is dispatched to be refused again, and when that leaves no
+    target the core answers the compaction 400 at once instead of spending
+    re-consults. This is conservative: a near-edge turn is handed off rather
+    than retried with a sibling control whose smaller output allowance might
+    have fit.
+  The policy contract admits `fits: false` from any provenance and reads an
+  estimated `fits: true` as unknown, so an over-window local target is excluded
+  before anything is sent to it. Facts are recomputed every turn: once the
+  history outgrows the local window, local stays excluded. A **cloud** target
+  without a counter sends `capacity: null`; its provider refuses an oversized
+  prompt itself, and that refusal reaches the caller translated, text intact.
+- **Runtime context refusals.** A local runtime's refusal before any output,
+  llama.cpp's or an OpenAI-compatible one (`context_length_exceeded` or
+  "maximum context length" in the error's code, type or message: vLLM, MLX, a
+  custom endpoint), re-consults with `reconsult: "capacity"`.
+- **No deployment fits.** When every executable target has a
+  `context_capacity` shortfall that stands (see `context_overflow`) and none
+  is unknown, the
+  core answers `400 context_exceeds_all_deployments` in the caller's wire
+  format before Decisions or any runtime is contacted. A target without a fact
+  (a cloud target without a counter) is never assumed not to fit, so a default
+  hybrid profile is never refused on an estimate. The message starts with
+  `prompt is too long:` (Anthropic's wording, on which Claude Code compacts; the
+  Messages wire carries no code), gives the request's size and its basis
+  (estimated, measured or reported) when that exceeds the largest configured
+  "maximum context length", names that window and its model, and asks for the
+  conversation to be compacted or shortened. A service refusal `execution_no_feasible_target` (or a selection
+  of an infeasible target) under the same condition gets the same answer.
+- **Provider context refusals.** A cloud provider's context-length refusal
+  (HTTP 400/413 naming `context_length_exceeded`, "maximum context length",
+  "prompt is too long" or "input is too long" in the error's code, type or
+  message), received before any output, is forwarded translated; on the
+  Messages wire its message is prefixed with `prompt is too long:` unless it
+  already starts so.
 - **Pre-dispatch check and veto.** The final prepared request is checked again
   before dispatch. If it does not fit the selected target, or the local runtime
   refuses it for context before any output, the core re-consults once per cause
@@ -208,6 +285,14 @@ input modalities explicitly include `text` and may include `image`. Authenticate
 health reports the minimum limits and modality intersection of possible execution
 targets. No harness gateway clamps the caller's requested output allowance.
 `auth_env` names an optional credential.
+`capacity_estimate` (v2, optional, local deployments) tunes the sizing of a
+local deployment without a registered counter: `{"headroom_ratio": 0.05,
+"media_tokens": 8192}` are the defaults for absent members (limits:
+`headroom_ratio` in [0, 10], `media_tokens` >= 0). `headroom_ratio` applies
+only to the byte bound; `media_tokens` (a Retina screenshot is about 6.6k
+Qwen-VL tokens) to both. Each distinct prepared body is sized once per
+deployment and turn, and a configured Qwen3.8 deployment builds its counter
+at startup.
 Local inference cannot receive the hosted Decisions credential, including under
 an alternate environment-variable name. Unknown token units are an empty string;
 they cannot support comparable prefix evidence.

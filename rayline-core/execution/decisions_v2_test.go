@@ -76,6 +76,8 @@ type v2Decisions struct {
 	mutate func(map[string]any)
 	// failNext answers that many lookups with HTTP 500.
 	failNext int
+	// refuse, when it returns a code, answers HTTP 409 with that contract code.
+	refuse func(contextV2) string
 }
 
 func (fixture *v2Decisions) snapshot() []v2Lookup {
@@ -117,6 +119,13 @@ func v2Server(t *testing.T, config Config, fixture *v2Decisions, counts ...int) 
 			return
 		}
 		sent := body.Routing.Execution
+		if fixture.refuse != nil {
+			if code := fixture.refuse(sent); code != "" {
+				w.WriteHeader(http.StatusConflict)
+				_, _ = io.WriteString(w, `{"error":{"code":"`+code+`","type":"invalid_request_error"},"type":"error"}`)
+				return
+			}
+		}
 		id := fixture.choose(sent)
 		action := actions[id]
 		excluded := []map[string]any{}
@@ -256,8 +265,12 @@ func TestV2EnvelopeCarriesEventsLastServedHistoryAndTargets(t *testing.T) {
 		if got.Hold != nil || got.Expect == nil || got.Expect.PackageSHA256 == nil || *got.Expect.PackageSHA256 != config.PackageSHA256 || got.Expect.OfferSHA256 != nil {
 			t.Fatalf("turn %d hold/expect %+v %+v", index, got.Hold, got.Expect)
 		}
-		if len(got.Targets) != 2 || got.Targets[0].ActionID != localActionID || got.Targets[0].Placement != "local" || got.Targets[1].Placement != "cloud" || got.Targets[1].Capacity != nil {
+		if len(got.Targets) != 2 || got.Targets[0].ActionID != localActionID || got.Targets[0].Placement != "local" || got.Targets[1].Placement != "cloud" {
 			t.Fatalf("turn %d targets %+v", index, got.Targets)
+		}
+		// A cloud target without a counter is never estimated: unknown.
+		if cloudFact := got.Targets[1].Capacity; cloudFact != nil {
+			t.Fatalf("turn %d cloud capacity %+v", index, cloudFact)
 		}
 		capacity := got.Targets[0].Capacity
 		if capacity == nil || !capacity.Fits || *capacity.Required != 300+64 || *capacity.Available != 1000 || *capacity.AvailableSource != "configured" || *capacity.Units != "provider:fixture-worker" || capacity.Provenance != "local_measured" {

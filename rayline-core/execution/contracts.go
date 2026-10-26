@@ -43,6 +43,32 @@ type Deployment struct {
 	// CapacityMarginTokens is an explicit counting margin added to the exact
 	// prepared prompt and output limit in capacity admission (v2 only).
 	CapacityMarginTokens int64 `json:"capacity_margin_tokens,omitempty"`
+	// CapacityEstimate tunes the conservative estimate used when this local
+	// deployment has no registered prompt counter (v2 only). Absent members
+	// take the documented defaults.
+	CapacityEstimate *CapacityEstimate `json:"capacity_estimate,omitempty"`
+	// ContextOverflow states what this local runtime does with a prompt over
+	// its window: "refuses" (a context error before any output: llama.cpp,
+	// vLLM) or "truncates" (silently: Ollama, mlx_lm.server). Empty means
+	// "truncates". Only on a "refuses" deployment may an estimated shortfall
+	// be relaxed to unknown so the runtime decides (v2 only).
+	ContextOverflow string `json:"context_overflow,omitempty"`
+}
+
+const (
+	ContextOverflowRefuses   = "refuses"
+	ContextOverflowTruncates = "truncates"
+)
+
+// CapacityEstimate overrides the estimator constants for one deployment
+// (capacity_estimate.go).
+type CapacityEstimate struct {
+	// HeadroomRatio raises the byte bound of a model other than Qwen3.8-27B
+	// (default 0.05).
+	HeadroomRatio *float64 `json:"headroom_ratio,omitempty"`
+	// MediaTokens is charged per inline base64 image instead of its bytes
+	// (default 8192).
+	MediaTokens *int64 `json:"media_tokens,omitempty"`
 }
 
 // ProviderPin is part of the approved cloud dispatch profile. Exact dispatch

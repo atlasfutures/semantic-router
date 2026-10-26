@@ -1,0 +1,162 @@
+{
+ "fixtures": {
+  "arabic": {
+   "bytes": 55874,
+   "qwen_tokens": 27080
+  },
+  "armenian": {
+   "bytes": 55598,
+   "qwen_tokens": 32821
+  },
+  "base64": {
+   "bytes": 60790,
+   "qwen_tokens": 45037
+  },
+  "code_30k": {
+   "bytes": 111584,
+   "qwen_tokens": 29980
+  },
+  "cyrillic": {
+   "bytes": 55808,
+   "qwen_tokens": 22512
+  },
+  "edge_cases": {
+   "bytes": 83524,
+   "qwen_tokens": 32072
+  },
+  "emoji": {
+   "bytes": 25645,
+   "qwen_tokens": 17176
+  },
+  "fasta": {
+   "bytes": 61034,
+   "qwen_tokens": 31865
+  },
+  "float_logs": {
+   "bytes": 85890,
+   "qwen_tokens": 63890
+  },
+  "fullwidth": {
+   "bytes": 24758,
+   "qwen_tokens": 11046
+  },
+  "greek": {
+   "bytes": 55102,
+   "qwen_tokens": 23614
+  },
+  "hangul_random": {
+   "bytes": 25591,
+   "qwen_tokens": 17437
+  },
+  "hebrew": {
+   "bytes": 55804,
+   "qwen_tokens": 24672
+  },
+  "hex_sha256": {
+   "bytes": 72000,
+   "qwen_tokens": 55665
+  },
+  "json_catalog": {
+   "bytes": 59966,
+   "qwen_tokens": 16780
+  },
+  "latin_ext": {
+   "bytes": 55950,
+   "qwen_tokens": 41822
+  },
+  "multilingual": {
+   "bytes": 80697,
+   "qwen_tokens": 15746
+  },
+  "numeric_csv": {
+   "bytes": 65716,
+   "qwen_tokens": 64485
+  },
+  "probe_arabic_block": {
+   "bytes": 16000,
+   "qwen_tokens": 13483
+  },
+  "probe_arabic_harakat": {
+   "bytes": 50907,
+   "qwen_tokens": 22920
+  },
+  "probe_cyr_ext": {
+   "bytes": 16000,
+   "qwen_tokens": 15090
+  },
+  "probe_cyr_supp": {
+   "bytes": 16000,
+   "qwen_tokens": 16000
+  },
+  "probe_fatiha": {
+   "bytes": 47400,
+   "qwen_tokens": 16800
+  },
+  "probe_genesis_vocalized": {
+   "bytes": 63000,
+   "qwen_tokens": 35000
+  },
+  "probe_greek_block": {
+   "bytes": 16000,
+   "qwen_tokens": 12503
+  },
+  "probe_han_hard": {
+   "bytes": 24000,
+   "qwen_tokens": 24000
+  },
+  "probe_hebrew_block": {
+   "bytes": 16000,
+   "qwen_tokens": 13419
+  },
+  "probe_hebrew_cant": {
+   "bytes": 74526,
+   "qwen_tokens": 56408
+  },
+  "probe_hebrew_half_niqqud": {
+   "bytes": 38971,
+   "qwen_tokens": 21771
+  },
+  "probe_hebrew_niqqud": {
+   "bytes": 50552,
+   "qwen_tokens": 32528
+  },
+  "probe_kana_hard": {
+   "bytes": 24000,
+   "qwen_tokens": 15931
+  },
+  "probe_short_rand_lower_any": {
+   "bytes": 35919,
+   "qwen_tokens": 18011
+  },
+  "probe_short_rand_lower_vowelrich": {
+   "bytes": 38745,
+   "qwen_tokens": 18587
+  },
+  "probe_short_rand_mixed_vowelrich": {
+   "bytes": 26761,
+   "qwen_tokens": 15431
+  },
+  "prose": {
+   "bytes": 119993,
+   "qwen_tokens": 31297
+  },
+  "rare_han": {
+   "bytes": 24145,
+   "qwen_tokens": 19181
+  },
+  "slugs_lower": {
+   "bytes": 41099,
+   "qwen_tokens": 21884
+  },
+  "upper_codes": {
+   "bytes": 37796,
+   "qwen_tokens": 22270
+  },
+  "uvlock_120k": {
+   "bytes": 122586,
+   "qwen_tokens": 80068
+  }
+ },
+ "tokenizer": "Qwen/Qwen3.8-27B tokenizer.json",
+ "tokenizer_sha256": "0997f410c57a1f4e53b09e4be8f4a172d90edd9564368fb0847030937229b9f3"
+}

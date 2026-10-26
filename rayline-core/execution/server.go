@@ -7,6 +7,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -21,6 +22,7 @@ import (
 	"github.com/atlasfutures/semantic-router/rayline-core/protocolcodec"
 	"github.com/atlasfutures/semantic-router/rayline-core/reasoning"
 	"github.com/atlasfutures/semantic-router/rayline-core/thinkingcontrol"
+	"github.com/atlasfutures/semantic-router/rayline-core/tokencount"
 )
 
 type admittedAction struct {
@@ -81,6 +83,19 @@ func NewServer(config Config, registry *thinkingcontrol.Registry, provider Decis
 		}
 		if err := validateProviderPin(deployment); err != nil {
 			return nil, fmt.Errorf("deployment %s: %w", deployment.ID, err)
+		}
+		if err := deployment.CapacityEstimate.validate(); err != nil {
+			return nil, fmt.Errorf("deployment %s: %w", deployment.ID, err)
+		}
+		if overflow := deployment.ContextOverflow; overflow != "" && overflow != ContextOverflowRefuses && overflow != ContextOverflowTruncates {
+			return nil, fmt.Errorf("deployment %s: context_overflow must be %q or %q", deployment.ID, ContextOverflowRefuses, ContextOverflowTruncates)
+		}
+		if isQwen38Deployment(deployment) {
+			// Build the embedded counter now, so a corrupt embed fails at
+			// startup rather than on a turn.
+			if _, err := tokencount.Qwen38(); err != nil {
+				return nil, fmt.Errorf("deployment %s: qwen3.8 counter: %w", deployment.ID, err)
+			}
 		}
 		if deployment.Kind == "local" && deployment.AuthEnv != "" &&
 			(deployment.AuthEnv == config.Decisions.AuthEnv || (os.Getenv(deployment.AuthEnv) != "" && os.Getenv(deployment.AuthEnv) == os.Getenv(config.Decisions.AuthEnv))) {
@@ -341,10 +356,15 @@ func (server *Server) execute(writer http.ResponseWriter, incoming *http.Request
 			for actionID, prompt := range prompts {
 				reuse["action:"+actionID] = prompt
 			}
+			// A prompt no deployment can hold is refused before Decisions or
+			// any runtime is contacted; it can only be compacted.
+			if server.writeContextExceeded(writer, format, facts) {
+				return
+			}
 		}
 		decision, err := server.provider.Decide(ctx, input)
 		if err != nil {
-			server.writeError(writer, format, http.StatusBadGateway, "decision_failed", err.Error())
+			server.writeDecisionError(writer, format, err, input.Capacity)
 			return
 		}
 		pending = &pendingTurn{fingerprint: requestFingerprint, requestID: requestID, decision: decision, input: input}
@@ -415,7 +435,15 @@ func (server *Server) execute(writer http.ResponseWriter, incoming *http.Request
 		// A runtime's own context refusal arrives before any output. It is a
 		// fact for the service, never a local reselection or truncation.
 		if v2 && readErr == nil && isRuntimeContextRejection(selected.deployment, upstream.StatusCode, errorBody) {
-			fact := runtimeContextRejection(selected.deployment, capacityFact(selected.deployment, prompt, prepared.outputLimit))
+			previous := capacityFact(selected.deployment, prompt, prepared.outputLimit)
+			if previous == nil {
+				previous = pending.input.Capacity[selected.action.ID]
+			}
+			fact := runtimeContextRejection(selected.deployment, previous)
+			// The runtime refused the conversation, not one control: every
+			// action on this deployment is out for this turn, so a sibling is
+			// never dispatched to be refused again.
+			pending.input.Capacity = server.withDeploymentRefusal(pending.input.Capacity, selected.deployment, selected.action.ID, fact)
 			if !server.reconsult(ctx, writer, format, pending, selected.action.ID, decision.RouteID, "capacity", fact) {
 				return
 			}
@@ -426,7 +454,7 @@ func (server *Server) execute(writer http.ResponseWriter, incoming *http.Request
 			return
 		}
 		upstream.Body = io.NopCloser(bytes.NewReader(errorBody))
-		server.forwardError(writer, format, selected.deployment.Protocol, upstream)
+		server.forwardError(writer, format, selected.deployment.Protocol, upstream, selected.deployment.Kind == "cloud" && isProviderContextRefusal(upstream.StatusCode, errorBody))
 		return
 	}
 	defer upstream.Body.Close()
@@ -518,16 +546,25 @@ const maxReconsults = 2
 // selects another action itself. It writes the visible error on failure.
 func (server *Server) reconsult(ctx context.Context, writer http.ResponseWriter, format llmprotocol.WireFormat, pending *pendingTurn, actionID, retryOf, kind string, fact *CapacityFact) bool {
 	if pending.consults >= maxReconsults {
+		if server.writeContextExceeded(writer, format, withFact(pending.input.Capacity, actionID, fact)) {
+			return false
+		}
 		server.writeError(writer, format, http.StatusConflict, "execution_no_feasible_target", "the selected target does not fit this request and the re-consult limit was reached")
 		return false
 	}
 	input := pending.input
-	capacity := make(map[string]*CapacityFact, len(input.Capacity)+1)
-	for id, existing := range input.Capacity {
-		capacity[id] = existing
-	}
-	capacity[actionID] = fact
+	capacity := withFact(input.Capacity, actionID, fact)
+	// The new fact may leave every target short: an estimate on a runtime
+	// that refuses for itself then yields, as at turn start.
+	server.relaxEstimatedShortfalls(capacity)
 	input.Capacity = capacity
+	if server.exceedsAllDeployments(capacity) {
+		// Nothing is left to choose: answer the compaction refusal now
+		// rather than spend re-consults on targets known not to fit.
+		pending.input.Capacity = capacity
+		server.writeContextExceeded(writer, format, capacity)
+		return false
+	}
 	// Keep the fact even if this consult fails, so a client retry of the same
 	// request cannot dispatch the refused target again.
 	pending.input.Capacity = capacity
@@ -535,16 +572,48 @@ func (server *Server) reconsult(ctx context.Context, writer http.ResponseWriter,
 	slog.Info("execution reconsult", "reconsult", kind, "retry_of", retryOf, "vetoed_action_id", actionID, "required", int64OrNil(fact.Required), "available", int64OrNil(fact.Available), "attempt", input.Reconsult.Attempt)
 	decision, err := server.provider.Decide(ctx, input)
 	if err != nil {
-		server.writeError(writer, format, http.StatusBadGateway, "decision_failed", err.Error())
+		server.writeDecisionError(writer, format, err, input.Capacity)
 		return false
 	}
 	if decision.ActionID == actionID {
+		if server.writeContextExceeded(writer, format, capacity) {
+			return false
+		}
 		server.writeError(writer, format, http.StatusConflict, "execution_no_feasible_target", "Decisions reselected a target the core reported does not fit")
 		return false
 	}
 	pending.input, pending.decision = input, decision
 	pending.consults++
 	return true
+}
+
+// withDeploymentRefusal copies a turn's capacity facts with the selected
+// action's runtime context refusal (fact) recorded, and the same refusal for
+// every sibling action bound to that deployment.
+func (server *Server) withDeploymentRefusal(facts map[string]*CapacityFact, deployment Deployment, selectedID string, fact *CapacityFact) map[string]*CapacityFact {
+	capacity := make(map[string]*CapacityFact, len(facts)+1)
+	for id, existing := range facts {
+		capacity[id] = existing
+	}
+	for id, action := range server.actions {
+		switch {
+		case id == selectedID:
+			capacity[id] = fact
+		case action.deployment.ID == deployment.ID:
+			capacity[id] = runtimeContextRejection(deployment, facts[id])
+		}
+	}
+	return capacity
+}
+
+// withFact copies a turn's capacity facts with one narrowing fact added.
+func withFact(facts map[string]*CapacityFact, actionID string, fact *CapacityFact) map[string]*CapacityFact {
+	capacity := make(map[string]*CapacityFact, len(facts)+1)
+	for id, existing := range facts {
+		capacity[id] = existing
+	}
+	capacity[actionID] = fact
+	return capacity
 }
 
 // Failed and partial attempts consume the same process-wide admission as a
@@ -563,6 +632,28 @@ func (server *Server) reserveGenerationAttempt() bool {
 			return true
 		}
 	}
+}
+
+// writeDecisionError reports a failed consult. A service that finds no
+// feasible target while every target has a known context shortfall gets the
+// same compaction message as the core's own refusal, not a generic failure.
+func (server *Server) writeDecisionError(writer http.ResponseWriter, format llmprotocol.WireFormat, err error, capacity map[string]*CapacityFact) {
+	var refusal *DecisionsRefusal
+	noFeasible := errors.Is(err, errSelectedInfeasible) || errors.As(err, &refusal) && (refusal.Code == "execution_no_feasible_target" || refusal.Code == "no_feasible_target")
+	if noFeasible && server.writeContextExceeded(writer, format, capacity) {
+		return
+	}
+	server.writeError(writer, format, http.StatusBadGateway, "decision_failed", err.Error())
+}
+
+// writeContextExceeded writes the compaction refusal when every target has a
+// context shortfall and none is unknown.
+func (server *Server) writeContextExceeded(writer http.ResponseWriter, format llmprotocol.WireFormat, capacity map[string]*CapacityFact) bool {
+	if !server.exceedsAllDeployments(capacity) {
+		return false
+	}
+	server.writeError(writer, format, http.StatusBadRequest, CodeContextExceedsAllDeployments, server.contextExceededMessage(capacity))
+	return true
 }
 
 func writeJSON(writer http.ResponseWriter, status int, value any) {

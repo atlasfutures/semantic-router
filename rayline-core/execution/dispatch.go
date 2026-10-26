@@ -3,6 +3,7 @@ package execution
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -191,7 +192,11 @@ func dispatchEchoMatches(header http.Header, selected admittedAction, decision D
 		header.Get("X-Rayline-Dispatch-Issuer") == selected.deployment.IssuerSHA256
 }
 
-func (server *Server) forwardError(writer http.ResponseWriter, target, source llmprotocol.WireFormat, upstream *http.Response) {
+// forwardError translates an upstream refusal received before any output. A
+// provider's context-length refusal delivered on the Messages wire starts with
+// Anthropic's "prompt is too long:", on which Claude Code compacts; the
+// provider's own text follows.
+func (server *Server) forwardError(writer http.ResponseWriter, target, source llmprotocol.WireFormat, upstream *http.Response, contextRefusal bool) {
 	body, err := readBounded(upstream.Body, 1<<20)
 	if err != nil {
 		server.writeError(writer, target, http.StatusBadGateway, "upstream_error", "selected endpoint returned an unreadable error")
@@ -202,9 +207,74 @@ func (server *Server) forwardError(writer http.ResponseWriter, target, source ll
 		server.writeError(writer, target, http.StatusBadGateway, "upstream_error", "selected endpoint returned an invalid error body")
 		return
 	}
+	if contextRefusal && target == llmprotocol.AnthropicMessagesV1 {
+		translated.Body = withPromptTooLong(translated.Body)
+	}
 	writer.Header().Set("Content-Type", "application/json")
 	writer.WriteHeader(upstream.StatusCode)
 	_, _ = writer.Write(translated.Body)
+}
+
+// isProviderContextRefusal recognizes a refusal of a prompt over the
+// context length (OpenAI context_length_exceeded, "maximum context length",
+// Anthropic "prompt is too long", "input is too long") in the error's code,
+// type or message only: {"error": {...}}, {"error": "..."} or vLLM's
+// top-level {"message", "type", "code"}.
+func isProviderContextRefusal(status int, body []byte) bool {
+	return contextRefusalNames(status, body, "context_length_exceeded", "maximum context length", "prompt is too long", "input is too long")
+}
+
+// contextRefusalNames reports whether a 400/413 error names one of markers
+// in its code, type or message.
+func contextRefusalNames(status int, body []byte, markers ...string) bool {
+	if status != http.StatusBadRequest && status != http.StatusRequestEntityTooLarge {
+		return false
+	}
+	var envelope map[string]json.RawMessage
+	if json.Unmarshal(body, &envelope) != nil {
+		return false
+	}
+	fields := []json.RawMessage{envelope["message"], envelope["type"], envelope["code"], envelope["error"]}
+	var inner map[string]json.RawMessage
+	if json.Unmarshal(envelope["error"], &inner) == nil {
+		fields = append(fields, inner["message"], inner["type"], inner["code"])
+	}
+	for _, field := range fields {
+		var text string
+		if json.Unmarshal(field, &text) != nil {
+			continue
+		}
+		lower := strings.ToLower(text)
+		for _, marker := range markers {
+			if strings.Contains(lower, marker) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// withPromptTooLong prefixes an Anthropic error body's message; any other
+// shape is returned unchanged.
+func withPromptTooLong(body []byte) []byte {
+	var envelope map[string]any
+	if json.Unmarshal(body, &envelope) != nil {
+		return body
+	}
+	inner, ok := envelope["error"].(map[string]any)
+	if !ok {
+		return body
+	}
+	message, _ := inner["message"].(string)
+	if strings.HasPrefix(strings.ToLower(message), "prompt is too long") {
+		return body
+	}
+	inner["message"] = strings.TrimSuffix("prompt is too long: "+message, ": ")
+	rewritten, err := json.Marshal(envelope)
+	if err != nil {
+		return body
+	}
+	return rewritten
 }
 
 func readBounded(reader io.Reader, limit int64) ([]byte, error) {

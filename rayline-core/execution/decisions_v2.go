@@ -3,6 +3,7 @@ package execution
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 )
@@ -253,6 +254,10 @@ func sameTurn(left, right turnV2) bool {
 	return left.ID == right.ID && left.Attempt == right.Attempt && left.Epoch == right.Epoch && equal(left.RetryOf, right.RetryOf) && equal(left.Reconsult, right.Reconsult)
 }
 
+// errSelectedInfeasible is a selection of a target this turn's own capacity
+// facts mark fits:false.
+var errSelectedInfeasible = errors.New("Decisions selected a target the core reported does not fit")
+
 // validateV2 checks the service applied this turn's envelope and policy and
 // that its receipt explains the selected action without contradicting a
 // capacity fact the core reported. It never substitutes another action.
@@ -318,7 +323,7 @@ func validateV2(raw []byte, selected publicDecision, identity *decisionIdentity,
 			continue
 		}
 		if target.ActionID == identity.ActionID {
-			return nil, fmt.Errorf("Decisions selected a target the core reported does not fit")
+			return nil, errSelectedInfeasible
 		}
 		if reason := excluded[target.ActionID]; target.Capacity.Reason == nil || reason != *target.Capacity.Reason {
 			return nil, fmt.Errorf("Decisions receipt omitted an infeasible target's exclusion")
