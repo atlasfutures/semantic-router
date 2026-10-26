@@ -1,0 +1,102 @@
+package extproc
+
+import (
+	"bytes"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
+)
+
+// A count the upstream stated before the output is a snapshot, and the row
+// says so.
+//
+// Anthropic's message_start states output_tokens 1 before the first delta.
+// Measured live 2026-10-26 with a 20 s deadline: after 781 content deltas the
+// usage row said completion_tokens 1, usage_source authoritative, and so did
+// the frame the Messages client received. The turn was billed as one token.
+// Once output has run past the statement the output leg takes the larger of
+// the snapshot and the Router's estimate of what it forwarded, and the row is
+// marked an estimate so reconciliation can tell it from a settlement.
+func TestACountStatedBeforeTheOutputIsRestatedOnTheRow(t *testing.T) {
+	logs := captureLogs(t)
+	router := &OpenAIRouter{}
+	ctx := overrunningStreamContext(t)
+	ctx.TargetFormat = llmprotocol.AnthropicMessagesV1
+	ctx.StartTime = time.Now()
+
+	// Inside the budget: message_start with the snapshot, then real output.
+	streamDeadlineResponseBody(t, router, ctx, anthropicMessageStart(37, 1))
+	streamDeadlineResponseBody(t, router, ctx, anthropicTextDelta(strings.Repeat("one two three four ", 60)))
+
+	// Then the deadline falls.
+	ctx.StartTime = time.Now().Add(-600 * time.Second)
+	body := streamDeadlineResponseBody(t, router, ctx, anthropicTextDelta("five"))
+
+	fields := findLogEvent(t, logs, "llm_usage")
+	if truncated, _ := fields["truncated"].(bool); !truncated {
+		t.Fatalf("a turn the Router cut was counted as a whole one: %v", fields)
+	}
+	if got, _ := fields["completion_tokens"].(int64); got <= 1 {
+		t.Fatalf("completion_tokens = %v: the snapshot was billed as the turn's output", fields["completion_tokens"])
+	}
+	if got, _ := fields["usage_source"].(string); got != "stream_estimate" {
+		t.Fatalf("usage_source = %q, want stream_estimate for a restated count", got)
+	}
+	if got, _ := fields["prompt_tokens"].(int64); got != 37 {
+		t.Fatalf("prompt_tokens = %v, want the stated 37: a prompt does not grow", fields["prompt_tokens"])
+	}
+	// The frame the client receives says the same.
+	if bytes.Contains(body, []byte(`"output_tokens":1,`)) {
+		t.Fatalf("the client was told the turn cost one token:\n%s", body)
+	}
+	if !bytes.Contains(body, []byte(`"usage_source":"stream_estimate"`)) {
+		t.Fatalf("the client was not told the count is an estimate:\n%s", body)
+	}
+}
+
+func anthropicMessageStart(input, output int) string {
+	return "event: message_start\n" +
+		`data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant",` +
+		`"model":"claude-haiku-4-5","content":[],"stop_reason":null,"usage":{"input_tokens":` +
+		itoa(input) + `,"output_tokens":` + itoa(output) + `}}}` + "\n\n" +
+		"event: content_block_start\n" +
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}` + "\n\n"
+}
+
+func anthropicTextDelta(text string) string {
+	return "event: content_block_delta\n" +
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"` + text + `"}}` + "\n\n"
+}
+
+func itoa(value int) string {
+	return strconv.Itoa(value)
+}
+
+// A snapshot that happens to be larger than the estimate still does not pass
+// as settled. The turn ran past it, so the row is an estimate whichever count
+// it carries; a reconciler summing settlements must not count this one.
+func TestASnapshotThatWinsIsStillAnEstimate(t *testing.T) {
+	logs := captureLogs(t)
+	router := &OpenAIRouter{}
+	ctx := overrunningStreamContext(t)
+	ctx.TargetFormat = llmprotocol.AnthropicMessagesV1
+	ctx.StartTime = time.Now()
+
+	// A generous snapshot, then a little real output past it.
+	streamDeadlineResponseBody(t, router, ctx, anthropicMessageStart(37, 100))
+	streamDeadlineResponseBody(t, router, ctx, anthropicTextDelta("one two"))
+
+	ctx.StartTime = time.Now().Add(-600 * time.Second)
+	streamDeadlineResponseBody(t, router, ctx, anthropicTextDelta("three"))
+
+	fields := findLogEvent(t, logs, "llm_usage")
+	if got, _ := fields["completion_tokens"].(int64); got != 100 {
+		t.Fatalf("completion_tokens = %v, want the larger snapshot kept", fields["completion_tokens"])
+	}
+	if got, _ := fields["usage_source"].(string); got != "stream_estimate" {
+		t.Fatalf("usage_source = %q: a count the turn ran past was presented as settled", got)
+	}
+}

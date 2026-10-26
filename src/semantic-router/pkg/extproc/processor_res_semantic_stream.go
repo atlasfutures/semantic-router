@@ -39,10 +39,16 @@ type semanticResponseStreamState struct {
 	// serviceTier is the tier the upstream said it served the turn at.
 	serviceTier string
 	usage       llmprotocol.Usage
-	items       map[int]*semanticStreamItem
-	order       []int
-	terminal    bool
-	failed      *llmprotocol.ProtocolError
+	// generatedAtUsage is how much output the turn had produced when the
+	// upstream last stated a count. A count stated before more output arrived
+	// is a snapshot, not a settlement: Anthropic's message_start says
+	// output_tokens 1 before a single delta, and a turn cut after that has
+	// generated far more than 1 (outputRestatedPastSnapshot).
+	generatedAtUsage int
+	items            map[int]*semanticStreamItem
+	order            []int
+	terminal         bool
+	failed           *llmprotocol.ProtocolError
 	// upstreamFailed is the provider's error as it said it, before the
 	// client's copy was made public; the failure is classed by it.
 	upstreamFailed *llmprotocol.ProtocolError
@@ -342,6 +348,7 @@ func (state *semanticResponseStreamState) observe(events []llmprotocol.Event) {
 		}
 		if event.Usage != nil {
 			state.usage = *event.Usage
+			state.generatedAtUsage = generatedTextBytes(state)
 		}
 		if event.StopReason != "" {
 			state.stop = event.StopReason
@@ -695,9 +702,16 @@ func truncatedStreamUsage(ctx *RequestContext, usage responseUsageMetrics) respo
 	}
 	if ctx.SemanticStreamState != nil {
 		usage = responseUsageFromSemanticUsage(ctx.SemanticStreamState.usage)
+		if usage.invalid {
+			// The terminal the codec wrote for the cut has already reconciled
+			// the count (reconciledTruncationUsage), and what it restated is
+			// an estimate by provenance. That is the row, not a reason to
+			// discard the stream's own input legs and measure everything.
+			usage = responseUsageFromRestatedUsage(ctx.SemanticStreamState.usage)
+		}
 	}
 	if !usage.invalid {
-		return usage
+		return outputRestatedPastSnapshot(ctx, usage)
 	}
 	if estimated, carried := estimatedTruncatedStreamUsage(ctx); carried {
 		// The counts are the Router's estimate; a charge the upstream

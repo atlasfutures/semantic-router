@@ -2,6 +2,7 @@ package extproc
 
 import (
 	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
+
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/classification"
 )
 
@@ -33,16 +34,72 @@ func estimatedTruncatedStreamUsage(ctx *RequestContext) (responseUsageMetrics, b
 		return responseUsageMetrics{}, false
 	}
 	completion := estimatedTokensForBytes(generated)
-	prompt := estimatedTokensForBytes(ctx.VSRContextTextBytes)
-	return responseUsageMetrics{
-		promptTokens:             prompt,
-		promptTokensReported:     prompt > 0,
+	estimate := responseUsageMetrics{
 		completionTokens:         completion,
 		completionTokensReported: true,
-		totalTokens:              prompt + completion,
-		totalTokensReported:      true,
 		estimated:                true,
-	}, true
+	}
+	// The prompt the stream itself stated is a number the Router saw, and a
+	// better one than its own byte count: Anthropic's message_start says the
+	// input and cache legs before the first delta, and a prompt does not grow
+	// after it is counted. Only a stream that said nothing is measured.
+	if !statedInputLegs(ctx.SemanticStreamState, &estimate) {
+		prompt := estimatedTokensForBytes(ctx.VSRContextTextBytes)
+		estimate.promptTokens, estimate.promptTokensReported = prompt, prompt > 0
+	}
+	estimate.totalTokens = estimate.promptTokens + estimate.completionTokens
+	estimate.totalTokensReported = true
+	return estimate, true
+}
+
+// statedInputLegs copies the input legs the stream stated onto an estimate,
+// and reports whether it stated any. Provenance is not required to be
+// authoritative here: the turn is already an estimate, and a derived input
+// total is still the stream's own statement rather than the Router's guess.
+func statedInputLegs(state *semanticResponseStreamState, estimate *responseUsageMetrics) bool {
+	if state == nil || state.usage.State != llmprotocol.UsageAvailable || state.usage.InputTotal.Value == nil {
+		return false
+	}
+	estimate.promptTokens = int(*state.usage.InputTotal.Value)
+	estimate.promptTokensReported = true
+	if state.usage.InputCacheRead.Value != nil {
+		estimate.cachedPromptTokens = int(*state.usage.InputCacheRead.Value)
+		estimate.cachedPromptTokensReported = true
+	}
+	if state.usage.InputCacheWrite.Value != nil {
+		estimate.cacheWriteTokens = int(*state.usage.InputCacheWrite.Value)
+		estimate.cacheWriteTokensReported = true
+	}
+	return true
+}
+
+// outputRestatedPastSnapshot takes a count the upstream stated and asks
+// whether the turn kept generating after it was stated.
+//
+// If it did not, the count is a settlement and stands. If it did, the output
+// leg is a snapshot: Anthropic's message_start states output_tokens 1 before
+// the first delta, and a turn the Router cut after 780 deltas was being billed
+// as one token, marked authoritative. Measured live 2026-10-26. The output
+// then takes the larger of the snapshot and the Router's own estimate of what
+// it forwarded, and whichever wins the row says it is an estimate: the
+// snapshot is known to be short, and the estimate is bytes over four, which is
+// low on average rather than a bound. The input leg is left as stated: a
+// prompt does not grow after it is counted.
+func outputRestatedPastSnapshot(ctx *RequestContext, usage responseUsageMetrics) responseUsageMetrics {
+	state := ctx.SemanticStreamState
+	if state == nil || generatedTextBytes(state) <= state.generatedAtUsage {
+		return usage
+	}
+	usage.estimated = true
+	estimated, carried := estimatedTruncatedStreamUsage(ctx)
+	if !carried || estimated.completionTokens <= usage.completionTokens {
+		return usage
+	}
+	usage.completionTokens = estimated.completionTokens
+	usage.completionTokensReported = true
+	usage.totalTokens = usage.promptTokens + usage.completionTokens
+	usage.totalTokensReported = true
+	return usage
 }
 
 // generatedTextBytes is everything the turn produced that reached the client.

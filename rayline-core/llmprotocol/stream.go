@@ -12,6 +12,16 @@ type FailureScope string
 const (
 	FailureTransport FailureScope = "transport"
 	FailureResponse  FailureScope = "response"
+	// FailureTruncated is a turn the Router itself ended after the upstream had
+	// already produced output: its own deadline, its silence limit, or a body
+	// that was cut mid-read. The generation happened and was billed to us, so
+	// the terminal has to carry the count -- and every one of these turns
+	// stopped the model where it stood rather than failing, which is a stop
+	// each client protocol can already say in its own vocabulary. An encoder
+	// renders this scope as the shape its own format defines for a response
+	// that stopped early, not as a transport error; see the stop reason the
+	// event carries. Messages is the exception by contract (decision 31).
+	FailureTruncated FailureScope = "truncated"
 )
 
 const (

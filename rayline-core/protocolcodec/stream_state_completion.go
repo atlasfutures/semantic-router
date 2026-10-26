@@ -247,7 +247,11 @@ func (state *streamState) applyUsageEvidence(event llmprotocol.Event) (llmprotoc
 	if event.Usage == nil {
 		return event, nil
 	}
-	merged, restated, err := mergeMonotonicUsage(state.usage, *event.Usage)
+	current := state.usage
+	if event.Type == llmprotocol.EventResponseFailed && event.Failure == llmprotocol.FailureTruncated {
+		current = concedeOutputToTruncation(current, *event.Usage)
+	}
+	merged, restated, err := mergeMonotonicUsage(current, *event.Usage)
 	if err != nil {
 		return llmprotocol.Event{}, err
 	}
@@ -466,7 +470,10 @@ func validateFailedEvent(event llmprotocol.Event) (llmprotocol.Event, error) {
 	switch event.Failure {
 	case "":
 		event.Failure = llmprotocol.FailureTransport
-	case llmprotocol.FailureTransport, llmprotocol.FailureResponse:
+	// FailureTruncated is the Router's own: a turn it ended after the upstream
+	// had produced output. No decoder mints it; the engine re-scopes the
+	// terminal once the caller has stated what the turn cost.
+	case llmprotocol.FailureTransport, llmprotocol.FailureResponse, llmprotocol.FailureTruncated:
 	default:
 		return llmprotocol.Event{}, llmprotocol.NewError(llmprotocol.ErrorUpstreamUnavailable, "stream_failure_scope", "failed stream has an invalid failure scope", nil)
 	}
