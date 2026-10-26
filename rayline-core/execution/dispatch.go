@@ -215,17 +215,40 @@ func (server *Server) forwardError(writer http.ResponseWriter, target, source ll
 	_, _ = writer.Write(translated.Body)
 }
 
-// isProviderContextRefusal recognizes a provider's refusal of a prompt over
-// its context length (OpenAI context_length_exceeded, "maximum context
-// length", Anthropic "prompt is too long", "input is too long").
+// isProviderContextRefusal recognizes a refusal of a prompt over the
+// context length (OpenAI context_length_exceeded, "maximum context length",
+// Anthropic "prompt is too long", "input is too long") in the error's code,
+// type or message only: {"error": {...}}, {"error": "..."} or vLLM's
+// top-level {"message", "type", "code"}.
 func isProviderContextRefusal(status int, body []byte) bool {
+	return contextRefusalNames(status, body, "context_length_exceeded", "maximum context length", "prompt is too long", "input is too long")
+}
+
+// contextRefusalNames reports whether a 400/413 error names one of markers
+// in its code, type or message.
+func contextRefusalNames(status int, body []byte, markers ...string) bool {
 	if status != http.StatusBadRequest && status != http.StatusRequestEntityTooLarge {
 		return false
 	}
-	lower := bytes.ToLower(body)
-	for _, marker := range []string{"context_length_exceeded", "maximum context length", "prompt is too long", "input is too long"} {
-		if bytes.Contains(lower, []byte(marker)) {
-			return true
+	var envelope map[string]json.RawMessage
+	if json.Unmarshal(body, &envelope) != nil {
+		return false
+	}
+	fields := []json.RawMessage{envelope["message"], envelope["type"], envelope["code"], envelope["error"]}
+	var inner map[string]json.RawMessage
+	if json.Unmarshal(envelope["error"], &inner) == nil {
+		fields = append(fields, inner["message"], inner["type"], inner["code"])
+	}
+	for _, field := range fields {
+		var text string
+		if json.Unmarshal(field, &text) != nil {
+			continue
+		}
+		lower := strings.ToLower(text)
+		for _, marker := range markers {
+			if strings.Contains(lower, marker) {
+				return true
+			}
 		}
 	}
 	return false

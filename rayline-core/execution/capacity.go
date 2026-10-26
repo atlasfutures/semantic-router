@@ -130,19 +130,23 @@ func (server *Server) measureCapacity(ctx context.Context, body []byte, format l
 	return facts, measured, nil
 }
 
-// isRuntimeContextRejection recognizes llama.cpp's documented refusal of a
-// prompt that exceeds its slot context. It applies only to local targets and
-// only before any output was delivered.
+// isRuntimeContextRejection recognizes a local runtime's refusal of a prompt
+// over its context before any output: llama.cpp's documented error, or an
+// OpenAI-compatible context-length refusal (vLLM, MLX, a custom endpoint:
+// context_length_exceeded or "maximum context length" in the error's code,
+// type or message).
 func isRuntimeContextRejection(deployment Deployment, status int, body []byte) bool {
-	if deployment.Kind != "local" || status != 400 {
+	if deployment.Kind != "local" {
 		return false
 	}
-	for _, marker := range [][]byte{[]byte("exceed_context_size_error"), []byte("exceeds the available context size")} {
-		if bytes.Contains(body, marker) {
-			return true
+	if status == 400 {
+		for _, marker := range [][]byte{[]byte("exceed_context_size_error"), []byte("exceeds the available context size")} {
+			if bytes.Contains(body, marker) {
+				return true
+			}
 		}
 	}
-	return false
+	return contextRefusalNames(status, body, "context_length_exceeded", "maximum context length")
 }
 
 func int64OrNil(value *int64) any {
@@ -183,8 +187,9 @@ func (server *Server) contextExceededMessage(facts map[string]*CapacityFact) str
 			}
 		}
 	}
-	size := "it exceeds"
-	if sized != nil && sized.Required != nil {
+	// A stated size is never smaller than the window it is compared with.
+	size := "every available deployment reports that it exceeds its context window, so it exceeds"
+	if sized != nil && sized.Required != nil && *sized.Required > window {
 		basis := map[string]string{capacityProvenanceEstimated: "estimated", capacityProvenanceMeasured: "measured"}[sized.Provenance]
 		if basis == "" {
 			basis = "reported"

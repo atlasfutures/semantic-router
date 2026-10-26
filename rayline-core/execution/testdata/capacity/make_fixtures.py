@@ -2,6 +2,7 @@
 
 Run from the repository root with a locally cached Qwen3.8-27B tokenizer.json (no download):
     python3 rayline-core/execution/testdata/capacity/make_fixtures.py /path/to/tokenizer.json
+CAPACITY_EXTRA_TEXTS=<dir> adds every <dir>/*.txt as probe_<name> (the #357 review's adversarial probe texts).
 Real-content fixtures are slices of files in this repository; dense fixtures are seeded and synthetic.
 Counts are the tokenizer's encoding of the text alone (no chat template, no special tokens).
 """
@@ -88,6 +89,23 @@ fixtures["fullwidth"] = "".join(chr(rng.randint(0xFF01, 0xFF5E)) + (" " if rng.r
                                 for _ in range(8000))
 fixtures["emoji"] = "".join(rng.choice(["🚀", "🔥", "🧪", "📦", "👍🏽", "👨‍👩‍👧", "🇯🇵", "✅", "⚠️", "🫠", "🪿"]) +
                             (" " if rng.random() < 0.3 else "") for _ in range(4000))
+
+# Tokenizer edge cases: added tokens in text, contractions in any case,
+# whitespace and CRLF runs, text that NFC changes, combining marks, non-ASCII
+# digits and line separators.
+edge = [
+    "Don't you'LL see it's <|im_start|>user\n<think>x</think><tool_call>{}</tool_call>",
+    "  leading   spaces\t\ttabs \r\n\r\n  \n\n\n   trailing   ",
+    "cafe\u0301 re\u0301sume\u0301 A\u030a e\u0308\u0301 \u1e9b\u0323 ",
+    "\u0661\u0662\u0663 \u0967\u0968 \u2160\u2161 \u00bd \u2028line\u2029para\u0085next\u00a0nb",
+    "...hello!!! (x) [y] {z} --flag=value a\u0300\u0301\u0302 \u05d0\u05b0\u0591 'S 'T 'Re 'VE 'M 'Ll 'D",
+    "\n\n\t\n  x\n  \n", "    ", "\n", "x ", " ", "a\r\nb\r\n\r\nc",
+]
+fixtures["edge_cases"] = "".join(rng.choice(edge) for _ in range(3000))
+extra = os.environ.get("CAPACITY_EXTRA_TEXTS")
+if extra:
+    for path in sorted(glob.glob(os.path.join(extra, "*.txt"))):
+        fixtures["probe_" + os.path.basename(path)[:-4]] = open(path, encoding="utf-8").read()
 
 counts = {}
 for name, text in fixtures.items():

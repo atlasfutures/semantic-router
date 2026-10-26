@@ -52,7 +52,8 @@ type Deployment struct {
 // CapacityEstimate overrides the estimator constants for one deployment
 // (capacity_estimate.go).
 type CapacityEstimate struct {
-	// HeadroomRatio raises the character-class estimate (default 0.10).
+	// HeadroomRatio raises the byte bound of a model other than Qwen3.8-27B
+	// (default 0.05).
 	HeadroomRatio *float64 `json:"headroom_ratio,omitempty"`
 	// MediaTokens is charged per inline base64 image instead of its bytes
 	// (default 8192).

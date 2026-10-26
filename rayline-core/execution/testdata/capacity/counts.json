@@ -13,12 +13,16 @@
    "qwen_tokens": 45037
   },
   "code_30k": {
-   "bytes": 112280,
-   "qwen_tokens": 29996
+   "bytes": 111584,
+   "qwen_tokens": 29980
   },
   "cyrillic": {
    "bytes": 55808,
    "qwen_tokens": 22512
+  },
+  "edge_cases": {
+   "bytes": 83524,
+   "qwen_tokens": 32072
   },
   "emoji": {
    "bytes": 25645,
@@ -67,6 +71,70 @@
   "numeric_csv": {
    "bytes": 65716,
    "qwen_tokens": 64485
+  },
+  "probe_arabic_block": {
+   "bytes": 16000,
+   "qwen_tokens": 13483
+  },
+  "probe_arabic_harakat": {
+   "bytes": 50907,
+   "qwen_tokens": 22920
+  },
+  "probe_cyr_ext": {
+   "bytes": 16000,
+   "qwen_tokens": 15090
+  },
+  "probe_cyr_supp": {
+   "bytes": 16000,
+   "qwen_tokens": 16000
+  },
+  "probe_fatiha": {
+   "bytes": 47400,
+   "qwen_tokens": 16800
+  },
+  "probe_genesis_vocalized": {
+   "bytes": 63000,
+   "qwen_tokens": 35000
+  },
+  "probe_greek_block": {
+   "bytes": 16000,
+   "qwen_tokens": 12503
+  },
+  "probe_han_hard": {
+   "bytes": 24000,
+   "qwen_tokens": 24000
+  },
+  "probe_hebrew_block": {
+   "bytes": 16000,
+   "qwen_tokens": 13419
+  },
+  "probe_hebrew_cant": {
+   "bytes": 74526,
+   "qwen_tokens": 56408
+  },
+  "probe_hebrew_half_niqqud": {
+   "bytes": 38971,
+   "qwen_tokens": 21771
+  },
+  "probe_hebrew_niqqud": {
+   "bytes": 50552,
+   "qwen_tokens": 32528
+  },
+  "probe_kana_hard": {
+   "bytes": 24000,
+   "qwen_tokens": 15931
+  },
+  "probe_short_rand_lower_any": {
+   "bytes": 35919,
+   "qwen_tokens": 18011
+  },
+  "probe_short_rand_lower_vowelrich": {
+   "bytes": 38745,
+   "qwen_tokens": 18587
+  },
+  "probe_short_rand_mixed_vowelrich": {
+   "bytes": 26761,
+   "qwen_tokens": 15431
   },
   "prose": {
    "bytes": 119993,

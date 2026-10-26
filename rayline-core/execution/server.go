@@ -424,7 +424,11 @@ func (server *Server) execute(writer http.ResponseWriter, incoming *http.Request
 		// A runtime's own context refusal arrives before any output. It is a
 		// fact for the service, never a local reselection or truncation.
 		if v2 && readErr == nil && isRuntimeContextRejection(selected.deployment, upstream.StatusCode, errorBody) {
-			fact := runtimeContextRejection(selected.deployment, capacityFact(selected.deployment, prompt, prepared.outputLimit))
+			previous := capacityFact(selected.deployment, prompt, prepared.outputLimit)
+			if previous == nil {
+				previous = pending.input.Capacity[selected.action.ID]
+			}
+			fact := runtimeContextRejection(selected.deployment, previous)
 			if !server.reconsult(ctx, writer, format, pending, selected.action.ID, decision.RouteID, "capacity", fact) {
 				return
 			}

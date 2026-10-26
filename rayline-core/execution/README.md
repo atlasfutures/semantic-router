@@ -102,16 +102,31 @@ opt-in. The core reports facts and never picks or ranks a model.
   observed); `units` = its `token_units`; `provenance: "local_measured"`. A
   counter that fails reports that target `fits: false` with
   `reason: "runtime_unavailable"` instead of refusing the turn. A **local**
-  target without a counter (a custom endpoint, Ollama, MLX) is estimated from the
-  same prepared request with `provenance: "caller_estimated"` (never
-  `local_measured`) and `units` = its `token_units` or null; see
-  `capacity_estimate` below. The policy contract admits an estimated
-  `fits: false` as an exclusion and reads an estimated `fits: true` as unknown,
-  so an over-window local target is excluded before anything is sent to it.
-  Facts are recomputed every turn: once the history outgrows the local window,
-  local stays excluded. A **cloud** target without a counter sends
-  `capacity: null`; its provider refuses an oversized prompt itself, and that
-  refusal reaches the caller translated, text intact.
+  target without a registered counter is sized from the same prepared request:
+  - **Qwen3.8-27B** (`registry_model: "qwen/qwen3.8-27b"`, Chat wire; the
+    Rayline Local default) is rendered with the model's chat template
+    (`qwen_capacity.go`) and counted in-process with the embedded tokenizer
+    (`tokencount`, pure Go: the snapshot's `merges.txt`, its added tokens,
+    NFC and its pre-tokenizer), `provenance: "local_measured"`. The rendering
+    takes the template's most expensive branch where the request does not pin
+    one and adds 16 tokens, 2 per message and 4 per tool. This assumes the
+    runtime serves Qwen3.8-27B with that template; the core does not verify the
+    served model.
+  - **Any other model** gets the prepared request's UTF-8 byte count, a proven
+    upper bound for byte-level BPE, raised by `headroom_ratio` and 512 tokens
+    for a template preamble, `provenance: "caller_estimated"`.
+  - An inline base64 image is charged `media_tokens` instead of its bytes, and
+    a fact that includes one is `caller_estimated`.
+  The policy contract admits `fits: false` from any provenance and reads an
+  estimated `fits: true` as unknown, so an over-window local target is excluded
+  before anything is sent to it. Facts are recomputed every turn: once the
+  history outgrows the local window, local stays excluded. A **cloud** target
+  without a counter sends `capacity: null`; its provider refuses an oversized
+  prompt itself, and that refusal reaches the caller translated, text intact.
+- **Runtime context refusals.** A local runtime's refusal before any output,
+  llama.cpp's or an OpenAI-compatible one (`context_length_exceeded` or
+  "maximum context length" in the error's code, type or message: vLLM, MLX, a
+  custom endpoint), re-consults with `reconsult: "capacity"`.
 - **No deployment fits.** When every executable target has a
   `context_capacity` shortfall, of any provenance, and none is unknown, the
   core answers `400 context_exceeds_all_deployments` in the caller's wire
@@ -120,15 +135,16 @@ opt-in. The core reports facts and never picks or ranks a model.
   hybrid profile is never refused on an estimate. The message starts with
   `prompt is too long:` (Anthropic's wording, on which Claude Code compacts; the
   Messages wire carries no code), gives the request's size and its basis
-  (estimated, measured or reported) and the largest configured "maximum context
-  length" with its model, and asks for the conversation to be compacted or
-  shortened. A service refusal `execution_no_feasible_target` (or a selection
+  (estimated, measured or reported) when that exceeds the largest configured
+  "maximum context length", names that window and its model, and asks for the
+  conversation to be compacted or shortened. A service refusal `execution_no_feasible_target` (or a selection
   of an infeasible target) under the same condition gets the same answer.
 - **Provider context refusals.** A cloud provider's context-length refusal
   (HTTP 400/413 naming `context_length_exceeded`, "maximum context length",
-  "prompt is too long" or "input is too long"), received before any output,
-  is forwarded translated; on the Messages wire its message is prefixed with
-  `prompt is too long:` unless it already starts so.
+  "prompt is too long" or "input is too long" in the error's code, type or
+  message), received before any output, is forwarded translated; on the
+  Messages wire its message is prefixed with `prompt is too long:` unless it
+  already starts so.
 - **Pre-dispatch check and veto.** The final prepared request is checked again
   before dispatch. If it does not fit the selected target, or the local runtime
   refuses it for context before any output, the core re-consults once per cause
@@ -234,23 +250,12 @@ input modalities explicitly include `text` and may include `image`. Authenticate
 health reports the minimum limits and modality intersection of possible execution
 targets. No harness gateway clamps the caller's requested output allowance.
 `auth_env` names an optional credential.
-`capacity_estimate` (v2, optional, local deployments) tunes the estimate used
-when the deployment has no prompt counter: `{"headroom_ratio": 0.1,
+`capacity_estimate` (v2, optional, local deployments) tunes the sizing of a
+local deployment without a registered counter: `{"headroom_ratio": 0.05,
 "media_tokens": 8192}` are the defaults for absent members (limits:
-`headroom_ratio` in [0, 10], `media_tokens` >= 0). The estimate charges by
-character class over the decoded request text (`capacity_estimate.go`).
-Byte-level BPE spends about a token per character on numbers, hashes, base64
-and random letters but 3.5-4 bytes per token on prose, and never more tokens
-than UTF-8 bytes, so the byte count is the fallback and cheaper rates apply
-only where the measured random-text worst case stays below them. An inline
-base64 image is `media_tokens` (a Retina screenshot is about 6.6k Qwen-VL
-tokens). Against the Qwen3.8-27B tokenizer on the fixtures in
-`testdata/capacity` (real repository content plus adversarial dense and
-non-Latin text) it under-counts none of them; content outside those fixtures
-is not proven. The price is an over-count on ordinary text: about 1.65x on
-prose and code and 3.2x on natural CJK/Cyrillic text (with headroom), so such
-sessions leave a local window that much earlier. Raise `headroom_ratio` for a
-runtime whose tokenizer is denser than Qwen's.
+`headroom_ratio` in [0, 10], `media_tokens` >= 0). `headroom_ratio` applies
+only to the byte bound; `media_tokens` (a Retina screenshot is about 6.6k
+Qwen-VL tokens) to both.
 Local inference cannot receive the hosted Decisions credential, including under
 an alternate environment-variable name. Unknown token units are an empty string;
 they cannot support comparable prefix evidence.
