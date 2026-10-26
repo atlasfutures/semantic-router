@@ -57,6 +57,38 @@ fixtures["multilingual"] = "".join(rng.choice([
     "Die Kontextfensterüberschreitungsprüfung verhindert stillschweigende Kürzungen durch lokale Laufzeitumgebungen.\n",
     "Build passed ✅ deploy 🚀 tests 🧪 flaky 🔥 package 📦 ok 👍🏽 → ✓ ★ ∑ ≤ ≥ ±\n"]) for _ in range(600))
 
+# Adversarial content (review of #357): long single-case letter runs, non-Latin
+# alphabets, rare Han, random Hangul, full-width forms and emoji.
+fixtures["fasta"] = ">chr7:55019017-55211628 synthetic\n" + "".join(
+    "".join(rng.choice("ACGT") for _ in range(60)) + "\n" for _ in range(1000))
+fixtures["slugs_lower"] = "".join(
+    "".join(rng.choice("abcdefghijklmnopqrstuvwxyz") for _ in range(rng.randint(12, 40))) + rng.choice(" \n-_/")
+    for _ in range(1500))
+fixtures["upper_codes"] = "".join(
+    "".join(rng.choice("ABCDEFGHIJKLMNOPQRSTUVWXYZ") for _ in range(rng.randint(4, 24))) + rng.choice(" \n_,.")
+    for _ in range(2500))
+
+
+def alphabet_words(letters, words):
+    return "".join("".join(rng.choice(letters) for _ in range(rng.randint(2, 11))) + rng.choice("  ,.\n")
+                   for _ in range(words))
+
+
+fixtures["greek"] = alphabet_words([chr(c) for c in range(0x3B1, 0x3CA)], 4000)
+fixtures["hebrew"] = alphabet_words([chr(c) for c in range(0x5D0, 0x5EB)], 4000)
+fixtures["armenian"] = alphabet_words([chr(c) for c in range(0x561, 0x587)], 4000)
+fixtures["cyrillic"] = alphabet_words([chr(c) for c in range(0x430, 0x450)], 4000)
+fixtures["arabic"] = alphabet_words([chr(c) for c in range(0x621, 0x64B)], 4000)
+fixtures["latin_ext"] = alphabet_words([chr(c) for c in range(0x100, 0x180)], 4000)
+fixtures["rare_han"] = "".join(chr(rng.choice([rng.randint(0x3400, 0x4DBF), rng.randint(0x8000, 0x9FA5)])) +
+                               ("\n" if rng.random() < 0.02 else "") for _ in range(8000))
+fixtures["hangul_random"] = "".join(chr(rng.randint(0xAC00, 0xD7A3)) + (" " if rng.random() < 0.2 else "")
+                                    for _ in range(8000))
+fixtures["fullwidth"] = "".join(chr(rng.randint(0xFF01, 0xFF5E)) + (" " if rng.random() < 0.1 else "")
+                                for _ in range(8000))
+fixtures["emoji"] = "".join(rng.choice(["🚀", "🔥", "🧪", "📦", "👍🏽", "👨‍👩‍👧", "🇯🇵", "✅", "⚠️", "🫠", "🪿"]) +
+                            (" " if rng.random() < 0.3 else "") for _ in range(4000))
+
 counts = {}
 for name, text in fixtures.items():
     with open(os.path.join(OUT, name + ".txt.gz"), "wb") as raw, gzip.GzipFile(fileobj=raw, mode="wb", mtime=0) as gz:

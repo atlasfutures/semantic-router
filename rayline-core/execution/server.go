@@ -435,7 +435,7 @@ func (server *Server) execute(writer http.ResponseWriter, incoming *http.Request
 			return
 		}
 		upstream.Body = io.NopCloser(bytes.NewReader(errorBody))
-		server.forwardError(writer, format, selected.deployment.Protocol, upstream)
+		server.forwardError(writer, format, selected.deployment.Protocol, upstream, selected.deployment.Kind == "cloud" && isProviderContextRefusal(upstream.StatusCode, errorBody))
 		return
 	}
 	defer upstream.Body.Close()
@@ -599,7 +599,7 @@ func (server *Server) writeDecisionError(writer http.ResponseWriter, format llmp
 }
 
 // writeContextExceeded writes the compaction refusal when every target has a
-// measured or provider-reported context shortfall.
+// context shortfall and none is unknown.
 func (server *Server) writeContextExceeded(writer http.ResponseWriter, format llmprotocol.WireFormat, capacity map[string]*CapacityFact) bool {
 	if !server.exceedsAllDeployments(capacity) {
 		return false

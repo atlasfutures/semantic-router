@@ -27,8 +27,8 @@ const (
 	capacityProvenanceMeasured  = "local_measured"
 	capacityProvenanceEstimated = "caller_estimated"
 
-	// CodeContextExceedsAllDeployments refuses a turn whose measured prompt
-	// fits no admitted deployment, before any runtime is contacted.
+	// CodeContextExceedsAllDeployments refuses a turn that every admitted
+	// deployment reports it cannot hold, before any runtime is contacted.
 	CodeContextExceedsAllDeployments = "context_exceeds_all_deployments"
 )
 
@@ -152,40 +152,55 @@ func int64OrNil(value *int64) any {
 	return *value
 }
 
-// contextExceededMessage explains a turn no deployment can hold, from the
-// largest window among the targets. It starts with Anthropic's "prompt is too
+// contextExceededMessage explains a turn no deployment can hold: the
+// request's size from its facts and the largest configured context window
+// among the executable targets. It starts with Anthropic's "prompt is too
 // long" (Claude Code compacts on it) and carries OpenAI's "maximum context
 // length" wording. Callers check exceedsAllDeployments first.
 func (server *Server) contextExceededMessage(facts map[string]*CapacityFact) string {
-	ids := make([]string, 0, len(facts))
-	for id := range facts {
-		ids = append(ids, id)
+	ids := make([]string, 0, len(server.actions))
+	for id, selected := range server.actions {
+		if selected.deployment.ID != "" {
+			ids = append(ids, id)
+		}
 	}
 	sort.Strings(ids)
-	var largest *CapacityFact
-	model := ""
+	var window int64
+	model, windowID := "", ""
 	for _, id := range ids {
-		fact := facts[id]
-		if fact == nil || fact.Available == nil || fact.Required == nil {
-			continue
-		}
-		if largest == nil || *fact.Available > *largest.Available {
-			largest, model = fact, server.actions[id].action.Model
+		if deployment := server.actions[id].deployment; deployment.ContextWindow > window {
+			window, model, windowID = deployment.ContextWindow, server.actions[id].action.Model, id
 		}
 	}
-	if largest == nil {
-		return "prompt is too long: it exceeds the context window of every available deployment. Compact or shorten the conversation, then retry."
+	// The size is the largest target's own fact when it has one, else the
+	// largest stated requirement.
+	sized := facts[windowID]
+	if sized == nil || sized.Required == nil {
+		sized = nil
+		for _, id := range ids {
+			if fact := facts[id]; fact != nil && fact.Required != nil && (sized == nil || *fact.Required > *sized.Required) {
+				sized = fact
+			}
+		}
 	}
-	size := fmt.Sprintf("this request needs %d tokens", *largest.Required)
-	if largest.prompt > 0 {
-		size = fmt.Sprintf("about %d prompt tokens (measured) plus the output allowance need %d tokens", largest.prompt, *largest.Required)
+	size := "it exceeds"
+	if sized != nil && sized.Required != nil {
+		basis := map[string]string{capacityProvenanceEstimated: "estimated", capacityProvenanceMeasured: "measured"}[sized.Provenance]
+		if basis == "" {
+			basis = "reported"
+		}
+		size = fmt.Sprintf("this request needs %d tokens (%s), more than", *sized.Required, basis)
+		if sized.prompt > 0 {
+			size = fmt.Sprintf("about %d prompt tokens (%s) plus the output allowance need %d tokens, more than", sized.prompt, basis, *sized.Required)
+		}
 	}
-	return fmt.Sprintf("prompt is too long: %s, more than every available deployment; the largest maximum context length is %d tokens (%s). Compact or shorten the conversation, then retry.", size, *largest.Available, model)
+	return fmt.Sprintf("prompt is too long: %s every available deployment; the largest maximum context length is %d tokens (%s). Compact or shorten the conversation, then retry.", size, window, model)
 }
 
 // exceedsAllDeployments reports whether every executable action has a
-// measured or provider-reported context shortfall for this request. Estimated
-// facts never refuse a turn: they only keep a local runtime from receiving it.
+// context shortfall for this request, of any provenance. A target with no
+// fact (unknown, such as a cloud target without a counter) is never assumed
+// not to fit.
 func (server *Server) exceedsAllDeployments(facts map[string]*CapacityFact) bool {
 	executable := 0
 	for id, selected := range server.actions {
@@ -194,7 +209,7 @@ func (server *Server) exceedsAllDeployments(facts map[string]*CapacityFact) bool
 		}
 		executable++
 		fact := facts[id]
-		if fact == nil || fact.Fits || fact.Reason == nil || *fact.Reason != CapacityContext || fact.Provenance == capacityProvenanceEstimated {
+		if fact == nil || fact.Fits || fact.Reason == nil || *fact.Reason != CapacityContext {
 			return false
 		}
 	}

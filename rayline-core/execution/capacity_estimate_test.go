@@ -3,6 +3,7 @@ package execution
 import (
 	"compress/gzip"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"unicode/utf16"
 
 	"github.com/atlasfutures/semantic-router/rayline-core/thinkingcontrol"
 )
@@ -117,38 +119,72 @@ func bigTurn(messages ...string) string {
 	return `{"model":"arc-1.0","max_tokens":4096,` + v2Tools + `,"messages":[` + strings.Join(messages, ",") + `]}`
 }
 
-// TestCapacityEstimateNeverUndercountsRealContent checks each fixture at the
-// window boundary: with a local window one token short of the real prompt
-// plus output, the estimate must report fits:false. It also bounds the
-// over-count on prose, code, JSON and multilingual text.
-func TestCapacityEstimateNeverUndercountsRealContent(t *testing.T) {
+// escapeNonASCII re-encodes a JSON body with every non-ASCII character as a
+// \uXXXX escape (surrogate pairs above the BMP), as some clients send it.
+func escapeNonASCII(body []byte) []byte {
+	var out strings.Builder
+	for _, char := range string(body) {
+		if char < 0x80 {
+			out.WriteRune(char)
+			continue
+		}
+		if char > 0xFFFF {
+			high, low := utf16.EncodeRune(char)
+			fmt.Fprintf(&out, "\\u%04x\\u%04x", high, low)
+			continue
+		}
+		fmt.Fprintf(&out, "\\u%04x", char)
+	}
+	return []byte(out.String())
+}
+
+// TestCapacityEstimateUndercountsNoFixture checks each fixture, raw and
+// \u-escaped, at the window boundary: with a local window one token short of
+// the real prompt plus output, the estimate must report fits:false. It also
+// bounds the over-count on prose, code and JSON. It proves nothing about
+// content outside these fixtures.
+func TestCapacityEstimateUndercountsNoFixture(t *testing.T) {
 	fixtures := loadCapacityFixtures(t)
 	names := make([]string, 0, len(fixtures))
 	for name := range fixtures {
 		names = append(names, name)
 	}
 	sort.Strings(names)
-	if len(names) < 9 {
+	if len(names) < 22 {
 		t.Fatalf("fixtures %v", names)
 	}
 	const output = 4096
 	zero := 0.0
 	for _, name := range names {
 		fixture := fixtures[name]
-		body := []byte(bigTurn(jsonMessage(t, "user", fixture.text)))
-		raw := estimatePromptTokens(body, &CapacityEstimate{HeadroomRatio: &zero})
-		estimate := estimatePromptTokens(body, nil)
-		t.Logf("%-12s bytes/token=%.2f real=%6d estimate=%6d ratio=%.2f (without headroom %.2f)", name, float64(len(fixture.text))/float64(fixture.tokens), fixture.tokens, estimate, float64(estimate)/float64(fixture.tokens), float64(raw)/float64(fixture.tokens))
-		if raw < fixture.tokens {
-			t.Errorf("%s: estimate without headroom %d is below the real %d tokens", name, raw, fixture.tokens)
+		plain := []byte(bigTurn(jsonMessage(t, "user", fixture.text)))
+		for encoding, body := range map[string][]byte{"utf8": plain, "escaped": escapeNonASCII(plain)} {
+			raw := estimatePromptTokens(body, &CapacityEstimate{HeadroomRatio: &zero})
+			estimate := estimatePromptTokens(body, nil)
+			if encoding == "utf8" {
+				t.Logf("%-13s bytes/token=%.2f real=%6d estimate=%6d ratio=%.2f (without headroom %.2f)", name, float64(len(fixture.text))/float64(fixture.tokens), fixture.tokens, estimate, float64(estimate)/float64(fixture.tokens), float64(raw)/float64(fixture.tokens))
+			}
+			if raw < fixture.tokens {
+				t.Errorf("%s/%s: estimate without headroom %d is below the real %d tokens", name, encoding, raw, fixture.tokens)
+			}
+			local := Deployment{ContextWindow: fixture.tokens + output - 1}
+			if fact := estimatedCapacityFact(local, body, output); fact.Fits {
+				t.Errorf("%s/%s: a window one token short of the real prompt was judged to fit (%d <= %d)", name, encoding, *fact.Required, *fact.Available)
+			}
 		}
-		local := Deployment{ContextWindow: fixture.tokens + output - 1}
-		if fact := estimatedCapacityFact(local, body, output); fact.Fits {
-			t.Errorf("%s: a window one token short of the real prompt was judged to fit (%d <= %d)", name, *fact.Required, *fact.Available)
+		switch name {
+		case "prose", "code_30k", "json_catalog":
+			if ratio := float64(estimatePromptTokens(plain, nil)) / float64(fixture.tokens); ratio > 1.75 {
+				t.Errorf("%s: over-count %.2f is unreasonable", name, ratio)
+			}
 		}
-		if ratio := float64(estimate) / float64(fixture.tokens); ratio > 1.75 {
-			t.Errorf("%s: over-count %.2f is unreasonable", name, ratio)
-		}
+	}
+	// An escaped emoji is one character, never a negative charge.
+	if got := estimatePromptTokens([]byte(`"\ud83d\ude80\ud83d\udd25"`), &CapacityEstimate{HeadroomRatio: &zero}); got < 8 {
+		t.Fatalf("escaped emoji pair estimate %d", got)
+	}
+	if got := estimatePromptTokens([]byte(`"\ud83d x \ude80"`), &CapacityEstimate{HeadroomRatio: &zero}); got < 6 {
+		t.Fatalf("lone surrogates estimate %d", got)
 	}
 }
 
@@ -214,8 +250,9 @@ func TestCapacityEstimateRoutesRealContentByLocalWindow(t *testing.T) {
 
 func TestCapacityEstimateNeverRefusesACloudConversation(t *testing.T) {
 	// Over 1M estimated tokens: local is excluded, cloud stays unknown and is
-	// selected; the provider's own refusal reaches the caller with its text
-	// ("prompt is too long", which Claude Code compacts on).
+	// selected. The provider's own OpenAI-style refusal reaches the caller; on
+	// the Messages wire it starts with "prompt is too long:" so Claude Code
+	// compacts, followed by the provider's text.
 	local := &upstreamFixture{}
 	cloudCalls := 0
 	cloud := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -223,26 +260,114 @@ func TestCapacityEstimateNeverRefusesACloudConversation(t *testing.T) {
 		_, _ = io.Copy(io.Discard, r.Body)
 		modelPinHeaders(w.Header())
 		w.WriteHeader(http.StatusBadRequest)
-		_, _ = io.WriteString(w, `{"error":{"message":"prompt is too long: 1180000 tokens > 1000000 maximum","type":"invalid_request_error","code":"context_length_exceeded"}}`)
+		_, _ = io.WriteString(w, `{"error":{"message":"This endpoint's maximum context length is 1000000 tokens. However, you requested about 1180000 tokens.","type":"invalid_request_error","code":"context_length_exceeded"}}`)
 	}))
 	defer cloud.Close()
 	config := capacityEstimateConfig(t, chatUpstream(t, local, false).URL, cloud.URL+"/v1/chat/completions")
 	fixture := &v2Decisions{choose: fitPolicy}
 	_, httpServer := v2Server(t, config, fixture)
-	prose := loadCapacityFixtures(t)["prose"]
-	status, _, response := executeWithHeaders(t, httpServer.URL, bigTurn(jsonMessage(t, "user", strings.Repeat(prose.text, 36))), "cloud-refuses")
-	if status != http.StatusBadRequest || !strings.Contains(string(response), "prompt is too long: 1180000 tokens") || strings.Contains(string(response), CodeContextExceedsAllDeployments) {
-		t.Fatalf("status %d: %.300s", status, response)
+	huge := bigTurn(jsonMessage(t, "user", strings.Repeat(loadCapacityFixtures(t)["prose"].text, 36)))
+	for _, tc := range []struct{ path, want string }{
+		{"/v1/chat/completions", `"code":"context_length_exceeded","message":"This endpoint's maximum context length is 1000000 tokens.`},
+		{"/v1/messages", `"message":"prompt is too long: This endpoint's maximum context length is 1000000 tokens.`},
+	} {
+		status, response := executeHTTP(t, httpServer.URL, tc.path, huge, "cloud-refuses"+tc.path)
+		if status != http.StatusBadRequest || !strings.Contains(string(response), tc.want) || strings.Contains(string(response), CodeContextExceedsAllDeployments) {
+			t.Fatalf("%s status %d: %.400s", tc.path, status, response)
+		}
 	}
-	if len(fixture.snapshot()) != 1 || local.count() != 0 || cloudCalls != 1 {
+	if len(fixture.snapshot()) != 2 || local.count() != 0 || cloudCalls != 2 {
 		t.Fatalf("lookups=%d local=%d cloud=%d", len(fixture.snapshot()), local.count(), cloudCalls)
 	}
-	// An estimated shortfall never maps a service refusal to the core's 400.
+	// A shortfall on local alone never maps a service refusal to the 400
+	// while a cloud target is unknown.
 	fixture.refuse = func(contextV2) string { return "execution_no_feasible_target" }
-	status, _, response = executeWithHeaders(t, httpServer.URL, bigTurn(jsonMessage(t, "user", strings.Repeat(prose.text, 4))), "service-refuses")
+	status, _, response := executeWithHeaders(t, httpServer.URL, bigTurn(jsonMessage(t, "user", strings.Repeat(loadCapacityFixtures(t)["prose"].text, 4))), "service-refuses")
 	if status != http.StatusBadGateway || !strings.Contains(string(response), "decision_failed") {
 		t.Fatalf("status %d: %.300s", status, response)
 	}
+}
+
+func TestProviderContextRefusalOnlyRewritesRecognisedRefusals(t *testing.T) {
+	for _, tc := range []struct {
+		status int
+		body   string
+		want   bool
+	}{
+		{400, `{"error":{"code":"context_length_exceeded","message":"too big"}}`, true},
+		{400, `{"error":{"message":"This model's maximum context length is 200000 tokens."}}`, true},
+		{413, `{"error":{"message":"Input is too long for requested model."}}`, true},
+		{400, `{"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long: 210000 tokens > 200000 maximum"}}`, true},
+		{400, `{"error":{"message":"invalid tool schema"}}`, false},
+		{500, `{"error":{"message":"maximum context length exceeded upstream"}}`, false},
+	} {
+		if got := isProviderContextRefusal(tc.status, []byte(tc.body)); got != tc.want {
+			t.Errorf("%d %s: %v", tc.status, tc.body, got)
+		}
+	}
+	already := []byte(`{"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long: 210000 tokens > 200000 maximum"}}`)
+	if got := withPromptTooLong(already); string(got) != string(already) {
+		t.Fatalf("an Anthropic refusal was rewritten: %s", got)
+	}
+}
+
+func TestCapacityShortfallOnEveryTargetRefusesWhateverItsProvenance(t *testing.T) {
+	fixtures := loadCapacityFixtures(t)
+	over := bigTurn(jsonMessage(t, "user", fixtures["code_30k"].text), jsonMessage(t, "user", fixtures["uvlock_120k"].text))
+	t.Run("local only, no counter", func(t *testing.T) {
+		local := &upstreamFixture{}
+		config := capacityEstimateConfig(t, chatUpstream(t, local, false).URL, "http://127.0.0.1:9/v1/chat/completions")
+		config.Deployments, config.Actions = config.Deployments[:1], config.Actions[:1]
+		fixture := &v2Decisions{choose: fitPolicy}
+		_, httpServer := v2Server(t, config, fixture)
+		status, response := executeHTTP(t, httpServer.URL, "/v1/messages", over, "local-only")
+		if status != http.StatusBadRequest || !strings.Contains(string(response), `"message":"prompt is too long: about `) || !strings.Contains(string(response), "prompt tokens (estimated)") || !strings.Contains(string(response), "the largest maximum context length is 98304 tokens (qwen3.8-27b)") {
+			t.Fatalf("status %d: %s", status, response)
+		}
+		if len(fixture.snapshot()) != 0 || local.count() != 0 {
+			t.Fatalf("lookups=%d local=%d", len(fixture.snapshot()), local.count())
+		}
+	})
+	t.Run("counted cloud and estimated local", func(t *testing.T) {
+		local, cloud := &upstreamFixture{}, &upstreamFixture{}
+		config := capacityEstimateConfig(t, chatUpstream(t, local, false).URL, chatUpstream(t, cloud, true).URL+"/v1/chat/completions")
+		fixture := &v2Decisions{choose: fitPolicy}
+		server, httpServer := v2Server(t, config, fixture)
+		for _, deployment := range config.Deployments[1:] {
+			if err := server.RegisterPromptCounter(deployment.ID, &fixedCounter{identity: promptIdentity(deployment), counts: []int{1_100_000}}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		status, response := executeHTTP(t, httpServer.URL, "/v1/chat/completions", over, "mixed")
+		if status != http.StatusBadRequest || !strings.Contains(string(response), `"code":"context_exceeds_all_deployments"`) || !strings.Contains(string(response), "about 1100000 prompt tokens (measured)") || !strings.Contains(string(response), "1000000 tokens (kimi-k3)") {
+			t.Fatalf("status %d: %s", status, response)
+		}
+		if len(fixture.snapshot()) != 0 || local.count() != 0 || cloud.count() != 0 {
+			t.Fatalf("lookups=%d local=%d cloud=%d", len(fixture.snapshot()), local.count(), cloud.count())
+		}
+	})
+	t.Run("largest window comes from config", func(t *testing.T) {
+		config := capacityEstimateConfig(t, "http://127.0.0.1:8/v1/chat/completions", "http://127.0.0.1:9/v1/chat/completions")
+		server, _ := v2Server(t, config, &v2Decisions{choose: fitPolicy})
+		reason, source := CapacityContext, "configured"
+		required, available := int64(114_000), int64(estimateLocalWindow)
+		facts := map[string]*CapacityFact{
+			localActionID:       {Reason: &reason, Required: &required, Available: &available, AvailableSource: &source, Provenance: capacityProvenanceEstimated, prompt: 109_904},
+			cloudActionID:       runtimeContextRejection(config.Deployments[1], nil),
+			secondCloudActionID: runtimeContextRejection(config.Deployments[2], nil),
+		}
+		if !server.exceedsAllDeployments(facts) {
+			t.Fatal("every target reported a shortfall")
+		}
+		message := server.contextExceededMessage(facts)
+		if !strings.Contains(message, "about 109904 prompt tokens (estimated)") || !strings.Contains(message, "the largest maximum context length is 1000000 tokens (kimi-k3)") {
+			t.Fatalf("message %q", message)
+		}
+		delete(facts, secondCloudActionID)
+		if server.exceedsAllDeployments(facts) {
+			t.Fatal("an unknown target must block the refusal")
+		}
+	})
 }
 
 func TestCapacityMeasuredShortfallEverywhereRefusesInEachWireFormat(t *testing.T) {

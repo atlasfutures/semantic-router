@@ -1,16 +1,52 @@
 {
  "fixtures": {
+  "arabic": {
+   "bytes": 55874,
+   "qwen_tokens": 27080
+  },
+  "armenian": {
+   "bytes": 55598,
+   "qwen_tokens": 32821
+  },
   "base64": {
    "bytes": 60790,
    "qwen_tokens": 45037
   },
   "code_30k": {
-   "bytes": 112136,
-   "qwen_tokens": 29990
+   "bytes": 112280,
+   "qwen_tokens": 29996
+  },
+  "cyrillic": {
+   "bytes": 55808,
+   "qwen_tokens": 22512
+  },
+  "emoji": {
+   "bytes": 25645,
+   "qwen_tokens": 17176
+  },
+  "fasta": {
+   "bytes": 61034,
+   "qwen_tokens": 31865
   },
   "float_logs": {
    "bytes": 85890,
    "qwen_tokens": 63890
+  },
+  "fullwidth": {
+   "bytes": 24758,
+   "qwen_tokens": 11046
+  },
+  "greek": {
+   "bytes": 55102,
+   "qwen_tokens": 23614
+  },
+  "hangul_random": {
+   "bytes": 25591,
+   "qwen_tokens": 17437
+  },
+  "hebrew": {
+   "bytes": 55804,
+   "qwen_tokens": 24672
   },
   "hex_sha256": {
    "bytes": 72000,
@@ -19,6 +55,10 @@
   "json_catalog": {
    "bytes": 59966,
    "qwen_tokens": 16780
+  },
+  "latin_ext": {
+   "bytes": 55950,
+   "qwen_tokens": 41822
   },
   "multilingual": {
    "bytes": 80697,
@@ -31,6 +71,18 @@
   "prose": {
    "bytes": 119993,
    "qwen_tokens": 31297
+  },
+  "rare_han": {
+   "bytes": 24145,
+   "qwen_tokens": 19181
+  },
+  "slugs_lower": {
+   "bytes": 41099,
+   "qwen_tokens": 21884
+  },
+  "upper_codes": {
+   "bytes": 37796,
+   "qwen_tokens": 22270
   },
   "uvlock_120k": {
    "bytes": 122586,
