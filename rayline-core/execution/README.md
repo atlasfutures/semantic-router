@@ -104,19 +104,38 @@ opt-in. The core reports facts and never picks or ranks a model.
   `reason: "runtime_unavailable"` instead of refusing the turn. A **local**
   target without a registered counter is sized from the same prepared request:
   - **Qwen3.8-27B** (`registry_model: "qwen/qwen3.8-27b"`, Chat wire; the
-    Rayline Local default) is rendered with the model's chat template
-    (`qwen_capacity.go`) and counted in-process with the embedded tokenizer
-    (`tokencount`, pure Go: the snapshot's `merges.txt`, its added tokens,
-    NFC and its pre-tokenizer), `provenance: "local_measured"`. The rendering
-    takes the template's most expensive branch where the request does not pin
-    one and adds 16 tokens, 2 per message and 4 per tool. This assumes the
-    runtime serves Qwen3.8-27B with that template; the core does not verify the
-    served model.
-  - **Any other model** gets the prepared request's UTF-8 byte count, a proven
-    upper bound for byte-level BPE, raised by `headroom_ratio` and 512 tokens
-    for a template preamble, `provenance: "caller_estimated"`.
+    Rayline Local default) is rendered with the model's chat template as
+    vLLM's Chat path feeds it (`qwen_capacity.go`: arguments and tools
+    re-spelt by Python's `tojson`, floats by `repr`; each tool also counted as
+    `model_dump()` spells it, with null `description`/`parameters`, and the
+    dearer spelling charged; one token per joined content-part boundary) and
+    counted in-process with the embedded tokenizer (`tokencount`, pure Go:
+    the snapshot's `merges.txt`, its added tokens, NFC and its
+    pre-tokenizer), `provenance: "local_measured"`. The rendering takes the
+    template's most expensive branch where the request does not pin one and
+    adds 16 tokens, 2 per message and 8 per tool. A message the counter can
+    only bound by its bytes (text x/text cannot normalize as the reference
+    does: a supplementary character in non-NFC text, or one of the combining
+    marks the reference's older Unicode tables lack) makes the fact
+    `caller_estimated`. This assumes the runtime serves Qwen3.8-27B with that
+    template; the core does not verify the served model. An operator serving
+    Qwen with a custom template should register a llama.cpp counter instead.
+  - **Any other model** gets the UTF-8 byte count of a worst-case
+    re-serialization of the prepared request (values re-encoded with
+    `indent=4`, Python separators and float `repr`, non-ASCII and `<`, `>`,
+    `&` escaped, each tool call's arguments reloaded and re-encoded beside
+    it), a proven upper bound for byte-level BPE whatever a template does to
+    the request's JSON, raised by `headroom_ratio` and 512 tokens for a
+    template preamble, `provenance: "caller_estimated"`.
   - An inline base64 image is charged `media_tokens` instead of its bytes, and
     a fact that includes one is `caller_estimated`.
+  - **An estimated shortfall only hands off.** When every executable target
+    falls short and any of those facts is `caller_estimated`, the estimated
+    facts are sent as unknown: the turn dispatches and the runtime's own
+    refusal decides (llama.cpp and OpenAI-compatible refusals re-consult). The
+    compaction 400 needs shortfalls that are all measured or
+    provider-reported, so a byte bound never refuses a session that still
+    fits.
   The policy contract admits `fits: false` from any provenance and reads an
   estimated `fits: true` as unknown, so an over-window local target is excluded
   before anything is sent to it. Facts are recomputed every turn: once the
@@ -127,8 +146,8 @@ opt-in. The core reports facts and never picks or ranks a model.
   llama.cpp's or an OpenAI-compatible one (`context_length_exceeded` or
   "maximum context length" in the error's code, type or message: vLLM, MLX, a
   custom endpoint), re-consults with `reconsult: "capacity"`.
-- **No deployment fits.** When every executable target has a
-  `context_capacity` shortfall, of any provenance, and none is unknown, the
+- **No deployment fits.** When every executable target has a measured or
+  provider-reported `context_capacity` shortfall and none is unknown, the
   core answers `400 context_exceeds_all_deployments` in the caller's wire
   format before Decisions or any runtime is contacted. A target without a fact
   (a cloud target without a counter) is never assumed not to fit, so a default
@@ -255,7 +274,9 @@ local deployment without a registered counter: `{"headroom_ratio": 0.05,
 "media_tokens": 8192}` are the defaults for absent members (limits:
 `headroom_ratio` in [0, 10], `media_tokens` >= 0). `headroom_ratio` applies
 only to the byte bound; `media_tokens` (a Retina screenshot is about 6.6k
-Qwen-VL tokens) to both.
+Qwen-VL tokens) to both. Each distinct prepared body is sized once per
+deployment and turn, and a configured Qwen3.8 deployment builds its counter
+at startup.
 Local inference cannot receive the hosted Decisions credential, including under
 an alternate environment-variable name. Unknown token units are an empty string;
 they cannot support comparable prefix evidence.

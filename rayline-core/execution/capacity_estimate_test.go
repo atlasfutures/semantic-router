@@ -123,11 +123,27 @@ func bigTurn(messages ...string) string {
 type qwenConversation struct {
 	Body   json.RawMessage `json:"body"`
 	Tokens int64           `json:"qwen_prompt_tokens"`
+	// VLLM marks a reference rendered after vLLM's request shaping
+	// (model_dump()ed tools, parts joined with "\n").
+	VLLM bool `json:"vllm"`
+	// ToolJSONOnly marks a reference that counts only the tool's
+	// tojson(indent=4) spelling.
+	ToolJSONOnly bool `json:"tool_json_only"`
 }
 
-// loadQwenConversations reads Chat bodies with the real Qwen3.8-27B template
+type qwenBoundaries struct {
+	ZhLine   string            `json:"zh_line"`
+	Fixtures map[string]string `json:"fixtures"`
+	Cases    map[string]struct {
+		SourceChars int   `json:"source_chars"`
+		FillerDots  int   `json:"filler_dots"`
+		Tokens      int64 `json:"qwen_prompt_tokens"`
+	} `json:"cases"`
+}
+
+// loadQwenConversations reads Chat bodies with real Qwen3.8-27B template
 // token counts (testdata/capacity/make_conversations.py).
-func loadQwenConversations(t *testing.T) map[string]qwenConversation {
+func loadQwenConversations(t *testing.T) (map[string]qwenConversation, qwenBoundaries) {
 	t.Helper()
 	file, err := os.Open("testdata/capacity/conversations.json.gz")
 	if err != nil {
@@ -138,46 +154,177 @@ func loadQwenConversations(t *testing.T) map[string]qwenConversation {
 	if err != nil {
 		t.Fatal(err)
 	}
-	conversations := map[string]qwenConversation{}
-	if err := json.NewDecoder(reader).Decode(&conversations); err != nil {
+	raw := map[string]json.RawMessage{}
+	if err := json.NewDecoder(reader).Decode(&raw); err != nil {
 		t.Fatal(err)
 	}
-	return conversations
+	var boundaries qwenBoundaries
+	if err := json.Unmarshal(raw["_boundaries"], &boundaries); err != nil {
+		t.Fatal(err)
+	}
+	delete(raw, "_boundaries")
+	conversations := map[string]qwenConversation{}
+	for name, entry := range raw {
+		var conversation qwenConversation
+		if err := json.Unmarshal(entry, &conversation); err != nil {
+			t.Fatal(err)
+		}
+		conversations[name] = conversation
+	}
+	return conversations, boundaries
 }
 
 // TestQwenTemplateCountMatchesTheReference renders each conversation as the
 // Qwen3.8 chat template does and counts it with the embedded tokenizer: the
 // count before margins equals transformers' apply_chat_template count, and
-// the capacity count (with margins) is never below it.
+// the capacity count is never below it, nor below the count after vLLM's
+// request shaping (null tool fields, reloaded float arguments, joined parts).
 func TestQwenTemplateCountMatchesTheReference(t *testing.T) {
-	conversations := loadQwenConversations(t)
-	if len(conversations) < 6 {
-		t.Fatalf("conversations %d", len(conversations))
-	}
+	conversations, _ := loadQwenConversations(t)
 	counter, err := tokencount.Qwen38()
 	if err != nil {
 		t.Fatal(err)
 	}
 	names := make([]string, 0, len(conversations))
-	for name := range conversations {
-		names = append(names, name)
+	for name, conversation := range conversations {
+		if !conversation.ToolJSONOnly {
+			names = append(names, name)
+		}
 	}
 	sort.Strings(names)
+	if len(names) < 9 {
+		t.Fatalf("conversations %v", names)
+	}
 	for _, name := range names {
 		conversation := conversations[name]
-		rendered, _, _, _, err := qwenRender(conversation.Body)
+		prompt, err := qwenRender(conversation.Body, counter)
 		if err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
-		exact := int64(counter.Count(rendered))
-		counted, images, err := qwenPromptTokens(conversation.Body)
-		if err != nil || images != 0 {
-			t.Fatalf("%s: %v images=%d", name, err, images)
+		rendered, renderedExact := counter.CountExact(prompt.text)
+		counted, images, countedExact, err := qwenPromptTokens(conversation.Body)
+		if err != nil || images != 0 || !renderedExact || !countedExact {
+			t.Fatalf("%s: %v images=%d exact=%v/%v", name, err, images, renderedExact, countedExact)
 		}
-		t.Logf("%-32s reference=%6d rendered=%6d capacity=%6d", name, conversation.Tokens, exact, counted)
-		if exact != conversation.Tokens || counted < conversation.Tokens {
-			t.Errorf("%s: rendered %d, capacity %d, reference %d", name, exact, counted, conversation.Tokens)
+		t.Logf("%-32s reference=%6d rendered=%6d capacity=%6d vllm=%v", name, conversation.Tokens, rendered, counted, conversation.VLLM)
+		if counted < conversation.Tokens || !conversation.VLLM && int64(rendered) != conversation.Tokens {
+			t.Errorf("%s: rendered %d, capacity %d, reference %d", name, rendered, counted, conversation.Tokens)
 		}
+	}
+	// Floats are spelt as Python re-serializes them after vLLM reloads them.
+	prompt, err := qwenRender(conversations["vllm_floats"].Body, counter)
+	if err != nil || !strings.Contains(prompt.text, "1000000000000000.0") || !strings.Contains(prompt.text, "1e+20") || !strings.Contains(prompt.text, `"default": 1000000000000000.0`) {
+		t.Fatalf("float spelling %v: %s", err, prompt.text)
+	}
+}
+
+// TestQwenCapacityFlipsAtTheExact98304Boundary builds, per content class, a
+// conversation whose real templated count plus the capacity margins plus a
+// 4,096-token output allowance is exactly 98,304: it fits a 98,304 window
+// and not a 98,303 one.
+func TestQwenCapacityFlipsAtTheExact98304Boundary(t *testing.T) {
+	_, boundaries := loadQwenConversations(t)
+	fixtures := loadCapacityFixtures(t)
+	const window, output, margin = 98304, 4096, qwenMarginTokens + qwenMessageMarginTokens
+	names := make([]string, 0, len(boundaries.Cases))
+	for name := range boundaries.Cases {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	if len(names) != 9 {
+		t.Fatalf("classes %v", names)
+	}
+	qwen := Deployment{Kind: "local", RegistryModel: qwen38RegistryModel, Protocol: llmprotocol.OpenAIChatV1}
+	for _, name := range names {
+		entry := boundaries.Cases[name]
+		source := boundaries.ZhLine
+		if fixture, ok := boundaries.Fixtures[name]; ok {
+			source = fixtures[fixture].text
+		}
+		runes := []rune(source)
+		for len(runes) < 1_200_000 {
+			runes = append(runes, runes...)
+		}
+		content := string(runes[:entry.SourceChars]) + strings.Repeat(".", entry.FillerDots)
+		body := []byte(`{"model":"qwen","max_tokens":4096,"messages":[` + jsonMessage(t, "user", content) + `]}`)
+		qwen.ContextWindow = window
+		fits := estimatedCapacityFact(qwen, body, output)
+		qwen.ContextWindow = window - 1
+		short := estimatedCapacityFact(qwen, body, output)
+		t.Logf("%-12s reference=%6d capacity prompt=%6d required=%6d fits(98304)=%v fits(98303)=%v", name, entry.Tokens, fits.prompt, *fits.Required, fits.Fits, short.Fits)
+		if fits.prompt != entry.Tokens+margin || !fits.Fits || short.Fits || fits.Provenance != capacityProvenanceMeasured {
+			t.Errorf("%s: %s / %s", name, mustJSON(fits), mustJSON(short))
+		}
+	}
+}
+
+// TestByteBoundCoversTemplateReserialization checks the byte bound of a model
+// other than Qwen3.8 against what a template can make of the request: a tool
+// whose 50,000-entry enum is re-encoded with indent=4, and float arguments
+// reloaded and re-spelt by Python.
+func TestByteBoundCoversTemplateReserialization(t *testing.T) {
+	conversations, _ := loadQwenConversations(t)
+	for _, name := range []string{"enum_50k_indent4", "vllm_floats", "vllm_bare_tool", "tool_loop"} {
+		conversation := conversations[name]
+		bound := byteBoundTokens(conversation.Body, nil)
+		t.Logf("%-18s reference=%7d byte bound=%7d", name, conversation.Tokens, bound)
+		if bound < conversation.Tokens {
+			t.Errorf("%s: byte bound %d below the reference %d", name, bound, conversation.Tokens)
+		}
+	}
+	floats := []byte(`{"messages":[{"role":"assistant","tool_calls":[{"function":{"name":"f","arguments":"{\"n\":1e15}"}}]}]}`)
+	if worst := worstCaseBytes(floats); worst < int64(len(floats))+int64(len("1000000000000000.0")) {
+		t.Fatalf("arguments were not re-spelt: %d", worst)
+	}
+}
+
+// TestEstimatedShortfallVetoesOnlyWhereItCanHandOff covers both directions of
+// the rule: an estimated shortfall stays while another target can take the
+// turn, and becomes unknown when every target falls short.
+func TestEstimatedShortfallVetoesOnlyWhereItCanHandOff(t *testing.T) {
+	config := capacityEstimateConfig(t, "http://127.0.0.1:8/v1/chat/completions", "http://127.0.0.1:9/v1/chat/completions")
+	server, _ := v2Server(t, config, &v2Decisions{choose: fitPolicy})
+	reason := CapacityContext
+	short := func(provenance string) *CapacityFact {
+		required, available := int64(200_000), int64(estimateLocalWindow)
+		return &CapacityFact{Reason: &reason, Required: &required, Available: &available, Provenance: provenance}
+	}
+	// Cloud targets unknown: the local estimate hands off.
+	facts := map[string]*CapacityFact{localActionID: short(capacityProvenanceEstimated)}
+	server.relaxEstimatedShortfalls(facts)
+	if facts[localActionID] == nil {
+		t.Fatal("an estimated shortfall with a cloud to hand off to was dropped")
+	}
+	// Every target short, one estimated: the estimate becomes unknown, so no 400.
+	facts = map[string]*CapacityFact{localActionID: short(capacityProvenanceEstimated), cloudActionID: short(capacityProvenanceMeasured), secondCloudActionID: short(capacityProvenanceMeasured)}
+	server.relaxEstimatedShortfalls(facts)
+	if facts[localActionID] != nil || server.exceedsAllDeployments(facts) {
+		t.Fatalf("an all-short turn kept its estimated fact: %s", mustJSON(facts))
+	}
+	// Every target short and measured: the 400 stands.
+	facts = map[string]*CapacityFact{localActionID: short(capacityProvenanceMeasured), cloudActionID: short(capacityProvenanceMeasured), secondCloudActionID: short("provider_reported")}
+	server.relaxEstimatedShortfalls(facts)
+	if len(facts) != 3 || !server.exceedsAllDeployments(facts) {
+		t.Fatalf("measured shortfalls were relaxed: %s", mustJSON(facts))
+	}
+}
+
+func TestLocalOnlyEstimatedShortfallDispatchesInsteadOfRefusing(t *testing.T) {
+	// A local-only profile whose count is only a byte bound (text x/text
+	// cannot normalize as the reference does) and over the window: the turn
+	// is dispatched and the runtime decides, never refused for compaction.
+	local := &upstreamFixture{}
+	config := capacityEstimateConfig(t, chatUpstream(t, local, false).URL, "http://127.0.0.1:9/v1/chat/completions")
+	config.Deployments, config.Actions = config.Deployments[:1], config.Actions[:1]
+	fixture := &v2Decisions{choose: fitPolicy}
+	_, httpServer := v2Server(t, config, fixture)
+	content := strings.Repeat("a\U00010041\u0301 ", 30_000)
+	status, response := executeHTTP(t, httpServer.URL, "/v1/chat/completions", bigTurn(jsonMessage(t, "user", content)), "local-only-estimated")
+	if status != 200 || local.count() != 1 {
+		t.Fatalf("status %d local=%d: %.300s", status, local.count(), response)
+	}
+	if fact := fixture.snapshot()[0].Execution.Targets[0].Capacity; fact != nil {
+		t.Fatalf("the relaxed estimate was still sent: %s", mustJSON(fact))
 	}
 }
 
@@ -187,7 +334,11 @@ func TestQwenTemplateCountMatchesTheReference(t *testing.T) {
 func TestCapacityFactsAtTheWindowBoundary(t *testing.T) {
 	const output = 4096
 	qwen := Deployment{Kind: "local", RegistryModel: qwen38RegistryModel, Protocol: llmprotocol.OpenAIChatV1}
-	for name, conversation := range loadQwenConversations(t) {
+	conversations, _ := loadQwenConversations(t)
+	for name, conversation := range conversations {
+		if conversation.VLLM || conversation.ToolJSONOnly {
+			continue
+		}
 		qwen.ContextWindow = conversation.Tokens + output - 1
 		fact := estimatedCapacityFact(qwen, conversation.Body, output)
 		if fact.Fits || fact.Provenance != capacityProvenanceMeasured || *fact.Units != qwenTokenUnits {

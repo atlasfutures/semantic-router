@@ -80,8 +80,8 @@ func runtimeContextRejection(deployment Deployment, previous *CapacityFact) *Cap
 
 // measureCapacity prepares each target exactly as dispatch would. A target
 // with a qualified counter is counted with its own runtime tokenizer
-// (local_measured); a local target without one is estimated
-// (caller_estimated); a cloud target without one stays unknown. Nothing is
+// (local_measured); a local target without one is sized by
+// localPromptSize; a cloud target without one stays unknown. Nothing is
 // committed.
 func (server *Server) measureCapacity(ctx context.Context, body []byte, format llmprotocol.WireFormat, state *branchState) (map[string]*CapacityFact, map[string]*cachecontext.MeasuredPrompt, error) {
 	facts := make(map[string]*CapacityFact)
@@ -91,6 +91,11 @@ func (server *Server) measureCapacity(ctx context.Context, body []byte, format l
 		ids = append(ids, id)
 	}
 	sort.Strings(ids)
+	type promptSize struct {
+		prompt            int64
+		provenance, units string
+	}
+	sizes := map[string]promptSize{}
 	for _, id := range ids {
 		selected := server.actions[id]
 		counted := server.counters[selected.deployment.ID] != nil
@@ -112,7 +117,18 @@ func (server *Server) measureCapacity(ctx context.Context, body []byte, format l
 			continue
 		}
 		if !counted {
-			facts[id] = estimatedCapacityFact(selected.deployment, prepared.body, prepared.outputLimit)
+			if selected.deployment.ContextWindow <= 0 {
+				continue
+			}
+			// Actions differing only in a control often prepare the same
+			// bytes: size each distinct body once per deployment.
+			key := selected.deployment.ID + "\x00" + fingerprint(prepared.body)
+			size, ok := sizes[key]
+			if !ok {
+				size.prompt, size.provenance, size.units = localPromptSize(selected.deployment, prepared.body)
+				sizes[key] = size
+			}
+			facts[id] = sizedCapacityFact(selected.deployment, size.prompt, size.provenance, size.units, prepared.outputLimit)
 			continue
 		}
 		prompt, err := server.measurePreparedPrompt(ctx, selected, prepared.body, state, nil)
@@ -127,7 +143,27 @@ func (server *Server) measureCapacity(ctx context.Context, body []byte, format l
 		measured[id] = prompt
 		facts[id] = capacityFact(selected.deployment, prompt, prepared.outputLimit)
 	}
+	server.relaxEstimatedShortfalls(facts)
 	return facts, measured, nil
+}
+
+// relaxEstimatedShortfalls keeps an estimated shortfall only while it can
+// hand the turn off: when every executable target falls short and any of
+// those facts is merely estimated, the estimated ones become unknown. The
+// turn then dispatches and the runtime's own refusal decides (llama.cpp's and
+// OpenAI-compatible refusals re-consult); the compaction 400 stays for
+// shortfalls that are all measured or provider-reported. Otherwise a byte
+// bound far above the real count would refuse a session that still fits,
+// and a harness would compact in a loop.
+func (server *Server) relaxEstimatedShortfalls(facts map[string]*CapacityFact) {
+	if !server.exceedsAllDeployments(facts) {
+		return
+	}
+	for id, fact := range facts {
+		if fact.Provenance == capacityProvenanceEstimated {
+			delete(facts, id)
+		}
+	}
 }
 
 // isRuntimeContextRejection recognizes a local runtime's refusal of a prompt

@@ -11,7 +11,6 @@ import (
 	"container/heap"
 	"fmt"
 	"strings"
-	"sync"
 
 	"golang.org/x/text/unicode/norm"
 )
@@ -21,14 +20,9 @@ type BPE struct {
 	ranks map[uint64]merge
 	added []string
 	split func(string, func(string))
-
-	mu    sync.Mutex
-	cache map[string]int32
 }
 
 type merge struct{ rank, id uint32 }
-
-const pieceCacheLimit = 1 << 18
 
 func pairKey(left, right uint32) uint64 { return uint64(left)<<32 | uint64(right) }
 
@@ -85,7 +79,7 @@ func newBPE(compressed []byte, added []string, split func(string, func(string)))
 	if err := scanner.Err(); err != nil {
 		return nil, err
 	}
-	return &BPE{ranks: ranks, added: added, split: split, cache: make(map[string]int32)}, nil
+	return &BPE{ranks: ranks, added: added, split: split}, nil
 }
 
 // byteDecoder inverts GPT-2's bytes_to_unicode table.
@@ -115,11 +109,32 @@ func decodeToken(token string, decode map[rune]byte) (string, error) {
 	return string(out), nil
 }
 
-// Count returns the number of tokens the reference tokenizer produces for
-// text with no special tokens added: added tokens split first, then NFC, the
-// pre-tokenizer and byte-level BPE on each piece.
+// Count returns an upper bound on the reference tokenizer's token count for
+// text with no special tokens added; it is exact when CountExact says so.
 func (bpe *BPE) Count(text string) int {
-	total := 0
+	count, _ := bpe.CountExact(text)
+	return count
+}
+
+// CountExact counts as the reference does: added tokens split first, then
+// NFC, the pre-tokenizer and byte-level BPE on each piece. exact is false
+// when a segment between added tokens had to be charged its NFD UTF-8 byte
+// count instead (byte-level BPE never emits more tokens than bytes, and NFC
+// never lengthens NFD).
+//
+// That happens only for a segment that is not already NFC and that x/text
+// cannot normalize as the reference does: one holding a supplementary code
+// point (x/text's composition table truncates a supplementary starter, so
+// U+10041 + U+0301 composes to U+00C1, and its Unicode 17 tables compose
+// U+11390 + U+113C9, which the reference's do not) or one of the combining
+// marks the reference's older tables treat as starters (newerMarks). Text
+// already NFC under Go's tables is left unchanged by the reference too:
+// Unicode only ever adds compositions and combining classes. Every code
+// point in ten contexts, and every canonical decomposition, was compared
+// with the reference tokenizer: no exact count differs and none is lower.
+func (bpe *BPE) CountExact(text string) (count int, exact bool) {
+	exact = true
+	cache := make(map[string]int)
 	for len(text) > 0 {
 		at, length := bpe.nextAdded(text)
 		segment := text
@@ -127,18 +142,46 @@ func (bpe *BPE) Count(text string) int {
 			segment = text[:at]
 		}
 		if segment != "" {
-			if !norm.NFC.IsNormalString(segment) {
-				segment = norm.NFC.String(segment)
+			normal := norm.NFC.IsNormalString(segment)
+			if !normal && safeToCompose(segment) {
+				segment, normal = norm.NFC.String(segment), true
 			}
-			bpe.split(segment, func(piece string) { total += bpe.countPiece(piece) })
+			if normal {
+				bpe.split(segment, func(piece string) { count += bpe.countPiece(piece, cache) })
+			} else {
+				count += len(norm.NFD.String(segment))
+				exact = false
+			}
 		}
 		if at < 0 {
 			break
 		}
-		total++
+		count++
 		text = text[at+length:]
 	}
-	return total
+	return count, exact
+}
+
+// newerMarks are the BMP combining marks whose canonical combining class the
+// reference normalizer does not know (found by comparing its NFC with
+// x/text's on every BMP code point beside other marks).
+var newerMarks = [][2]rune{
+	{0x7FD, 0x7FD}, {0x897, 0x89F}, {0x8CA, 0x8D3}, {0x9FE, 0x9FE}, {0xC3C, 0xC3C}, {0xD3B, 0xD3C}, {0xEBA, 0xEBA},
+	{0x1715, 0x1715}, {0x1ABF, 0x1ADD}, {0x1AE0, 0x1AEB}, {0x1DF6, 0x1DFA}, {0xA82C, 0xA82C},
+}
+
+func safeToCompose(text string) bool {
+	for _, char := range text {
+		if char > 0xFFFF {
+			return false
+		}
+		for _, marks := range newerMarks {
+			if char >= marks[0] && char <= marks[1] {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // nextAdded finds the leftmost (then longest) added token in text.
@@ -162,27 +205,16 @@ func (bpe *BPE) nextAdded(text string) (int, int) {
 	}
 }
 
-func (bpe *BPE) countPiece(piece string) int {
+func (bpe *BPE) countPiece(piece string, cache map[string]int) int {
 	if len(piece) <= 1 {
 		return len(piece)
 	}
-	cacheable := len(piece) <= 64
-	if cacheable {
-		bpe.mu.Lock()
-		count, ok := bpe.cache[piece]
-		bpe.mu.Unlock()
-		if ok {
-			return int(count)
-		}
+	if count, ok := cache[piece]; ok {
+		return count
 	}
 	count := bpe.mergeCount(piece)
-	if cacheable {
-		bpe.mu.Lock()
-		if len(bpe.cache) >= pieceCacheLimit {
-			bpe.cache = make(map[string]int32)
-		}
-		bpe.cache[piece] = int32(count)
-		bpe.mu.Unlock()
+	if len(piece) <= 64 {
+		cache[piece] = count
 	}
 	return count
 }

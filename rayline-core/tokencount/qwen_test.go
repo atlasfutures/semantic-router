@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 )
 
@@ -66,10 +67,72 @@ func TestQwen38CountsEqualTheReferenceTokenizer(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		got, want := counter.Count(string(text)), manifest.Fixtures[name].Tokens
-		t.Logf("%-28s reference=%6d core=%6d", name, want, got)
-		if got != want {
-			t.Errorf("%s: core %d, reference %d", name, got, want)
+		got, exact := counter.CountExact(string(text))
+		want := manifest.Fixtures[name].Tokens
+		t.Logf("%-34s reference=%6d core=%6d exact=%v", name, want, got, exact)
+		if got != want || !exact {
+			t.Errorf("%s: core %d (exact=%v), reference %d", name, got, exact, want)
 		}
+	}
+}
+
+// TestQwen38NeverUndercountsRandomText runs seeded random strings over the
+// review's character pools (testdata/make_random.py): an exact count equals
+// the reference, and no count is below it.
+func TestQwen38NeverUndercountsRandomText(t *testing.T) {
+	counter, err := Qwen38()
+	if err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.Open("testdata/random.json.gz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	reader, err := gzip.NewReader(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cases []struct {
+		Text   string `json:"text"`
+		Tokens int    `json:"qwen_tokens"`
+	}
+	if err := json.NewDecoder(reader).Decode(&cases); err != nil {
+		t.Fatal(err)
+	}
+	exactCount := 0
+	for index, c := range cases {
+		got, exact := counter.CountExact(c.Text)
+		if got < c.Tokens || exact && got != c.Tokens {
+			t.Errorf("case %d (%.40q): core %d exact=%v, reference %d", index, c.Text, got, exact, c.Tokens)
+		}
+		if exact {
+			exactCount++
+		}
+	}
+	t.Logf("%d strings, %d counted exactly, none under", len(cases), exactCount)
+}
+
+func TestQwen38NeverTrustsXTextComposition(t *testing.T) {
+	counter, err := Qwen38()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		text string
+		real int
+	}{
+		// Unicode 16 composition the reference does not apply.
+		{strings.Repeat("\U00011390\U000113C9", 20000), 160000},
+		// x/text's truncated key composes U+10041 + U+0301 to U+00C1.
+		{strings.Repeat("a\U00010041́", 1000), 6000},
+	} {
+		if got := counter.Count(tc.text); got < tc.real {
+			t.Errorf("%.12q: %d below the reference %d", tc.text, got, tc.real)
+		}
+	}
+	// Decomposed accents compose exactly.
+	if got, exact := counter.CountExact("café résumé"); !exact || got != counter.Count("café résumé") {
+		t.Errorf("NFD text counted %d exact=%v", got, exact)
 	}
 }

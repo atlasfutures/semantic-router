@@ -2,9 +2,13 @@ package execution
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"math"
+	"strings"
+
+	"github.com/atlasfutures/semantic-router/rayline-core/thinkingcontrol"
 )
 
 // A local target without a registered runtime counter gets a capacity fact
@@ -14,11 +18,17 @@ import (
 //   - Qwen3.8-27B (registry_model qwen/qwen3.8-27b, Chat wire): the request
 //     is rendered with the model's chat template and counted with the
 //     embedded tokenizer (qwen_capacity.go), provenance local_measured.
-//   - Any other model: the UTF-8 byte count of the prepared request, a proven
-//     upper bound for a byte-level BPE tokenizer (every token covers at
-//     least one byte; the JSON framing of each message exceeds its template
-//     tokens), raised by headroom_ratio and estimateTemplateMarginTokens for a
-//     template preamble the body does not carry; provenance caller_estimated.
+//     A segment the counter can only bound by bytes (text x/text cannot
+//     normalize as the reference does) makes the fact caller_estimated.
+//   - Any other model: the UTF-8 byte count of a worst-case re-serialization
+//     of the prepared request, a proven upper bound for a byte-level BPE
+//     tokenizer (every token covers at least one byte) whatever a template
+//     does to the request's JSON: values re-encoded with indent=4, Python
+//     separators, floats by repr, non-ASCII and <, >, & escaped, and each
+//     tool call's arguments string reloaded and re-encoded the same way
+//     beside it. It is raised by headroom_ratio and
+//     estimateTemplateMarginTokens for a preamble the body does not carry;
+//     provenance caller_estimated.
 //
 // An inline base64 image is charged media_tokens instead of its bytes in both
 // cases, and a fact with images is caller_estimated: the runtime's image
@@ -58,33 +68,39 @@ func (estimate *CapacityEstimate) validate() error {
 	return nil
 }
 
-// estimatedCapacityFact is capacityFact for a local target without a
+// localPromptSize sizes a prepared request for a local target without a
 // registered counter: counted for Qwen3.8-27B, otherwise bounded by bytes.
-func estimatedCapacityFact(deployment Deployment, body []byte, outputLimit int64) *CapacityFact {
-	if deployment.ContextWindow <= 0 {
-		return nil
-	}
+func localPromptSize(deployment Deployment, body []byte) (int64, string, string) {
 	_, mediaTokens := deployment.CapacityEstimate.settings()
-	provenance, units := capacityProvenanceEstimated, deployment.TokenUnits
-	var prompt int64
-	counted := false
+	units := deployment.TokenUnits
 	if isQwen38Deployment(deployment) {
-		tokens, images, err := qwenPromptTokens(body)
+		tokens, images, exact, err := qwenPromptTokens(body)
 		if err == nil {
-			prompt, counted = tokens+images*mediaTokens, true
-			if images == 0 {
+			provenance := capacityProvenanceEstimated
+			if images == 0 && exact {
 				provenance = capacityProvenanceMeasured
 			}
 			if units == "" {
 				units = qwenTokenUnits
 			}
-		} else {
-			slog.Warn("qwen capacity count failed; using the byte bound", "deployment", deployment.ID, "error", err.Error())
+			return tokens + images*mediaTokens, provenance, units
 		}
+		slog.Warn("qwen capacity count failed; using the byte bound", "deployment", deployment.ID, "error", err.Error())
 	}
-	if !counted {
-		prompt = byteBoundTokens(body, deployment.CapacityEstimate)
+	return byteBoundTokens(body, deployment.CapacityEstimate), capacityProvenanceEstimated, units
+}
+
+// estimatedCapacityFact is capacityFact for a local target without a
+// registered counter.
+func estimatedCapacityFact(deployment Deployment, body []byte, outputLimit int64) *CapacityFact {
+	if deployment.ContextWindow <= 0 {
+		return nil
 	}
+	prompt, provenance, units := localPromptSize(deployment, body)
+	return sizedCapacityFact(deployment, prompt, provenance, units, outputLimit)
+}
+
+func sizedCapacityFact(deployment Deployment, prompt int64, provenance, units string, outputLimit int64) *CapacityFact {
 	required := prompt + outputLimit + deployment.CapacityMarginTokens
 	available := deployment.ContextWindow
 	source := capacitySourceConfigured
@@ -99,16 +115,56 @@ func estimatedCapacityFact(deployment Deployment, body []byte, outputLimit int64
 	return fact
 }
 
-// byteBoundTokens is ceil(text bytes * (1 + headroom_ratio)) + images *
+// byteBoundTokens is ceil(worst-case bytes * (1 + headroom_ratio)) + images *
 // media_tokens + estimateTemplateMarginTokens over the prepared body.
 func byteBoundTokens(body []byte, estimate *CapacityEstimate) int64 {
 	headroom, mediaTokens := estimate.settings()
-	text := int64(len(body))
+	text := worstCaseBytes(body)
 	blobs := inlineImages(body)
 	for _, blob := range blobs {
 		text -= int64(blob[1] - blob[0])
 	}
-	return int64(math.Ceil(float64(text)*(1+headroom))) + int64(len(blobs))*mediaTokens + estimateTemplateMarginTokens
+	return int64(math.Ceil(float64(max(text, 0))*(1+headroom))) + int64(len(blobs))*mediaTokens + estimateTemplateMarginTokens
+}
+
+// worstCaseBytes is the longest spelling a template can give the request's
+// JSON: the body itself or its indent=4 ASCII re-encoding, with <, > and &
+// escaped as Go's json does, plus each tool-call arguments string reloaded
+// and re-encoded the same way.
+func worstCaseBytes(body []byte) int64 {
+	spell := func(raw []byte) int64 {
+		dumped, err := thinkingcontrol.PythonDumps(raw, 4, true)
+		if err != nil {
+			return int64(len(raw))
+		}
+		escaped := int64(strings.Count(dumped, "<")+strings.Count(dumped, ">")+strings.Count(dumped, "&")) * 5
+		return max(int64(len(dumped))+escaped, int64(len(raw)))
+	}
+	total := spell(body)
+	var walk func(any, string)
+	walk = func(node any, key string) {
+		switch value := node.(type) {
+		case map[string]any:
+			for child, item := range value {
+				walk(item, child)
+			}
+		case []any:
+			for _, item := range value {
+				walk(item, key)
+			}
+		case string:
+			if key == "arguments" {
+				total += spell([]byte(value))
+			}
+		}
+	}
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.UseNumber()
+	var parsed any
+	if decoder.Decode(&parsed) == nil {
+		walk(parsed, "")
+	}
+	return total
 }
 
 // inlineImages finds base64 images that are JSON structure, not text: an
