@@ -443,7 +443,7 @@ func (server *Server) execute(writer http.ResponseWriter, incoming *http.Request
 			// The runtime refused the conversation, not one control: every
 			// action on this deployment is out for this turn, so a sibling is
 			// never dispatched to be refused again.
-			pending.input.Capacity = server.withDeploymentRefusal(pending.input.Capacity, selected.deployment)
+			pending.input.Capacity = server.withDeploymentRefusal(pending.input.Capacity, selected.deployment, selected.action.ID, fact)
 			if !server.reconsult(ctx, writer, format, pending, selected.action.ID, decision.RouteID, "capacity", fact) {
 				return
 			}
@@ -554,12 +554,16 @@ func (server *Server) reconsult(ctx context.Context, writer http.ResponseWriter,
 	}
 	input := pending.input
 	capacity := withFact(input.Capacity, actionID, fact)
+	// The new fact may leave every target short: an estimate on a runtime
+	// that refuses for itself then yields, as at turn start.
+	server.relaxEstimatedShortfalls(capacity)
 	input.Capacity = capacity
 	if server.exceedsAllDeployments(capacity) {
 		// Nothing is left to choose: answer the compaction refusal now
 		// rather than spend re-consults on targets known not to fit.
 		pending.input.Capacity = capacity
-		return !server.writeContextExceeded(writer, format, capacity)
+		server.writeContextExceeded(writer, format, capacity)
+		return false
 	}
 	// Keep the fact even if this consult fails, so a client retry of the same
 	// request cannot dispatch the refused target again.
@@ -583,15 +587,19 @@ func (server *Server) reconsult(ctx context.Context, writer http.ResponseWriter,
 	return true
 }
 
-// withDeploymentRefusal copies a turn's capacity facts with a runtime
-// context refusal recorded for every action bound to deployment.
-func (server *Server) withDeploymentRefusal(facts map[string]*CapacityFact, deployment Deployment) map[string]*CapacityFact {
+// withDeploymentRefusal copies a turn's capacity facts with the selected
+// action's runtime context refusal (fact) recorded, and the same refusal for
+// every sibling action bound to that deployment.
+func (server *Server) withDeploymentRefusal(facts map[string]*CapacityFact, deployment Deployment, selectedID string, fact *CapacityFact) map[string]*CapacityFact {
 	capacity := make(map[string]*CapacityFact, len(facts)+1)
 	for id, existing := range facts {
 		capacity[id] = existing
 	}
 	for id, action := range server.actions {
-		if action.deployment.ID == deployment.ID {
+		switch {
+		case id == selectedID:
+			capacity[id] = fact
+		case action.deployment.ID == deployment.ID:
 			capacity[id] = runtimeContextRejection(deployment, facts[id])
 		}
 	}

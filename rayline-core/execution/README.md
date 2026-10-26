@@ -139,11 +139,18 @@ opt-in. The core reports facts and never picks or ranks a model.
     when every executable target falls short, its estimated facts are sent as
     unknown for all its actions: the turn dispatches there and the runtime's
     own context refusal decides.
+    A missing `context_overflow` means `"truncates"`; Rayline Local's CLI
+    sets `"refuses"` when it detects llama.cpp. The rule is part of the
+    all-short decision itself: an estimated shortfall on a `"refuses"`
+    deployment counts as unknown there, so the turn start, a re-consult, the
+    re-consult limit and a service refusal all agree.
   - **A runtime context refusal covers its whole deployment.** It is recorded
     as `provider_reported` for every action bound to that deployment, so no
     sibling control is dispatched to be refused again, and when that leaves no
     target the core answers the compaction 400 at once instead of spending
-    re-consults.
+    re-consults. This is conservative: a near-edge turn is handed off rather
+    than retried with a sibling control whose smaller output allowance might
+    have fit.
   The policy contract admits `fits: false` from any provenance and reads an
   estimated `fits: true` as unknown, so an over-window local target is excluded
   before anything is sent to it. Facts are recomputed every turn: once the

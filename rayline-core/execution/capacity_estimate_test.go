@@ -209,7 +209,7 @@ func TestQwenTemplateCountMatchesTheReference(t *testing.T) {
 		t.Logf("%-32s reference=%6d rendered=%6d capacity=%6d vllm=%v", name, conversation.Tokens, rendered, counted, conversation.VLLM)
 		// A Hugging Face reference concatenates text parts; the rendering
 		// joins them with "\n" as vLLM does and charges the difference.
-		if counted < conversation.Tokens || !conversation.VLLM && !prompt.multipart && int64(rendered) != conversation.Tokens {
+		if counted < conversation.Tokens || !conversation.VLLM && !hasContentParts(t, conversation.Body) && int64(rendered) != conversation.Tokens {
 			t.Errorf("%s: rendered %d, capacity %d, reference %d", name, rendered, counted, conversation.Tokens)
 		}
 	}
@@ -278,6 +278,25 @@ func TestByteBoundCoversTemplateReserialization(t *testing.T) {
 	if worst := worstCaseBytes(floats); worst < int64(len(floats))+int64(len("1000000000000000.0")) {
 		t.Fatalf("arguments were not re-spelt: %d", worst)
 	}
+}
+
+// hasContentParts reports a message whose content is a list of parts.
+func hasContentParts(t *testing.T, body []byte) bool {
+	t.Helper()
+	var request struct {
+		Messages []struct {
+			Content json.RawMessage `json:"content"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal(body, &request); err != nil {
+		t.Fatal(err)
+	}
+	for _, message := range request.Messages {
+		if trimmed := strings.TrimSpace(string(message.Content)); strings.HasPrefix(trimmed, "[") {
+			return true
+		}
+	}
+	return false
 }
 
 // localFact sizes a local target's prepared body as measureCapacity does.
@@ -392,6 +411,45 @@ func TestRefusingLocalRuntimeIsAskedOnceAcrossItsControls(t *testing.T) {
 	}
 	if calls != 1 || len(fixture.snapshot()) != 1 {
 		t.Fatalf("runtime calls=%d lookups=%d", calls, len(fixture.snapshot()))
+	}
+}
+
+func TestRefusalOfOneRefusingRuntimeYieldsTheOthersEstimate(t *testing.T) {
+	// Two local "refuses" deployments. A (98,304) has an estimated shortfall;
+	// B (1,000,000) fits by its estimate, but its runtime refuses. Every
+	// target is then short, A's only by estimate on a runtime that refuses
+	// for itself: the turn is dispatched to A, not answered with the 400.
+	var aCalls, bCalls int
+	a := &upstreamFixture{}
+	aServer := chatUpstream(t, a, false)
+	b := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		bCalls++
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"error":{"code":400,"message":"the request exceeds the available context size, try increasing it","type":"exceed_context_size_error"}}`)
+	}))
+	defer b.Close()
+	config := localOnlyControls(t, aServer.URL, ContextOverflowRefuses, 1)
+	second := config.Deployments[0]
+	second.ID, second.URL, second.ContextWindow = "local-b", b.URL, 1_000_000
+	action := config.Actions[0]
+	action.ID, action.Worker, action.DeploymentID = strings.Repeat("b", 64), "fixture-qwen-b", "local-b"
+	config.Deployments = append(config.Deployments, second)
+	config.Actions = append(config.Actions, action)
+	fixture := &v2Decisions{choose: fitPolicy}
+	_, httpServer := v2Server(t, config, fixture)
+	status, header, response := executeWithHeaders(t, httpServer.URL, overWindowByteBounded(t), "two-refusing")
+	aCalls = a.count()
+	if status != 200 || header.Get("X-Rayline-Executed-Action-Id") != localActionID {
+		t.Fatalf("status %d executed %q: %.300s", status, header.Get("X-Rayline-Executed-Action-Id"), response)
+	}
+	lookups := fixture.snapshot()
+	if aCalls != 1 || bCalls != 1 || len(lookups) != 2 {
+		t.Fatalf("a=%d b=%d lookups=%d", aCalls, bCalls, len(lookups))
+	}
+	first, second2 := lookups[0].Execution.Targets, lookups[1].Execution.Targets
+	if first[1].Capacity == nil || first[1].Capacity.Fits || second2[1].Capacity != nil || second2[0].Capacity == nil || second2[0].Capacity.Provenance != "provider_reported" {
+		t.Fatalf("targets %s / %s", mustJSON(first), mustJSON(second2))
 	}
 }
 

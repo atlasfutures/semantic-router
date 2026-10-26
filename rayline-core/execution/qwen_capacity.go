@@ -65,8 +65,6 @@ type qwenPrompt struct {
 	// text parts, what concatenating them (a Hugging Face template) costs
 	// beyond vLLM's "\n" join, when it costs more.
 	extra int64
-	// multipart reports a message whose parts vLLM joined with "\n".
-	multipart bool
 }
 
 // qwenPromptTokens counts the prepared Chat body rendered with the Qwen3.8
@@ -115,7 +113,6 @@ func qwenRender(body []byte, counter *tokencount.BPE) (qwenPrompt, error) {
 		if glued != text {
 			// Pieces never cross the template's special tokens around a
 			// content, so the two joins can be compared alone.
-			prompt.multipart = true
 			prompt.extra += max(int64(counter.Count(thinkingcontrol.PythonStrip(glued))-counter.Count(contents[index])), 0)
 		}
 	}

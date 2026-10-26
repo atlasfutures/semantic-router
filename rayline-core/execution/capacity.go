@@ -147,24 +147,50 @@ func (server *Server) measureCapacity(ctx context.Context, body []byte, format l
 	return facts, measured, nil
 }
 
-// relaxEstimatedShortfalls keeps an estimated shortfall unless the runtime
-// can be trusted to refuse: when every executable target falls short, the
-// estimated facts of a deployment marked context_overflow "refuses" become
-// unknown, for all its actions, so the turn dispatches there and the
-// runtime's own context refusal decides (it re-consults, or ends in the
-// compaction 400 once every target is out). A deployment that truncates
-// (the default) keeps its estimate, so a prompt over its window is never
-// sent to be silently cut; if that leaves every target short, the turn gets
-// the compaction 400.
+// relaxEstimatedShortfalls applies shortfallStands to the facts sent to
+// Decisions: when every executable target falls short, counting every
+// shortfall, an estimated one on a context_overflow "refuses" deployment is
+// sent as unknown for all that deployment's actions, so the turn dispatches
+// there and the runtime's own context refusal decides. While some target is
+// not short, every estimate still excludes its target, so the turn hands off
+// rather than probing a runtime.
 func (server *Server) relaxEstimatedShortfalls(facts map[string]*CapacityFact) {
-	if !server.exceedsAllDeployments(facts) {
+	if !server.everyTarget(facts, isContextShortfall) {
 		return
 	}
 	for id, fact := range facts {
-		if fact.Provenance == capacityProvenanceEstimated && server.actions[id].deployment.ContextOverflow == ContextOverflowRefuses {
+		if server.yieldsToRuntime(id, fact) {
 			delete(facts, id)
 		}
 	}
+}
+
+func isContextShortfall(fact *CapacityFact) bool {
+	return fact != nil && !fact.Fits && fact.Reason != nil && *fact.Reason == CapacityContext
+}
+
+// yieldsToRuntime reports an estimated shortfall on a deployment whose
+// runtime refuses an over-window prompt itself (context_overflow "refuses"):
+// it never settles that every target falls short. A truncating runtime's
+// estimate (the default) stands.
+func (server *Server) yieldsToRuntime(id string, fact *CapacityFact) bool {
+	return isContextShortfall(fact) && fact.Provenance == capacityProvenanceEstimated && server.actions[id].deployment.ContextOverflow == ContextOverflowRefuses
+}
+
+// everyTarget reports whether every executable action's fact satisfies
+// holds; false when there is none.
+func (server *Server) everyTarget(facts map[string]*CapacityFact, holds func(*CapacityFact) bool) bool {
+	executable := 0
+	for id, selected := range server.actions {
+		if selected.deployment.ID == "" {
+			continue
+		}
+		executable++
+		if !holds(facts[id]) {
+			return false
+		}
+	}
+	return executable > 0
 }
 
 // isRuntimeContextRejection recognizes a local runtime's refusal of a prompt
@@ -240,20 +266,20 @@ func (server *Server) contextExceededMessage(facts map[string]*CapacityFact) str
 }
 
 // exceedsAllDeployments reports whether every executable action has a
-// context shortfall for this request, of any provenance. A target with no
-// fact (unknown, such as a cloud target without a counter) is never assumed
-// not to fit.
+// context shortfall that stands for this request: any provenance, except an
+// estimate on a runtime that refuses for itself (yieldsToRuntime), which
+// counts as unknown. A target with no fact (unknown, such as a cloud target
+// without a counter) is never assumed not to fit. Every refusal path (turn
+// start, re-consult, re-consult limit, a service refusal) decides with it.
 func (server *Server) exceedsAllDeployments(facts map[string]*CapacityFact) bool {
-	executable := 0
-	for id, selected := range server.actions {
-		if selected.deployment.ID == "" {
-			continue
-		}
-		executable++
-		fact := facts[id]
-		if fact == nil || fact.Fits || fact.Reason == nil || *fact.Reason != CapacityContext {
-			return false
+	return server.everyTarget(facts, isContextShortfall) && !server.anyYields(facts)
+}
+
+func (server *Server) anyYields(facts map[string]*CapacityFact) bool {
+	for id, fact := range facts {
+		if server.yieldsToRuntime(id, fact) {
+			return true
 		}
 	}
-	return executable > 0
+	return false
 }
