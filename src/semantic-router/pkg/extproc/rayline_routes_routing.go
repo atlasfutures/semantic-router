@@ -92,6 +92,9 @@ type raylineRoutesRouting struct {
 	executionV2 *routesExecutionV2
 	// responseFields is routing.response_fields, nil when not sent.
 	responseFields []string
+	// signals is routing.signals (pathfinder #5943), nil when not sent or
+	// empty.
+	signals []string
 }
 
 func (routing *raylineRoutesRouting) wantsPredictions() bool {
@@ -206,7 +209,7 @@ func routesReadMembers(
 	var unknown []string
 	for name := range members {
 		switch name {
-		case "value_usd", "temperature", "prices", "exclusive", "response_fields", "execution", "policy":
+		case "value_usd", "temperature", "prices", "exclusive", "response_fields", "execution", "policy", "signals":
 		default:
 			unknown = append(unknown, name)
 		}
@@ -264,6 +267,13 @@ func routesReadMembers(
 			return failure
 		}
 		routing.responseFields = fields
+	}
+	if raw, ok := members["signals"]; ok {
+		signals, failure := readRoutingSignals(raw)
+		if failure != nil {
+			return failure
+		}
+		routing.signals = signals
 	}
 	if routing.prices != nil {
 		routing.priceSHA256 = routesPriceSHA256(routing.prices, routing.exclusive)
@@ -559,6 +569,7 @@ func raylineRoutesControls(
 		controls.ExecutionV2, routing.executionNotAdmitted = routesExecutionV2Controls(routing.executionV2)
 	}
 	controls.Policy = routing.policy
+	controls.Signals = routing.signals
 	return controls
 }
 
@@ -579,9 +590,11 @@ func raylineRoutesRoutingControlsKey(controls *selection.RaylineARCRouteControls
 		Execution   *selection.RaylineARCRouteExecution   `json:"execution"`
 		ExecutionV2 *selection.RaylineARCRouteExecutionV2 `json:"execution_v2"`
 		Policy      *raylinearc.PolicyMember              `json:"policy"`
+		// Two lookups asking for different signals answer differently.
+		Signals []string `json:"signals,omitempty"`
 	}{
 		controls.Points, controls.Exploration, routesStoreVersion(controls), controls.Exclusive, controls.Predictions,
-		controls.Execution, controls.ExecutionV2, controls.Policy,
+		controls.Execution, controls.ExecutionV2, controls.Policy, controls.Signals,
 	})
 	if err != nil {
 		return "unencodable"
@@ -833,6 +846,15 @@ func raylineRoutesAddResults(
 		if echo.Policy.Status == "unsupported" {
 			echo.UnappliedKeys = append(echo.UnappliedKeys, "policy")
 		}
+	}
+	if routing.signals != nil {
+		// The block is the service's, passed through as it wrote it. A
+		// lookup that asked for signals and got none is inconsistent,
+		// never answered as if it had not asked.
+		if decision.Signals == nil {
+			return fmt.Errorf("the decision carries no signals block")
+		}
+		payload.Signals = decision.Signals
 	}
 	if routing.prices != nil {
 		echo.Prices = &raylineRoutesPricesEcho{

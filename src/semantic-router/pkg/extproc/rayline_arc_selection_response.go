@@ -125,6 +125,11 @@ func publicSelectionFailureClass(class string) string {
 		if selectionShapeRefusalClasses[class] {
 			return selectionFailureRequestShape
 		}
+		// A signal the caller named that ARC or this cell does not serve
+		// rides a 400: the request's shape, not an outage.
+		if signal := signalRefusalOf(class); signal != nil && signal.contract().status == 400 {
+			return selectionFailureRequestShape
+		}
 		return selectionFailureUnavailable
 	}
 }
@@ -286,7 +291,11 @@ func (r *OpenAIRouter) authoritativeSelectionFailureResponse(
 	recordSelectionLifecycleFailure(ctx, "selection", err)
 	recordTurnFailure(ctx, selectionTurnFailureClass(failure.class), false)
 	var response *ext_proc.ProcessingResponse
-	switch {
+	switch signal := signalRefusalOf(failure.class); {
+	case signal != nil:
+		// A refused routing.signals answers the service's reason as its
+		// code, in the client's protocol, as /v1/routes does.
+		response = r.raylineGenerationRoutingRefusal(ctx, signal.contract())
 	case selectionShapeRefusalClasses[failure.class]:
 		response = r.requestShapeRefusalResponse(ctx)
 	case failure.class == arcFailurePolicyUndecidable:

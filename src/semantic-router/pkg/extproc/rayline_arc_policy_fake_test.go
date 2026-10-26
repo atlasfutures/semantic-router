@@ -148,6 +148,16 @@ type fakePolicyService struct {
 	appends       []raylinearc.PolicyAppendRequest
 	resolved      []raylinearc.PolicyDecisionRequest
 	contentScores bool
+	// A decide naming signals (pathfinder #5943) is refused as the service
+	// refuses it: a name outside knownSignals is signal_not_supported, one
+	// outside servedSignals signal_not_admitted, and signalHeadsBroken
+	// refuses every one with signal_heads_unavailable. Otherwise the answer
+	// carries signalBlock(names).
+	knownSignals      []string
+	servedSignals     []string
+	signalHeadsBroken bool
+	// omitSignals answers a decide naming signals without the block.
+	omitSignals bool
 }
 
 type fakeStagedTurn struct {
@@ -254,6 +264,46 @@ func (fake *fakePolicyService) serveAppend(writer http.ResponseWriter, request *
 	response.Messages = count
 	// The fixture's hold stays: VSR never reads it (ADR 0155's amendment).
 	fake.writeJSON(writer, http.StatusOK, response)
+}
+
+// fakeSignalBlock is the fake's signals block: one opaque result per name.
+func fakeSignalBlock(names []string) json.RawMessage {
+	block := map[string]any{}
+	for _, name := range names {
+		block[name] = map[string]any{
+			"schema": "rayline.signal." + name + ".v1", "taxonomy": "fake-v1", "scopes": map[string]any{},
+			"unavailable": "no_stage_one_readout", "latency_ms": 0.01,
+		}
+	}
+	encoded, _ := json.Marshal(block)
+	return encoded
+}
+
+// signalRefusal is the service's refusal of a decide's signals, or nil.
+func (fake *fakePolicyService) signalRefusal(names []string) map[string]any {
+	if len(names) == 0 {
+		return nil
+	}
+	fake.mu.Lock()
+	known, served, broken := fake.knownSignals, fake.servedSignals, fake.signalHeadsBroken
+	fake.mu.Unlock()
+	var unknown, refused []string
+	for _, name := range names {
+		if !slices.Contains(known, name) {
+			unknown = append(unknown, name)
+		} else if !slices.Contains(served, name) {
+			refused = append(refused, name)
+		}
+	}
+	switch {
+	case len(unknown) > 0:
+		return map[string]any{"reason": "signal_not_supported", "signals": unknown}
+	case broken:
+		return map[string]any{"reason": "signal_heads_unavailable"}
+	case len(refused) > 0:
+		return map[string]any{"reason": "signal_not_admitted", "signals": refused}
+	}
+	return nil
 }
 
 func newFakePolicyService(t *testing.T, alias, sha256 string, catalog []string) *fakePolicyService {
@@ -391,6 +441,10 @@ func (fake *fakePolicyService) serve(writer http.ResponseWriter, request *http.R
 			fake.writeJSON(writer, http.StatusUnprocessableEntity, map[string]any{
 				"error": "selection_refused", "detail": map[string]any{"reason": reason},
 			})
+			return
+		}
+		if refusal := fake.signalRefusal(decide.Signals); refusal != nil {
+			fake.writeJSON(writer, http.StatusUnprocessableEntity, map[string]any{"error": "unsupported_request", "detail": refusal})
 			return
 		}
 		resolved, ok := fake.stageDecide(decide)
@@ -596,6 +650,9 @@ func (fake *fakePolicyService) decision(request raylinearc.PolicyDecisionRequest
 	if fake.cacheTrace != nil && slices.Contains(request.ResponseFields, "cache_trace") {
 		trace := *fake.cacheTrace
 		response.Decision.CacheTrace = &trace
+	}
+	if len(request.Signals) > 0 && !fake.omitSignals {
+		response.Signals = fakeSignalBlock(request.Signals)
 	}
 	// A relaxed call advances no session (pathfinder#3068).
 	if (request.EpisodeMode == raylinearc.PolicyEpisodeModeRelaxed && !ignoreEpisodeMode) || nullRevision {

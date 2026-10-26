@@ -567,8 +567,11 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	if arcContext.PolicyCallKind != "" && arcContext.PolicyCallKind != raylinearc.PolicyCallUnknown {
 		signals.CallKind, signals.CallKindSource = arcContext.PolicyCallKind, arcContext.PolicyCallKindSource
 	}
-	turn, attribution, transition := raylinearc.PolicyTurn(state.Policy, messages, roles, state.TurnIndex, signals)
-	prefixShape := observePolicyPrefix(arcContext, clientRequest, messages, state.Policy, signals, transition)
+	// One request digests its transcript several times; each message is
+	// canonicalized once.
+	digests := raylinearc.NewPrefixDigests(messages)
+	turn, attribution, transition := raylinearc.PolicyTurnFrom(state.Policy, digests, roles, state.TurnIndex, signals)
+	prefixShape := observePolicyPrefix(arcContext, clientRequest, digests, state.Policy, signals, transition)
 	sideCall := signals.CallKind == raylinearc.PolicyCallSide
 	scheduled := scorer.schedule != "" && !sideCall
 	// A two-stage package's service owns the model choice: it decides at the
@@ -583,7 +586,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		raylinearc.ModelChangeAllowed(state.TurnIndex, turn.EpochStartTurn, turn.CompactionCount))
 	retainedArm, retained := -1, false
 	if atBoundary {
-		retainedArm, retained = state.PolicyBoundary.RetainedArm(messages, state.TurnIndex, turn)
+		retainedArm, retained = state.PolicyBoundary.RetainedArmFrom(digests, state.TurnIndex, turn)
 	}
 	held := -1
 	// A side call keeps the held arm whatever the schedule says; a turn holds
@@ -711,6 +714,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	explorationExcluded := scorer.exploration.apply(&request, arcContext.PolicySignalHeaders, sideCall)
 	pricesStatus := attachRoutingPrices(armed.prices, &request)
 	applyRouteControls(&request, routeControls)
+	request.Signals = turnSignals(arcContext)
 	predictionsAsked := false
 	if routeControls != nil && routeControls.Predictions && scorer.advertises(raylinearc.PolicyCapabilityPredictions) {
 		predictionsAsked = true
@@ -930,6 +934,11 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 			response, err = decidePolicyThroughBusy(ctx, decider, request, scorer.busyWait, admit, withCacheContext)
 		}
 	}
+	// A refusal of the caller's routing.signals answers the service's own
+	// reason as its public code, whatever else the request carried.
+	if class := signalRefusalClass(err); class != "" {
+		return nil, arcSelectionFailure(class)
+	}
 	// A refusal of the caller's routing.execution or routing.policy answers
 	// its public code (selection_refused reasons such as no_feasible_target
 	// and policy_preset_not_admitted), ahead of the generic undecidable
@@ -1145,6 +1154,11 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		if execution != nil && routeExecutionTraceMissing(&request, response) {
 			return nil, arcSelectionFailure(arcFailureRoutesExecutionTraceMissing)
 		}
+		// A lookup that asked for signals and got no block fails here,
+		// before anything commits, as inconsistent (502).
+		if len(routeControls.Signals) > 0 && response.Signals == nil {
+			return nil, arcSelectionFailure(arcFailureRoutesSignalsMissing)
+		}
 		if executionV2 != nil {
 			if class := checkRouteOfferPin(executionV2.ExpectOffer, identity); class != "" {
 				return nil, arcSelectionFailure(class)
@@ -1159,6 +1173,9 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 			result.RaylineARC.RouteCacheTrace = response.Decision.CacheTrace
 		}
 	}
+	if len(request.Signals) > 0 {
+		result.RaylineARC.Signals = response.Signals
+	}
 	if class := recordRouteControls(result.RaylineARC, scorer, routeControls, response, available, predictionsAsked); class != "" {
 		logging.ComponentErrorEvent("extproc", "rayline_arc_policy_service_failed", map[string]interface{}{
 			"class": class, "episode_id_hash": arcContext.EpisodeIDHash,
@@ -1170,8 +1187,8 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		// selection log only.
 		audit := raylinearc.NewPolicyPriceAudit(scorer.sha256, response.RoutingPricesUsed, result.RaylineARC.PolicyPredictedCostUSD)
 		result.RaylineARC.PolicyTurnState = turn.Clone()
-		result.RaylineARC.PolicyNextState = turn.NextWithPrices(
-			messages, response.Decision.SelectedActionID, response.Decision.SelectedArmID, audit,
+		result.RaylineARC.PolicyNextState = turn.NextWithPricesFrom(
+			digests, response.Decision.SelectedActionID, response.Decision.SelectedArmID, audit,
 		)
 		var retainedBoundary *raylinearc.PolicyBoundaryDecision
 		if retained {
@@ -1180,7 +1197,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		recordPolicyExplorationOrigin(result.RaylineARC, turn, retainedBoundary, servedRelaxed)
 	}
 	if atBoundary && !retained {
-		result.RaylineARC.PolicyBoundary = raylinearc.NewPolicyBoundaryDecision(binding.arm, state.TurnIndex, turn, messages)
+		result.RaylineARC.PolicyBoundary = raylinearc.NewPolicyBoundaryDecisionFrom(binding.arm, state.TurnIndex, turn, digests)
 	}
 	if fallback {
 		logRaylineARCFallbackDecision(arcContext.EpisodeIDHash, arcContext.RequestID, state.TurnIndex, turn, scorer.cellOutWorkers(loggedRoutes), forced, available, response)

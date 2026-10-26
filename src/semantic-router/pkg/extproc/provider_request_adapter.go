@@ -69,18 +69,13 @@ func (r *OpenAIRouter) adaptProviderRequest(
 	if err != nil {
 		return nil, err
 	}
-	body, err = applyUpstreamSessionID(body, dispatch, ctx)
-	if err != nil {
-		return nil, err
-	}
-	body, err = applyProviderPreferences(body, dispatch, r.Config, ctx)
+	body, err = applyUpstreamRoutingMembers(body, dispatch, r.Config, ctx)
 	if err != nil {
 		return nil, err
 	}
 	// Read back rather than remember: the record then names the bytes that
 	// travel, whichever mutation put them there.
-	recordDispatchedReasoningControls(ctx, body)
-	recordDispatchedProviderPin(ctx, body)
+	recordDispatchedControls(ctx, body)
 	return body, nil
 }
 
@@ -126,16 +121,11 @@ func (r *OpenAIRouter) adaptMessagesProviderRequest(
 	if err != nil {
 		return nil, err
 	}
-	body, err = applyUpstreamSessionID(body, dispatch, ctx)
+	body, err = applyUpstreamRoutingMembers(body, dispatch, r.Config, ctx)
 	if err != nil {
 		return nil, err
 	}
-	body, err = applyProviderPreferences(body, dispatch, r.Config, ctx)
-	if err != nil {
-		return nil, err
-	}
-	recordDispatchedReasoningControls(ctx, body)
-	recordDispatchedProviderPin(ctx, body)
+	recordDispatchedControls(ctx, body)
 	return body, nil
 }
 

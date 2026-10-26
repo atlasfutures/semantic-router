@@ -95,7 +95,7 @@ func (cache *policyPrefixShapeCache) remember(episode string, shape *raylinearc.
 func observePolicyPrefix(
 	arcContext *selection.RaylineARCSelectionContext,
 	clientRequest raylinearc.PolicyClientRequest,
-	messages []json.RawMessage,
+	digests *raylinearc.PrefixDigests,
 	previous *raylinearc.PolicyEpisodeState,
 	signals raylinearc.PolicyTurnSignals,
 	transition string,
@@ -107,7 +107,7 @@ func observePolicyPrefix(
 	if clientRequest.Instructions != nil {
 		system, _ = json.Marshal(*clientRequest.Instructions)
 	}
-	current := raylinearc.NewPolicyPrefixShape(messages, system, clientRequest.Tools)
+	current := raylinearc.NewPolicyPrefixShapeFrom(digests, system, clientRequest.Tools)
 	if transition != raylinearc.PolicyTransitionPrefixBreak && transition != raylinearc.PolicyTransitionExtends {
 		return current
 	}
@@ -122,13 +122,17 @@ func observePolicyPrefix(
 		"transition":             transition,
 		"call_kind":              string(signals.CallKind),
 		"previous_message_count": previous.PrefixLen,
-		"message_count":          len(messages),
+		"message_count":          len(digests.Messages()),
 		"previous_shape_known":   recorded != nil,
 		"system_changed":         nil,
 		"tools_changed":          nil,
 		"first_divergent_index":  nil,
 		"divergent_role":         nil,
 		"divergent_block_type":   nil,
+		// The divergent message's block layout in this request and in the
+		// recorded one: names, lengths and short digests, never content.
+		"divergent_layout":          nil,
+		"previous_divergent_layout": nil,
 	}
 	if recorded != nil {
 		fields["system_changed"] = recorded.System != current.System
@@ -137,9 +141,15 @@ func observePolicyPrefix(
 			fields["first_divergent_index"] = index
 			// The index is past the current transcript's end when the
 			// request is a strict prefix of the recorded one.
-			if index < len(messages) {
+			if messages := digests.Messages(); index < len(messages) {
 				role, block := raylinearc.PolicyMessageKind(messages[index])
 				fields["divergent_role"], fields["divergent_block_type"] = role, block
+				fields["divergent_layout"] = raylinearc.NewPolicyMessageLayout(messages[index]).Fields()
+			}
+			// The same message as the recorded request sent it, when it was
+			// among the last ones that request kept the layout of.
+			if layout, kept := recorded.Layout(index); kept {
+				fields["previous_divergent_layout"] = layout.Fields()
 			}
 		}
 	}

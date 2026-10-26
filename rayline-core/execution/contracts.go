@@ -82,6 +82,9 @@ type Decision struct {
 	Result          string
 	// Receipt is the v2 policy receipt; nil in current and v1 modes.
 	Receipt *DecisionReceipt
+	// Signals is the response's signals block, returned to the caller; nil
+	// when absent.
+	Signals json.RawMessage
 }
 
 // AppliedPriceProfile records the immutable profile resolved by the gateway.
@@ -106,6 +109,9 @@ type DecisionInput struct {
 	Event     ExecutionEvent
 	Capacity  map[string]*CapacityFact
 	Reconsult *Reconsult
+	// Signals is the caller's routing.signals, passed to Decisions unchanged;
+	// nil when the request named none.
+	Signals json.RawMessage
 }
 
 // Reconsult marks a decision that a new fact (capacity or a post-decision

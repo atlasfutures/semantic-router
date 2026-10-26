@@ -121,6 +121,9 @@ type RaylineARCSelectionContext struct {
 	// ARC's routing.value_usd, 1 / V), sent in place of the cell's; nil
 	// keeps the cell's.
 	TurnCostWeight *float64
+	// TurnSignals is a generation turn's routing.signals, forwarded as the
+	// decide request's signals; nil keeps the request without them.
+	TurnSignals []string
 	// PolicyCallKind and PolicyCallKindSource are the request's call kind as
 	// classified before the episode was read; selection serves the request as
 	// that kind. Empty when the request was not classified ahead of selection.
@@ -163,6 +166,9 @@ type RaylineARCRouteControls struct {
 	// #5904) and ExecutionV2 the v2 envelope; each nil without one.
 	Policy      *raylinearc.PolicyMember
 	ExecutionV2 *RaylineARCRouteExecutionV2
+	// Signals is routing.signals as sent (pathfinder #5943), forwarded as
+	// the decide request's signals; nil without one.
+	Signals []string
 }
 
 // RaylineARCRouteExecutionV2 is a v2 routing.execution as decide-request
@@ -324,6 +330,10 @@ type RaylineARCTrace struct {
 	// routing.policy or a v2 routing.execution (nil when the service sent
 	// none).
 	RouteReceipt *raylinearc.PolicyDecisionReceipt
+	// Signals is the service's signals block for a decision whose request
+	// named signals, as the service wrote it; nil otherwise (and on a turn
+	// the service did not decide, such as a hold).
+	Signals json.RawMessage
 	// PolicyOperatingPoint is the operating point the service decided at, as
 	// it echoed it (point_id names its cost weight), and PolicyTierPicks the
 	// decision at each configured tier point. Both are set only for a cell

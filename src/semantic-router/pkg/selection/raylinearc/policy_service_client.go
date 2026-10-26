@@ -26,6 +26,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -254,8 +255,22 @@ const PolicyTurnDeltaUnsupportedClass = "turn_delta_unsupported"
 // answers the operation 404 or 405.
 const PolicyAppendUnsupportedClass = "append_unsupported"
 
+// PolicySignalRefusedClass is the service's refusal of a request's
+// caller-facing signals (pathfinder #5943: unsupported_request with a
+// detail.reason such as signal_not_supported, signal_not_admitted or
+// signal_heads_unavailable). The reason is passed to the caller unchanged as
+// the public code, so the router keeps no list of signal names of its own.
+const PolicySignalRefusedClass = "signal_refused"
+
+// policySignalRefusalReason matches a signal refusal's reason: bounded, so
+// no free-form service text becomes a public code or a log value.
+var policySignalRefusalReason = regexp.MustCompile(`^signal_[a-z0-9_]{1,48}$`)
+
 func policyFailureClass(failure PolicyErrorResponse) string {
 	reason, _ := failure.Detail["reason"].(string)
+	if failure.Error == "unsupported_request" && policySignalRefusalReason.MatchString(reason) {
+		return PolicySignalRefusedClass
+	}
 	if code, ok := policyDecisionsV2RefusalReasons[reason]; ok && code == failure.Error {
 		return PolicyDecisionsV2RefusedClass
 	}
@@ -478,7 +493,7 @@ func (client *PolicyServiceClient) do(
 				refusal.Detail = map[string]any{"reason": PolicyRefusalReason(failure.Detail)}
 			case PolicyMediaRefusedClass:
 				refusal.Detail = map[string]any{"sub_reason": PolicyMediaRefusalSubReason(failure.Detail)}
-			case PolicyDecisionsV2RefusedClass, PolicyExplorationRefusedClass:
+			case PolicyDecisionsV2RefusedClass, PolicyExplorationRefusedClass, PolicySignalRefusedClass:
 				refusal.Detail = map[string]any{"reason": failure.Detail["reason"]}
 			}
 			return nil, refusal

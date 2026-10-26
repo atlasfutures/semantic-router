@@ -1,6 +1,7 @@
 package extproc
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -30,6 +31,10 @@ type raylineGenerationRouting struct {
 	// 1 / valueUSD. Nil on a tier cell, which keeps its own.
 	costWeight  *float64
 	temperature *float64
+	// signals is routing.signals (pathfinder #5943): forwarded to the
+	// policy service, its block answered in x-vsr-signals. Nil when not
+	// sent or empty.
+	signals []string
 }
 
 // raylineGenerationRoutingPolicy is the one policy-service ARC decision
@@ -86,7 +91,12 @@ func (routing *raylineGenerationRouting) key() string {
 		}
 		return strconv.FormatFloat(*value, 'g', -1, 64)
 	}
-	return "generation:v=" + format(routing.valueUSD) + ":t=" + format(routing.temperature)
+	key := "generation:v=" + format(routing.valueUSD) + ":t=" + format(routing.temperature)
+	if routing.signals != nil {
+		encoded, _ := json.Marshal(routing.signals)
+		key += ":s=" + string(encoded)
+	}
+	return key
 }
 
 // readRaylineGenerationRouting validates the block in the contract's order:
@@ -130,7 +140,7 @@ func readRaylineGenerationRouting(
 	}
 	var unknown []string
 	for name := range members {
-		if name != "value_usd" && name != "temperature" {
+		if name != "value_usd" && name != "temperature" && name != "signals" {
 			unknown = append(unknown, name)
 		}
 	}
@@ -168,6 +178,13 @@ func readRaylineGenerationRouting(
 		}
 		routing.temperature = &value
 	}
+	if raw, ok := members["signals"]; ok {
+		signals, failure := readRoutingSignals(raw)
+		if failure != nil {
+			return nil, nil, failure
+		}
+		routing.signals = signals
+	}
 	stripped, refusal := stripRoutingMember(body)
 	if refusal != nil {
 		return nil, nil, refusal
@@ -191,8 +208,9 @@ func raylineGenerationTierMessage(fixed float64, known bool) string {
 	return fmt.Sprintf("This ARC model decides at a fixed value_usd of %g; use arc-1.0 for a custom value.", fixed)
 }
 
-// raylineGenerationRoutingRefusal answers a refused block as a 400 in the
-// client's protocol, with the contract's code. Chat and Responses carry it as
+// raylineGenerationRoutingRefusal answers a refused block in the client's
+// protocol, with the contract's code and status (400 for every block
+// refusal; a signal refusal states its own). Chat and Responses carry it as
 // error.code through the protocol encoder. The Messages encoder writes no
 // code, so a Messages refusal is written here, in the Anthropic envelope the
 // contract's ErrorEnvelope extends with error.code, as /v1/routes does.
@@ -203,10 +221,14 @@ func (r *OpenAIRouter) raylineGenerationRoutingRefusal(
 	if ctx != nil && ctx.SourceFormat == llmprotocol.AnthropicMessagesV1 {
 		return r.createRaylineRoutesCodedError(ctx, refusal)
 	}
-	if ctx != nil {
-		ctx.ImmediateProtocolError = llmprotocol.NewError(llmprotocol.ErrorInvalidRequest, refusal.code, refusal.message, nil)
+	status, category := http.StatusBadRequest, llmprotocol.ErrorInvalidRequest
+	if refusal.status != 0 && refusal.status != http.StatusBadRequest {
+		status, category = refusal.status, llmprotocol.ErrorUpstreamUnavailable
 	}
-	return r.createErrorResponse(http.StatusBadRequest, refusal.message)
+	if ctx != nil {
+		ctx.ImmediateProtocolError = llmprotocol.NewError(category, refusal.code, refusal.message, nil)
+	}
+	return r.createErrorResponse(status, refusal.message)
 }
 
 // raylineGenerationSignalHeaders adds the block's temperature to the trusted
@@ -257,6 +279,15 @@ func raylineGenerationRoutingStatus(ctx *RequestContext) (applied []string, unap
 			unapplied = append(unapplied, "temperature")
 		}
 	}
+	// signals applies when the service answered its block: a hold decides
+	// nothing, so it has none.
+	if routing.signals != nil {
+		if ctx.VSRRaylineARC.Signals != nil {
+			applied = append(applied, "signals")
+		} else {
+			unapplied = append(unapplied, "signals")
+		}
+	}
 	return applied, unapplied
 }
 
@@ -271,6 +302,22 @@ func (builder *responseHeaderMutationBuilder) addRaylineGenerationRoutingHeaders
 	applied, unapplied := raylineGenerationRoutingStatus(ctx)
 	builder.addString(headers.VSRRoutingApplied, strings.Join(applied, ","))
 	builder.addString(headers.VSRRoutingUnapplied, strings.Join(unapplied, ","))
+	builder.addString(headers.VSRSignals, raylineGenerationSignalsHeader(ctx))
+}
+
+// raylineGenerationSignalsHeader is a generation turn's signals block as the
+// service wrote it, compacted to one header line; "" when the turn asked for
+// no signals or the service answered none.
+func raylineGenerationSignalsHeader(ctx *RequestContext) string {
+	if ctx == nil || ctx.RaylineGenerationRouting == nil || ctx.RaylineGenerationRouting.signals == nil ||
+		ctx.VSRRaylineARC == nil || ctx.VSRRaylineARC.Signals == nil {
+		return ""
+	}
+	var compact bytes.Buffer
+	if json.Compact(&compact, ctx.VSRRaylineARC.Signals) != nil {
+		return ""
+	}
+	return compact.String()
 }
 
 // raylineARCHoldOfferKind reports a turn served by a hold (capacity or media):
