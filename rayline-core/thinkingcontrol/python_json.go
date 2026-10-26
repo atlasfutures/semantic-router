@@ -149,3 +149,53 @@ func writePython(buf *bytes.Buffer, v *value, indent, depth int, ensureASCII boo
 	}
 	return nil
 }
+
+// PythonWorstCaseBytes parses raw once and returns the length of its longest
+// template spelling: json.dumps(indent=4, ensure_ascii=True) with <, > and &
+// escaped as Go's json escapes them, never shorter than raw itself, plus the
+// same for every string member named reloadKey that parses as JSON (a tool
+// call's arguments, which a server reloads and re-encodes). Members are
+// visited in document order.
+func PythonWorstCaseBytes(raw []byte, reloadKey string) (int64, error) {
+	parsed, err := parseJSON(raw)
+	if err != nil {
+		return int64(len(raw)), err
+	}
+	spell := func(v *value, original int) (int64, error) {
+		var buf bytes.Buffer
+		if err := writePython(&buf, v, 4, 0, true); err != nil {
+			return int64(original), err
+		}
+		dumped := buf.Bytes()
+		escaped := int64(bytes.Count(dumped, []byte("<"))+bytes.Count(dumped, []byte(">"))+bytes.Count(dumped, []byte("&"))) * 5
+		return max(int64(len(dumped))+escaped, int64(original)), nil
+	}
+	total, err := spell(parsed, len(raw))
+	if err != nil {
+		return total, err
+	}
+	var walk func(*value, string)
+	walk = func(v *value, key string) {
+		switch v.kind {
+		case kindObject:
+			for _, m := range v.members {
+				walk(m.val, m.key)
+			}
+		case kindArray:
+			for _, item := range v.items {
+				walk(item, key)
+			}
+		case kindString:
+			if key == reloadKey {
+				if reloaded, err := parseJSON([]byte(v.str)); err == nil {
+					size, _ := spell(reloaded, len(v.str))
+					total += size
+				} else {
+					total += int64(len(v.str))
+				}
+			}
+		}
+	}
+	walk(parsed, "")
+	return total, nil
+}

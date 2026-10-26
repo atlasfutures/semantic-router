@@ -147,20 +147,21 @@ func (server *Server) measureCapacity(ctx context.Context, body []byte, format l
 	return facts, measured, nil
 }
 
-// relaxEstimatedShortfalls keeps an estimated shortfall only while it can
-// hand the turn off: when every executable target falls short and any of
-// those facts is merely estimated, the estimated ones become unknown. The
-// turn then dispatches and the runtime's own refusal decides (llama.cpp's and
-// OpenAI-compatible refusals re-consult); the compaction 400 stays for
-// shortfalls that are all measured or provider-reported. Otherwise a byte
-// bound far above the real count would refuse a session that still fits,
-// and a harness would compact in a loop.
+// relaxEstimatedShortfalls keeps an estimated shortfall unless the runtime
+// can be trusted to refuse: when every executable target falls short, the
+// estimated facts of a deployment marked context_overflow "refuses" become
+// unknown, for all its actions, so the turn dispatches there and the
+// runtime's own context refusal decides (it re-consults, or ends in the
+// compaction 400 once every target is out). A deployment that truncates
+// (the default) keeps its estimate, so a prompt over its window is never
+// sent to be silently cut; if that leaves every target short, the turn gets
+// the compaction 400.
 func (server *Server) relaxEstimatedShortfalls(facts map[string]*CapacityFact) {
 	if !server.exceedsAllDeployments(facts) {
 		return
 	}
 	for id, fact := range facts {
-		if fact.Provenance == capacityProvenanceEstimated {
+		if fact.Provenance == capacityProvenanceEstimated && server.actions[id].deployment.ContextOverflow == ContextOverflowRefuses {
 			delete(facts, id)
 		}
 	}

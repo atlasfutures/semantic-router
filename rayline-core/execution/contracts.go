@@ -47,7 +47,18 @@ type Deployment struct {
 	// deployment has no registered prompt counter (v2 only). Absent members
 	// take the documented defaults.
 	CapacityEstimate *CapacityEstimate `json:"capacity_estimate,omitempty"`
+	// ContextOverflow states what this local runtime does with a prompt over
+	// its window: "refuses" (a context error before any output: llama.cpp,
+	// vLLM) or "truncates" (silently: Ollama, mlx_lm.server). Empty means
+	// "truncates". Only on a "refuses" deployment may an estimated shortfall
+	// be relaxed to unknown so the runtime decides (v2 only).
+	ContextOverflow string `json:"context_overflow,omitempty"`
 }
+
+const (
+	ContextOverflowRefuses   = "refuses"
+	ContextOverflowTruncates = "truncates"
+)
 
 // CapacityEstimate overrides the estimator constants for one deployment
 // (capacity_estimate.go).

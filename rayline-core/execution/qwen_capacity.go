@@ -21,9 +21,10 @@ const qwen38RegistryModel = "qwen/qwen3.8-27b"
 // The rendering follows vLLM's Chat path: tool-call arguments and tools are
 // reloaded and re-serialized by the template's tojson (Python spelling:
 // ", " / ": " separators, floats by repr, so 1e15 is 1000000000000000.0), a
-// tool is also counted as vLLM's model_dump() spells it ("description": null,
-// "parameters": null, declared fields first) and the dearer spelling is
-// charged, and text parts joined with "\n" cost one token per boundary. It
+// tool is spelt as vLLM's model_dump() hands it over ("description": null,
+// "parameters": null, declared fields first), and text parts are joined with
+// "\n" in the rendered text (a plain concatenation is charged too where it
+// costs more). It
 // takes the template's most expensive branch wherever the request does not
 // pin one (xhigh reasoning instructions, a think block on every assistant
 // turn) and adds a fixed margin per message and per tool.
@@ -60,9 +61,12 @@ type qwenPrompt struct {
 	messages int
 	tools    int
 	images   int64
-	// extra is tokens charged beside the text: one per content-part
-	// boundary and the dearer tool spellings.
+	// extra is tokens charged beside the text: for a message of several
+	// text parts, what concatenating them (a Hugging Face template) costs
+	// beyond vLLM's "\n" join, when it costs more.
 	extra int64
+	// multipart reports a message whose parts vLLM joined with "\n".
+	multipart bool
 }
 
 // qwenPromptTokens counts the prepared Chat body rendered with the Qwen3.8
@@ -102,24 +106,28 @@ func qwenRender(body []byte, counter *tokencount.BPE) (qwenPrompt, error) {
 	prompt := qwenPrompt{messages: len(request.Messages), tools: len(request.Tools)}
 	contents := make([]string, len(request.Messages))
 	for index, message := range request.Messages {
-		text, images, boundaries, err := qwenContent(message.Content)
+		text, glued, images, err := qwenContent(message.Content)
 		if err != nil {
 			return qwenPrompt{}, err
 		}
 		contents[index] = thinkingcontrol.PythonStrip(text)
 		prompt.images += images
-		prompt.extra += boundaries
+		if glued != text {
+			// Pieces never cross the template's special tokens around a
+			// content, so the two joins can be compared alone.
+			prompt.multipart = true
+			prompt.extra += max(int64(counter.Count(thinkingcontrol.PythonStrip(glued))-counter.Count(contents[index])), 0)
+		}
 	}
 	var out strings.Builder
 	if len(request.Tools) > 0 {
 		out.WriteString("<|im_start|>system\n" + qwenReasoningXHigh + "\n\n" + qwenToolsHeader)
 		for _, tool := range request.Tools {
-			rendered, extra, err := qwenToolSpelling(tool, counter)
+			rendered, err := qwenToolSpelling(tool)
 			if err != nil {
 				return qwenPrompt{}, err
 			}
 			out.WriteString("\n" + rendered)
-			prompt.extra += extra
 		}
 		out.WriteString(qwenToolsFooter)
 		if request.Messages[0].Role == "system" && contents[0] != "" {
@@ -178,33 +186,29 @@ func qwenRender(body []byte, counter *tokencount.BPE) (qwenPrompt, error) {
 	return prompt, nil
 }
 
-// qwenToolSpelling is the template's tojson of a tool as the request spells
-// it, and how many tokens more vLLM's model_dump() spelling costs, if any.
-func qwenToolSpelling(raw json.RawMessage, counter *tokencount.BPE) (string, int64, error) {
-	asSent, err := thinkingcontrol.PythonDumps(raw, 0, false)
-	if err != nil {
-		return "", 0, err
-	}
+// qwenToolSpelling is the template's tojson of a tool as vLLM hands it over:
+// pydantic's model_dump() of the request's tool (declared fields first, an
+// absent one null, type defaulting to "function").
+func qwenToolSpelling(raw json.RawMessage) (string, error) {
 	tool, err := thinkingcontrol.PythonMembers(raw)
 	if err != nil {
-		return asSent, 0, nil
+		return thinkingcontrol.PythonDumps(raw, 0, false)
 	}
-	dumped := modelDump(tool, []string{"type", "function"}, nil)
+	replaced := map[string]string{}
 	for _, member := range tool {
 		if member.Key == "function" {
-			function, err := thinkingcontrol.PythonMembers([]byte(member.JSON))
-			if err == nil {
-				dumped = modelDump(tool, []string{"type", "function"}, map[string]string{"function": modelDump(function, []string{"name", "description", "parameters"}, nil)})
+			if function, err := thinkingcontrol.PythonMembers([]byte(member.JSON)); err == nil {
+				replaced["function"] = modelDump(function, []string{"name", "description", "parameters"}, nil, nil)
 			}
 		}
 	}
-	extra := int64(counter.Count(dumped)) - int64(counter.Count(asSent))
-	return asSent, max(extra, 0), nil
+	return modelDump(tool, []string{"type", "function"}, map[string]string{"type": `"function"`}, replaced), nil
 }
 
 // modelDump spells an object as pydantic's model_dump() then tojson would:
-// declared fields first (null when absent), then the rest in order.
-func modelDump(members []thinkingcontrol.PythonMember, declared []string, replaced map[string]string) string {
+// declared fields first (their default, else null, when absent), then the
+// rest in order.
+func modelDump(members []thinkingcontrol.PythonMember, declared []string, defaults, replaced map[string]string) string {
 	spelling := func(member thinkingcontrol.PythonMember) string {
 		if value, ok := replaced[member.Key]; ok {
 			return value
@@ -214,7 +218,10 @@ func modelDump(members []thinkingcontrol.PythonMember, declared []string, replac
 	parts := make([]string, 0, len(members)+len(declared))
 	seen := map[string]bool{}
 	for _, key := range declared {
-		value := "null"
+		value, ok := defaults[key]
+		if !ok {
+			value = "null"
+		}
 		for _, member := range members {
 			if member.Key == key {
 				value = spelling(member)
@@ -231,23 +238,22 @@ func modelDump(members []thinkingcontrol.PythonMember, declared []string, replac
 	return "{" + strings.Join(parts, ", ") + "}"
 }
 
-// qwenContent is the template's render_content: a string, or text parts and
-// vision placeholders, with the number of part boundaries vLLM joins with
-// "\n".
-func qwenContent(raw json.RawMessage) (string, int64, int64, error) {
+// qwenContent is the template's render_content of a message's content as
+// vLLM hands it over: a string, or text parts joined with "\n", and vision
+// placeholders. glued is the same parts concatenated, as a Hugging Face
+// template renders a list.
+func qwenContent(raw json.RawMessage) (text, glued string, images int64, err error) {
 	if len(raw) == 0 || string(raw) == "null" {
-		return "", 0, 0, nil
+		return "", "", 0, nil
 	}
-	var text string
-	if err := json.Unmarshal(raw, &text); err == nil {
-		return text, 0, 0, nil
+	if json.Unmarshal(raw, &text) == nil {
+		return text, text, 0, nil
 	}
 	var parts []map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &parts); err != nil {
-		return "", 0, 0, fmt.Errorf("unsupported content shape")
+		return "", "", 0, fmt.Errorf("unsupported content shape")
 	}
-	var out strings.Builder
-	var images int64
+	rendered := make([]string, 0, len(parts))
 	for _, part := range parts {
 		var kind string
 		_ = json.Unmarshal(part["type"], &kind)
@@ -255,22 +261,22 @@ func qwenContent(raw json.RawMessage) (string, int64, int64, error) {
 		_, video := part["video"]
 		switch {
 		case image || kind == "image" || kind == "image_url":
-			out.WriteString("<|vision_start|><|image_pad|><|vision_end|>")
+			rendered = append(rendered, "<|vision_start|><|image_pad|><|vision_end|>")
 			images++
 		case video || kind == "video":
-			out.WriteString("<|vision_start|><|video_pad|><|vision_end|>")
+			rendered = append(rendered, "<|vision_start|><|video_pad|><|vision_end|>")
 			images++
 		case part["text"] != nil:
 			var value string
 			if err := json.Unmarshal(part["text"], &value); err != nil {
-				return "", 0, 0, err
+				return "", "", 0, err
 			}
-			out.WriteString(value)
+			rendered = append(rendered, value)
 		default:
-			return "", 0, 0, fmt.Errorf("unsupported content part %q", kind)
+			return "", "", 0, fmt.Errorf("unsupported content part %q", kind)
 		}
 	}
-	return out.String(), images, int64(max(len(parts)-1, 0)), nil
+	return strings.Join(rendered, "\n"), strings.Join(rendered, ""), images, nil
 }
 
 // writeQwenArguments renders a call's arguments as the template's

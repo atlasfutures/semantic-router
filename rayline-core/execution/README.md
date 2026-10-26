@@ -106,9 +106,10 @@ opt-in. The core reports facts and never picks or ranks a model.
   - **Qwen3.8-27B** (`registry_model: "qwen/qwen3.8-27b"`, Chat wire; the
     Rayline Local default) is rendered with the model's chat template as
     vLLM's Chat path feeds it (`qwen_capacity.go`: arguments and tools
-    re-spelt by Python's `tojson`, floats by `repr`; each tool also counted as
-    `model_dump()` spells it, with null `description`/`parameters`, and the
-    dearer spelling charged; one token per joined content-part boundary) and
+    re-spelt by Python's `tojson`, floats by `repr`; each tool as
+    `model_dump()` spells it, declared fields first with null
+    `description`/`parameters`; text parts joined with "\n" in the rendered
+    text, and a plain concatenation charged too where it costs more) and
     counted in-process with the embedded tokenizer (`tokencount`, pure Go:
     the snapshot's `merges.txt`, its added tokens, NFC and its
     pre-tokenizer), `provenance: "local_measured"`. The rendering takes the
@@ -129,13 +130,20 @@ opt-in. The core reports facts and never picks or ranks a model.
     template preamble, `provenance: "caller_estimated"`.
   - An inline base64 image is charged `media_tokens` instead of its bytes, and
     a fact that includes one is `caller_estimated`.
-  - **An estimated shortfall only hands off.** When every executable target
-    falls short and any of those facts is `caller_estimated`, the estimated
-    facts are sent as unknown: the turn dispatches and the runtime's own
-    refusal decides (llama.cpp and OpenAI-compatible refusals re-consult). The
-    compaction 400 needs shortfalls that are all measured or
-    provider-reported, so a byte bound never refuses a session that still
-    fits.
+  - **`context_overflow`** (local deployments, `"refuses"` or
+    `"truncates"`, default `"truncates"`) states what the runtime does with a
+    prompt over its window. On a `"truncates"` deployment (Ollama,
+    `mlx_lm.server`) an estimated shortfall always stands, so such a prompt is
+    never sent to be silently cut; if that leaves every target short, the turn
+    gets the compaction 400. On a `"refuses"` deployment (llama.cpp, vLLM),
+    when every executable target falls short, its estimated facts are sent as
+    unknown for all its actions: the turn dispatches there and the runtime's
+    own context refusal decides.
+  - **A runtime context refusal covers its whole deployment.** It is recorded
+    as `provider_reported` for every action bound to that deployment, so no
+    sibling control is dispatched to be refused again, and when that leaves no
+    target the core answers the compaction 400 at once instead of spending
+    re-consults.
   The policy contract admits `fits: false` from any provenance and reads an
   estimated `fits: true` as unknown, so an over-window local target is excluded
   before anything is sent to it. Facts are recomputed every turn: once the
@@ -146,8 +154,9 @@ opt-in. The core reports facts and never picks or ranks a model.
   llama.cpp's or an OpenAI-compatible one (`context_length_exceeded` or
   "maximum context length" in the error's code, type or message: vLLM, MLX, a
   custom endpoint), re-consults with `reconsult: "capacity"`.
-- **No deployment fits.** When every executable target has a measured or
-  provider-reported `context_capacity` shortfall and none is unknown, the
+- **No deployment fits.** When every executable target has a
+  `context_capacity` shortfall that stands (see `context_overflow`) and none
+  is unknown, the
   core answers `400 context_exceeds_all_deployments` in the caller's wire
   format before Decisions or any runtime is contacted. A target without a fact
   (a cloud target without a counter) is never assumed not to fit, so a default

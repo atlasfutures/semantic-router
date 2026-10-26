@@ -207,7 +207,9 @@ func TestQwenTemplateCountMatchesTheReference(t *testing.T) {
 			t.Fatalf("%s: %v images=%d exact=%v/%v", name, err, images, renderedExact, countedExact)
 		}
 		t.Logf("%-32s reference=%6d rendered=%6d capacity=%6d vllm=%v", name, conversation.Tokens, rendered, counted, conversation.VLLM)
-		if counted < conversation.Tokens || !conversation.VLLM && int64(rendered) != conversation.Tokens {
+		// A Hugging Face reference concatenates text parts; the rendering
+		// joins them with "\n" as vLLM does and charges the difference.
+		if counted < conversation.Tokens || !conversation.VLLM && !prompt.multipart && int64(rendered) != conversation.Tokens {
 			t.Errorf("%s: rendered %d, capacity %d, reference %d", name, rendered, counted, conversation.Tokens)
 		}
 	}
@@ -248,9 +250,9 @@ func TestQwenCapacityFlipsAtTheExact98304Boundary(t *testing.T) {
 		content := string(runes[:entry.SourceChars]) + strings.Repeat(".", entry.FillerDots)
 		body := []byte(`{"model":"qwen","max_tokens":4096,"messages":[` + jsonMessage(t, "user", content) + `]}`)
 		qwen.ContextWindow = window
-		fits := estimatedCapacityFact(qwen, body, output)
+		fits := localFact(qwen, body, output)
 		qwen.ContextWindow = window - 1
-		short := estimatedCapacityFact(qwen, body, output)
+		short := localFact(qwen, body, output)
 		t.Logf("%-12s reference=%6d capacity prompt=%6d required=%6d fits(98304)=%v fits(98303)=%v", name, entry.Tokens, fits.prompt, *fits.Required, fits.Fits, short.Fits)
 		if fits.prompt != entry.Tokens+margin || !fits.Fits || short.Fits || fits.Provenance != capacityProvenanceMeasured {
 			t.Errorf("%s: %s / %s", name, mustJSON(fits), mustJSON(short))
@@ -278,53 +280,146 @@ func TestByteBoundCoversTemplateReserialization(t *testing.T) {
 	}
 }
 
-// TestEstimatedShortfallVetoesOnlyWhereItCanHandOff covers both directions of
-// the rule: an estimated shortfall stays while another target can take the
-// turn, and becomes unknown when every target falls short.
-func TestEstimatedShortfallVetoesOnlyWhereItCanHandOff(t *testing.T) {
-	config := capacityEstimateConfig(t, "http://127.0.0.1:8/v1/chat/completions", "http://127.0.0.1:9/v1/chat/completions")
-	server, _ := v2Server(t, config, &v2Decisions{choose: fitPolicy})
+// localFact sizes a local target's prepared body as measureCapacity does.
+func localFact(deployment Deployment, body []byte, output int64) *CapacityFact {
+	prompt, provenance, units := localPromptSize(deployment, body)
+	return sizedCapacityFact(deployment, prompt, provenance, units, output)
+}
+
+// TestEstimatedShortfallRelaxesOnlyOnARefusingRuntime covers the rule both
+// ways: an estimated shortfall with a target to hand off to stays; when every
+// target falls short it becomes unknown only on a context_overflow "refuses"
+// deployment; measured shortfalls always stay.
+func TestEstimatedShortfallRelaxesOnlyOnARefusingRuntime(t *testing.T) {
 	reason := CapacityContext
 	short := func(provenance string) *CapacityFact {
 		required, available := int64(200_000), int64(estimateLocalWindow)
 		return &CapacityFact{Reason: &reason, Required: &required, Available: &available, Provenance: provenance}
 	}
-	// Cloud targets unknown: the local estimate hands off.
-	facts := map[string]*CapacityFact{localActionID: short(capacityProvenanceEstimated)}
-	server.relaxEstimatedShortfalls(facts)
-	if facts[localActionID] == nil {
-		t.Fatal("an estimated shortfall with a cloud to hand off to was dropped")
+	for _, overflow := range []string{"", ContextOverflowTruncates, ContextOverflowRefuses} {
+		config := capacityEstimateConfig(t, "http://127.0.0.1:8/v1/chat/completions", "http://127.0.0.1:9/v1/chat/completions")
+		config.Deployments[0].ContextOverflow = overflow
+		server, _ := v2Server(t, config, &v2Decisions{choose: fitPolicy})
+		// Cloud targets unknown: the local estimate hands off either way.
+		facts := map[string]*CapacityFact{localActionID: short(capacityProvenanceEstimated)}
+		server.relaxEstimatedShortfalls(facts)
+		if facts[localActionID] == nil {
+			t.Fatalf("%q: an estimated shortfall with a cloud to hand off to was dropped", overflow)
+		}
+		// Every target short, the local one estimated.
+		facts = map[string]*CapacityFact{localActionID: short(capacityProvenanceEstimated), cloudActionID: short(capacityProvenanceMeasured), secondCloudActionID: short(capacityProvenanceMeasured)}
+		server.relaxEstimatedShortfalls(facts)
+		relaxed := facts[localActionID] == nil
+		if relaxed != (overflow == ContextOverflowRefuses) || server.exceedsAllDeployments(facts) == relaxed {
+			t.Fatalf("%q: relaxed=%v facts %s", overflow, relaxed, mustJSON(facts))
+		}
+		// Every target short and measured: the 400 stands.
+		facts = map[string]*CapacityFact{localActionID: short(capacityProvenanceMeasured), cloudActionID: short(capacityProvenanceMeasured), secondCloudActionID: short("provider_reported")}
+		server.relaxEstimatedShortfalls(facts)
+		if len(facts) != 3 || !server.exceedsAllDeployments(facts) {
+			t.Fatalf("%q: measured shortfalls were relaxed: %s", overflow, mustJSON(facts))
+		}
 	}
-	// Every target short, one estimated: the estimate becomes unknown, so no 400.
-	facts = map[string]*CapacityFact{localActionID: short(capacityProvenanceEstimated), cloudActionID: short(capacityProvenanceMeasured), secondCloudActionID: short(capacityProvenanceMeasured)}
-	server.relaxEstimatedShortfalls(facts)
-	if facts[localActionID] != nil || server.exceedsAllDeployments(facts) {
-		t.Fatalf("an all-short turn kept its estimated fact: %s", mustJSON(facts))
+	bad := capacityEstimateConfig(t, "http://127.0.0.1:8/v1/chat/completions", "http://127.0.0.1:9/v1/chat/completions")
+	bad.Deployments[0].ContextOverflow = "drops"
+	bad.Decisions.URL = "http://127.0.0.1:3/v1/routes"
+	t.Setenv("TEST_DECISIONS_KEY", "fixture-hosted-key-never-for-local")
+	registry, err := thinkingcontrol.Embedded()
+	if err != nil {
+		t.Fatal(err)
 	}
-	// Every target short and measured: the 400 stands.
-	facts = map[string]*CapacityFact{localActionID: short(capacityProvenanceMeasured), cloudActionID: short(capacityProvenanceMeasured), secondCloudActionID: short("provider_reported")}
-	server.relaxEstimatedShortfalls(facts)
-	if len(facts) != 3 || !server.exceedsAllDeployments(facts) {
-		t.Fatalf("measured shortfalls were relaxed: %s", mustJSON(facts))
+	provider, err := NewHTTPDecisions(bad)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewServer(bad, registry, provider, testCoreToken); err == nil || !strings.Contains(err.Error(), "context_overflow") {
+		t.Fatalf("invalid context_overflow admitted: %v", err)
 	}
 }
 
-func TestLocalOnlyEstimatedShortfallDispatchesInsteadOfRefusing(t *testing.T) {
-	// A local-only profile whose count is only a byte bound (text x/text
-	// cannot normalize as the reference does) and over the window: the turn
-	// is dispatched and the runtime decides, never refused for compaction.
-	local := &upstreamFixture{}
-	config := capacityEstimateConfig(t, chatUpstream(t, local, false).URL, "http://127.0.0.1:9/v1/chat/completions")
+// overWindowByteBounded is a conversation whose Qwen count can only be
+// bounded by bytes (text x/text cannot normalize as the reference does) and
+// is over a 98,304 window: an estimated shortfall.
+func overWindowByteBounded(t *testing.T) string {
+	return bigTurn(jsonMessage(t, "user", strings.Repeat("a\U00010041́ ", 30_000)))
+}
+
+// localOnlyControls binds n actions (controls) to the one local deployment.
+func localOnlyControls(t *testing.T, localURL, overflow string, n int) Config {
+	config := capacityEstimateConfig(t, localURL, "http://127.0.0.1:9/v1/chat/completions")
 	config.Deployments, config.Actions = config.Deployments[:1], config.Actions[:1]
+	config.Deployments[0].ContextOverflow = overflow
+	for index := 1; index < n; index++ {
+		action := config.Actions[0]
+		action.ID = strings.Repeat(string("0123456789"[index]), 64)
+		config.Actions = append(config.Actions, action)
+	}
+	return config
+}
+
+func TestTruncatingLocalRuntimeNeverReceivesAnEstimatedOverflow(t *testing.T) {
+	local := &upstreamFixture{}
+	config := localOnlyControls(t, chatUpstream(t, local, false).URL, "", 1)
 	fixture := &v2Decisions{choose: fitPolicy}
 	_, httpServer := v2Server(t, config, fixture)
-	content := strings.Repeat("a\U00010041\u0301 ", 30_000)
-	status, response := executeHTTP(t, httpServer.URL, "/v1/chat/completions", bigTurn(jsonMessage(t, "user", content)), "local-only-estimated")
-	if status != 200 || local.count() != 1 {
-		t.Fatalf("status %d local=%d: %.300s", status, local.count(), response)
+	status, response := executeHTTP(t, httpServer.URL, "/v1/messages", overWindowByteBounded(t), "truncates")
+	if status != http.StatusBadRequest || !strings.Contains(string(response), `"message":"prompt is too long: `) || !strings.Contains(string(response), "(estimated)") {
+		t.Fatalf("status %d: %.300s", status, response)
 	}
-	if fact := fixture.snapshot()[0].Execution.Targets[0].Capacity; fact != nil {
-		t.Fatalf("the relaxed estimate was still sent: %s", mustJSON(fact))
+	if local.count() != 0 || len(fixture.snapshot()) != 0 {
+		t.Fatalf("local=%d lookups=%d", local.count(), len(fixture.snapshot()))
+	}
+}
+
+func TestRefusingLocalRuntimeIsAskedOnceAcrossItsControls(t *testing.T) {
+	// The estimate is relaxed, the runtime refuses once, and the refusal
+	// holds for all four controls on that deployment: the compaction 400 in
+	// one round, no re-consult spent on a sibling.
+	calls := 0
+	local := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"error":{"code":400,"message":"the request exceeds the available context size, try increasing it","type":"exceed_context_size_error"}}`)
+	}))
+	defer local.Close()
+	config := localOnlyControls(t, local.URL, ContextOverflowRefuses, 4)
+	fixture := &v2Decisions{choose: fitPolicy}
+	_, httpServer := v2Server(t, config, fixture)
+	status, response := executeHTTP(t, httpServer.URL, "/v1/messages", overWindowByteBounded(t), "refuses")
+	if status != http.StatusBadRequest || !strings.Contains(string(response), `"message":"prompt is too long: `) {
+		t.Fatalf("status %d: %.300s", status, response)
+	}
+	if calls != 1 || len(fixture.snapshot()) != 1 {
+		t.Fatalf("runtime calls=%d lookups=%d", calls, len(fixture.snapshot()))
+	}
+}
+
+// TestQwenContentPartsChargeEitherJoin checks parts whose "\n" join and plain
+// concatenation tokenize differently: the capacity count covers both.
+func TestQwenContentPartsChargeEitherJoin(t *testing.T) {
+	many := make([]string, 0, 60)
+	for index := 0; index < 60; index++ {
+		many = append(many, []string{"hel", "lo", "foo.", "bar", " x ", "1", "２", "א"}[index%8])
+	}
+	for _, parts := range [][]string{{"foo.", "bar"}, {"hel", "lo"}, many} {
+		items := make([]string, 0, len(parts))
+		for _, part := range parts {
+			raw, _ := json.Marshal(map[string]string{"type": "text", "text": part})
+			items = append(items, string(raw))
+		}
+		counted, _, _, err := qwenPromptTokens([]byte(`{"messages":[{"role":"user","content":[` + strings.Join(items, ",") + `]}]}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, joined := range []string{strings.Join(parts, "\n"), strings.Join(parts, "")} {
+			plain, _ := json.Marshal(joined)
+			// The single-string reference carries the same margins.
+			reference, _, _, err := qwenPromptTokens([]byte(`{"messages":[{"role":"user","content":` + string(plain) + `}]}`))
+			if err != nil || counted < reference {
+				t.Errorf("%q: parts counted %d, joined %q counts %d (%v)", parts[:min(len(parts), 3)], counted, joined[:min(len(joined), 20)], reference, err)
+			}
+		}
 	}
 }
 
@@ -340,7 +435,7 @@ func TestCapacityFactsAtTheWindowBoundary(t *testing.T) {
 			continue
 		}
 		qwen.ContextWindow = conversation.Tokens + output - 1
-		fact := estimatedCapacityFact(qwen, conversation.Body, output)
+		fact := localFact(qwen, conversation.Body, output)
 		if fact.Fits || fact.Provenance != capacityProvenanceMeasured || *fact.Units != qwenTokenUnits {
 			t.Errorf("qwen %s: %s", name, mustJSON(fact))
 		}
@@ -356,7 +451,7 @@ func TestCapacityFactsAtTheWindowBoundary(t *testing.T) {
 		fixture := fixtures[name]
 		body := []byte(bigTurn(jsonMessage(t, "user", fixture.text)))
 		other.ContextWindow = fixture.tokens + output - 1
-		fact := estimatedCapacityFact(other, body, output)
+		fact := localFact(other, body, output)
 		t.Logf("%-34s qwen tokens=%6d byte bound=%7d (%.2fx)", name, fixture.tokens, fact.prompt, float64(fact.prompt)/float64(fixture.tokens))
 		if fact.Fits || fact.Provenance != capacityProvenanceEstimated || fact.prompt < int64(len(fixture.text)) {
 			t.Errorf("byte bound %s: %s", name, mustJSON(fact))

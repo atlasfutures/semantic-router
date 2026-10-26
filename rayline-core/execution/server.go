@@ -87,6 +87,9 @@ func NewServer(config Config, registry *thinkingcontrol.Registry, provider Decis
 		if err := deployment.CapacityEstimate.validate(); err != nil {
 			return nil, fmt.Errorf("deployment %s: %w", deployment.ID, err)
 		}
+		if overflow := deployment.ContextOverflow; overflow != "" && overflow != ContextOverflowRefuses && overflow != ContextOverflowTruncates {
+			return nil, fmt.Errorf("deployment %s: context_overflow must be %q or %q", deployment.ID, ContextOverflowRefuses, ContextOverflowTruncates)
+		}
 		if isQwen38Deployment(deployment) {
 			// Build the embedded counter now, so a corrupt embed fails at
 			// startup rather than on a turn.
@@ -437,6 +440,10 @@ func (server *Server) execute(writer http.ResponseWriter, incoming *http.Request
 				previous = pending.input.Capacity[selected.action.ID]
 			}
 			fact := runtimeContextRejection(selected.deployment, previous)
+			// The runtime refused the conversation, not one control: every
+			// action on this deployment is out for this turn, so a sibling is
+			// never dispatched to be refused again.
+			pending.input.Capacity = server.withDeploymentRefusal(pending.input.Capacity, selected.deployment)
 			if !server.reconsult(ctx, writer, format, pending, selected.action.ID, decision.RouteID, "capacity", fact) {
 				return
 			}
@@ -548,6 +555,12 @@ func (server *Server) reconsult(ctx context.Context, writer http.ResponseWriter,
 	input := pending.input
 	capacity := withFact(input.Capacity, actionID, fact)
 	input.Capacity = capacity
+	if server.exceedsAllDeployments(capacity) {
+		// Nothing is left to choose: answer the compaction refusal now
+		// rather than spend re-consults on targets known not to fit.
+		pending.input.Capacity = capacity
+		return !server.writeContextExceeded(writer, format, capacity)
+	}
 	// Keep the fact even if this consult fails, so a client retry of the same
 	// request cannot dispatch the refused target again.
 	pending.input.Capacity = capacity
@@ -568,6 +581,21 @@ func (server *Server) reconsult(ctx context.Context, writer http.ResponseWriter,
 	pending.input, pending.decision = input, decision
 	pending.consults++
 	return true
+}
+
+// withDeploymentRefusal copies a turn's capacity facts with a runtime
+// context refusal recorded for every action bound to deployment.
+func (server *Server) withDeploymentRefusal(facts map[string]*CapacityFact, deployment Deployment) map[string]*CapacityFact {
+	capacity := make(map[string]*CapacityFact, len(facts)+1)
+	for id, existing := range facts {
+		capacity[id] = existing
+	}
+	for id, action := range server.actions {
+		if action.deployment.ID == deployment.ID {
+			capacity[id] = runtimeContextRejection(deployment, facts[id])
+		}
+	}
+	return capacity
 }
 
 // withFact copies a turn's capacity facts with one narrowing fact added.

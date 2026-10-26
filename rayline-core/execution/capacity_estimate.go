@@ -2,11 +2,9 @@ package execution
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"math"
-	"strings"
 
 	"github.com/atlasfutures/semantic-router/rayline-core/thinkingcontrol"
 )
@@ -90,16 +88,6 @@ func localPromptSize(deployment Deployment, body []byte) (int64, string, string)
 	return byteBoundTokens(body, deployment.CapacityEstimate), capacityProvenanceEstimated, units
 }
 
-// estimatedCapacityFact is capacityFact for a local target without a
-// registered counter.
-func estimatedCapacityFact(deployment Deployment, body []byte, outputLimit int64) *CapacityFact {
-	if deployment.ContextWindow <= 0 {
-		return nil
-	}
-	prompt, provenance, units := localPromptSize(deployment, body)
-	return sizedCapacityFact(deployment, prompt, provenance, units, outputLimit)
-}
-
 func sizedCapacityFact(deployment Deployment, prompt int64, provenance, units string, outputLimit int64) *CapacityFact {
 	required := prompt + outputLimit + deployment.CapacityMarginTokens
 	available := deployment.ContextWindow
@@ -128,43 +116,15 @@ func byteBoundTokens(body []byte, estimate *CapacityEstimate) int64 {
 }
 
 // worstCaseBytes is the longest spelling a template can give the request's
-// JSON: the body itself or its indent=4 ASCII re-encoding, with <, > and &
-// escaped as Go's json does, plus each tool-call arguments string reloaded
-// and re-encoded the same way.
+// JSON (thinkingcontrol.PythonWorstCaseBytes, one parse), with each tool
+// call's arguments string reloaded and re-encoded beside it. A body that does
+// not parse is charged three times its bytes.
 func worstCaseBytes(body []byte) int64 {
-	spell := func(raw []byte) int64 {
-		dumped, err := thinkingcontrol.PythonDumps(raw, 4, true)
-		if err != nil {
-			return int64(len(raw))
-		}
-		escaped := int64(strings.Count(dumped, "<")+strings.Count(dumped, ">")+strings.Count(dumped, "&")) * 5
-		return max(int64(len(dumped))+escaped, int64(len(raw)))
+	size, err := thinkingcontrol.PythonWorstCaseBytes(body, "arguments")
+	if err != nil {
+		return 3 * int64(len(body))
 	}
-	total := spell(body)
-	var walk func(any, string)
-	walk = func(node any, key string) {
-		switch value := node.(type) {
-		case map[string]any:
-			for child, item := range value {
-				walk(item, child)
-			}
-		case []any:
-			for _, item := range value {
-				walk(item, key)
-			}
-		case string:
-			if key == "arguments" {
-				total += spell([]byte(value))
-			}
-		}
-	}
-	decoder := json.NewDecoder(bytes.NewReader(body))
-	decoder.UseNumber()
-	var parsed any
-	if decoder.Decode(&parsed) == nil {
-		walk(parsed, "")
-	}
-	return total
+	return size
 }
 
 // inlineImages finds base64 images that are JSON structure, not text: an
