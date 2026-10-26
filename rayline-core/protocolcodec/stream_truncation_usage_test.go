@@ -46,6 +46,8 @@ func truncatedStreamTerminal(
 	requireNoError(t, err)
 	if usage != nil {
 		stream.SetTruncationUsage(usage, llmprotocol.UsageSourceStreamEstimate)
+		// The host that cut the turn says why; here it is its deadline.
+		stream.SetTruncationCause(llmprotocol.TruncationDeadline)
 	}
 	cut := llmprotocol.NewError(
 		llmprotocol.ErrorUpstreamTimeout, "stream_truncated",
@@ -491,7 +493,7 @@ func TestAHeldCompletionsCountAndStopSurviveACut(t *testing.T) {
 		"a finished answer was restated as one stopped at a limit")
 }
 
-// Which cause the terminal names, per mechanism.
+// The cause the host states travels beside the stop, whichever it is.
 //
 // The stop has to be "length" -- Chat's vocabulary is closed and holds nothing
 // for a turn infrastructure ended -- and read literally that says the model
@@ -499,15 +501,19 @@ func TestAHeldCompletionsCountAndStopSurviveACut(t *testing.T) {
 // out of a budget, just a wall-clock one. For a model that went quiet or a
 // connection that broke it is wrong, and a client acting on it would shorten
 // its prompt when it should have retried. So the mechanism travels beside the
-// stop and the stop is no longer the only thing a client can read.
+// stop and the stop is no longer the only thing a client can read. The host
+// names it; this codec knows the vocabulary and nothing about the host's own
+// codes for its cuts.
 func TestTruncationNamesItsCause(t *testing.T) {
 	for _, probe := range []struct {
 		code, cause string
 	}{
-		{code: "stream_truncated", cause: "deadline"},
-		{code: "stream_idle_timeout", cause: "silence"},
-		{code: "stream_first_content_timeout", cause: "silence"},
-		{code: "standard_resend_body_cut", cause: "transport"},
+		// The codes are whatever the host calls its cuts; this codec never
+		// reads them, so these are made up.
+		{code: "host_budget_elapsed", cause: llmprotocol.TruncationDeadline},
+		{code: "host_model_went_quiet", cause: llmprotocol.TruncationSilence},
+		{code: "host_no_first_byte", cause: llmprotocol.TruncationSilence},
+		{code: "host_socket_closed", cause: llmprotocol.TruncationTransport},
 	} {
 		engine := NewBuiltinEngine()
 		requested := true
@@ -520,6 +526,7 @@ func TestTruncationNamesItsCause(t *testing.T) {
 		served, _, _, err := stream.Push([]byte(truncatedUpstreamChunk(llmprotocol.OpenAIChatV1)))
 		requireNoError(t, err)
 		stream.SetTruncationUsage(estimatedTruncationUsage(), llmprotocol.UsageSourceStreamEstimate)
+		stream.SetTruncationCause(probe.cause)
 		terminal, _, _, _ := stream.Finalize(llmprotocol.NewError(
 			llmprotocol.ErrorUpstreamTimeout, probe.code, "the router ended this stream", nil))
 

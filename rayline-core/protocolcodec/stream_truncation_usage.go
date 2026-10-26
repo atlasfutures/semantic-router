@@ -13,13 +13,12 @@ import (
 
 // Saying so when a cut turn's count cannot travel.
 //
-// A turn the Router ended has already cost what it cost, and the count it
-// hands the codec is the only record the client and the proxy in front of the
-// cell will ever get: the stream never reached its usage frame. For two
-// releases that count was dropped for every non-Messages client by an optional
-// capability assertion that returned silently -- no log, no error, no
-// diagnostic -- so the drop was invisible on both sides while the upstream
-// billed for the whole generation (memex-desktop#7214).
+// A turn the host ended has already cost what it cost, and the count it hands
+// the codec is the only record the client and whatever bills behind it will
+// ever get: the stream never reached its usage frame. That count was once
+// dropped for every non-Messages client by an optional capability assertion
+// that returned silently -- no log, no error, no diagnostic -- so the drop was
+// invisible on both sides while the upstream billed for the whole generation.
 //
 // So no path may drop one quietly again. Where a format genuinely cannot carry
 // the count, or the client declined to be told, that is said here by name, with

@@ -588,6 +588,9 @@ type StreamEngine struct {
 	// below, because its terminal states them in a shape of its own.
 	truncationUsage  *llmprotocol.Usage
 	truncationSource string
+	// truncationCause is why the caller ended the turn, in the vocabulary
+	// llmprotocol.Truncation* defines, carried onto the terminal it writes.
+	truncationCause string
 	// servedStop is the stop an output item the upstream finished already
 	// stated. A turn cut after that was cut in its transport, not in its
 	// generation, so its terminal keeps the stop the model reached.
@@ -629,6 +632,18 @@ func (engine *StreamEngine) SetTruncationUsage(usage *llmprotocol.Usage, source 
 	if carrier, ok := engine.encoder.(truncationUsageCarrier); ok {
 		carrier.SetTruncationUsage(usage, source)
 	}
+}
+
+// SetTruncationCause says why the caller is about to end the turn, in the
+// vocabulary llmprotocol.Truncation* defines. The caller owns that knowledge --
+// its own deadline, its own silence limit, its own read of the body -- and the
+// codec only carries the word onto the terminal, where a format has a place
+// for it. Called before Finalize, beside SetTruncationUsage.
+func (engine *StreamEngine) SetTruncationCause(cause string) {
+	if engine == nil {
+		return
+	}
+	engine.truncationCause = cause
 }
 
 func (engine *StreamEngine) Push(frame []byte) ([][]byte, []llmprotocol.Event, llmprotocol.Diagnostics, error) {

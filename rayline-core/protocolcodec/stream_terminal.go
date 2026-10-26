@@ -277,6 +277,7 @@ func (engine *StreamEngine) markTruncatedTerminal(events []llmprotocol.Event) []
 		}
 		events[index].Failure = llmprotocol.FailureTruncated
 		events[index].StopReason = stop
+		events[index].Truncation = engine.truncationCause
 		events[index].Usage = reconciledTruncationUsage(
 			engine.truncationUsage, engine.statedTerminalUsage(events[index].Usage), engine.outputSinceUsage,
 		)

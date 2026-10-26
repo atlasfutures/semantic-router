@@ -106,17 +106,19 @@ func (r *OpenAIRouter) handleSemanticStreamingResponseBody(
 	if cut || endOfStream {
 		if readCut {
 			buffers.recordError(ctx, ctx.UpstreamBodyCut, true)
-			r.attachTruncatedStreamUsage(ctx)
+			r.attachTruncatedStreamUsage(ctx, ctx.UpstreamBodyCut)
 		}
 		if overran {
 			r.logResponseStreamTruncation(ctx)
-			buffers.recordError(ctx, r.truncatedStreamError(), true)
-			r.attachTruncatedStreamUsage(ctx)
+			cut := r.truncatedStreamError()
+			buffers.recordError(ctx, cut, true)
+			r.attachTruncatedStreamUsage(ctx, cut)
 		}
 		if silent {
 			r.logResponseStreamSilence(ctx)
-			buffers.recordError(ctx, silentStreamError(ctx), true)
-			r.attachTruncatedStreamUsage(ctx)
+			cut := silentStreamError(ctx)
+			buffers.recordError(ctx, cut, true)
+			r.attachTruncatedStreamUsage(ctx, cut)
 		}
 		buffers.finalize(ctx)
 		r.finalizeSemanticStreamingResponse(ctx, buffers.streamErr)

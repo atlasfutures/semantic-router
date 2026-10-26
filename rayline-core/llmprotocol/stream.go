@@ -24,6 +24,20 @@ const (
 	FailureTruncated FailureScope = "truncated"
 )
 
+// The causes a host may give for a turn it ended. A host states one of these
+// on a FailureTruncated terminal (Event.Truncation); a codec renders it where
+// its format has a place for one. The vocabulary names the mechanism rather
+// than a remedy or a transport category: a caller reads TruncationDeadline and
+// asks for less work in one turn, TruncationSilence and retries a model that
+// stopped talking, TruncationTransport and retries a connection. A string
+// rather than a boolean, so a further cause can be added without changing the
+// shape.
+const (
+	TruncationDeadline  = "deadline"
+	TruncationSilence   = "silence"
+	TruncationTransport = "transport"
+)
+
 const (
 	EventResponseStarted         EventType = "response.started"
 	EventOutputItemStarted       EventType = "output.item.started"
@@ -79,7 +93,12 @@ type Event struct {
 	Usage               *Usage
 	Error               *ProtocolError
 	Failure             FailureScope
-	Opaque              []byte
+	// Truncation is why the host ended the turn, on a FailureTruncated
+	// terminal only: one of the Truncation* causes, or empty when the host
+	// stated none. The host that cut the turn is the one that knows why; the
+	// codec only carries it.
+	Truncation string
+	Opaque     []byte
 }
 
 type StreamContext struct {

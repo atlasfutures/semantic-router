@@ -480,6 +480,26 @@ func validateFailedEvent(event llmprotocol.Event) (llmprotocol.Event, error) {
 	return event, nil
 }
 
+// validateTruncationCause holds the cause to its contract: stated only on a
+// terminal the host truncated, and only in the vocabulary the codecs render.
+// A cause on any other event, or a word outside the vocabulary, is a host
+// bug rather than a stream to translate.
+func validateTruncationCause(event llmprotocol.Event) error {
+	if event.Truncation == "" {
+		return nil
+	}
+	if event.Type != llmprotocol.EventResponseFailed || event.Failure != llmprotocol.FailureTruncated {
+		return llmprotocol.NewError(llmprotocol.ErrorInternal, "stream_truncation_cause_scope",
+			"a truncation cause belongs on a truncated terminal only", nil)
+	}
+	switch event.Truncation {
+	case llmprotocol.TruncationDeadline, llmprotocol.TruncationSilence, llmprotocol.TruncationTransport:
+		return nil
+	}
+	return llmprotocol.NewError(llmprotocol.ErrorInternal, "stream_truncation_cause_unknown",
+		"a truncation cause must be one the codecs render", nil)
+}
+
 // usageCountNames names usageCounts' entries for diagnostics.
 var usageCountNames = []string{
 	"input_uncached", "input_cache_read", "input_cache_write",

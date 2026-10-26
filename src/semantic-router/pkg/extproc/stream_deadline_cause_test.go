@@ -16,31 +16,21 @@ import (
 // travels beside the stop, and a caller choosing between retrying and asking
 // for less work reads that instead of inferring it from the stop.
 //
-// The codes and the causes live in different packages, so nothing makes the
-// compiler notice a cut added without a cause beside it. This test is that
-// link: it drives the real path with each code the Router cuts a stream with
-// and fails if any of them reaches a client unexplained. A cut added to
-// routerStreamCutCodes without a case in raylineTruncationCause fails here.
+// Nothing makes the compiler notice a cut added to routerStreamCutCodes
+// without an entry in routerStreamCutCauses. This test is that link: it holds
+// the two maps in step, then drives the real path with each code the Router
+// cuts a stream with and fails if any of them reaches a client unexplained.
 func TestEveryRouterCutNamesItsCauseToTheClient(t *testing.T) {
-	// Each code the Router ends a stream with, and the mechanism a client is
-	// told. Keep in step with routerStreamCutCodes and with the body cut.
-	causes := map[string]string{
-		"stream_truncated":            "deadline",
-		streamIdleTimeoutCode:         "silence",
-		streamFirstContentTimeoutCode: "silence",
-		"standard_resend_body_cut":    "transport",
-	}
 	for code := range routerStreamCutCodes {
-		if _, mapped := causes[code]; !mapped {
-			t.Fatalf(
-				"the Router cuts a stream with %q and this test states no cause for it; "+
-					"add the case to raylineTruncationCause and the expectation here",
-				code,
-			)
+		if _, mapped := routerStreamCutCauses[code]; !mapped {
+			t.Fatalf("the Router cuts a stream with %q and routerStreamCutCauses states no cause for it", code)
 		}
 	}
+	if _, mapped := routerStreamCutCauses["standard_resend_body_cut"]; !mapped {
+		t.Fatal("the body cut states no cause")
+	}
 
-	for code, cause := range causes {
+	for code, cause := range routerStreamCutCauses {
 		router := &OpenAIRouter{}
 		ctx := overrunningStreamContext(t)
 		ctx.SourceFormat = llmprotocol.OpenAIChatV1
@@ -49,10 +39,9 @@ func TestEveryRouterCutNamesItsCauseToTheClient(t *testing.T) {
 
 		buffers := semanticStreamBuffers{}
 		buffers.push([]byte(endlessUpstreamChunk(1)), ctx)
-		buffers.recordError(ctx, llmprotocol.NewError(
-			llmprotocol.ErrorUpstreamTimeout, code, "the router ended this stream", nil,
-		), true)
-		router.attachTruncatedStreamUsage(ctx)
+		cut := llmprotocol.NewError(llmprotocol.ErrorUpstreamTimeout, code, "the router ended this stream", nil)
+		buffers.recordError(ctx, cut, true)
+		router.attachTruncatedStreamUsage(ctx, cut)
 		buffers.finalize(ctx)
 
 		want := []byte(`"rayline":{"truncated":"` + cause + `"}`)

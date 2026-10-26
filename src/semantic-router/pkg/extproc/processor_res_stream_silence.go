@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
+
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 )
 
@@ -128,6 +129,35 @@ var routerStreamCutCodes = map[string]bool{
 	"stream_truncated":            true,
 	streamFirstContentTimeoutCode: true,
 	streamIdleTimeoutCode:         true,
+}
+
+// routerStreamCutCauses is what a client is told about each cut the Router
+// makes, in the vocabulary the codec renders (llmprotocol.Truncation*). The
+// codes are the Router's own, so the map lives here beside them rather than
+// in the codec: the codec knows the three words and nothing about why this
+// host cuts a stream. Every code in routerStreamCutCodes has an entry, and so
+// does the body cut (standard_resend_body_cut), which is not a timeout and is
+// classed apart. A cut added without an entry here reaches the client as a
+// bare length stop, which is why a test holds the two in step.
+//
+// "deadline" rather than "timeout" even though the category is a timeout: a
+// timeout on this path already means something else -- an upstream timeout,
+// the route timer, a socket ETIMEDOUT -- and a caller reading it infers the
+// model stopped responding, which on a deadline cut it had not.
+var routerStreamCutCauses = map[string]string{
+	"stream_truncated":            llmprotocol.TruncationDeadline,
+	streamFirstContentTimeoutCode: llmprotocol.TruncationSilence,
+	streamIdleTimeoutCode:         llmprotocol.TruncationSilence,
+	"standard_resend_body_cut":    llmprotocol.TruncationTransport,
+}
+
+// routerStreamCutCause names the cut an in-band error is, or nothing for an
+// error that is not one of the Router's own.
+func routerStreamCutCause(cut *llmprotocol.ProtocolError) string {
+	if cut == nil {
+		return ""
+	}
+	return routerStreamCutCauses[cut.Code]
 }
 
 func (r *OpenAIRouter) logResponseStreamSilence(ctx *RequestContext) {

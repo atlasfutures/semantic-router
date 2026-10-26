@@ -156,7 +156,12 @@ const usageSourceUnknown = "unknown"
 // It is only ever called for a turn the Router itself ended. A provider
 // failure is the provider's to describe, and an estimate on it would be the
 // Router inventing a number about someone else's turn.
-func (r *OpenAIRouter) attachTruncatedStreamUsage(ctx *RequestContext) {
+//
+// cut is the error this branch is ending the turn with. It is passed rather
+// than read back from the context, because ctx.SemanticStreamErr keeps the
+// first error of the stream and a filter or codec error recorded before the
+// cut would leave the terminal with no cause, or the wrong one.
+func (r *OpenAIRouter) attachTruncatedStreamUsage(ctx *RequestContext, cut *llmprotocol.ProtocolError) {
 	if ctx == nil || ctx.ProtocolResponseStream == nil {
 		return
 	}
@@ -169,6 +174,9 @@ func (r *OpenAIRouter) attachTruncatedStreamUsage(ctx *RequestContext) {
 	ctx.ProtocolResponseStream.SetTruncationUsage(
 		truncatedStreamNeutralUsage(usage), llmprotocol.UsageSourceStreamEstimate,
 	)
+	// Why the turn was cut is this Router's to say (routerStreamCutCauses);
+	// the codec only carries the word.
+	ctx.ProtocolResponseStream.SetTruncationCause(routerStreamCutCause(cut))
 }
 
 // truncatedStreamNeutralUsage carries the counted row back into the shape the

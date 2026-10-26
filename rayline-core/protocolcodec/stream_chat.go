@@ -949,7 +949,7 @@ func (encoder *chatStreamEncoder) encodeChatTruncation(
 			"chat", "the client did not request the stream usage chunk (stream_options.include_usage)",
 		)
 	}
-	return encoder.encodeChatTerminal(event, raylineTruncationCause(event.Error))
+	return encoder.encodeChatTerminal(event, event.Truncation)
 }
 
 func encodeChatStreamFrame(context llmprotocol.StreamContext, chunk chatChunkWire) ([]byte, error) {
