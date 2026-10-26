@@ -68,9 +68,39 @@ func TestMessagesDigestComparesTheCanonicalConversation(t *testing.T) {
 			false,
 		},
 		{
-			"only system messages are demoted",
-			`{"role":"user","content":[{"type":"text","text":"x"}]}`,
+			"Claude Desktop demotes the user's prompt from one block to a string",
+			`{"role":"user","content":[{"type":"text","text":"fix it","cache_control":{"type":"ephemeral"}}]}`,
+			`{"role":"user","content":"fix it"}`,
+			true,
+		},
+		{
+			"a demoted user prompt whose text changed",
+			`{"role":"user","content":[{"type":"text","text":"fix it"}]}`,
+			`{"role":"user","content":"fix it "}`,
+			false,
+		},
+		{
+			"a user block with another member stays a list",
+			`{"role":"user","content":[{"type":"text","text":"x","citations":[]}]}`,
 			`{"role":"user","content":"x"}`,
+			false,
+		},
+		{
+			"two user blocks never equal their joined string",
+			`{"role":"user","content":[{"type":"text","text":"a"},{"type":"text","text":"b"}]}`,
+			`{"role":"user","content":"ab"}`,
+			false,
+		},
+		{
+			"an empty user text block is not an empty string",
+			`{"role":"user","content":[{"type":"text","text":""}]}`,
+			`{"role":"user","content":""}`,
+			false,
+		},
+		{
+			"an assistant message is not demoted",
+			`{"role":"assistant","content":[{"type":"text","text":"x"}]}`,
+			`{"role":"assistant","content":"x"}`,
 			false,
 		},
 	}
