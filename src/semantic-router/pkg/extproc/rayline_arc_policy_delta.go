@@ -261,8 +261,10 @@ func policyDeltaFor(
 // and transcript-projection.v9) read the same. Only Claude Code's two
 // per-request rewrites of history are insignificant: a cache_control marker
 // on a message or on one of its top-level content blocks (never one nested
-// deeper, such as a tool's input), and a system message whose content is one
-// text block, which is its text. Object key order and whitespace are
+// deeper, such as a tool's input), and a system or user message whose content
+// is one text block, which is its text (Claude Code demotes its trailing
+// system message so, Claude Desktop its newest user prompt; both projections
+// read a string as that one block). Object key order and whitespace are
 // insignificant. Anything else that differs makes the turn go in full.
 func policyDeltaDigest(messages []json.RawMessage, n int) string {
 	hash := sha256.New()
@@ -289,9 +291,11 @@ func policyDeltaCanonical(message json.RawMessage) []byte {
 				delete(fields, "cache_control")
 			}
 		}
-		if object["role"] == "system" && len(blocks) == 1 {
+		if role := object["role"]; (role == "system" || role == "user") && len(blocks) == 1 {
 			if fields, ok := blocks[0].(map[string]any); ok && len(fields) == 2 && fields["type"] == "text" {
-				if text, ok := fields["text"].(string); ok {
+				// canonical-conversation.v1 reads a user's "" as no block and
+				// an empty text block as one: those are not demoted.
+				if text, ok := fields["text"].(string); ok && (role == "system" || text != "") {
 					object["content"] = text
 				}
 			}

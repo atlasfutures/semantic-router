@@ -774,10 +774,21 @@ func TestDeltaDigestKeepsNestedCacheControl(t *testing.T) {
 	if policyDeltaDigest([]json.RawMessage{old}, 1) == policyDeltaDigest([]json.RawMessage{changed}, 1) {
 		t.Fatal("a changed tool input matched")
 	}
-	userBlock := json.RawMessage(`{"role":"user","content":[{"type":"text","text":"hi"}]}`)
+	// Claude Desktop's newest prompt, demoted once a tool round follows it.
+	userBlock := json.RawMessage(`{"role":"user","content":[{"type":"text","text":"hi","cache_control":{"type":"ephemeral"}}]}`)
 	userString := json.RawMessage(`{"role":"user","content":"hi"}`)
-	if policyDeltaDigest([]json.RawMessage{userBlock}, 1) == policyDeltaDigest([]json.RawMessage{userString}, 1) {
-		t.Fatal("only a system message's single text block is its text")
+	if policyDeltaDigest([]json.RawMessage{userBlock}, 1) != policyDeltaDigest([]json.RawMessage{userString}, 1) {
+		t.Fatal("a demoted user prompt changed the digest")
+	}
+	for name, pair := range map[string][2]string{
+		"changed text":   {`{"role":"user","content":[{"type":"text","text":"hi"}]}`, `{"role":"user","content":"hi "}`},
+		"another member": {`{"role":"user","content":[{"type":"text","text":"hi","citations":[]}]}`, `{"role":"user","content":"hi"}`},
+		"two blocks":     {`{"role":"user","content":[{"type":"text","text":"h"},{"type":"text","text":"i"}]}`, `{"role":"user","content":"hi"}`},
+		"assistant":      {`{"role":"assistant","content":[{"type":"text","text":"hi"}]}`, `{"role":"assistant","content":"hi"}`},
+	} {
+		if policyDeltaDigest([]json.RawMessage{json.RawMessage(pair[0])}, 1) == policyDeltaDigest([]json.RawMessage{json.RawMessage(pair[1])}, 1) {
+			t.Fatalf("%s matched", name)
+		}
 	}
 }
 
