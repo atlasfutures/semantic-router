@@ -7,6 +7,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -80,6 +81,9 @@ func NewServer(config Config, registry *thinkingcontrol.Registry, provider Decis
 			return nil, fmt.Errorf("deployment %s: %w", deployment.ID, err)
 		}
 		if err := validateProviderPin(deployment); err != nil {
+			return nil, fmt.Errorf("deployment %s: %w", deployment.ID, err)
+		}
+		if err := deployment.CapacityEstimate.validate(); err != nil {
 			return nil, fmt.Errorf("deployment %s: %w", deployment.ID, err)
 		}
 		if deployment.Kind == "local" && deployment.AuthEnv != "" &&
@@ -341,10 +345,15 @@ func (server *Server) execute(writer http.ResponseWriter, incoming *http.Request
 			for actionID, prompt := range prompts {
 				reuse["action:"+actionID] = prompt
 			}
+			// A prompt no deployment can hold is refused before Decisions or
+			// any runtime is contacted; it can only be compacted.
+			if server.exceedsAllDeployments(facts) && server.writeContextExceeded(writer, format, facts) {
+				return
+			}
 		}
 		decision, err := server.provider.Decide(ctx, input)
 		if err != nil {
-			server.writeError(writer, format, http.StatusBadGateway, "decision_failed", err.Error())
+			server.writeDecisionError(writer, format, err, input.Capacity)
 			return
 		}
 		pending = &pendingTurn{fingerprint: requestFingerprint, requestID: requestID, decision: decision, input: input}
@@ -518,15 +527,14 @@ const maxReconsults = 2
 // selects another action itself. It writes the visible error on failure.
 func (server *Server) reconsult(ctx context.Context, writer http.ResponseWriter, format llmprotocol.WireFormat, pending *pendingTurn, actionID, retryOf, kind string, fact *CapacityFact) bool {
 	if pending.consults >= maxReconsults {
+		if server.writeContextExceeded(writer, format, withFact(pending.input.Capacity, actionID, fact)) {
+			return false
+		}
 		server.writeError(writer, format, http.StatusConflict, "execution_no_feasible_target", "the selected target does not fit this request and the re-consult limit was reached")
 		return false
 	}
 	input := pending.input
-	capacity := make(map[string]*CapacityFact, len(input.Capacity)+1)
-	for id, existing := range input.Capacity {
-		capacity[id] = existing
-	}
-	capacity[actionID] = fact
+	capacity := withFact(input.Capacity, actionID, fact)
 	input.Capacity = capacity
 	// Keep the fact even if this consult fails, so a client retry of the same
 	// request cannot dispatch the refused target again.
@@ -535,16 +543,29 @@ func (server *Server) reconsult(ctx context.Context, writer http.ResponseWriter,
 	slog.Info("execution reconsult", "reconsult", kind, "retry_of", retryOf, "vetoed_action_id", actionID, "required", int64OrNil(fact.Required), "available", int64OrNil(fact.Available), "attempt", input.Reconsult.Attempt)
 	decision, err := server.provider.Decide(ctx, input)
 	if err != nil {
-		server.writeError(writer, format, http.StatusBadGateway, "decision_failed", err.Error())
+		server.writeDecisionError(writer, format, err, input.Capacity)
 		return false
 	}
 	if decision.ActionID == actionID {
+		if server.writeContextExceeded(writer, format, capacity) {
+			return false
+		}
 		server.writeError(writer, format, http.StatusConflict, "execution_no_feasible_target", "Decisions reselected a target the core reported does not fit")
 		return false
 	}
 	pending.input, pending.decision = input, decision
 	pending.consults++
 	return true
+}
+
+// withFact copies a turn's capacity facts with one narrowing fact added.
+func withFact(facts map[string]*CapacityFact, actionID string, fact *CapacityFact) map[string]*CapacityFact {
+	capacity := make(map[string]*CapacityFact, len(facts)+1)
+	for id, existing := range facts {
+		capacity[id] = existing
+	}
+	capacity[actionID] = fact
+	return capacity
 }
 
 // Failed and partial attempts consume the same process-wide admission as a
@@ -563,6 +584,29 @@ func (server *Server) reserveGenerationAttempt() bool {
 			return true
 		}
 	}
+}
+
+// writeDecisionError reports a failed consult. A service that finds no
+// feasible target while the core reported context shortfalls gets the same
+// compaction message as the core's own refusal, not a generic failure.
+func (server *Server) writeDecisionError(writer http.ResponseWriter, format llmprotocol.WireFormat, err error, capacity map[string]*CapacityFact) {
+	var refusal *DecisionsRefusal
+	noFeasible := errors.Is(err, errSelectedInfeasible) || errors.As(err, &refusal) && (refusal.Code == "execution_no_feasible_target" || refusal.Code == "no_feasible_target")
+	if noFeasible && server.writeContextExceeded(writer, format, capacity) {
+		return
+	}
+	server.writeError(writer, format, http.StatusBadGateway, "decision_failed", err.Error())
+}
+
+// writeContextExceeded writes the compaction refusal when this turn's facts
+// show a context shortfall and no target that fits.
+func (server *Server) writeContextExceeded(writer http.ResponseWriter, format llmprotocol.WireFormat, capacity map[string]*CapacityFact) bool {
+	message := server.contextExceededMessage(capacity)
+	if message == "" {
+		return false
+	}
+	server.writeError(writer, format, http.StatusBadRequest, CodeContextExceedsAllDeployments, message)
+	return true
 }
 
 func writeJSON(writer http.ResponseWriter, status int, value any) {

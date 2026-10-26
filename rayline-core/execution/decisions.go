@@ -398,7 +398,7 @@ func (provider *HTTPDecisions) Decide(ctx context.Context, input DecisionInput) 
 		if provider.config.Decisions.apiMode() == DecisionsExecutionContextV2 {
 			// v2 refusals are contract codes (execution_*, policy_*): name the
 			// code so the harness and logs show why. Messages are not echoed.
-			return Decision{}, fmt.Errorf("Decisions request refused (HTTP %d%s)", response.StatusCode, refusalCode(response))
+			return Decision{}, &DecisionsRefusal{Status: response.StatusCode, Code: refusalCode(response)}
 		}
 		return Decision{}, fmt.Errorf("Decisions request refused (HTTP %d)", response.StatusCode)
 	}
@@ -702,6 +702,20 @@ func validateCachePolicyEcho(source, mode, episodeIdentity string, multiwarm *bo
 	return nil
 }
 
+// DecisionsRefusal is a v2 non-200 answer, with its contract code when the
+// body names one (execution_*, policy_*). Messages are not echoed.
+type DecisionsRefusal struct {
+	Status int
+	Code   string
+}
+
+func (refusal *DecisionsRefusal) Error() string {
+	if refusal.Code == "" {
+		return fmt.Sprintf("Decisions request refused (HTTP %d)", refusal.Status)
+	}
+	return fmt.Sprintf("Decisions request refused (HTTP %d, %s)", refusal.Status, refusal.Code)
+}
+
 // contractCode is the shape of every execution_*/policy_* contract code.
 var contractCode = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
 
@@ -719,5 +733,5 @@ func refusalCode(response *http.Response) string {
 	if json.Unmarshal(raw, &body) != nil || !contractCode.MatchString(body.Error.Code) {
 		return ""
 	}
-	return ", " + body.Error.Code
+	return body.Error.Code
 }

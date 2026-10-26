@@ -101,8 +101,27 @@ opt-in. The core reports facts and never picks or ranks a model.
   `available_source: "configured"` (llama.cpp's per-slot allocation is not yet
   observed); `units` = its `token_units`; `provenance: "local_measured"`. A
   counter that fails reports that target `fits: false` with
-  `reason: "runtime_unavailable"` instead of refusing the turn. Other targets
-  send `capacity: null`.
+  `reason: "runtime_unavailable"` instead of refusing the turn. Every other
+  target (a local runtime without a counter, such as Ollama, MLX or a custom
+  endpoint, and every cloud target) is estimated from the same prepared request:
+  prompt = ceil((body bytes / `bytes_per_token` + inline media × `media_tokens`)
+  × (1 + `headroom_ratio`)), `required` = that + output limit + margin, with
+  `provenance: "caller_estimated"` (never `local_measured`) and `units` = its
+  `token_units` or null. Inline media is a base64 image `"data"` source or a
+  `data:image/...;base64,` URL in the request structure; the same bytes quoted
+  inside a string, and other media such as a PDF, keep the byte count. The policy contract admits an estimated `fits: false` as an
+  exclusion and reads an estimated `fits: true` as unknown, so an over-window
+  local target is excluded before anything is sent to it, and the facts are
+  recomputed every turn: once the history outgrows the local window, local stays
+  excluded.
+- **No deployment fits.** When every executable target reports a
+  `context_capacity` shortfall, the core answers `400
+  context_exceeds_all_deployments` in the caller's wire format before Decisions or
+  any runtime is contacted. The message gives the prompt size (estimated or
+  measured), the total with the output allowance, the largest window and its
+  model, and asks for the conversation to be compacted or shortened. A service
+  refusal `execution_no_feasible_target` (or a selection of an infeasible target)
+  while no target is reported to fit gets the same answer.
 - **Pre-dispatch check and veto.** The final prepared request is checked again
   before dispatch. If it does not fit the selected target, or the local runtime
   refuses it for context before any output, the core re-consults once per cause
@@ -208,6 +227,17 @@ input modalities explicitly include `text` and may include `image`. Authenticate
 health reports the minimum limits and modality intersection of possible execution
 targets. No harness gateway clamps the caller's requested output allowance.
 `auth_env` names an optional credential.
+`capacity_estimate` (v2, optional) tunes the estimate used when the deployment
+has no prompt counter: `{"bytes_per_token": 3, "headroom_ratio": 0.15,
+"media_tokens": 4096}` are the defaults for absent members. Served BPE
+tokenizers average 3.5-4.5 bytes per token on prose and 3-3.5 on code, and the
+JSON request adds escapes and structure, so bytes/3 over-counts typical traffic;
+the 15% headroom covers denser text (Qwen splits digits one per token) and
+template tokens; 4,096 tokens per inline image covers a 1080p screenshot on
+Claude (~1.6k) and Qwen-VL (~2.7k). Raise `headroom_ratio` or lower
+`bytes_per_token` for a runtime that truncates silently on unusually dense input.
+Limits: `bytes_per_token` in [0.5, 16], `headroom_ratio` in [0, 10],
+`media_tokens` >= 0.
 Local inference cannot receive the hosted Decisions credential, including under
 an alternate environment-variable name. Unknown token units are an empty string;
 they cannot support comparable prefix evidence.
