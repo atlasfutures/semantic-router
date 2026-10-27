@@ -604,6 +604,9 @@ type StreamEngine struct {
 	// streamContext is the client's own request for this stream, read to tell
 	// whether the target's terminal can state a count at all.
 	streamContext llmprotocol.StreamContext
+	// cutByCaller says the caller ended the turn (SetTruncationCause), which
+	// it states even for a turn that delivered nothing.
+	cutByCaller bool
 }
 
 // truncationUsageCarrier is an encoder whose terminal states a cut turn's count
@@ -644,6 +647,15 @@ func (engine *StreamEngine) SetTruncationCause(cause string) {
 		return
 	}
 	engine.truncationCause = cause
+	engine.cutByCaller = true
+}
+
+// cutByCaller reports that the caller ended this turn, whether or not it had
+// a count to hand over. A trailing fragment is then what the cut left behind
+// even when no output preceded it, and the terminal names the caller's cut
+// rather than the fragment.
+func (engine *StreamEngine) cutByCallerOrCounted() bool {
+	return engine.cutByCaller || engine.truncationUsage != nil
 }
 
 func (engine *StreamEngine) Push(frame []byte) ([][]byte, []llmprotocol.Event, llmprotocol.Diagnostics, error) {

@@ -158,7 +158,7 @@ func (engine *StreamEngine) prepareFinalization(reason error) streamFinalization
 		reason = firstFailure
 	}
 	events, diagnostics, decodeErr := engine.decoder.Finalize(reason)
-	if engine.truncationUsage != nil {
+	if engine.cutByCallerOrCounted() {
 		events, diagnostics = engine.withholdOutputFlushedAtCut(events, diagnostics)
 	}
 	result := streamFinalization{
@@ -166,7 +166,7 @@ func (engine *StreamEngine) prepareFinalization(reason error) streamFinalization
 		decodeErr: decodeErr, firstFailure: firstFailure,
 	}
 	switch {
-	case decodeErr != nil && engine.truncationUsage != nil && firstFailure == nil &&
+	case decodeErr != nil && engine.cutByCallerOrCounted() && firstFailure == nil &&
 		truncatedTrailingFragment(decodeErr):
 		// The Router cut this turn, and the bytes it cut it in the middle of
 		// were half a frame. A transport read does not end on a frame boundary,
@@ -267,6 +267,16 @@ func (engine *StreamEngine) withholdOutputFlushedAtCut(
 	withheld := 0
 	for _, event := range events {
 		if outputDelta(event) || event.Type == llmprotocol.EventImageGenerationProgress {
+			withheld++
+			continue
+		}
+		// An item completed here may carry what nobody has seen -- a call's
+		// whole arguments, an image, a search's result -- so it is not
+		// published either; the cut's own closer states the item as what had
+		// reached the client. The stop it states is still recorded, because
+		// a stop is a fact about the turn rather than output.
+		if event.Type == llmprotocol.EventOutputItemCompleted {
+			engine.recordTerminalEvent(event)
 			withheld++
 			continue
 		}
