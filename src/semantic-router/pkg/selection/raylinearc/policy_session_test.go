@@ -29,9 +29,13 @@ type fakeModalServer struct {
 	body   []byte
 	stale  []byte
 
-	mu         sync.Mutex
-	sessions   map[string]int // token -> container; absent = expired or ended
-	dead       map[int]bool
+	mu       sync.Mutex
+	sessions map[string]int // token -> container; absent = expired or ended
+	dead     map[int]bool
+	// hung containers hold every decide until the caller gives up: a stopped
+	// container's sessions before Modal answers 502 for them (#358).
+	hung       map[int]bool
+	release    chan struct{} // closed at cleanup, before the server, so a hung decide returns
 	staleOn    map[int]bool
 	calls      map[int]int
 	containers int
@@ -53,12 +57,15 @@ func newFakeModalServer(t *testing.T, containers int) *fakeModalServer {
 		stale:      []byte(strings.Replace(string(body), fixturePackage(t).PackageSHA256, strings.Repeat("f", 64), 1)),
 		sessions:   map[string]int{},
 		dead:       map[int]bool{},
+		hung:       map[int]bool{},
 		staleOn:    map[int]bool{},
 		calls:      map[int]int{},
 		containers: containers,
 	}
+	fake.release = make(chan struct{})
 	fake.server = httptest.NewServer(http.HandlerFunc(fake.serve))
 	t.Cleanup(fake.server.Close)
+	t.Cleanup(func() { close(fake.release) }) // runs first (cleanups are LIFO)
 	return fake
 }
 
@@ -96,7 +103,7 @@ func (fake *fakeModalServer) serve(w http.ResponseWriter, r *http.Request) {
 		container := -1
 		for offset := 0; offset < fake.containers; offset++ {
 			candidate := (fake.nextID + offset) % fake.containers
-			if !fake.dead[candidate] {
+			if !fake.dead[candidate] && !fake.hung[candidate] {
 				container = candidate
 				break
 			}
@@ -133,6 +140,14 @@ func (fake *fakeModalServer) serve(w http.ResponseWriter, r *http.Request) {
 			fake.mu.Unlock()
 			w.WriteHeader(http.StatusNotFound)
 			_, _ = w.Write([]byte("Unknown or expired session"))
+			return
+		}
+		if fake.hung[container] {
+			fake.mu.Unlock()
+			select {
+			case <-r.Context().Done():
+			case <-fake.release:
+			}
 			return
 		}
 		if fake.dead[container] {
@@ -193,9 +208,14 @@ func testSessionBackend(t *testing.T, fake *fakeModalServer, startTimeout time.D
 
 func sessionDecide(t *testing.T, binding *PolicySessionBinding) (*PolicyDecisionResponse, error) {
 	t.Helper()
-	return binding.Decide(context.Background(), PolicyDecisionRequest{
+	return binding.Decide(context.Background(), sessionDecisionRequest(t))
+}
+
+func sessionDecisionRequest(t *testing.T) PolicyDecisionRequest {
+	t.Helper()
+	return PolicyDecisionRequest{
 		SchemaVersion: PolicyDecisionRequestSchema, EpisodeIDHash: episodeHash("a"), Package: fixturePackage(t),
-	})
+	}
 }
 
 // A new episode starts one session; every call of the turn (busy retries)
@@ -580,4 +600,89 @@ func TestPolicySessionNeverFollowsARedirect(t *testing.T) {
 		t.Fatalf("a credential followed the redirect to %v", path)
 		return true
 	})
+}
+
+// A container that stops answering (its decides time out, no 502 yet): that
+// turn fails closed and asks nothing twice, but the episode's next turn moves
+// to a new session at once instead of timing out again (#358).
+func TestPolicySessionTimeoutMakesTheNextTurnMove(t *testing.T) {
+	fake := newFakeModalServer(t, 3)
+	backend := testSessionBackend(t, fake, time.Second)
+	first := backend.Bind(nil, false)
+	if _, err := sessionDecide(t, first); err != nil {
+		t.Fatal(err)
+	}
+	persisted, _ := first.Session()
+	fake.mu.Lock()
+	fake.hung[fake.sessions[persisted.Token]] = true
+	fake.mu.Unlock()
+
+	timedOut := backend.Bind(persisted, false)
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	_, err := timedOut.Decide(ctx, sessionDecisionRequest(t))
+	cancel()
+	var failure *PolicyServiceError
+	if !errors.As(err, &failure) || (failure.Class != "timeout" && failure.Class != "transport") {
+		t.Fatalf("hung decide err = %v, want a timeout", err)
+	}
+	if starts, _, _ := fake.counts(); starts != 1 {
+		t.Fatalf("starts = %d: the timed-out turn must not move (fail closed)", starts)
+	}
+
+	next := backend.Bind(persisted, false)
+	if _, err := sessionDecide(t, next); err != nil {
+		t.Fatalf("the next turn did not move: %v", err)
+	}
+	moved, changed := next.Session()
+	if !changed || moved == nil || *moved == *persisted {
+		t.Fatal("the next turn did not record its new session")
+	}
+	if _, wasMoved := next.Sessions(); !wasMoved {
+		t.Fatal("the next turn did not report its move")
+	}
+	if starts, terminates, _ := fake.counts(); starts != 2 || terminates != 1 {
+		t.Fatalf("starts %d terminates %d, want 2 and 1 (the suspect session ended)", starts, terminates)
+	}
+}
+
+// A caller that goes away (a client disconnect) says nothing about the
+// container: the session stays the episode's.
+func TestPolicySessionCallerCancelIsNotSuspect(t *testing.T) {
+	fake := newFakeModalServer(t, 2)
+	backend := testSessionBackend(t, fake, time.Second)
+	first := backend.Bind(nil, false)
+	if _, err := sessionDecide(t, first); err != nil {
+		t.Fatal(err)
+	}
+	persisted, _ := first.Session()
+	fake.mu.Lock()
+	fake.hung[fake.sessions[persisted.Token]] = true
+	fake.mu.Unlock()
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() { time.Sleep(100 * time.Millisecond); cancel() }()
+	_, _ = backend.Bind(persisted, false).Decide(ctx, sessionDecisionRequest(t))
+	if backend.suspect.has(*persisted) {
+		t.Fatal("a caller cancel marked the session suspect")
+	}
+}
+
+// A suspect mark lasts the session's idle timeout; then Modal has ended the
+// session anyway (a turn on it gets the 404 and moves).
+func TestPolicySessionSuspectMarkExpires(t *testing.T) {
+	clock := time.Date(2026, 10, 27, 7, 0, 0, 0, time.UTC)
+	suspect := newSuspectSessions(time.Minute, func() time.Time { return clock })
+	session := PolicySession{ID: "sd-1", Token: "tok.1"}
+	suspect.mark(session)
+	if !suspect.has(session) {
+		t.Fatal("not suspect right after the mark")
+	}
+	clock = clock.Add(time.Minute)
+	if suspect.has(session) {
+		t.Fatal("still suspect after its idle timeout")
+	}
+	var none *suspectSessions
+	none.mark(session)
+	if none.has(session) {
+		t.Fatal("a nil set reports a suspect")
+	}
 }
