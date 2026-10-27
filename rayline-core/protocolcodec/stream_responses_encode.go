@@ -116,8 +116,20 @@ func (encoder *responsesStreamEncoder) encodeResponsesItemStart(event llmprotoco
 		return nil, nil
 	}
 	if event.ToolCall != nil {
-		frames, _, err := encoder.ensureResponsesOutputStarted(event, responsesOutputTool)
-		return frames, err
+		frames, key, err := encoder.ensureResponsesOutputStarted(event, responsesOutputTool)
+		if err != nil {
+			return nil, err
+		}
+		// The call is known from its start, so a cut before its first
+		// argument delta can still close it as the call it was. The start's
+		// "{}" is a placeholder the deltas replace, not an argument, and is
+		// not kept (streamState keeps the same rule for the accumulated call).
+		seed := *event.ToolCall
+		if strings.TrimSpace(seed.Arguments) == "{}" {
+			seed.Arguments = ""
+		}
+		encoder.recordOpenToolCall(key, &seed)
+		return frames, nil
 	}
 	if event.Content != nil && event.Content.Kind == llmprotocol.ContentGeneratedImage {
 		frames, _, err := encoder.ensureResponsesOutputStarted(event, responsesOutputImage)

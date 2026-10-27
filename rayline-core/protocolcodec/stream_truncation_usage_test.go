@@ -943,6 +943,31 @@ func TestACutInsideAnObjectOrACharacterStillBills(t *testing.T) {
 	}
 }
 
+// A closing token that was wrong is not a cut either: more bytes could never
+// have repaired `{"id":"x"]`, so it is the upstream's doing and ends on the
+// error, while `{"id":"x"` just stopped and bills.
+func TestAWrongClosingTokenAtTheCutIsStillAViolation(t *testing.T) {
+	engine := NewBuiltinEngine()
+	requested := true
+	stream, err := engine.NewStream(llmprotocol.OpenAIChatV1, llmprotocol.OpenAIChatV1,
+		llmprotocol.StreamContext{
+			Context: t.Context(), Options: llmprotocol.StreamOptions{IncludeUsage: &requested},
+		})
+	requireNoError(t, err)
+	_, _, _, err = stream.Push([]byte(truncatedUpstreamChunk(llmprotocol.OpenAIChatV1)))
+	requireNoError(t, err)
+	_, _, _, err = stream.Push([]byte(`data: {"id":"chatcmpl-1"]`))
+	requireNoError(t, err)
+	stream.SetTruncationUsage(estimatedTruncationUsage(), llmprotocol.UsageSourceStreamEstimate)
+	stream.SetTruncationCause(llmprotocol.TruncationDeadline)
+	terminal, _, _, _ := stream.Finalize(llmprotocol.NewError(
+		llmprotocol.ErrorUpstreamTimeout, "stream_truncated", "deadline", nil))
+
+	body := string(joinFrames(terminal))
+	wantContains(t, body, "invalid_upstream_json", "a wrong closing token was passed off as a cut")
+	wantNotContains(t, body, `"finish_reason":"length"`, "a malformed stream was presented as an ordinary truncation")
+}
+
 // A byte that is simply invalid is not a cut, wherever the deadline fell. A
 // character cut in half would have been whole had the bytes kept coming; 0xff
 // never would, and a provider that sent it broke the protocol.
@@ -1010,6 +1035,59 @@ func TestAnOpenImageGenerationAtTheCutStillTerminates(t *testing.T) {
 	wantNotContains(t, body, "event: error")
 	// The text item the cut landed in is still closed, as incomplete.
 	wantContains(t, body, `"role":"assistant","status":"incomplete","type":"message"`)
+}
+
+// Whatever an upstream puts under the rayline name is not a reason to fail
+// the stream. The member is this Router's own; on the way in it is bytes that
+// are discarded, so a provider's boolean or number there costs the client
+// nothing.
+func TestAMalformedUpstreamRaylineMemberIsIgnored(t *testing.T) {
+	for name, member := range map[string]string{
+		"boolean": `true`,
+		"number":  `{"truncated":123}`,
+		"string":  `"deadline"`,
+	} {
+		engine := NewBuiltinEngine()
+		stream, err := engine.NewStream(llmprotocol.OpenAIChatV1, llmprotocol.OpenAIChatV1,
+			llmprotocol.StreamContext{Context: t.Context()})
+		requireNoError(t, err)
+		frames, _, _, err := stream.Push([]byte(`data: {"id":"chatcmpl-1","object":"chat.completion.chunk","model":"m",` +
+			`"choices":[{"index":0,"delta":{"role":"assistant","content":"hi"},"finish_reason":null}],"rayline":` + member + `}` + "\n\n"))
+		requireNoError(t, err, "%s: an upstream's rayline member failed the stream", name)
+		wantNotContains(t, string(joinFrames(frames)), "rayline", "%s: an upstream's member was relayed", name)
+	}
+}
+
+// A tool call cut before its first argument delta still closes as the call it
+// was. An Anthropic tool_use opens with a "{}" placeholder and the Router may
+// cut the turn before any input_json_delta; the call is known from its start,
+// so the closer has a call to close rather than failing the terminal.
+func TestAToolCallCutBeforeItsFirstDeltaStillCloses(t *testing.T) {
+	engine := NewBuiltinEngine()
+	stream, err := engine.NewStream(llmprotocol.AnthropicMessagesV1, llmprotocol.OpenAIResponsesV1,
+		llmprotocol.StreamContext{Context: t.Context()})
+	requireNoError(t, err)
+
+	served, _, _, err := stream.Push([]byte(
+		"event: message_start\n" +
+			`data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant",` +
+			`"model":"m","content":[],"stop_reason":null,"usage":{"input_tokens":37,"output_tokens":1}}}` +
+			"\n\nevent: content_block_start\n" +
+			`data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":"lookup","input":{}}}` +
+			"\n\n"))
+	requireNoError(t, err)
+	stream.SetTruncationUsage(estimatedTruncationUsage(), llmprotocol.UsageSourceStreamEstimate)
+	stream.SetTruncationCause(llmprotocol.TruncationDeadline)
+	terminal, _, _, err := stream.Finalize(llmprotocol.NewError(
+		llmprotocol.ErrorUpstreamTimeout, "stream_truncated", "deadline", nil))
+	requireNoError(t, err, "a tool call cut before its first delta failed the terminal")
+
+	body := string(joinFrames(append(served, terminal...)))
+	wantContains(t, body, `"type":"response.incomplete"`, "the turn did not terminate")
+	wantContains(t, body, `"call_id":"toolu_1"`, "the call was not closed as the call it was")
+	wantContains(t, body, `"name":"lookup"`)
+	wantContains(t, body, `"status":"incomplete","type":"function_call"`, "a cut call claimed to be whole")
+	wantNotContains(t, body, "tool_event_invalid")
 }
 
 // The drop that cannot be helped is loud.
