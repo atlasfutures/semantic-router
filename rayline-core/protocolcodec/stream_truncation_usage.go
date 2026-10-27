@@ -73,12 +73,14 @@ func truncatedTrailingFragment(decodeErr error) bool {
 	}
 	// The structural checks name the same thing in their own words: an
 	// object or array the bytes stopped inside, or a multibyte character cut
-	// in half. Each is complete as far as it goes and would have been whole
-	// had the bytes kept coming, which a syntax error never would.
+	// in half (upstreamUTF8CutCode, which the validator tells apart from a
+	// byte that is simply invalid). Each is complete as far as it goes and
+	// would have been whole had the bytes kept coming, which a syntax error
+	// never would.
 	message := decodeErr.Error()
 	for _, shape := range []string{
 		"unexpected EOF", "unexpected end of JSON input",
-		"unterminated object", "unterminated array", "invalid_upstream_utf8",
+		"unterminated object", "unterminated array", upstreamUTF8CutCode,
 	} {
 		if strings.Contains(message, shape) {
 			return true

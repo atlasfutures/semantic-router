@@ -943,6 +943,31 @@ func TestACutInsideAnObjectOrACharacterStillBills(t *testing.T) {
 	}
 }
 
+// A byte that is simply invalid is not a cut, wherever the deadline fell. A
+// character cut in half would have been whole had the bytes kept coming; 0xff
+// never would, and a provider that sent it broke the protocol.
+func TestAnInvalidByteAtTheCutIsStillAViolation(t *testing.T) {
+	engine := NewBuiltinEngine()
+	requested := true
+	stream, err := engine.NewStream(llmprotocol.OpenAIChatV1, llmprotocol.OpenAIChatV1,
+		llmprotocol.StreamContext{
+			Context: t.Context(), Options: llmprotocol.StreamOptions{IncludeUsage: &requested},
+		})
+	requireNoError(t, err)
+	_, _, _, err = stream.Push([]byte(truncatedUpstreamChunk(llmprotocol.OpenAIChatV1)))
+	requireNoError(t, err)
+	_, _, _, err = stream.Push([]byte("data: {\"id\":\"chatcmpl-1\",\"object\":\"\xff"))
+	requireNoError(t, err)
+	stream.SetTruncationUsage(estimatedTruncationUsage(), llmprotocol.UsageSourceStreamEstimate)
+	stream.SetTruncationCause(llmprotocol.TruncationDeadline)
+	terminal, _, _, _ := stream.Finalize(llmprotocol.NewError(
+		llmprotocol.ErrorUpstreamTimeout, "stream_truncated", "deadline", nil))
+
+	body := string(joinFrames(terminal))
+	wantContains(t, body, "invalid_upstream_utf8", "an invalid byte was passed off as a cut")
+	wantNotContains(t, body, `"finish_reason":"length"`, "a malformed stream was presented as an ordinary truncation")
+}
+
 // An image generation open at the cut has no state the closer could
 // synthesize, so it is left open rather than closed as something it is not.
 // The terminal still arrives, with its count; it used to be replaced by a
