@@ -30,6 +30,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -140,6 +141,10 @@ func clonePolicySession(session *PolicySession) *PolicySession {
 type PolicySessionConfig struct {
 	IdleTimeout  time.Duration
 	StartTimeout time.Duration
+	// ReapTimeout and MaxReaps bound the reaps of starts that got no answer
+	// (policy_session_reaper.go); zero is the default.
+	ReapTimeout time.Duration
+	MaxReaps    int
 }
 
 // PolicySessionBackend starts and ends the Modal sessions of a sessioned
@@ -152,6 +157,12 @@ type PolicySessionBackend struct {
 	config      PolicySessionConfig
 	now         func() time.Time
 	newKey      func() (string, error)
+	// reapSlots bounds the reaps in flight (policy_session_reaper.go).
+	reapInit    sync.Once
+	reapSlots   chan struct{}
+	reapDropped atomic.Int64
+	onReap      func(outcome string)
+
 	// suspect holds the sessions whose last decide timed out or failed in
 	// transport (#358), so the episode's next turn does not wait on them again.
 	suspect *suspectSessions
@@ -241,7 +252,8 @@ func idempotencyKey() (string, error) {
 }
 
 // Start starts one session, bounded by the start timeout. Any failure is a
-// PolicyServiceError of class session_start.
+// PolicyServiceError of class session_start. A start that got no answer is
+// reaped in the background: Modal may still create its session.
 func (backend *PolicySessionBackend) Start(ctx context.Context) (PolicySession, error) {
 	key, err := backend.newKey()
 	if err != nil {
@@ -253,23 +265,36 @@ func (backend *PolicySessionBackend) Start(ctx context.Context) (PolicySession, 
 	header.Set("x-modal-timestamp", strconv.FormatFloat(float64(backend.now().UnixNano())/1e9, 'f', 6, 64))
 	status, body, err := backend.control(ctx, policySessionStartPath, header, backend.config.StartTimeout)
 	if err != nil {
+		// No answer, or a 200 whose session went unread (here or below, if
+		// malformed): Modal may hold a session for it. A refusal, read or
+		// not, started none.
+		if status == 0 || status == http.StatusOK {
+			backend.reap(ctx, header)
+		}
 		return PolicySession{}, &PolicyServiceError{Class: PolicySessionStartClass}
 	}
 	if status != http.StatusOK {
 		return PolicySession{}, &PolicyServiceError{Class: PolicySessionStartClass, Status: status}
 	}
+	session, ok := decodePolicySessionStart(body)
+	if !ok {
+		backend.reap(ctx, header)
+		return PolicySession{}, &PolicyServiceError{Class: PolicySessionStartClass, Status: status}
+	}
+	return session, nil
+}
+
+// decodePolicySessionStart reads a start's {session_id, token}.
+func decodePolicySessionStart(body []byte) (PolicySession, bool) {
 	var started struct {
 		SessionID string `json:"session_id"`
 		Token     string `json:"token"`
 	}
 	if json.Unmarshal(body, &started) != nil {
-		return PolicySession{}, &PolicyServiceError{Class: PolicySessionStartClass, Status: status}
+		return PolicySession{}, false
 	}
 	session := PolicySession{ID: started.SessionID, Token: started.Token}
-	if ValidatePolicySession(session) != nil {
-		return PolicySession{}, &PolicyServiceError{Class: PolicySessionStartClass, Status: status}
-	}
-	return session, nil
+	return session, ValidatePolicySession(session) == nil
 }
 
 // Terminate ends a session: its in-flight requests finish and new ones are
