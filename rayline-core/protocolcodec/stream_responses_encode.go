@@ -461,9 +461,16 @@ func (encoder *responsesStreamEncoder) closeOpenResponsesItems(
 		// tried and left a hole in the output indexes that no reader of the
 		// resource could resolve.
 		if item.kind == responsesOutputImage {
+			status := llmprotocol.ImageGenerationFailed
+			if encoder.imageProgressCompleted[responsesOutputKey{item: item.itemIndex, kind: responsesOutputImage}] {
+				// The provider had already said the image was complete; only
+				// the item's close was cut off. The item closes as the
+				// progress said, since a failed close would contradict it.
+				status = llmprotocol.ImageGenerationCompleted
+			}
 			closing.Content = &llmprotocol.Content{
 				Kind:           llmprotocol.ContentGeneratedImage,
-				GeneratedImage: &llmprotocol.GeneratedImage{Status: llmprotocol.ImageGenerationFailed},
+				GeneratedImage: &llmprotocol.GeneratedImage{Status: status},
 			}
 		}
 		// The item is closed as the turn ended, not as a completed answer.
