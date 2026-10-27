@@ -640,8 +640,16 @@ func TestPolicySessionTimeoutMakesTheNextTurnMove(t *testing.T) {
 	if _, wasMoved := next.Sessions(); !wasMoved {
 		t.Fatal("the next turn did not report its move")
 	}
-	if starts, terminates, _ := fake.counts(); starts != 2 || terminates != 1 {
-		t.Fatalf("starts %d terminates %d, want 2 and 1 (the suspect session ended)", starts, terminates)
+	deadline := time.Now().Add(2 * time.Second) // the old session is ended off the turn's path
+	for {
+		starts, terminates, _ := fake.counts()
+		if starts == 2 && terminates == 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("starts %d terminates %d, want 2 and 1 (the suspect session ended)", starts, terminates)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
@@ -679,6 +687,13 @@ func TestPolicySessionSuspectMarkExpires(t *testing.T) {
 	clock = clock.Add(time.Minute)
 	if suspect.has(session) {
 		t.Fatal("still suspect after its idle timeout")
+	}
+	// Marking prunes the expired entries, so the set stays bounded.
+	suspect.mark(PolicySession{ID: "sd-2", Token: "tok.2"})
+	clock = clock.Add(2 * time.Minute)
+	suspect.mark(PolicySession{ID: "sd-3", Token: "tok.3"})
+	if n := len(suspect.until); n != 1 {
+		t.Fatalf("%d entries after marking past the others' expiry, want 1", n)
 	}
 	var none *suspectSessions
 	none.mark(session)

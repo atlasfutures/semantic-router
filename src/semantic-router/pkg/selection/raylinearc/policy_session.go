@@ -176,20 +176,11 @@ func newSuspectSessions(ttl time.Duration, now func() time.Time) *suspectSession
 	return &suspectSessions{until: map[[sha256.Size]byte]time.Time{}, ttl: ttl, now: now}
 }
 
+// mark records a suspect session. It also forgets the expired ones, so the set
+// stays bounded by the sessions that timed out within one idle timeout.
 func (suspect *suspectSessions) mark(session PolicySession) {
 	if suspect == nil {
 		return
-	}
-	suspect.mu.Lock()
-	defer suspect.mu.Unlock()
-	suspect.until[sha256.Sum256([]byte(session.Token))] = suspect.now().Add(suspect.ttl)
-}
-
-// has reports a suspect session, and forgets every one whose idle timeout has
-// passed (Modal has ended it by then; a turn on it gets the 404 and moves).
-func (suspect *suspectSessions) has(session PolicySession) bool {
-	if suspect == nil {
-		return false
 	}
 	suspect.mu.Lock()
 	defer suspect.mu.Unlock()
@@ -199,7 +190,24 @@ func (suspect *suspectSessions) has(session PolicySession) bool {
 			delete(suspect.until, key)
 		}
 	}
-	_, found := suspect.until[sha256.Sum256([]byte(session.Token))]
+	suspect.until[sha256.Sum256([]byte(session.Token))] = now.Add(suspect.ttl)
+}
+
+// has reports a suspect session whose idle timeout has not passed (after it,
+// Modal has ended the session anyway: a turn on it gets the 404 and moves). A
+// lookup touches one entry; mark does the pruning.
+func (suspect *suspectSessions) has(session PolicySession) bool {
+	if suspect == nil {
+		return false
+	}
+	suspect.mu.Lock()
+	defer suspect.mu.Unlock()
+	key := sha256.Sum256([]byte(session.Token))
+	until, found := suspect.until[key]
+	if found && !suspect.now().Before(until) {
+		delete(suspect.until, key)
+		return false
+	}
 	return found
 }
 
@@ -375,7 +383,10 @@ func (binding *PolicySessionBinding) Decide(
 			// The persisted session timed out on an earlier turn: this turn's
 			// one move is to a new session, before any call reaches the old one.
 			binding.moved = true
-			binding.terminate(ctx, *binding.persisted)
+			// Ended off the turn's path: a stalled terminate must not use up the
+			// deadline the new session needs.
+			old := *binding.persisted
+			go binding.terminate(context.WithoutCancel(ctx), old)
 			if err := binding.start(ctx); err != nil {
 				return nil, err
 			}
