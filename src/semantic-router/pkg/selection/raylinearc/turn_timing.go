@@ -73,6 +73,7 @@ type TurnTiming struct {
 	sessionStarts int
 	reusedKnown   bool
 	reused        bool
+	earlyResponse bool
 	operation     string
 	episodeIDHash string
 	contextTokens int
@@ -275,6 +276,7 @@ func (timing *TurnTiming) recordPolicyCall(
 	timing.operation = operation
 	timing.requestBytes, timing.responseBytes = requestBytes, responseBytes
 	timing.reusedKnown, timing.reused = snapshot.reusedKnown, snapshot.reused
+	timing.earlyResponse = false
 	for _, span := range []TurnSpan{SpanDNS, SpanConnect, SpanTLS, SpanWroteRequest, SpanFirstByte, SpanHTTP, SpanDecode} {
 		timing.has &^= 1 << uint(span)
 	}
@@ -290,9 +292,12 @@ func (timing *TurnTiming) recordPolicyCall(
 	}
 	if !snapshot.wrote.IsZero() {
 		timing.set(SpanWroteRequest, snapshot.wrote.Sub(snapshot.start))
-		if !snapshot.firstByte.IsZero() {
+		// A server can answer before the upload is done (an early
+		// refusal): that response is marked, never a negative span.
+		if !snapshot.firstByte.IsZero() && !snapshot.firstByte.Before(snapshot.wrote) {
 			timing.set(SpanFirstByte, snapshot.firstByte.Sub(snapshot.wrote))
 		}
+		timing.earlyResponse = !snapshot.firstByte.IsZero() && snapshot.firstByte.Before(snapshot.wrote)
 	}
 	if !finished.IsZero() {
 		timing.set(SpanHTTP, finished.Sub(snapshot.start))
@@ -332,6 +337,9 @@ func (timing *TurnTiming) Seal(total time.Duration) map[string]interface{} {
 	}
 	if timing.reusedKnown {
 		fields["reused_conn"] = timing.reused
+	}
+	if timing.earlyResponse {
+		fields["early_response"] = true
 	}
 	if timing.sessionStarts > 0 {
 		fields["session_starts"] = timing.sessionStarts

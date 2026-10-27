@@ -34,7 +34,7 @@ func (r *OpenAIRouter) selectModelFromCandidates(
 	ctx *RequestContext,
 ) (selected *config.ModelRef, selectedMethod string, err error) {
 	if raylineARCSelection(algorithm) {
-		defer func() { emitRaylineARCTurnTiming(ctx, raylineARCTurnSurfaceHosted, "", algorithm, err) }()
+		defer func() { emitRaylineARCTurnTiming(ctx, algorithm, err) }()
 	}
 	defaultCandidate := firstValidCandidateModelRef(selCtx)
 	if defaultCandidate == nil {

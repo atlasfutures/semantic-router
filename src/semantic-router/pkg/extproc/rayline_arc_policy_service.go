@@ -936,6 +936,9 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 			response, err = decidePolicyThroughBusy(ctx, decider, request, scorer.busyWait, admit, withCacheContext)
 		}
 	}
+	// policy_ms is the turn's decide calls, retries and re-asks included,
+	// timed before any refusal below returns.
+	turnTiming.Set(raylinearc.SpanPolicy, selector.now().Sub(started))
 	// A refusal of the caller's routing.signals answers the service's own
 	// reason as its public code, whatever else the request carried.
 	if class := signalRefusalClass(err); class != "" {
@@ -972,7 +975,6 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		return nil, boundedARCEncoderFailure(shed.err)
 	}
 	latency := selector.now().Sub(started)
-	turnTiming.Set(raylinearc.SpanPolicy, latency)
 	if err != nil {
 		class := "transport"
 		var failure *raylinearc.PolicyServiceError

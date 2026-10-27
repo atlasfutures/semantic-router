@@ -195,3 +195,17 @@ func TestTurnMillisKeepsATenthOfAMillisecond(t *testing.T) {
 		}
 	}
 }
+
+// A server that answers before the upload is done marks the response early
+// rather than logging a negative first_byte_ms.
+func TestTurnTimingMarksAnEarlyResponse(t *testing.T) {
+	start := time.Now()
+	call := &policyCallTiming{start: start, firstByte: start.Add(time.Millisecond), wrote: start.Add(3 * time.Millisecond)}
+	timing := NewTurnTiming()
+	timing.recordPolicyCall("decide", 0, 10, call, start.Add(4*time.Millisecond), 20)
+	fields := timing.Seal(0)
+	if fields["early_response"] != true || fields["wrote_request_ms"] != 3.0 {
+		t.Fatalf("fields = %v", fields)
+	}
+	refuseTimingFields(t, fields, "first_byte_ms")
+}

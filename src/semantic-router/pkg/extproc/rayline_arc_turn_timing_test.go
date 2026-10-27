@@ -171,7 +171,19 @@ func TestRoutesLookupLogsOneTurnTimingLineOnFailure(t *testing.T) {
 	}
 	fields := oneTurnTimingEvent(t, logs)
 	if fields["surface"] != raylineARCTurnSurfaceRoutes || fields["outcome"] != "failed" ||
-		fields["routing_decision_id"] != "rte_timing" || fields["body_bytes"] != int64(64) {
+		fields["routing_decision_id"] != "rte_timing" || fields["body_bytes"] != int64(64) ||
+		fields["status"] == int64(200) || fields["status"] == int64(0) {
+		t.Fatalf("fields = %v", fields)
+	}
+
+	// A lookup refused before selection (a routing block on a cell that
+	// serves none) logs its one line too, with the refusal's status.
+	ctx = routesContext(nil)
+	startRaylineARCTurnTiming(ctx, 1)
+	logs = captureLogs(t)
+	response := router.handleRaylineRoutesAPI([]byte(`{"model":"arc-1.0","messages":[{"role":"user","content":"x"}],"routing":{}}`), ctx)
+	fields = oneTurnTimingEvent(t, logs)
+	if fields["outcome"] != "failed" || fields["status"] != int64(immediateStatusCode(t, response)) {
 		t.Fatalf("fields = %v", fields)
 	}
 }
