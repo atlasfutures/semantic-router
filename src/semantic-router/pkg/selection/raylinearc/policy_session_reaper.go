@@ -18,31 +18,31 @@ package raylinearc
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"time"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 )
 
-// A start that the cell gives up on (the caller went away or the start
-// timeout lapsed) is not withdrawn: Modal keeps placing the session and holds
-// one of the Server's slots for it until the idle timeout, with no one holding
-// its token. On a saturated Server every retried turn orphans another slot, so
-// the overload sustains itself (a 10-27 dev fault: a 160-slot Server took no
-// session for about 15 min with no real load).
+// A session start the cell gives up on (the caller went away or the start
+// timeout lapsed) is not withdrawn by closing its request: Modal keeps placing
+// the session, and it holds one of the Server's slots until the idle timeout
+// with no one holding its token. On a saturated Server every retried turn
+// orphans another slot, so the overload sustains itself (a 10-27 dev fault: a
+// 160-slot Server took no session for about 15 min with no real load).
 //
-// The start is therefore handed to a reaper, off the turn's path: it repeats
-// the start with the same x-idempotency-key and x-modal-timestamp, which is
-// what Modal's SDK does when it retries a start (modal/_server.py,
-// _post_session_start: one key and timestamp per start, kept across up to 5
-// attempts), so the answer is the session the first attempt created, and ends
-// it at once. Should Modal not dedupe on the key, the repeat starts a session
-// of its own and ends it: a slot held briefly, never for the idle timeout.
-// Reaps are bounded; one beyond the bound is dropped and logged.
+// Nor can it be recovered later: a repeated start with the same
+// x-idempotency-key and x-modal-timestamp starts another session (measured on
+// a dev Server, 10-27). So the start's own request is never abandoned: it runs
+// on a context detached from the caller, and when the caller gives up first, a
+// reaper keeps waiting for that same response, bounded by the reap timeout,
+// and ends the session it brings. Reaps are bounded; a start beyond the bound
+// is cancelled as before, and counted.
 const (
-	// DefaultPolicySessionReapTimeout bounds a reap's repeated start. Modal
-	// answers it once the session is placed, which on a saturated Server
-	// takes as long as the queue.
+	// DefaultPolicySessionReapTimeout bounds a start's request, the wait of a
+	// reap included. Modal answers once the session is placed, which on a
+	// saturated Server takes as long as the queue.
 	DefaultPolicySessionReapTimeout = 2 * time.Minute
 	// DefaultPolicySessionMaxReaps bounds the reaps in flight per backend.
 	DefaultPolicySessionMaxReaps = 8
@@ -55,10 +55,46 @@ const (
 	policySessionReapDrop   = "dropped"
 )
 
-// reap ends, best effort and in the background, the session a start that got
-// no answer may have created. header is that start's, idempotency key
-// included.
-func (backend *PolicySessionBackend) reap(ctx context.Context, header http.Header) {
+type policySessionStartAnswer struct {
+	status int
+	body   []byte
+	err    error
+}
+
+// awaitStart sends a start and waits for its answer up to the start timeout
+// or the caller's end. A start given up on is handed to a reaper.
+func (backend *PolicySessionBackend) awaitStart(ctx context.Context, header http.Header) (int, []byte, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, nil, err
+	}
+	timeout := backend.config.ReapTimeout
+	if timeout <= 0 {
+		timeout = DefaultPolicySessionReapTimeout
+	}
+	// The request outlives the caller's wait, never the other way round.
+	timeout = max(timeout, backend.config.StartTimeout)
+	startCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	answers := make(chan policySessionStartAnswer, 1)
+	go func() {
+		status, body, err := backend.control(startCtx, policySessionStartPath, header, timeout)
+		answers <- policySessionStartAnswer{status: status, body: body, err: err}
+	}()
+	wait := time.NewTimer(backend.config.StartTimeout)
+	defer wait.Stop()
+	select {
+	case answer := <-answers:
+		cancel()
+		return answer.status, answer.body, answer.err
+	case <-ctx.Done():
+	case <-wait.C:
+	}
+	backend.reap(answers, cancel)
+	return 0, nil, errors.New("ARC policy session start was given up on")
+}
+
+// reap waits, in the background, for the answer to a start the caller gave up
+// on, and ends the session it brings.
+func (backend *PolicySessionBackend) reap(answers <-chan policySessionStartAnswer, cancel context.CancelFunc) {
 	backend.reapInit.Do(func() {
 		limit := backend.config.MaxReaps
 		if limit <= 0 {
@@ -69,42 +105,38 @@ func (backend *PolicySessionBackend) reap(ctx context.Context, header http.Heade
 	select {
 	case backend.reapSlots <- struct{}{}:
 	default:
+		cancel()
 		backend.reapDone(policySessionReapDrop, map[string]interface{}{"dropped": backend.reapDropped.Add(1)})
 		return
 	}
 	go func() {
 		defer func() { <-backend.reapSlots }()
+		defer cancel()
 		began := time.Now()
-		outcome, status := backend.reapStart(context.WithoutCancel(ctx), header)
-		backend.reapDone(outcome, map[string]interface{}{"status": status, "elapsed_ms": time.Since(began).Milliseconds()})
+		answer := <-answers
+		outcome := backend.reapAnswer(answer)
+		backend.reapDone(outcome, map[string]interface{}{"status": answer.status, "elapsed_ms": time.Since(began).Milliseconds()})
 	}()
 }
 
-// reapStart repeats the start and ends the session it answers. A 4xx means
-// the key started no session; no answer, or a 5xx (which Modal's SDK retries),
-// leaves it unknown.
-func (backend *PolicySessionBackend) reapStart(ctx context.Context, header http.Header) (string, int) {
-	timeout := backend.config.ReapTimeout
-	if timeout <= 0 {
-		timeout = DefaultPolicySessionReapTimeout
-	}
-	status, body, err := backend.control(ctx, policySessionStartPath, header, timeout)
+// reapAnswer ends the session a start's answer brings. A refusal started none;
+// no answer, or a 200 whose session cannot be read, leaves it unknown.
+func (backend *PolicySessionBackend) reapAnswer(answer policySessionStartAnswer) string {
 	switch {
-	case err != nil, status >= http.StatusInternalServerError:
-		return policySessionReapFailed, status
-	case status != http.StatusOK:
-		return policySessionNotCreated, status
+	case answer.status != 0 && answer.status != http.StatusOK:
+		return policySessionNotCreated
+	case answer.err != nil:
+		return policySessionReapFailed
 	}
-	session, ok := decodePolicySessionStart(body)
+	session, ok := decodePolicySessionStart(answer.body)
 	if !ok {
-		return policySessionReapFailed, status
+		return policySessionReapFailed
 	}
-	// Terminate bounds itself; ctx is detached, so a slow start leaves it its
-	// full bound.
-	if backend.Terminate(ctx, session) != nil {
-		return policySessionReapFailed, status
+	// Terminate bounds itself.
+	if backend.Terminate(context.Background(), session) != nil {
+		return policySessionReapFailed
 	}
-	return policySessionReaped, status
+	return policySessionReaped
 }
 
 // reapDone logs a reap's outcome; never the session or its token.

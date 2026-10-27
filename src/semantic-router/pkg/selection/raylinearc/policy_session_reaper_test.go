@@ -14,91 +14,68 @@ import (
 	"time"
 )
 
-// placingModalServer emulates a saturated Modal Server's session start: it
-// takes delay to place a session and places it whether or not the caller is
-// still waiting, and a repeated start with the same x-idempotency-key waits
-// for that placement and answers the session that key created.
-type placingModalServer struct {
+// slowModalServer emulates a saturated Modal Server's session start: it
+// answers after delay (or once hold is closed), with a new session or with
+// code, and every start, repeated or not, is a new session.
+type slowModalServer struct {
 	server *httptest.Server
 	delay  time.Duration
-	// create false places nothing; repeat is then the repeated start's answer.
-	create bool
-	repeat int
-	// malformed answers the first start with an empty 200, session or not.
-	malformed bool
-	// hold, when set, holds every repeated start until it is closed.
+	code   int
+	// hold, when set, holds every start until it is closed.
 	hold chan struct{}
-	// entered receives each first start as it arrives.
+	// entered receives each start as it arrives.
 	entered chan struct{}
 
 	mu         sync.Mutex
-	byKey      map[string]string // idempotency key -> token
-	placed     map[string]chan struct{}
-	stamps     map[string][]string
-	attempts   map[string]int
+	starts     int
+	cancelled  int
+	issued     []string
 	terminated []string
 }
 
-func newPlacingModalServer(t *testing.T, delay time.Duration, create bool) *placingModalServer {
+func newSlowModalServer(t *testing.T, delay time.Duration) *slowModalServer {
 	t.Helper()
-	fake := &placingModalServer{
-		delay: delay, create: create, byKey: map[string]string{}, placed: map[string]chan struct{}{}, stamps: map[string][]string{}, attempts: map[string]int{},
-	}
+	fake := &slowModalServer{delay: delay}
 	fake.server = httptest.NewServer(http.HandlerFunc(fake.serve))
 	t.Cleanup(fake.server.Close)
 	return fake
 }
 
-func (fake *placingModalServer) serve(w http.ResponseWriter, r *http.Request) {
+func (fake *slowModalServer) serve(w http.ResponseWriter, r *http.Request) {
 	if r.Header.Get("Modal-Key") != fakeModalKey || r.Header.Get("Modal-Secret") != fakeModalSecret {
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
 	switch r.URL.Path {
 	case policySessionStartPath:
-		key := r.Header.Get("x-idempotency-key")
 		fake.mu.Lock()
-		fake.attempts[key]++
-		repeated := fake.attempts[key] > 1
-		if !repeated {
-			fake.placed[key] = make(chan struct{})
-		}
-		placed := fake.placed[key]
-		fake.stamps[key] = append(fake.stamps[key], r.Header.Get("x-modal-timestamp"))
+		fake.starts++
 		hold, entered := fake.hold, fake.entered
 		fake.mu.Unlock()
-		if !repeated && entered != nil {
+		if entered != nil {
 			entered <- struct{}{}
 		}
-		if repeated {
-			<-placed
-			if hold != nil {
-				<-hold
-			}
+		if hold == nil {
+			hold = make(chan struct{})
+			time.AfterFunc(fake.delay, func() { close(hold) })
+		}
+		select {
+		case <-hold:
+		case <-r.Context().Done():
 			fake.mu.Lock()
-			token, found := fake.byKey[key]
+			fake.cancelled++
 			fake.mu.Unlock()
-			if !found {
-				w.WriteHeader(fake.repeat)
-				return
-			}
-			fake.answer(w, key, token)
 			return
 		}
-		// Placed regardless of the caller: a cancelled request does not
-		// withdraw the start.
-		time.Sleep(fake.delay)
-		token := ""
-		if fake.create {
-			token = fmt.Sprintf("tok.%s.secret-material", key[:8])
-			fake.mu.Lock()
-			fake.byKey[key] = token
-			fake.mu.Unlock()
+		if fake.code != 0 {
+			w.WriteHeader(fake.code)
+			return
 		}
-		close(placed)
-		if token != "" && !fake.malformed {
-			fake.answer(w, key, token)
-		}
+		fake.mu.Lock()
+		token := fmt.Sprintf("tok.%04d.secret-material", len(fake.issued))
+		fake.issued = append(fake.issued, token)
+		fake.mu.Unlock()
+		_ = json.NewEncoder(w).Encode(map[string]string{"session_id": "sd-" + token[4:8], "token": token})
 	case policySessionTerminatePath:
 		fake.mu.Lock()
 		fake.terminated = append(fake.terminated, strings.TrimPrefix(r.Header.Get("Modal-Authorization"), "Bearer "))
@@ -108,18 +85,18 @@ func (fake *placingModalServer) serve(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (fake *placingModalServer) answer(w http.ResponseWriter, key, token string) {
-	_ = json.NewEncoder(w).Encode(map[string]string{"session_id": "sd-" + key[:8], "token": token})
-}
-
-func reapBackend(t *testing.T, fake *placingModalServer, maxReaps int) (*PolicySessionBackend, chan string) {
+func reapBackend(t *testing.T, url string, config PolicySessionConfig) (*PolicySessionBackend, chan string) {
 	t.Helper()
 	client := NewPolicyServiceClient(PolicyServiceConfig{
-		BaseURL: fake.server.URL, ModalKey: fakeModalKey, ModalSecret: fakeModalSecret, TotalTimeout: time.Second,
+		BaseURL: url, ModalKey: fakeModalKey, ModalSecret: fakeModalSecret, TotalTimeout: time.Second,
 	})
-	backend, err := NewPolicySessionBackend(client, PolicySessionConfig{
-		StartTimeout: 100 * time.Millisecond, ReapTimeout: 5 * time.Second, MaxReaps: maxReaps,
-	})
+	if config.StartTimeout == 0 {
+		config.StartTimeout = 100 * time.Millisecond
+	}
+	if config.ReapTimeout == 0 {
+		config.ReapTimeout = 5 * time.Second
+	}
+	backend, err := NewPolicySessionBackend(client, config)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,123 +125,138 @@ func noReap(t *testing.T, outcomes chan string) {
 	}
 }
 
-// A start the cell gave up on while Modal was still placing it: the reaper
-// repeats it with the same idempotency key and timestamp and ends exactly the
-// session Modal created for it.
-func TestPolicySessionTimedOutStartIsReaped(t *testing.T) {
-	fake := newPlacingModalServer(t, 300*time.Millisecond, true)
-	backend, outcomes := reapBackend(t, fake, 0)
+func startFailsClosed(t *testing.T, backend *PolicySessionBackend, ctx context.Context) {
+	t.Helper()
 	var failure *PolicyServiceError
-	if _, err := backend.Start(context.Background()); !errors.As(err, &failure) || failure.Class != PolicySessionStartClass {
+	if _, err := backend.Start(ctx); !errors.As(err, &failure) || failure.Class != PolicySessionStartClass {
 		t.Fatalf("err = %v, want class %s", err, PolicySessionStartClass)
+	}
+}
+
+// assertReapedTheOne checks that the one start's own delayed session, and no
+// other, was ended, with no second start.
+func (fake *slowModalServer) assertReapedTheOne(t *testing.T) {
+	t.Helper()
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if fake.starts != 1 || len(fake.issued) != 1 {
+		t.Fatalf("starts %d, sessions %d, want 1 and 1", fake.starts, len(fake.issued))
+	}
+	if len(fake.terminated) != 1 || fake.terminated[0] != fake.issued[0] {
+		t.Fatalf("terminated %d sessions, want exactly the delayed one", len(fake.terminated))
+	}
+}
+
+// A start past the start timeout fails the turn at the timeout, but its
+// request is still awaited: the session its delayed 200 brings is ended.
+func TestPolicySessionTimedOutStartIsReaped(t *testing.T) {
+	fake := newSlowModalServer(t, 300*time.Millisecond)
+	backend, outcomes := reapBackend(t, fake.server.URL, PolicySessionConfig{})
+	began := time.Now()
+	startFailsClosed(t, backend, context.Background())
+	if elapsed := time.Since(began); elapsed > 250*time.Millisecond {
+		t.Fatalf("the start waited %s past its timeout", elapsed)
 	}
 	if outcome := nextReap(t, outcomes); outcome != policySessionReaped {
 		t.Fatalf("reap outcome %q, want %q", outcome, policySessionReaped)
 	}
-	fake.mu.Lock()
-	defer fake.mu.Unlock()
-	if len(fake.byKey) != 1 {
-		t.Fatalf("sessions created %d, want 1", len(fake.byKey))
-	}
-	for key, token := range fake.byKey {
-		if fake.attempts[key] != 2 {
-			t.Fatalf("starts with the key %d, want 2", fake.attempts[key])
-		}
-		if stamps := fake.stamps[key]; stamps[0] == "" || stamps[0] != stamps[1] {
-			t.Fatalf("timestamps %q, want one repeated", stamps)
-		}
-		if len(fake.terminated) != 1 || fake.terminated[0] != token {
-			t.Fatalf("terminated %d sessions, want exactly the orphan", len(fake.terminated))
-		}
-	}
+	fake.assertReapedTheOne(t)
 }
 
 // A caller that goes away mid-start is reaped the same way.
 func TestPolicySessionCancelledStartIsReaped(t *testing.T) {
-	fake := newPlacingModalServer(t, 300*time.Millisecond, true)
+	fake := newSlowModalServer(t, 300*time.Millisecond)
 	fake.entered = make(chan struct{}, 1)
-	backend, outcomes := reapBackend(t, fake, 0)
-	backend.config.StartTimeout = 5 * time.Second
+	backend, outcomes := reapBackend(t, fake.server.URL, PolicySessionConfig{StartTimeout: 5 * time.Second})
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
 		<-fake.entered
 		cancel()
 	}()
-	if _, err := backend.Start(ctx); err == nil {
-		t.Fatal("a cancelled start succeeded")
-	}
+	startFailsClosed(t, backend, ctx)
 	if outcome := nextReap(t, outcomes); outcome != policySessionReaped {
 		t.Fatalf("reap outcome %q, want %q", outcome, policySessionReaped)
 	}
+	fake.assertReapedTheOne(t)
 }
 
-// A 200 whose session could not be read is reaped too.
-func TestPolicySessionMalformedStartIsReaped(t *testing.T) {
-	// No delay: the first start answers at once, with an empty 200.
-	fake := newPlacingModalServer(t, 0, true)
-	fake.malformed = true
-	backend, outcomes := reapBackend(t, fake, 0)
-	if _, err := backend.Start(context.Background()); err == nil {
-		t.Fatal("a start without a session succeeded")
+// A reap timeout shorter than the start timeout does not cut an in-time start
+// short.
+func TestPolicySessionReapTimeoutCoversTheStartTimeout(t *testing.T) {
+	fake := newSlowModalServer(t, 150*time.Millisecond)
+	backend, outcomes := reapBackend(t, fake.server.URL, PolicySessionConfig{
+		StartTimeout: 2 * time.Second, ReapTimeout: 50 * time.Millisecond,
+	})
+	if _, err := backend.Start(context.Background()); err != nil {
+		t.Fatalf("an in-time start failed: %v", err)
 	}
-	if outcome := nextReap(t, outcomes); outcome != policySessionReaped {
-		t.Fatalf("reap outcome %q, want %q", outcome, policySessionReaped)
+	noReap(t, outcomes)
+}
+
+// A start that brings no answer by the reap timeout is failed; nothing is
+// ended.
+func TestPolicySessionUnansweredReapFails(t *testing.T) {
+	fake := newSlowModalServer(t, 2*time.Second)
+	backend, outcomes := reapBackend(t, fake.server.URL, PolicySessionConfig{
+		StartTimeout: 50 * time.Millisecond, ReapTimeout: 200 * time.Millisecond,
+	})
+	startFailsClosed(t, backend, context.Background())
+	if outcome := nextReap(t, outcomes); outcome != policySessionReapFailed {
+		t.Fatalf("reap outcome %q, want %q", outcome, policySessionReapFailed)
 	}
 	fake.mu.Lock()
 	defer fake.mu.Unlock()
-	if len(fake.terminated) != 1 {
-		t.Fatalf("terminated %d sessions, want 1", len(fake.terminated))
+	if fake.starts != 1 || len(fake.terminated) != 0 {
+		t.Fatalf("starts %d terminates %d, want 1 and 0", fake.starts, len(fake.terminated))
 	}
 }
 
-// A key that started no session: the repeated start is refused, nothing is
-// terminated.
-func TestPolicySessionReapOfUncreatedStart(t *testing.T) {
-	fake := newPlacingModalServer(t, 300*time.Millisecond, false)
-	fake.repeat = http.StatusNotFound
-	backend, outcomes := reapBackend(t, fake, 0)
-	if _, err := backend.Start(context.Background()); err == nil {
-		t.Fatal("a start past its timeout succeeded")
-	}
+// A delayed refusal started no session: not_created, nothing ended.
+func TestPolicySessionDelayedRefusalIsNotCreated(t *testing.T) {
+	fake := newSlowModalServer(t, 300*time.Millisecond)
+	fake.code = http.StatusTooManyRequests
+	backend, outcomes := reapBackend(t, fake.server.URL, PolicySessionConfig{})
+	startFailsClosed(t, backend, context.Background())
 	if outcome := nextReap(t, outcomes); outcome != policySessionNotCreated {
 		t.Fatalf("reap outcome %q, want %q", outcome, policySessionNotCreated)
 	}
 	fake.mu.Lock()
 	defer fake.mu.Unlock()
-	if len(fake.terminated) != 0 {
-		t.Fatal("a reap terminated a session no start created")
+	if fake.starts != 1 || len(fake.terminated) != 0 {
+		t.Fatalf("starts %d terminates %d, want 1 and 0", fake.starts, len(fake.terminated))
 	}
 }
 
-// A 5xx on the repeated start leaves the session unknown: failed, not
-// not_created.
-func TestPolicySessionReapServerErrorIsFailed(t *testing.T) {
-	fake := newPlacingModalServer(t, 300*time.Millisecond, false)
-	fake.repeat = http.StatusServiceUnavailable
-	backend, outcomes := reapBackend(t, fake, 0)
-	_, _ = backend.Start(context.Background())
-	if outcome := nextReap(t, outcomes); outcome != policySessionReapFailed {
-		t.Fatalf("reap outcome %q, want %q", outcome, policySessionReapFailed)
-	}
-}
-
-// Reaps beyond the bound are dropped, not queued: an overload spawns no more
-// than MaxReaps of them.
+// Reaps beyond the bound are dropped: those starts are cancelled, as before.
 func TestPolicySessionReapsAreBounded(t *testing.T) {
-	fake := newPlacingModalServer(t, 300*time.Millisecond, true)
+	fake := newSlowModalServer(t, 0)
 	fake.hold = make(chan struct{})
+	fake.entered = make(chan struct{}, 5)
 	var once sync.Once
 	release := func() { once.Do(func() { close(fake.hold) }) }
 	t.Cleanup(release) // runs before the server closes (cleanups are LIFO)
-	backend, outcomes := reapBackend(t, fake, 2)
+	backend, outcomes := reapBackend(t, fake.server.URL, PolicySessionConfig{StartTimeout: 30 * time.Second, MaxReaps: 2})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	var starts sync.WaitGroup
 	for range 5 {
 		starts.Add(1)
 		go func() {
 			defer starts.Done()
-			_, _ = backend.Start(context.Background())
+			if _, err := backend.Start(ctx); err == nil {
+				t.Error("a held start succeeded")
+			}
 		}()
 	}
+	// Every start reaches the server before any caller gives up.
+	for range 5 {
+		select {
+		case <-fake.entered:
+		case <-time.After(10 * time.Second):
+			t.Fatal("a start never reached the server")
+		}
+	}
+	cancel()
 	starts.Wait()
 	for range 3 {
 		if outcome := nextReap(t, outcomes); outcome != policySessionReapDrop {
@@ -273,6 +265,19 @@ func TestPolicySessionReapsAreBounded(t *testing.T) {
 	}
 	if dropped := backend.reapDropped.Load(); dropped != 3 {
 		t.Fatalf("dropped %d reaps, want 3", dropped)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		fake.mu.Lock()
+		cancelled := fake.cancelled
+		fake.mu.Unlock()
+		if cancelled == 3 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("cancelled %d starts, want the 3 dropped", cancelled)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 	release()
 	for range 2 {
@@ -283,12 +288,12 @@ func TestPolicySessionReapsAreBounded(t *testing.T) {
 	noReap(t, outcomes)
 	fake.mu.Lock()
 	defer fake.mu.Unlock()
-	if len(fake.terminated) != 2 {
-		t.Fatalf("terminated %d sessions, want 2", len(fake.terminated))
+	if fake.starts != 5 || len(fake.terminated) != 2 {
+		t.Fatalf("starts %d terminates %d, want 5 and 2", fake.starts, len(fake.terminated))
 	}
 }
 
-// A start that answers, a session or a refusal, is never reaped.
+// A start that answers in time, a session or a refusal, is never reaped.
 func TestPolicySessionAnsweredStartIsNotReaped(t *testing.T) {
 	modal := newFakeModalServer(t, 1)
 	answered := testSessionBackend(t, modal, time.Second)
@@ -316,17 +321,7 @@ func TestPolicySessionUnreadableRefusalIsNotReaped(t *testing.T) {
 		_, _ = w.Write(bytes.Repeat([]byte("x"), maxPolicySessionStartBytes+1))
 	}))
 	t.Cleanup(server.Close)
-	client := NewPolicyServiceClient(PolicyServiceConfig{
-		BaseURL: server.URL, ModalKey: fakeModalKey, ModalSecret: fakeModalSecret, TotalTimeout: time.Second,
-	})
-	backend, err := NewPolicySessionBackend(client, PolicySessionConfig{StartTimeout: time.Second})
-	if err != nil {
-		t.Fatal(err)
-	}
-	outcomes := make(chan string, 1)
-	backend.onReap = func(outcome string) { outcomes <- outcome }
-	if _, err := backend.Start(context.Background()); err == nil {
-		t.Fatal("a refused start succeeded")
-	}
+	backend, outcomes := reapBackend(t, server.URL, PolicySessionConfig{StartTimeout: time.Second})
+	startFailsClosed(t, backend, context.Background())
 	noReap(t, outcomes)
 }
