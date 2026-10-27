@@ -1270,6 +1270,101 @@ func TestAToolCallStartFlushedAtTheCutIsNotPublished(t *testing.T) {
 	wantContains(t, body, "stream_truncated", "the client was not told the turn was cut")
 }
 
+// A cut right after a high surrogate's escape is a cut: the low surrogate's
+// escape would have followed. A high surrogate followed by anything else is
+// the upstream's doing and stays a violation.
+func TestACutBetweenSurrogateEscapesStillBills(t *testing.T) {
+	for name, probe := range map[string]struct {
+		tail string
+		cut  bool
+	}{
+		"cut after the high surrogate":      {tail: `data: {"id":"chatcmpl-1","object":"\ud83d`, cut: true},
+		"cut inside the low surrogate":      {tail: `data: {"id":"chatcmpl-1","object":"\ud83d\ude`, cut: true},
+		"high surrogate followed by a word": {tail: `data: {"id":"chatcmpl-1","object":"\ud83dabc"}`, cut: false},
+	} {
+		engine := NewBuiltinEngine()
+		requested := true
+		stream, err := engine.NewStream(llmprotocol.OpenAIChatV1, llmprotocol.OpenAIChatV1,
+			llmprotocol.StreamContext{
+				Context: t.Context(), Options: llmprotocol.StreamOptions{IncludeUsage: &requested},
+			})
+		requireNoError(t, err)
+		_, _, _, err = stream.Push([]byte(truncatedUpstreamChunk(llmprotocol.OpenAIChatV1)))
+		requireNoError(t, err)
+		_, _, _, err = stream.Push([]byte(probe.tail))
+		requireNoError(t, err, "%s: refused before the cut", name)
+		stream.SetTruncationUsage(estimatedTruncationUsage(), llmprotocol.UsageSourceStreamEstimate)
+		stream.SetTruncationCause(llmprotocol.TruncationDeadline)
+		terminal, _, _, _ := stream.Finalize(llmprotocol.NewError(
+			llmprotocol.ErrorUpstreamTimeout, "stream_truncated", "deadline", nil))
+		body := string(joinFrames(terminal))
+		if probe.cut {
+			wantContains(t, body, `"finish_reason":"length"`, "%s: the cut was taken for a violation", name)
+			wantContains(t, body, `"completion_tokens":268`, "%s: the count was lost", name)
+		} else {
+			wantContains(t, body, "invalid_upstream_unicode", "%s: a violation was passed off as a cut", name)
+			wantNotContains(t, body, `"finish_reason":"length"`, "%s: a malformed stream was presented as a truncation", name)
+		}
+	}
+}
+
+// An image whose progress had already said completed closes as completed when
+// only its item's close was cut off: a failed close would contradict the
+// progress the client holds, and this codec's own decoder refuses that.
+func TestAnImageCompletedBeforeTheCutClosesAsCompleted(t *testing.T) {
+	engine := NewBuiltinEngine()
+	stream, err := engine.NewStream(llmprotocol.OpenAIResponsesV1, llmprotocol.OpenAIResponsesV1,
+		llmprotocol.StreamContext{Context: t.Context()})
+	requireNoError(t, err)
+	var frames [][]byte
+	for _, chunk := range []string{
+		"event: response.created\n" + `data: {"type":"response.created","sequence_number":0,` +
+			`"response":{"id":"resp_1","object":"response","created_at":0,"model":"m","status":"in_progress","output":[]}}` + "\n\n",
+		"event: response.output_item.added\n" + `data: {"type":"response.output_item.added","sequence_number":1,"output_index":0,` +
+			`"item":{"type":"image_generation_call","id":"ig_1","status":"in_progress","result":null}}` + "\n\n",
+		"event: response.image_generation_call.completed\n" + `data: {"type":"response.image_generation_call.completed",` +
+			`"sequence_number":2,"item_id":"ig_1","output_index":0}` + "\n\n",
+	} {
+		pushed, _, _, pushErr := stream.Push([]byte(chunk))
+		requireNoError(t, pushErr)
+		frames = append(frames, pushed...)
+	}
+	stream.SetTruncationUsage(estimatedTruncationUsage(), llmprotocol.UsageSourceStreamEstimate)
+	stream.SetTruncationCause(llmprotocol.TruncationDeadline)
+	terminal, _, _, err := stream.Finalize(llmprotocol.NewError(
+		llmprotocol.ErrorUpstreamTimeout, "stream_truncated", "deadline", nil))
+	requireNoError(t, err, "a completed image whose close was cut off turned the cut into an error")
+
+	body := string(joinFrames(append(frames, terminal...)))
+	wantContains(t, body, `"type":"response.incomplete"`)
+	wantContains(t, body, `"status":"completed","type":"image_generation_call"`, "the item contradicted its own progress")
+	readback, err := engine.NewStream(llmprotocol.OpenAIResponsesV1, llmprotocol.OpenAIResponsesV1,
+		llmprotocol.StreamContext{Context: t.Context()})
+	requireNoError(t, err)
+	_, _, _, err = readback.Push([]byte(body))
+	requireNoError(t, err, "this codec emitted a stream it cannot itself read")
+}
+
+// An item that only materializes when it completes is output once the target
+// writes it. A redacted thinking block becomes an encrypted reasoning item
+// for a Responses client, and a cut after it closes the turn rather than
+// ending on the error reserved for a turn that delivered nothing.
+func TestAnItemMaterializedAtCompletionIsPublishedOutput(t *testing.T) {
+	engine := NewBuiltinEngine()
+	stream, err := engine.NewStream(llmprotocol.AnthropicMessagesV1, llmprotocol.OpenAIResponsesV1,
+		llmprotocol.StreamContext{Context: t.Context()})
+	requireNoError(t, err)
+	_, _, _, err = stream.Push([]byte(
+		"event: message_start\n" +
+			`data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant",` +
+			`"model":"m","content":[],"stop_reason":null,"usage":{"input_tokens":37,"output_tokens":1}}}` + "\n\n" +
+			"event: content_block_start\n" +
+			`data: {"type":"content_block_start","index":0,"content_block":{"type":"redacted_thinking","data":"RVJSUkVEQUNURUQ="}}` + "\n\n" +
+			"event: content_block_stop\n" + `data: {"type":"content_block_stop","index":0}` + "\n\n"))
+	requireNoError(t, err)
+	wantTrue(t, stream.OutputPublished(), "an item the target wrote at completion did not count as output")
+}
+
 // The drop that cannot be helped is loud.
 //
 // Chat omits its usage-only chunk unless the client requested it, so a cut
