@@ -442,6 +442,12 @@ data: [DONE]
   ends in the error frame instead (`code: stream_truncated`,
   `stream_idle_timeout`, `stream_first_content_timeout`, or
   `standard_resend_body_cut`). A usage of zeros is never written.
+- A turn the model had already finished -- its `finish_reason` and usage
+  were sent, and only the connection was then cut -- states the stop the
+  model reached rather than `length`, with its count. The one exception: when
+  that client did not request the usage chunk, rewriting the terminal would
+  carry no count and would cost the client the error that names what broke,
+  so the error frame is kept.
 
 **Responses** ends with `response.incomplete`, whose `incomplete_details.reason`
 is `max_output_tokens`, one of the values the OpenAI SDKs recognise; the
