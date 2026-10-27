@@ -155,8 +155,13 @@ func TestResponsesTruncationWritesIncomplete(t *testing.T) {
 	wantNotContains(t, body, `"type":"error"`)
 	wantNotContains(t, body, "response.failed")
 
-	// The item the cut landed in is closed, so the terminal states a resource
-	// whose lifecycle is whole and keeps the text the client was streamed.
+	// The item the cut landed in is closed as incomplete -- the turn ended in
+	// the middle of it -- so the terminal states a resource whose lifecycle
+	// is whole, says so, and keeps the text the client was streamed.
+	wantContains(t, body, `"role":"assistant","status":"incomplete","type":"message"`,
+		"the item the cut landed in claimed to be complete")
+	wantNotContains(t, body, `"status":"completed","type":"message"`,
+		"partial text was presented as a finished item")
 	// This terminal follows the completion lifecycle, where an open item is a
 	// lifecycle error -- which this codec's own decoder refuses, so a stream it
 	// emits and cannot read back is the clearest statement that it is invalid.
@@ -761,6 +766,77 @@ func TestACountFlushedAtTheCutStillBills(t *testing.T) {
 	body := string(joinFrames(append(served, terminal...)))
 	wantContains(t, body, `"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}`,
 		"a settlement flushed at the cut was replaced by the estimate")
+}
+
+// A Responses completion held back pending a clean end of stream is a fresh
+// settlement, unlike Chat's sentinel: the provider's final count is on the
+// resource itself. A transport cut after it keeps that count, and does not
+// restate it from the estimate as if it were a snapshot.
+func TestAHeldResponsesCompletionIsASettlement(t *testing.T) {
+	engine := NewBuiltinEngine()
+	stream, err := engine.NewStream(llmprotocol.OpenAIResponsesV1, llmprotocol.OpenAIResponsesV1,
+		llmprotocol.StreamContext{Context: t.Context()})
+	requireNoError(t, err)
+
+	item := `{"content":[{"annotations":[],"text":"ninety-one is","type":"output_text"}],"id":"item_1",` +
+		`"role":"assistant","status":"completed","type":"message"}`
+	var frames [][]byte
+	for _, chunk := range []string{
+		truncatedUpstreamChunk(llmprotocol.OpenAIResponsesV1),
+		"event: response.output_text.done\n" + `data: {"type":"response.output_text.done","sequence_number":4,` +
+			`"item_id":"item_1","output_index":0,"content_index":0,"text":"ninety-one is"}` + "\n\n",
+		"event: response.content_part.done\n" + `data: {"type":"response.content_part.done","sequence_number":5,` +
+			`"item_id":"item_1","output_index":0,"content_index":0,"part":{"annotations":[],"text":"ninety-one is","type":"output_text"}}` + "\n\n",
+		"event: response.output_item.done\n" + `data: {"type":"response.output_item.done","sequence_number":6,` +
+			`"output_index":0,"item":` + item + `}` + "\n\n",
+		"event: response.completed\n" + `data: {"type":"response.completed","sequence_number":7,"response":{"id":"resp_1",` +
+			`"object":"response","created_at":0,"model":"m","status":"completed","output":[` + item + `],` +
+			`"usage":{"input_tokens":10,"output_tokens":5,"total_tokens":15}}}` + "\n\n",
+	} {
+		pushed, _, _, pushErr := stream.Push([]byte(chunk))
+		requireNoError(t, pushErr)
+		frames = append(frames, pushed...)
+	}
+	// The completion is held pending a clean end of stream; the body is cut.
+	stream.SetTruncationUsage(estimatedTruncationUsage(), llmprotocol.UsageSourceStreamEstimate)
+	stream.SetTruncationCause(llmprotocol.TruncationTransport)
+	terminal, _, _, err := stream.Finalize(llmprotocol.NewError(
+		llmprotocol.ErrorUpstreamUnavailable, "standard_resend_body_cut", "the body was cut", nil))
+	requireNoError(t, err)
+
+	body := string(joinFrames(append(frames, terminal...)))
+	wantContains(t, body, `"output_tokens":5`, "the provider's settlement was restated from the estimate")
+	wantNotContains(t, body, `"output_tokens":268`, "an estimate replaced a settlement")
+}
+
+// A settlement flushed at the cut reaches a Messages client too. The Messages
+// encoder used to write the count the caller installed before finalization,
+// so a usage frame cut off from its blank line was ignored and the client
+// billed from the estimate.
+func TestASettlementFlushedAtTheCutReachesAMessagesClient(t *testing.T) {
+	engine := NewBuiltinEngine()
+	stream, err := engine.NewStream(llmprotocol.AnthropicMessagesV1, llmprotocol.AnthropicMessagesV1,
+		llmprotocol.StreamContext{Context: t.Context()})
+	requireNoError(t, err)
+
+	served, _, _, err := stream.Push([]byte(truncatedUpstreamChunk(llmprotocol.AnthropicMessagesV1)))
+	requireNoError(t, err)
+	// The provider's final count, cut off from its blank line.
+	_, _, _, err = stream.Push([]byte("event: content_block_stop\n" + `data: {"type":"content_block_stop","index":0}` +
+		"\n\nevent: message_delta\n" +
+		`data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":500}}` + "\n"))
+	requireNoError(t, err)
+
+	stream.SetTruncationUsage(estimatedTruncationUsage(), llmprotocol.UsageSourceStreamEstimate)
+	stream.SetTruncationCause(llmprotocol.TruncationTransport)
+	terminal, _, _, err := stream.Finalize(llmprotocol.NewError(
+		llmprotocol.ErrorUpstreamUnavailable, "standard_resend_body_cut", "the body was cut", nil))
+	requireNoError(t, err)
+
+	body := string(joinFrames(append(served, terminal...)))
+	wantContains(t, body, `"output_tokens":500`, "the settlement flushed at the cut was ignored")
+	wantNotContains(t, body, `"output_tokens":268`, "the client was billed from the estimate")
+	wantContains(t, body, `"usage_source":"stream_estimate"`)
 }
 
 // The drop that cannot be helped is loud.

@@ -55,6 +55,19 @@ func outputDelta(event llmprotocol.Event) bool {
 	return false
 }
 
+// sameUsageTotals reports whether two counts state the same totals, so a
+// repeat of a statement can be told from a new one.
+func sameUsageTotals(left, right llmprotocol.Usage) bool {
+	same := func(a, b llmprotocol.TokenCount) bool {
+		if a.Value == nil || b.Value == nil {
+			return a.Value == nil && b.Value == nil
+		}
+		return *a.Value == *b.Value
+	}
+	return same(left.InputTotal, right.InputTotal) && same(left.OutputTotal, right.OutputTotal) &&
+		same(left.Total, right.Total)
+}
+
 // naturalStop reports a stop the model reached on its own, as opposed to one
 // naming a failure or a stop nothing has stated yet.
 func naturalStop(stop llmprotocol.StopReason) bool {
@@ -200,13 +213,20 @@ func (engine *StreamEngine) transportFailureEvents(
 		}
 		if engine.pendingCompletion.Usage != nil &&
 			engine.pendingCompletion.Usage.State == llmprotocol.UsageAvailable {
+			// Whether the completion's count is a fresh statement depends on
+			// the format. A Chat [DONE] completion carries the usage the stream
+			// had accumulated, whatever its age; a Responses response.completed
+			// carries the provider's final count on the resource itself. The
+			// difference is visible in the numbers: a count that repeats the
+			// last statement is a carry-forward, and whether output ran past
+			// that statement is left exactly as it was; a count that says
+			// something new is a settlement, after everything the turn
+			// generated.
 			stated := *engine.pendingCompletion.Usage
+			if engine.statedUsage == nil || !sameUsageTotals(*engine.statedUsage, stated) {
+				engine.outputSinceUsage = false
+			}
 			engine.statedUsage = &stated
-			// Not a fresh statement: a Chat completion carries the usage the
-			// stream had accumulated, whatever its age, so whether output ran
-			// past the last real statement is left exactly as it was. A usage
-			// the upstream stated on its final chunk arrived as its own event
-			// and already cleared the flag.
 		}
 	}
 	engine.pendingCompletion = nil
