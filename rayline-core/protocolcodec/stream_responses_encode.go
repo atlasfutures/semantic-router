@@ -355,12 +355,11 @@ func (encoder *responsesStreamEncoder) encodeResponsesTruncation(
 		// is what this turn's count is.
 		truncated.Usage = &llmprotocol.Usage{State: llmprotocol.UsageUnavailable}
 	}
-	// A search the upstream asked for but never answered is still part of what
-	// the turn did, and the completion path flushes those before its terminal.
-	frames, err := encoder.flushPendingAnthropicSearches(truncated)
-	if err != nil {
-		return nil, nil, err
-	}
+	// A search the upstream asked for but never answered stays open, as every
+	// web search open at the cut does (closeOpenResponsesItems): flushing it
+	// would state a done item still in progress, which this codec's own
+	// decoder refuses. The queries it carried are not output the client had.
+	var frames [][]byte
 	// The item the cut landed in is still open. This terminal follows the
 	// completion lifecycle, where an active item is a lifecycle error the
 	// decoder refuses (stream_item_incomplete), and the resource's output is
@@ -778,27 +777,37 @@ func (encoder *responsesStreamEncoder) encodeCompletedResponsesOutput(
 		return nil, nil, llmprotocol.NewError(llmprotocol.ErrorInternal, "tool_event_invalid", "tool event is invalid", nil)
 	}
 	index, id := encoder.outputIndexes[key], encoder.outputIDs[key]
+	arguments := event.ToolCall.Arguments
+	if encoder.closingAtCut && arguments == "" {
+		// A call the cut closed before any argument reached the client. The
+		// done event's value has to be a JSON object -- this codec's own
+		// decoder refuses "" there, and refuses an item closed without the
+		// event -- so the call states the empty object, which is what an
+		// Anthropic tool_use opens with, and the item says it is incomplete.
+		arguments = "{}"
+	}
 	done := responsesEventWire{
 		Type: "response.function_call_arguments.done", Sequence: encoder.nextWireSequence(),
 		ItemID: id, OutputIndex: responsesOutputIndex(index),
-		Name: event.ToolCall.Name, Arguments: event.ToolCall.Arguments,
+		Name: event.ToolCall.Name, Arguments: arguments,
 	}
 	doneFrame, err := encoder.encodeResponsesStreamFrame(done)
 	if err != nil {
 		return nil, nil, err
 	}
+	frames := [][]byte{doneFrame}
 	wire := responsesEventWire{
 		Type: "response.output_item.done", Sequence: encoder.nextWireSequence(), OutputIndex: responsesOutputIndex(index),
 	}
 	item := responsesItemWire{
 		Type: "function_call", ID: id, Status: responsesToolCallStatus(event.ToolCall),
-		CallID: event.ToolCall.ID, Name: event.ToolCall.Name, Arguments: event.ToolCall.Arguments,
+		CallID: event.ToolCall.ID, Name: event.ToolCall.Name, Arguments: arguments,
 		Namespace: event.ToolCall.Namespace,
 	}
 	wire.Item = marshalResponsesEventItem(item)
 	encoder.recordResponsesCompletedOutput(index, wire.Item)
 	frame, err := encoder.encodeResponsesStreamFrame(wire)
-	return [][]byte{doneFrame, frame}, nil, err
+	return append(frames, frame), nil, err
 }
 
 // responsesToolCallStatus is a function_call item's final status. A call the

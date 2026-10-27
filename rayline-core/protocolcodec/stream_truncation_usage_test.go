@@ -1088,6 +1088,124 @@ func TestAToolCallCutBeforeItsFirstDeltaStillCloses(t *testing.T) {
 	wantContains(t, body, `"name":"lookup"`)
 	wantContains(t, body, `"status":"incomplete","type":"function_call"`, "a cut call claimed to be whole")
 	wantNotContains(t, body, "tool_event_invalid")
+	// No arguments reached the client. The done event's value has to be a
+	// JSON object and an item cannot close without the event, so the call
+	// states the empty object its start opened with, marked incomplete.
+	wantContains(t, body, `"arguments":"{}"`, "a cut call with no arguments did not state the empty object")
+	readback, err := engine.NewStream(llmprotocol.OpenAIResponsesV1, llmprotocol.OpenAIResponsesV1,
+		llmprotocol.StreamContext{Context: t.Context()})
+	requireNoError(t, err)
+	_, _, _, err = readback.Push([]byte(body))
+	requireNoError(t, err, "this codec emitted a cut-call stream it cannot itself read")
+}
+
+// An item completed only at the cut is not published either. A
+// response.output_item.done cut off from its blank line can carry what nobody
+// has seen -- here a call's whole arguments -- and the count was taken before
+// it; the cut's own closer states the item as what had reached the client.
+func TestACompletionFlushedAtTheCutDoesNotPublishUnseenOutput(t *testing.T) {
+	engine := NewBuiltinEngine()
+	stream, err := engine.NewStream(llmprotocol.OpenAIResponsesV1, llmprotocol.OpenAIResponsesV1,
+		llmprotocol.StreamContext{Context: t.Context()})
+	requireNoError(t, err)
+
+	var served [][]byte
+	for _, chunk := range []string{
+		"event: response.created\n" + `data: {"type":"response.created","sequence_number":0,` +
+			`"response":{"id":"resp_1","object":"response","created_at":0,"model":"m","status":"in_progress","output":[]}}` + "\n\n",
+		"event: response.output_item.added\n" + `data: {"type":"response.output_item.added","sequence_number":1,"output_index":0,` +
+			`"item":{"type":"function_call","id":"fc_1","call_id":"call_1","name":"lookup","arguments":"","status":"in_progress"}}` + "\n\n",
+		// The whole call arrives in the done event, cut off from its blank line.
+		"event: response.function_call_arguments.done\n" + `data: {"type":"response.function_call_arguments.done","sequence_number":2,` +
+			`"item_id":"fc_1","output_index":0,"name":"lookup","arguments":"{\"q\":\"UNSEEN ARGUMENTS\"}"}` + "\n",
+	} {
+		pushed, _, _, pushErr := stream.Push([]byte(chunk))
+		requireNoError(t, pushErr)
+		served = append(served, pushed...)
+	}
+	stream.SetTruncationUsage(estimatedTruncationUsage(), llmprotocol.UsageSourceStreamEstimate)
+	stream.SetTruncationCause(llmprotocol.TruncationDeadline)
+	terminal, _, _, err := stream.Finalize(llmprotocol.NewError(
+		llmprotocol.ErrorUpstreamTimeout, "stream_truncated", "deadline", nil))
+	requireNoError(t, err)
+
+	body := string(joinFrames(append(served, terminal...)))
+	wantNotContains(t, body, "UNSEEN ARGUMENTS", "output decoded at the cut reached the client unbilled")
+	wantContains(t, body, `"type":"response.incomplete"`)
+	wantContains(t, body, `"status":"incomplete","type":"function_call"`, "the call was not closed as what had reached the client")
+}
+
+// A cut before any output, in the middle of the first frame, is still the
+// caller's cut. There is no count to publish, so the terminal is the error --
+// but the caller's error, naming the cut, not the fragment's.
+func TestAPreOutputFragmentIsStillTheCallersCut(t *testing.T) {
+	engine := NewBuiltinEngine()
+	stream, err := engine.NewStream(llmprotocol.OpenAIChatV1, llmprotocol.OpenAIChatV1,
+		llmprotocol.StreamContext{Context: t.Context()})
+	requireNoError(t, err)
+	_, _, _, err = stream.Push([]byte(`data: {"id":"chatcmpl-1","object":"chat.completion.chu`))
+	requireNoError(t, err)
+	// The caller cut the turn and says so; it has nothing to count.
+	stream.SetTruncationCause(llmprotocol.TruncationDeadline)
+	terminal, _, _, err := stream.Finalize(llmprotocol.NewError(
+		llmprotocol.ErrorUpstreamTimeout, "stream_truncated", "the router ended this stream", nil))
+	requireNoError(t, err, "the fragment outranked the caller's cut")
+
+	body := string(joinFrames(terminal))
+	wantContains(t, body, "stream_truncated", "the client was not told the turn was cut")
+	wantNotContains(t, body, "invalid_upstream_json", "the fragment became the client's answer")
+	wantNotContains(t, body, `"finish_reason":"length"`, "a turn that delivered nothing was closed as a length stop")
+	wantNotContains(t, body, `"usage"`)
+}
+
+// A provider's web search still pending at the cut stays open. Flushing it
+// would state a done item still in progress, which this codec's own decoder
+// refuses; it is left as every web search open at the cut is, and the
+// terminal still arrives with its count and reads back.
+func TestAPendingWebSearchAtTheCutStaysOpen(t *testing.T) {
+	engine := NewBuiltinEngine()
+	stream, err := engine.NewStream(llmprotocol.AnthropicMessagesV1, llmprotocol.OpenAIResponsesV1,
+		llmprotocol.StreamContext{Context: t.Context()})
+	requireNoError(t, err)
+
+	served, _, _, err := stream.Push([]byte(
+		"event: message_start\n" +
+			`data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant",` +
+			`"model":"m","content":[],"stop_reason":null,"usage":{"input_tokens":5,"output_tokens":1}}}` + "\n\n" +
+			"event: content_block_start\n" +
+			`data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}` + "\n\n" +
+			"event: content_block_delta\n" +
+			`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Let me check."}}` + "\n\n" +
+			"event: content_block_stop\n" + `data: {"type":"content_block_stop","index":0}` + "\n\n" +
+			// The search is requested; its result never arrives.
+			"event: content_block_start\n" +
+			`data: {"type":"content_block_start","index":1,"content_block":{"type":"server_tool_use","id":"srvtoolu_1","name":"web_search","input":{}}}` + "\n\n" +
+			"event: content_block_delta\n" +
+			`data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"query\":\"go releases\"}"}}` + "\n\n" +
+			"event: content_block_stop\n" + `data: {"type":"content_block_stop","index":1}` + "\n\n"))
+	requireNoError(t, err)
+	stream.SetTruncationUsage(estimatedTruncationUsage(), llmprotocol.UsageSourceStreamEstimate)
+	stream.SetTruncationCause(llmprotocol.TruncationDeadline)
+	terminal, _, _, err := stream.Finalize(llmprotocol.NewError(
+		llmprotocol.ErrorUpstreamTimeout, "stream_truncated", "deadline", nil))
+	requireNoError(t, err, "a pending web search turned the cut into an error")
+
+	body := string(joinFrames(append(served, terminal...)))
+	wantContains(t, body, `"type":"response.incomplete"`, "the turn did not terminate")
+	wantContains(t, body, `"output_tokens":268`, "the count was dropped")
+	wantNotContains(t, body, `"type":"web_search_call","status":"in_progress"}`+"\n", "a pending search was stated done")
+	if strings.Contains(body, "response.output_item.done") && strings.Contains(body, `"type":"web_search_call"`) {
+		for _, frame := range strings.Split(body, "\n\n") {
+			if strings.Contains(frame, "response.output_item.done") && strings.Contains(frame, "web_search_call") {
+				t.Fatalf("a pending web search was stated done at the cut:\n%s", frame)
+			}
+		}
+	}
+	readback, err := engine.NewStream(llmprotocol.OpenAIResponsesV1, llmprotocol.OpenAIResponsesV1,
+		llmprotocol.StreamContext{Context: t.Context()})
+	requireNoError(t, err)
+	_, _, _, err = readback.Push([]byte(body))
+	requireNoError(t, err, "this codec emitted a stream it cannot itself read")
 }
 
 // The drop that cannot be helped is loud.
