@@ -132,7 +132,8 @@ func TestPolicyTurnLogsOneTurnTimingLine(t *testing.T) {
 	}
 	fields = oneTurnTimingEvent(t, logs)
 	requireTurnTimingFields(t, fields, "failure_class", "http_ms", "first_byte_ms", "policy_ms", "parse_ms", "total_ms")
-	if fields["outcome"] != "failed" || fields["surface"] != raylineARCTurnSurfaceHosted {
+	if fields["outcome"] != "failed" || fields["surface"] != raylineARCTurnSurfaceHosted ||
+		fields["failure_class"] == "selector" || fields["failure_class"] == "" {
 		t.Fatalf("fields = %v", fields)
 	}
 	if _, present := fields["session_action"]; present {

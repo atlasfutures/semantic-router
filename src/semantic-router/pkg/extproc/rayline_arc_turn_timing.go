@@ -1,6 +1,7 @@
 package extproc
 
 import (
+	"errors"
 	"time"
 
 	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
@@ -52,7 +53,10 @@ func emitRaylineARCTurnTiming(ctx *RequestContext, algorithm *config.AlgorithmCo
 	fields["outcome"] = "selected"
 	if err != nil {
 		fields["outcome"] = "failed"
-		if algorithm != nil {
+		var failure *modelSelectionFailure
+		if errors.As(err, &failure) {
+			fields["failure_class"] = failure.class
+		} else if algorithm != nil {
 			fields["failure_class"] = authoritativeSelectionFailureClass(algorithm, err)
 		}
 	}
