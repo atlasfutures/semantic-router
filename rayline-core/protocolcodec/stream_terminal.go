@@ -25,7 +25,7 @@ func (engine *StreamEngine) recordTerminalEvent(event llmprotocol.Event) {
 	// the transport is left to go wrong after that, and a cut there must not
 	// restate a finished answer as one stopped at a limit
 	// (markTruncatedTerminal).
-	if event.Type == llmprotocol.EventOutputItemCompleted && naturalStop(event.StopReason) {
+	if event.Type != llmprotocol.EventResponseFailed && naturalStop(event.StopReason) {
 		engine.servedStop = event.StopReason
 	}
 	// Every count the stream states passes through here. The terminal the
@@ -270,10 +270,20 @@ func (engine *StreamEngine) withholdOutputFlushedAtCut(
 			withheld++
 			continue
 		}
-		// A terminal the decoder built carries the usage it accumulated, not
-		// a fresh statement; recording it here would make a snapshot look
-		// settled. The terminal is reconciled on its own, after this.
-		if event.Type != llmprotocol.EventResponseFailed && event.Type != llmprotocol.EventResponseCompleted {
+		// A completion flushed here is one the transport cut off from its
+		// blank line: the provider finished and said so. It is held exactly
+		// as deferSuccessfulTerminal holds one, so transportFailureEvents
+		// harvests what it established -- its count, its stop, its tier --
+		// before the cut's terminal is built. A failed terminal the decoder
+		// built carries the usage it accumulated, not a fresh statement;
+		// recording it here would make a snapshot look settled, so it is
+		// reconciled on its own, after this.
+		if event.Type == llmprotocol.EventResponseCompleted {
+			completion := event
+			engine.pendingCompletion = &completion
+			continue
+		}
+		if event.Type != llmprotocol.EventResponseFailed {
 			engine.recordTerminalEvent(event)
 		}
 		kept = append(kept, event)

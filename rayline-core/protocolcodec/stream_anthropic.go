@@ -430,7 +430,12 @@ func (decoder *anthropicStreamDecoder) decodeAnthropicMessageDelta(
 		return nil, diagnostics, nil
 	}
 	usage := decodeAnthropicMessageDeltaUsage(*wire.Usage)
-	events, eventDiagnostics, err := decoder.emitAnthropicEvent(llmprotocol.Event{Type: llmprotocol.EventUsageUpdated, Usage: &usage})
+	// The delta states the stop the model reached beside its count. The stop
+	// travels on the event, so a turn cut between this delta and message_stop
+	// is still known to have finished (StreamEngine.recordTerminalEvent).
+	events, eventDiagnostics, err := decoder.emitAnthropicEvent(llmprotocol.Event{
+		Type: llmprotocol.EventUsageUpdated, Usage: &usage, StopReason: decoder.stop,
+	})
 	return events, appendDiagnostics(diagnostics, eventDiagnostics, decoder.policy.Limits.Diagnostics), err
 }
 
