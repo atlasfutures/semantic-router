@@ -57,6 +57,13 @@ func clientVisibleOutput(event llmprotocol.Event) bool {
 	if event.Type == llmprotocol.EventToolCallDelta && event.ToolCall != nil {
 		return true
 	}
+	// An item that only materializes when it completes -- a redacted
+	// thinking block carried as an encrypted reasoning item, a provider's
+	// whole web-search result -- is output the moment the target writes it;
+	// again the target decides, by writing a frame or not.
+	if event.Type == llmprotocol.EventOutputItemCompleted && event.Content != nil {
+		return true
+	}
 	if event.Type == llmprotocol.EventOutputTextDelta && event.Content != nil && len(event.Content.Citations) > 0 {
 		return true
 	}
