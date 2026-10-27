@@ -547,6 +547,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	// The offer below can still lift the tool-loop hold, so its outcome is
 	// logged once, when the turn's selection ends.
 	defer func() { hold.log(arcContext) }()
+	turnTiming, prepareStarted := raylinearc.TurnTimingFrom(ctx), time.Now()
 	scorer, ok := armed.scorer.(*policyServiceScorer)
 	if !ok {
 		return nil, arcSelectionFailure("policy_scorer")
@@ -818,6 +819,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	}
 	// Every call of this turn, busy retries and re-asks included, goes to
 	// the one replica the binding settles on.
+	turnTiming.Set(raylinearc.SpanDecidePrepare, time.Since(prepareStarted))
 	decider, replicaBinding := armed.policyDeciderFor(arcContext.EpisodeIDHash, state)
 	sessionBinding := armed.policySessionBindingFor(state, sideCall)
 	if sessionBinding != nil {
@@ -970,6 +972,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		return nil, boundedARCEncoderFailure(shed.err)
 	}
 	latency := selector.now().Sub(started)
+	turnTiming.Set(raylinearc.SpanPolicy, latency)
 	if err != nil {
 		class := "transport"
 		var failure *raylinearc.PolicyServiceError
@@ -1103,6 +1106,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	}
 	result := selector.selectionResult(armed, selCtx, arcContext, state, encoded, decision, encodeLatency)
 	result.RaylineARC.PolicyLatency = latency
+	turnTiming.SetSessionAction(result.RaylineARC.SessionAction)
 	result.RaylineARC.EncoderLatencyUnknown = response.TimingMillis.Encode == nil
 	result.RaylineARC.PolicyDecisionMode = decisionMode
 	if staging {

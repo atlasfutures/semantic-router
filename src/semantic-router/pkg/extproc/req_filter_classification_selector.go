@@ -7,6 +7,7 @@ import (
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
 
 const (
@@ -31,7 +32,10 @@ func (r *OpenAIRouter) selectModelFromCandidates(
 	selCtx *selection.SelectionContext,
 	algorithm *config.AlgorithmConfig,
 	ctx *RequestContext,
-) (*config.ModelRef, string, error) {
+) (selected *config.ModelRef, selectedMethod string, err error) {
+	if raylineARCSelection(algorithm) {
+		defer func() { emitRaylineARCTurnTiming(ctx, raylineARCTurnSurfaceHosted, "", algorithm, err) }()
+	}
 	defaultCandidate := firstValidCandidateModelRef(selCtx)
 	if defaultCandidate == nil {
 		return nil, "", selectionFailureForAlgorithm(algorithm, "no_candidate")
@@ -91,6 +95,9 @@ func (r *OpenAIRouter) selectWithSelector(
 	ctx *RequestContext,
 ) (*config.ModelRef, string, error) {
 	requestCtx := selectionRequestContext(ctx)
+	if ctx != nil && raylineARCSelection(algorithm) {
+		requestCtx = raylinearc.WithTurnTiming(requestCtx, ctx.RaylineARCTurnTiming)
+	}
 	selectionStart := time.Now()
 	result, err := selector.Select(requestCtx, selCtx)
 	selection.RecordSelectionDuration(

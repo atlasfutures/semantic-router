@@ -436,8 +436,12 @@ type RequestContext struct {
 	// ARC policy-service mode forwards its system, tools and messages so the
 	// service projects the conversation itself; nothing else reads it.
 	RaylineARCRawBody []byte
-	SemanticRequest   *llmprotocol.Request
-	SemanticResponse  *llmprotocol.Response
+	// RaylineARCTurnTiming collects the turn's cell-side spans for the
+	// rayline_arc_turn_timing line (rayline_arc_turn_timing.go); nil before
+	// the body arrives.
+	RaylineARCTurnTiming *raylinearc.TurnTiming
+	SemanticRequest      *llmprotocol.Request
+	SemanticResponse     *llmprotocol.Response
 	// UpstreamDecodedRemnant is the response the codec decoded and then
 	// refused. It exists only on a decode failure and is never served to a
 	// client: accounting reads it so a turn the Router could not use is still

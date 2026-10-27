@@ -12,6 +12,7 @@ import (
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/inflight"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/metrics"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/utils/entropy"
 )
 
@@ -32,6 +33,7 @@ func (r *OpenAIRouter) handleRequestBody(
 	ctx.ProcessingStartTime = time.Now()
 	requestBody := v.RequestBody.GetBody()
 	ctx.RaylineARCRawBody = requestBody
+	startRaylineARCTurnTiming(ctx, len(requestBody))
 	// A route lookup is answered here and never routed. It runs before the
 	// ingress codec because it discriminates its own wire format from the
 	// body, and before every routing side effect because there is no upstream
@@ -47,7 +49,9 @@ func (r *OpenAIRouter) handleRequestBody(
 		return routingRefusal, nil
 	}
 	ctx.RaylineARCRawBody = requestBody
+	parseStarted := time.Now()
 	request, earlyResponse := r.prepareProtocolRequest(requestBody, ctx)
+	ctx.RaylineARCTurnTiming.Set(raylinearc.SpanParse, time.Since(parseStarted))
 	if earlyResponse != nil {
 		return earlyResponse, nil
 	}

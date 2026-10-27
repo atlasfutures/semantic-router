@@ -35,6 +35,7 @@ import (
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/routerruntime"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
 
 // raylineRoutesAPIPath answers one question -- where should this request go --
@@ -329,7 +330,7 @@ func (r *OpenAIRouter) handleRaylineRoutesAPI(
 	// whatever context it is handed; the caller here is waiting on an answer,
 	// so the bound has to be imposed from outside.
 	lookupContext, cancel := context.WithTimeout(
-		r.raylineRoutesContext(ctx),
+		raylinearc.WithTurnTiming(r.raylineRoutesContext(ctx), raylineARCTurnTimingOf(ctx)),
 		settings.EffectiveDeadline(),
 	)
 	defer cancel()
@@ -353,6 +354,7 @@ func (r *OpenAIRouter) handleRaylineRoutesAPI(
 		lookupContext,
 		raylineRoutesConsultWithControls(body, routeID, episode, ephemeral, wireFormat, controls, ctx.Headers),
 	)
+	emitRaylineARCTurnTiming(ctx, raylineARCTurnSurfaceRoutes, routeID, nil, err)
 	if err != nil {
 		return r.raylineRoutesFailure(ctx, lookupContext, routeID, err)
 	}

@@ -372,7 +372,12 @@ func (service *raylineARCDecisionService) selectWorker(
 		service.router.finalizeRaylineARCAbort(requestContext, failure)
 		return selectedRoute{}, err
 	}
-	if err := commitDecisionOnlyEpisode(ctx, requestContext); err != nil {
+	commitStarted := time.Now()
+	err = commitDecisionOnlyEpisode(ctx, requestContext)
+	if requestContext.RaylineARCTransaction != nil {
+		requestContext.RaylineARCTurnTiming.Set(raylinearc.SpanEpisodeCommit, time.Since(commitStarted))
+	}
+	if err != nil {
 		return selectedRoute{}, err
 	}
 	return route, nil
@@ -700,10 +705,12 @@ func (service *raylineARCDecisionService) decisionOnlyRequestContext(
 			err,
 		)
 	}
+	turnTiming, parseStarted := raylinearc.TurnTimingFrom(ctx), time.Now()
 	decoded, envelope, _, err := engine.DecodeRequestForMutation(
 		wireFormat,
 		request.Body,
 	)
+	turnTiming.Set(raylinearc.SpanParse, time.Since(parseStarted))
 	if err != nil {
 		return nil, fmt.Errorf(
 			"%w: decision-only routing could not decode the consult body: %w",
@@ -735,6 +742,7 @@ func (service *raylineARCDecisionService) decisionOnlyRequestContext(
 	return &RequestContext{
 		Headers:              headers,
 		RaylineARCRawBody:    request.Body,
+		RaylineARCTurnTiming: turnTiming,
 		RequestID:            request.DecisionID,
 		SourceFormat:         wireFormat,
 		SemanticRequest:      &decoded,
