@@ -66,17 +66,21 @@ func (OpenAIChatCodec) NewEncoder(context llmprotocol.StreamContext, policy llmp
 // chatChunkWire always writes choices: the include_usage chunk carries
 // "choices": [] beside usage (encodeChatStreamFrame), as OpenAI's does.
 type chatChunkWire struct {
-	ID                string                    `json:"id"`
-	Object            string                    `json:"object,omitempty"`
-	Created           int64                     `json:"created,omitempty"`
-	Model             string                    `json:"model,omitempty"`
-	Choices           []chatChunkChoiceWire     `json:"choices"`
-	Usage             *chatUsageWire            `json:"usage,omitempty"`
-	Provider          *string                   `json:"provider,omitempty"`
-	Moderation        json.RawMessage           `json:"moderation,omitempty"`
-	Obfuscation       string                    `json:"obfuscation,omitempty"`
-	Error             *chatErrorWire            `json:"error,omitempty"`
-	Rayline           *raylineChunkWire         `json:"rayline,omitempty"`
+	ID          string                `json:"id"`
+	Object      string                `json:"object,omitempty"`
+	Created     int64                 `json:"created,omitempty"`
+	Model       string                `json:"model,omitempty"`
+	Choices     []chatChunkChoiceWire `json:"choices"`
+	Usage       *chatUsageWire        `json:"usage,omitempty"`
+	Provider    *string               `json:"provider,omitempty"`
+	Moderation  json.RawMessage       `json:"moderation,omitempty"`
+	Obfuscation string                `json:"obfuscation,omitempty"`
+	Error       *chatErrorWire        `json:"error,omitempty"`
+	// Rayline is this Router's own member (stream_rayline_truncated.go). It
+	// is raw on the way in so that whatever an upstream puts under the name
+	// -- a boolean, a number, a shape of its own -- is carried as bytes and
+	// discarded, never decoded and never a reason to fail the stream.
+	Rayline           json.RawMessage           `json:"rayline,omitempty"`
 	ServiceTier       *chatServiceTierWire      `json:"service_tier,omitempty"`
 	SystemFingerprint *string                   `json:"system_fingerprint,omitempty"`
 	PromptLogprobs    *chatNullOnlyWire         `json:"prompt_logprobs,omitempty"`
@@ -898,7 +902,11 @@ func (encoder *chatStreamEncoder) encodeChatTerminal(
 		// cannot be sent once the stream has started, and a client reading the
 		// stop has the cause in the same frame rather than having to correlate
 		// two.
-		finishChunk.Rayline = &raylineChunkWire{Truncated: truncated}
+		member, err := json.Marshal(raylineChunkWire{Truncated: truncated})
+		if err != nil {
+			return nil, nil, err
+		}
+		finishChunk.Rayline = member
 	}
 	finishFrame, err := encodeChatStreamFrame(encoder.context, finishChunk)
 	if err != nil {
