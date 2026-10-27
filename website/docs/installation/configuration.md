@@ -442,12 +442,14 @@ data: [DONE]
   ends in the error frame instead (`code: stream_truncated`,
   `stream_idle_timeout`, `stream_first_content_timeout`, or
   `standard_resend_body_cut`). A usage of zeros is never written.
-- A turn the model had already finished -- its `finish_reason` and usage
-  were sent, and only the connection was then cut -- states the stop the
-  model reached rather than `length`, with its count. The one exception: when
-  that client did not request the usage chunk, rewriting the terminal would
-  carry no count and would cost the client the error that names what broke,
-  so the error frame is kept.
+- A turn the model had already finished -- its `finish_reason` was sent, and
+  only the connection was then cut -- states the stop the model reached
+  rather than `length`. The count is the provider's where the stream stated
+  one before the cut; where the cut fell between the stop and the usage
+  chunk, the count is the Router's estimate, and the usage row says
+  `stream_estimate`. The one exception: when that client did not request the
+  usage chunk, rewriting the terminal would carry no count and would cost the
+  client the error that names what broke, so the error frame is kept.
 
 **Responses** ends with `response.incomplete`, whose `incomplete_details.reason`
 is `max_output_tokens`, one of the values the OpenAI SDKs recognise; the
@@ -458,10 +460,10 @@ cut is not closed -- those items close only with state the upstream sends on
 completion, which a cut turn does not have -- so no `output_item.done` arrives
 for it and the terminal resource omits it from `output`. No `rayline` member
 is written: the resource states its own reason. As on Chat, a turn the model
-had already finished (its `response.completed` was received, or its final
-usage and stop were stated, and only the connection was then cut) ends with
-`response.completed` carrying the provider's own count, not with
-`response.incomplete`.
+had already finished -- its stop was stated, and only the connection was then
+cut -- ends with `response.completed`, not `response.incomplete`, carrying
+the provider's count where the stream stated one and the Router's estimate
+otherwise.
 
 **Messages** is unchanged: the `error` event carries `usage` and
 `usage_source: "stream_estimate"` beside the error object (see the API
