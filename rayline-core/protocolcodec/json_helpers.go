@@ -538,9 +538,21 @@ func consumeJSONObject(decoder *json.Decoder, depth, maximumDepth int) error {
 	}
 	closing, err := decoder.Token()
 	if err != nil || closing != json.Delim('}') {
-		return fmt.Errorf("unterminated object")
+		return unterminatedJSON("object", err)
 	}
 	return nil
+}
+
+// unterminatedJSON names a container the bytes did not close. When the bytes
+// simply stopped, the error says so by wrapping io.ErrUnexpectedEOF: that is
+// what a transport cut leaves behind, and a reader deciding whether a
+// fragment is a cut must be able to tell it from a closing token that was
+// wrong, which more bytes could never repair.
+func unterminatedJSON(container string, cause error) error {
+	if cause != nil && (errors.Is(cause, io.EOF) || errors.Is(cause, io.ErrUnexpectedEOF)) {
+		return fmt.Errorf("unterminated %s: %w", container, io.ErrUnexpectedEOF)
+	}
+	return fmt.Errorf("unterminated %s", container)
 }
 
 func consumeJSONArray(decoder *json.Decoder, depth, maximumDepth int) error {
@@ -551,7 +563,7 @@ func consumeJSONArray(decoder *json.Decoder, depth, maximumDepth int) error {
 	}
 	closing, err := decoder.Token()
 	if err != nil || closing != json.Delim(']') {
-		return fmt.Errorf("unterminated array")
+		return unterminatedJSON("array", err)
 	}
 	return nil
 }

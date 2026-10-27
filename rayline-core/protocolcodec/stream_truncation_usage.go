@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"strings"
 	"sync"
 
 	logging "github.com/atlasfutures/semantic-router/rayline-core/diagnostics"
@@ -68,25 +67,18 @@ func truncatedTrailingFragment(decodeErr error) bool {
 	if errors.As(decodeErr, &syntax) {
 		return false
 	}
+	// The bytes stopped: inside a value, inside an object or array
+	// (unterminatedJSON says so by wrapping the EOF), or inside a multibyte
+	// character (upstreamUTF8CutCode, which the validator tells apart from a
+	// byte that is simply invalid). Each is complete as far as it goes and
+	// would have been whole had the bytes kept coming. A closing token that
+	// was wrong, or a byte that was never valid, is the upstream's doing and
+	// carries no EOF, so it is not matched here.
 	if errors.Is(decodeErr, io.ErrUnexpectedEOF) || errors.Is(decodeErr, io.EOF) {
 		return true
 	}
-	// The structural checks name the same thing in their own words: an
-	// object or array the bytes stopped inside, or a multibyte character cut
-	// in half (upstreamUTF8CutCode, which the validator tells apart from a
-	// byte that is simply invalid). Each is complete as far as it goes and
-	// would have been whole had the bytes kept coming, which a syntax error
-	// never would.
-	message := decodeErr.Error()
-	for _, shape := range []string{
-		"unexpected EOF", "unexpected end of JSON input",
-		"unterminated object", "unterminated array", upstreamUTF8CutCode,
-	} {
-		if strings.Contains(message, shape) {
-			return true
-		}
-	}
-	return false
+	var protocolError *llmprotocol.ProtocolError
+	return errors.As(decodeErr, &protocolError) && protocolError.Code == upstreamUTF8CutCode
 }
 
 // truncationTerminalCarriesUsage reports whether this target's own terminal has
