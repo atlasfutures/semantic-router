@@ -100,3 +100,31 @@ func TestASnapshotThatWinsIsStillAnEstimate(t *testing.T) {
 		t.Fatalf("usage_source = %q: a count the turn ran past was presented as settled", got)
 	}
 }
+
+// A cut before any output reached the client ends on the error terminal even
+// when the upstream had already stated a count: Anthropic's message_start
+// prices the prompt before the first delta, and that count used to make the
+// cut look like a turn to close as a length stop.
+func TestACutBeforeAnyOutputKeepsTheErrorTerminalDespiteAStatedCount(t *testing.T) {
+	logs := captureLogs(t)
+	router := &OpenAIRouter{}
+	ctx := overrunningStreamContext(t)
+	ctx.SourceFormat = llmprotocol.OpenAIChatV1
+	ctx.TargetFormat = llmprotocol.AnthropicMessagesV1
+	ctx.SemanticRequest = streamUsageRequest()
+
+	// message_start with its count, then the deadline, with no delta between.
+	body := streamDeadlineResponseBody(t, router, ctx, anthropicMessageStart(37, 1))
+
+	if !bytes.Contains(body, []byte(`"code":"stream_truncated"`)) {
+		t.Fatalf("a cut before any output did not end on the error terminal:\n%s", body)
+	}
+	if bytes.Contains(body, []byte(`"finish_reason":"length"`)) || bytes.Contains(body, []byte("data: [DONE]")) {
+		t.Fatalf("a turn that delivered nothing was closed as a length stop:\n%s", body)
+	}
+	// The prompt the upstream priced still reaches the usage row.
+	fields := findLogEvent(t, logs, "llm_usage")
+	if got, _ := fields["prompt_tokens"].(int64); got != 37 {
+		t.Fatalf("prompt_tokens = %v, want the stated 37 on the row", fields["prompt_tokens"])
+	}
+}

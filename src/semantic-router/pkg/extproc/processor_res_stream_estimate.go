@@ -165,10 +165,18 @@ func (r *OpenAIRouter) attachTruncatedStreamUsage(ctx *RequestContext, cut *llmp
 	if ctx == nil || ctx.ProtocolResponseStream == nil {
 		return
 	}
+	if generatedTextBytes(ctx.SemanticStreamState) == 0 {
+		// No output reached the client, so there is no turn to close as one
+		// stopped at a limit: the client is told the error, as documented. A
+		// count the upstream stated before the cut (Anthropic's message_start
+		// prices the prompt before the first delta) is not lost -- the usage
+		// row still bills it -- but it does not rewrite the terminal.
+		return
+	}
 	usage := truncatedStreamUsage(ctx, invalidResponseTerminalUsage("stream_cut"))
 	if usage.invalid {
-		// Nothing was seen, so there is nothing to say. The turn is named as
-		// uncounted on the telemetry side instead.
+		// Nothing was counted, so there is nothing to say. The turn is named
+		// as uncounted on the telemetry side instead.
 		return
 	}
 	ctx.ProtocolResponseStream.SetTruncationUsage(
