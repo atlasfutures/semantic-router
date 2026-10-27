@@ -547,6 +547,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	// The offer below can still lift the tool-loop hold, so its outcome is
 	// logged once, when the turn's selection ends.
 	defer func() { hold.log(arcContext) }()
+	turnTiming, prepareStarted := raylinearc.TurnTimingFrom(ctx), time.Now()
 	scorer, ok := armed.scorer.(*policyServiceScorer)
 	if !ok {
 		return nil, arcSelectionFailure("policy_scorer")
@@ -818,6 +819,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	}
 	// Every call of this turn, busy retries and re-asks included, goes to
 	// the one replica the binding settles on.
+	turnTiming.Set(raylinearc.SpanDecidePrepare, time.Since(prepareStarted))
 	decider, replicaBinding := armed.policyDeciderFor(arcContext.EpisodeIDHash, state)
 	sessionBinding := armed.policySessionBindingFor(state, sideCall)
 	if sessionBinding != nil {
@@ -825,6 +827,8 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		defer sessionBinding.Release(ctx)
 	}
 	started := selector.now()
+	// The timing line keeps its own clock: selector.now is the selection's.
+	policyStarted := time.Now()
 	// A delta cell stages its strict main turns and sends a turn that
 	// extends the staged prefix as a delta, decided synchronously like any
 	// other turn (rayline_arc_policy_delta.go).
@@ -926,6 +930,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 					excluded: excluded, hard: hard, cellOut: loggedRoutes, turn: turn,
 					derivedModel: derived.model, derivedSource: derived.source,
 				})
+				turnTiming.Set(raylinearc.SpanPolicy, time.Since(policyStarted))
 				return nil, arcSelectionFailure("policy_no_available_action")
 			}
 			logRaylineARCDerivedHold(arcContext, derived, "re-ask")
@@ -934,6 +939,9 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 			response, err = decidePolicyThroughBusy(ctx, decider, request, scorer.busyWait, admit, withCacheContext)
 		}
 	}
+	// policy_ms is the turn's decide calls, retries and re-asks included,
+	// timed before any refusal below returns.
+	turnTiming.Set(raylinearc.SpanPolicy, time.Since(policyStarted))
 	// A refusal of the caller's routing.signals answers the service's own
 	// reason as its public code, whatever else the request carried.
 	if class := signalRefusalClass(err); class != "" {
@@ -1103,6 +1111,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	}
 	result := selector.selectionResult(armed, selCtx, arcContext, state, encoded, decision, encodeLatency)
 	result.RaylineARC.PolicyLatency = latency
+	turnTiming.SetSessionAction(result.RaylineARC.SessionAction)
 	result.RaylineARC.EncoderLatencyUnknown = response.TimingMillis.Encode == nil
 	result.RaylineARC.PolicyDecisionMode = decisionMode
 	if staging {

@@ -35,6 +35,7 @@ import (
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/routerruntime"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
 
 // raylineRoutesAPIPath answers one question -- where should this request go --
@@ -262,7 +263,7 @@ func requestPathFromContext(ctx *RequestContext) string {
 func (r *OpenAIRouter) handleRaylineRoutesAPI(
 	body []byte,
 	ctx *RequestContext,
-) *ext_proc.ProcessingResponse {
+) (response *ext_proc.ProcessingResponse) {
 	if !isRaylineRoutesRequest(ctx) {
 		return nil
 	}
@@ -275,6 +276,10 @@ func (r *OpenAIRouter) handleRaylineRoutesAPI(
 	if method := raylineRoutesHeader(ctx, ":method"); method != "" && method != "POST" {
 		return r.createRaylineRoutesError(ctx, 405, "invalid_request_error", "method not allowed")
 	}
+	// The lookup's one timing line, logged once its answer is built, so its
+	// outcome is the answer's status and the logging adds nothing to it.
+	routeID := ""
+	defer func() { emitRaylineARCRoutesTurnTiming(ctx, routeID, response) }()
 
 	settings := r.raylineRoutesConfig()
 	wireFormat, warnings, detail := readRaylineRoutesBody(body, r.raylineRoutesEncodesToolNames(), raylineRoutesHeader(ctx, raylineRoutesFormatHeader))
@@ -329,12 +334,12 @@ func (r *OpenAIRouter) handleRaylineRoutesAPI(
 	// whatever context it is handed; the caller here is waiting on an answer,
 	// so the bound has to be imposed from outside.
 	lookupContext, cancel := context.WithTimeout(
-		r.raylineRoutesContext(ctx),
+		raylinearc.WithTurnTiming(r.raylineRoutesContext(ctx), raylineARCTurnTimingOf(ctx)),
 		settings.EffectiveDeadline(),
 	)
 	defer cancel()
 
-	routeID := raylineRoutesRouteID(ctx)
+	routeID = raylineRoutesRouteID(ctx)
 	episode := raylineRoutesEpisodeIdentity(ctx)
 	// Ephemeral unless this cell keeps episodes and the caller named a
 	// conversation. Both halves are required: without the identity there is

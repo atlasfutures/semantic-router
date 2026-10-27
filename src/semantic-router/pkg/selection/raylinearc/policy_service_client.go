@@ -25,6 +25,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"regexp"
 	"strings"
@@ -397,15 +398,18 @@ func (client *PolicyServiceClient) Decide(
 	ctx context.Context,
 	request PolicyDecisionRequest,
 ) (*PolicyDecisionResponse, error) {
+	encodeStarted := time.Now()
 	payload, err := EncodePolicyDecisionRequest(request)
 	if err != nil {
 		return nil, &PolicyServiceError{Class: "request"}
 	}
-	body, err := client.do(ctx, http.MethodPost, "/v1/rayline/arc/policy/decide", payload)
+	body, err := client.doTimed(ctx, "decide", time.Since(encodeStarted), http.MethodPost, "/v1/rayline/arc/policy/decide", payload)
 	if err != nil {
 		return nil, err
 	}
+	decodeStarted := time.Now()
 	response, err := DecodePolicyDecisionResponse(body)
+	TurnTimingFrom(ctx).Set(SpanDecode, time.Since(decodeStarted))
 	if err != nil {
 		return nil, &PolicyServiceError{Class: "decode"}
 	}
@@ -419,11 +423,12 @@ func (client *PolicyServiceClient) Append(
 	ctx context.Context,
 	request PolicyAppendRequest,
 ) (*PolicyAppendResponse, error) {
+	encodeStarted := time.Now()
 	payload, err := EncodePolicyAppendRequest(request)
 	if err != nil {
 		return nil, &PolicyServiceError{Class: "request"}
 	}
-	body, err := client.do(ctx, http.MethodPost, "/v1/rayline/arc/policy/append", payload)
+	body, err := client.doTimed(ctx, "append", time.Since(encodeStarted), http.MethodPost, "/v1/rayline/arc/policy/append", payload)
 	if err != nil {
 		var failure *PolicyServiceError
 		if errors.As(err, &failure) && failure.Class == "status" &&
@@ -432,7 +437,9 @@ func (client *PolicyServiceClient) Append(
 		}
 		return nil, err
 	}
+	decodeStarted := time.Now()
 	response, err := DecodePolicyAppendResponse(body)
+	TurnTimingFrom(ctx).Set(SpanDecode, time.Since(decodeStarted))
 	if err != nil {
 		return nil, &PolicyServiceError{Class: "decode"}
 	}
@@ -445,6 +452,37 @@ func (client *PolicyServiceClient) do(
 	path string,
 	payload []byte,
 ) ([]byte, error) {
+	return client.doTimed(ctx, "", 0, method, path, payload)
+}
+
+// doTimed is do for a turn's decide or append: when the context carries the
+// turn's timing, the call's connection, upload, server and read spans are
+// recorded into it (rayline_arc_turn_timing). It changes nothing else.
+func (client *PolicyServiceClient) doTimed(
+	ctx context.Context,
+	operation string,
+	marshal time.Duration,
+	method string,
+	path string,
+	payload []byte,
+) ([]byte, error) {
+	var (
+		timing *TurnTiming
+		call   *policyCallTiming
+	)
+	if operation != "" {
+		if timing = TurnTimingFrom(ctx); timing != nil {
+			call = &policyCallTiming{}
+			ctx = httptrace.WithClientTrace(ctx, call.clientTrace())
+		}
+	}
+	var (
+		finished      time.Time
+		responseBytes int
+	)
+	if call != nil {
+		defer func() { timing.recordPolicyCall(operation, marshal, len(payload), call, finished, responseBytes) }()
+	}
 	ctx, cancel := context.WithTimeout(ctx, client.config.TotalTimeout)
 	defer cancel()
 	var reader io.Reader
@@ -465,6 +503,11 @@ func (client *PolicyServiceClient) do(
 		request.Header.Set("Modal-Key", client.config.ModalKey)
 		request.Header.Set("Modal-Secret", client.config.ModalSecret)
 	}
+	if call != nil {
+		call.mu.Lock()
+		call.start = time.Now()
+		call.mu.Unlock()
+	}
 	response, err := client.http.Do(request)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
@@ -474,6 +517,7 @@ func (client *PolicyServiceClient) do(
 	}
 	defer func() { _ = response.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(response.Body, maxPolicyServiceResponseBytes+1))
+	finished, responseBytes = time.Now(), len(body)
 	if err != nil || len(body) > maxPolicyServiceResponseBytes {
 		return nil, &PolicyServiceError{Class: "transport", Status: response.StatusCode}
 	}

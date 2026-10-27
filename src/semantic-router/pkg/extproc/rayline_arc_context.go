@@ -164,6 +164,7 @@ func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 	// refused here: its service refuses on its own count, and the router
 	// holds the episode's arm through that refusal (policyCapacityHold).
 	result.ContextTokens = reqCtx.VSRContextTokenCount
+	reqCtx.RaylineARCTurnTiming.SetTurn(result.EpisodeIDHash, result.ContextTokens)
 	if limit := algorithm.RaylineARC.ContextLimit(); limit > 0 &&
 		algorithm.RaylineARC.PolicyService == nil && result.ContextTokens > limit {
 		logging.ComponentEvent("extproc", "rayline_arc_over_context_limit", map[string]interface{}{
@@ -192,6 +193,7 @@ func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 	}
 	reqCtx.RaylineARCSessionKey, reqCtx.RaylineARCSessionKeySource = raylineARCSessionKey(signalHeaders, rawEpisodeID)
 	if rawEpisodeID != "" {
+		loadStarted := time.Now()
 		state, coalesced, failure := r.prepareOrJoinRaylineARCTurn(
 			algorithm.RaylineARC,
 			reqCtx,
@@ -199,6 +201,7 @@ func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 			len(modelRefs),
 			result.PolicyCallKind == raylinearc.PolicyCallSide,
 		)
+		reqCtx.RaylineARCTurnTiming.Set(raylinearc.SpanEpisodeLoad, time.Since(loadStarted))
 		if failure != "" {
 			result.PreparationFailure = failure
 			return result

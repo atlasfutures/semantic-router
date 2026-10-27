@@ -378,8 +378,13 @@ func (binding *PolicySessionBinding) Decide(
 	request PolicyDecisionRequest,
 ) (*PolicyDecisionResponse, error) {
 	if binding.current == nil {
+		// session_lookup is the turn's choice of session (the persisted one
+		// and the suspect check); a start it leads to is timed on its own.
+		lookupStarted := time.Now()
+		suspect := binding.persisted != nil && binding.backend.suspect.has(*binding.persisted)
+		TurnTimingFrom(ctx).Set(SpanSessionLookup, time.Since(lookupStarted))
 		switch {
-		case binding.persisted != nil && binding.backend.suspect.has(*binding.persisted):
+		case suspect:
 			// The persisted session timed out on an earlier turn: this turn's
 			// one move is to a new session, before any call reaches the old one.
 			binding.moved = true
@@ -432,7 +437,9 @@ func (binding *PolicySessionBinding) Decide(
 }
 
 func (binding *PolicySessionBinding) start(ctx context.Context) error {
+	started := time.Now()
 	session, err := binding.backend.Start(ctx)
+	TurnTimingFrom(ctx).AddSessionStart(time.Since(started))
 	if err != nil {
 		return err
 	}
