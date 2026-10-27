@@ -68,9 +68,23 @@ func truncatedTrailingFragment(decodeErr error) bool {
 	if errors.As(decodeErr, &syntax) {
 		return false
 	}
-	return errors.Is(decodeErr, io.ErrUnexpectedEOF) || errors.Is(decodeErr, io.EOF) ||
-		strings.Contains(decodeErr.Error(), "unexpected EOF") ||
-		strings.Contains(decodeErr.Error(), "unexpected end of JSON input")
+	if errors.Is(decodeErr, io.ErrUnexpectedEOF) || errors.Is(decodeErr, io.EOF) {
+		return true
+	}
+	// The structural checks name the same thing in their own words: an
+	// object or array the bytes stopped inside, or a multibyte character cut
+	// in half. Each is complete as far as it goes and would have been whole
+	// had the bytes kept coming, which a syntax error never would.
+	message := decodeErr.Error()
+	for _, shape := range []string{
+		"unexpected EOF", "unexpected end of JSON input",
+		"unterminated object", "unterminated array", "invalid_upstream_utf8",
+	} {
+		if strings.Contains(message, shape) {
+			return true
+		}
+	}
+	return false
 }
 
 // truncationTerminalCarriesUsage reports whether this target's own terminal has
