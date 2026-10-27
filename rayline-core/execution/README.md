@@ -1,7 +1,7 @@
 # Standalone execution
 
-`cmd/rayline-core` is the HTTP transport for the shared VSR implementation. Rayline
-Local's `rld` owns the process, credentials, and harness gateway. The executor owns
+`cmd/rayline-core` is the HTTP transport for the shared VSR implementation.
+Raydock's `rld` owns the process, credentials, and harness gateway. The executor owns
 protocol conversion, ARC decisions, exact deployment binding, thinking controls,
 private append, and completed-execution evidence.
 
@@ -26,7 +26,7 @@ opt-in. The core reports facts and never picks or ranks a model.
   `overrides.selection.min_p_pass` in (0, 1). Served presets:
   `arc-policy.hybrid-default.v1`, `arc-policy.prefer-local.v1` (pathfinder
   #5913) and `arc-policy.package-default.v1`. At most 16 executable bindings fit
-  `targets[]`. Rayline Local writes
+  `targets[]`. Raydock writes
   `arc-policy.hybrid-default.v1` when its user sets no override; the core never
   sends an absent policy in this mode. Allowed routing keys are `policy`,
   `value_usd`, `prices`, `exclusive`, `signals` and the price-profile keys.
@@ -47,7 +47,7 @@ opt-in. The core reports facts and never picks or ranks a model.
   used. Such a profile pins no package: `expect` pins only the registry (and
   any offer), and the response names the package. Every derived action is a
   target, and the service refuses a target its serving package lacks
-  (`execution_unknown_action`), so choose `bases` to match the served actions. Rayline Local builds one by default, so a user needs no profile
+  (`execution_unknown_action`), so choose `bases` to match the served actions. Raydock builds one by default, so a user needs no profile
   file.
 - **Envelope.** Each decision sends `routing.execution` version
   `arc-execution-context.v2`: `turn` (`id`, `attempt`, `epoch`, `retry_of`,
@@ -104,7 +104,7 @@ opt-in. The core reports facts and never picks or ranks a model.
   `reason: "runtime_unavailable"` instead of refusing the turn. A **local**
   target without a registered counter is sized from the same prepared request:
   - **Qwen3.8-27B** (`registry_model: "qwen/qwen3.8-27b"`, Chat wire; the
-    Rayline Local default) is rendered with the model's chat template as
+    Raydock default) is rendered with the model's chat template as
     vLLM's Chat path feeds it (`qwen_capacity.go`: arguments and tools
     re-spelt by Python's `tojson`, floats by `repr`; each tool as
     `model_dump()` spells it, declared fields first with null
@@ -139,7 +139,7 @@ opt-in. The core reports facts and never picks or ranks a model.
     when every executable target falls short, its estimated facts are sent as
     unknown for all its actions: the turn dispatches there and the runtime's
     own context refusal decides.
-    A missing `context_overflow` means `"truncates"`; Rayline Local's CLI
+    A missing `context_overflow` means `"truncates"`; Raydock's CLI
     sets `"refuses"` when it detects llama.cpp. The rule is part of the
     all-short decision itself: an estimated shortfall on a `"refuses"`
     deployment counts as unknown there, so the turn start, a re-consult, the
@@ -403,7 +403,7 @@ only at a new user turn. The run therefore does not prove tool-turn costing
 overlap, retained KV residency, or cache-aware Decisions selection; current API
 mode keeps this execution evidence local.
 
-The reusable acceptance script lives in Rayline Local as
+The reusable acceptance script lives in Raydock as
 `scripts/test-hybrid-core.py`. It joins the real Rust/Go processes and can include
 installed Claude Code and the exact cloud gateway. Its fixture mode deliberately
 uses synthetic Decisions and model responses; it is separate from live ARC and
