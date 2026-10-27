@@ -128,3 +128,25 @@ func TestACutBeforeAnyOutputKeepsTheErrorTerminalDespiteAStatedCount(t *testing.
 		t.Fatalf("prompt_tokens = %v, want the stated 37 on the row", fields["prompt_tokens"])
 	}
 }
+
+// A call that has only started is output the client holds, with no bytes to
+// count. A cut then still closes the turn in the format's own shape rather
+// than on the error terminal reserved for a turn that delivered nothing.
+func TestACallThatOnlyStartedIsOutputTheClientHolds(t *testing.T) {
+	router := &OpenAIRouter{}
+	ctx := overrunningStreamContext(t)
+	ctx.SourceFormat = llmprotocol.OpenAIChatV1
+	ctx.SemanticRequest = streamUsageRequest()
+
+	body := streamDeadlineResponseBody(t, router, ctx,
+		`data: {"id":"gen-1","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,`+
+			`"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_1","type":"function",`+
+			`"function":{"name":"lookup","arguments":""}}]},"finish_reason":null}]}`+"\n\n")
+
+	if !bytes.Contains(body, []byte(`"finish_reason":"length"`)) || !bytes.Contains(body, []byte("data: [DONE]")) {
+		t.Fatalf("a turn whose call had started was not closed for the client:\n%s", body)
+	}
+	if bytes.Contains(body, []byte(`"code":"stream_truncated"`)) {
+		t.Fatalf("a turn with output the client holds ended on the error terminal:\n%s", body)
+	}
+}

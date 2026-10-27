@@ -45,10 +45,15 @@ type semanticResponseStreamState struct {
 	// output_tokens 1 before a single delta, and a turn cut after that has
 	// generated far more than 1 (outputRestatedPastSnapshot).
 	generatedAtUsage int
-	items            map[int]*semanticStreamItem
-	order            []int
-	terminal         bool
-	failed           *llmprotocol.ProtocolError
+	// outputForwarded says something the client can see has been sent: a
+	// delta of any kind, an image's progress, or a call's start. Text bytes
+	// alone do not say so -- a call that has only started, or an image still
+	// generating, is output a client holds with no bytes to count.
+	outputForwarded bool
+	items           map[int]*semanticStreamItem
+	order           []int
+	terminal        bool
+	failed          *llmprotocol.ProtocolError
 	// upstreamFailed is the provider's error as it said it, before the
 	// client's copy was made public; the failure is classed by it.
 	upstreamFailed *llmprotocol.ProtocolError
@@ -336,6 +341,22 @@ func streamUsageRequestedByClient(ctx *RequestContext) bool {
 	return options.IncludeUsage != nil && *options.IncludeUsage
 }
 
+// clientVisibleOutput reports an event the client receives as output: a delta
+// that carries anything, an image's progress, or an item that opens a call.
+func clientVisibleOutput(event llmprotocol.Event) bool {
+	switch event.Type {
+	case llmprotocol.EventOutputTextDelta, llmprotocol.EventReasoningDelta:
+		return event.Delta != "" || (event.Content != nil && len(event.Content.Citations) > 0)
+	case llmprotocol.EventToolCallDelta:
+		return event.ToolCall != nil
+	case llmprotocol.EventImageGenerationProgress:
+		return true
+	case llmprotocol.EventOutputItemStarted:
+		return event.ToolCall != nil
+	}
+	return false
+}
+
 //nolint:gocognit,cyclop,funlen // Observation is an exhaustive reducer over the closed neutral event contract.
 func (state *semanticResponseStreamState) observe(events []llmprotocol.Event) {
 	if state == nil {
@@ -351,6 +372,9 @@ func (state *semanticResponseStreamState) observe(events []llmprotocol.Event) {
 		if event.Usage != nil {
 			state.usage = *event.Usage
 			state.generatedAtUsage = generatedTextBytes(state)
+		}
+		if clientVisibleOutput(event) {
+			state.outputForwarded = true
 		}
 		if event.StopReason != "" {
 			state.stop = event.StopReason

@@ -30,9 +30,12 @@ import (
 // the direction to be wrong in here.
 func estimatedTruncatedStreamUsage(ctx *RequestContext) (responseUsageMetrics, bool) {
 	generated := generatedTextBytes(ctx.SemanticStreamState)
-	if generated == 0 {
+	if generated == 0 && (ctx.SemanticStreamState == nil || !ctx.SemanticStreamState.outputForwarded) {
 		return responseUsageMetrics{}, false
 	}
+	// Output with no bytes to count -- a call that only started, an image
+	// still generating -- carries as a count of what was seen, which is
+	// nothing yet on the output leg; the input legs are the stream's.
 	completion := estimatedTokensForBytes(generated)
 	estimate := responseUsageMetrics{
 		completionTokens:         completion,
@@ -165,7 +168,11 @@ func (r *OpenAIRouter) attachTruncatedStreamUsage(ctx *RequestContext, cut *llmp
 	if ctx == nil || ctx.ProtocolResponseStream == nil {
 		return
 	}
-	if generatedTextBytes(ctx.SemanticStreamState) == 0 {
+	// Why the turn was cut is this Router's to say (routerStreamCutCauses),
+	// and it is said whether or not there is a count: a fragment the cut left
+	// behind is then named as the cut rather than as malformed upstream JSON.
+	ctx.ProtocolResponseStream.SetTruncationCause(routerStreamCutCause(cut))
+	if ctx.SemanticStreamState == nil || !ctx.SemanticStreamState.outputForwarded {
 		// No output reached the client, so there is no turn to close as one
 		// stopped at a limit: the client is told the error, as documented. A
 		// count the upstream stated before the cut (Anthropic's message_start
@@ -182,9 +189,6 @@ func (r *OpenAIRouter) attachTruncatedStreamUsage(ctx *RequestContext, cut *llmp
 	ctx.ProtocolResponseStream.SetTruncationUsage(
 		truncatedStreamNeutralUsage(usage), llmprotocol.UsageSourceStreamEstimate,
 	)
-	// Why the turn was cut is this Router's to say (routerStreamCutCauses);
-	// the codec only carries the word.
-	ctx.ProtocolResponseStream.SetTruncationCause(routerStreamCutCause(cut))
 }
 
 // truncatedStreamNeutralUsage carries the counted row back into the shape the
