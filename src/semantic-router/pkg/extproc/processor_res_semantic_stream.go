@@ -45,10 +45,13 @@ type semanticResponseStreamState struct {
 	// output_tokens 1 before a single delta, and a turn cut after that has
 	// generated far more than 1 (outputRestatedPastSnapshot).
 	generatedAtUsage int
-	// outputForwarded says something the client can see has been sent: a
-	// delta of any kind, an image's progress, or a call's start. Text bytes
+	// outputForwarded says the target encoder has written something the
+	// client can see (StreamEngine.OutputPublished): a delta of any kind, an
+	// image's progress, a call's start where the format shows one. Text bytes
 	// alone do not say so -- a call that has only started, or an image still
-	// generating, is output a client holds with no bytes to count.
+	// generating, is output a client holds with no bytes to count -- and the
+	// decoded events alone do not either: a Chat target writes nothing for a
+	// call's start, so a Chat client holds nothing yet.
 	outputForwarded bool
 	items           map[int]*semanticStreamItem
 	order           []int
@@ -174,6 +177,9 @@ func (buffers *semanticStreamBuffers) push(responseBody []byte, ctx *RequestCont
 		frames, events, diagnostics, err := ctx.ProtocolResponseStream.Push(responseBody)
 		buffers.translated = appendProtocolFrames(buffers.translated, frames)
 		observeProtocolStream(ctx, events, diagnostics)
+		if ctx.SemanticStreamState != nil && ctx.ProtocolResponseStream.OutputPublished() {
+			ctx.SemanticStreamState.outputForwarded = true
+		}
 		buffers.recordError(ctx, err, true)
 	}
 }
@@ -341,22 +347,6 @@ func streamUsageRequestedByClient(ctx *RequestContext) bool {
 	return options.IncludeUsage != nil && *options.IncludeUsage
 }
 
-// clientVisibleOutput reports an event the client receives as output: a delta
-// that carries anything, an image's progress, or an item that opens a call.
-func clientVisibleOutput(event llmprotocol.Event) bool {
-	switch event.Type {
-	case llmprotocol.EventOutputTextDelta, llmprotocol.EventReasoningDelta:
-		return event.Delta != "" || (event.Content != nil && len(event.Content.Citations) > 0)
-	case llmprotocol.EventToolCallDelta:
-		return event.ToolCall != nil
-	case llmprotocol.EventImageGenerationProgress:
-		return true
-	case llmprotocol.EventOutputItemStarted:
-		return event.ToolCall != nil
-	}
-	return false
-}
-
 //nolint:gocognit,cyclop,funlen // Observation is an exhaustive reducer over the closed neutral event contract.
 func (state *semanticResponseStreamState) observe(events []llmprotocol.Event) {
 	if state == nil {
@@ -372,9 +362,6 @@ func (state *semanticResponseStreamState) observe(events []llmprotocol.Event) {
 		if event.Usage != nil {
 			state.usage = *event.Usage
 			state.generatedAtUsage = generatedTextBytes(state)
-		}
-		if clientVisibleOutput(event) {
-			state.outputForwarded = true
 		}
 		if event.StopReason != "" {
 			state.stop = event.StopReason

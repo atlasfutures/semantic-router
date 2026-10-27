@@ -607,6 +607,12 @@ type StreamEngine struct {
 	// cutByCaller says the caller ended the turn (SetTruncationCause), which
 	// it states even for a turn that delivered nothing.
 	cutByCaller bool
+	// outputPublished says the target encoder has written output the client
+	// can see: a delta with something in it, an image's progress, a call's
+	// start -- and only where the target wrote a frame for it. A Chat target
+	// writes nothing for a call's start, so a start alone leaves a Chat
+	// client with no output, while a Responses client holds an opened item.
+	outputPublished bool
 }
 
 // truncationUsageCarrier is an encoder whose terminal states a cut turn's count
@@ -648,6 +654,14 @@ func (engine *StreamEngine) SetTruncationCause(cause string) {
 	}
 	engine.truncationCause = cause
 	engine.cutByCaller = true
+}
+
+// OutputPublished reports whether the target encoder has written output the
+// client can see. The caller reads it to decide whether a turn it is ending
+// closes in the format's own shape or ends on the error terminal a turn that
+// delivered nothing gets.
+func (engine *StreamEngine) OutputPublished() bool {
+	return engine != nil && engine.outputPublished
 }
 
 // cutByCaller reports that the caller ended this turn, whether or not it had
@@ -717,6 +731,9 @@ func (engine *StreamEngine) encodeEvents(
 		diagnostics = appendDiagnostics(diagnostics, eventDiagnostics, engine.maxDiagnostics)
 		if err != nil {
 			return frames, accepted, diagnostics, err
+		}
+		if len(encoded) > 0 && clientVisibleOutput(events[index]) {
+			engine.outputPublished = true
 		}
 		frames = append(frames, encoded...)
 		accepted = append(accepted, events[index])

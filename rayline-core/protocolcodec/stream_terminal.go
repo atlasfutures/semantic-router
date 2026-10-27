@@ -44,6 +44,25 @@ func (engine *StreamEngine) recordTerminalEvent(event llmprotocol.Event) {
 	}
 }
 
+// clientVisibleOutput reports an event a client receives as output once a
+// target writes it: a delta that carries anything, an image's progress, or
+// an item that opens a call. Whether the target wrote it is the encoder's
+// answer (StreamEngine.outputPublished).
+func clientVisibleOutput(event llmprotocol.Event) bool {
+	if outputDelta(event) || event.Type == llmprotocol.EventImageGenerationProgress {
+		return true
+	}
+	// A call delta that names the call -- its id and name, before any
+	// argument -- is a chunk a Chat client sees; the target decides.
+	if event.Type == llmprotocol.EventToolCallDelta && event.ToolCall != nil {
+		return true
+	}
+	if event.Type == llmprotocol.EventOutputTextDelta && event.Content != nil && len(event.Content.Citations) > 0 {
+		return true
+	}
+	return event.Type == llmprotocol.EventOutputItemStarted && event.ToolCall != nil
+}
+
 // outputDelta reports an event that adds to what the turn has generated.
 func outputDelta(event llmprotocol.Event) bool {
 	switch event.Type {
@@ -266,7 +285,7 @@ func (engine *StreamEngine) withholdOutputFlushedAtCut(
 	kept := events[:0]
 	withheld := 0
 	for _, event := range events {
-		if outputDelta(event) || event.Type == llmprotocol.EventImageGenerationProgress {
+		if clientVisibleOutput(event) {
 			withheld++
 			continue
 		}

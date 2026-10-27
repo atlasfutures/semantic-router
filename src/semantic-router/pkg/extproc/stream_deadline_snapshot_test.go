@@ -150,3 +150,25 @@ func TestACallThatOnlyStartedIsOutputTheClientHolds(t *testing.T) {
 		t.Fatalf("a turn with output the client holds ended on the error terminal:\n%s", body)
 	}
 }
+
+// The same call's start that is output for a Responses client is nothing for
+// a Chat client, whose role chunk already went. A cut after it ends on the
+// error terminal for Chat, as a turn that delivered nothing does.
+func TestACallStartIsNotOutputForAChatClient(t *testing.T) {
+	router := &OpenAIRouter{}
+	ctx := overrunningStreamContext(t)
+	ctx.SourceFormat = llmprotocol.OpenAIChatV1
+	ctx.TargetFormat = llmprotocol.AnthropicMessagesV1
+	ctx.SemanticRequest = streamUsageRequest()
+
+	body := streamDeadlineResponseBody(t, router, ctx, anthropicMessageStart(37, 1)+
+		"event: content_block_start\n"+
+		`data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_1","name":"lookup","input":{}}}`+"\n\n")
+
+	if !bytes.Contains(body, []byte(`"code":"stream_truncated"`)) {
+		t.Fatalf("a Chat client with no output was not told the turn was cut:\n%s", body)
+	}
+	if bytes.Contains(body, []byte(`"finish_reason":"length"`)) {
+		t.Fatalf("a Chat client that held nothing was closed as a length stop:\n%s", body)
+	}
+}
