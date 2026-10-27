@@ -404,6 +404,68 @@ global:
   `response_body_mode: FULL_DUPLEX_STREAMED` ends the turn on time, and only
   after the first body message. In other modes the next chunk ends it.
 
+### What a client receives when the Router ends a turn
+
+A turn the Router ends -- at `deadline_sec`, at a silence limit, or when the
+upstream body was cut while the Router read it -- has already produced output
+the upstream charged for. The stream therefore terminates in the client
+protocol's own normal shape, so the client can close it and the tokens already
+spent are billed, rather than in an error frame that carries neither.
+
+**Chat Completions** ends with the three frames the format defines for a turn
+stopped at a limit. `finish_reason` is `length`, because the vocabulary is
+closed and nothing in it names a turn infrastructure ended. Read literally
+`length` says the model exhausted its token budget, which is true of a
+deadline and not of a model that went quiet or a connection that broke, so the
+cause rides the same chunk in one namespaced member:
+
+```text
+data: {"id":"…","object":"chat.completion.chunk","model":"…","choices":[{"index":0,"delta":{},"finish_reason":"length"}],"rayline":{"truncated":"deadline"}}
+
+data: {"id":"…","object":"chat.completion.chunk","model":"…","choices":[],"usage":{"prompt_tokens":37,"completion_tokens":2359,"total_tokens":2396}}
+
+data: [DONE]
+```
+
+- `rayline.truncated` is one of `deadline` (the turn ran out of its wall-clock
+  budget while the model was producing normally: ask for less work in one
+  turn), `silence` (the model stopped sending content: retry), or `transport`
+  (the connection to the upstream broke: retry). A turn the model itself ended
+  carries no `rayline` member, so its presence always means this Router cut
+  the turn. A member arriving from an upstream is never relayed; each router
+  speaks only for itself.
+- The usage chunk is opt-in, as in the format: it is written only when the
+  request set `stream_options.include_usage`. A turn whose usage could not be
+  written is logged (`truncation_usage_unwritten`, with the encoder and the
+  reason); nothing is dropped silently.
+- A turn cut before any output reached the client has no count to state and
+  ends in the error frame instead (`code: stream_truncated`,
+  `stream_idle_timeout`, `stream_first_content_timeout`, or
+  `standard_resend_body_cut`). A usage of zeros is never written.
+
+**Responses** ends with `response.incomplete`, whose `incomplete_details.reason`
+is `max_output_tokens`, one of the values the OpenAI SDKs recognise; the
+resource carries `usage` and the output items the client was streamed, with an
+item the cut landed in closed as `incomplete`. No `rayline` member is written:
+the resource states its own reason.
+
+**Messages** is unchanged: the `error` event carries `usage` and
+`usage_source: "stream_estimate"` beside the error object (see the API
+reference).
+
+**The count.** The upstream never reached its usage frame, so the Router
+counts what it forwarded. Any count the upstream stated before the cut is
+kept where it still stands: the input legs always, and the output leg only if
+no output followed the statement. A count the turn then ran past is a
+snapshot, not a settlement (Anthropic's `message_start` states `output_tokens:
+1` before the first delta), so the output leg takes the larger of the snapshot
+and the Router's estimate, and the usage row says `usage_source:
+stream_estimate` so reconciliation against provider invoices can tell it from
+a settlement. The row also carries `truncated: true` and the cut's code in
+`failure_detail`, so the truncation rate is a query. Output the upstream had
+sent but the Router had not yet forwarded when it cut the turn is not
+published; the terminal's count was taken before it.
+
 ### Thinking markers
 
 Some Messages clients, pi and OpenClaw among them, turn a thinking block that
