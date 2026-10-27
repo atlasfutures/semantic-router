@@ -453,12 +453,14 @@ data: [DONE]
 
 **Responses** ends with `response.incomplete`, whose `incomplete_details.reason`
 is `max_output_tokens`, one of the values the OpenAI SDKs recognise; the
-resource carries `usage` and the output items the client was streamed. A
-message, reasoning or function-call item the cut landed in is closed first,
-as `incomplete`. An image generation or a provider's web search open at the
-cut is not closed -- those items close only with state the upstream sends on
-completion, which a cut turn does not have -- so no `output_item.done` arrives
-for it and the terminal resource omits it from `output`. No `rayline` member
+resource carries `usage` and the output items the client was streamed. Every
+item the cut landed in is closed first: a message, reasoning, function-call
+or web-search item as `incomplete`, and an image generation as `failed` --
+its image will never come, and `failed` is the one terminal status the format
+gives an image without a result. A function call cut before any argument
+reached the client states `{}`, the empty object its start opened with. A
+provider's web search the upstream had requested but not yet opened as an
+item is not added at the cut. No `rayline` member
 is written: the resource states its own reason. As on Chat, a turn the model
 had already finished -- its stop was stated, and only the connection was then
 cut -- ends with `response.completed`, not `response.incomplete`, carrying

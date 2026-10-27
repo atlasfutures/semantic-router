@@ -422,6 +422,7 @@ func (encoder *responsesStreamEncoder) closeOpenResponsesItems(
 	defer func() { encoder.closingAtCut = false }()
 	type openItem struct {
 		itemIndex, outputIndex int
+		kind                   responsesOutputKind
 	}
 	open := make([]openItem, 0, len(encoder.itemOutputKeys))
 	for itemIndex, keys := range encoder.itemOutputKeys {
@@ -429,16 +430,7 @@ func (encoder *responsesStreamEncoder) closeOpenResponsesItems(
 			if _, done := encoder.completedOutput[encoder.outputIndexes[key]]; done {
 				continue
 			}
-			// An image generation or a provider's web search closes only with
-			// state the upstream sends on its completion -- the image, the
-			// search's result -- and a cut turn has none to synthesize. Such
-			// an item stays open rather than closing as something it is not,
-			// and the terminal still states the count; a client reading the
-			// resource sees the item absent from output, as it was before.
-			if key.kind == responsesOutputImage || key.kind == responsesOutputWebSearch {
-				continue
-			}
-			open = append(open, openItem{itemIndex: itemIndex, outputIndex: encoder.outputIndexes[key]})
+			open = append(open, openItem{itemIndex: itemIndex, outputIndex: encoder.outputIndexes[key], kind: key.kind})
 			break
 		}
 	}
@@ -461,6 +453,18 @@ func (encoder *responsesStreamEncoder) closeOpenResponsesItems(
 			cut := *call
 			cut.Incomplete = true
 			closing.ToolCall = &cut
+		}
+		// An image generation closes only with its image, which will never
+		// come: it closes as failed, the one terminal status the format gives
+		// an image without a result. A web search closes as incomplete, as
+		// any other item the cut landed in does. Leaving either open was
+		// tried and left a hole in the output indexes that no reader of the
+		// resource could resolve.
+		if item.kind == responsesOutputImage {
+			closing.Content = &llmprotocol.Content{
+				Kind:           llmprotocol.ContentGeneratedImage,
+				GeneratedImage: &llmprotocol.GeneratedImage{Status: llmprotocol.ImageGenerationFailed},
+			}
 		}
 		// The item is closed as the turn ended, not as a completed answer.
 		closed, _, err := encoder.encodeCompletedResponsesItem(closing)
@@ -748,7 +752,9 @@ func (encoder *responsesStreamEncoder) encodeCompletedResponsesWebSearch(
 	}
 	index := encoder.outputIndexes[key]
 	item.Type, item.ID = "web_search_call", encoder.outputIDs[key]
-	if item.Status == "" {
+	if encoder.closingAtCut {
+		item.Status = "incomplete"
+	} else if item.Status == "" {
 		item.Status = "completed"
 	}
 	wire := responsesEventWire{

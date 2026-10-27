@@ -993,10 +993,11 @@ func TestAnInvalidByteAtTheCutIsStillAViolation(t *testing.T) {
 	wantNotContains(t, body, `"finish_reason":"length"`, "a malformed stream was presented as an ordinary truncation")
 }
 
-// An image generation open at the cut has no state the closer could
-// synthesize, so it is left open rather than closed as something it is not.
-// The terminal still arrives, with its count; it used to be replaced by a
-// bare image_generation_item_invalid error that dropped the usage.
+// An image generation open at the cut closes as failed: its image will never
+// come, and failed is the one terminal status the format gives an image
+// without a result. The terminal still arrives, with its count; it used to be
+// replaced by a bare image_generation_item_invalid error that dropped the
+// usage, and leaving the item open instead left a hole in the output indexes.
 func TestAnOpenImageGenerationAtTheCutStillTerminates(t *testing.T) {
 	engine := NewBuiltinEngine()
 	stream, err := engine.NewStream(llmprotocol.OpenAIResponsesV1, llmprotocol.OpenAIResponsesV1,
@@ -1033,8 +1034,17 @@ func TestAnOpenImageGenerationAtTheCutStillTerminates(t *testing.T) {
 	wantContains(t, body, `"output_tokens":268`, "the count was dropped")
 	wantNotContains(t, body, "image_generation_item_invalid")
 	wantNotContains(t, body, "event: error")
+	wantContains(t, body, `"id":"ig_1","result":null,"status":"failed","type":"image_generation_call"`,
+		"the image the cut landed in was not closed as failed")
 	// The text item the cut landed in is still closed, as incomplete.
 	wantContains(t, body, `"role":"assistant","status":"incomplete","type":"message"`)
+	// With both items closed the resource has no hole in its indexes, and
+	// this codec's own decoder reads it back.
+	readback, err := engine.NewStream(llmprotocol.OpenAIResponsesV1, llmprotocol.OpenAIResponsesV1,
+		llmprotocol.StreamContext{Context: t.Context()})
+	requireNoError(t, err)
+	_, _, _, err = readback.Push([]byte(body))
+	requireNoError(t, err, "this codec emitted a resource with a hole in its output it cannot itself read")
 }
 
 // Whatever an upstream puts under the rayline name is not a reason to fail
@@ -1158,10 +1168,10 @@ func TestAPreOutputFragmentIsStillTheCallersCut(t *testing.T) {
 	wantNotContains(t, body, `"usage"`)
 }
 
-// A provider's web search still pending at the cut stays open. Flushing it
-// would state a done item still in progress, which this codec's own decoder
-// refuses; it is left as every web search open at the cut is, and the
-// terminal still arrives with its count and reads back.
+// A provider's web search still pending at the cut is not flushed as a new
+// item: it is not output the client had, and flushing it stated a done item
+// still in progress, which this codec's own decoder refuses. The terminal
+// still arrives with its count and reads back.
 func TestAPendingWebSearchAtTheCutStaysOpen(t *testing.T) {
 	engine := NewBuiltinEngine()
 	stream, err := engine.NewStream(llmprotocol.AnthropicMessagesV1, llmprotocol.OpenAIResponsesV1,
@@ -1206,6 +1216,58 @@ func TestAPendingWebSearchAtTheCutStaysOpen(t *testing.T) {
 	requireNoError(t, err)
 	_, _, _, err = readback.Push([]byte(body))
 	requireNoError(t, err, "this codec emitted a stream it cannot itself read")
+}
+
+// Output the client holds is output the target wrote. A call's start opens
+// an item for a Responses client and writes nothing for a Chat one, whose
+// role chunk already went; the same decoded event leaves one client with
+// output and the other with none.
+func TestOutputPublishedIsTheTargetsAnswer(t *testing.T) {
+	start := "event: message_start\n" +
+		`data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant",` +
+		`"model":"m","content":[],"stop_reason":null,"usage":{"input_tokens":37,"output_tokens":1}}}` +
+		"\n\nevent: content_block_start\n" +
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":"lookup","input":{}}}` +
+		"\n\n"
+	for target, published := range map[llmprotocol.WireFormat]bool{
+		llmprotocol.OpenAIChatV1:      false,
+		llmprotocol.OpenAIResponsesV1: true,
+	} {
+		engine := NewBuiltinEngine()
+		stream, err := engine.NewStream(llmprotocol.AnthropicMessagesV1, target,
+			llmprotocol.StreamContext{Context: t.Context()})
+		requireNoError(t, err)
+		_, _, _, err = stream.Push([]byte(start))
+		requireNoError(t, err)
+		wantEqual(t, published, stream.OutputPublished(),
+			"%s: the target's own output was not what decided", target)
+	}
+}
+
+// A call's start flushed at the cut is withheld like any other output the
+// decoder only produces then. The caller decided on the turn before it.
+func TestAToolCallStartFlushedAtTheCutIsNotPublished(t *testing.T) {
+	engine := NewBuiltinEngine()
+	stream, err := engine.NewStream(llmprotocol.OpenAIResponsesV1, llmprotocol.OpenAIResponsesV1,
+		llmprotocol.StreamContext{Context: t.Context()})
+	requireNoError(t, err)
+	_, _, _, err = stream.Push([]byte(
+		"event: response.created\n" + `data: {"type":"response.created","sequence_number":0,` +
+			`"response":{"id":"resp_1","object":"response","created_at":0,"model":"m","status":"in_progress","output":[]}}` + "\n\n" +
+			// The call's start, cut off from its blank line.
+			"event: response.output_item.added\n" + `data: {"type":"response.output_item.added","sequence_number":1,"output_index":0,` +
+			`"item":{"type":"function_call","id":"fc_1","call_id":"call_1","name":"UNSEEN","arguments":"","status":"in_progress"}}` + "\n"))
+	requireNoError(t, err)
+	// Nothing reached the client, so the caller has no count and says only
+	// why it cut.
+	stream.SetTruncationCause(llmprotocol.TruncationDeadline)
+	terminal, _, _, err := stream.Finalize(llmprotocol.NewError(
+		llmprotocol.ErrorUpstreamTimeout, "stream_truncated", "deadline", nil))
+	requireNoError(t, err)
+
+	body := string(joinFrames(terminal))
+	wantNotContains(t, body, "UNSEEN", "a call opened only at the cut reached the client")
+	wantContains(t, body, "stream_truncated", "the client was not told the turn was cut")
 }
 
 // The drop that cannot be helped is loud.
