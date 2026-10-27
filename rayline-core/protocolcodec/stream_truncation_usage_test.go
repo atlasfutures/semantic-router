@@ -692,6 +692,77 @@ func TestAnOutputCountStatedAfterTheOutputStands(t *testing.T) {
 	wantNotContains(t, body, `"completion_tokens":268`, "an estimate replaced a settlement")
 }
 
+// Output the decoder only produces at the cut is not published.
+//
+// A transport read can end after a complete event and before the blank line
+// that ends it; the framer holds the event and Finalize flushes it -- after
+// the Router has counted the turn. Publishing it would deliver output the
+// terminal's count does not cover (Codex review on the pull request). It is
+// withheld, and a count or a stop the same flush carried is still honoured.
+func TestOutputFlushedAtTheCutIsNotPublished(t *testing.T) {
+	engine := NewBuiltinEngine()
+	requested := true
+	stream, err := engine.NewStream(llmprotocol.OpenAIChatV1, llmprotocol.OpenAIChatV1,
+		llmprotocol.StreamContext{
+			Context: t.Context(), Options: llmprotocol.StreamOptions{IncludeUsage: &requested},
+		})
+	requireNoError(t, err)
+
+	served, _, _, err := stream.Push([]byte(truncatedUpstreamChunk(llmprotocol.OpenAIChatV1)))
+	requireNoError(t, err)
+	// A complete event whose terminating blank line never arrives.
+	held, _, _, err := stream.Push([]byte(`data: {"id":"chatcmpl-1","object":"chat.completion.chunk",` +
+		`"choices":[{"index":0,"delta":{"content":" UNCOUNTED TAIL"},"finish_reason":null}]}` + "\n"))
+	requireNoError(t, err)
+	wantEqual(t, 0, len(held), "an unterminated event was published before the framer closed it")
+
+	stream.SetTruncationUsage(estimatedTruncationUsage(), llmprotocol.UsageSourceStreamEstimate)
+	stream.SetTruncationCause(llmprotocol.TruncationDeadline)
+	terminal, _, diagnostics, err := stream.Finalize(llmprotocol.NewError(
+		llmprotocol.ErrorUpstreamTimeout, "stream_truncated", "deadline", nil))
+	requireNoError(t, err)
+
+	body := string(joinFrames(append(served, terminal...)))
+	wantNotContains(t, body, "UNCOUNTED TAIL", "output decoded at the cut reached the client unbilled")
+	wantContains(t, body, `"completion_tokens":268`)
+	wantContains(t, body, "data: [DONE]")
+	var said bool
+	for _, diagnostic := range diagnostics {
+		if diagnostic.Field == "stream.output" && diagnostic.Action == llmprotocol.DiagnosticDropped {
+			said = true
+		}
+	}
+	wantTrue(t, said, "the withheld output was not named in the diagnostics: %v", diagnostics)
+}
+
+// A count the same flush carries is still the count that bills: the upstream's
+// usage frame, cut off from its blank line, is a settlement and not output.
+func TestACountFlushedAtTheCutStillBills(t *testing.T) {
+	engine := NewBuiltinEngine()
+	requested := true
+	stream, err := engine.NewStream(llmprotocol.OpenAIChatV1, llmprotocol.OpenAIChatV1,
+		llmprotocol.StreamContext{
+			Context: t.Context(), Options: llmprotocol.StreamOptions{IncludeUsage: &requested},
+		})
+	requireNoError(t, err)
+
+	served, _, _, err := stream.Push([]byte(truncatedUpstreamChunk(llmprotocol.OpenAIChatV1)))
+	requireNoError(t, err)
+	_, _, _, err = stream.Push([]byte(`data: {"id":"chatcmpl-1","object":"chat.completion.chunk","choices":[],` +
+		`"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}` + "\n"))
+	requireNoError(t, err)
+
+	stream.SetTruncationUsage(estimatedTruncationUsage(), llmprotocol.UsageSourceStreamEstimate)
+	stream.SetTruncationCause(llmprotocol.TruncationDeadline)
+	terminal, _, _, err := stream.Finalize(llmprotocol.NewError(
+		llmprotocol.ErrorUpstreamTimeout, "stream_truncated", "deadline", nil))
+	requireNoError(t, err)
+
+	body := string(joinFrames(append(served, terminal...)))
+	wantContains(t, body, `"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}`,
+		"a settlement flushed at the cut was replaced by the estimate")
+}
+
 // The drop that cannot be helped is loud.
 //
 // Chat omits its usage-only chunk unless the client requested it, so a cut

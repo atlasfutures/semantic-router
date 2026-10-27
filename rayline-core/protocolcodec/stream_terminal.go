@@ -145,6 +145,9 @@ func (engine *StreamEngine) prepareFinalization(reason error) streamFinalization
 		reason = firstFailure
 	}
 	events, diagnostics, decodeErr := engine.decoder.Finalize(reason)
+	if engine.truncationUsage != nil {
+		events, diagnostics = engine.withholdOutputFlushedAtCut(events, diagnostics)
+	}
 	result := streamFinalization{
 		events: events, diagnostics: diagnostics, terminalReason: reason,
 		decodeErr: decodeErr, firstFailure: firstFailure,
@@ -221,6 +224,47 @@ func (engine *StreamEngine) transportFailureEvents(
 		Failure:             llmprotocol.FailureTransport,
 		UpstreamServiceTier: servedTier,
 	}))
+}
+
+// withholdOutputFlushedAtCut keeps output the decoder only produced at
+// finalization from reaching a client whose turn the Router has already cut.
+//
+// A transport read can end after a complete event and before the blank line
+// that terminates it. The framer holds that event, and Finalize flushes it --
+// after the Router has counted the turn and handed the count over. Publishing
+// it would deliver output the terminal's count does not cover, and the count
+// cannot be retaken here: the Router estimates from what it forwarded, and
+// this is forwarded by nobody yet. So the output is withheld, and the
+// diagnostics say so. What else the flush carried -- a count the upstream
+// stated, a stop an item reached -- is kept and recorded ahead of the terminal
+// it informs, since the terminal is reconciled before these events are
+// otherwise seen.
+func (engine *StreamEngine) withholdOutputFlushedAtCut(
+	events []llmprotocol.Event,
+	diagnostics llmprotocol.Diagnostics,
+) ([]llmprotocol.Event, llmprotocol.Diagnostics) {
+	kept := events[:0]
+	withheld := 0
+	for _, event := range events {
+		if outputDelta(event) || event.Type == llmprotocol.EventImageGenerationProgress {
+			withheld++
+			continue
+		}
+		// A terminal the decoder built carries the usage it accumulated, not
+		// a fresh statement; recording it here would make a snapshot look
+		// settled. The terminal is reconciled on its own, after this.
+		if event.Type != llmprotocol.EventResponseFailed && event.Type != llmprotocol.EventResponseCompleted {
+			engine.recordTerminalEvent(event)
+		}
+		kept = append(kept, event)
+	}
+	if withheld > 0 {
+		diagnostics = appendDiagnostics(diagnostics, llmprotocol.Diagnostics{{
+			Source: engine.sourceFormat, Field: "stream.output", Action: llmprotocol.DiagnosticDropped,
+			Reason: "output decoded at the cut is not published: the turn was counted before it arrived",
+		}}, engine.maxDiagnostics)
+	}
+	return kept, diagnostics
 }
 
 // markTruncatedTerminal re-scopes the terminal of a turn the Router ended.
