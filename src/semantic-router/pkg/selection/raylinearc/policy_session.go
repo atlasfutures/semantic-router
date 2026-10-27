@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -28,6 +29,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -150,6 +152,63 @@ type PolicySessionBackend struct {
 	config      PolicySessionConfig
 	now         func() time.Time
 	newKey      func() (string, error)
+	// suspect holds the sessions whose last decide timed out or failed in
+	// transport (#358), so the episode's next turn does not wait on them again.
+	suspect *suspectSessions
+}
+
+// suspectSessions remembers, by a hash of the token and until the session's
+// idle timeout, each session whose decide timed out or failed in transport.
+// That turn still fails closed: the container may have advanced its session,
+// so it is never asked again within the turn. But a stopped container's
+// sessions often time out for minutes before Modal answers 502 or 404 for them
+// (a 10-26 dev fault: about 7 min), and every turn of an episode on one would
+// fail the same way. Its next turn starts a new session instead, which is the
+// turn's one move. Process-local: each router instance learns on its own.
+type suspectSessions struct {
+	mu    sync.Mutex
+	until map[[sha256.Size]byte]time.Time
+	ttl   time.Duration
+	now   func() time.Time
+}
+
+func newSuspectSessions(ttl time.Duration, now func() time.Time) *suspectSessions {
+	return &suspectSessions{until: map[[sha256.Size]byte]time.Time{}, ttl: ttl, now: now}
+}
+
+// mark records a suspect session. It also forgets the expired ones, so the set
+// stays bounded by the sessions that timed out within one idle timeout.
+func (suspect *suspectSessions) mark(session PolicySession) {
+	if suspect == nil {
+		return
+	}
+	suspect.mu.Lock()
+	defer suspect.mu.Unlock()
+	now := suspect.now()
+	for key, until := range suspect.until {
+		if !now.Before(until) {
+			delete(suspect.until, key)
+		}
+	}
+	suspect.until[sha256.Sum256([]byte(session.Token))] = now.Add(suspect.ttl)
+}
+
+// has reports a suspect session whose idle timeout has not passed (after it,
+// Modal has ended the session anyway: a turn on it gets the 404 and moves). A
+// lookup touches one entry; mark does the pruning.
+func (suspect *suspectSessions) has(session PolicySession) bool {
+	if suspect == nil {
+		return false
+	}
+	suspect.mu.Lock()
+	defer suspect.mu.Unlock()
+	key := sha256.Sum256([]byte(session.Token))
+	until, found := suspect.until[key]
+	if found && !suspect.now().Before(until) {
+		delete(suspect.until, key)
+		return false
+	}
+	return found
 }
 
 // NewPolicySessionBackend validates the configuration. The client must carry
@@ -166,6 +225,7 @@ func NewPolicySessionBackend(client *PolicyServiceClient, config PolicySessionCo
 	}
 	return &PolicySessionBackend{
 		client: client, controlHTTP: noRedirectClient(client.http), config: config, now: time.Now, newKey: idempotencyKey,
+		suspect: newSuspectSessions(config.IdleTimeout, time.Now),
 	}, nil
 }
 
@@ -298,8 +358,9 @@ func (backend *PolicySessionBackend) Bind(persisted *PolicySession, ephemeral bo
 // starts a new session and is retried there once; the turn moves at most once,
 // so a strict episode is never in flight on two containers within a turn. A
 // timeout or transport failure is returned as is: the container may have
-// advanced its session, so the turn fails closed. It is not safe for
-// concurrent use.
+// advanced its session, so the turn fails closed. That session is then
+// suspect (#358): the episode's next turn starts a new one rather than wait on
+// it again, and ends it best effort. It is not safe for concurrent use.
 type PolicySessionBinding struct {
 	backend   *PolicySessionBackend
 	persisted *PolicySession
@@ -317,13 +378,32 @@ func (binding *PolicySessionBinding) Decide(
 	request PolicyDecisionRequest,
 ) (*PolicyDecisionResponse, error) {
 	if binding.current == nil {
-		if binding.persisted != nil {
+		switch {
+		case binding.persisted != nil && binding.backend.suspect.has(*binding.persisted):
+			// The persisted session timed out on an earlier turn: this turn's
+			// one move is to a new session, before any call reaches the old one.
+			binding.moved = true
+			// Ended off the turn's path: a stalled terminate must not use up the
+			// deadline the new session needs.
+			old := *binding.persisted
+			go binding.terminate(context.WithoutCancel(ctx), old)
+			if err := binding.start(ctx); err != nil {
+				return nil, err
+			}
+		case binding.persisted != nil:
 			binding.use(*binding.persisted, false)
-		} else if err := binding.start(ctx); err != nil {
-			return nil, err
+		default:
+			if err := binding.start(ctx); err != nil {
+				return nil, err
+			}
 		}
 	}
 	response, err := binding.backend.client.WithSessionToken(binding.current.Token).Decide(ctx, request)
+	if policySessionUncertain(err) && !errors.Is(ctx.Err(), context.Canceled) {
+		// A caller that went away (a client disconnect) says nothing about the
+		// container; a deadline or a transport failure might.
+		binding.backend.suspect.mark(*binding.current)
+	}
 	stale := err == nil && staleOwner(request, response)
 	if !stale && !policySessionLost(err) {
 		return response, err
@@ -409,6 +489,17 @@ func policySessionLost(err error) bool {
 	default:
 		return false
 	}
+}
+
+// policySessionUncertain reports a decide that failed without an answer: a
+// timeout or a transport failure. The container may or may not have advanced
+// its session, so the turn fails closed and the session becomes suspect.
+func policySessionUncertain(err error) bool {
+	var failure *PolicyServiceError
+	if !errors.As(err, &failure) {
+		return false
+	}
+	return failure.Class == "timeout" || failure.Class == "transport"
 }
 
 // PolicySessionUnanswered reports a failure of the session layer itself (a
