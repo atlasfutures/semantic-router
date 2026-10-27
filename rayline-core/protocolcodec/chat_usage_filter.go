@@ -136,6 +136,14 @@ func filterChatUsageFrame(frame []byte, limit int, first, keepUsage bool) ([]byt
 		return nil, false, true, false, err
 	}
 	restated = restated || publicError
+	// rayline is this Router's own statement about a turn it ended, minted
+	// by its encoder alone. One arriving from an upstream -- a provider, or
+	// a router in front of this one -- is not relayed: a client reading the
+	// member must be able to trust that this Router cut the turn.
+	if _, upstreamMarker := object["rayline"]; upstreamMarker {
+		delete(object, "rayline")
+		restated = true
+	}
 	usage, hasUsage := object["usage"]
 	if !hasUsage || keepUsage {
 		if !restated {
