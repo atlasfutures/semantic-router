@@ -42,10 +42,13 @@ import (
 const (
 	// DefaultPolicySessionReapTimeout bounds a start's request, the wait of a
 	// reap included. Modal answers once the session is placed, which on a
-	// saturated Server takes as long as the queue.
-	DefaultPolicySessionReapTimeout = 2 * time.Minute
-	// DefaultPolicySessionMaxReaps bounds the reaps in flight per backend.
-	DefaultPolicySessionMaxReaps = 8
+	// saturated Server takes as long as the queue: past a fresh container's
+	// boot (about 3.3 min on dev). At 2 min, a 10-27 dev overload re-test
+	// reaped none of 70.
+	DefaultPolicySessionReapTimeout = 5 * time.Minute
+	// DefaultPolicySessionMaxReaps bounds the reaps in flight per backend. At
+	// 8, the same re-test dropped 717 reaps.
+	DefaultPolicySessionMaxReaps = 64
 
 	policySessionReapEvent = "rayline_arc_policy_session_start_reap"
 
