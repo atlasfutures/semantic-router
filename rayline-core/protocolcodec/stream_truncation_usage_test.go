@@ -839,6 +839,154 @@ func TestASettlementFlushedAtTheCutReachesAMessagesClient(t *testing.T) {
 	wantContains(t, body, `"usage_source":"stream_estimate"`)
 }
 
+// A completion the transport cut off from its blank line still settles the
+// turn. The decoder only produces it at Finalize; it is harvested as a held
+// completion is, so its count, its stop and its tier reach the terminal.
+func TestACompletionFlushedAtTheCutSettlesTheTurn(t *testing.T) {
+	engine := NewBuiltinEngine()
+	stream, err := engine.NewStream(llmprotocol.OpenAIResponsesV1, llmprotocol.OpenAIResponsesV1,
+		llmprotocol.StreamContext{Context: t.Context()})
+	requireNoError(t, err)
+
+	item := `{"content":[{"annotations":[],"text":"ninety-one is","type":"output_text"}],"id":"item_1",` +
+		`"role":"assistant","status":"completed","type":"message"}`
+	var frames [][]byte
+	for _, chunk := range []string{
+		truncatedUpstreamChunk(llmprotocol.OpenAIResponsesV1),
+		"event: response.output_text.done\n" + `data: {"type":"response.output_text.done","sequence_number":4,` +
+			`"item_id":"item_1","output_index":0,"content_index":0,"text":"ninety-one is"}` + "\n\n",
+		"event: response.content_part.done\n" + `data: {"type":"response.content_part.done","sequence_number":5,` +
+			`"item_id":"item_1","output_index":0,"content_index":0,"part":{"annotations":[],"text":"ninety-one is","type":"output_text"}}` + "\n\n",
+		"event: response.output_item.done\n" + `data: {"type":"response.output_item.done","sequence_number":6,` +
+			`"output_index":0,"item":` + item + `}` + "\n\n",
+		// The completion, cut off from its blank line.
+		"event: response.completed\n" + `data: {"type":"response.completed","sequence_number":7,"response":{"id":"resp_1",` +
+			`"object":"response","created_at":0,"model":"m","status":"completed","output":[` + item + `],` +
+			`"usage":{"input_tokens":10,"output_tokens":5,"total_tokens":15}}}` + "\n",
+	} {
+		pushed, _, _, pushErr := stream.Push([]byte(chunk))
+		requireNoError(t, pushErr)
+		frames = append(frames, pushed...)
+	}
+	stream.SetTruncationUsage(estimatedTruncationUsage(), llmprotocol.UsageSourceStreamEstimate)
+	stream.SetTruncationCause(llmprotocol.TruncationTransport)
+	terminal, _, _, err := stream.Finalize(llmprotocol.NewError(
+		llmprotocol.ErrorUpstreamUnavailable, "standard_resend_body_cut", "the body was cut", nil))
+	requireNoError(t, err)
+
+	body := string(joinFrames(append(frames, terminal...)))
+	wantContains(t, body, `"output_tokens":5`, "the flushed completion's count was discarded")
+	wantNotContains(t, body, `"output_tokens":268`, "the turn was restated from the estimate")
+	wantNotContains(t, body, `"max_output_tokens"`, "a finished turn was reported as stopped at a limit")
+}
+
+// The stop a Messages message_delta states survives a cut before message_stop.
+// The delta carries the model's stop and its final count; a turn cut between
+// the two had finished, and a Chat client is told the stop it reached.
+func TestAStopStatedByAMessageDeltaSurvivesACut(t *testing.T) {
+	engine := NewBuiltinEngine()
+	requested := true
+	stream, err := engine.NewStream(llmprotocol.AnthropicMessagesV1, llmprotocol.OpenAIChatV1,
+		llmprotocol.StreamContext{
+			Context: t.Context(), Options: llmprotocol.StreamOptions{IncludeUsage: &requested},
+		})
+	requireNoError(t, err)
+
+	served, _, _, err := stream.Push([]byte(truncatedUpstreamChunk(llmprotocol.AnthropicMessagesV1) +
+		"event: content_block_stop\n" + `data: {"type":"content_block_stop","index":0}` + "\n\n" +
+		"event: message_delta\n" +
+		`data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":5}}` + "\n\n"))
+	requireNoError(t, err)
+	// No message_stop: the connection is cut first.
+	stream.SetTruncationUsage(estimatedTruncationUsage(), llmprotocol.UsageSourceStreamEstimate)
+	stream.SetTruncationCause(llmprotocol.TruncationTransport)
+	terminal, _, _, err := stream.Finalize(llmprotocol.NewError(
+		llmprotocol.ErrorUpstreamUnavailable, "standard_resend_body_cut", "the body was cut", nil))
+	requireNoError(t, err)
+
+	body := string(joinFrames(append(served, terminal...)))
+	wantContains(t, body, `"finish_reason":"stop"`, "the stop the model reached was lost")
+	wantNotContains(t, body, `"finish_reason":"length"`, "a finished answer was reported as cut short")
+	wantContains(t, body, `"completion_tokens":5`, "the delta's settlement was replaced")
+}
+
+// A cut can land inside a JSON object or inside a multibyte character. The
+// structural checks name those in their own words rather than as an EOF, and
+// each is what a cut leaves behind: complete as far as it goes.
+func TestACutInsideAnObjectOrACharacterStillBills(t *testing.T) {
+	for name, tail := range map[string]string{
+		"inside an object":   `data: {"id":"chatcmpl-1","object":"chat.completion.chu`,
+		"inside a value":     `data: {"id":"chatcmpl-1"`,
+		"inside a character": "data: {\"id\":\"chatcmpl-1\",\"object\":\"\xe2\x82",
+	} {
+		engine := NewBuiltinEngine()
+		requested := true
+		stream, err := engine.NewStream(llmprotocol.OpenAIChatV1, llmprotocol.OpenAIChatV1,
+			llmprotocol.StreamContext{
+				Context: t.Context(), Options: llmprotocol.StreamOptions{IncludeUsage: &requested},
+			})
+		requireNoError(t, err)
+		served, _, _, err := stream.Push([]byte(truncatedUpstreamChunk(llmprotocol.OpenAIChatV1)))
+		requireNoError(t, err)
+		_, _, _, err = stream.Push([]byte(tail))
+		requireNoError(t, err, "%s: the fragment was refused before the cut", name)
+		stream.SetTruncationUsage(estimatedTruncationUsage(), llmprotocol.UsageSourceStreamEstimate)
+		stream.SetTruncationCause(llmprotocol.TruncationDeadline)
+		terminal, _, _, err := stream.Finalize(llmprotocol.NewError(
+			llmprotocol.ErrorUpstreamTimeout, "stream_truncated", "deadline", nil))
+		requireNoError(t, err, "%s: a cut was reported as malformed upstream JSON", name)
+
+		body := string(joinFrames(append(served, terminal...)))
+		wantContains(t, body, `"completion_tokens":268`, "%s: the count was lost", name)
+		wantContains(t, body, "data: [DONE]", "%s: the stream was left open", name)
+		wantNotContains(t, body, "invalid_upstream", "%s: the fragment became the client's answer", name)
+	}
+}
+
+// An image generation open at the cut has no state the closer could
+// synthesize, so it is left open rather than closed as something it is not.
+// The terminal still arrives, with its count; it used to be replaced by a
+// bare image_generation_item_invalid error that dropped the usage.
+func TestAnOpenImageGenerationAtTheCutStillTerminates(t *testing.T) {
+	engine := NewBuiltinEngine()
+	stream, err := engine.NewStream(llmprotocol.OpenAIResponsesV1, llmprotocol.OpenAIResponsesV1,
+		llmprotocol.StreamContext{Context: t.Context()})
+	requireNoError(t, err)
+
+	var frames [][]byte
+	for _, chunk := range []string{
+		"event: response.created\n" + `data: {"type":"response.created","sequence_number":0,` +
+			`"response":{"id":"resp_1","object":"response","created_at":0,"model":"m","status":"in_progress","output":[]}}` + "\n\n",
+		"event: response.output_item.added\n" + `data: {"type":"response.output_item.added","sequence_number":1,"output_index":0,` +
+			`"item":{"type":"image_generation_call","id":"ig_1","status":"in_progress","result":null}}` + "\n\n",
+		"event: response.image_generation_call.in_progress\n" + `data: {"type":"response.image_generation_call.in_progress",` +
+			`"sequence_number":2,"item_id":"ig_1","output_index":0}` + "\n\n",
+		"event: response.output_item.added\n" + `data: {"type":"response.output_item.added","sequence_number":3,"output_index":1,` +
+			`"item":{"type":"message","id":"item_2","role":"assistant","status":"in_progress","content":[]}}` + "\n\n",
+		"event: response.content_part.added\n" + `data: {"type":"response.content_part.added","sequence_number":4,"item_id":"item_2",` +
+			`"output_index":1,"content_index":0,"part":{"type":"output_text","text":"","annotations":[]}}` + "\n\n",
+		"event: response.output_text.delta\n" + `data: {"type":"response.output_text.delta","sequence_number":5,"item_id":"item_2",` +
+			`"output_index":1,"content_index":0,"delta":"here is your"}` + "\n\n",
+	} {
+		pushed, _, _, pushErr := stream.Push([]byte(chunk))
+		requireNoError(t, pushErr)
+		frames = append(frames, pushed...)
+	}
+	stream.SetTruncationUsage(estimatedTruncationUsage(), llmprotocol.UsageSourceStreamEstimate)
+	stream.SetTruncationCause(llmprotocol.TruncationDeadline)
+	terminal, _, _, err := stream.Finalize(llmprotocol.NewError(
+		llmprotocol.ErrorUpstreamTimeout, "stream_truncated", "deadline", nil))
+	requireNoError(t, err, "an open image generation turned the cut into an error")
+
+	body := string(joinFrames(append(frames, terminal...)))
+	wantContains(t, body, `"type":"response.incomplete"`, "the turn did not terminate")
+	wantContains(t, body, `"output_tokens":268`, "the count was dropped")
+	wantNotContains(t, body, "image_generation_item_invalid")
+	wantNotContains(t, body, "event: error")
+	// The text item the cut landed in is still closed, as incomplete.
+	wantContains(t, body, `"role":"assistant","status":"incomplete","type":"message"`)
+}
+
 // The drop that cannot be helped is loud.
 //
 // Chat omits its usage-only chunk unless the client requested it, so a cut

@@ -418,6 +418,15 @@ func (encoder *responsesStreamEncoder) closeOpenResponsesItems(
 			if _, done := encoder.completedOutput[encoder.outputIndexes[key]]; done {
 				continue
 			}
+			// An image generation or a provider's web search closes only with
+			// state the upstream sends on its completion -- the image, the
+			// search's result -- and a cut turn has none to synthesize. Such
+			// an item stays open rather than closing as something it is not,
+			// and the terminal still states the count; a client reading the
+			// resource sees the item absent from output, as it was before.
+			if key.kind == responsesOutputImage || key.kind == responsesOutputWebSearch {
+				continue
+			}
 			open = append(open, openItem{itemIndex: itemIndex, outputIndex: encoder.outputIndexes[key]})
 			break
 		}
