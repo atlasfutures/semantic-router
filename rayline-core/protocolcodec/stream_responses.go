@@ -105,7 +105,10 @@ type responsesStreamEncoder struct {
 	// far. A turn the Router cuts mid-call has to close the item it opened,
 	// and only the call's own name, id and arguments can close it
 	// (closeOpenResponsesItems); the deltas themselves pass straight through.
-	openToolCalls   map[responsesOutputKey]*llmprotocol.ToolCall
+	openToolCalls map[responsesOutputKey]*llmprotocol.ToolCall
+	// closingAtCut is set while the items a cut landed in are being closed,
+	// so each closes as incomplete: the turn ended in the middle of it.
+	closingAtCut    bool
 	responseStarted bool
 	wireSequence    uint64
 }

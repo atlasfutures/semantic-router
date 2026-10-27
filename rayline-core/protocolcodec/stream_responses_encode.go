@@ -407,6 +407,8 @@ func (encoder *responsesStreamEncoder) recordOpenToolCall(
 func (encoder *responsesStreamEncoder) closeOpenResponsesItems(
 	event llmprotocol.Event,
 ) ([][]byte, error) {
+	encoder.closingAtCut = true
+	defer func() { encoder.closingAtCut = false }()
 	type openItem struct {
 		itemIndex, outputIndex int
 	}
@@ -448,6 +450,16 @@ func (encoder *responsesStreamEncoder) closeOpenResponsesItems(
 		frames = append(frames, closed...)
 	}
 	return frames, nil
+}
+
+// closedItemStatus is the status an item closes with: "incomplete" while the
+// items a cut landed in are being closed, since the turn ended in the middle
+// of each, and "completed" for an item the model finished.
+func (encoder *responsesStreamEncoder) closedItemStatus() string {
+	if encoder.closingAtCut {
+		return "incomplete"
+	}
+	return "completed"
 }
 
 // openToolCallFor is the function call an item had streamed, if it is one.
@@ -794,7 +806,7 @@ func (encoder *responsesStreamEncoder) encodeCompletedResponsesContent(
 		return nil, nil, err
 	}
 	index, id := encoder.outputIndexes[outputKey], encoder.outputIDs[outputKey]
-	item, err := marshalCompletedResponsesItem(outputKey, id, parts)
+	item, err := marshalCompletedResponsesItem(outputKey, id, parts, encoder.closedItemStatus())
 	if err != nil {
 		return nil, nil, err
 	}
