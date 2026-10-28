@@ -2266,6 +2266,9 @@ global:
       # open response then carries the next host's stream. An arm may set its
       # own providers.models[].first_content_sec. Off by default.
       host_retry: false
+      # Stop trying further hosts once a turn is this old (seconds since it
+      # started); 0 leaves deadline_sec as the only bound.
+      host_retry_budget_sec: 0
       # How long a discount endpoint's standard re-send (standard_twin) may
       # take. It must stay below the ext_proc message_timeout, which bounds
       # how long Envoy waits for the re-send's answer. 0 selects 55 s (below

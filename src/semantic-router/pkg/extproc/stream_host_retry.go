@@ -291,6 +291,14 @@ func (r *OpenAIRouter) retryOnNextHost(ctx *RequestContext, class, detail string
 	}
 	current := &plan.attempts[len(plan.attempts)-1]
 	current.host, current.source = host, source
+	if budget := r.Config.ResponseStreamHostRetryBudgetSec; budget > 0 && !ctx.StartTime.IsZero() &&
+		time.Since(ctx.StartTime) >= time.Duration(budget)*time.Second {
+		logging.ComponentWarnEvent("extproc", "stream_host_retry_unavailable", map[string]interface{}{
+			"request_id": ctx.RequestID, "model": plan.dispatch.logicalModel, "reason": "budget_spent",
+			"attempt": len(plan.attempts), "budget_ms": int64(budget) * 1000,
+		})
+		return false
+	}
 	tried := append(plan.tried(), host)
 	next := []string{}
 	for _, candidate := range plan.hosts {

@@ -500,3 +500,41 @@ func TestStalledCallKeepsTheInputItStated(t *testing.T) {
 	assert.Equal(t, 20, usage.promptTokens)
 	assert.False(t, usage.completionTokensReported)
 }
+
+// Once the turn has spent its retry budget, no further host is tried and the
+// stall is cut as before.
+func TestSpentRetryBudgetCutsTheStall(t *testing.T) {
+	upstream := newHostUpstream(t, map[string]string{hostRetryHostB: "content"})
+	router := hostRetryRouter(upstream.server.URL, true, 0)
+	router.Config.ResponseStreamHostRetryBudgetSec = 60
+	stream := NewMockStream(nil)
+	ctx, _ := routeFlexTurn(t, router, hostRetryArm, true)
+	require.NoError(t, router.processResponseHeaders(NewMockStream(nil), flexUpstreamHeaders(http.StatusOK, "text/event-stream"), ctx))
+	require.NoError(t, router.handleProcessRequest(stream, fullDuplexResponseBodyRequest(openRouterKeepaliveChunk, false), ctx))
+	ctx.StartTime = time.Now().Add(-91 * time.Second)
+	ctx.StreamContentSince = ctx.StartTime
+	require.NoError(t, router.endSilentStream(stream, ctx))
+
+	assert.False(t, ctx.HostRetry.started())
+	assert.True(t, ctx.StreamingComplete)
+	assert.Equal(t, turnFailureTimeout, ctx.ResponseFailureClass)
+	assert.Empty(t, upstream.calls())
+}
+
+// The exchange ends while the call's opening frames are held: nothing but
+// comments reached the client, so no content was sent before the failure.
+func TestHeldFramesAreNotContentSentWhenTheExchangeEnds(t *testing.T) {
+	upstream := newHostUpstream(t, map[string]string{})
+	router := hostRetryRouter(upstream.server.URL, true, 0)
+	stream := NewMockStream(nil)
+	ctx, _ := routeFlexTurn(t, router, hostRetryArm, true)
+	require.NoError(t, router.processResponseHeaders(NewMockStream(nil), flexUpstreamHeaders(http.StatusOK, "text/event-stream"), ctx))
+	require.NoError(t, router.handleProcessRequest(stream, fullDuplexResponseBodyRequest(hostRetryPreContentChunk, false), ctx))
+	require.NotEmpty(t, ctx.HostRetry.held)
+
+	router.finalizeEndedStream(ctx, io.EOF)
+
+	require.NotNil(t, ctx.ContentSentBeforeFailure)
+	assert.False(t, *ctx.ContentSentBeforeFailure)
+}
+

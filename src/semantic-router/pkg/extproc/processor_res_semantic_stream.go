@@ -662,6 +662,10 @@ func (r *OpenAIRouter) classStreamFailure(
 		// sent chunks carried reached the client, whatever the class.
 		sent = ctx.DeliveredStreamItems > 0
 	}
+	if plan := ctx.HostRetry; plan != nil && !plan.exposed {
+		// Held for a host retry, the call's frames never reached the client.
+		sent = ctx.DeliveredStreamItems > 0
+	}
 	var inBand *llmprotocol.ProtocolError
 	switch {
 	case responseErr == nil && llmprotocol.ResponseRefused(semanticResponse):

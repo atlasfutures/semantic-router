@@ -256,8 +256,11 @@ type RouterOptions struct {
 	FlexResendBudgetSec int `yaml:"flex_resend_budget_sec,omitempty"`
 	// ResponseStreamHostRetry re-sends a stalled streamed turn on its arm's
 	// next provider host; see CanonicalResponseStream.HostRetry.
-	ResponseStreamHostRetry bool                 `yaml:"response_stream_host_retry,omitempty"`
-	SkipProcessing          SkipProcessingConfig `yaml:"skip_processing,omitempty"`
+	ResponseStreamHostRetry bool `yaml:"response_stream_host_retry,omitempty"`
+	// ResponseStreamHostRetryBudgetSec caps a turn's host retries; see
+	// CanonicalResponseStream.HostRetryBudgetSec.
+	ResponseStreamHostRetryBudgetSec int                  `yaml:"response_stream_host_retry_budget_sec,omitempty"`
+	SkipProcessing                   SkipProcessingConfig `yaml:"skip_processing,omitempty"`
 	// ThinkingMarkerMint signs thinking a non-Anthropic upstream wrote with a
 	// Router thinking marker on Messages output (semantic-router #191).
 	ThinkingMarkerMint bool `yaml:"thinking_marker_mint,omitempty"`
