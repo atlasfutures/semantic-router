@@ -245,8 +245,8 @@ func TestMintedThinkingMarkerIsStrippedForClaude(t *testing.T) {
 	}
 }
 
-// The active tool loop's latest thinking is never stripped before the send:
-// Anthropic requires it. The re-send keeps it only when the run covers it.
+// The active tool loop's latest thinking is never stripped before a Claude
+// send: Anthropic requires it. Sent unserved, it starts the next run.
 func TestActiveToolLoopThinkingIsKept(t *testing.T) {
 	router, _ := newThinkingGuardRouter(t, "claude")
 	for _, tc := range []struct {
@@ -272,9 +272,7 @@ func TestActiveToolLoopThinkingIsKept(t *testing.T) {
 			if adopted := ctx.RaylineARCTransaction.thinkingAdopted; adopted != wantAdopted {
 				t.Fatalf("adopted = %q, want %q: a sent unserved loop message starts the next run", adopted, wantAdopted)
 			}
-			if plan.keep["sig-loop"] != tc.wantKeep || len(plan.keep) != map[bool]int{true: 1, false: 0}[tc.wantKeep] {
-				t.Fatalf("re-send keeps %v, want sig-loop kept = %v", plan.keep, tc.wantKeep)
-			}
+			_ = plan
 		})
 	}
 }
@@ -395,11 +393,11 @@ func TestThinkingSignatureRefusalIsRecognised(t *testing.T) {
 	}
 }
 
-// The re-send body strips the thinking of every earlier assistant message.
-// The active tool loop's latest message keeps it only when the run covers it;
-// otherwise it loses it, and thinking is turned off for the call along with
-// the clear_thinking edit that requires it.
-func TestThinkingRetryBodyStripsEarlierTurns(t *testing.T) {
+// The re-send body strips the thinking of every assistant message, the
+// active loop's included: a kept block's signature covers what precedes it.
+// Thinking is turned off, with the clear_thinking edit and the effort that
+// require it, only where the model can turn it off.
+func TestThinkingRetryBodyStripsEveryTurn(t *testing.T) {
 	var client map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(toolLoopHistory("sig-earlier", "sig-loop")), &client); err != nil {
 		t.Fatal(err)
@@ -409,36 +407,33 @@ func TestThinkingRetryBodyStripsEarlierTurns(t *testing.T) {
 	client["context_management"] = json.RawMessage(`{"edits":[{"type":"clear_thinking_20251015","keep":"all"},{"type":"clear_tool_uses_20250919"}]}`)
 	dispatched, _ := json.Marshal(client)
 
-	served, change, ok := thinkingRetryBody(dispatched, map[string]bool{"sig-loop": true})
-	if !ok || change.stripped != 1 || change.thinkingDisabled {
-		t.Fatalf("served loop: ok=%v change=%+v", ok, change)
-	}
-	if strings.Contains(string(served), "sig-earlier") || !strings.Contains(string(served), "sig-loop") ||
-		!strings.Contains(string(served), `"adaptive"`) || !strings.Contains(string(served), "clear_thinking") {
-		t.Fatalf("served loop body: %s", served)
-	}
-
-	unserved, change, ok := thinkingRetryBody(dispatched, nil)
+	disabled, change, ok := thinkingRetryBody(dispatched, true)
 	if !ok || change.stripped != 2 || !change.thinkingDisabled {
-		t.Fatalf("unserved loop: ok=%v change=%+v", ok, change)
+		t.Fatalf("can disable: ok=%v change=%+v", ok, change)
 	}
 	var members map[string]json.RawMessage
-	if err := json.Unmarshal(unserved, &members); err != nil {
+	if err := json.Unmarshal(disabled, &members); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(string(members["messages"]), `"thinking"`) || !strings.Contains(string(members["messages"]), "toolu_1") {
-		t.Fatalf("unserved loop messages: %s", members["messages"])
+		t.Fatalf("messages: %s", members["messages"])
 	}
 	if !sameJSON(t, members["thinking"], `{"type":"disabled"}`) ||
 		!sameJSON(t, members["context_management"], `{"edits":[{"type":"clear_tool_uses_20250919"}]}`) {
-		t.Fatalf("unserved loop: thinking %s, context_management %s", members["thinking"], members["context_management"])
+		t.Fatalf("thinking %s, context_management %s", members["thinking"], members["context_management"])
 	}
 	if _, kept := members["output_config"]; kept {
 		t.Fatalf("an effort that requires thinking survived thinking off: %s", members["output_config"])
 	}
 
+	alwaysOn, change, ok := thinkingRetryBody(dispatched, false)
+	if !ok || change.stripped != 2 || change.thinkingDisabled ||
+		!strings.Contains(string(alwaysOn), `"adaptive"`) || strings.Contains(string(alwaysOn), "sig-loop") {
+		t.Fatalf("always on: ok=%v change=%+v body=%s", ok, change, alwaysOn)
+	}
+
 	plain, _ := json.Marshal(map[string]any{"messages": []any{map[string]any{"role": "user", "content": "hi"}}})
-	if _, _, ok := thinkingRetryBody(plain, nil); ok {
+	if _, _, ok := thinkingRetryBody(plain, true); ok {
 		t.Fatal("a body with no thinking was re-sent")
 	}
 }
@@ -541,16 +536,14 @@ func answerRefusal(t *testing.T, router *OpenAIRouter, ctx *RequestContext, upst
 }
 
 // A signature refusal is re-sent exactly once, before anything reaches the
-// client, with no thinking left in the earlier turns, even the run's own; the
-// run's loop thinking is kept, and the client gets the re-send's reply. Both calls are marked on
-// llm_usage.
+// client, with no thinking left in any turn, even the run's own, and the
+// client gets the re-send's reply. Both calls are marked on llm_usage.
 func TestSignatureRefusalIsResentOnceWithoutEarlierThinking(t *testing.T) {
 	logs := captureLogs(t)
 	upstream := newClaudeUpstream(t, http.StatusOK, claudeServedReply)
 	ctx, envoy := refusedThinkingTurn(t, "episode-thinking-retry", upstream, http.StatusBadRequest, signatureRefusal, "sig-earlier")
-	if transaction := ctx.RaylineARCTransaction; !transaction.thinkingRestart ||
-		transaction.thinkingAdopted != protocolcodec.SignatureAnchorKey("sig-loop") {
-		t.Fatalf("restart = %v, adopted = %q: the run must start again at the kept loop message",
+	if transaction := ctx.RaylineARCTransaction; !transaction.thinkingRestart || transaction.thinkingAdopted != "" {
+		t.Fatalf("restart = %v, adopted = %q: the run must start again at the re-send's reply",
 			transaction.thinkingRestart, transaction.thinkingAdopted)
 	}
 
@@ -567,7 +560,7 @@ func TestSignatureRefusalIsResentOnceWithoutEarlierThinking(t *testing.T) {
 	if err := json.Unmarshal(calls[0], &sent); err != nil {
 		t.Fatal(err)
 	}
-	assertSignatures(t, "re-send", sent["messages"], []string{"sig-loop"}, []string{"sig-earlier"})
+	assertSignatures(t, "re-send", sent["messages"], nil, []string{"sig-earlier", `"sig-loop"`})
 
 	lines := usageLines(logs)
 	if len(lines) != 2 {
@@ -580,7 +573,7 @@ func TestSignatureRefusalIsResentOnceWithoutEarlierThinking(t *testing.T) {
 	assertFields(t, "re-send", lines[1], map[string]interface{}{"thinking_signature_retry": thinkingRetryResend})
 	event := findLogEvent(t, logs, "thinking_signature_retry")
 	assertFields(t, "thinking_signature_retry", event, map[string]interface{}{
-		"refused_status": http.StatusBadRequest, "resend_status": http.StatusOK, "stripped": 1, "thinking_disabled": false,
+		"refused_status": http.StatusBadRequest, "resend_status": http.StatusOK, "stripped": 2,
 	})
 }
 
@@ -883,10 +876,23 @@ func TestRepeatedTextDoesNotMoveTheRun(t *testing.T) {
 // index cannot show they are not the refused ones.
 func TestChatRetryStripsTheLoopsDetails(t *testing.T) {
 	dispatched := []byte(piChatHistory(claudeChatReasoning))
-	retried, change, ok := chatRetryBody(dispatched)
+	retried, change, ok := chatRetryBody(dispatched, false)
 	if !ok || change.stripped != 1 || strings.Contains(string(retried), "reasoning_details") ||
 		!strings.Contains(string(retried), "claude reasoning") {
 		t.Fatalf("ok=%v change=%+v body=%s", ok, change, retried)
+	}
+	// The loop here is no longer active (a user turn follows it), so a
+	// Claude re-send keeps its reasoning request.
+	var withReasoning map[string]json.RawMessage
+	_ = json.Unmarshal([]byte(piChatHistory(claudeChatReasoning)), &withReasoning)
+	withReasoning["reasoning"] = json.RawMessage(`{"max_tokens":2048}`)
+	var messages []json.RawMessage
+	_ = json.Unmarshal(withReasoning["messages"], &messages)
+	withReasoning["messages"], _ = json.Marshal(messages[:len(messages)-1])
+	active, _ := json.Marshal(withReasoning)
+	retried, change, ok = chatRetryBody(active, true)
+	if !ok || !change.thinkingDisabled || strings.Contains(string(retried), `"reasoning":{`) {
+		t.Fatalf("an active loop's Claude re-send still asked for reasoning: ok=%v change=%+v body=%s", ok, change, retried)
 	}
 }
 
@@ -909,7 +915,7 @@ func TestRunIsFoundAcrossASplitReply(t *testing.T) {
 // A Chat re-send keeps the plaintext of reasoning held only in its details.
 func TestChatRetryKeepsDetailOnlyText(t *testing.T) {
 	retried, _, ok := chatRetryBody([]byte(piChatHistory(
-		`"reasoning_details":[{"type":"reasoning.text","text":"only here","signature":"sig","format":"anthropic-claude-v1","index":0}]`)))
+		`"reasoning_details":[{"type":"reasoning.text","text":"only here","signature":"sig","format":"anthropic-claude-v1","index":0}]`)), false)
 	if !ok || strings.Contains(string(retried), "reasoning_details") || !strings.Contains(string(retried), `"reasoning_content":"only here"`) {
 		t.Fatalf("ok=%v body=%s", ok, retried)
 	}
@@ -993,8 +999,8 @@ func TestActiveLoopIsFoundAcrossParallelResultsAndTextBesideThem(t *testing.T) {
 	})
 }
 
-// The Messages re-send keeps a split active reply's thinking whole when the
-// run covers it, and otherwise strips all of it and turns thinking off.
+// The Messages re-send strips a split active reply's thinking, in every one
+// of its messages, and turns thinking off when the model can.
 func TestThinkingRetryBodyTreatsASplitReplyAsOne(t *testing.T) {
 	body := []byte(`{"thinking":{"type":"adaptive"},"messages":[` +
 		`{"role":"user","content":"start"},` +
@@ -1003,16 +1009,8 @@ func TestThinkingRetryBodyTreatsASplitReplyAsOne(t *testing.T) {
 		assistantTurn(thinkingBlock("sig-loop")) + `,` +
 		assistantTurn(`{"type":"tool_use","id":"toolu_1","name":"bash","input":{}}`) + `,` +
 		`{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"ok"}]}]}`)
-	served, change, ok := thinkingRetryBody(body, map[string]bool{"sig-loop": true})
-	if !ok || change.thinkingDisabled || !strings.Contains(string(served), `"sig-loop"`) || strings.Contains(string(served), `"sig-earlier"`) ||
-		change.keptSignature != protocolcodec.SignatureAnchorKey("sig-loop") {
-		t.Fatalf("served: ok=%v change=%+v body=%s", ok, change, served)
-	}
-	unserved, change, ok := thinkingRetryBody(body, nil)
-	if !ok || !change.thinkingDisabled || strings.Contains(string(unserved), `"sig-loop"`) {
-		t.Fatalf("unserved: ok=%v change=%+v body=%s", ok, change, unserved)
-	}
-	if !refusedActiveThinking(body, []byte(`messages.3.content.0: Invalid signature`)) {
-		t.Fatal("a refusal of the split reply's first message was not read as the loop's own")
+	retried, change, ok := thinkingRetryBody(body, true)
+	if !ok || !change.thinkingDisabled || change.stripped != 2 || strings.Contains(string(retried), `"sig-loop"`) {
+		t.Fatalf("ok=%v change=%+v body=%s", ok, change, retried)
 	}
 }

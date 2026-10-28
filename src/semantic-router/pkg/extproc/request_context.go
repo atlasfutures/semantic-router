@@ -154,14 +154,11 @@ type RequestContext struct {
 	RaylineARCEndpointsTried     []string
 	RaylineARCDispatchedEndpoint string
 	RaylineARCEndpointResend     *endpointResendPlan
-	// ThinkingSignatureRetry is the guard's re-send staged on a Claude
-	// dispatch over Messages (rayline_arc_thinking_signature.go), and
+	// ThinkingSignatureRetry is the guard's re-send staged on a dispatch
+	// (rayline_arc_thinking_signature.go), and
 	// ThinkingSignatureRetried says the call in flight is that re-send.
-	// thinkingRetryKeep is the active tool loop's latest thinking the
-	// episode's run covers, the only thinking the re-send keeps.
 	ThinkingSignatureRetry   *thinkingSignatureRetryPlan
 	ThinkingSignatureRetried bool
-	thinkingRetryKeep        []string
 	// streamReceiver is the ext_proc stream's receiver, so a phase that must
 	// read ahead (the guard's re-send) can, and put back what it read.
 	streamReceiver *streamReceiver

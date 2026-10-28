@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"regexp"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
@@ -56,13 +55,16 @@ import (
 //
 // After a refusal. A call on any worker refused with exactly the
 // invalid-signature 400 or OpenRouter's encrypted-reasoning one is re-sent
-// once, at once, on the same arm, with the reasoning of every earlier
-// assistant message stripped (Messages: thinking blocks; Chat:
-// reasoning_details; Responses: encrypted reasoning items). The active tool
-// loop's latest message keeps its thinking only when the run covers it; when
-// its thinking is stripped, thinking is turned off for that one call, as
+// once, at once, on the same arm, with the signed and encrypted reasoning of
+// every assistant message stripped, the active tool loop's latest reply's
+// included (Messages: thinking blocks; Chat: reasoning_details; Responses:
+// encrypted reasoning items). Anthropic binds a signature to the history
+// before it, so no block survives the removal of any before it; the run
+// starts again at the re-send's reply. Where the loop's reply lost its
+// thinking and the model can turn thinking off, the re-send turns it off, as
 // Anthropic's own error advises, since the call would otherwise be refused
-// for the missing block. Nothing has reached the client then: the refusal is
+// for the missing block; an always-on model keeps its settings. Nothing has
+// reached the client then: the refusal is
 // decided before its headers are answered (thinkingSignatureRetryOnResponseHeaders),
 // which needs the response body under FULL_DUPLEX_STREAMED, where the Router
 // may read the body before it answers the headers. Under BUFFERED the body is
@@ -155,7 +157,6 @@ func (r *OpenAIRouter) guardHistoryReasoning(
 	if ctx == nil {
 		return 0
 	}
-	ctx.thinkingRetryKeep = nil
 	if request == nil || !r.thinkingSignatureGuardOn(dispatch) || ctx.RaylineARCTransaction == nil {
 		return 0
 	}
@@ -182,12 +183,7 @@ func (r *OpenAIRouter) guardHistoryReasoning(
 	keepActive := false
 	switch {
 	case active >= 0 && covered(activeStart):
-		// The re-send keeps the loop's latest reasoning only when the run
-		// covers it.
 		keepActive = true
-		for index := activeStart; index <= active; index++ {
-			ctx.thinkingRetryKeep = append(ctx.thinkingRetryKeep, protocolcodec.MessageThinkingKeys(request.Messages[index])...)
-		}
 	case active >= 0 && claude:
 		// Sent though the run does not cover it: if Claude takes it, a new
 		// run starts at it, so later turns keep it and the prefix this turn's
@@ -299,18 +295,18 @@ func activeToolLoopReply(messages []llmprotocol.Message) (int, int) {
 }
 
 // thinkingSignatureRetryPlan is what the guard's re-send needs: the dispatch,
-// the body it was sent, and the thinking of the active tool loop's latest
-// message the run covers (a signed block's signature, a redacted block's
-// data), the only thinking the re-send keeps.
+// the body it was sent, whether the worker is Claude, and whether its model
+// can turn reasoning off (config.RouterConfig.ModelCanDisableReasoning).
 type thinkingSignatureRetryPlan struct {
 	dispatch   *providerDispatch
 	dispatched []byte
-	keep       map[string]bool
+	claude     bool
+	canDisable bool
 }
 
-// stageThinkingSignatureRetry keeps what the re-send needs for a Claude
-// dispatch over Messages. A turn a flex or endpoint re-send already answers
-// keeps those: neither re-sends a 400.
+// stageThinkingSignatureRetry keeps what the re-send needs for a dispatch. A
+// turn a flex or endpoint re-send already answers keeps those: neither
+// re-sends a 400.
 func (r *OpenAIRouter) stageThinkingSignatureRetry(ctx *RequestContext, dispatch *providerDispatch, body []byte) {
 	if ctx == nil {
 		return
@@ -319,12 +315,10 @@ func (r *OpenAIRouter) stageThinkingSignatureRetry(ctx *RequestContext, dispatch
 	if !r.thinkingSignatureGuardOn(dispatch) || ctx.LooperRequest || len(body) == 0 {
 		return
 	}
-	keep := make(map[string]bool, len(ctx.thinkingRetryKeep))
-	for _, key := range ctx.thinkingRetryKeep {
-		keep[key] = true
-	}
 	ctx.ThinkingSignatureRetry = &thinkingSignatureRetryPlan{
-		dispatch: dispatch, dispatched: body, keep: keep,
+		dispatch: dispatch, dispatched: body,
+		claude:     r.armFamily(dispatch.logicalModel) == anthropicFamily,
+		canDisable: r.Config.ModelCanDisableReasoning(dispatch.logicalModel),
 	}
 }
 
@@ -365,22 +359,12 @@ func thinkingSignatureRejected(body []byte) bool {
 func (plan *thinkingSignatureRetryPlan) retryBody(refusal []byte) ([]byte, thinkingRetryChange, bool) {
 	switch plan.dispatch.targetFormat {
 	case llmprotocol.AnthropicMessagesV1:
-		keep := plan.keep
-		if refusedActiveThinking(plan.dispatched, refusal) {
-			// The refusal may be of the loop's own block: the run's record of
-			// it does not make it verifiable.
-			keep = nil
-		}
-		retryBody, change, changed := thinkingRetryBody(plan.dispatched, keep)
-		if !changed && len(keep) > 0 {
-			retryBody, change, changed = thinkingRetryBody(plan.dispatched, nil)
-		}
-		return retryBody, change, changed
+		return thinkingRetryBody(plan.dispatched, plan.canDisable)
 	case llmprotocol.OpenAIChatV1:
 		// A Chat refusal's message index (Anthropic's, behind OpenRouter)
 		// does not name a Chat message, so the loop's own reasoning_details
 		// cannot be shown not to be the refused ones: they go too.
-		return chatRetryBody(plan.dispatched)
+		return chatRetryBody(plan.dispatched, plan.claude && plan.canDisable)
 	case llmprotocol.OpenAIResponsesV1:
 		return responsesRetryBody(plan.dispatched)
 	}
@@ -389,15 +373,20 @@ func (plan *thinkingSignatureRetryPlan) retryBody(refusal []byte) ([]byte, think
 
 // chatRetryBody is a dispatched Chat body with every assistant message's
 // reasoning_details removed (the encrypted and signed reasoning OpenRouter
-// carries). The reasoning text is kept.
-func chatRetryBody(body []byte) ([]byte, thinkingRetryChange, bool) {
+// carries). The reasoning text is kept. For a Claude worker whose model can
+// turn reasoning off (disableReasoning), a re-send whose active loop reply
+// lost its signed details asks for no reasoning, as the Messages re-send turns
+// thinking off: Claude refuses a loop whose last reply lacks its thinking.
+func chatRetryBody(body []byte, disableReasoning bool) ([]byte, thinkingRetryChange, bool) {
 	var change thinkingRetryChange
 	var members map[string]json.RawMessage
 	var messages []map[string]json.RawMessage
 	if json.Unmarshal(body, &members) != nil || json.Unmarshal(members["messages"], &messages) != nil {
 		return nil, change, false
 	}
-	for _, message := range messages {
+	active := activeChatToolLoopReplyEnd(messages)
+	activeStripped := false
+	for index, message := range messages {
 		if wireRole(message) != "assistant" {
 			continue
 		}
@@ -417,6 +406,7 @@ func chatRetryBody(body []byte) ([]byte, thinkingRetryChange, bool) {
 		}
 		delete(message, "reasoning_details")
 		change.stripped++
+		activeStripped = activeStripped || index == active
 	}
 	if change.stripped == 0 {
 		return nil, change, false
@@ -426,8 +416,43 @@ func chatRetryBody(body []byte) ([]byte, thinkingRetryChange, bool) {
 		return nil, change, false
 	}
 	members["messages"] = encoded
+	if activeStripped && disableReasoning {
+		for _, member := range []string{"reasoning", "reasoning_effort"} {
+			if _, set := members[member]; set {
+				delete(members, member)
+				change.thinkingDisabled = true
+			}
+		}
+	}
 	out, err := json.Marshal(members)
 	return out, change, err == nil
+}
+
+// activeChatToolLoopReplyEnd is the index of the assistant message whose
+// tool calls a Chat body's trailing tool messages answer, or -1. A Chat
+// reply is one message.
+func activeChatToolLoopReplyEnd(messages []map[string]json.RawMessage) int {
+	last := len(messages) - 1
+	answered := map[string]bool{}
+	for ; last >= 0 && wireRole(messages[last]) != "assistant"; last-- {
+		var id string
+		if json.Unmarshal(messages[last]["tool_call_id"], &id) == nil && id != "" {
+			answered[id] = true
+		}
+	}
+	if last < 0 || len(answered) == 0 {
+		return -1
+	}
+	var calls []struct {
+		ID string `json:"id"`
+	}
+	_ = json.Unmarshal(messages[last]["tool_calls"], &calls)
+	for _, call := range calls {
+		if answered[call.ID] {
+			return last
+		}
+	}
+	return -1
 }
 
 // responsesRetryBody is a dispatched Responses body without its encrypted
@@ -464,51 +489,22 @@ func hasJSONMember(members map[string]json.RawMessage, name string) bool {
 	return present && len(value) > 0 && string(value) != "null" && string(value) != `""`
 }
 
-// refusedMessagePattern reads the message index a refusal names
-// ("messages.19.content.12: ...").
-var refusedMessagePattern = regexp.MustCompile(`messages\.(\d+)\.content\.\d+`)
-
-// refusedActiveThinking reports whether a refusal may be of a block of the
-// active tool loop's latest message in the dispatched body: it names that
-// message, or names no message at all.
-func refusedActiveThinking(dispatched, refusal []byte) bool {
-	var members map[string]json.RawMessage
-	var messages []map[string]json.RawMessage
-	if json.Unmarshal(dispatched, &members) != nil || json.Unmarshal(members["messages"], &messages) != nil {
-		return false
-	}
-	start, end := activeWireToolLoopReply(messages)
-	if end < 0 {
-		return false
-	}
-	matches := refusedMessagePattern.FindAllSubmatch(refusal, -1)
-	if len(matches) == 0 {
-		// A refusal that names no block (OpenRouter's encrypted-reasoning
-		// one) may be of the loop's own: nothing proves it is not.
-		return true
-	}
-	for _, match := range matches {
-		if index, err := strconv.Atoi(string(match[1])); err == nil && index >= start && index <= end {
-			return true
-		}
-	}
-	return false
-}
-
 // thinkingRetryBody is the dispatched Messages body with the thinking of
-// every earlier assistant message stripped. The active tool loop's latest
-// message keeps the blocks keep names; when it loses any, it loses all, and
-// thinking is turned off for the call (with any clear_thinking context edit,
-// which requires it). It reports what it changed, and false when nothing.
+// every assistant message stripped, the active tool loop's latest reply's
+// included. A kept block's signature covers the history before it (Anthropic
+// binds it to its prefix), so no block survives the removal of any before
+// it, and the run starts again at the re-send's reply. When the loop's reply
+// loses its thinking, thinking is turned off for the call where the model
+// can turn it off (with the clear_thinking edit and an effort that require
+// it): otherwise Anthropic refuses the loop for its missing thinking block.
+// An always-on model keeps its thinking settings, and its re-send may be
+// refused for that. It reports what it changed, and false when nothing.
 type thinkingRetryChange struct {
 	stripped         int
 	thinkingDisabled bool
-	// keptSignature is the anchor key of the active loop's first thinking
-	// block when the re-send keeps it.
-	keptSignature string
 }
 
-func thinkingRetryBody(body []byte, keep map[string]bool) ([]byte, thinkingRetryChange, bool) {
+func thinkingRetryBody(body []byte, canDisable bool) ([]byte, thinkingRetryChange, bool) {
 	var change thinkingRetryChange
 	var members map[string]json.RawMessage
 	if json.Unmarshal(body, &members) != nil {
@@ -519,59 +515,29 @@ func thinkingRetryBody(body []byte, keep map[string]bool) ([]byte, thinkingRetry
 		return nil, change, false
 	}
 	start, end := activeWireToolLoopReply(messages)
-	inActive := func(index int) bool { return end >= 0 && index >= start && index <= end }
-	// The active reply keeps its thinking only whole, across its messages.
-	activeWhole := end >= 0
-	for index := start; end >= 0 && index <= end; index++ {
-		var blocks []map[string]json.RawMessage
-		_ = json.Unmarshal(messages[index]["content"], &blocks)
-		for _, block := range blocks {
-			if key, thinking := wireThinkingKey(block); thinking {
-				activeWhole = activeWhole && keep[key]
-				if change.keptSignature == "" && key != "" {
-					change.keptSignature = protocolcodec.SignatureAnchorKey(key)
-					if wireBlockType(block) == "redacted_thinking" {
-						change.keptSignature = protocolcodec.RedactedAnchorKey(key)
-					}
-				}
-			}
-		}
-	}
-	if !activeWhole {
-		change.keptSignature = ""
-	}
 	activeStripped := false
 	kept := make([]map[string]json.RawMessage, 0, len(messages))
 	for index, message := range messages {
-		if wireRole(message) != "assistant" {
-			kept = append(kept, message)
-			continue
-		}
 		var blocks []map[string]json.RawMessage
-		if json.Unmarshal(message["content"], &blocks) != nil {
+		if wireRole(message) != "assistant" || json.Unmarshal(message["content"], &blocks) != nil {
 			kept = append(kept, message)
 			continue
 		}
-		holds := 0
-		for _, block := range blocks {
-			if _, thinking := wireThinkingKey(block); thinking {
-				holds++
-			}
-		}
-		if holds == 0 || inActive(index) && activeWhole {
-			kept = append(kept, message)
-			continue
-		}
-		if inActive(index) {
-			activeStripped = true
-		}
-		remaining := make([]map[string]json.RawMessage, 0, len(blocks)-holds)
+		remaining := make([]map[string]json.RawMessage, 0, len(blocks))
 		for _, block := range blocks {
 			if _, thinking := wireThinkingKey(block); !thinking {
 				remaining = append(remaining, block)
 			}
 		}
+		holds := len(blocks) - len(remaining)
+		if holds == 0 {
+			kept = append(kept, message)
+			continue
+		}
 		change.stripped += holds
+		if end >= 0 && index >= start && index <= end {
+			activeStripped = true
+		}
 		if len(remaining) == 0 {
 			continue
 		}
@@ -590,7 +556,7 @@ func thinkingRetryBody(body []byte, keep map[string]bool) ([]byte, thinkingRetry
 		return nil, change, false
 	}
 	members["messages"] = encoded
-	if activeStripped && thinkingEnabledOnWire(members["thinking"]) {
+	if activeStripped && canDisable && thinkingEnabledOnWire(members["thinking"]) {
 		members["thinking"] = json.RawMessage(`{"type":"disabled"}`)
 		withoutClearThinkingEdits(members)
 		withoutThinkingOnlyEffort(members)
@@ -805,8 +771,8 @@ func (r *OpenAIRouter) thinkingSignatureRetryOnResponseHeaders(
 	// that starts again from this turn.
 	r.auditRaylineARCUpstream(retryBody, ctx)
 	if transaction := ctx.RaylineARCTransaction; transaction != nil && transaction.thinkingWorker != "" {
-		// A kept loop message starts the new run, as an adopted one does.
-		transaction.thinkingRestart, transaction.thinkingAdopted = true, change.keptSignature
+		// The re-send kept no reasoning: the run starts again at its reply.
+		transaction.thinkingRestart, transaction.thinkingAdopted = true, ""
 	}
 	result := callFlexTwin(ctx, call, r.flexResendBodyLimit(), received.Add(budget))
 	fields := map[string]interface{}{
