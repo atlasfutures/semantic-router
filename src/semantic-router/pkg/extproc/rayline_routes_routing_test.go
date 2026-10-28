@@ -634,3 +634,25 @@ func TestRoutesEchoNeverAppliesAnUnappliedTemperature(t *testing.T) {
 		t.Fatalf("result %+v echo %+v", payload.Presets.Swift.Temperature, payload.Routing)
 	}
 }
+
+// The tiers' versioned ids are the tiers: a routed lookup on them is admitted
+// and keeps the tier's fixed value, like arc-swift and arc-sage.
+func TestRoutesRoutingTreatsTheVersionedTierIdsAsTheTiers(t *testing.T) {
+	body := func(model, routing string) []byte {
+		return []byte(`{"model":"` + model + `","messages":[{"role":"user","content":"hi"}],"routing":` + routing + `}`)
+	}
+	for model, value := range map[string]string{"arc-swift-1.0": "0.1", "arc-sage-1.0": "4.5", "rayline/arc-sage-1.0": "4.5"} {
+		if _, _, refusal := readRaylineRoutesRouting(body(model, `{"prices":{"openai/gpt-6-luna":{"input":5000,"cache_read":500,"cache_write":5000,"output":40000}},"exclusive":true}`), nil); refusal != nil {
+			t.Fatalf("%s: refused (%s: %s)", model, refusal.code, refusal.message)
+		}
+		if _, _, refusal := readRaylineRoutesRouting(body(model, `{"value_usd":`+value+`}`), nil); refusal != nil {
+			t.Fatalf("%s at its own value: refused (%s)", model, refusal.code)
+		}
+		if _, _, refusal := readRaylineRoutesRouting(body(model, `{"value_usd":2}`), nil); refusal == nil || refusal.code != "tier_value_immutable" {
+			t.Fatalf("%s at another value: got %v, want tier_value_immutable", model, refusal)
+		}
+	}
+	if _, _, refusal := readRaylineRoutesRouting(body("arc-sage-2.0", `{"value_usd":1}`), nil); refusal == nil || refusal.code != "unknown_model" {
+		t.Fatalf("arc-sage-2.0: got %v, want unknown_model", refusal)
+	}
+}

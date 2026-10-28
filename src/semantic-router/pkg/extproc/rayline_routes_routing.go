@@ -53,6 +53,9 @@ var routesPresets = []struct {
 var routesPublicModels = map[string]float64{
 	"arc-swift": 0.1, "rayline/arc-swift": 0.1,
 	"arc-sage": 4.5, "rayline/arc-sage": 4.5,
+	// The tiers' versioned ids, as the standing cell's entrypoints name them.
+	"arc-swift-1.0": 0.1, "rayline/arc-swift-1.0": 0.1,
+	"arc-sage-1.0": 4.5, "rayline/arc-sage-1.0": 4.5,
 	"arc-1.0": 0, "arc-1": 0, "rayline/arc-1": 0, "rayline/arc-1.0": 0,
 }
 
