@@ -6,7 +6,7 @@
  "wire_model": "openai/gpt-5.6-terra",
  "admission": "enforced",
  "allow_experimental": true,
- "registry_pin": "eb0d014ac155443c9d8b95bcd6f6cc113224065e078a46332acd9cc9c5fad440",
+ "registry_pin": "9450ce173270ec8ed55d8d1bf29d706f3fc409daf06654a03724544eb9abf609",
  "calls": [
   {
    "client_body": "client-00.json",
