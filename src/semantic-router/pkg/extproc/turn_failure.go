@@ -90,6 +90,7 @@ func recordTurnFailureDetail(ctx *RequestContext, class, detail string, contentS
 		fields["episode_id_hash"] = trace.EpisodeIDHash
 		fields["policy_action_id"] = trace.PolicyActionID
 	}
+	addUpstreamErrorTextFields(fields, ctx.UpstreamErrorText)
 	if stop := responseStopTelemetry(ctx); stop.known() {
 		fields["provider_stop_reason"] = stop.providerStop
 		fields["stop_details_type"] = stop.detailsType
