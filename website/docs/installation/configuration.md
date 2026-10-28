@@ -413,9 +413,10 @@ global:
   `response_body_mode: FULL_DUPLEX_STREAMED`, and until the first content the
   Router holds the stream's opening frames and sends SSE comments in their
   place. Off by default.
-- `host_retry_budget_sec` caps the time a turn spends on host retries: once
-  the turn is that old, no further host is tried and the turn ends as a
-  first-content timeout. `0` leaves `deadline_sec` as the only bound. With N
+- `host_retry_budget_sec` caps the time a turn spends on host retries: a
+  re-send waits for its first content only until the turn is that old, no
+  further host is tried after that, and the turn ends as a first-content
+  timeout. The first call keeps its full first-content limit. `0` leaves `deadline_sec` as the only bound. With N
   hosts and a first-content limit of L seconds, a turn that stalls on every
   host takes about N × L seconds before its error.
 - The limits are checked whenever a chunk arrives. When nothing arrives at

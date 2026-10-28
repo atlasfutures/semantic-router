@@ -102,10 +102,11 @@ type CanonicalResponseStream struct {
 	// (stream_host_retry.go). The arm's pin must list more than one host. Off
 	// by default.
 	HostRetry bool `yaml:"host_retry,omitempty"`
-	// HostRetryBudgetSec caps the time a turn may spend on host retries: no
-	// further host is tried once this long has passed since the turn
-	// started, and the turn ends as a first-content timeout. Zero leaves
-	// deadline_sec as the only bound.
+	// HostRetryBudgetSec caps the time a turn may spend on host retries: a
+	// re-send waits for its first content only until this long has passed
+	// since the turn started, no further host is tried after that, and the
+	// turn ends as a first-content timeout. The first call keeps its full
+	// first-content limit. Zero leaves deadline_sec as the only bound.
 	HostRetryBudgetSec int `yaml:"host_retry_budget_sec,omitempty"`
 }
 

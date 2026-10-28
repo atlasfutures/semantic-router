@@ -489,7 +489,9 @@ func (r *OpenAIRouter) retryAfterStreamFailure(ctx *RequestContext) bool {
 // reasoning, a refusal or a tool call.
 func (state *semanticResponseStreamState) carriesContent() bool {
 	for _, item := range state.items {
-		if item.text != "" || item.reasoning != "" || item.refusal != "" || item.toolCall != nil || item.carried != nil {
+		// A tool call's bare start carries no output yet.
+		calledTool := item.toolCall != nil && (item.toolCall.Arguments != "" || item.completed)
+		if item.text != "" || item.reasoning != "" || item.refusal != "" || calledTool || item.carried != nil {
 			return true
 		}
 	}

@@ -538,3 +538,30 @@ func TestHeldFramesAreNotContentSentWhenTheExchangeEnds(t *testing.T) {
 	assert.False(t, *ctx.ContentSentBeforeFailure)
 }
 
+// A re-send in flight waits for its first content only as long as the
+// turn's retry budget has left.
+func TestRetryBudgetShortensTheReSendsWait(t *testing.T) {
+	router := hostRetryRouter("http://127.0.0.1:1", true, 30)
+	router.Config.ResponseStreamHostRetryBudgetSec = 45
+	ctx, _ := silentStreamContext(t, 0)
+	ctx.RequestModel = hostRetryArm
+	ctx.StartTime = time.Now().Add(-30 * time.Second)
+	ctx.StreamContentSince = time.Now()
+	assert.Equal(t, 30*time.Second, router.streamSilenceLimit(ctx), "the first call was capped")
+
+	ctx.HostRetry = &hostRetryPlan{splice: &hostRetrySplice{}}
+	assert.InDelta(t, (15 * time.Second).Seconds(), router.streamSilenceLimit(ctx).Seconds(), 1)
+	// 46 s into the turn, the re-send sent at 30 s has been silent 16 s.
+	ctx.StartTime = time.Now().Add(-46 * time.Second)
+	ctx.StreamContentSince = time.Now().Add(-16 * time.Second)
+	assert.True(t, router.streamSilenceExceeded(ctx))
+}
+
+// A tool call's bare start is no content: an in-band error after it still
+// moves the turn to the next host.
+func TestABareToolCallStartIsNotContent(t *testing.T) {
+	state := &semanticResponseStreamState{items: map[int]*semanticStreamItem{0: {toolCall: &llmprotocol.ToolCall{ID: "call_1", Name: "read"}}}}
+	assert.False(t, state.carriesContent())
+	state.items[0].toolCall.Arguments = `{"path":`
+	assert.True(t, state.carriesContent())
+}
