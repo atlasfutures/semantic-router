@@ -21,19 +21,24 @@ import (
 //
 // Only those: never the request, the metadata's raw provider body, or any
 // other member. The message is redacted as the client's copy is
-// (llmprotocol.RedactProviderText), its links are dropped, its whitespace is
-// folded, and it is cut at upstreamErrorTextMax bytes. An account refusal
-// (401, 402) is left out: its text names the cell's provider account.
+// (llmprotocol.RedactProviderText), its links are dropped, every quoted span
+// is replaced by [quoted] (a provider that echoes a request value quotes it:
+// "Invalid value: 'x'"), its whitespace is folded, and it is cut at
+// upstreamErrorTextMax bytes. An echo the provider did not quote is not
+// caught; the cut bounds it. An account refusal (401, 402) is left out: its
+// text names the cell's provider account. A slug is kept only when it has a
+// provider slug's shape and the redactor leaves it as it is.
 
 const (
 	upstreamErrorTextMax  = 300
-	upstreamErrorSlugMax  = 64
+	upstreamErrorSlugMax  = 48
 	upstreamErrorSlugsMax = 16
 )
 
 var (
-	upstreamErrorLinkPattern = regexp.MustCompile(`https?://\S+`)
-	upstreamErrorSlugPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]*$`)
+	upstreamErrorLinkPattern  = regexp.MustCompile(`https?://\S+`)
+	upstreamErrorSlugPattern  = regexp.MustCompile(`^[a-z0-9][a-z0-9._/-]*$`)
+	upstreamErrorQuotePattern = regexp.MustCompile("\"[^\"]*\"|'[^']*'|`[^`]*`|“[^”]*”|‘[^’]*’")
 )
 
 // upstreamErrorText is what a provider's 4xx said, as the logs may carry it.
@@ -81,6 +86,7 @@ func readUpstreamErrorText(status int, body []byte, protocolError *llmprotocol.P
 func loggableUpstreamMessage(message string) string {
 	message = llmprotocol.RedactProviderText(message)
 	message = upstreamErrorLinkPattern.ReplaceAllString(message, "[link]")
+	message = upstreamErrorQuotePattern.ReplaceAllString(message, "[quoted]")
 	message = strings.Join(strings.Fields(message), " ")
 	if len(message) <= upstreamErrorTextMax {
 		return message
@@ -94,8 +100,9 @@ func loggableUpstreamMessage(message string) string {
 
 // loggableSlug is a provider slug, or "" for anything that is not one.
 func loggableSlug(slug string) string {
-	slug = strings.TrimSpace(slug)
-	if len(slug) > upstreamErrorSlugMax || !upstreamErrorSlugPattern.MatchString(slug) {
+	slug = strings.ToLower(strings.TrimSpace(slug))
+	if len(slug) > upstreamErrorSlugMax || !upstreamErrorSlugPattern.MatchString(slug) ||
+		strings.HasPrefix(slug, "sk-") || llmprotocol.RedactProviderText(slug) != slug {
 		return ""
 	}
 	return slug

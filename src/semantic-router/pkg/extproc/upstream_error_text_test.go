@@ -81,3 +81,17 @@ func TestUsageLineStatesNoUpstreamErrorTextByDefault(t *testing.T) {
 		}
 	}
 }
+
+// A request value the provider echoes in quotes never reaches the log, and
+// a credential-shaped slug is dropped.
+func TestUpstreamErrorTextDropsEchoedValuesAndCredentialSlugs(t *testing.T) {
+	body := []byte(`{"error":{"message":"Invalid value: 'customer-private-input' for messages[2]; expected \"tool\"",` +
+		`"metadata":{"pinned_provider_slug":"sk-or-v1-0123456789abcdef","accepting_provider_slugs":["sk-or-v1-0123456789abcdef","google-vertex"]}}}`)
+	text := readUpstreamErrorText(400, body, nil)
+	if strings.Contains(text.message, "customer-private-input") || !strings.Contains(text.message, "[quoted]") {
+		t.Fatalf("message = %q", text.message)
+	}
+	if text.pinnedSlug != "" || fmt.Sprint(text.acceptingSlugs) != "[google-vertex]" {
+		t.Fatalf("slugs = %q %v", text.pinnedSlug, text.acceptingSlugs)
+	}
+}
