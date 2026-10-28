@@ -31,6 +31,10 @@ func (r *OpenAIRouter) handleResponseBody(v *ext_proc.ProcessingRequest_Response
 		return r.handleUpstreamTransportError(responseBody, ctx), nil
 	}
 
+	if ctx.IsStreamingResponse && ctx.HostRetry.started() {
+		// A re-send on the arm's next host serves the client now.
+		return droppedHostChunk(ctx), nil
+	}
 	if ctx.IsStreamingResponse {
 		return r.handleSemanticStreamingResponseBody(responseBody, v.ResponseBody.GetEndOfStream(), ctx), nil
 	}

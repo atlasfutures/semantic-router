@@ -279,6 +279,9 @@ func validateCanonicalProviderModel(
 	if err := validateProviderServiceTier(model.Name, model.ServiceTier); err != nil {
 		return "", err
 	}
+	if model.FirstContentSec < 0 {
+		return "", fmt.Errorf("providers.models[%s].first_content_sec must not be negative", model.Name)
+	}
 	if err := validateCanonicalProviderModelMetadata(model); err != nil {
 		return "", err
 	}

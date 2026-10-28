@@ -26,8 +26,11 @@ type semanticResponseStreamState struct {
 	// line written from here can only be joined to its turn by timestamp.
 	requestID  string
 	responseID string
-	model      string
-	stop       llmprotocol.StopReason
+	// upstreamResponseID is the id the upstream gave the response (an
+	// OpenRouter generation id), before the Router's own public id replaced it.
+	upstreamResponseID string
+	model              string
+	stop               llmprotocol.StopReason
 	// sourceStop and provider are what the upstream said about itself: the stop
 	// string it sent and the provider that served the turn.
 	sourceStop string
@@ -92,7 +95,12 @@ func (r *OpenAIRouter) handleSemanticStreamingResponseBody(
 	overran := r.responseStreamOverran(ctx)
 	// Checked after this chunk's content was observed, so a chunk that
 	// carries content is never cut for the silence before it.
-	silent := !overran && !endOfStream && r.streamSilenceExceeded(ctx)
+	silent := !overran && !endOfStream && (r.streamSilenceExceeded(ctx) || ctx.HostRetry != nil && ctx.HostRetry.exhausted)
+	if silent && r.retryOnNextHost(ctx, turnFailureTimeout, streamFirstContentTimeoutCode) {
+		// The arm's next host takes the turn over; nothing of this call
+		// reaches the client.
+		return droppedHostChunk(ctx)
+	}
 	// A body the Router read itself that ended in a read error is cut there,
 	// even when its last frame looked final.
 	readCut := !overran && endOfStream && ctx.UpstreamBodyCut != nil
@@ -117,11 +125,12 @@ func (r *OpenAIRouter) handleSemanticStreamingResponseBody(
 		if cut {
 			releaseCutTurn(ctx)
 		}
+		ctx.HostRetry.stop()
 	}
 	// The turn is over either way here: the upstream reached its end, or the
 	// Router ended it. Both have to end the response, or the client waits for
 	// an EOF that only the platform will send.
-	return buffers.processingResponse(ctx, cut || endOfStream)
+	return holdHostRetryFrames(ctx, buffers.processingResponse(ctx, cut || endOfStream))
 }
 
 func (r *OpenAIRouter) initializeSemanticResponseStream(ctx *RequestContext) {
@@ -278,6 +287,9 @@ func (r *OpenAIRouter) ensureSemanticResponseStream(ctx *RequestContext) error {
 		streamContext.ResponseID = responseID
 	}
 	mutation = func(event *llmprotocol.Event) error {
+		if event.ResponseID != "" && ctx.SemanticStreamState != nil {
+			ctx.SemanticStreamState.upstreamResponseID = event.ResponseID
+		}
 		if responseID != "" {
 			event.ResponseID = responseID
 		}

@@ -433,6 +433,9 @@ type ModelParams struct {
 	// ServiceTier is the OpenRouter service tier the arm sends; see
 	// ServiceTierForModel.
 	ServiceTier string `yaml:"service_tier,omitempty"`
+	// FirstContentSec is the arm's own first-content limit; see
+	// FirstContentSecForModel.
+	FirstContentSec int `yaml:"first_content_sec,omitempty"`
 }
 
 // EvidenceScore resolves a versioned static model index. Missing, failed, and

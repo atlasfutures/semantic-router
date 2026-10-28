@@ -29,7 +29,8 @@ func (r *OpenAIRouter) streamSilenceLimit(ctx *RequestContext) time.Duration {
 	if r == nil || r.Config == nil || ctx == nil {
 		return 0
 	}
-	seconds := r.Config.ResponseStreamFirstContentSec
+	// An arm may set its own first-content limit.
+	seconds := r.Config.FirstContentSecForModel(ctx.RequestModel)
 	if ctx.StreamContentSeen {
 		seconds = r.Config.ResponseStreamIdleSec
 	}

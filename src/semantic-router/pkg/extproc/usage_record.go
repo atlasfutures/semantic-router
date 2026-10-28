@@ -150,6 +150,23 @@ type llmUsageRecord struct {
 	// carries its failure_class like any failed call. Null on every other
 	// call.
 	EndpointResend *string `json:"endpoint_resend"`
+	// HostRetry marks the calls of a streamed turn re-sent on its arm's next
+	// provider host after a call failed before any content
+	// (stream_host_retry.go): host_attempt on each call the cell went on
+	// from, host_retry on the last call, which served the client whatever
+	// its outcome. HostAttempt is the call's place in the turn, from 1;
+	// UpstreamHost the host it is attributed to, and UpstreamHostSource how
+	// that was known: response (the stream named it) or order (the first
+	// host not yet tried). HostAttemptStartedMS is when the call was sent,
+	// from the turn's start. Null on every other call.
+	HostRetry            *string `json:"host_retry"`
+	HostAttempt          *int    `json:"host_attempt"`
+	UpstreamHost         *string `json:"upstream_host"`
+	UpstreamHostSource   *string `json:"upstream_host_source"`
+	HostAttemptStartedMS *int64  `json:"host_attempt_started_ms"`
+	// UpstreamResponseID is the id the upstream gave a streamed response (an
+	// OpenRouter generation id), null when none arrived.
+	UpstreamResponseID *string `json:"upstream_response_id"`
 	// ProviderEndpoint is the endpoint tag the call is known to be served
 	// by, null when OpenRouter could choose; ProviderEndpointsTried are the
 	// turn's endpoints dispatched so far when it picked one of several;
@@ -342,6 +359,10 @@ func (r *OpenAIRouter) newLLMUsageRecord(ctx *RequestContext, usage responseUsag
 		record.UpstreamProvider = nonEmpty(state.provider)
 		record.UpstreamServiceTier = nonEmpty(state.serviceTier)
 	}
+	if state := ctx.SemanticStreamState; state != nil {
+		record.UpstreamResponseID = nonEmpty(state.upstreamResponseID)
+	}
+	addHostRetryFields(&record, ctx)
 	addUsageRecordARCAttribution(&record, ctx)
 	return record
 }

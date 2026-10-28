@@ -164,6 +164,9 @@ type RequestContext struct {
 	// FlexResend is the standard re-send staged for a discount-endpoint
 	// dispatch (flex_resend.go); nil for every arm without a standard twin.
 	FlexResend *flexResendPlan
+	// HostRetry is the re-send on the arm's next provider host staged for a
+	// dispatch whose pin lists several (stream_host_retry.go); nil otherwise.
+	HostRetry *hostRetryPlan
 	// UpstreamBodyCut is set when the Router read the provider's body itself
 	// and the read ended in an error: the stream that ends with it is cut,
 	// not complete, whatever its last frame said.

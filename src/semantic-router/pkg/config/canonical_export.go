@@ -314,6 +314,7 @@ func CanonicalGlobalFromRouterConfig(cfg *RouterConfig) *CanonicalGlobal {
 				FirstContentSec: cfg.ResponseStreamFirstContentSec,
 				IdleSec:         cfg.ResponseStreamIdleSec,
 				ResendBudgetSec: cfg.FlexResendBudgetSec,
+				HostRetry:       cfg.ResponseStreamHostRetry,
 			},
 			SkipProcessing: cfg.SkipProcessing,
 			ModelSelection: cfg.ModelSelection,

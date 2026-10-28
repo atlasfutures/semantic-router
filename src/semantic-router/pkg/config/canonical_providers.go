@@ -46,6 +46,11 @@ type CanonicalProviderModel struct {
 	// request for the arm carries it as the top-level service_tier, replacing
 	// any tier the client sent. Absent, the request is left as it was.
 	ServiceTier string `yaml:"service_tier,omitempty"`
+	// FirstContentSec overrides global.router.response_stream.first_content_sec
+	// for this arm: how long its streamed turn may wait for its first content.
+	// A non-thinking arm can be held to a shorter wait than an arm that
+	// reasons in silence. Absent or zero, the global limit applies.
+	FirstContentSec int `yaml:"first_content_sec,omitempty"`
 }
 
 // CanonicalReasoning either references one built-in family or defines the

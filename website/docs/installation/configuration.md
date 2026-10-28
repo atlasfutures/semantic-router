@@ -398,7 +398,21 @@ global:
   cell's fallback excludes that model from its next decisions, and the episode
   lease is released at once, so the client's retry is decided afresh.
 - Set both limits above the slowest legitimate first content of every model,
-  including one that reasons without streaming its reasoning.
+  including one that reasons without streaming its reasoning. A model may set
+  its own `providers.models[].first_content_sec`, which replaces the global
+  value for that model, so a model that does not reason can be ended sooner.
+- `host_retry: true` re-sends a turn on the model's next provider host when
+  the first-content limit fires before any content reached the client. The
+  model's `provider_preferences` must list more than one host (`order`, or
+  `only`). The re-send is the dispatched body with the hosts tried so far
+  removed from `order` and `only` and added to `ignore`, and its stream
+  reaches the client on the same response. The host that stalled is the one
+  the response named in `provider`, or else the first host in the list not
+  yet tried. The turn keeps its model, its decision and its episode lease;
+  only when every host has stalled or failed does it end as above. It needs
+  `response_body_mode: FULL_DUPLEX_STREAMED`, and until the first content the
+  Router holds the stream's opening frames and sends SSE comments in their
+  place. Off by default.
 - The limits are checked whenever a chunk arrives. When nothing arrives at
   all, only a cell whose ext_proc filter uses
   `response_body_mode: FULL_DUPLEX_STREAMED` ends the turn on time, and only

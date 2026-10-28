@@ -48,6 +48,7 @@ func applyCanonicalModelCardOverlay(cfg *RouterConfig, canonical *CanonicalConfi
 		}
 		params.StandardTwin = model.StandardTwin
 		params.ServiceTier = model.ServiceTier
+		params.FirstContentSec = model.FirstContentSec
 		cfg.ModelConfig[model.Name] = params
 	}
 }

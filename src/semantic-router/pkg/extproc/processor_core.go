@@ -121,7 +121,7 @@ func (r *OpenAIRouter) processWithContext(
 
 	receiver := startStreamReceiver(stream)
 	for {
-		message, stalled := receiver.next(r.loopWait(ctx))
+		message, stalled := receiver.next(r.loopWait(ctx), hostRetryChunks(ctx))
 		if stalled {
 			if waiting, ok := receiver.poll(); ok {
 				message, stalled = waiting, false
@@ -138,6 +138,13 @@ func (r *OpenAIRouter) processWithContext(
 			}
 			// Nothing arrived and the body being held is past its deadline.
 			if err := r.endStalledResponseBody(stream, ctx); err != nil {
+				return err
+			}
+			continue
+		}
+		if message.spliced != nil {
+			// What a re-send on the arm's next host said.
+			if err := r.serveHostRetryChunk(stream, ctx, *message.spliced); err != nil {
 				return err
 			}
 			continue
