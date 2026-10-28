@@ -31,6 +31,24 @@ type CanonicalRouterGlobal struct {
 	ModelSelection            ModelSelectionConfig     `yaml:"model_selection"`
 	Learning                  RouterLearningConfig     `yaml:"learning,omitempty"`
 	ThinkingMarkers           CanonicalThinkingMarkers `yaml:"thinking_markers,omitempty"`
+	// ThinkingSignatures governs the Claude thinking signatures a request's
+	// history carries to a Claude worker.
+	ThinkingSignatures CanonicalThinkingSignatures `yaml:"thinking_signatures,omitempty"`
+}
+
+// CanonicalThinkingSignatures controls what a Claude worker reached over
+// Messages is sent of the signed thinking in a request's history. By default
+// the Router strips the thinking of every earlier assistant turn it did not
+// itself serve on the same Claude model (the episode's thinking run), and
+// re-sends a call Anthropic refused for an invalid thinking signature once
+// with the earlier turns' thinking stripped (extproc
+// rayline_arc_thinking_signature.go). A signature verifies only on the model
+// and provider family that wrote it, so a resent foreign block fails the turn
+// with a 400 on every retry.
+type CanonicalThinkingSignatures struct {
+	// KeepUnserved turns both off: the history's thinking reaches a Claude
+	// worker as the client sent it, and a refusal is not re-sent.
+	KeepUnserved bool `yaml:"keep_unserved,omitempty"`
 }
 
 // CanonicalThinkingMarkers controls the Router's thinking markers
@@ -392,6 +410,7 @@ func applyCanonicalRouterGlobal(cfg *RouterConfig, router CanonicalRouterGlobal)
 	cfg.ResponseStreamIdleSec = router.ResponseStream.IdleSec
 	cfg.FlexResendBudgetSec = router.ResponseStream.ResendBudgetSec
 	cfg.ThinkingMarkerMint = router.ThinkingMarkers.Mint
+	cfg.KeepUnservedClaudeThinking = router.ThinkingSignatures.KeepUnserved
 	cfg.SkipProcessing = router.SkipProcessing
 	cfg.ModelSelection = router.ModelSelection
 	cfg.RouterLearning = router.Learning

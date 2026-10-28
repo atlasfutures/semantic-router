@@ -430,6 +430,34 @@ global:
   was trained on thinking replayed this way: it changes what those clients
   send from text to thinking.
 
+### Thinking signatures
+
+Anthropic checks the signature of every thinking block in a request's
+history, and a signature verifies only on the Claude model, and the provider
+family, that wrote it. Thinking another model signed, or thinking signed
+before the conversation reached the Router (on a client's own key), fails
+the turn with a 400 on every retry.
+
+```yaml
+global:
+  router:
+    thinking_signatures:
+      keep_unserved: false
+```
+
+- By default a Claude worker reached over Messages is sent the thinking of an
+  earlier assistant turn only when the Router served that turn on the same
+  model, in the episode's current run on it. The thinking of every other
+  earlier turn is stripped. The latest assistant message of an active tool
+  loop always keeps its thinking, which Anthropic requires.
+- A call refused for an invalid thinking signature is re-sent once, before
+  anything reaches the client, with the thinking of every earlier assistant
+  turn stripped. The active tool loop's latest thinking is kept only when the
+  Router served it; otherwise thinking is turned off for that one call. The
+  refusal can be read before its headers are answered only under
+  `FULL_DUPLEX_STREAMED` response bodies.
+- `keep_unserved: true` turns both off.
+
 ### Catalog-backed models
 
 Built-in support is additive to the same `version: v0.3` hierarchy. Set the

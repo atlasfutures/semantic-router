@@ -159,6 +159,12 @@ type llmUsageRecord struct {
 	// carries its failure_class like any failed call. Null on every other
 	// call.
 	EndpointResend *string `json:"endpoint_resend"`
+	// ThinkingSignatureRetry marks the two calls of a Claude turn refused for
+	// an invalid thinking signature and re-sent with the earlier turns'
+	// thinking stripped (rayline_arc_thinking_signature.go):
+	// signature_attempt on the refused call, stripped_resend on the re-send.
+	// Null on every other call.
+	ThinkingSignatureRetry *string `json:"thinking_signature_retry"`
 	// ProviderEndpoint is the endpoint tag the call is known to be served
 	// by, null when OpenRouter could choose; ProviderEndpointsTried are the
 	// turn's endpoints dispatched so far when it picked one of several;
@@ -326,6 +332,10 @@ func (r *OpenAIRouter) newLLMUsageRecord(ctx *RequestContext, usage responseUsag
 	record.RequestedServiceTier = nonEmpty(ctx.DispatchedServiceTier)
 	if ctx.FlexResend.served() {
 		record.FlexResend = nonEmpty(flexResendStandard)
+	}
+	if ctx.ThinkingSignatureRetried {
+		// The refused call's line overwrites this with signature_attempt.
+		record.ThinkingSignatureRetry = nonEmpty(thinkingRetryResend)
 	}
 	record.ProviderEndpoint = nonEmpty(ctx.RaylineARCDispatchedEndpoint)
 	record.SessionKeySource = nonEmpty(ctx.RaylineARCSessionKeySource)

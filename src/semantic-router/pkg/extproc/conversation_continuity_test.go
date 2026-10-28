@@ -67,6 +67,12 @@ const (
 	// the top-level tools on OpenRouter (req_filter_tool_changes.go). A
 	// system message that is left empty goes too.
 	transformToolChangesToTools = "tool_changes_to_tools"
+	// A Claude arm is sent no thinking from an earlier assistant turn the
+	// cell did not serve on its model (rayline_arc_thinking_signature.go):
+	// a captured conversation's thinking was signed elsewhere, so every
+	// assistant message but the active tool loop's latest loses its
+	// thinking, and a message left empty goes.
+	transformUnservedThinkingStripped = "unserved_thinking_stripped"
 )
 
 type continuityCase struct {
@@ -383,7 +389,20 @@ func conversationShape(raw []byte) ([]messageShape, error) {
 // instead, in conversationKept.
 func expectedConversation(client []messageShape, transforms map[string]bool) []messageShape {
 	out := make([]messageShape, 0, len(client))
-	for _, message := range client {
+	activeLoop := activeLoopShape(client)
+	for index, message := range client {
+		if transforms[transformUnservedThinkingStripped] && message.Role == "assistant" && index != activeLoop {
+			kept := make([]blockShape, 0, len(message.Blocks))
+			for _, block := range message.Blocks {
+				if block.Type != "thinking" && block.Type != "redacted_thinking" {
+					kept = append(kept, block)
+				}
+			}
+			if len(kept) == 0 {
+				continue
+			}
+			message.Blocks = kept
+		}
 		if transforms[transformDeveloperAsSystem] && message.Role == "developer" {
 			message.Role = "system"
 		}
@@ -412,6 +431,32 @@ func expectedConversation(client []messageShape, transforms map[string]bool) []m
 		out = append(out, message)
 	}
 	return out
+}
+
+// activeLoopShape is the index of the assistant message whose tool call the
+// last message answers, or -1.
+func activeLoopShape(messages []messageShape) int {
+	if len(messages) < 2 {
+		return -1
+	}
+	answered := map[string]bool{}
+	for _, block := range messages[len(messages)-1].Blocks {
+		if block.Type == "tool_result" && block.Link != "" {
+			answered[block.Link] = true
+		}
+	}
+	for index := len(messages) - 2; index >= 0 && len(answered) > 0; index-- {
+		if messages[index].Role != "assistant" {
+			continue
+		}
+		for _, block := range messages[index].Blocks {
+			if block.Type == "tool_use" && answered[block.Link] {
+				return index
+			}
+		}
+		return -1
+	}
+	return -1
 }
 
 // conversationKept reports how the provider's conversation differs from the
@@ -686,6 +731,9 @@ func TestConversationContinuityOfCapturedClients(t *testing.T) {
 				transforms := fixture.Case.Transforms
 				if action.ID == v5GLMUp {
 					transforms = append([]string{transformSteerTailText}, transforms...)
+				}
+				if action.ID == v5OpusAction {
+					transforms = append([]string{transformUnservedThinkingStripped}, transforms...)
 				}
 				err := errors.Join(
 					conversationKept(fixture.Client, result.Provider, transforms),

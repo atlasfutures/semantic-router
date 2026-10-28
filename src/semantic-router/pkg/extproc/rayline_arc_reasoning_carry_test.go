@@ -21,6 +21,10 @@ func TestReasoningFromAnotherModelIsCarriedToTheNextWorker(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build router: %v", err)
 	}
+	// The carry rules under test run beneath the thinking-signature guard,
+	// which would strip this unserved history for a Claude Messages worker
+	// (rayline_arc_thinking_signature_test.go covers the guard).
+	router.Config.KeepUnservedClaudeThinking = true
 	awaitPolicySelectorArmed(t, router)
 	history := func(thinking string) string {
 		return `{"model":"auto","max_tokens":4096,"messages":[` +

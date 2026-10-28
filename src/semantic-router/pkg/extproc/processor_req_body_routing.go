@@ -140,6 +140,9 @@ func (r *OpenAIRouter) carryReasoningForDispatch(
 	if r.dropRaylineARCOpaqueReasoningIssuedElsewhere(request, dispatch, ctx) {
 		changed = true
 	}
+	if r.guardClaudeThinking(request, dispatch, ctx) > 0 {
+		changed = true
+	}
 	return changed
 }
 
@@ -452,6 +455,7 @@ func (r *OpenAIRouter) finalizeProviderDispatchResponse(
 	ctx.DispatchedServiceTier = dispatchedServiceTier(body)
 	r.stageFlexResend(ctx, dispatch, body)
 	r.stageEndpointResend(ctx, dispatch, body)
+	r.stageThinkingSignatureRetry(ctx, dispatch, body)
 	r.auditRaylineARCUpstream(body, ctx)
 	common := response.GetRequestBody().GetResponse()
 	if common == nil {

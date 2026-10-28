@@ -80,6 +80,16 @@ type raylineARCEpisodeTransaction struct {
 	// record, with the turn, which worker issued each block.
 	dispatchWorker  string
 	opaqueReasoning []string
+	// thinkingWorker is the thinking run of the Claude model this turn was
+	// dispatched to (rayline_arc_thinking_signature.go), thinkingOthers the
+	// runs of the cell's other Claude models, which this turn ends,
+	// thinkingAnchored whether the request's history held the run's anchor,
+	// and thinkingSignature the first thinking signature the response held,
+	// the anchor of a new run.
+	thinkingWorker    string
+	thinkingOthers    []string
+	thinkingAnchored  bool
+	thinkingSignature string
 	// call is the cache evidence of this turn's policy-service call: the
 	// action it served, the TTL its dispatched body stated and the
 	// provider's usage. It is recorded on the served arm's warmth with the
@@ -655,6 +665,12 @@ func (transaction *raylineARCEpisodeTransaction) nextState() (*raylinearc.Episod
 			nextState.ReasoningProvenance, transaction.dispatchWorker, transaction.opaqueReasoning,
 		)
 	}
+	if transaction.thinkingWorker != "" {
+		nextState.ReasoningProvenance = reasoning.WithThinkingRun(
+			nextState.ReasoningProvenance, transaction.thinkingWorker, transaction.thinkingOthers,
+			transaction.thinkingAnchored, transaction.thinkingSignature,
+		)
+	}
 	if transaction.reasoningIssuersStaged {
 		nextState.ReasoningIssuers = append([]string(nil), transaction.reasoningIssuers...)
 	}
@@ -959,4 +975,5 @@ func (transaction *raylineARCEpisodeTransaction) observeOpaqueReasoning(requestC
 		return
 	}
 	transaction.opaqueReasoning = protocolcodec.ResponseOpaqueReasoning(requestContext.SemanticResponse)
+	transaction.thinkingSignature = protocolcodec.ResponseThinkingSignature(requestContext.SemanticResponse)
 }
