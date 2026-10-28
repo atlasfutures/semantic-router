@@ -562,6 +562,11 @@ func TestRetryBudgetShortensTheReSendsWait(t *testing.T) {
 func TestABareToolCallStartIsNotContent(t *testing.T) {
 	state := &semanticResponseStreamState{items: map[int]*semanticStreamItem{0: {toolCall: &llmprotocol.ToolCall{ID: "call_1", Name: "read"}}}}
 	assert.False(t, state.carriesContent())
+	state.items[0].toolCall.Arguments = "{}"
+	assert.False(t, state.carriesContent(), "a Messages tool_use start's input {} was taken as content")
+	state.items[0].completed = true
+	assert.True(t, state.carriesContent(), "a completed call without arguments carries content")
+	state.items[0].completed = false
 	state.items[0].toolCall.Arguments = `{"path":`
 	assert.True(t, state.carriesContent())
 }
