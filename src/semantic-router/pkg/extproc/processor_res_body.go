@@ -32,6 +32,11 @@ func (r *OpenAIRouter) handleResponseBody(v *ext_proc.ProcessingRequest_Response
 	}
 
 	if ctx.IsStreamingResponse && ctx.HostRetry.started() {
+		if !ctx.StreamingComplete && r.responseStreamOverran(ctx) {
+			// The turn's deadline still holds while a re-send serves: the
+			// streaming path cuts it, re-send and all.
+			return r.handleSemanticStreamingResponseBody(nil, false, ctx), nil
+		}
 		// A re-send on the arm's next host serves the client now.
 		return droppedHostChunk(ctx), nil
 	}

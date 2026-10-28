@@ -607,3 +607,22 @@ func TestABareChatToolCallDeltaIsNotContent(t *testing.T) {
 	}})
 	assert.True(t, ctx.StreamContentSeen)
 }
+
+// The turn's deadline still ends it while a re-send serves: the original
+// call's next keepalive finds it past the deadline and the turn is cut.
+func TestTheTurnDeadlineHoldsWhileAReSendServes(t *testing.T) {
+	upstream := newHostUpstream(t, map[string]string{hostRetryHostB: "stall"})
+	router := hostRetryRouter(upstream.server.URL, true, 0)
+	stream := NewMockStream(nil)
+	ctx, _ := startStalledTurn(t, router, stream, openRouterKeepaliveChunk)
+	require.True(t, ctx.HostRetry.started())
+
+	ctx.StartTime = time.Now().Add(-600 * time.Second)
+	require.NoError(t, router.handleProcessRequest(stream, fullDuplexResponseBodyRequest(openRouterKeepaliveChunk, false), ctx))
+
+	assert.True(t, ctx.StreamingComplete)
+	_, ended := clientBytes(stream)
+	assert.True(t, ended, "the deadline did not end the response")
+	assert.Nil(t, hostRetryChunks(ctx), "the re-send is still being read")
+}
+
