@@ -279,7 +279,9 @@ func (backend *PolicySessionBackend) Terminate(ctx context.Context, session Poli
 		return errors.New("ARC policy session is invalid")
 	}
 	header := http.Header{}
-	header.Set("Modal-Authorization", "Bearer "+session.Token)
+	// Modal's terminate reads the session token from x-modal-server-session-token; with the token only in
+	// Modal-Authorization it answers 401 and the session keeps its slot until its idle timeout (prod 2026-10-27).
+	header.Set("x-modal-server-session-token", session.Token)
 	status, _, err := backend.control(ctx, policySessionTerminatePath, header, policySessionTerminateTimeout)
 	if err != nil {
 		return err
