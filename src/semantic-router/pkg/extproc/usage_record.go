@@ -88,6 +88,13 @@ type llmUsageRecord struct {
 	// FailureDetail is the specific cause behind failure_class, such as the
 	// protocol code of a reply the Router could not use.
 	FailureDetail *string `json:"failure_detail"`
+	// UpstreamErrorMessage is a provider 4xx's own message, redacted and cut
+	// at 300 bytes; the slugs are the providers OpenRouter's error metadata
+	// named as pinned and as able to accept the request
+	// (upstream_error_text.go). Null when the call failed otherwise.
+	UpstreamErrorMessage                *string  `json:"upstream_error_message"`
+	UpstreamErrorPinnedProviderSlug     *string  `json:"upstream_error_pinned_provider_slug"`
+	UpstreamErrorAcceptingProviderSlugs []string `json:"upstream_error_accepting_provider_slugs"`
 	// UpstreamAttempts is how many times the cell's provider hop sent the
 	// call, null when it did not say. Above 1, Envoy retried it on the same
 	// route before any response reached the Router, so the counts and cost
@@ -270,6 +277,9 @@ func (r *OpenAIRouter) newLLMUsageRecord(ctx *RequestContext, usage responseUsag
 	record.FailureClass = nonEmpty(ctx.ResponseFailureClass)
 	record.ContentSentBeforeFailure = ctx.ContentSentBeforeFailure
 	record.FailureDetail = nonEmpty(ctx.ResponseFailureDetail)
+	record.UpstreamErrorMessage = nonEmpty(ctx.UpstreamErrorText.message)
+	record.UpstreamErrorPinnedProviderSlug = nonEmpty(ctx.UpstreamErrorText.pinnedSlug)
+	record.UpstreamErrorAcceptingProviderSlugs = ctx.UpstreamErrorText.acceptingSlugs
 	// A re-sent turn (flex twin or another endpoint) is read whole before the
 	// response pipeline sees it, and an unreachable re-send is answered with
 	// synthetic headers, so its "first byte" is not one: no TTFT is stated.

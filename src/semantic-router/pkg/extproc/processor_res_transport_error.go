@@ -55,6 +55,7 @@ func (r *OpenAIRouter) handleUpstreamTransportError(
 	if upstreamError == nil {
 		upstreamError = translated.TransportError.Error
 	}
+	ctx.UpstreamErrorText = readUpstreamErrorText(ctx.UpstreamStatusCode, body, upstreamError)
 	r.recordUpstreamErrorTurn(ctx, upstreamError)
 	response := buildResponseBodyContinueResponse(nil, nil)
 	setResponseBodyMutation(response, translated.Body)
