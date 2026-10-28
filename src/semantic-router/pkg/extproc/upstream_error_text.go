@@ -24,7 +24,8 @@ import (
 // other member. The message is redacted as the client's copy is
 // (llmprotocol.RedactProviderText), its links are dropped, every quoted span
 // is replaced by [quoted] (a provider that echoes a request value quotes it:
-// "Invalid value: 'x'"), its whitespace is folded, and it is cut at
+// "Invalid value: 'x'") except a backticked plain identifier, which names a
+// protocol member ("Invalid `signature` in `thinking` block"), its whitespace is folded, and it is cut at
 // upstreamErrorTextMax bytes. An echo the provider did not quote is not
 // caught; the cut bounds it. An account refusal (401, 402) is left out: its
 // text names the cell's provider account. A slug is kept only when it has a
@@ -104,7 +105,10 @@ func loggableUpstreamMessage(message string) string {
 	return message[:cut]
 }
 
-// withoutQuotedSpans replaces each quoted span with [quoted]. An apostrophe
+// withoutQuotedSpans replaces each quoted span with [quoted], except a
+// backticked plain identifier (plainIdentifier), which names a protocol
+// member rather than echoing a value: "Invalid `signature` in `thinking`
+// block" reads as Anthropic wrote it. An apostrophe
 // inside a word (can't) opens nothing; a backslash escapes the next rune; a
 // span left open runs to the end of the message, so no part of a quoted
 // value is ever kept.
@@ -131,13 +135,29 @@ func withoutQuotedSpans(message string) string {
 				break
 			}
 		}
-		out.WriteString("[quoted]")
 		if end < 0 {
+			out.WriteString("[quoted]")
 			break
+		}
+		if inner := string(runes[index+1 : end]); closer == '`' && plainIdentifier(inner) {
+			out.WriteString("`" + inner + "`")
+		} else {
+			out.WriteString("[quoted]")
 		}
 		index = end
 	}
 	return out.String()
+}
+
+// upstreamErrorIdentifierPattern is a protocol member's name as a provider
+// backticks it in an error: lower case, digits, underscores and dots, at most
+// upstreamErrorIdentifierMax bytes.
+var upstreamErrorIdentifierPattern = regexp.MustCompile(`^[a-z_][a-z0-9_.]*$`)
+
+const upstreamErrorIdentifierMax = 40
+
+func plainIdentifier(text string) bool {
+	return len(text) <= upstreamErrorIdentifierMax && upstreamErrorIdentifierPattern.MatchString(text)
 }
 
 // pythonLiteralPrefixes open a quoted literal (b'...', rb'...') where an
