@@ -914,3 +914,49 @@ func TestChatRetryKeepsDetailOnlyText(t *testing.T) {
 		t.Fatalf("ok=%v body=%s", ok, retried)
 	}
 }
+
+// End to end through the Responses codec: a Responses client resends the
+// loop's latest reply as separate reasoning, function_call and
+// function_call_output items. Claude, with no run on record, is still sent
+// the reply's signed reasoning beside its call, which Anthropic requires,
+// while an earlier turn's reasoning is stripped.
+func TestSplitActiveLoopReplyKeepsItsReasoningForClaude(t *testing.T) {
+	router, _ := newThinkingGuardRouter(t, "claude")
+	history := `{"model":"auto","store":false,"input":[` +
+		`{"role":"user","content":"start"},` +
+		`{"type":"reasoning","id":"item_0","summary":[],"content":[{"type":"reasoning_text","text":"old reasoning"}],` +
+		`"signature":"sig-old","format":"anthropic-claude-v1"},` +
+		`{"type":"message","role":"assistant","content":[{"type":"output_text","text":"turn one"}]},` +
+		`{"role":"user","content":"run the tests"},` +
+		`{"type":"reasoning","id":"item_1","summary":[],"content":[{"type":"reasoning_text","text":"loop reasoning"}],` +
+		`"signature":"sig-loop","format":"anthropic-claude-v1"},` +
+		`{"type":"function_call","id":"fc_1","call_id":"call_1","name":"bash","arguments":"{}"},` +
+		`{"type":"function_call_output","call_id":"call_1","output":"ok"}],` +
+		`"tools":[{"type":"function","name":"bash","parameters":{"type":"object","properties":{}}}]}`
+	ctx, body := dispatchThinkingTurnAt(t, router, "episode-split-loop", "/v1/responses", history)
+	assertJSONField(t, body, "model", `"anthropic/claude-opus-5"`)
+	wire := string(body["messages"])
+	if !strings.Contains(wire, `"signature":"sig-loop"`) || strings.Contains(wire, "sig-old") {
+		t.Fatalf("the loop's reasoning was stripped or the earlier turn's sent: %s", wire)
+	}
+	var messages []struct {
+		Role    string           `json:"role"`
+		Content []map[string]any `json:"content"`
+	}
+	if err := json.Unmarshal(body["messages"], &messages); err != nil {
+		t.Fatal(err)
+	}
+	for _, message := range messages {
+		if message.Role != "assistant" || len(message.Content) == 0 {
+			continue
+		}
+		for _, block := range message.Content {
+			if block["type"] == "tool_use" && message.Content[0]["type"] != "thinking" {
+				t.Fatalf("the loop's assistant message does not start with its thinking: %s", wire)
+			}
+		}
+	}
+	if adopted := ctx.RaylineARCTransaction.thinkingAdopted; adopted != protocolcodec.SignatureAnchorKey("sig-loop") {
+		t.Fatalf("adopted = %q, want the loop reply's signature", adopted)
+	}
+}

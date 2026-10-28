@@ -172,26 +172,37 @@ func (r *OpenAIRouter) guardHistoryReasoning(
 	transaction.thinkingAnchored = runStart >= 0
 	transaction.thinkingReplyIndex = len(request.Messages)
 	covered := func(index int) bool { return runStart >= 0 && index >= runStart }
-	active := activeToolLoopAssistant(request.Messages)
+	// The active loop's latest reply: the assistant message holding the
+	// answered call and the assistant messages right before it, which a
+	// Responses client sends as items of the same reply (its reasoning, then
+	// its calls).
+	activeStart, active := activeToolLoopReply(request.Messages)
+	inActive := func(index int) bool { return active >= 0 && index >= activeStart && index <= active }
 	transaction.thinkingAdopted = ""
 	keepActive := false
 	switch {
-	case active >= 0 && covered(active):
+	case active >= 0 && covered(activeStart):
 		// The re-send keeps the loop's latest reasoning only when the run
 		// covers it.
 		keepActive = true
-		ctx.thinkingRetryKeep = protocolcodec.MessageThinkingKeys(request.Messages[active])
+		for index := activeStart; index <= active; index++ {
+			ctx.thinkingRetryKeep = append(ctx.thinkingRetryKeep, protocolcodec.MessageThinkingKeys(request.Messages[index])...)
+		}
 	case active >= 0 && claude:
 		// Sent though the run does not cover it: if Claude takes it, a new
 		// run starts at it, so later turns keep it and the prefix this turn's
 		// thinking is signed over does not change.
 		keepActive = true
-		if keys := protocolcodec.MessageAnchorKeys(request.Messages[active], active); len(keys) > 0 {
+		reply := llmprotocol.Message{Role: llmprotocol.RoleAssistant}
+		for index := activeStart; index <= active; index++ {
+			reply.Content = append(reply.Content, request.Messages[index].Content...)
+		}
+		if keys := protocolcodec.MessageAnchorKeys(reply, activeStart); len(keys) > 0 {
 			transaction.thinkingAdopted = keys[0]
 		}
 	}
 	drop := func(index int, message llmprotocol.Message) bool {
-		return message.Role == llmprotocol.RoleAssistant && !covered(index) && (index != active || !keepActive)
+		return message.Role == llmprotocol.RoleAssistant && !covered(index) && (!inActive(index) || !keepActive)
 	}
 	var stripped int
 	if claude {
@@ -244,6 +255,22 @@ func thinkingRunStart(messages []llmprotocol.Message, anchors []string) int {
 		start = end - 1
 	}
 	return -1
+}
+
+// activeToolLoopReply is the active tool loop's latest reply as indexes of
+// its first and last assistant message (the one holding the answered call),
+// or -1, -1. A Responses client resends one reply as consecutive items, so
+// the reply runs back from the call over the assistant messages before it.
+func activeToolLoopReply(messages []llmprotocol.Message) (int, int) {
+	active := activeToolLoopAssistant(messages)
+	if active < 0 {
+		return -1, -1
+	}
+	start := active
+	for start > 0 && messages[start-1].Role == llmprotocol.RoleAssistant {
+		start--
+	}
+	return start, active
 }
 
 // activeToolLoopAssistant is the index of the assistant message whose tool
