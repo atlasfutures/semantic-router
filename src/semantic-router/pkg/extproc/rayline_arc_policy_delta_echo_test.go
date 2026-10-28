@@ -19,6 +19,8 @@ package extproc
 import (
 	"encoding/json"
 	"testing"
+
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
 
 // The delta digest reads a staged reply and a client's echo of it as the
@@ -178,6 +180,25 @@ func TestDeltaDigestCleansEveryRoleAtTheBlockBoundary(t *testing.T) {
 				t.Fatalf("%s vs %s: match %v, want %v", tc.left, tc.right, got, tc.match)
 			}
 		})
+	}
+}
+
+// The parity oracle cleans only where _clean does: a tool's input stays
+// opaque, whatever block shapes it holds.
+func TestDeltaParityOracleKeepsToolInputOpaque(t *testing.T) {
+	request := func(signature string) raylinearc.PolicyClientRequest {
+		thinking := map[string]any{"type": "thinking", "thinking": "t"}
+		if signature != "" {
+			thinking["signature"] = signature
+		}
+		messages, _ := json.Marshal([]any{map[string]any{"role": "assistant", "content": []any{
+			map[string]any{"type": "tool_use", "id": "t", "name": "x", "input": map[string]any{
+				"type": "tool_result", "content": []any{thinking}, "role": "user"}},
+		}}})
+		return raylinearc.PolicyClientRequest{Messages: messages}
+	}
+	if fakeCanonicalRequest(t, request("s")) == fakeCanonicalRequest(t, request("")) {
+		t.Fatal("the oracle cleaned a tool's input")
 	}
 }
 

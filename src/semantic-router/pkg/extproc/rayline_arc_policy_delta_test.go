@@ -225,15 +225,6 @@ func fakeCanonicalRequest(t *testing.T, request raylinearc.PolicyClientRequest) 
 		switch typed := value.(type) {
 		case map[string]any:
 			delete(typed, "cache_control")
-			// _clean runs on a message's content blocks and a tool_result's,
-			// never on data nested deeper (a tool's input).
-			if blocks, ok := typed["content"].([]any); ok && (typed["role"] != nil || typed["type"] == "tool_result") {
-				for _, block := range blocks {
-					if fields, ok := block.(map[string]any); ok {
-						fakeClean(fields)
-					}
-				}
-			}
 			for key, member := range typed {
 				typed[key] = strip(member)
 			}
@@ -246,6 +237,25 @@ func fakeCanonicalRequest(t *testing.T, request raylinearc.PolicyClientRequest) 
 			}
 		}
 		return value
+	}
+	// _clean runs on each message's content blocks and a tool_result's,
+	// never on data nested deeper (a tool's input).
+	var cleanBlocks func(any)
+	cleanBlocks = func(content any) {
+		blocks, _ := content.([]any)
+		for _, block := range blocks {
+			if fields, ok := block.(map[string]any); ok {
+				fakeClean(fields)
+				if fields["type"] == "tool_result" {
+					cleanBlocks(fields["content"])
+				}
+			}
+		}
+	}
+	for _, message := range messages {
+		if fields, ok := message.(map[string]any); ok {
+			cleanBlocks(fields["content"])
+		}
 	}
 	var system, tools any
 	_ = json.Unmarshal(request.System, &system)
