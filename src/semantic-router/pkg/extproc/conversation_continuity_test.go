@@ -391,10 +391,10 @@ func conversationShape(raw []byte) ([]messageShape, error) {
 // instead, in conversationKept.
 func expectedConversation(client []messageShape, transforms map[string]bool) []messageShape {
 	out := make([]messageShape, 0, len(client))
-	activeLoop := activeLoopShape(client)
+	loopStart, loopEnd := activeLoopShape(client)
 	for index, message := range client {
 		if transforms[transformUnservedThinkingStripped] && message.Role == "assistant" &&
-			(index != activeLoop || transforms[transformUnservedLoopThinkingStripped]) {
+			(loopEnd < 0 || index < loopStart || index > loopEnd || transforms[transformUnservedLoopThinkingStripped]) {
 			kept := make([]blockShape, 0, len(message.Blocks))
 			for _, block := range message.Blocks {
 				if block.Type != "thinking" && block.Type != "redacted_thinking" {
@@ -436,30 +436,37 @@ func expectedConversation(client []messageShape, transforms map[string]bool) []m
 	return out
 }
 
-// activeLoopShape is the index of the assistant message whose tool call the
-// last message answers, or -1.
-func activeLoopShape(messages []messageShape) int {
-	if len(messages) < 2 {
-		return -1
+// activeLoopShape is the active tool loop's latest reply as the indexes of
+// its first and last assistant message, or -1, -1: the consecutive assistant
+// messages before the trailing results, when those answer any of its calls.
+func activeLoopShape(messages []messageShape) (int, int) {
+	last := len(messages) - 1
+	for last >= 0 && messages[last].Role != "assistant" {
+		last--
+	}
+	if last < 0 || last == len(messages)-1 {
+		return -1, -1
 	}
 	answered := map[string]bool{}
-	for _, block := range messages[len(messages)-1].Blocks {
-		if block.Type == "tool_result" && block.Link != "" {
-			answered[block.Link] = true
-		}
-	}
-	for index := len(messages) - 2; index >= 0 && len(answered) > 0; index-- {
-		if messages[index].Role != "assistant" {
-			continue
-		}
-		for _, block := range messages[index].Blocks {
-			if block.Type == "tool_use" && answered[block.Link] {
-				return index
+	for _, message := range messages[last+1:] {
+		for _, block := range message.Blocks {
+			if block.Type == "tool_result" && block.Link != "" {
+				answered[block.Link] = true
 			}
 		}
-		return -1
 	}
-	return -1
+	start := last
+	for start > 0 && messages[start-1].Role == "assistant" {
+		start--
+	}
+	for _, message := range messages[start : last+1] {
+		for _, block := range message.Blocks {
+			if block.Type == "tool_use" && answered[block.Link] {
+				return start, last
+			}
+		}
+	}
+	return -1, -1
 }
 
 // conversationKept reports how the provider's conversation differs from the

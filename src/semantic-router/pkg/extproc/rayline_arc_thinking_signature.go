@@ -258,48 +258,44 @@ func thinkingRunStart(messages []llmprotocol.Message, anchors []string) int {
 }
 
 // activeToolLoopReply is the active tool loop's latest reply as indexes of
-// its first and last assistant message (the one holding the answered call),
-// or -1, -1. A Responses client resends one reply as consecutive items, so
-// the reply runs back from the call over the assistant messages before it.
+// its first and last message, or -1, -1. The reply is the run of consecutive
+// assistant messages before the history's trailing results: a Responses
+// client resends one reply as separate items (its reasoning, then each call),
+// and a Messages client's results may decode, with any text beside them, to
+// several tool and user messages. The loop is active when those results
+// answer any of the reply's calls, in whatever order.
 func activeToolLoopReply(messages []llmprotocol.Message) (int, int) {
-	active := activeToolLoopAssistant(messages)
-	if active < 0 {
+	last := len(messages) - 1
+	for last >= 0 && messages[last].Role != llmprotocol.RoleAssistant {
+		last--
+	}
+	if last < 0 || last == len(messages)-1 {
 		return -1, -1
 	}
-	start := active
+	answered := map[string]struct{}{}
+	for _, message := range messages[last+1:] {
+		results, _ := toolResultCallIDs(message)
+		for id := range results {
+			answered[id] = struct{}{}
+		}
+	}
+	if len(answered) == 0 {
+		return -1, -1
+	}
+	start := last
 	for start > 0 && messages[start-1].Role == llmprotocol.RoleAssistant {
 		start--
 	}
-	return start, active
-}
-
-// activeToolLoopAssistant is the index of the assistant message whose tool
-// call the last message answers with a tool_result, or -1 when the request
-// does not end in an answered tool call.
-func activeToolLoopAssistant(messages []llmprotocol.Message) int {
-	if len(messages) < 2 {
-		return -1
-	}
-	// A Messages client's tool_result blocks may decode to a user or a tool
-	// message.
-	results, _ := toolResultCallIDs(messages[len(messages)-1])
-	if len(results) == 0 {
-		return -1
-	}
-	for index := len(messages) - 2; index >= 0; index-- {
-		if messages[index].Role != llmprotocol.RoleAssistant {
-			continue
-		}
-		for _, content := range messages[index].Content {
+	for _, message := range messages[start : last+1] {
+		for _, content := range message.Content {
 			if content.Kind == llmprotocol.ContentToolCall && content.ToolCall != nil {
-				if _, answered := results[content.ToolCall.ID]; answered {
-					return index
+				if _, ok := answered[content.ToolCall.ID]; ok {
+					return start, last
 				}
 			}
 		}
-		return -1
 	}
-	return -1
+	return -1, -1
 }
 
 // thinkingSignatureRetryPlan is what the guard's re-send needs: the dispatch,
@@ -481,8 +477,8 @@ func refusedActiveThinking(dispatched, refusal []byte) bool {
 	if json.Unmarshal(dispatched, &members) != nil || json.Unmarshal(members["messages"], &messages) != nil {
 		return false
 	}
-	active := activeWireToolLoopAssistant(messages)
-	if active < 0 {
+	start, end := activeWireToolLoopReply(messages)
+	if end < 0 {
 		return false
 	}
 	matches := refusedMessagePattern.FindAllSubmatch(refusal, -1)
@@ -492,7 +488,7 @@ func refusedActiveThinking(dispatched, refusal []byte) bool {
 		return true
 	}
 	for _, match := range matches {
-		if index, err := strconv.Atoi(string(match[1])); err == nil && index == active {
+		if index, err := strconv.Atoi(string(match[1])); err == nil && index >= start && index <= end {
 			return true
 		}
 	}
@@ -522,7 +518,28 @@ func thinkingRetryBody(body []byte, keep map[string]bool) ([]byte, thinkingRetry
 	if json.Unmarshal(members["messages"], &messages) != nil {
 		return nil, change, false
 	}
-	active := activeWireToolLoopAssistant(messages)
+	start, end := activeWireToolLoopReply(messages)
+	inActive := func(index int) bool { return end >= 0 && index >= start && index <= end }
+	// The active reply keeps its thinking only whole, across its messages.
+	activeWhole := end >= 0
+	for index := start; end >= 0 && index <= end; index++ {
+		var blocks []map[string]json.RawMessage
+		_ = json.Unmarshal(messages[index]["content"], &blocks)
+		for _, block := range blocks {
+			if key, thinking := wireThinkingKey(block); thinking {
+				activeWhole = activeWhole && keep[key]
+				if change.keptSignature == "" && key != "" {
+					change.keptSignature = protocolcodec.SignatureAnchorKey(key)
+					if wireBlockType(block) == "redacted_thinking" {
+						change.keptSignature = protocolcodec.RedactedAnchorKey(key)
+					}
+				}
+			}
+		}
+	}
+	if !activeWhole {
+		change.keptSignature = ""
+	}
 	activeStripped := false
 	kept := make([]map[string]json.RawMessage, 0, len(messages))
 	for index, message := range messages {
@@ -535,29 +552,17 @@ func thinkingRetryBody(body []byte, keep map[string]bool) ([]byte, thinkingRetry
 			kept = append(kept, message)
 			continue
 		}
-		holds, whole := 0, true
+		holds := 0
 		for _, block := range blocks {
-			if key, thinking := wireThinkingKey(block); thinking {
+			if _, thinking := wireThinkingKey(block); thinking {
 				holds++
-				whole = whole && keep[key]
 			}
 		}
-		if holds == 0 || index == active && whole {
-			if index == active && holds > 0 {
-				for _, block := range blocks {
-					if key, thinking := wireThinkingKey(block); thinking && key != "" {
-						change.keptSignature = protocolcodec.SignatureAnchorKey(key)
-						if wireBlockType(block) == "redacted_thinking" {
-							change.keptSignature = protocolcodec.RedactedAnchorKey(key)
-						}
-						break
-					}
-				}
-			}
+		if holds == 0 || inActive(index) && activeWhole {
 			kept = append(kept, message)
 			continue
 		}
-		if index == active {
+		if inActive(index) {
 			activeStripped = true
 		}
 		remaining := make([]map[string]json.RawMessage, 0, len(blocks)-holds)
@@ -625,41 +630,44 @@ func wireThinkingKey(block map[string]json.RawMessage) (string, bool) {
 	return key, true
 }
 
-// activeWireToolLoopAssistant is activeToolLoopAssistant on a Messages body.
-func activeWireToolLoopAssistant(messages []map[string]json.RawMessage) int {
-	if len(messages) < 2 || wireRole(messages[len(messages)-1]) != "user" {
-		return -1
+// activeWireToolLoopReply is activeToolLoopReply on a Messages body.
+func activeWireToolLoopReply(messages []map[string]json.RawMessage) (int, int) {
+	last := len(messages) - 1
+	for last >= 0 && wireRole(messages[last]) != "assistant" {
+		last--
+	}
+	if last < 0 || last == len(messages)-1 {
+		return -1, -1
 	}
 	answered := map[string]bool{}
-	var last []map[string]json.RawMessage
-	_ = json.Unmarshal(messages[len(messages)-1]["content"], &last)
-	for _, block := range last {
-		if wireBlockType(block) != "tool_result" {
-			continue
-		}
-		var id string
-		if json.Unmarshal(block["tool_use_id"], &id) == nil && id != "" {
-			answered[id] = true
+	for _, message := range messages[last+1:] {
+		var blocks []map[string]json.RawMessage
+		_ = json.Unmarshal(message["content"], &blocks)
+		for _, block := range blocks {
+			var id string
+			if wireBlockType(block) == "tool_result" && json.Unmarshal(block["tool_use_id"], &id) == nil && id != "" {
+				answered[id] = true
+			}
 		}
 	}
 	if len(answered) == 0 {
-		return -1
+		return -1, -1
 	}
-	for index := len(messages) - 2; index >= 0; index-- {
-		if wireRole(messages[index]) != "assistant" {
-			continue
-		}
+	start := last
+	for start > 0 && wireRole(messages[start-1]) == "assistant" {
+		start--
+	}
+	for _, message := range messages[start : last+1] {
 		var blocks []map[string]json.RawMessage
-		_ = json.Unmarshal(messages[index]["content"], &blocks)
+		_ = json.Unmarshal(message["content"], &blocks)
 		for _, block := range blocks {
 			var id string
 			if wireBlockType(block) == "tool_use" && json.Unmarshal(block["id"], &id) == nil && answered[id] {
-				return index
+				return start, last
 			}
 		}
-		return -1
 	}
-	return -1
+	return -1, -1
 }
 
 func thinkingEnabledOnWire(raw json.RawMessage) bool {

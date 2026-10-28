@@ -960,3 +960,59 @@ func TestSplitActiveLoopReplyKeepsItsReasoningForClaude(t *testing.T) {
 		t.Fatalf("adopted = %q, want the loop reply's signature", adopted)
 	}
 }
+
+// The active loop is found whatever order parallel results come back in, and
+// with text beside the results.
+func TestActiveLoopIsFoundAcrossParallelResultsAndTextBesideThem(t *testing.T) {
+	router, _ := newThinkingGuardRouter(t, "claude")
+	t.Run("reverse-ordered parallel results", func(t *testing.T) {
+		history := `{"model":"auto","store":false,"input":[` +
+			`{"role":"user","content":"run both"},` +
+			`{"type":"reasoning","id":"item_1","summary":[],"content":[{"type":"reasoning_text","text":"loop reasoning"}],` +
+			`"signature":"sig-loop","format":"anthropic-claude-v1"},` +
+			`{"type":"function_call","id":"fc_a","call_id":"call_a","name":"bash","arguments":"{}"},` +
+			`{"type":"function_call","id":"fc_b","call_id":"call_b","name":"bash","arguments":"{}"},` +
+			`{"type":"function_call_output","call_id":"call_b","output":"b"},` +
+			`{"type":"function_call_output","call_id":"call_a","output":"a"}],` +
+			`"tools":[{"type":"function","name":"bash","parameters":{"type":"object","properties":{}}}]}`
+		_, body := dispatchThinkingTurnAt(t, router, "episode-parallel-reverse", "/v1/responses", history)
+		if !strings.Contains(string(body["messages"]), `"signature":"sig-loop"`) {
+			t.Fatalf("the loop's reasoning was stripped: %s", body["messages"])
+		}
+	})
+	t.Run("text beside the tool result", func(t *testing.T) {
+		history := messagesHistory(
+			`{"role":"user","content":"start"}`,
+			assistantTurn(thinkingBlock("sig-earlier"), `{"type":"text","text":"turn one"}`),
+			`{"role":"user","content":"run the tests"}`,
+			assistantTurn(thinkingBlock("sig-loop"), `{"type":"tool_use","id":"toolu_1","name":"bash","input":{}}`),
+			`{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"ok"},{"type":"text","text":"and then?"}]}`,
+		)
+		_, body := dispatchThinkingTurn(t, router, "episode-text-beside-result", history)
+		assertSignatures(t, "text beside result", body["messages"], []string{"sig-loop"}, []string{"sig-earlier"})
+	})
+}
+
+// The Messages re-send keeps a split active reply's thinking whole when the
+// run covers it, and otherwise strips all of it and turns thinking off.
+func TestThinkingRetryBodyTreatsASplitReplyAsOne(t *testing.T) {
+	body := []byte(`{"thinking":{"type":"adaptive"},"messages":[` +
+		`{"role":"user","content":"start"},` +
+		assistantTurn(thinkingBlock("sig-earlier"), `{"type":"text","text":"turn one"}`) + `,` +
+		`{"role":"user","content":"run the tests"},` +
+		assistantTurn(thinkingBlock("sig-loop")) + `,` +
+		assistantTurn(`{"type":"tool_use","id":"toolu_1","name":"bash","input":{}}`) + `,` +
+		`{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"ok"}]}]}`)
+	served, change, ok := thinkingRetryBody(body, map[string]bool{"sig-loop": true})
+	if !ok || change.thinkingDisabled || !strings.Contains(string(served), `"sig-loop"`) || strings.Contains(string(served), `"sig-earlier"`) ||
+		change.keptSignature != protocolcodec.SignatureAnchorKey("sig-loop") {
+		t.Fatalf("served: ok=%v change=%+v body=%s", ok, change, served)
+	}
+	unserved, change, ok := thinkingRetryBody(body, nil)
+	if !ok || !change.thinkingDisabled || strings.Contains(string(unserved), `"sig-loop"`) {
+		t.Fatalf("unserved: ok=%v change=%+v body=%s", ok, change, unserved)
+	}
+	if !refusedActiveThinking(body, []byte(`messages.3.content.0: Invalid signature`)) {
+		t.Fatal("a refusal of the split reply's first message was not read as the loop's own")
+	}
+}
