@@ -1,0 +1,28 @@
+{
+ "description": "a captured Claude Code body on anthropic/claude-haiku-5.5 at base default: its own thinking is replaced by {type: adaptive, display: summarized}, one thinking member, beside the base's effort",
+ "format": "messages",
+ "provider": "openrouter",
+ "model": "anthropic/claude-haiku-5.5",
+ "wire_model": "anthropic/claude-haiku-5.5",
+ "admission": "enforced",
+ "allow_experimental": true,
+ "registry_pin": "9450ce173270ec8ed55d8d1bf29d706f3fc409daf06654a03724544eb9abf609",
+ "calls": [
+  {
+   "client_body": "client-00.json",
+   "control_id": "605a61ada934f704248cb99cc84179bf15747302120d11e67ba723db0d8d955b",
+   "expected_body": "provider-00.json",
+   "receipt": {
+    "call": 0,
+    "control_id": "605a61ada934f704248cb99cc84179bf15747302120d11e67ba723db0d8d955b",
+    "level_in_force": "up",
+    "instruction_state": "steered",
+    "written": "instruction",
+    "epoch": 0,
+    "epoch_reset_reason": null,
+    "retry": false
+   }
+  }
+ ],
+ "refusal": null
+}
