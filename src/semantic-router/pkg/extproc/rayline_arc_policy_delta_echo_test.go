@@ -146,6 +146,41 @@ func TestDeltaDigestMirrorsTheServiceClean(t *testing.T) {
 	}
 }
 
+// The removals apply to every message's top-level content blocks, as _clean
+// does in every role and format, and before a system or user message's one
+// text block is demoted to its string; data nested deeper (a tool's input,
+// a tool_result's content) and Responses parts keep every member, which is
+// stricter than the service and so safe.
+func TestDeltaDigestCleansEveryRoleAtTheBlockBoundary(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		left, right string
+		match       bool
+	}{
+		{"user_citations_empty_demoted", `{"role":"user","content":[{"type":"text","text":"hi","citations":[]}]}`, `{"role":"user","content":"hi"}`, true},
+		{"user_citations_null_demoted", `{"role":"user","content":[{"type":"text","text":"hi","citations":null}]}`, `{"role":"user","content":"hi"}`, true},
+		{"system_citations_empty_demoted", `{"role":"system","content":[{"type":"text","text":"note","citations":[]}]}`, `{"role":"system","content":"note"}`, true},
+		{"user_citations_nonempty", `{"role":"user","content":[{"type":"text","text":"hi","citations":[{"type":"x"}]}]}`, `{"role":"user","content":"hi"}`, false},
+		{"user_thinking_signature", `{"role":"user","content":[{"type":"thinking","thinking":"t","signature":"s"}]}`, `{"role":"user","content":[{"type":"thinking","thinking":"t"}]}`, true},
+		{"chat_user_parts", `{"role":"user","content":[{"type":"text","text":"a","citations":[]},{"type":"text","text":"b"}]}`, `{"role":"user","content":[{"type":"text","text":"a"},{"type":"text","text":"b"}]}`, true},
+		{"citations_false_kept", `{"role":"assistant","content":[{"type":"text","text":"a","citations":false}]}`, `{"role":"assistant","content":[{"type":"text","text":"a"}]}`, false},
+		{"tool_input_signature_kept", `{"role":"assistant","content":[{"type":"tool_use","id":"t","name":"x","input":{"type":"thinking","thinking":"a","signature":"s"}}]}`,
+			`{"role":"assistant","content":[{"type":"tool_use","id":"t","name":"x","input":{"type":"thinking","thinking":"a"}}]}`, false},
+		{"tool_result_nested_kept", `{"role":"user","content":[{"type":"tool_result","tool_use_id":"t","content":[{"type":"text","text":"a","citations":[]}]}]}`,
+			`{"role":"user","content":[{"type":"tool_result","tool_use_id":"t","content":[{"type":"text","text":"a"}]}]}`, false},
+		{"responses_output_text_kept", `{"type":"message","role":"assistant","content":[{"type":"output_text","text":"a","citations":[]}]}`,
+			`{"type":"message","role":"assistant","content":[{"type":"output_text","text":"a"}]}`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := policyDeltaDigest([]json.RawMessage{json.RawMessage(tc.left)}, 1) ==
+				policyDeltaDigest([]json.RawMessage{json.RawMessage(tc.right)}, 1)
+			if got != tc.match {
+				t.Fatalf("%s vs %s: match %v, want %v", tc.left, tc.right, got, tc.match)
+			}
+		})
+	}
+}
+
 // A Workshop-shaped conversation (signed thinking, then unsigned thinking
 // from another arm, each echoed as the agent rebuilds it) appends every
 // reply and sends every held turn as a delta that decides on the
