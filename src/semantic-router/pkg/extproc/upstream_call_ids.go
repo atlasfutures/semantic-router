@@ -130,6 +130,18 @@ func upstreamStreamResponseID(responseID string, stream llmprotocol.StreamContex
 	return responseID
 }
 
+// observeUpstreamStreamEventID records a stream event's upstream id: the
+// one a failure chunk carried as telemetry, or a start's or failure's own id
+// when the upstream wrote it.
+func observeUpstreamStreamEventID(ctx *RequestContext, event llmprotocol.Event, stream llmprotocol.StreamContext) {
+	switch {
+	case event.UpstreamResponseID != "":
+		observeUpstreamResponseID(ctx, event.UpstreamResponseID)
+	case event.Type == llmprotocol.EventResponseStarted, event.Type == llmprotocol.EventResponseFailed:
+		observeUpstreamResponseID(ctx, upstreamStreamResponseID(event.ResponseID, stream))
+	}
+}
+
 func boundedUpstreamID(value string) string {
 	return boundedPrintable(strings.TrimSpace(value), maxUpstreamIDLength)
 }

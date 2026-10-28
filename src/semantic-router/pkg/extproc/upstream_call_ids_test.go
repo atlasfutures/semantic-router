@@ -358,3 +358,24 @@ func TestFailedResendKeepsItsHeaderIDs(t *testing.T) {
 		})
 	}
 }
+
+// A stream whose first frame is an error has no start to name its id; the
+// id the upstream wrote on that frame is still the call's.
+func TestStreamErrorInTheFirstFrameNamesItsGenerationID(t *testing.T) {
+	logs := captureLogs(t)
+	twin := newFlexTwin(t, http.StatusOK, "text/event-stream", providerIDStream)
+	router := flexResendRouter(twin.server.URL)
+	ctx, _ := routeFlexTurn(t, router, flexResendTwin, true)
+	deliverHeaders(t, router, ctx, providerIDHeaders(http.StatusOK, "text/event-stream"))
+	errorFirst := `data: {"id":"gen-error-first","object":"chat.completion.chunk","created":1,"model":"openai/gpt-luna",` +
+		`"provider":"Moonshot","choices":[],"error":{"type":"server_error","code":"upstream_error","message":"provider unavailable"}}` + "\n\n"
+
+	deliverBody(t, router, ctx, errorFirst, true)
+
+	for _, event := range []string{"turn_failed", "llm_usage"} {
+		if got := findLogEvent(t, logs, event)["upstream_generation_id"]; got != "gen-error-first" {
+			t.Fatalf("%s upstream_generation_id = %v, want gen-error-first", event, got)
+		}
+	}
+	assertNoSecretLogged(t, logs)
+}

@@ -65,6 +65,10 @@ type Event struct {
 	// UpstreamServiceTier is the service tier the upstream says it served
 	// the turn at, carried from the chunk that states it. Router telemetry.
 	UpstreamServiceTier string
+	// UpstreamResponseID is the id the upstream wrote on a chunk whose
+	// event carries no start to name it (an error in the stream's first
+	// frame). Router telemetry; no encoder publishes it.
+	UpstreamResponseID  string
 	MatchedStopSequence string
 	Usage               *Usage
 	Error               *ProtocolError
