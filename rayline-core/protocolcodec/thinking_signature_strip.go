@@ -211,7 +211,7 @@ func DropForeignOpaqueReasoning(
 				if content.Text == "" {
 					// The carrier was the reasoning's only text: its
 					// plaintext stays.
-					content.Text = reasoningDetailsPlaintext(details)
+					content.Text = ReasoningDetailsPlaintext(details)
 				}
 				content.Extensions = withoutReasoningDetailsMember(content.Extensions)
 			}
@@ -250,9 +250,9 @@ func withoutReasoningDetailsMember(fields *llmprotocol.UnmodeledFields) *llmprot
 	return &copied
 }
 
-// reasoningDetailsPlaintext is the readable text a reasoning_details array
+// ReasoningDetailsPlaintext is the readable text a reasoning_details array
 // holds: its items' text and summaries, in order.
-func reasoningDetailsPlaintext(details json.RawMessage) string {
+func ReasoningDetailsPlaintext(details json.RawMessage) string {
 	var items []struct {
 		Text    string `json:"text"`
 		Summary string `json:"summary"`

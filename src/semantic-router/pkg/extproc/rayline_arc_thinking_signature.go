@@ -213,8 +213,12 @@ func (r *OpenAIRouter) guardHistoryReasoning(
 	return stripped
 }
 
-// thinkingRunStart is the index of the first assistant message holding one of
-// the run's anchors, or -1 when the history holds none.
+// thinkingRunStart is the index of the first message of the reply holding
+// one of the run's anchors, or -1 when the history holds none. A reply is a
+// run of consecutive assistant messages: a Responses client resends one
+// reply as several items (its reasoning, then its message and calls), so a
+// reply is read, and its text anchored, as one message at its first index,
+// as ResponseAnchorKey records it.
 func thinkingRunStart(messages []llmprotocol.Message, anchors []string) int {
 	if len(anchors) == 0 {
 		return -1
@@ -223,15 +227,21 @@ func thinkingRunStart(messages []llmprotocol.Message, anchors []string) int {
 	for _, anchor := range anchors {
 		anchored[anchor] = true
 	}
-	for index, message := range messages {
-		if message.Role != llmprotocol.RoleAssistant {
+	for start := 0; start < len(messages); start++ {
+		if messages[start].Role != llmprotocol.RoleAssistant {
 			continue
 		}
-		for _, key := range protocolcodec.MessageAnchorKeys(message, index) {
+		reply := llmprotocol.Message{Role: llmprotocol.RoleAssistant}
+		end := start
+		for ; end < len(messages) && messages[end].Role == llmprotocol.RoleAssistant; end++ {
+			reply.Content = append(reply.Content, messages[end].Content...)
+		}
+		for _, key := range protocolcodec.MessageAnchorKeys(reply, start) {
 			if anchored[reasoning.ThinkingRunAnchorDigest(key)] {
-				return index
+				return start
 			}
 		}
+		start = end - 1
 	}
 	return -1
 }
@@ -368,10 +378,22 @@ func chatRetryBody(body []byte) ([]byte, thinkingRetryChange, bool) {
 		if wireRole(message) != "assistant" {
 			continue
 		}
-		if _, held := message["reasoning_details"]; held {
-			delete(message, "reasoning_details")
-			change.stripped++
+		details, held := message["reasoning_details"]
+		if !held {
+			continue
 		}
+		if !hasJSONMember(message, "reasoning_content") && !hasJSONMember(message, "reasoning") {
+			// The details were the reasoning's only text: its plaintext stays.
+			if text := protocolcodec.ReasoningDetailsPlaintext(details); text != "" {
+				encoded, err := json.Marshal(text)
+				if err != nil {
+					return nil, change, false
+				}
+				message["reasoning_content"] = encoded
+			}
+		}
+		delete(message, "reasoning_details")
+		change.stripped++
 	}
 	if change.stripped == 0 {
 		return nil, change, false

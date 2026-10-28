@@ -889,3 +889,28 @@ func TestChatRetryStripsTheLoopsDetails(t *testing.T) {
 		t.Fatalf("ok=%v change=%+v body=%s", ok, change, retried)
 	}
 }
+
+// A Responses client resends one reply as several items; the run is found at
+// the reply's first one.
+func TestRunIsFoundAcrossASplitReply(t *testing.T) {
+	user := llmprotocol.Message{Role: llmprotocol.RoleUser, Content: []llmprotocol.Content{{Kind: llmprotocol.ContentText, Text: "go"}}}
+	reasoningItem := llmprotocol.Message{Role: llmprotocol.RoleAssistant, Content: []llmprotocol.Content{{Kind: llmprotocol.ContentReasoning, Text: "thought"}}}
+	textItem := llmprotocol.Message{Role: llmprotocol.RoleAssistant, Content: []llmprotocol.Content{{Kind: llmprotocol.ContentText, Text: "answer"}}}
+	reply := &llmprotocol.Response{Output: []llmprotocol.OutputItem{
+		{Role: llmprotocol.RoleAssistant, Content: reasoningItem.Content},
+		{Role: llmprotocol.RoleAssistant, Content: textItem.Content},
+	}}
+	anchor := reasoning.ThinkingRunAnchorDigest(protocolcodec.ResponseAnchorKey(reply, 1))
+	if start := thinkingRunStart([]llmprotocol.Message{user, reasoningItem, textItem, user}, []string{anchor}); start != 1 {
+		t.Fatalf("run start = %d, want the reply's first item, 1", start)
+	}
+}
+
+// A Chat re-send keeps the plaintext of reasoning held only in its details.
+func TestChatRetryKeepsDetailOnlyText(t *testing.T) {
+	retried, _, ok := chatRetryBody([]byte(piChatHistory(
+		`"reasoning_details":[{"type":"reasoning.text","text":"only here","signature":"sig","format":"anthropic-claude-v1","index":0}]`)))
+	if !ok || strings.Contains(string(retried), "reasoning_details") || !strings.Contains(string(retried), `"reasoning_content":"only here"`) {
+		t.Fatalf("ok=%v body=%s", ok, retried)
+	}
+}
