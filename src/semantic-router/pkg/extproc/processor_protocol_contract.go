@@ -300,8 +300,13 @@ func (r *OpenAIRouter) decodeClientResponse(
 	responseID := responseObjectPublicID(ctx)
 	namespaces := requestToolNamespaces(ctx)
 	var mutation protocolcodec.ResponseMutation
+	// The id the upstream wrote is kept as the call's generation id before
+	// a public one replaces it.
+	upstreamIDSeen := false
 	if responseID != "" || namespaces != nil {
 		mutation = func(response *llmprotocol.Response) error {
+			observeUpstreamResponseID(ctx, response.ID)
+			upstreamIDSeen = true
 			if responseID != "" {
 				response.ID = responseID
 			}
@@ -310,6 +315,9 @@ func (r *OpenAIRouter) decodeClientResponse(
 		}
 	}
 	decoded, err := engine.TranslateResponse(source, target, body, mutation)
+	if !upstreamIDSeen && decoded.Response.Generation != 0 {
+		observeUpstreamResponseID(ctx, decoded.Response.ID)
+	}
 	if err != nil {
 		ctx.UpstreamDecodedRemnant = decodedResponseRemnant(decoded)
 		return nil, err

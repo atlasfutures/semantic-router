@@ -485,6 +485,8 @@ func (r *OpenAIRouter) endpointResendOnResponseHeaders(
 		ctx.DispatchedOutbound = readDispatchedOutboundParams(resend.call.body, plan.dispatch)
 		recordDispatchedProviderPin(ctx, resend.call.body)
 		result = callFlexTwin(ctx, resend.call, r.flexResendBodyLimit(), deadline)
+		// A refused re-send's row names its own provider ids.
+		ctx.UpstreamCallIDs = result.ids
 		statuses = append(statuses, result.status)
 		retry := endpointResendTrigger(result.status)
 		if retry == "" || index == len(calls)-1 || !time.Now().Before(deadline) {

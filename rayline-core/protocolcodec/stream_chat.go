@@ -230,7 +230,9 @@ func (decoder *chatStreamDecoder) decodeProviderFrame(frame []byte) ([]llmprotoc
 	}
 	decoder.observeUpstreamAttribution(chunk)
 	if chunk.Error != nil {
-		event, err := decoder.next(chatStreamFailureEvent(chunk.Error))
+		failure := chatStreamFailureEvent(chunk.Error)
+		failure.UpstreamResponseID = chunk.ID
+		event, err := decoder.next(failure)
 		if err != nil {
 			return nil, nil, err
 		}

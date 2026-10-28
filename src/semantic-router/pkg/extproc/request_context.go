@@ -223,6 +223,10 @@ type RequestContext struct {
 	// (x-vsr-upstream-attempts): above 1, Envoy retried it and the earlier
 	// attempts never reached the Router. 0 when the hop did not say.
 	UpstreamAttempts int
+	// UpstreamCallIDs are the provider's own ids for the current call: its
+	// generation id and request id, as its response headers and body stated
+	// them (upstream_call_ids.go).
+	UpstreamCallIDs upstreamCallIDs
 	// UpstreamAttemptCount distinguishes one logical Rayline request from the
 	// wire attempts Envoy made beneath it. RetryCount is attempts minus one;
 	// RetryExhausted is true only when the final 429/503 consumed the artifact

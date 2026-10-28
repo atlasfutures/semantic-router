@@ -278,6 +278,10 @@ func (r *OpenAIRouter) ensureSemanticResponseStream(ctx *RequestContext) error {
 		streamContext.ResponseID = responseID
 	}
 	mutation = func(event *llmprotocol.Event) error {
+		// The stream's start (or a failure before any start) names the
+		// upstream's id, kept before a public one replaces it: it reaches
+		// the logs even when the turn is cut before any content.
+		observeUpstreamStreamEventID(ctx, *event, streamContext)
 		if responseID != "" {
 			event.ResponseID = responseID
 		}

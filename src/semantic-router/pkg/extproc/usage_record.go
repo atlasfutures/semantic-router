@@ -111,6 +111,14 @@ type llmUsageRecord struct {
 	// named it; ProviderOrder is the route the dispatched body pinned.
 	UpstreamProvider *string  `json:"upstream_provider"`
 	ProviderOrder    []string `json:"provider_order"`
+	// The provider's own ids for the call (upstream_call_ids.go), null when
+	// the upstream stated none: UpstreamGenerationID is the x-generation-id
+	// header or the response's id (OpenRouter's generation id), and
+	// UpstreamRequestID a provider request id header, which
+	// UpstreamRequestIDHeader names.
+	UpstreamGenerationID    *string `json:"upstream_generation_id"`
+	UpstreamRequestID       *string `json:"upstream_request_id"`
+	UpstreamRequestIDHeader *string `json:"upstream_request_id_header"`
 	// PrivacyMode is the data mode a Rayline ARC turn was served under
 	// (standard, privacy or zdr), null outside ARC; a private turn also
 	// carries its allowed set's size and digest, never the set
@@ -282,6 +290,9 @@ func (r *OpenAIRouter) newLLMUsageRecord(ctx *RequestContext, usage responseUsag
 		routing := ctx.RoutingLatency.Milliseconds()
 		record.RoutingLatencyMS = &routing
 	}
+	record.UpstreamGenerationID = nonEmpty(ctx.UpstreamCallIDs.generationID)
+	record.UpstreamRequestID = nonEmpty(ctx.UpstreamCallIDs.requestID)
+	record.UpstreamRequestIDHeader = nonEmpty(ctx.UpstreamCallIDs.requestIDHeader)
 	if ctx.UpstreamAttempts > 0 {
 		attempts := ctx.UpstreamAttempts
 		complete := attempts == 1
