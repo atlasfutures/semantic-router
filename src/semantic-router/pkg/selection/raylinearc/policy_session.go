@@ -81,6 +81,17 @@ const (
 	DefaultPolicySessionStartTimeout = 10 * time.Second
 	// policySessionTerminateTimeout bounds a best-effort terminate.
 	policySessionTerminateTimeout = 5 * time.Second
+	// policySessionTransportRetryBudget bounds the one move a turn makes when
+	// a decide on the episode's session fails in transport: the new session's
+	// start and its decide together.
+	policySessionTransportRetryBudget = 2 * time.Second
+	// DefaultPolicySessionReplacedGrace is how long a session the episode
+	// moved off is kept after the commit that replaced it: a turn on another
+	// router instance that read the episode before that commit (a side call,
+	// a relaxed turn) may still send its decides there. It is never shorter
+	// than two decide timeouts (a decide and a re-ask); a decide in flight at
+	// the terminate finishes anyway.
+	DefaultPolicySessionReplacedGrace = 60 * time.Second
 )
 
 // PolicySession is one Modal sticky session: the episode's owner on a
@@ -138,8 +149,9 @@ func clonePolicySession(session *PolicySession) *PolicySession {
 
 // PolicySessionConfig is the resolved sessions configuration.
 type PolicySessionConfig struct {
-	IdleTimeout  time.Duration
-	StartTimeout time.Duration
+	IdleTimeout   time.Duration
+	StartTimeout  time.Duration
+	ReplacedGrace time.Duration
 }
 
 // PolicySessionBackend starts and ends the Modal sessions of a sessioned
@@ -155,6 +167,8 @@ type PolicySessionBackend struct {
 	// suspect holds the sessions whose last decide timed out or failed in
 	// transport (#358), so the episode's next turn does not wait on them again.
 	suspect *suspectSessions
+	// transportRetryBudget bounds a turn's move after a transport failure.
+	transportRetryBudget time.Duration
 }
 
 // suspectSessions remembers, by a hash of the token and until the session's
@@ -223,9 +237,12 @@ func NewPolicySessionBackend(client *PolicyServiceClient, config PolicySessionCo
 	if config.StartTimeout <= 0 {
 		config.StartTimeout = DefaultPolicySessionStartTimeout
 	}
+	if config.ReplacedGrace <= 0 {
+		config.ReplacedGrace = max(DefaultPolicySessionReplacedGrace, 2*client.config.TotalTimeout)
+	}
 	return &PolicySessionBackend{
 		client: client, controlHTTP: noRedirectClient(client.http), config: config, now: time.Now, newKey: idempotencyKey,
-		suspect: newSuspectSessions(config.IdleTimeout, time.Now),
+		suspect: newSuspectSessions(config.IdleTimeout, time.Now), transportRetryBudget: policySessionTransportRetryBudget,
 	}, nil
 }
 
@@ -359,10 +376,19 @@ func (backend *PolicySessionBackend) Bind(persisted *PolicySession, ephemeral bo
 // episode)
 // starts a new session and is retried there once; the turn moves at most once,
 // so a strict episode is never in flight on two containers within a turn. A
-// timeout or transport failure is returned as is: the container may have
+// transport failure on the episode's session, which never got an answer, is
+// that move too, bounded by a small budget. A timeout, or a transport failure
+// on a session the turn started, is returned as is: the container may have
 // advanced its session, so the turn fails closed. That session is then
 // suspect (#358): the episode's next turn starts a new one rather than wait on
-// it again, and ends it best effort. It is not safe for concurrent use.
+// it again.
+//
+// A session the episode state records is never ended by the turn that moves
+// off it, only once that turn's commit has recorded the new one
+// (TerminateReplaced): the state is shared by every router instance, so a turn
+// that ended it and then failed before its commit would leave the episode on a
+// session that is gone, and the next turn on any other instance would fail on
+// it (prod 2026-10-28). It is not safe for concurrent use.
 type PolicySessionBinding struct {
 	backend   *PolicySessionBackend
 	persisted *PolicySession
@@ -372,6 +398,10 @@ type PolicySessionBinding struct {
 	owned    []PolicySession
 	sessions int
 	moved    bool
+	// replaced is the persisted session this turn moved off, ended only after
+	// the commit that records its replacement. An ephemeral turn records no
+	// replacement, so it never sets one.
+	replaced *PolicySession
 }
 
 // Decide asks the bound session for one decision.
@@ -385,11 +415,7 @@ func (binding *PolicySessionBinding) Decide(
 			// The persisted session timed out on an earlier turn: this turn's
 			// one move is to a new session, before any call reaches the old one.
 			binding.moved = true
-			// Ended off the turn's path: a stalled terminate must not use up the
-			// deadline the new session needs.
-			old := *binding.persisted
-			go binding.terminate(context.WithoutCancel(ctx), old)
-			if err := binding.start(ctx); err != nil {
+			if err := binding.moveOff(ctx); err != nil {
 				return nil, err
 			}
 		case binding.persisted != nil:
@@ -400,37 +426,111 @@ func (binding *PolicySessionBinding) Decide(
 			}
 		}
 	}
-	response, err := binding.backend.client.WithSessionToken(binding.current.Token).Decide(ctx, request)
-	if policySessionUncertain(err) && !errors.Is(ctx.Err(), context.Canceled) {
-		// A caller that went away (a client disconnect) says nothing about the
-		// container; a deadline or a transport failure might.
-		binding.backend.suspect.mark(*binding.current)
-	}
+	response, err := binding.decide(ctx, request)
 	stale := err == nil && staleOwner(request, response)
-	if !stale && !policySessionLost(err) {
+	transport := binding.transportRetryable(ctx, err)
+	if !stale && !transport && !policySessionLost(err) {
 		return response, err
 	}
-	if stale {
+	if stale && !binding.onPersisted() {
 		// A rollover can leave the session on a container still serving the
-		// previous build. End it; the caller refuses the stale answer itself
-		// (policy_package_mismatch) if no new session replaces it.
-		binding.terminate(ctx, *binding.current)
+		// previous build. End one this turn started; the episode's own is
+		// replaced by the move below, and ended once the turn commits. The
+		// caller refuses the stale answer itself (policy_package_mismatch) if
+		// no new session replaces it. Ended off the turn's path: a stalled
+		// terminate must not use up the deadline the new session needs.
+		go binding.terminate(ctx, *binding.current)
 	}
 	if binding.moved {
 		return response, err
 	}
 	binding.moved = true
-	if startErr := binding.start(ctx); startErr != nil {
-		if stale {
-			return response, nil
+	moveCtx := ctx
+	if transport {
+		var cancel context.CancelFunc
+		moveCtx, cancel = context.WithTimeout(ctx, binding.backend.transportRetryBudget)
+		defer cancel()
+	}
+	if startErr := binding.moveOff(moveCtx); startErr != nil {
+		if stale || transport {
+			// The turn fails (or is refused) on its first answer, as it would
+			// have without the move.
+			return response, err
 		}
 		return nil, startErr
 	}
-	response, err = binding.backend.client.WithSessionToken(binding.current.Token).Decide(ctx, request)
+	response, err = binding.decide(moveCtx, request)
 	if err == nil && staleOwner(request, response) {
-		binding.terminate(ctx, *binding.current)
+		go binding.terminate(ctx, *binding.current)
 	}
 	return response, err
+}
+
+// decide sends one decide to the current session. A decide that failed
+// without an answer makes the session suspect, unless the caller went away
+// (a client disconnect), which says nothing about the container.
+func (binding *PolicySessionBinding) decide(
+	ctx context.Context,
+	request PolicyDecisionRequest,
+) (*PolicyDecisionResponse, error) {
+	response, err := binding.backend.client.WithSessionToken(binding.current.Token).Decide(ctx, request)
+	if policySessionUncertain(err) && !errors.Is(ctx.Err(), context.Canceled) {
+		binding.backend.suspect.mark(*binding.current)
+	}
+	return response, err
+}
+
+// transportRetryable reports a transport failure the turn may move on: one
+// on the episode's existing session, before the turn's one move, that got no
+// decision (no answer, or an answer other than a 200 whose body could not be
+// read) from a caller still waiting. A brand-new session's failure, or a
+// timeout, is not: the container may be working on it.
+func (binding *PolicySessionBinding) transportRetryable(ctx context.Context, err error) bool {
+	var failure *PolicyServiceError
+	if binding.moved || !binding.onPersisted() || ctx.Err() != nil || !errors.As(err, &failure) {
+		return false
+	}
+	return failure.Class == "transport" && failure.Status != http.StatusOK
+}
+
+// onPersisted reports whether the turn is on the session the episode records.
+func (binding *PolicySessionBinding) onPersisted() bool {
+	return binding.persisted != nil && binding.current != nil && *binding.current == *binding.persisted
+}
+
+// moveOff starts the session the turn moves to. The persisted session it
+// leaves is the replaced one, ended once the turn commits; an ephemeral turn
+// commits nothing, so the episode keeps it and it is not ended at all.
+func (binding *PolicySessionBinding) moveOff(ctx context.Context) error {
+	if err := binding.start(ctx); err != nil {
+		return err
+	}
+	if binding.persisted != nil && !binding.ephemeral {
+		binding.replaced = clonePolicySession(binding.persisted)
+	}
+	return nil
+}
+
+// TerminateReplaced ends, best effort and off the caller's path, the session
+// this turn moved the episode off, after the replaced grace. The caller calls
+// it only once the episode commit has recorded the new session: before it, the
+// old one is still the one every router instance would decide the episode's
+// next turn on. The grace covers a turn that read the episode just before the
+// commit; one still later moves off it (a transport failure or Modal's 404).
+func (binding *PolicySessionBinding) TerminateReplaced(ctx context.Context) {
+	if binding == nil || binding.replaced == nil {
+		return
+	}
+	replaced := *binding.replaced
+	binding.replaced = nil
+	detached := context.WithoutCancel(ctx)
+	time.AfterFunc(binding.backend.config.ReplacedGrace, func() { binding.terminate(detached, replaced) })
+}
+
+// Replaces reports whether the turn moved off a session the episode records,
+// which its commit then ends (TerminateReplaced).
+func (binding *PolicySessionBinding) Replaces() bool {
+	return binding != nil && binding.replaced != nil
 }
 
 func (binding *PolicySessionBinding) start(ctx context.Context) error {

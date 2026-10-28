@@ -133,6 +133,9 @@ func recordPolicySession(
 	trace.PolicySessions, trace.PolicySessionMoved = binding.Sessions()
 	if session, changed := binding.Session(); changed {
 		trace.PolicySession = session
+		if binding.Replaces() {
+			trace.PolicySessionReplaced = binding
+		}
 	}
 	if trace.PolicySessionMoved {
 		logging.ComponentWarnEvent("extproc", "rayline_arc_policy_session_moved", map[string]interface{}{

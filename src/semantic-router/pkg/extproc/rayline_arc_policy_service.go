@@ -999,6 +999,15 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 			}
 		}
 		fields := map[string]interface{}{"class": class, "episode_id_hash": arcContext.EpisodeIDHash}
+		// A timeout or transport failure names what failed (a dial, TLS or
+		// read error, and the status when one was answered); the client has
+		// already dropped the URL and redacted the credentials.
+		if failure != nil && failure.Cause != "" {
+			fields["error"] = failure.Cause
+			if failure.Status != 0 {
+				fields["status"] = failure.Status
+			}
+		}
 		// With nothing to hold, a media refusal fails as the
 		// unsupported_request it is on the wire (request_shape); the log keeps
 		// its bounded sub_reason.
