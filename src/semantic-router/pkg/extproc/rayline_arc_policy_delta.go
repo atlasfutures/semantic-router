@@ -257,15 +257,24 @@ func policyDeltaFor(
 }
 
 // policyDeltaDigest digests the first n messages as the delta check
-// compares them: what the service's projections (canonical-conversation.v1
-// and transcript-projection.v9) read the same. Only Claude Code's two
-// per-request rewrites of history are insignificant: a cache_control marker
-// on a message or on one of its top-level content blocks (never one nested
-// deeper, such as a tool's input), and a system or user message whose content
-// is one text block, which is its text (Claude Code demotes its trailing
-// system message so, Claude Desktop its newest user prompt; both projections
-// read a string as that one block). Object key order and whitespace are
-// insignificant. Anything else that differs makes the turn go in full.
+// compares them: what the service's canonical conversation projection
+// (canonical_v1 and canonical_v2 packages, the only ones it serves a delta
+// for) reads the same. Insignificant are:
+//   - a cache_control marker on a message or on one of its top-level content
+//     blocks (never one nested deeper, such as a tool's input);
+//   - the members the projection removes from a top-level content block
+//     whatever their value (pathfinder canonical_conversation.py _clean): a
+//     tool_use or server_tool_use block's caller and a thinking block's
+//     signature; and a text block's citations when null or [] (non-empty
+//     citations are encoded, so they still count);
+//   - a system or user message whose content is one text block, which is its
+//     text (Claude Code demotes its trailing system message so, Claude
+//     Desktop its newest user prompt; the projection reads a string as that
+//     one block).
+//
+// Object key order and whitespace are insignificant. Anything else that
+// differs, thinking text and redacted_thinking data included, makes the turn
+// go in full.
 func policyDeltaDigest(messages []json.RawMessage, n int) string {
 	hash := sha256.New()
 	for _, message := range messages[:n] {
@@ -289,6 +298,7 @@ func policyDeltaCanonical(message json.RawMessage) []byte {
 		for _, block := range blocks {
 			if fields, ok := block.(map[string]any); ok {
 				delete(fields, "cache_control")
+				policyDeltaCleanBlock(fields)
 			}
 		}
 		if role := object["role"]; (role == "system" || role == "user") && len(blocks) == 1 {
@@ -306,6 +316,26 @@ func policyDeltaCanonical(message json.RawMessage) []byte {
 		return message
 	}
 	return canonical
+}
+
+// policyDeltaCleanBlock removes from one top-level content block exactly
+// the members the service's canonical projection removes from it (beside
+// cache_control), so a client that echoes them otherwise -- Workshop's agent
+// sends no citations or caller and an unsigned thinking block's signature as
+// "" -- extends the staged turn as the full request encodes it.
+func policyDeltaCleanBlock(fields map[string]any) {
+	switch fields["type"] {
+	case "text":
+		if citations, ok := fields["citations"]; ok {
+			if list, isList := citations.([]any); citations == nil || (isList && len(list) == 0) {
+				delete(fields, "citations")
+			}
+		}
+	case "tool_use", "server_tool_use":
+		delete(fields, "caller")
+	case "thinking":
+		delete(fields, "signature")
+	}
 }
 
 // policyShellOf is a full request's shell: everything but its conversation.
@@ -576,14 +606,15 @@ func policyAssistantOutput(format string, body []byte) ([]json.RawMessage, bool)
 	}
 }
 
-// anthropicEchoContent is a Messages reply's content as Claude Code echoes
-// it in the next request's history (testdata/thread_continuation, Claude
-// Code 2.1.309): a text block carries "citations": [] where the reply had
-// none, and a tool_use block "caller": {"type":"direct"} where it named
-// none. Every other block and member is kept as the reply had it. The next
-// turn's digest check is what proves the echo matched; a client that echoes
-// otherwise costs only a full resend (delta_mismatch_reason
-// appended_mismatch).
+// anthropicEchoContent is a Messages reply's content as the service stages
+// it: a text block carries "citations": [] where the reply had none, and a
+// tool_use block "caller": {"type":"direct"} where it named none, as Claude
+// Code 2.1.309 echoes it (testdata/thread_continuation). Every other block
+// and member is kept as the reply had it. Both members are ones the delta
+// digest ignores at those values (policyDeltaCleanBlock), so a client that
+// echoes them otherwise matches too; the next turn's digest check is what
+// proves the echo matched, and a mismatch costs only a full resend
+// (delta_mismatch_reason appended_mismatch).
 func anthropicEchoContent(raw json.RawMessage) (json.RawMessage, bool) {
 	var blocks []map[string]json.RawMessage
 	if json.Unmarshal(raw, &blocks) != nil {
@@ -608,16 +639,18 @@ func anthropicEchoContent(raw json.RawMessage) (json.RawMessage, bool) {
 }
 
 // policyReplyThinks reports whether the reply the client received holds
-// reasoning whose echo no captured client shows, read before any
-// normalization: a Messages redacted_thinking block or a thinking block
-// that is anything but {type, thinking, signature} with a signature, a Chat
-// message's reasoning members, a Responses reasoning item. An unreadable
-// reply counts as thinking.
+// reasoning whose echo the delta digest cannot be shown to read as the
+// service does, read before any normalization: a Messages redacted_thinking
+// block or a thinking block that is anything but {type, thinking} with an
+// optional string signature, a Chat message's reasoning members, a Responses
+// reasoning item. An unreadable reply counts as thinking.
 //
-// A signed Messages thinking block is appended: Claude Code 2.1.309 echoes
-// it unchanged (testdata/continuity/cc-2.1.309-thread-create-thinking-tool-
-// turn, message 11). A client that echoes it otherwise costs only a full
-// resend (appended_mismatch).
+// A Messages thinking block is appended, signed or not: the service encodes
+// its text and drops its signature whatever its value, as the digest does,
+// so Claude Code 2.1.309's unchanged echo (testdata/continuity/cc-2.1.309-
+// thread-create-thinking-tool-turn, message 11) and Workshop's, which sends
+// an unsigned block's signature as "", both extend it. A client that echoes
+// the text otherwise costs only a full resend (appended_mismatch).
 func policyReplyThinks(format string, body []byte) bool {
 	switch format {
 	case policyFormatAnthropic:
@@ -634,11 +667,18 @@ func policyReplyThinks(format string, body []byte) bool {
 			case "redacted_thinking":
 				return true
 			case "thinking":
-				var signature string
-				if len(block) != 3 || json.Unmarshal(block["signature"], &signature) != nil || signature == "" {
+				var text, signature string
+				if json.Unmarshal(block["thinking"], &text) != nil || string(block["thinking"]) == "null" {
 					return true
 				}
-				if _, ok := block["thinking"]; !ok {
+				members := 2
+				if raw, ok := block["signature"]; ok {
+					if json.Unmarshal(raw, &signature) != nil || string(raw) == "null" {
+						return true
+					}
+					members++
+				}
+				if len(block) != members {
 					return true
 				}
 			}
