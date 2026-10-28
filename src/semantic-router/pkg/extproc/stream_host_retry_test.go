@@ -394,18 +394,58 @@ func TestStalledHostIsTheOneTheStreamNamed(t *testing.T) {
 	assert.Equal(t, hostSourceOrder, source)
 }
 
-func TestPinnedHostsFollowOrderThenOnlyWithoutIgnored(t *testing.T) {
+func TestPinnedHostsNeverWidenTheOnlyList(t *testing.T) {
 	body := []byte(`{"provider":{"order":["a","b"],"only":["b","c","d"],"ignore":["d"]}}`)
-	assert.Equal(t, []string{"a", "b", "c"}, pinnedHosts(body))
+	assert.Equal(t, []string{"b", "c"}, pinnedHosts(body))
+	assert.Equal(t, []string{"a", "b"}, pinnedHosts([]byte(`{"provider":{"order":["a","b"]}}`)))
 	assert.Empty(t, pinnedHosts([]byte(`{"model":"m"}`)))
+	// An order host outside only is no host the pin reaches.
+	assert.Equal(t, []string{"a"}, pinnedHosts([]byte(`{"provider":{"order":["a","b"],"only":["a"]}}`)))
 
-	narrowed, ok := withHostsRemoved(body, []string{"b", "c"}, []string{"a"})
+	narrowed, ok := withHostsRemoved(body, []string{"b"})
 	require.True(t, ok)
 	var wire struct {
 		Provider map[string][]string `json:"provider"`
 	}
 	require.NoError(t, json.Unmarshal(narrowed, &wire))
-	assert.Equal(t, []string{"b", "c"}, wire.Provider["order"])
-	assert.Equal(t, []string{"b", "c"}, wire.Provider["only"])
-	assert.Equal(t, []string{"d", "a"}, wire.Provider["ignore"])
+	assert.Equal(t, []string{"a"}, wire.Provider["order"])
+	assert.Equal(t, []string{"c", "d"}, wire.Provider["only"])
+	assert.Equal(t, []string{"d", "b"}, wire.Provider["ignore"])
+}
+
+// With no first-content limit no retry can fire, so nothing is held.
+func TestNothingIsHeldWithoutAFirstContentLimit(t *testing.T) {
+	upstream := newHostUpstream(t, map[string]string{hostRetryHostB: "content"})
+	router := hostRetryRouter(upstream.server.URL, true, 0)
+	router.Config.ResponseStreamFirstContentSec = 0
+	stream := NewMockStream(nil)
+	ctx, _ := routeFlexTurn(t, router, hostRetryArm, true)
+	require.NoError(t, router.processResponseHeaders(NewMockStream(nil), flexUpstreamHeaders(http.StatusOK, "text/event-stream"), ctx))
+	require.NoError(t, router.handleProcessRequest(stream, fullDuplexResponseBodyRequest(hostRetryPreContentChunk, false), ctx))
+	sent, _ := clientBytes(stream)
+	assert.Contains(t, sent, "gen-stalled")
+}
+
+// A codec error the stalled call raised does not fail the re-send that
+// serves the turn.
+func TestStalledCallsStreamErrorDoesNotFailTheReSend(t *testing.T) {
+	logs := captureLogs(t)
+	upstream := newHostUpstream(t, map[string]string{hostRetryHostB: "content"})
+	router := hostRetryRouter(upstream.server.URL, true, 0)
+	stream := NewMockStream(nil)
+	ctx, _ := routeFlexTurn(t, router, hostRetryArm, true)
+	ctx.ProcessingStartTime = ctx.StartTime
+	require.NoError(t, router.processResponseHeaders(NewMockStream(nil), flexUpstreamHeaders(http.StatusOK, "text/event-stream"), ctx))
+	require.NoError(t, router.handleProcessRequest(stream, fullDuplexResponseBodyRequest(openRouterKeepaliveChunk, false), ctx))
+	ctx.StreamingAborted = true
+	ctx.SemanticStreamErr = assert.AnError
+	ctx.StreamContentSince = time.Now().Add(-91 * time.Second)
+	require.NoError(t, router.endSilentStream(stream, ctx))
+	require.True(t, ctx.HostRetry.started())
+	drainSpliced(t, router, ctx, stream)
+
+	assert.Empty(t, ctx.ResponseFailureClass)
+	lines := usageLines(logs)
+	require.Len(t, lines, 2)
+	assert.Nil(t, lines[1]["failure_class"])
 }

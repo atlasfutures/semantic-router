@@ -66,6 +66,9 @@ const (
 	hostSourceOrder    = "order"
 
 	hostRetryReadSize = 32 << 10
+	// hostRetryMaxHeld bounds the frames held from the client. Past it they
+	// are sent, and the call can no longer be replaced.
+	hostRetryMaxHeld = 1 << 20
 )
 
 // hostRetryHoldFrame is what the client is sent in place of held frames: an
@@ -89,6 +92,9 @@ type hostRetryPlan struct {
 	// exhausted says the last call failed before any content and no host is
 	// left: the turn ends as a first-content timeout.
 	exhausted bool
+	// exposed says frames of the call in flight reached the client, so a
+	// re-send would repeat them: it is not replaced.
+	exposed bool
 	// trailersPending says the original call's trailers arrived while a
 	// re-send was serving; their reply goes out when the re-send ends.
 	trailersPending bool
@@ -142,9 +148,9 @@ func (r *OpenAIRouter) stageHostRetry(ctx *RequestContext, dispatch *providerDis
 	}
 }
 
-// pinnedHosts are the hosts a body's provider object lists, in the order
-// OpenRouter tries them: order, then the only entries order leaves out,
-// without the ones ignore names.
+// pinnedHosts are the hosts a body's provider object lets OpenRouter try, in
+// the order it tries them, without the ones ignore names: with an only list,
+// its hosts, those order names first in order's order; without one, order.
 func pinnedHosts(body []byte) []string {
 	var wire struct {
 		Provider struct {
@@ -156,8 +162,18 @@ func pinnedHosts(body []byte) []string {
 	if json.Unmarshal(body, &wire) != nil {
 		return nil
 	}
+	listed := wire.Provider.Order
+	if len(wire.Provider.Only) > 0 {
+		listed = []string{}
+		for _, host := range wire.Provider.Order {
+			if containsFold(wire.Provider.Only, strings.TrimSpace(host)) {
+				listed = append(listed, host)
+			}
+		}
+		listed = append(listed, wire.Provider.Only...)
+	}
 	hosts := []string{}
-	for _, host := range append(append([]string(nil), wire.Provider.Order...), wire.Provider.Only...) {
+	for _, host := range listed {
 		host = strings.TrimSpace(host)
 		if host == "" || containsFold(hosts, host) || containsFold(wire.Provider.Ignore, host) {
 			continue
@@ -222,22 +238,27 @@ func (plan *hostRetryPlan) currentHost(ctx *RequestContext) (string, string) {
 }
 
 // holding reports that the call in flight's frames are held from the client:
-// nothing has been sent of it yet, and another host could still replace it.
-func (plan *hostRetryPlan) holding(ctx *RequestContext) bool {
-	return plan != nil && ctx.FullDuplexResponseBody && !ctx.StreamContentSeen &&
-		!ctx.StreamingComplete && len(plan.remaining()) > 1
+// nothing has been sent of it yet, and another host could still replace it,
+// which takes a first-content limit to fire.
+func (r *OpenAIRouter) holdingForHostRetry(ctx *RequestContext) bool {
+	plan := ctx.HostRetry
+	return plan != nil && !plan.exposed && streamSilenceTimerArmed(ctx) && !ctx.StreamContentSeen &&
+		!ctx.StreamingComplete && r.streamSilenceLimit(ctx) > 0 && len(plan.remaining()) > 1
 }
 
 // holdHostRetryFrames keeps a reply's frames from the client while the call
 // could still be replaced, and sends what was held with the first reply
 // that is not held.
-func holdHostRetryFrames(ctx *RequestContext, response *ext_proc.ProcessingResponse) *ext_proc.ProcessingResponse {
+func (r *OpenAIRouter) holdHostRetryFrames(ctx *RequestContext, response *ext_proc.ProcessingResponse) *ext_proc.ProcessingResponse {
 	plan := ctx.HostRetry
 	streamed := response.GetResponseBody().GetResponse().GetBodyMutation().GetStreamedResponse()
 	if plan == nil || streamed == nil {
 		return response
 	}
-	if plan.holding(ctx) {
+	if r.holdingForHostRetry(ctx) && len(plan.held)+len(streamed.Body) > hostRetryMaxHeld {
+		plan.exposed = true
+	}
+	if r.holdingForHostRetry(ctx) {
 		if len(streamed.Body) > 0 {
 			plan.held = append(plan.held, streamed.Body...)
 			streamed.Body = bytes.Clone(hostRetryHoldFrame)
@@ -248,6 +269,9 @@ func holdHostRetryFrames(ctx *RequestContext, response *ext_proc.ProcessingRespo
 		streamed.Body = append(plan.held, streamed.Body...)
 		plan.held = nil
 	}
+	if len(streamed.Body) > 0 {
+		plan.exposed = true
+	}
 	return response
 }
 
@@ -257,7 +281,7 @@ func holdHostRetryFrames(ctx *RequestContext, response *ext_proc.ProcessingRespo
 // without it.
 func (r *OpenAIRouter) retryOnNextHost(ctx *RequestContext, class, detail string) bool {
 	plan := ctx.HostRetry
-	if plan == nil || ctx.StreamContentSeen || ctx.StreamingComplete || !streamSilenceTimerArmed(ctx) {
+	if plan == nil || plan.exposed || ctx.StreamContentSeen || ctx.StreamingComplete || !streamSilenceTimerArmed(ctx) {
 		return false
 	}
 	host, source := plan.currentHost(ctx)
@@ -276,7 +300,7 @@ func (r *OpenAIRouter) retryOnNextHost(ctx *RequestContext, class, detail string
 	if len(next) == 0 {
 		return false
 	}
-	body, ok := withHostsRemoved(plan.dispatched, next, tried)
+	body, ok := withHostsRemoved(plan.dispatched, tried)
 	fields := map[string]interface{}{
 		"request_id": ctx.RequestID, "model": plan.dispatch.logicalModel,
 		"stalled_host": host, "stalled_host_source": source, "next_hosts": next,
@@ -303,7 +327,7 @@ func (r *OpenAIRouter) retryOnNextHost(ctx *RequestContext, class, detail string
 	r.settleStalledHost(ctx, class, detail)
 	plan.stop()
 	plan.attempts = append(plan.attempts, hostAttempt{started: time.Now()})
-	plan.held = nil
+	plan.held, plan.exposed = nil, false
 	plan.dispatched = body
 	resetStreamForHostRetry(ctx, body, plan.dispatch)
 	r.initializeSemanticResponseStream(ctx)
@@ -327,10 +351,11 @@ func (r *OpenAIRouter) failHost(ctx *RequestContext, class, detail string) bool 
 	return false
 }
 
-// withHostsRemoved is the dispatched body with the provider object's order
-// and only narrowed to the hosts left, in order, and the tried hosts added to
-// ignore. Every other member of the body and of the object stays as it was.
-func withHostsRemoved(body []byte, left, tried []string) ([]byte, bool) {
+// withHostsRemoved is the dispatched body with the tried hosts taken out of
+// the provider object's order and only, each narrowed on its own so neither
+// list ever admits a host it did not, and added to ignore. Every other member
+// of the body and of the object stays as it was.
+func withHostsRemoved(body []byte, tried []string) ([]byte, bool) {
 	var members map[string]json.RawMessage
 	if json.Unmarshal(body, &members) != nil {
 		return nil, false
@@ -340,9 +365,21 @@ func withHostsRemoved(body []byte, left, tried []string) ([]byte, bool) {
 		return nil, false
 	}
 	for _, field := range []string{"order", "only"} {
-		if _, set := provider[field]; set {
-			provider[field] = mustMarshalStrings(left)
+		raw, set := provider[field]
+		if !set {
+			continue
 		}
+		var listed []string
+		if json.Unmarshal(raw, &listed) != nil {
+			return nil, false
+		}
+		kept := []string{}
+		for _, host := range listed {
+			if !containsFold(tried, strings.TrimSpace(host)) {
+				kept = append(kept, host)
+			}
+		}
+		provider[field] = mustMarshalStrings(kept)
 	}
 	var ignore []string
 	if raw, set := provider["ignore"]; set && json.Unmarshal(raw, &ignore) != nil {
@@ -380,7 +417,12 @@ func (r *OpenAIRouter) settleStalledHost(ctx *RequestContext, class, detail stri
 	if !ctx.StartTime.IsZero() {
 		latency = time.Since(ctx.StartTime)
 	}
+	// What the call stated before it stalled (Messages states its input
+	// usage at message_start) is kept; what it did not stays unknown.
 	usage := responseUsageMetrics{}
+	if ctx.SemanticStreamState != nil {
+		usage = responseUsageFromSemanticUsage(ctx.SemanticStreamState.usage)
+	}
 	record := r.newLLMUsageRecord(ctx, usage)
 	latencyMillis := latency.Milliseconds()
 	record.CompletionLatencyMS = &latencyMillis
@@ -402,6 +444,10 @@ func resetStreamForHostRetry(ctx *RequestContext, body []byte, dispatch *provide
 	ctx.ProtocolResponseStream = nil
 	ctx.PublicStreamFilter = nil
 	ctx.SemanticStreamState = nil
+	// A codec error the stalled call raised is that call's, not the re-send's.
+	ctx.StreamingAborted = false
+	ctx.SemanticStreamErr = nil
+	ctx.UpstreamBodyCut = nil
 	ctx.StreamContentSince = time.Now()
 	// The re-send is the cell's own single call.
 	ctx.UpstreamAttempts = 1

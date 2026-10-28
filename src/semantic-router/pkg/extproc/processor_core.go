@@ -142,18 +142,17 @@ func (r *OpenAIRouter) processWithContext(
 			}
 			continue
 		}
+		var err error
 		if message.spliced != nil {
 			// What a re-send on the arm's next host said.
-			if err := r.serveHostRetryChunk(stream, ctx, *message.spliced); err != nil {
-				return err
+			err = r.serveHostRetryChunk(stream, ctx, *message.spliced)
+		} else {
+			if message.err != nil {
+				return r.handleProcessReceiveError(ctx, message.err)
 			}
-			continue
+			err = r.handleProcessRequest(stream, message.request, ctx)
 		}
-		if message.err != nil {
-			return r.handleProcessReceiveError(ctx, message.err)
-		}
-
-		if err := r.handleProcessRequest(stream, message.request, ctx); err != nil {
+		if err != nil {
 			if sendCanceled(err) {
 				// The client or the proxy went away while a chunk was being
 				// sent: the stream ended as it does on a receive error, and

@@ -130,7 +130,7 @@ func (r *OpenAIRouter) handleSemanticStreamingResponseBody(
 	// The turn is over either way here: the upstream reached its end, or the
 	// Router ended it. Both have to end the response, or the client waits for
 	// an EOF that only the platform will send.
-	return holdHostRetryFrames(ctx, buffers.processingResponse(ctx, cut || endOfStream))
+	return r.holdHostRetryFrames(ctx, buffers.processingResponse(ctx, cut || endOfStream))
 }
 
 func (r *OpenAIRouter) initializeSemanticResponseStream(ctx *RequestContext) {
