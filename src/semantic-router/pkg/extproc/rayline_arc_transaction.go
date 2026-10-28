@@ -65,6 +65,10 @@ type raylineARCEpisodeTransaction struct {
 	// to on a sessioned policy Server, committed only with the turn; nil
 	// keeps the stored session. Never logged.
 	policySession *raylinearc.PolicySession
+	// policySessionReplaced ends the session policySession replaces, once
+	// the turn has committed; a turn that does not commit leaves it, since the
+	// episode still records it.
+	policySessionReplaced *raylinearc.PolicySessionBinding
 	// policySessionCleared drops the stored session: the cell no longer
 	// decides through sessions.
 	policySessionCleared bool
@@ -270,8 +274,14 @@ func (transaction *raylineARCEpisodeTransaction) markSelectionWithAffinity(
 // markPolicySession records the session a sessioned policy Server decided
 // this turn on, when it is not the one the episode holds (nil leaves that
 // one), or, cleared, that the cell no longer uses sessions and the stored one
-// goes. A side call commits nothing, so its binding reports none.
-func (transaction *raylineARCEpisodeTransaction) markPolicySession(session *raylinearc.PolicySession, cleared bool) {
+// goes. A side call commits nothing, so its binding reports none. replaced,
+// when the turn moved off the episode's session, ends that one after the
+// commit.
+func (transaction *raylineARCEpisodeTransaction) markPolicySession(
+	session *raylinearc.PolicySession,
+	cleared bool,
+	replaced *raylinearc.PolicySessionBinding,
+) {
 	if transaction == nil {
 		return
 	}
@@ -281,6 +291,17 @@ func (transaction *raylineARCEpisodeTransaction) markPolicySession(session *rayl
 	}
 	cloned := *session
 	transaction.policySession = &cloned
+	transaction.policySessionReplaced = replaced
+}
+
+// endReplacedPolicySession ends the session this turn moved the episode off,
+// now that the commit records the new one.
+func (transaction *raylineARCEpisodeTransaction) endReplacedPolicySession(ctx context.Context) {
+	if transaction.policySession == nil || transaction.policySessionCleared {
+		return
+	}
+	transaction.policySessionReplaced.TerminateReplaced(ctx)
+	transaction.policySessionReplaced = nil
 }
 
 // takesHandovers reports whether this turn, leading a coalesced group, takes a
@@ -564,6 +585,7 @@ func (transaction *raylineARCEpisodeTransaction) commit(
 			return
 		}
 		transaction.state = nextState
+		transaction.endReplacedPolicySession(ctx)
 		metrics.RecordRaylineARCEpisodeTransaction("commit", "")
 		recordCommittedARCEpisodeTelemetry(requestContext, transaction)
 	})
@@ -618,6 +640,7 @@ func (transaction *raylineARCEpisodeTransaction) commitRelaxed(
 		logging.ComponentWarnEvent("extproc", "rayline_arc_relaxed_commit_failed", map[string]interface{}{"error": err.Error()})
 	default:
 		transaction.state = nextState
+		transaction.endReplacedPolicySession(ctx)
 		metrics.RecordRaylineARCEpisodeTransaction("commit", "relaxed")
 		recordCommittedARCEpisodeTelemetry(requestContext, transaction)
 	}

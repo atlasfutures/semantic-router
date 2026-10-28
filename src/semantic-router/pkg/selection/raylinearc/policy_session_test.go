@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -34,8 +35,14 @@ type fakeModalServer struct {
 	dead     map[int]bool
 	// hung containers hold every decide until the caller gives up: a stopped
 	// container's sessions before Modal answers 502 for them (#358).
-	hung       map[int]bool
-	release    chan struct{} // closed at cleanup, before the server, so a hung decide returns
+	hung    map[int]bool
+	release chan struct{} // closed at cleanup, before the server, so a hung decide returns
+	// reset containers drop every decide's connection without an answer: a
+	// transport failure, as an ended session's decides were in prod
+	// (2026-10-28).
+	reset map[int]bool
+	// refuse containers answer every decide with the service's own 503.
+	refuse     map[int]bool
 	staleOn    map[int]bool
 	calls      map[int]int
 	containers int
@@ -58,6 +65,8 @@ func newFakeModalServer(t *testing.T, containers int) *fakeModalServer {
 		sessions:   map[string]int{},
 		dead:       map[int]bool{},
 		hung:       map[int]bool{},
+		reset:      map[int]bool{},
+		refuse:     map[int]bool{},
 		staleOn:    map[int]bool{},
 		calls:      map[int]int{},
 		containers: containers,
@@ -158,6 +167,21 @@ func (fake *fakeModalServer) serve(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusBadGateway)
 			return
 		}
+		if fake.reset[container] {
+			fake.calls[container]++
+			fake.mu.Unlock()
+			if conn, _, err := w.(http.Hijacker).Hijack(); err == nil {
+				_ = conn.Close()
+			}
+			return
+		}
+		if fake.refuse[container] {
+			fake.calls[container]++
+			fake.mu.Unlock()
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"error":"backend_unavailable"}`))
+			return
+		}
 		fake.calls[container]++
 		stale := fake.staleOn[container]
 		fake.mu.Unlock()
@@ -202,7 +226,9 @@ func testSessionBackend(t *testing.T, fake *fakeModalServer, startTimeout time.D
 	client := NewPolicyServiceClient(PolicyServiceConfig{
 		BaseURL: fake.server.URL, ModalKey: fakeModalKey, ModalSecret: fakeModalSecret, TotalTimeout: 5 * time.Second,
 	})
-	backend, err := NewPolicySessionBackend(client, PolicySessionConfig{IdleTimeout: 900 * time.Second, StartTimeout: startTimeout})
+	backend, err := NewPolicySessionBackend(client, PolicySessionConfig{
+		IdleTimeout: 900 * time.Second, StartTimeout: startTimeout, ReplacedGrace: time.Millisecond,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -385,16 +411,37 @@ func TestPolicySessionStaleBuildTerminatesAndRestarts(t *testing.T) {
 	if err != nil || response.Package != fixturePackage(t) {
 		t.Fatalf("the restarted turn answered %+v, %v", response, err)
 	}
-	if fake.containerOf(*persisted) != -1 {
-		t.Fatal("the stale session was not ended")
-	}
 	moved, _ := turn.Session()
 	if fake.containerOf(*moved) == old {
 		t.Fatal("the new session landed on the stale container")
 	}
-	_, terminates, violations := fake.counts()
-	if terminates != 1 || len(violations) != 0 {
-		t.Fatalf("terminates %d violations %v", terminates, violations)
+	// The episode records the stale session until the turn commits, so it is
+	// ended only then.
+	if fake.containerOf(*persisted) == -1 || !turn.Replaces() {
+		t.Fatal("the stale session was ended before the commit")
+	}
+	turn.TerminateReplaced(context.Background())
+	waitForTerminates(t, fake, 1)
+	if fake.containerOf(*persisted) != -1 {
+		t.Fatal("the stale session was not ended")
+	}
+	if _, _, violations := fake.counts(); len(violations) != 0 {
+		t.Fatalf("violations %v", violations)
+	}
+}
+
+func waitForTerminates(t *testing.T, fake *fakeModalServer, want int) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second) // a replaced session is ended off the caller's path
+	for {
+		if _, terminates, _ := fake.counts(); terminates == want {
+			return
+		}
+		if time.Now().After(deadline) {
+			_, terminates, _ := fake.counts()
+			t.Fatalf("terminates %d, want %d", terminates, want)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
@@ -644,17 +691,13 @@ func TestPolicySessionTimeoutMakesTheNextTurnMove(t *testing.T) {
 	if _, wasMoved := next.Sessions(); !wasMoved {
 		t.Fatal("the next turn did not report its move")
 	}
-	deadline := time.Now().Add(2 * time.Second) // the old session is ended off the turn's path
-	for {
-		starts, terminates, _ := fake.counts()
-		if starts == 2 && terminates == 1 {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("starts %d terminates %d, want 2 and 1 (the suspect session ended)", starts, terminates)
-		}
-		time.Sleep(10 * time.Millisecond)
+	// The suspect session is the episode's until the move commits; then it is
+	// ended.
+	if starts, terminates, _ := fake.counts(); starts != 2 || terminates != 0 {
+		t.Fatalf("starts %d terminates %d before the commit, want 2 and 0", starts, terminates)
 	}
+	next.TerminateReplaced(context.Background())
+	waitForTerminates(t, fake, 1)
 }
 
 // A caller that goes away (a client disconnect) says nothing about the
@@ -703,5 +746,258 @@ func TestPolicySessionSuspectMarkExpires(t *testing.T) {
 	none.mark(session)
 	if none.has(session) {
 		t.Fatal("a nil set reports a suspect")
+	}
+}
+
+// sessionOn is a persisted session on the given container: a first turn's.
+func sessionOn(t *testing.T, fake *fakeModalServer, backend *PolicySessionBackend) PolicySession {
+	t.Helper()
+	first := backend.Bind(nil, false)
+	if _, err := sessionDecide(t, first); err != nil {
+		t.Fatal(err)
+	}
+	persisted, _ := first.Session()
+	return *persisted
+}
+
+func (fake *fakeModalServer) resetOn(container int) {
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	fake.reset[container] = true
+}
+
+// A decide on the episode's session that fails in transport (no answer) moves
+// the turn to a new session once, within the same turn, and is answered there.
+// The old session is the episode's until the move commits, so it is ended only
+// then.
+func TestPolicySessionTransportFailureMovesWithinTheTurn(t *testing.T) {
+	fake := newFakeModalServer(t, 2)
+	backend := testSessionBackend(t, fake, time.Second)
+	persisted := sessionOn(t, fake, backend)
+	old := fake.containerOf(persisted)
+	fake.resetOn(old)
+
+	turn := backend.Bind(&persisted, false)
+	if _, err := sessionDecide(t, turn); err != nil {
+		t.Fatalf("the retried turn failed: %v", err)
+	}
+	moved, changed := turn.Session()
+	if !changed || moved == nil || *moved == persisted || fake.containerOf(*moved) == old {
+		t.Fatal("the turn did not move to a new session on another container")
+	}
+	if used, wasMoved := turn.Sessions(); used != 2 || !wasMoved {
+		t.Fatalf("sessions %d moved %t", used, wasMoved)
+	}
+	if starts, terminates, _ := fake.counts(); starts != 2 || terminates != 0 {
+		t.Fatalf("starts %d terminates %d, want 2 and 0 before the commit", starts, terminates)
+	}
+	// After the commit it is kept for the grace, for a turn that read the
+	// episode just before it, then ended.
+	backend.config.ReplacedGrace = 300 * time.Millisecond
+	turn.TerminateReplaced(context.Background())
+	time.Sleep(100 * time.Millisecond)
+	if _, terminates, _ := fake.counts(); terminates != 0 {
+		t.Fatal("the replaced session was ended within its grace")
+	}
+	waitForTerminates(t, fake, 1)
+	if fake.containerOf(persisted) != -1 {
+		t.Fatal("the replaced session was not ended after the commit")
+	}
+}
+
+// The move after a transport failure is made once: a new session that fails
+// too fails the turn as transport, as it did without the move, and the
+// episode's session is not ended.
+func TestPolicySessionTransportRetryFailsTheTurnOnce(t *testing.T) {
+	fake := newFakeModalServer(t, 2)
+	backend := testSessionBackend(t, fake, time.Second)
+	persisted := sessionOn(t, fake, backend)
+	fake.resetOn(0)
+	fake.resetOn(1)
+
+	turn := backend.Bind(&persisted, false)
+	_, err := sessionDecide(t, turn)
+	var failure *PolicyServiceError
+	if !errors.As(err, &failure) || failure.Class != "transport" {
+		t.Fatalf("err = %v, want transport", err)
+	}
+	fake.mu.Lock()
+	calls := fake.calls[0] + fake.calls[1]
+	fake.mu.Unlock()
+	if starts, terminates, _ := fake.counts(); starts != 2 || terminates != 0 || calls != 3 {
+		t.Fatalf("starts %d terminates %d decides %d, want 2, 0 and 3 (the first turn, the failed decide, one retry)", starts, terminates, calls)
+	}
+	// A later call of the same turn (a re-ask) does not move again.
+	if _, err := sessionDecide(t, turn); err == nil {
+		t.Fatal("the re-ask succeeded on a reset container")
+	}
+	if starts, _, _ := fake.counts(); starts != 2 {
+		t.Fatalf("starts %d, want no second move", starts)
+	}
+}
+
+// A brand-new session's transport failure is not moved: the turn fails.
+func TestPolicySessionTransportFailureOnANewSessionIsNotRetried(t *testing.T) {
+	fake := newFakeModalServer(t, 1)
+	backend := testSessionBackend(t, fake, time.Second)
+	fake.resetOn(0)
+	_, err := sessionDecide(t, backend.Bind(nil, false))
+	var failure *PolicyServiceError
+	if !errors.As(err, &failure) || failure.Class != "transport" {
+		t.Fatalf("err = %v, want transport", err)
+	}
+	if starts, _, _ := fake.counts(); starts != 1 {
+		t.Fatalf("starts %d, want 1 (no retry)", starts)
+	}
+}
+
+// Any other failure on the episode's session, an answered refusal among them,
+// is not moved.
+func TestPolicySessionNonTransportFailureIsNotRetried(t *testing.T) {
+	fake := newFakeModalServer(t, 2)
+	backend := testSessionBackend(t, fake, time.Second)
+	persisted := sessionOn(t, fake, backend)
+	fake.mu.Lock()
+	fake.refuse[fake.sessions[persisted.Token]] = true
+	fake.mu.Unlock()
+	turn := backend.Bind(&persisted, false)
+	_, err := sessionDecide(t, turn)
+	var failure *PolicyServiceError
+	if !errors.As(err, &failure) || failure.Class != "backend_unavailable" {
+		t.Fatalf("err = %v, want backend_unavailable", err)
+	}
+	if starts, _, _ := fake.counts(); starts != 1 || turn.Replaces() {
+		t.Fatalf("starts %d replaces %t, want no move", starts, turn.Replaces())
+	}
+}
+
+// The move after a transport failure is bounded: a start that does not answer
+// within the budget fails the turn with its first transport failure.
+func TestPolicySessionTransportRetryIsBounded(t *testing.T) {
+	fake := newFakeModalServer(t, 2)
+	backend := testSessionBackend(t, fake, 5*time.Second)
+	persisted := sessionOn(t, fake, backend)
+	fake.resetOn(fake.containerOf(persisted))
+	fake.mu.Lock()
+	fake.startSleep = 3 * time.Second
+	fake.mu.Unlock()
+	backend.transportRetryBudget = 150 * time.Millisecond
+
+	began := time.Now()
+	_, err := sessionDecide(t, backend.Bind(&persisted, false))
+	var failure *PolicyServiceError
+	if !errors.As(err, &failure) || failure.Class != "transport" {
+		t.Fatalf("err = %v, want the first transport failure", err)
+	}
+	if elapsed := time.Since(began); elapsed > time.Second {
+		t.Fatalf("the bounded move took %s", elapsed)
+	}
+}
+
+// A side call commits nothing, so it never ends the episode's session: not
+// when it moves off a suspect one, nor off one that failed in transport.
+func TestPolicySessionSideCallNeverEndsTheEpisodesSession(t *testing.T) {
+	fake := newFakeModalServer(t, 2)
+	backend := testSessionBackend(t, fake, time.Second)
+	persisted := sessionOn(t, fake, backend)
+	backend.suspect.mark(persisted)
+
+	side := backend.Bind(&persisted, true)
+	if _, err := sessionDecide(t, side); err != nil {
+		t.Fatal(err)
+	}
+	side.TerminateReplaced(context.Background())
+	side.Release(context.Background())
+	waitForTerminates(t, fake, 1) // the side call's own session
+	if fake.containerOf(persisted) == -1 {
+		t.Fatal("a side call ended the episode's suspect session")
+	}
+
+	fresh := sessionOn(t, fake, backend)
+	fake.resetOn(fake.containerOf(fresh))
+	transported := backend.Bind(&fresh, true)
+	if _, err := sessionDecide(t, transported); err != nil {
+		t.Fatalf("the side call's move failed: %v", err)
+	}
+	if transported.Replaces() {
+		t.Fatal("a side call reports a replaced session")
+	}
+	transported.Release(context.Background())
+	waitForTerminates(t, fake, 2)
+	if fake.containerOf(fresh) == -1 {
+		t.Fatal("a side call ended the episode's session after a transport failure")
+	}
+}
+
+// A transport failure says what failed, without the URL or any credential.
+func TestPolicyTransportCauseRedactsCredentials(t *testing.T) {
+	client := NewPolicyServiceClient(PolicyServiceConfig{
+		BaseURL: "https://policy.example", ModalKey: fakeModalKey, ModalSecret: fakeModalSecret, TotalTimeout: time.Second,
+	}).WithSessionToken("tok.0001.secret-material")
+	cause := client.transportCause(&url.Error{
+		Op:  "Post",
+		URL: "https://policy.example/v1/decide?t=tok.0001.secret-material",
+		Err: fmt.Errorf("dial tcp 10.0.0.1:443: tok.0001.secret-material %s %s\n%s", fakeModalKey, fakeModalSecret, strings.Repeat("x", 400)),
+	})
+	redirected := client.transportCause(&url.Error{Op: "Get", URL: "https://policy.example/v1/decide", Err: errors.New(
+		`failed to parse Location header "https://user:pass@elsewhere.example/x?key=k1": invalid`,
+	)})
+	if strings.Contains(redirected, "pass") || strings.Contains(redirected, "k1") || !strings.Contains(redirected, "<redacted>") {
+		t.Fatalf("redirect cause %q", redirected)
+	}
+	// A malformed redirect, relative or absolute, is quoted by the HTTP client
+	// itself; none of it reaches the cause.
+	for _, location := range []string{"/%zz?key=k1", "https://user:pass@elsewhere.example/it's/%zz?key=k1"} {
+		redirecting := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Location", location)
+			w.WriteHeader(http.StatusTemporaryRedirect)
+		}))
+		_, err := NewPolicyServiceClient(PolicyServiceConfig{BaseURL: redirecting.URL, TotalTimeout: time.Second}).
+			Decide(context.Background(), sessionDecisionRequest(t))
+		redirecting.Close()
+		var failure *PolicyServiceError
+		if !errors.As(err, &failure) || failure.Cause == "" {
+			t.Fatalf("redirect to %q: %v", location, err)
+		}
+		for _, leaked := range []string{"k1", "pass", "zz", "elsewhere", "127.0.0.1"} {
+			if strings.Contains(failure.Cause, leaked) {
+				t.Fatalf("redirect to %q: cause %q carries %q", location, failure.Cause, leaked)
+			}
+		}
+	}
+	for _, leaked := range []string{"secret-material", fakeModalKey, fakeModalSecret, "policy.example", "\n"} {
+		if strings.Contains(cause, leaked) {
+			t.Fatalf("cause %q carries %q", cause, leaked)
+		}
+	}
+	if !strings.HasPrefix(cause, "Post: dial tcp 10.0.0.1:443: redacted") || len(cause) > maxPolicyTransportCauseBytes {
+		t.Fatalf("cause %q", cause)
+	}
+
+	fake := newFakeModalServer(t, 1)
+	backend := testSessionBackend(t, fake, time.Second)
+	fake.resetOn(0)
+	_, err := sessionDecide(t, backend.Bind(nil, false))
+	var failure *PolicyServiceError
+	if !errors.As(err, &failure) || failure.Cause == "" || strings.Contains(failure.Cause, fake.server.URL) ||
+		strings.Contains(failure.Cause, "secret-material") || strings.Contains(err.Error(), failure.Cause) {
+		t.Fatalf("reset decide failure %+v", failure)
+	}
+}
+
+// A replaced session's grace is never shorter than two decide timeouts, so a
+// turn that read the episode before the commit can still decide and re-ask.
+func TestPolicySessionReplacedGraceCoversTwoDecides(t *testing.T) {
+	for _, tc := range []struct{ total, want time.Duration }{
+		{5 * time.Second, DefaultPolicySessionReplacedGrace},
+		{45 * time.Second, 90 * time.Second},
+	} {
+		client := NewPolicyServiceClient(PolicyServiceConfig{
+			BaseURL: "https://example.invalid", ModalKey: fakeModalKey, ModalSecret: fakeModalSecret, TotalTimeout: tc.total,
+		})
+		backend, err := NewPolicySessionBackend(client, PolicySessionConfig{})
+		if err != nil || backend.config.ReplacedGrace != tc.want {
+			t.Fatalf("decide timeout %s: grace %s, %v; want %s", tc.total, backend.config.ReplacedGrace, err, tc.want)
+		}
 	}
 }

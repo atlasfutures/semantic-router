@@ -73,6 +73,11 @@ type PolicyServiceError struct {
 	// sub_reason); nil
 	// otherwise, so no free-form service text travels further.
 	Detail map[string]any
+	// Cause is, for a timeout or transport failure, what the HTTP client
+	// reported (a dial, TLS or read error), without the request URL and with
+	// any credential the request carried redacted, bounded for a log field.
+	// Error never prints it.
+	Cause string
 }
 
 func (err *PolicyServiceError) Error() string {
@@ -468,14 +473,17 @@ func (client *PolicyServiceClient) do(
 	response, err := client.http.Do(request)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
-			return nil, &PolicyServiceError{Class: "timeout"}
+			return nil, &PolicyServiceError{Class: "timeout", Cause: client.transportCause(err)}
 		}
-		return nil, &PolicyServiceError{Class: "transport"}
+		return nil, &PolicyServiceError{Class: "transport", Cause: client.transportCause(err)}
 	}
 	defer func() { _ = response.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(response.Body, maxPolicyServiceResponseBytes+1))
-	if err != nil || len(body) > maxPolicyServiceResponseBytes {
-		return nil, &PolicyServiceError{Class: "transport", Status: response.StatusCode}
+	if err != nil {
+		return nil, &PolicyServiceError{Class: "transport", Status: response.StatusCode, Cause: client.transportCause(err)}
+	}
+	if len(body) > maxPolicyServiceResponseBytes {
+		return nil, &PolicyServiceError{Class: "transport", Status: response.StatusCode, Cause: "response body exceeds the limit"}
 	}
 	if response.StatusCode != http.StatusOK && client.config.SessionToken != "" {
 		if class := policySessionFailureClass(response.StatusCode, body); class != "" {
@@ -501,4 +509,42 @@ func (client *PolicyServiceClient) do(
 		return nil, &PolicyServiceError{Class: "status", Status: response.StatusCode}
 	}
 	return body, nil
+}
+
+// maxPolicyTransportCauseBytes bounds PolicyServiceError.Cause.
+const maxPolicyTransportCauseBytes = 256
+
+// policyCauseValue matches what an HTTP error may quote from the exchange (a
+// redirect's Location, absolute or relative, which may carry userinfo or a
+// query credential): a quoted value, an absolute URL, or a query.
+var policyCauseValue = regexp.MustCompile(`"(?:[^"\\]|\\.)*"|[A-Za-z][A-Za-z0-9+.-]*://\S*|\?\S*`)
+
+// transportCause is the log text of a failed HTTP exchange: the error without
+// the request URL (a *url.Error keeps only its operation and cause), any value
+// it quotes, any other URL or query, every credential this client sends
+// replaced, and only printable ASCII, bounded.
+func (client *PolicyServiceClient) transportCause(err error) string {
+	if err == nil {
+		return ""
+	}
+	text := err.Error()
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) && urlErr.Err != nil {
+		text = urlErr.Op + ": " + urlErr.Err.Error()
+	}
+	text = policyCauseValue.ReplaceAllString(text, "<redacted>")
+	for _, secret := range []string{client.config.SessionToken, client.config.ModalKey, client.config.ModalSecret} {
+		if secret != "" {
+			text = strings.ReplaceAll(text, secret, "redacted")
+		}
+	}
+	cleaned := make([]byte, 0, len(text))
+	for index := 0; index < len(text) && len(cleaned) < maxPolicyTransportCauseBytes; index++ {
+		if character := text[index]; character >= ' ' && character <= '~' {
+			cleaned = append(cleaned, character)
+		} else {
+			cleaned = append(cleaned, '?')
+		}
+	}
+	return string(cleaned)
 }

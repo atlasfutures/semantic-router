@@ -434,6 +434,11 @@ type RaylineARCTrace struct {
 	// decided this turn on, which the episode commit persists; nil when the
 	// turn changes none. Internal transaction state: never logged.
 	PolicySession *raylinearc.PolicySession
+	// PolicySessionReplaced is the turn's session binding when the turn moved
+	// off the session the episode records: the episode commit ends that one
+	// once it has recorded PolicySession (TerminateReplaced), never before.
+	// Internal transaction state.
+	PolicySessionReplaced *raylinearc.PolicySessionBinding
 	// PolicySessions is how many sessions the turn's calls used, and
 	// PolicySessionMoved whether the turn left a session that was gone.
 	PolicySessions     int

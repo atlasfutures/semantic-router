@@ -432,7 +432,7 @@ func (service *raylineARCDecisionService) resolveWorker(
 		result.RaylineARC.EncoderReplicaID,
 		result.RaylineARC.EncoderVisitedReplicaIDs,
 	)
-	requestContext.RaylineARCTransaction.markPolicySession(result.RaylineARC.PolicySession, result.RaylineARC.PolicySessionCleared)
+	requestContext.RaylineARCTransaction.markPolicySession(result.RaylineARC.PolicySession, result.RaylineARC.PolicySessionCleared, result.RaylineARC.PolicySessionReplaced)
 	stageRaylineARCPolicySelection(requestContext, result.RaylineARC, result.SelectedModel)
 	service.router.publishRaylineARCDecision(requestContext, result)
 	route := selectedRoute{worker: worker, result: result, catalog: provider}
