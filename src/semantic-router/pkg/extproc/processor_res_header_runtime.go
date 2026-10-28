@@ -51,6 +51,7 @@ func evaluateResponseHeaderOutcome(
 	outcome.isSuccessful = outcome.statusCode >= 200 && outcome.statusCode < 300
 	if ctx != nil {
 		ctx.UpstreamAttempts = upstreamAttemptsFromHeaders(v.ResponseHeaders.Headers)
+		ctx.UpstreamCallIDs = upstreamCallIDsFromHeaders(v.ResponseHeaders.Headers, ctx.RequestID)
 		ctx.IsStreamingResponse = outcome.isSuccessful &&
 			(isStreamingContentType(v.ResponseHeaders.Headers) || isResponseAPIStreamRequest(ctx))
 	}

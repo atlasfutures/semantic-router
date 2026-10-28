@@ -457,6 +457,8 @@ type flexTwinResult struct {
 	body        []byte
 	delivered   bool
 	err         error
+	// ids are the provider ids the re-send's response headers stated.
+	ids upstreamCallIDs
 }
 
 func callFlexTwin(ctx *RequestContext, call *flexTwinCall, limit int64, deadline time.Time) flexTwinResult {
@@ -487,6 +489,7 @@ func callFlexTwin(ctx *RequestContext, call *flexTwinCall, limit int64, deadline
 		body:        body,
 		delivered:   true,
 		err:         err,
+		ids:         upstreamCallIDsFromHTTPHeader(response.Header, ctx.RequestID),
 	}
 }
 
@@ -580,6 +583,9 @@ func (r *OpenAIRouter) serveResent(
 		// The re-send is exactly one attempt.
 		{Key: upstreamAttemptsHeader, RawValue: []byte("1")},
 	}}
+	// The re-send's own provider ids, which the header phase records as the
+	// call's.
+	headerMap.Headers = append(headerMap.Headers, result.ids.headers()...)
 	// A twin that answered with no body ends at its headers, as a provider
 	// hop's would (an empty 2xx is refused there as upstream_error); a
 	// re-send that got no answer goes on to the body phase, which encodes its

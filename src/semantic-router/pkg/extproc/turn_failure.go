@@ -86,6 +86,7 @@ func recordTurnFailureDetail(ctx *RequestContext, class, detail string, contentS
 		"upstream_status":             ctx.UpstreamStatusCode,
 		"streaming":                   ctx.IsStreamingResponse,
 	}
+	addUpstreamCallIDFields(fields, ctx)
 	if trace := ctx.VSRRaylineARC; trace != nil {
 		fields["episode_id_hash"] = trace.EpisodeIDHash
 		fields["policy_action_id"] = trace.PolicyActionID

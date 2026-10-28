@@ -57,6 +57,7 @@ func (r *OpenAIRouter) reportCacheHitTelemetry(
 	// the original call's.
 	record.UpstreamServiceTier = nil
 	record.RequestedServiceTier = nil
+	record.UpstreamGenerationID, record.UpstreamRequestID, record.UpstreamRequestIDHeader = nil, nil, nil
 	latencyMillis := lookupLatency.Milliseconds()
 	record.CompletionLatencyMS = &latencyMillis
 	// No upstream was called, so the turn's upstream cost is a known zero;
