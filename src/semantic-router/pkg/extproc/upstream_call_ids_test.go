@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 	"go.uber.org/zap/zaptest/observer"
@@ -271,6 +272,88 @@ func TestUpstreamCallIDsFromHeaders(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			if got := upstreamCallIDsFromHeaders(test.headers, test.callerReqID); got != test.want {
 				t.Fatalf("ids = %+v, want %+v", got, test.want)
+			}
+		})
+	}
+}
+
+// An id the codec filled in is not the provider's: a Responses client's
+// public id on a stream cut before the upstream said anything, and the stable
+// id generated for a Chat start that carried none, both log as null.
+func TestStreamIDTheCodecFilledInIsNotLogged(t *testing.T) {
+	noIDStart := `data: {"object":"chat.completion.chunk","created":1,"model":"openai/gpt-luna","choices":[]}` + "\n\n"
+	for name, test := range map[string]struct {
+		responses bool
+		first     string
+	}{
+		"responses public id, keepalives only": {responses: true, first: openRouterKeepaliveChunk},
+		"chat start without an id":             {first: noIDStart + openRouterKeepaliveChunk},
+	} {
+		t.Run(name, func(t *testing.T) {
+			logs := captureLogs(t)
+			twin := newFlexTwin(t, http.StatusOK, "text/event-stream", providerIDStream)
+			router := flexResendRouter(twin.server.URL)
+			router.Config.ResponseStreamFirstContentSec = 60
+			ctx, _ := routeFlexTurn(t, router, flexResendTwin, true)
+			if test.responses {
+				ctx.SourceFormat = llmprotocol.OpenAIResponsesV1
+				ctx.ResponseObjectState = &ResponseObjectState{GeneratedResponseID: "resp_router_public"}
+			}
+			deliverHeaders(t, router, ctx, providerIDHeaders(http.StatusOK, "text/event-stream"))
+			ctx.StreamContentSince = time.Now().Add(-90 * time.Second)
+
+			if err := router.handleProcessRequest(NewMockStream(nil), fullDuplexResponseBodyRequest(test.first, false), ctx); err != nil {
+				t.Fatalf("handleProcessRequest: %v", err)
+			}
+
+			for _, event := range []string{"turn_failed", "llm_usage"} {
+				fields := findLogEvent(t, logs, event)
+				if value, present := fields["upstream_generation_id"]; !present || value != nil {
+					t.Fatalf("%s upstream_generation_id = %v (present %v), want null", event, value, present)
+				}
+			}
+		})
+	}
+}
+
+// A re-send whose body fails still names the ids its headers stated.
+func TestFailedResendKeepsItsHeaderIDs(t *testing.T) {
+	for name, handler := range map[string]http.HandlerFunc{
+		"body read cut": func(w http.ResponseWriter, _ *http.Request) {
+			conn, buffered, err := w.(http.Hijacker).Hijack()
+			if err != nil {
+				return
+			}
+			_, _ = buffered.WriteString("HTTP/1.1 200 OK\r\ncontent-type: application/json\r\nrequest-id: req_cut\r\n" +
+				"content-length: 400\r\n\r\n{\"id\":")
+			_ = buffered.Flush()
+			_ = conn.Close()
+		},
+		"body past the limit": func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("content-type", "application/json")
+			w.Header().Set("request-id", "req_cut")
+			_, _ = io.WriteString(w, strings.Repeat(" ", 4096)+flexTwinChatReply)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			logs := captureLogs(t)
+			server := httptest.NewServer(handler)
+			t.Cleanup(server.Close)
+			router := flexResendRouter(server.URL)
+			router.Config.MaxResponseBodyBytes = 1024
+			ctx, _ := routeFlexTurn(t, router, flexResendArm, false)
+
+			deliverHeaders(t, router, ctx, providerIDHeaders(http.StatusTooManyRequests, "application/json"))
+
+			lines := usageLines(logs)
+			if len(lines) != 2 || lines[1]["failure_class"] == nil {
+				t.Fatalf("the failed re-send was not settled as a failure: %v", lines)
+			}
+			if got := lines[1]["upstream_request_id"]; got != "req_cut" {
+				t.Fatalf("re-send upstream_request_id = %v, want req_cut", got)
+			}
+			if got := findLogEvent(t, logs, "turn_failed")["upstream_request_id"]; got != "req_cut" {
+				t.Fatalf("turn_failed upstream_request_id = %v, want req_cut", got)
 			}
 		})
 	}

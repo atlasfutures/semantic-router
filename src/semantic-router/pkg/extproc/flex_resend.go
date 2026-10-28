@@ -478,10 +478,15 @@ func callFlexTwin(ctx *RequestContext, call *flexTwinCall, limit int64, deadline
 		return flexTwinFailure(err)
 	}
 	defer response.Body.Close()
+	// The re-send's provider ids are known from its headers, whatever its
+	// body then does.
+	ids := upstreamCallIDsFromHTTPHeader(response.Header, ctx.RequestID)
 	body, err := io.ReadAll(io.LimitReader(response.Body, limit+1))
 	if err == nil && int64(len(body)) > limit {
 		// Past the cell's limit is a breach, as the provider hop treats it.
-		return flexTwinFailure(fmt.Errorf("standard re-send body exceeds %d bytes", limit))
+		failure := flexTwinFailure(fmt.Errorf("standard re-send body exceeds %d bytes", limit))
+		failure.ids = ids
+		return failure
 	}
 	return flexTwinResult{
 		status:      response.StatusCode,
@@ -489,7 +494,7 @@ func callFlexTwin(ctx *RequestContext, call *flexTwinCall, limit int64, deadline
 		body:        body,
 		delivered:   true,
 		err:         err,
-		ids:         upstreamCallIDsFromHTTPHeader(response.Header, ctx.RequestID),
+		ids:         ids,
 	}
 }
 
@@ -528,7 +533,9 @@ func terminalFlexTwinResult(ctx *RequestContext, result flexTwinResult) flexTwin
 		ctx.UpstreamBodyCut = flexTwinCutError(result.err)
 		return result
 	}
-	return flexTwinFailure(result.err)
+	failure := flexTwinFailure(result.err)
+	failure.ids = result.ids
+	return failure
 }
 
 // serveFlexTwin answers the client with the twin's response, the dispatch

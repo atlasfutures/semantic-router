@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 )
 
@@ -115,6 +116,18 @@ func observeUpstreamResponseID(ctx *RequestContext, responseID string) {
 		return
 	}
 	ctx.UpstreamCallIDs.generationID = boundedUpstreamID(responseID)
+}
+
+// upstreamStreamResponseID is a stream start's id when the upstream wrote
+// it. The codec fills a start that carried none with the stream's public id
+// (a Responses client's) or a stable id it generates; neither is the
+// provider's, so neither is recorded.
+func upstreamStreamResponseID(responseID string, stream llmprotocol.StreamContext) string {
+	if responseID == "" || responseID == stream.ResponseID ||
+		responseID == llmprotocol.StableID("stream-response", stream.PublicModel, stream.ProviderModel) {
+		return ""
+	}
+	return responseID
 }
 
 func boundedUpstreamID(value string) string {
