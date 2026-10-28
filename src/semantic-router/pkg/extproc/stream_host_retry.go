@@ -117,6 +117,8 @@ type hostRetryChunk struct {
 	body        []byte
 	end         bool
 	err         error
+	// ids are the provider's own ids the call's headers stated.
+	ids upstreamCallIDs
 }
 
 type hostRetrySplice struct {
@@ -519,6 +521,9 @@ func resetStreamForHostRetry(ctx *RequestContext, body []byte, dispatch *provide
 	ctx.StreamingAborted = false
 	ctx.SemanticStreamErr = nil
 	ctx.UpstreamBodyCut = nil
+	// The stalled call's provider ids are its own line's; the re-send's
+	// arrive with its headers or its stream's start.
+	ctx.UpstreamCallIDs = upstreamCallIDs{}
 	ctx.StreamContentSince = time.Now()
 	// The re-send is the cell's own single call.
 	ctx.UpstreamAttempts = 1
@@ -551,6 +556,7 @@ func startHostRetrySplice(ctx *RequestContext, call *flexTwinCall) *hostRetrySpl
 	}
 	callCtx, cancel := context.WithCancel(parent)
 	splice := &hostRetrySplice{chunks: make(chan hostRetryChunk), cancel: cancel}
+	requestID := ctx.RequestID
 	deliver := func(chunk hostRetryChunk) bool {
 		select {
 		case splice.chunks <- chunk:
@@ -574,6 +580,7 @@ func startHostRetrySplice(ctx *RequestContext, call *flexTwinCall) *hostRetrySpl
 		defer response.Body.Close()
 		if !deliver(hostRetryChunk{
 			headers: true, status: response.StatusCode, contentType: response.Header.Get("content-type"),
+			ids: upstreamCallIDsFromHTTPHeader(response.Header, requestID),
 		}) {
 			return
 		}
@@ -608,6 +615,9 @@ func (r *OpenAIRouter) serveHostRetryChunk(
 	var response *ext_proc.ProcessingResponse
 	switch {
 	case chunk.headers:
+		// The re-send's own ids name it on its usage line, as an endpoint
+		// re-send's do.
+		ctx.UpstreamCallIDs = chunk.ids
 		if chunk.status >= 200 && chunk.status < 300 &&
 			strings.Contains(strings.ToLower(chunk.contentType), "text/event-stream") {
 			plan.splice.answered = true
