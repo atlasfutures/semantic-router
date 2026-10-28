@@ -95,3 +95,29 @@ func TestUpstreamErrorTextDropsEchoedValuesAndCredentialSlugs(t *testing.T) {
 		t.Fatalf("slugs = %q %v", text.pinnedSlug, text.acceptingSlugs)
 	}
 }
+
+func TestQuotedSpansNeverLeakPartly(t *testing.T) {
+	for message, want := range map[string]string{
+		`We can't accept 'customer-private-input' here`:                             `We can't accept [quoted] here`,
+		`Invalid URL "https://example.com"; invalid value "customer-private-input"`: `Invalid URL [quoted]; invalid value [quoted]`,
+		`Bad value "a \"customer-private-input\" b" in field`:                       `Bad value [quoted] in field`,
+		`Unclosed "customer-private-input`:                                          `Unclosed [quoted]`,
+	} {
+		if got := loggableUpstreamMessage(message); got != want {
+			t.Fatalf("%q became %q, want %q", message, got, want)
+		}
+	}
+}
+
+func TestCredentialShapedTokensNeverReachTheLog(t *testing.T) {
+	key := "provider_sk-or-v1-0123456789abcdef"
+	if got := loggableUpstreamMessage("Key " + key + " was refused"); strings.Contains(got, "0123456789abcdef") {
+		t.Fatalf("message kept the key: %q", got)
+	}
+	body := []byte(`{"error":{"message":"m","metadata":{"pinned_provider_slug":"` + key +
+		`","accepting_provider_slugs":["` + key + `","azure/global"]}}}`)
+	text := readUpstreamErrorText(400, body, nil)
+	if text.pinnedSlug != "" || fmt.Sprint(text.acceptingSlugs) != "[azure/global]" {
+		t.Fatalf("slugs = %q %v", text.pinnedSlug, text.acceptingSlugs)
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
@@ -36,9 +37,13 @@ const (
 )
 
 var (
-	upstreamErrorLinkPattern  = regexp.MustCompile(`https?://\S+`)
-	upstreamErrorSlugPattern  = regexp.MustCompile(`^[a-z0-9][a-z0-9._/-]*$`)
-	upstreamErrorQuotePattern = regexp.MustCompile("\"[^\"]*\"|'[^']*'|`[^`]*`|“[^”]*”|‘[^’]*’")
+	upstreamErrorLinkPattern = regexp.MustCompile(`https?://\S+`)
+	upstreamErrorSlugPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9.-]*(/[a-z0-9][a-z0-9.-]*)*$`)
+	// upstreamErrorSecretPattern is a credential-shaped token anywhere in a
+	// word (sk-..., rk_..., or any long unbroken token), which the shared
+	// redactor's word boundary can miss.
+	upstreamErrorSecretPattern = regexp.MustCompile(`(?i)(?:sk|rk|pk)[-_][A-Za-z0-9_-]{6,}|[A-Za-z0-9_-]{32,}`)
+	upstreamErrorQuoteClosers  = map[rune]rune{'"': '"', '`': '`', '\'': '\'', '“': '”', '‘': '’'}
 )
 
 // upstreamErrorText is what a provider's 4xx said, as the logs may carry it.
@@ -84,9 +89,10 @@ func readUpstreamErrorText(status int, body []byte, protocolError *llmprotocol.P
 }
 
 func loggableUpstreamMessage(message string) string {
+	message = withoutQuotedSpans(message)
 	message = llmprotocol.RedactProviderText(message)
+	message = upstreamErrorSecretPattern.ReplaceAllString(message, "[redacted]")
 	message = upstreamErrorLinkPattern.ReplaceAllString(message, "[link]")
-	message = upstreamErrorQuotePattern.ReplaceAllString(message, "[quoted]")
 	message = strings.Join(strings.Fields(message), " ")
 	if len(message) <= upstreamErrorTextMax {
 		return message
@@ -98,11 +104,47 @@ func loggableUpstreamMessage(message string) string {
 	return message[:cut]
 }
 
+// withoutQuotedSpans replaces each quoted span with [quoted]. An apostrophe
+// inside a word (can't) opens nothing; a backslash escapes the next rune; a
+// span left open runs to the end of the message, so no part of a quoted
+// value is ever kept.
+func withoutQuotedSpans(message string) string {
+	runes := []rune(message)
+	var out strings.Builder
+	isWord := func(index int) bool {
+		return index >= 0 && index < len(runes) && (unicode.IsLetter(runes[index]) || unicode.IsDigit(runes[index]))
+	}
+	for index := 0; index < len(runes); index++ {
+		closer, opens := upstreamErrorQuoteClosers[runes[index]]
+		if !opens || runes[index] == '\'' && isWord(index-1) {
+			out.WriteRune(runes[index])
+			continue
+		}
+		end := -1
+		for next := index + 1; next < len(runes); next++ {
+			if runes[next] == '\\' {
+				next++
+				continue
+			}
+			if runes[next] == closer && (closer != '\'' || !isWord(next+1)) {
+				end = next
+				break
+			}
+		}
+		out.WriteString("[quoted]")
+		if end < 0 {
+			break
+		}
+		index = end
+	}
+	return out.String()
+}
+
 // loggableSlug is a provider slug, or "" for anything that is not one.
 func loggableSlug(slug string) string {
 	slug = strings.ToLower(strings.TrimSpace(slug))
 	if len(slug) > upstreamErrorSlugMax || !upstreamErrorSlugPattern.MatchString(slug) ||
-		strings.HasPrefix(slug, "sk-") || llmprotocol.RedactProviderText(slug) != slug {
+		upstreamErrorSecretPattern.MatchString(slug) || llmprotocol.RedactProviderText(slug) != slug {
 		return ""
 	}
 	return slug
