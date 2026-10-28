@@ -225,17 +225,14 @@ func fakeCanonicalRequest(t *testing.T, request raylinearc.PolicyClientRequest) 
 		switch typed := value.(type) {
 		case map[string]any:
 			delete(typed, "cache_control")
-			switch typed["type"] {
-			case "text":
-				if citations, ok := typed["citations"]; ok {
-					if list, isList := citations.([]any); citations == nil || (isList && len(list) == 0) {
-						delete(typed, "citations")
+			// _clean runs on a message's content blocks and a tool_result's,
+			// never on data nested deeper (a tool's input).
+			if blocks, ok := typed["content"].([]any); ok && (typed["role"] != nil || typed["type"] == "tool_result") {
+				for _, block := range blocks {
+					if fields, ok := block.(map[string]any); ok {
+						fakeClean(fields)
 					}
 				}
-			case "tool_use", "server_tool_use":
-				delete(typed, "caller")
-			case "thinking":
-				delete(typed, "signature")
 			}
 			for key, member := range typed {
 				typed[key] = strip(member)
@@ -260,6 +257,23 @@ func fakeCanonicalRequest(t *testing.T, request raylinearc.PolicyClientRequest) 
 		t.Error(err)
 	}
 	return string(encoded)
+}
+
+// fakeClean removes what canonical_conversation.py _clean removes from one
+// content block beside cache_control.
+func fakeClean(fields map[string]any) {
+	switch fields["type"] {
+	case "text":
+		if citations, ok := fields["citations"]; ok {
+			if list, isList := citations.([]any); citations == nil || (isList && len(list) == 0) {
+				delete(fields, "citations")
+			}
+		}
+	case "tool_use", "server_tool_use":
+		delete(fields, "caller")
+	case "thinking":
+		delete(fields, "signature")
+	}
 }
 
 // newDeltaRefusingProxy answers every delta decide as a service that
@@ -718,6 +732,10 @@ func TestPolicyReplyThinksInEveryFormat(t *testing.T) {
 		{policyFormatAnthropic, `{"role":"assistant","content":[{"type":"thinking","thinking":"t","signature":7}]}`, true},
 		{policyFormatAnthropic, `{"role":"assistant","content":[{"type":"thinking","signature":"s"}]}`, true},
 		{policyFormatAnthropic, `{"role":"assistant","content":[{"type":"thinking","thinking":null}]}`, true},
+		{policyFormatAnthropic, `{"role":"assistant","content":[{"type":"thinking","thinking":7}]}`, true},
+		{policyFormatAnthropic, `{"role":"assistant","content":[{"type":"thinking","thinking":true}]}`, true},
+		{policyFormatAnthropic, `{"role":"assistant","content":[{"type":"thinking","thinking":["t"]}]}`, true},
+		{policyFormatAnthropic, `{"role":"assistant","content":[{"type":"thinking","thinking":{"t":1}}]}`, true},
 		{policyFormatAnthropic, `{"role":"assistant","content":[{"type":"thinking","thinking":"t","signature":"s","extra":1}]}`, true},
 		{policyFormatAnthropic, `{"role":"assistant","content":[{"type":"thinking","thinking":"t","extra":1}]}`, true},
 		{policyFormatAnthropic, `{"role":"assistant","content":[{"type":"thinking","thinking":"t","signature":"s"},{"type":"redacted_thinking","data":"x"}]}`, true},
