@@ -116,6 +116,9 @@ func (fake *fakeModalServer) serve(w http.ResponseWriter, r *http.Request) {
 	case policySessionTerminatePath:
 		fake.mu.Lock()
 		defer fake.mu.Unlock()
+		// As Modal does (measured on the dev Server 2026-10-27): terminate takes the session token from
+		// x-modal-server-session-token, and a token only in Modal-Authorization is refused with 401.
+		token := r.Header.Get("x-modal-server-session-token")
 		if !proxied || token == "" {
 			fake.violations = append(fake.violations, "terminate without the proxy key and the token")
 			w.WriteHeader(http.StatusUnauthorized)
@@ -567,7 +570,8 @@ func TestPolicySessionLossNeedsModalsSignature(t *testing.T) {
 func TestPolicySessionNeverFollowsARedirect(t *testing.T) {
 	var leaked sync.Map
 	elsewhere := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Modal-Authorization") != "" || r.Header.Get("Modal-Key") != "" {
+		if r.Header.Get("Modal-Authorization") != "" || r.Header.Get("Modal-Key") != "" ||
+			r.Header.Get("x-modal-server-session-token") != "" {
 			leaked.Store(r.URL.Path, true)
 		}
 	}))

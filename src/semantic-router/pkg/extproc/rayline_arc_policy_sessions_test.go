@@ -52,7 +52,8 @@ func newFakeSessionedServer(t *testing.T, containers []*fakePolicyService) *fake
 			return
 		}
 		if r.URL.Path == "/_modal/sessions/terminate" {
-			delete(front.sessions, strings.TrimPrefix(r.Header.Get("Modal-Authorization"), "Bearer "))
+			// Modal reads the terminate token from x-modal-server-session-token (a bearer alone is refused, 401).
+			delete(front.sessions, r.Header.Get("x-modal-server-session-token"))
 			front.mu.Unlock()
 			return
 		}
