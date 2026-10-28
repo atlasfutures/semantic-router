@@ -199,11 +199,14 @@ func TestDeltaSendsOnlyTheNewTurn(t *testing.T) {
 	}
 }
 
-// fakeCanonicalRequest is a decided request as the service's projections
-// read it (canonical-conversation.v1 and transcript-projection.v9 alike):
-// cache_control dropped everywhere and string content as one text block,
-// JSON key order and whitespace insignificant. The two differences VSR's
-// prefix digest tolerates are exactly these.
+// fakeCanonicalRequest is a decided request as the service's canonical
+// projection reads it (canonical-conversation.v1, the only form it serves a
+// delta for): cache_control dropped everywhere, string content as one text
+// block, and the members canonical_conversation.py _clean removes (a
+// tool_use or server_tool_use block's caller, a thinking block's signature,
+// a text block's null or [] citations); JSON key order and whitespace
+// insignificant. The differences VSR's prefix digest tolerates are exactly
+// these.
 func fakeCanonicalRequest(t *testing.T, request raylinearc.PolicyClientRequest) string {
 	var messages []any
 	if request.Input != nil {
@@ -222,6 +225,18 @@ func fakeCanonicalRequest(t *testing.T, request raylinearc.PolicyClientRequest) 
 		switch typed := value.(type) {
 		case map[string]any:
 			delete(typed, "cache_control")
+			switch typed["type"] {
+			case "text":
+				if citations, ok := typed["citations"]; ok {
+					if list, isList := citations.([]any); citations == nil || (isList && len(list) == 0) {
+						delete(typed, "citations")
+					}
+				}
+			case "tool_use", "server_tool_use":
+				delete(typed, "caller")
+			case "thinking":
+				delete(typed, "signature")
+			}
 			for key, member := range typed {
 				typed[key] = strip(member)
 			}
@@ -626,8 +641,9 @@ func TestDeltaAppendTakesNoDecideSlot(t *testing.T) {
 	}
 }
 
-// Claude Code's appended reply must reproduce the echo the client sends;
-// one echoed otherwise is told apart as the appended reply's mismatch.
+// Claude Code's appended reply must reproduce the echo the client sends
+// byte for byte; a bare echo (no citations or caller, as Workshop's agent
+// sends) reads the same to the service and extends it too.
 func TestDeltaClaudeCodeEchoShapes(t *testing.T) {
 	resend := readThreadFixture(t, "claude-code-2.1.309-thread-create-resend.request.json")
 	var body struct {
@@ -654,8 +670,8 @@ func TestDeltaClaudeCodeEchoShapes(t *testing.T) {
 	_ = json.Unmarshal(requestMessages(t, policyTestRequest(t, deltaUser, bare, deltaToolResult)), &messages)
 	_, reason := policyDeltaFor(fixture.scorer(), fixture.episode, &raylinearc.EpisodeState{TurnIndex: 1},
 		&raylinearc.PolicyEpisodeState{}, raylinearc.PolicyTransitionExtends, policyFormatAnthropic, messages)
-	if reason != "appended_mismatch" {
-		t.Fatalf("delta reason %q, want appended_mismatch", reason)
+	if reason != policyDecisionModeDelta {
+		t.Fatalf("delta reason %q, want delta", reason)
 	}
 }
 
@@ -696,8 +712,15 @@ func TestPolicyReplyThinksInEveryFormat(t *testing.T) {
 		{policyFormatAnthropic, `{"role":"assistant","content":[{"type":"redacted_thinking","data":"x"}]}`, true},
 		{policyFormatAnthropic, `{"role":"assistant","content":[{"type":"text","text":"a"}]}`, false},
 		{policyFormatAnthropic, `{"role":"assistant","content":[{"type":"thinking","thinking":"t","signature":"s"},{"type":"text","text":"a"}]}`, false},
-		{policyFormatAnthropic, `{"role":"assistant","content":[{"type":"thinking","thinking":"t","signature":""}]}`, true},
-		{policyFormatAnthropic, `{"role":"assistant","content":[{"type":"thinking","thinking":"t"}]}`, true},
+		{policyFormatAnthropic, `{"role":"assistant","content":[{"type":"thinking","thinking":"t","signature":""}]}`, false},
+		{policyFormatAnthropic, `{"role":"assistant","content":[{"type":"thinking","thinking":"t"}]}`, false},
+		{policyFormatAnthropic, `{"role":"assistant","content":[{"type":"thinking","thinking":"t","signature":null}]}`, true},
+		{policyFormatAnthropic, `{"role":"assistant","content":[{"type":"thinking","thinking":"t","signature":7}]}`, true},
+		{policyFormatAnthropic, `{"role":"assistant","content":[{"type":"thinking","signature":"s"}]}`, true},
+		{policyFormatAnthropic, `{"role":"assistant","content":[{"type":"thinking","thinking":null}]}`, true},
+		{policyFormatAnthropic, `{"role":"assistant","content":[{"type":"thinking","thinking":"t","signature":"s","extra":1}]}`, true},
+		{policyFormatAnthropic, `{"role":"assistant","content":[{"type":"thinking","thinking":"t","extra":1}]}`, true},
+		{policyFormatAnthropic, `{"role":"assistant","content":[{"type":"thinking","thinking":"t","signature":"s"},{"type":"redacted_thinking","data":"x"}]}`, true},
 		{policyFormatOpenAI, `{"choices":[{"message":{"role":"assistant","content":"a","reasoning":"why"}}]}`, true},
 		{policyFormatOpenAI, `{"choices":[{"message":{"role":"assistant","content":"a","reasoning_details":[{"type":"reasoning.text"}]}}]}`, true},
 		{policyFormatOpenAI, `{"choices":[{"message":{"role":"assistant","content":"a","reasoning":null}}]}`, false},
@@ -789,7 +812,7 @@ func TestDeltaDigestKeepsNestedCacheControl(t *testing.T) {
 	}
 	for name, pair := range map[string][2]string{
 		"changed text":   {`{"role":"user","content":[{"type":"text","text":"hi"}]}`, `{"role":"user","content":"hi "}`},
-		"another member": {`{"role":"user","content":[{"type":"text","text":"hi","citations":[]}]}`, `{"role":"user","content":"hi"}`},
+		"another member": {`{"role":"user","content":[{"type":"text","text":"hi","citations":[{"type":"char_location"}]}]}`, `{"role":"user","content":"hi"}`},
 		"two blocks":     {`{"role":"user","content":[{"type":"text","text":"h"},{"type":"text","text":"i"}]}`, `{"role":"user","content":"hi"}`},
 		"assistant":      {`{"role":"assistant","content":[{"type":"text","text":"hi"}]}`, `{"role":"assistant","content":"hi"}`},
 	} {
@@ -909,9 +932,11 @@ func TestDeltaReplayParityClaudeCodeThinkingTurn(t *testing.T) {
 	}
 }
 
-// A client that alters or strips an appended signed thinking block breaks
-// the digest gate: the held turn goes in full (appended_mismatch), and is
-// decided as the sync cell decides it.
+// A client that alters an appended thinking block's text, or drops the
+// block, breaks the digest gate: the held turn goes in full
+// (appended_mismatch), and is decided as the sync cell decides it. Its
+// signature is not encoded (canonical_conversation.py _clean), so an echo
+// that changes, empties or drops it extends the staged turn.
 func TestDeltaAlteredThinkingEchoForcesAFullResend(t *testing.T) {
 	signed := []any{
 		map[string]any{"type": "thinking", "thinking": "list first", "signature": "sig-1"},
@@ -932,8 +957,9 @@ func TestDeltaAlteredThinkingEchoForcesAFullResend(t *testing.T) {
 		mode string
 	}{
 		{"unchanged", echo(map[string]any{"type": "thinking", "thinking": "list first", "signature": "sig-1"}), policyDecisionModeDelta},
-		{"signature_changed", echo(map[string]any{"type": "thinking", "thinking": "list first", "signature": "sig-2"}), policyDecisionModeSync},
-		{"signature_stripped", echo(map[string]any{"type": "thinking", "thinking": "list first"}), policyDecisionModeSync},
+		{"signature_changed", echo(map[string]any{"type": "thinking", "thinking": "list first", "signature": "sig-2"}), policyDecisionModeDelta},
+		{"signature_emptied", echo(map[string]any{"type": "thinking", "thinking": "list first", "signature": ""}), policyDecisionModeDelta},
+		{"signature_stripped", echo(map[string]any{"type": "thinking", "thinking": "list first"}), policyDecisionModeDelta},
 		{"text_changed", echo(map[string]any{"type": "thinking", "thinking": "list", "signature": "sig-1"}), policyDecisionModeSync},
 		{"block_stripped", echo(nil), policyDecisionModeSync},
 	} {
