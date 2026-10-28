@@ -291,6 +291,15 @@ func (r *OpenAIRouter) retryOnNextHost(ctx *RequestContext, class, detail string
 	}
 	current := &plan.attempts[len(plan.attempts)-1]
 	current.host, current.source = host, source
+	if r.responseStreamOverran(ctx) {
+		// Past the turn's deadline no host is dialled: the deadline cut ends
+		// the turn, as it would without the retry.
+		logging.ComponentWarnEvent("extproc", "stream_host_retry_unavailable", map[string]interface{}{
+			"request_id": ctx.RequestID, "model": plan.dispatch.logicalModel, "reason": "deadline_passed",
+			"attempt": len(plan.attempts),
+		})
+		return false
+	}
 	if budget := r.Config.ResponseStreamHostRetryBudgetSec; budget > 0 && !ctx.StartTime.IsZero() &&
 		time.Since(ctx.StartTime) >= time.Duration(budget)*time.Second {
 		logging.ComponentWarnEvent("extproc", "stream_host_retry_unavailable", map[string]interface{}{

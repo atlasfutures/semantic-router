@@ -626,3 +626,26 @@ func TestTheTurnDeadlineHoldsWhileAReSendServes(t *testing.T) {
 	assert.Nil(t, hostRetryChunks(ctx), "the re-send is still being read")
 }
 
+// A re-send that fails after the turn's deadline starts no further host: the
+// deadline cut ends the turn, as without the retry.
+func TestNoHostIsStartedPastTheTurnDeadline(t *testing.T) {
+	upstream := newHostUpstream(t, map[string]string{"google-vertex": "content"})
+	router := hostRetryRouter(upstream.server.URL, true, 0, hostRetryHostA, hostRetryHostB, "google-vertex")
+	stream := NewMockStream(nil)
+	ctx, transaction := startStalledTurn(t, router, stream, openRouterKeepaliveChunk)
+	require.True(t, ctx.HostRetry.started())
+
+	// Host B answers 503 once the turn is past its deadline.
+	ctx.StartTime = time.Now().Add(-600 * time.Second)
+	drainSpliced(t, router, ctx, stream)
+
+	calls := upstream.calls()
+	require.Len(t, calls, 1, "a host was dialled past the deadline")
+	assert.Equal(t, hostRetryHostB, providerList(t, calls[0], "order")[0])
+	sent, ended := clientBytes(stream)
+	assert.True(t, ended, "the response was left open")
+	assert.Contains(t, sent, `"error"`)
+	assert.Equal(t, turnFailureTimeout, ctx.ResponseFailureClass)
+	assert.Equal(t, 1, transaction.aborts)
+}
+
