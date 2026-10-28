@@ -1848,6 +1848,12 @@ class Model(BaseModel):
     service_tier: Optional[
         Literal["default", "flex", "priority", "fast", "ultrafast"]
     ] = None
+    # Mirrors CanonicalProviderModel.FirstContentSec: the arm's own
+    # first-content limit, replacing global response_stream.first_content_sec.
+    first_content_sec: Optional[int] = Field(default=None, ge=0)
+    # Mirrors CanonicalProviderModel.HostRetry: the arm's own host-retry
+    # switch; absent follows global response_stream.host_retry.
+    host_retry: Optional[bool] = None
 
     @model_validator(mode="after")
     def validate_accepted_formats(self):

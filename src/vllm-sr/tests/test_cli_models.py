@@ -186,3 +186,18 @@ def test_service_tier_parses_beside_the_pin_and_refuses_unknown_tiers():
     raw["providers"]["models"][0]["service_tier"] = "scale"
     with pytest.raises(ValueError):
         UserConfig(**raw)
+
+
+def test_arm_first_content_limit_and_host_retry_parse_beside_the_pin():
+    raw = _provider_model(order=["anthropic", "amazon-bedrock"], allow_fallbacks=True)
+    model = raw["providers"]["models"][0]
+    model["first_content_sec"] = 300
+    model["host_retry"] = False
+    config = UserConfig(**raw)
+    assert config.providers.models[0].first_content_sec == 300
+    assert config.providers.models[0].host_retry is False
+    del model["host_retry"]
+    assert UserConfig(**raw).providers.models[0].host_retry is None
+    model["first_content_sec"] = -1
+    with pytest.raises(ValueError):
+        UserConfig(**raw)

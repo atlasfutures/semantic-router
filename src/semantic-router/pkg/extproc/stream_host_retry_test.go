@@ -587,3 +587,18 @@ func TestArmHostRetryOffOverridesTheGlobalFlag(t *testing.T) {
 	assert.Equal(t, 1, transaction.aborts)
 	assert.Empty(t, upstream.calls())
 }
+
+// A Chat stream names a tool call in its first delta, with no arguments:
+// that is the call's start, so the frames stay held and the turn can still
+// be re-sent.
+func TestABareChatToolCallDeltaIsNotContent(t *testing.T) {
+	ctx := &RequestContext{}
+	observeStreamContent(ctx, []llmprotocol.Event{{
+		Type: llmprotocol.EventToolCallDelta, ToolCall: &llmprotocol.ToolCall{ID: "call_1", Name: "read"},
+	}})
+	assert.False(t, ctx.StreamContentSeen)
+	observeStreamContent(ctx, []llmprotocol.Event{{
+		Type: llmprotocol.EventToolCallDelta, ToolCall: &llmprotocol.ToolCall{Arguments: `{"path":`},
+	}})
+	assert.True(t, ctx.StreamContentSeen)
+}

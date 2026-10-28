@@ -103,7 +103,7 @@ func observeStreamContent(ctx *RequestContext, events []llmprotocol.Event) {
 		return
 	}
 	for _, event := range events {
-		if streamContentEvent(event.Type) {
+		if streamContentEvent(event.Type) && !bareToolCallStart(event) {
 			ctx.StreamContentSince = time.Now()
 			if !ctx.StreamContentSeen {
 				ctx.StreamFirstContentAt = ctx.StreamContentSince
@@ -112,6 +112,13 @@ func observeStreamContent(ctx *RequestContext, events []llmprotocol.Event) {
 			return
 		}
 	}
+}
+
+// bareToolCallStart is a tool-call delta that carries no arguments yet: a
+// Chat stream names the call (id and name) in its first delta, which is an
+// item's start, not content.
+func bareToolCallStart(event llmprotocol.Event) bool {
+	return event.Type == llmprotocol.EventToolCallDelta && (event.ToolCall == nil || event.ToolCall.Arguments == "")
 }
 
 func streamContentEvent(eventType llmprotocol.EventType) bool {
