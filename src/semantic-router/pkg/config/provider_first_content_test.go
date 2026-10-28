@@ -55,3 +55,27 @@ func TestNegativeArmFirstContentSecIsRefused(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+// A Claude arm thinks in silence: its own limit sits above the global one,
+// and its host retry is off while the global flag is on.
+func TestClaudeArmWaitsLongerAndIsNotRetried(t *testing.T) {
+	source := providerPreferencesConfigYAML("      first_content_sec: 300\n      host_retry: false\n") + `global:
+  router:
+    response_stream:
+      first_content_sec: 30
+      host_retry: true
+`
+	parsed, err := ParseYAMLBytes([]byte(source))
+	if err != nil {
+		t.Fatalf("ParseYAMLBytes: %v", err)
+	}
+	if got := parsed.FirstContentSecForModel("model-a"); got != 300 {
+		t.Fatalf("arm limit = %d, want 300 above the global 30", got)
+	}
+	if parsed.HostRetryForModel("model-a") {
+		t.Fatal("the arm's host_retry: false did not turn its retry off")
+	}
+	if !parsed.HostRetryForModel("another-model") {
+		t.Fatal("an arm without its own switch did not follow the global flag")
+	}
+}

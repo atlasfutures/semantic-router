@@ -565,3 +565,25 @@ func TestABareToolCallStartIsNotContent(t *testing.T) {
 	state.items[0].toolCall.Arguments = `{"path":`
 	assert.True(t, state.carriesContent())
 }
+
+// An arm that turns its own host retry off is cut as before while the global
+// flag is on: a Claude arm's silence is its thinking.
+func TestArmHostRetryOffOverridesTheGlobalFlag(t *testing.T) {
+	upstream := newHostUpstream(t, map[string]string{hostRetryHostB: "content"})
+	router := hostRetryRouter(upstream.server.URL, true, 0)
+	off := false
+	params := router.Config.ModelConfig[hostRetryArm]
+	params.HostRetry = &off
+	router.Config.ModelConfig[hostRetryArm] = params
+	stream := NewMockStream(nil)
+
+	ctx, transaction := startStalledTurn(t, router, stream, hostRetryPreContentChunk)
+
+	assert.Nil(t, ctx.HostRetry)
+	sent, ended := clientBytes(stream)
+	assert.Contains(t, sent, "gen-stalled", "a frame was held for an arm with its retry off")
+	assert.True(t, ended)
+	assert.Equal(t, turnFailureTimeout, ctx.ResponseFailureClass)
+	assert.Equal(t, 1, transaction.aborts)
+	assert.Empty(t, upstream.calls())
+}

@@ -133,7 +133,7 @@ func (r *OpenAIRouter) stageHostRetry(ctx *RequestContext, dispatch *providerDis
 		return
 	}
 	ctx.HostRetry = nil
-	if r == nil || r.Config == nil || !r.Config.ResponseStreamHostRetry || dispatch == nil ||
+	if r == nil || r.Config == nil || dispatch == nil || !r.Config.HostRetryForModel(dispatch.logicalModel) ||
 		ctx.LooperRequest || ctx.FlexResend != nil || !providerIsOpenRouter(dispatch.profile) {
 		return
 	}

@@ -51,6 +51,11 @@ type CanonicalProviderModel struct {
 	// A non-thinking arm can be held to a shorter wait than an arm that
 	// reasons in silence. Absent or zero, the global limit applies.
 	FirstContentSec int `yaml:"first_content_sec,omitempty"`
+	// HostRetry turns global.router.response_stream.host_retry on or off for
+	// this arm. Absent, the global flag applies. An arm whose silence is its
+	// own (Claude's native thinking with display omitted streams nothing
+	// while it thinks) sets it false: another host would only think again.
+	HostRetry *bool `yaml:"host_retry,omitempty"`
 }
 
 // CanonicalReasoning either references one built-in family or defines the

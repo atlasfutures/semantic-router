@@ -13,3 +13,16 @@ func (c *RouterConfig) FirstContentSecForModel(modelName string) int {
 	}
 	return c.ResponseStreamFirstContentSec
 }
+
+// HostRetryForModel reports whether a stalled streamed turn on the arm is
+// re-sent on its next provider host: the arm's own host_retry when it sets
+// one, else the global response_stream.host_retry.
+func (c *RouterConfig) HostRetryForModel(modelName string) bool {
+	if c == nil {
+		return false
+	}
+	if params, found := c.resolveModelConfig(modelName); found && params.HostRetry != nil {
+		return *params.HostRetry
+	}
+	return c.ResponseStreamHostRetry
+}

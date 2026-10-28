@@ -184,8 +184,15 @@ providers:
       # carries this tier, not the flex entry's.
       service_tier: default
       # This arm's own first-content limit, replacing the global
-      # response_stream.first_content_sec. 0 keeps the global one.
+      # response_stream.first_content_sec, above or below it. 0 keeps the
+      # global one. A Claude 5.x arm thinks natively with its display
+      # omitted and streams nothing while it does: give it 300.
       first_content_sec: 0
+      # This arm's own host-retry switch (response_stream.host_retry);
+      # absent follows the global flag. Set false on the Claude arms
+      # (claude-haiku-5.5, claude-sonnet-5.5, claude-opus-5.5): their silence
+      # is the thinking itself, which another host would only restart.
+      host_retry: false
       backend_refs:
         - name: openrouter-standard
           base_url: https://openrouter.ai/api/v1
