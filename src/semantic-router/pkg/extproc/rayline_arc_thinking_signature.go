@@ -160,8 +160,8 @@ func (r *OpenAIRouter) guardClaudeThinking(
 		// Sent though the run does not cover it: if Anthropic takes it, a new
 		// run starts at it, so later turns keep it and the prefix this turn's
 		// thinking is signed over does not change.
-		if signatures := protocolcodec.MessageThinkingSignatures(request.Messages[active]); len(signatures) > 0 {
-			transaction.thinkingAdopted = signatures[0]
+		if keys := protocolcodec.MessageThinkingKeys(request.Messages[active]); len(keys) > 0 {
+			transaction.thinkingAdopted = keys[0]
 		}
 	}
 	if dispatch.targetFormat != llmprotocol.AnthropicMessagesV1 {
@@ -196,8 +196,10 @@ func thinkingRunStart(messages []llmprotocol.Message, anchors []string) int {
 		if message.Role != llmprotocol.RoleAssistant {
 			continue
 		}
-		for _, signature := range protocolcodec.MessageThinkingSignatures(message) {
-			if anchored[reasoning.ReasoningBlockDigest(signature)] {
+		// A signed block's signature or a redacted block's data: a run may
+		// start at either (an adopted redacted-only loop message).
+		for _, key := range protocolcodec.MessageThinkingKeys(message) {
+			if anchored[reasoning.ReasoningBlockDigest(key)] {
 				return index
 			}
 		}
@@ -299,8 +301,9 @@ func thinkingSignatureRejected(body []byte) bool {
 // ("messages.19.content.12: ...").
 var refusedMessagePattern = regexp.MustCompile(`messages\.(\d+)\.content\.\d+`)
 
-// refusedActiveThinking reports whether a refusal names a block of the
-// active tool loop's latest message in the dispatched body.
+// refusedActiveThinking reports whether a refusal may be of a block of the
+// active tool loop's latest message in the dispatched body: it names that
+// message, or names no message at all.
 func refusedActiveThinking(dispatched, refusal []byte) bool {
 	var members map[string]json.RawMessage
 	var messages []map[string]json.RawMessage
@@ -311,7 +314,13 @@ func refusedActiveThinking(dispatched, refusal []byte) bool {
 	if active < 0 {
 		return false
 	}
-	for _, match := range refusedMessagePattern.FindAllSubmatch(refusal, -1) {
+	matches := refusedMessagePattern.FindAllSubmatch(refusal, -1)
+	if len(matches) == 0 {
+		// A refusal that names no block (OpenRouter's encrypted-reasoning
+		// one) may be of the loop's own: nothing proves it is not.
+		return true
+	}
+	for _, match := range matches {
 		if index, err := strconv.Atoi(string(match[1])); err == nil && index == active {
 			return true
 		}
@@ -327,8 +336,8 @@ func refusedActiveThinking(dispatched, refusal []byte) bool {
 type thinkingRetryChange struct {
 	stripped         int
 	thinkingDisabled bool
-	// keptSignature is the first signature of the active loop's thinking
-	// when the re-send keeps it.
+	// keptSignature is the first key (signature, or redacted data) of the
+	// active loop's thinking when the re-send keeps it.
 	keptSignature string
 }
 
@@ -365,7 +374,7 @@ func thinkingRetryBody(body []byte, keep map[string]bool) ([]byte, thinkingRetry
 		if holds == 0 || index == active && whole {
 			if index == active && holds > 0 {
 				for _, block := range blocks {
-					if key, thinking := wireThinkingKey(block); thinking && wireBlockType(block) == "thinking" {
+					if key, thinking := wireThinkingKey(block); thinking && key != "" {
 						change.keptSignature = key
 						break
 					}
@@ -405,6 +414,7 @@ func thinkingRetryBody(body []byte, keep map[string]bool) ([]byte, thinkingRetry
 	if activeStripped && thinkingEnabledOnWire(members["thinking"]) {
 		members["thinking"] = json.RawMessage(`{"type":"disabled"}`)
 		withoutClearThinkingEdits(members)
+		withoutThinkingOnlyEffort(members)
 		change.thinkingDisabled = true
 	}
 	out, err := json.Marshal(members)
@@ -486,6 +496,31 @@ func thinkingEnabledOnWire(raw json.RawMessage) bool {
 		Type string `json:"type"`
 	}
 	return json.Unmarshal(raw, &thinking) == nil && thinking.Type != "" && thinking.Type != "disabled"
+}
+
+// thinkingOnlyEfforts are the output_config.effort levels Anthropic accepts
+// only with thinking on.
+var thinkingOnlyEfforts = map[string]bool{"xhigh": true, "max": true}
+
+// withoutThinkingOnlyEffort drops an effort level that requires thinking,
+// and output_config when nothing is left in it.
+func withoutThinkingOnlyEffort(members map[string]json.RawMessage) {
+	var output map[string]json.RawMessage
+	if json.Unmarshal(members["output_config"], &output) != nil {
+		return
+	}
+	var effort string
+	if json.Unmarshal(output["effort"], &effort) != nil || !thinkingOnlyEfforts[effort] {
+		return
+	}
+	delete(output, "effort")
+	if len(output) == 0 {
+		delete(members, "output_config")
+		return
+	}
+	if encoded, err := json.Marshal(output); err == nil {
+		members["output_config"] = encoded
+	}
 }
 
 // withoutClearThinkingEdits drops the clear_thinking context edits, which

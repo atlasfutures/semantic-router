@@ -110,3 +110,18 @@ func WithoutThinkingRun(provenance []ReasoningProvenance, worker string) []Reaso
 	}
 	return next
 }
+
+// SplitThinkingRun separates worker's anchors from the rest of the
+// provenance, so opaque blocks recorded with a turn are trimmed against the
+// rest alone and never push the live run's anchors out.
+func SplitThinkingRun(provenance []ReasoningProvenance, worker string) (own, rest []ReasoningProvenance) {
+	digest := ReasoningWorkerDigest(worker)
+	for _, entry := range provenance {
+		if entry.Worker == digest {
+			own = append(own, entry)
+		} else {
+			rest = append(rest, entry)
+		}
+	}
+	return own, rest
+}

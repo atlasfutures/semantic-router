@@ -669,9 +669,17 @@ func (transaction *raylineARCEpisodeTransaction) nextState() (*raylinearc.Episod
 		nextState.Controls = raylinearc.WithControlPlacement(nextState.Controls, *transaction.controlPlacement)
 	}
 	if len(transaction.opaqueReasoning) > 0 && transaction.dispatchWorker != "" {
-		nextState.ReasoningProvenance = reasoning.WithReasoningProvenance(
-			nextState.ReasoningProvenance, transaction.dispatchWorker, transaction.opaqueReasoning,
-		)
+		// The live thinking run's anchors are set aside, so the opaque
+		// blocks are trimmed against the rest of the record alone.
+		own, rest := reasoning.SplitThinkingRun(nextState.ReasoningProvenance, transaction.thinkingWorker)
+		if transaction.thinkingWorker == "" {
+			own, rest = nil, nextState.ReasoningProvenance
+		}
+		rest = reasoning.WithReasoningProvenance(rest, transaction.dispatchWorker, transaction.opaqueReasoning)
+		if limit := reasoning.MaxReasoningProvenance - len(own); len(rest) > limit {
+			rest = rest[len(rest)-max(limit, 0):]
+		}
+		nextState.ReasoningProvenance = append(rest, own...)
 	}
 	if transaction.thinkingWorker != "" {
 		provenance, anchored, anchor := nextState.ReasoningProvenance, transaction.thinkingAnchored, transaction.thinkingAdopted

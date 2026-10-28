@@ -396,6 +396,7 @@ func TestThinkingRetryBodyStripsEarlierTurns(t *testing.T) {
 		t.Fatal(err)
 	}
 	client["thinking"] = json.RawMessage(`{"type":"adaptive"}`)
+	client["output_config"] = json.RawMessage(`{"effort":"max"}`)
 	client["context_management"] = json.RawMessage(`{"edits":[{"type":"clear_thinking_20251015","keep":"all"},{"type":"clear_tool_uses_20250919"}]}`)
 	dispatched, _ := json.Marshal(client)
 
@@ -422,6 +423,9 @@ func TestThinkingRetryBodyStripsEarlierTurns(t *testing.T) {
 	if !sameJSON(t, members["thinking"], `{"type":"disabled"}`) ||
 		!sameJSON(t, members["context_management"], `{"edits":[{"type":"clear_tool_uses_20250919"}]}`) {
 		t.Fatalf("unserved loop: thinking %s, context_management %s", members["thinking"], members["context_management"])
+	}
+	if _, kept := members["output_config"]; kept {
+		t.Fatalf("an effort that requires thinking survived thinking off: %s", members["output_config"])
 	}
 
 	plain, _ := json.Marshal(map[string]any{"messages": []any{map[string]any{"role": "user", "content": "hi"}}})
@@ -609,5 +613,71 @@ func TestRefusalOfTheLoopsOwnBlockStripsIt(t *testing.T) {
 	calls := upstream.calls()
 	if len(calls) != 1 || strings.Contains(string(calls[0]), "sig-loop") {
 		t.Fatalf("re-sends = %d, body %s", len(calls), calls)
+	}
+}
+
+// OpenRouter's encrypted-reasoning refusal names no block, so the re-send
+// strips the loop's own thinking too.
+func TestUnindexedRefusalStripsTheLoopsBlock(t *testing.T) {
+	upstream := newClaudeUpstream(t, http.StatusOK, claudeServedReply)
+	refusal := `{"error":{"message":"The request contains encrypted reasoning or compaction content that can only be processed by the provider that created it (anthropic)"}}`
+	_, envoy := refusedThinkingTurn(t, "episode-thinking-unindexed", upstream, http.StatusBadRequest, refusal, "sig-earlier")
+	calls := upstream.calls()
+	if envoy.Responses[0].GetImmediateResponse() == nil || len(calls) != 1 || strings.Contains(string(calls[0]), "sig-") {
+		t.Fatalf("re-sends = %d: %s", len(calls), calls)
+	}
+}
+
+// A run adopted at a redacted-only loop message is found by its data.
+func TestRunAnchoredAtRedactedThinkingIsFound(t *testing.T) {
+	messages := []llmprotocol.Message{
+		{Role: llmprotocol.RoleUser, Content: []llmprotocol.Content{{Kind: llmprotocol.ContentText, Text: "start"}}},
+		{Role: llmprotocol.RoleAssistant, Content: []llmprotocol.Content{{Kind: llmprotocol.ContentUnmodeled, Unmodeled: &llmprotocol.UnmodeledBlock{
+			Format: llmprotocol.AnthropicMessagesV1, Type: "redacted_thinking", Raw: []byte(`{"type":"redacted_thinking","data":"blob"}`),
+		}}}},
+	}
+	if start := thinkingRunStart(messages, []string{reasoning.ReasoningBlockDigest("blob")}); start != 1 {
+		t.Fatalf("run start = %d, want 1", start)
+	}
+}
+
+// Opaque blocks a turn records never push the live run's anchor out.
+func TestOpaqueBlocksNeverEvictTheRunAnchor(t *testing.T) {
+	store, err := raylinearc.NewMemoryEpisodeStore(raylinearc.MemoryEpisodeStoreConfig{MaxEpisodes: 4, IdleTTL: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	episode := raylinearc.HashEpisodeID(t.Name())
+	worker := reasoning.ThinkingRunWorker("opus")
+	seed := func(state *raylinearc.EpisodeState) {
+		state.ReasoningProvenance = reasoning.WithThinkingRun(nil, worker, nil, false, "sig-anchor")
+	}
+	lease, state, err := store.Prepare(context.Background(), episode, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed(state)
+	transaction := newRaylineARCEpisodeTransaction(store, lease, state, episode, time.Minute, nil)
+	transaction.markSelection(0, 10)
+	transaction.thinkingWorker, transaction.thinkingAnchored, transaction.dispatchWorker = worker, true, "claude"
+	output := []llmprotocol.Content{}
+	for index := range reasoning.MaxReasoningProvenance + 4 {
+		output = append(output, llmprotocol.Content{Kind: llmprotocol.ContentUnmodeled, Unmodeled: &llmprotocol.UnmodeledBlock{
+			Format: llmprotocol.AnthropicMessagesV1, Type: "redacted_thinking",
+			Raw: []byte(fmt.Sprintf(`{"type":"redacted_thinking","data":"blob-%d"}`, index)),
+		}})
+	}
+	response := &llmprotocol.Response{Output: []llmprotocol.OutputItem{{Role: llmprotocol.RoleAssistant, Content: output}}}
+	if err := transaction.commit(context.Background(), &RequestContext{SemanticResponse: response}); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	next, reread, err := store.Prepare(context.Background(), episode, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = store.Abort(context.Background(), next)
+	if len(reread.ReasoningProvenance) > reasoning.MaxReasoningProvenance ||
+		fmt.Sprint(reasoning.ThinkingRunAnchors(reread.ReasoningProvenance, worker)) != fmt.Sprint([]string{reasoning.ReasoningBlockDigest("sig-anchor")}) {
+		t.Fatalf("provenance = %d entries, anchors %v", len(reread.ReasoningProvenance), reasoning.ThinkingRunAnchors(reread.ReasoningProvenance, worker))
 	}
 }
