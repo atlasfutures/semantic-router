@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -78,6 +79,10 @@ func newHostUpstream(t *testing.T, behaviour map[string]string) *hostUpstream {
 			w.Header().Set("content-type", "text/event-stream")
 			w.WriteHeader(http.StatusOK)
 			_, _ = io.WriteString(w, hostRetryContentStream("served on "+host))
+		case "sse_error":
+			w.Header().Set("content-type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			_, _ = io.WriteString(w, `data: {"error":{"code":502,"message":"provider overloaded"}}`+"\n\n")
 		case "stall":
 			w.Header().Set("content-type", "text/event-stream")
 			w.WriteHeader(http.StatusOK)
@@ -102,7 +107,10 @@ func (upstream *hostUpstream) calls() []map[string]json.RawMessage {
 
 // hostRetryRouter is a cell with one arm pinned to two hosts in order, with
 // OpenRouter's own fallbacks inside the list, on one OpenRouter backend.
-func hostRetryRouter(baseURL string, hostRetry bool, armFirstContentSec int) *OpenAIRouter {
+func hostRetryRouter(baseURL string, hostRetry bool, armFirstContentSec int, hosts ...string) *OpenAIRouter {
+	if len(hosts) == 0 {
+		hosts = []string{hostRetryHostA, hostRetryHostB}
+	}
 	fallbacks := true
 	cfg := &config.RouterConfig{
 		RouterOptions: config.RouterOptions{
@@ -117,7 +125,7 @@ func hostRetryRouter(baseURL string, hostRetry bool, armFirstContentSec int) *Op
 					PreferredEndpoints: []string{"openrouter"},
 					APIFormat:          config.APIFormatOpenAI,
 					ProviderPreferences: &config.OpenRouterProviderPreferences{
-						Order: []string{hostRetryHostA, hostRetryHostB}, AllowFallbacks: &fallbacks,
+						Order: hosts, AllowFallbacks: &fallbacks,
 						Ignore: []string{"anthropic/flex"},
 					},
 					FirstContentSec:  armFirstContentSec,
@@ -448,4 +456,47 @@ func TestStalledCallsStreamErrorDoesNotFailTheReSend(t *testing.T) {
 	lines := usageLines(logs)
 	require.Len(t, lines, 2)
 	assert.Nil(t, lines[1]["failure_class"])
+}
+
+// A re-send that fails in-band (an SSE error) before any content moves on to
+// the next host; its error never reaches the client.
+func TestInBandErrorBeforeContentMovesToTheNextHost(t *testing.T) {
+	logs := captureLogs(t)
+	upstream := newHostUpstream(t, map[string]string{hostRetryHostB: "sse_error", "google-vertex": "content"})
+	router := hostRetryRouter(upstream.server.URL, true, 0, hostRetryHostA, hostRetryHostB, "google-vertex")
+	stream := NewMockStream(nil)
+
+	ctx, transaction := startStalledTurn(t, router, stream, openRouterKeepaliveChunk)
+	drainSpliced(t, router, ctx, stream)
+
+	sent, ended := clientBytes(stream)
+	assert.True(t, ended)
+	assert.Contains(t, sent, "served on google-vertex")
+	assert.NotContains(t, sent, "provider overloaded")
+	assert.Empty(t, ctx.ResponseFailureClass)
+	assert.Equal(t, 0, transaction.aborts)
+	calls := upstream.calls()
+	require.Len(t, calls, 2)
+	assert.Equal(t, []string{"google-vertex"}, providerList(t, calls[1], "order"))
+	assert.Equal(t, []string{"anthropic/flex", hostRetryHostA, hostRetryHostB}, providerList(t, calls[1], "ignore"))
+	lines := usageLines(logs)
+	require.Len(t, lines, 3)
+	assertFields(t, "failed re-send", lines[1], map[string]interface{}{
+		"host_retry": hostRetryAttempt, "host_attempt": 2, "failure_class": turnFailureUpstreamError,
+		"content_sent_before_failure": false,
+	})
+	assertFields(t, "served", lines[2], map[string]interface{}{"host_attempt": 3, "upstream_host": "google-vertex"})
+}
+
+// A stalled Messages call states its input at message_start and nothing
+// after; its line keeps the input and leaves the output unknown.
+func TestStalledCallKeepsTheInputItStated(t *testing.T) {
+	input := int64(20)
+	usage := partialStreamUsage(llmprotocol.Usage{
+		State:      llmprotocol.UsageAvailable,
+		InputTotal: llmprotocol.TokenCount{Value: &input, Provenance: llmprotocol.UsageAuthoritative},
+	})
+	assert.True(t, usage.promptTokensReported)
+	assert.Equal(t, 20, usage.promptTokens)
+	assert.False(t, usage.completionTokensReported)
 }

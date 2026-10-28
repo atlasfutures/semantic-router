@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
 	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
@@ -421,7 +422,7 @@ func (r *OpenAIRouter) settleStalledHost(ctx *RequestContext, class, detail stri
 	// usage at message_start) is kept; what it did not stays unknown.
 	usage := responseUsageMetrics{}
 	if ctx.SemanticStreamState != nil {
-		usage = responseUsageFromSemanticUsage(ctx.SemanticStreamState.usage)
+		usage = partialStreamUsage(ctx.SemanticStreamState.usage)
 	}
 	record := r.newLLMUsageRecord(ctx, usage)
 	latencyMillis := latency.Milliseconds()
@@ -436,6 +437,55 @@ func (r *OpenAIRouter) settleStalledHost(ctx *RequestContext, class, detail stri
 	metrics.RecordModelWindowedRequest(
 		ctx.RequestModel, latency.Seconds(), 0, 0, true, class == turnFailureTimeout,
 	)
+}
+
+// partialStreamUsage is each count a call stated before it ended, alone: a
+// Messages call states its input at message_start and its output only later,
+// so the whole-usage reading would drop the input it did state.
+func partialStreamUsage(usage llmprotocol.Usage) responseUsageMetrics {
+	metrics := responseUsageMetrics{providerCost: usage.ProviderCost}
+	if value, reported, ok := authoritativeTerminalTokenCount(usage.InputTotal); reported && ok {
+		metrics.promptTokens, metrics.promptTokensReported = value, true
+	}
+	if value, reported, ok := authoritativeTerminalTokenCount(usage.OutputTotal); reported && ok {
+		metrics.completionTokens, metrics.completionTokensReported = value, true
+	}
+	if value, reported, ok := authoritativeTerminalTokenCount(usage.InputCacheRead); reported && ok {
+		metrics.cachedPromptTokens, metrics.cachedPromptTokensReported = value, true
+	}
+	if value, reported, ok := authoritativeTerminalTokenCount(usage.InputCacheWrite); reported && ok {
+		metrics.cacheWriteTokens, metrics.cacheWriteTokensReported = value, true
+	}
+	return metrics
+}
+
+// retryAfterStreamFailure moves a turn whose call failed in-band (an SSE
+// error event) before any content to the arm's next host. The failure event
+// counts as content for the silence limits; here it is no content the client
+// needs, since a host is left to serve the turn.
+func (r *OpenAIRouter) retryAfterStreamFailure(ctx *RequestContext) bool {
+	state := ctx.SemanticStreamState
+	if state == nil || state.upstreamFailed == nil && state.failed == nil || state.carriesContent() {
+		return false
+	}
+	seen, first := ctx.StreamContentSeen, ctx.StreamFirstContentAt
+	ctx.StreamContentSeen, ctx.StreamFirstContentAt = false, time.Time{}
+	if r.retryOnNextHost(ctx, turnFailureUpstreamError, "stream_error") {
+		return true
+	}
+	ctx.StreamContentSeen, ctx.StreamFirstContentAt = seen, first
+	return false
+}
+
+// carriesContent reports that the stream delivered model output: text,
+// reasoning, a refusal or a tool call.
+func (state *semanticResponseStreamState) carriesContent() bool {
+	for _, item := range state.items {
+		if item.text != "" || item.reasoning != "" || item.refusal != "" || item.toolCall != nil || item.carried != nil {
+			return true
+		}
+	}
+	return false
 }
 
 // resetStreamForHostRetry forgets what the stalled call's stream said: the

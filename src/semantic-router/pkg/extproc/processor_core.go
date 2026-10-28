@@ -127,7 +127,14 @@ func (r *OpenAIRouter) processWithContext(
 				message, stalled = waiting, false
 			}
 		}
-		if stalled {
+		var err error
+		switch {
+		case stalled && streamSilenceTimerArmed(ctx) && r.streamSilenceExceeded(ctx) && ctx.HostRetry != nil:
+			// Nothing arrived and the silence is past its limit. With a host
+			// retry staged this can start a re-send, so a failed Send is
+			// settled like any other below.
+			err = r.endSilentStream(stream, ctx)
+		case stalled:
 			if streamSilenceTimerArmed(ctx) && r.streamSilenceExceeded(ctx) {
 				// Nothing arrived, not even a keepalive, and the streamed
 				// turn's silence is past its limit.
@@ -141,15 +148,12 @@ func (r *OpenAIRouter) processWithContext(
 				return err
 			}
 			continue
-		}
-		var err error
-		if message.spliced != nil {
+		case message.spliced != nil:
 			// What a re-send on the arm's next host said.
 			err = r.serveHostRetryChunk(stream, ctx, *message.spliced)
-		} else {
-			if message.err != nil {
-				return r.handleProcessReceiveError(ctx, message.err)
-			}
+		case message.err != nil:
+			return r.handleProcessReceiveError(ctx, message.err)
+		default:
 			err = r.handleProcessRequest(stream, message.request, ctx)
 		}
 		if err != nil {
@@ -167,7 +171,9 @@ func (r *OpenAIRouter) processWithContext(
 			r.finalizeRouterReplay(ctx, state, reason)
 			return err
 		}
-		if state := ctx.SemanticStreamState; state != nil {
+		// Items whose frames are held for a host retry have not been
+		// delivered.
+		if state := ctx.SemanticStreamState; state != nil && !r.holdingForHostRetry(ctx) {
 			ctx.DeliveredStreamItems = len(state.items)
 		}
 

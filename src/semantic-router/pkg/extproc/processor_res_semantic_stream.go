@@ -91,7 +91,13 @@ func (r *OpenAIRouter) handleSemanticStreamingResponseBody(
 	recordStreamingTTFT(ctx)
 	r.initializeSemanticResponseStream(ctx)
 	buffers := semanticStreamBuffers{}
+	held := r.holdingForHostRetry(ctx)
 	buffers.push(responseBody, ctx)
+	if held && r.retryAfterStreamFailure(ctx) {
+		// The call failed in-band before any content; the arm's next host
+		// takes the turn over, and its error never reaches the client.
+		return droppedHostChunk(ctx)
+	}
 	overran := r.responseStreamOverran(ctx)
 	// Checked after this chunk's content was observed, so a chunk that
 	// carries content is never cut for the silence before it.
