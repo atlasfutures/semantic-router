@@ -86,6 +86,9 @@ func observeStreamContent(ctx *RequestContext, events []llmprotocol.Event) {
 	for _, event := range events {
 		if streamContentEvent(event.Type) {
 			ctx.StreamContentSince = time.Now()
+			if !ctx.StreamContentSeen {
+				ctx.StreamFirstContentAt = ctx.StreamContentSince
+			}
 			ctx.StreamContentSeen = true
 			return
 		}

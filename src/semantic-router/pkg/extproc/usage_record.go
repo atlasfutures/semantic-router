@@ -69,6 +69,12 @@ type llmUsageRecord struct {
 	// the upstream's own time to first byte. Null when not observed.
 	TTFTMS           *int64 `json:"ttft_ms"`
 	RoutingLatencyMS *int64 `json:"routing_latency_ms"`
+	// FirstContentMS is request-body start to the first streamed content
+	// event (text, reasoning or tool-call delta). A provider's keepalive
+	// comments reach the first byte, and so TTFTMS, without any content: a
+	// stalled turn has a TTFTMS and a null FirstContentMS. Null when no
+	// content arrived, on a buffered turn, and on a re-sent turn.
+	FirstContentMS *int64 `json:"first_content_ms"`
 	// UsageSource says whether the counts are the upstream's or the Router's
 	// own estimate of a turn it cut.
 	UsageSource string `json:"usage_source"`
@@ -277,6 +283,10 @@ func (r *OpenAIRouter) newLLMUsageRecord(ctx *RequestContext, usage responseUsag
 	if ctx.TTFTRecorded && !resent {
 		ttft := int64(ctx.TTFTSeconds * 1000)
 		record.TTFTMS = &ttft
+	}
+	if !ctx.StreamFirstContentAt.IsZero() && !ctx.ProcessingStartTime.IsZero() && !resent {
+		first := ctx.StreamFirstContentAt.Sub(ctx.ProcessingStartTime).Milliseconds()
+		record.FirstContentMS = &first
 	}
 	if ctx.RoutingLatency > 0 {
 		routing := ctx.RoutingLatency.Milliseconds()

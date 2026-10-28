@@ -96,6 +96,9 @@ type RequestContext struct {
 	// whether any content has arrived (processor_res_stream_silence.go).
 	StreamContentSince time.Time
 	StreamContentSeen  bool
+	// StreamFirstContentAt is when the streamed turn's first content event
+	// arrived. Keepalives and other non-content frames do not set it.
+	StreamFirstContentAt time.Time
 	// StreamEndedByReceiveError is true when the ext_proc exchange ended
 	// (the client or the proxy went away) before the stream did.
 	StreamEndedByReceiveError bool
