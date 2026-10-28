@@ -132,6 +132,8 @@ func TestBacktickedIdentifiersAreKept(t *testing.T) {
 		"Unknown field `context_management.edits` in body":                "Unknown field `context_management.edits` in body",
 		"Invalid value `customer-private-input` for model":                "Invalid value [quoted] for model",
 		"Invalid value `Customer` for role":                               "Invalid value [quoted] for role",
+		"Invalid value `customer_private_input` for field":                "Invalid value [quoted] for field",
+		"Unknown tool `deploy_prod.secret_step`":                          "Unknown tool [quoted]",
 		"Bad `two words` here":                                            "Bad [quoted] here",
 		"Unclosed `signature":                                             "Unclosed [quoted]",
 		"Too long `an_identifier_well_past_forty_bytes_of_length_x`":      "Too long [quoted]",

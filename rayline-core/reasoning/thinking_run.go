@@ -96,3 +96,17 @@ func WithThinkingRun(
 	}
 	return next
 }
+
+// WithoutThinkingRun drops every anchor of worker's run: a turn whose call
+// was refused for a signature and re-sent with the run's thinking stripped
+// starts the run again.
+func WithoutThinkingRun(provenance []ReasoningProvenance, worker string) []ReasoningProvenance {
+	digest := ReasoningWorkerDigest(worker)
+	next := make([]ReasoningProvenance, 0, len(provenance))
+	for _, entry := range provenance {
+		if entry.Worker != digest {
+			next = append(next, entry)
+		}
+	}
+	return next
+}

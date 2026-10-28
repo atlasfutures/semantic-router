@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -150,10 +151,18 @@ func (r *OpenAIRouter) guardClaudeThinking(
 	runStart := thinkingRunStart(request.Messages, reasoning.ThinkingRunAnchors(provenance, worker))
 	transaction.thinkingAnchored = runStart >= 0
 	active := activeToolLoopAssistant(request.Messages)
+	transaction.thinkingAdopted = ""
 	if active >= 0 && runStart >= 0 && active >= runStart {
 		// The re-send keeps the loop's latest thinking only when the run
 		// covers it.
 		ctx.thinkingRetryKeep = protocolcodec.MessageThinkingKeys(request.Messages[active])
+	} else if active >= 0 && dispatch.targetFormat == llmprotocol.AnthropicMessagesV1 {
+		// Sent though the run does not cover it: if Anthropic takes it, a new
+		// run starts at it, so later turns keep it and the prefix this turn's
+		// thinking is signed over does not change.
+		if signatures := protocolcodec.MessageThinkingSignatures(request.Messages[active]); len(signatures) > 0 {
+			transaction.thinkingAdopted = signatures[0]
+		}
 	}
 	if dispatch.targetFormat != llmprotocol.AnthropicMessagesV1 {
 		return 0
@@ -286,6 +295,30 @@ func thinkingSignatureRejected(body []byte) bool {
 	return false
 }
 
+// refusedMessagePattern reads the message index a refusal names
+// ("messages.19.content.12: ...").
+var refusedMessagePattern = regexp.MustCompile(`messages\.(\d+)\.content\.\d+`)
+
+// refusedActiveThinking reports whether a refusal names a block of the
+// active tool loop's latest message in the dispatched body.
+func refusedActiveThinking(dispatched, refusal []byte) bool {
+	var members map[string]json.RawMessage
+	var messages []map[string]json.RawMessage
+	if json.Unmarshal(dispatched, &members) != nil || json.Unmarshal(members["messages"], &messages) != nil {
+		return false
+	}
+	active := activeWireToolLoopAssistant(messages)
+	if active < 0 {
+		return false
+	}
+	for _, match := range refusedMessagePattern.FindAllSubmatch(refusal, -1) {
+		if index, err := strconv.Atoi(string(match[1])); err == nil && index == active {
+			return true
+		}
+	}
+	return false
+}
+
 // thinkingRetryBody is the dispatched Messages body with the thinking of
 // every earlier assistant message stripped. The active tool loop's latest
 // message keeps the blocks keep names; when it loses any, it loses all, and
@@ -294,6 +327,9 @@ func thinkingSignatureRejected(body []byte) bool {
 type thinkingRetryChange struct {
 	stripped         int
 	thinkingDisabled bool
+	// keptSignature is the first signature of the active loop's thinking
+	// when the re-send keeps it.
+	keptSignature string
 }
 
 func thinkingRetryBody(body []byte, keep map[string]bool) ([]byte, thinkingRetryChange, bool) {
@@ -327,6 +363,14 @@ func thinkingRetryBody(body []byte, keep map[string]bool) ([]byte, thinkingRetry
 			}
 		}
 		if holds == 0 || index == active && whole {
+			if index == active && holds > 0 {
+				for _, block := range blocks {
+					if key, thinking := wireThinkingKey(block); thinking && wireBlockType(block) == "thinking" {
+						change.keptSignature = key
+						break
+					}
+				}
+			}
 			kept = append(kept, message)
 			continue
 		}
@@ -514,7 +558,16 @@ func (r *OpenAIRouter) thinkingSignatureRetryOnResponseHeaders(
 	if !complete || !thinkingSignatureRejected(body) {
 		return giveBack("")
 	}
-	retryBody, change, changed := thinkingRetryBody(plan.dispatched, plan.keep)
+	keep := plan.keep
+	if refusedActiveThinking(plan.dispatched, body) {
+		// The refusal names the loop's own block: the run's record of it
+		// does not make it verifiable.
+		keep = nil
+	}
+	retryBody, change, changed := thinkingRetryBody(plan.dispatched, keep)
+	if !changed && len(keep) > 0 {
+		retryBody, change, changed = thinkingRetryBody(plan.dispatched, nil)
+	}
 	if !changed {
 		return giveBack("nothing_to_strip")
 	}
@@ -540,6 +593,13 @@ func (r *OpenAIRouter) thinkingSignatureRetryOnResponseHeaders(
 
 	ctx.ThinkingSignatureRetried = true
 	ctx.DispatchedOutbound = readDispatchedOutboundParams(retryBody, plan.dispatch)
+	// The re-send is the body the episode records: its prefix, and a run
+	// that starts again from this turn.
+	r.auditRaylineARCUpstream(retryBody, ctx)
+	if transaction := ctx.RaylineARCTransaction; transaction != nil && transaction.thinkingWorker != "" {
+		// A kept loop message starts the new run, as an adopted one does.
+		transaction.thinkingRestart, transaction.thinkingAdopted = true, change.keptSignature
+	}
 	result := callFlexTwin(ctx, call, r.flexResendBodyLimit(), received.Add(budget))
 	fields := map[string]interface{}{
 		"request_id":        ctx.RequestID,

@@ -86,10 +86,18 @@ type raylineARCEpisodeTransaction struct {
 	// thinkingAnchored whether the request's history held the run's anchor,
 	// and thinkingSignature the first thinking signature the response held,
 	// the anchor of a new run.
+	// thinkingAdopted is the signature of the active tool loop's latest
+	// thinking when the run did not cover it and it was sent anyway: a new
+	// run starts at it, so the message keeps its thinking on later turns and
+	// the prefix the turn's own signature was written over stays as sent.
+	// thinkingRestart says the turn was re-sent with the run's thinking
+	// stripped, so the run starts again from this turn.
 	thinkingWorker    string
 	thinkingOthers    []string
 	thinkingAnchored  bool
 	thinkingSignature string
+	thinkingAdopted   string
+	thinkingRestart   bool
 	// call is the cache evidence of this turn's policy-service call: the
 	// action it served, the TTL its dispatched body stated and the
 	// provider's usage. It is recorded on the served arm's warmth with the
@@ -666,9 +674,15 @@ func (transaction *raylineARCEpisodeTransaction) nextState() (*raylinearc.Episod
 		)
 	}
 	if transaction.thinkingWorker != "" {
+		provenance, anchored, anchor := nextState.ReasoningProvenance, transaction.thinkingAnchored, transaction.thinkingAdopted
+		if transaction.thinkingRestart {
+			provenance, anchored = reasoning.WithoutThinkingRun(provenance, transaction.thinkingWorker), false
+		}
+		if anchor == "" {
+			anchor = transaction.thinkingSignature
+		}
 		nextState.ReasoningProvenance = reasoning.WithThinkingRun(
-			nextState.ReasoningProvenance, transaction.thinkingWorker, transaction.thinkingOthers,
-			transaction.thinkingAnchored, transaction.thinkingSignature,
+			provenance, transaction.thinkingWorker, transaction.thinkingOthers, anchored, anchor,
 		)
 	}
 	if transaction.reasoningIssuersStaged {

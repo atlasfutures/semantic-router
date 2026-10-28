@@ -261,6 +261,10 @@ func TestActiveToolLoopThinkingIsKept(t *testing.T) {
 			if plan == nil {
 				t.Fatal("no re-send was staged for a Claude dispatch over Messages")
 			}
+			wantAdopted := map[bool]string{true: "", false: "sig-loop"}[tc.wantKeep]
+			if adopted := ctx.RaylineARCTransaction.thinkingAdopted; adopted != wantAdopted {
+				t.Fatalf("adopted = %q, want %q: a sent unserved loop message starts the next run", adopted, wantAdopted)
+			}
 			if plan.keep["sig-loop"] != tc.wantKeep || len(plan.keep) != map[bool]int{true: 1, false: 0}[tc.wantKeep] {
 				t.Fatalf("re-send keeps %v, want sig-loop kept = %v", plan.keep, tc.wantKeep)
 			}
@@ -317,6 +321,51 @@ func TestCommittedClaudeTurnAnchorsItsRun(t *testing.T) {
 	}
 	if anchors := reasoning.ThinkingRunAnchors(provenance, opus); fmt.Sprint(anchors) != fmt.Sprint([]string{digest("sig-3")}) {
 		t.Fatalf("the other model's run = %v", anchors)
+	}
+}
+
+// A turn that sent an unserved tool loop message anchors the new run there,
+// and a turn re-sent with its run's thinking stripped starts the run again,
+// at the loop message the re-send kept or else at its own reply.
+func TestThinkingRunAdoptsAndRestarts(t *testing.T) {
+	store, err := raylinearc.NewMemoryEpisodeStore(raylinearc.MemoryEpisodeStoreConfig{MaxEpisodes: 4, IdleTTL: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	episode := raylinearc.HashEpisodeID(t.Name())
+	worker := reasoning.ThinkingRunWorker("opus")
+	commit := func(anchored, restart bool, adopted string) []string {
+		t.Helper()
+		lease, state, err := store.Prepare(context.Background(), episode, 2)
+		if err != nil {
+			t.Fatal(err)
+		}
+		transaction := newRaylineARCEpisodeTransaction(store, lease, state, episode, time.Minute, nil)
+		transaction.markSelection(0, 10)
+		transaction.thinkingWorker, transaction.thinkingAnchored = worker, anchored
+		transaction.thinkingRestart, transaction.thinkingAdopted = restart, adopted
+		response := &llmprotocol.Response{Output: []llmprotocol.OutputItem{{Role: llmprotocol.RoleAssistant, Content: []llmprotocol.Content{
+			{Kind: llmprotocol.ContentReasoning, Text: "thought", Signature: "sig-reply"},
+		}}}}
+		if err := transaction.commit(context.Background(), &RequestContext{SemanticResponse: response}); err != nil {
+			t.Fatalf("commit: %v", err)
+		}
+		next, reread, err := store.Prepare(context.Background(), episode, 2)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = store.Abort(context.Background(), next)
+		return reasoning.ThinkingRunAnchors(reread.ReasoningProvenance, worker)
+	}
+	digest := reasoning.ReasoningBlockDigest
+	if got := commit(false, false, "sig-loop"); fmt.Sprint(got) != fmt.Sprint([]string{digest("sig-loop")}) {
+		t.Fatalf("adopted run = %v", got)
+	}
+	if got := commit(true, true, ""); fmt.Sprint(got) != fmt.Sprint([]string{digest("sig-reply")}) {
+		t.Fatalf("restarted run = %v, want only the re-send's reply", got)
+	}
+	if got := commit(true, true, "sig-kept"); fmt.Sprint(got) != fmt.Sprint([]string{digest("sig-kept")}) {
+		t.Fatalf("restarted run = %v, want only the kept loop message", got)
 	}
 }
 
@@ -477,7 +526,11 @@ func refusedThinkingTurn(
 func TestSignatureRefusalIsResentOnceWithoutEarlierThinking(t *testing.T) {
 	logs := captureLogs(t)
 	upstream := newClaudeUpstream(t, http.StatusOK, claudeServedReply)
-	_, envoy := refusedThinkingTurn(t, "episode-thinking-retry", upstream, http.StatusBadRequest, signatureRefusal, "sig-earlier")
+	ctx, envoy := refusedThinkingTurn(t, "episode-thinking-retry", upstream, http.StatusBadRequest, signatureRefusal, "sig-earlier")
+	if transaction := ctx.RaylineARCTransaction; !transaction.thinkingRestart || transaction.thinkingAdopted != "sig-loop" {
+		t.Fatalf("restart = %v, adopted = %q: the run must start again at the kept loop message",
+			transaction.thinkingRestart, transaction.thinkingAdopted)
+	}
 
 	immediate := envoy.Responses[0].GetImmediateResponse()
 	if immediate == nil || int(immediate.GetStatus().GetCode()) != http.StatusOK ||
@@ -541,5 +594,20 @@ func TestOtherRefusalIsNotResent(t *testing.T) {
 	message, ok := ctx.streamReceiver.poll()
 	if !ok || string(message.request.GetResponseBody().GetBody()) != refusal {
 		t.Fatalf("the body read ahead was not handed back: %v %v", ok, message.request)
+	}
+}
+
+// A refusal that names the loop's own block is re-sent without it, even when
+// the run covers it, and with thinking off.
+func TestRefusalOfTheLoopsOwnBlockStripsIt(t *testing.T) {
+	upstream := newClaudeUpstream(t, http.StatusOK, claudeServedReply)
+	refusal := strings.Replace(signatureRefusal, "messages.1.content.0", "messages.3.content.0", 1)
+	_, envoy := refusedThinkingTurn(t, "episode-thinking-own-block", upstream, http.StatusBadRequest, refusal, "sig-loop")
+	if envoy.Responses[0].GetImmediateResponse() == nil {
+		t.Fatalf("the refusal was not re-sent: %v", envoy.Responses[0])
+	}
+	calls := upstream.calls()
+	if len(calls) != 1 || strings.Contains(string(calls[0]), "sig-loop") {
+		t.Fatalf("re-sends = %d, body %s", len(calls), calls)
 	}
 }

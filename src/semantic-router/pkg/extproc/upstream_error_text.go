@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -106,7 +107,7 @@ func loggableUpstreamMessage(message string) string {
 }
 
 // withoutQuotedSpans replaces each quoted span with [quoted], except a
-// backticked plain identifier (plainIdentifier), which names a protocol
+// backticked protocol member name (plainIdentifier), which names a
 // member rather than echoing a value: "Invalid `signature` in `thinking`
 // block" reads as Anthropic wrote it. An apostrophe
 // inside a word (can't) opens nothing; a backslash escapes the next rune; a
@@ -151,13 +152,37 @@ func withoutQuotedSpans(message string) string {
 
 // upstreamErrorIdentifierPattern is a protocol member's name as a provider
 // backticks it in an error: lower case, digits, underscores and dots, at most
-// upstreamErrorIdentifierMax bytes.
+// upstreamErrorIdentifierMax bytes. Shape alone is not enough, since a
+// client's own value can have it (a tool name, an id), so every dot-separated
+// segment must also be a known protocol word or an index.
 var upstreamErrorIdentifierPattern = regexp.MustCompile(`^[a-z_][a-z0-9_.]*$`)
 
 const upstreamErrorIdentifierMax = 40
 
+// upstreamErrorProtocolWords are the Messages, Chat and Responses member and
+// type names a provider names in its errors.
+var upstreamErrorProtocolWords = map[string]bool{
+	"thinking": true, "redacted_thinking": true, "signature": true, "data": true, "text": true,
+	"type": true, "content": true, "role": true, "user": true, "assistant": true, "system": true,
+	"messages": true, "tools": true, "tool_choice": true, "tool_use": true, "tool_result": true,
+	"tool_use_id": true, "tool_calls": true, "tool_call_id": true, "input": true, "name": true, "id": true,
+	"image": true, "document": true, "source": true, "cache_control": true, "max_tokens": true,
+	"budget_tokens": true, "temperature": true, "top_p": true, "top_k": true, "stop_sequences": true,
+	"stream": true, "metadata": true, "model": true, "enabled": true, "disabled": true, "adaptive": true,
+	"output_config": true, "effort": true, "context_management": true, "edits": true, "reasoning": true,
+	"reasoning_content": true, "reasoning_details": true, "encrypted_content": true, "summary": true,
+}
+
 func plainIdentifier(text string) bool {
-	return len(text) <= upstreamErrorIdentifierMax && upstreamErrorIdentifierPattern.MatchString(text)
+	if len(text) > upstreamErrorIdentifierMax || !upstreamErrorIdentifierPattern.MatchString(text) {
+		return false
+	}
+	for _, segment := range strings.Split(text, ".") {
+		if _, err := strconv.Atoi(segment); err != nil && !upstreamErrorProtocolWords[segment] {
+			return false
+		}
+	}
+	return true
 }
 
 // pythonLiteralPrefixes open a quoted literal (b'...', rb'...') where an
