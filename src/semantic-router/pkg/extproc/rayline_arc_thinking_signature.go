@@ -764,6 +764,9 @@ func (r *OpenAIRouter) thinkingSignatureRetryOnResponseHeaders(
 	})
 	refusedText := ctx.UpstreamErrorText
 	ctx.UpstreamErrorText = upstreamErrorText{}
+	// The re-send is served whole, outside full duplex: no host retry can
+	// hold its frames or take it over, so the staged plan is dropped.
+	ctx.HostRetry = nil
 
 	ctx.ThinkingSignatureRetried = true
 	ctx.DispatchedOutbound = readDispatchedOutboundParams(retryBody, plan.dispatch)

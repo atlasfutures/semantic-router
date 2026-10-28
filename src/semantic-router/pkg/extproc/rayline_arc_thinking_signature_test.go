@@ -571,6 +571,10 @@ func TestSignatureRefusalIsResentOnceWithoutEarlierThinking(t *testing.T) {
 		t.Fatalf("the refused call's text = %q", message)
 	}
 	assertFields(t, "re-send", lines[1], map[string]interface{}{"thinking_signature_retry": thinkingRetryResend})
+	// The re-send was read whole: it states no first byte or first content.
+	if lines[1]["ttft_ms"] != nil || lines[1]["first_content_ms"] != nil {
+		t.Fatalf("the re-send stated ttft_ms %v, first_content_ms %v", lines[1]["ttft_ms"], lines[1]["first_content_ms"])
+	}
 	event := findLogEvent(t, logs, "thinking_signature_retry")
 	assertFields(t, "thinking_signature_retry", event, map[string]interface{}{
 		"refused_status": http.StatusBadRequest, "resend_status": http.StatusOK, "stripped": 2,
