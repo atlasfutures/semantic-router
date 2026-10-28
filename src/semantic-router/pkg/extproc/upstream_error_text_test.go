@@ -102,6 +102,7 @@ func TestQuotedSpansNeverLeakPartly(t *testing.T) {
 		`Invalid URL "https://example.com"; invalid value "customer-private-input"`: `Invalid URL [quoted]; invalid value [quoted]`,
 		`Bad value "a \"customer-private-input\" b" in field`:                       `Bad value [quoted] in field`,
 		`Unclosed "customer-private-input`:                                          `Unclosed [quoted]`,
+		`Invalid value: b'customer-private-input' for messages[0].content`:          `Invalid value: b[quoted] for messages[0].content`,
 	} {
 		if got := loggableUpstreamMessage(message); got != want {
 			t.Fatalf("%q became %q, want %q", message, got, want)
