@@ -183,6 +183,16 @@ providers:
       # top-level service_tier (it replaces a client's); the re-send above
       # carries this tier, not the flex entry's.
       service_tier: default
+      # This arm's own first-content limit, replacing the global
+      # response_stream.first_content_sec, above or below it. 0 keeps the
+      # global one. A Claude 5.x arm thinks natively with its display
+      # omitted and streams nothing while it does: give it 300.
+      first_content_sec: 0
+      # This arm's own host-retry switch (response_stream.host_retry);
+      # absent follows the global flag. Set false on the Claude arms
+      # (claude-haiku-5.5, claude-sonnet-5.5, claude-opus-5.5): their silence
+      # is the thinking itself, which another host would only restart.
+      host_retry: false
       backend_refs:
         - name: openrouter-standard
           base_url: https://openrouter.ai/api/v1
@@ -2257,6 +2267,15 @@ global:
       # the client's retry is decided afresh. Zero turns either off.
       first_content_sec: 0
       idle_sec: 0
+      # Re-send a streamed turn on its arm's next provider host when the
+      # first-content limit fires before any content reached the client. The
+      # arm's provider_preferences must list more than one host; the client's
+      # open response then carries the next host's stream. An arm may set its
+      # own providers.models[].first_content_sec. Off by default.
+      host_retry: false
+      # Stop trying further hosts once a turn is this old (seconds since it
+      # started); 0 leaves deadline_sec as the only bound.
+      host_retry_budget_sec: 0
       # How long a discount endpoint's standard re-send (standard_twin) may
       # take. It must stay below the ext_proc message_timeout, which bounds
       # how long Envoy waits for the re-send's answer. 0 selects 55 s (below

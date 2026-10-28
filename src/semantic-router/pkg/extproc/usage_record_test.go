@@ -458,6 +458,39 @@ func TestUsageRecordStatesNoTTFTForAResentTurn(t *testing.T) {
 	}
 }
 
+// A keepalive reaches the first byte without content: the line states the
+// time to first content apart from the TTFT, and null when none came.
+func TestUsageRecordCarriesFirstContentApartFromTTFT(t *testing.T) {
+	start := time.Now().Add(-20 * time.Second)
+	for _, tc := range []struct {
+		name  string
+		first time.Time
+		want  string
+	}{
+		{"content after keepalives", start.Add(12 * time.Second), "12000"},
+		{"stalled behind keepalives", time.Time{}, "<nil>"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			logs := captureLogs(t)
+			ctx := &RequestContext{
+				RequestID: "rt_first-000", RequestModel: "priced-model",
+				TTFTRecorded: true, TTFTSeconds: 10.3, ProcessingStartTime: start,
+				StreamFirstContentAt: tc.first,
+			}
+
+			usageRecordRouter().reportNonStreamingUsage(ctx, 20*time.Second, responseUsageMetrics{invalid: true})
+
+			fields := findLogEvent(t, logs, "llm_usage")
+			if value, present := fields["first_content_ms"]; !present || fmt.Sprint(value) != tc.want {
+				t.Fatalf("first_content_ms = %v (present %v), want %s", value, present, tc.want)
+			}
+			if fmt.Sprint(fields["ttft_ms"]) != "10300" {
+				t.Fatalf("ttft_ms = %v, want 10300", fields["ttft_ms"])
+			}
+		})
+	}
+}
+
 // A turn whose first byte was never seen states no TTFT rather than zero.
 func TestUsageRecordLeavesUnobservedTTFTNull(t *testing.T) {
 	logs := captureLogs(t)

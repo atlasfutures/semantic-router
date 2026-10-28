@@ -350,6 +350,11 @@ func isServiceTierSlug(slug string) bool {
 	return index > 0 && serviceTierSegments[slug[index+1:]]
 }
 
+// ProviderSlugKey is providerSlugKey, for the cell's own provider matching.
+func ProviderSlugKey(name string) string {
+	return providerSlugKey(name)
+}
+
 // providerSlugKey folds a provider's display name ("Google AI Studio") and
 // its slug ("google-ai-studio") to one key: lower case, letters and digits.
 func providerSlugKey(name string) string {

@@ -116,6 +116,17 @@ type CanonicalResponseStream struct {
 	// message_timeout the repository's Gateway API manifests ship. A negative
 	// value turns the re-send off.
 	ResendBudgetSec int `yaml:"resend_budget_sec,omitempty"`
+	// HostRetry re-sends a streamed turn on its arm's next provider host when
+	// the first-content limit fires before any content reached the client
+	// (stream_host_retry.go). The arm's pin must list more than one host. Off
+	// by default.
+	HostRetry bool `yaml:"host_retry,omitempty"`
+	// HostRetryBudgetSec caps the time a turn may spend on host retries: a
+	// re-send waits for its first content only until this long has passed
+	// since the turn started, no further host is tried after that, and the
+	// turn ends as a first-content timeout. The first call keeps its full
+	// first-content limit. Zero leaves deadline_sec as the only bound.
+	HostRetryBudgetSec int `yaml:"host_retry_budget_sec,omitempty"`
 }
 
 // CanonicalServiceGlobal groups shared runtime services exposed by the router.
@@ -410,6 +421,8 @@ func applyCanonicalRouterGlobal(cfg *RouterConfig, router CanonicalRouterGlobal)
 	cfg.ResponseStreamFirstContentSec = router.ResponseStream.FirstContentSec
 	cfg.ResponseStreamIdleSec = router.ResponseStream.IdleSec
 	cfg.FlexResendBudgetSec = router.ResponseStream.ResendBudgetSec
+	cfg.ResponseStreamHostRetry = router.ResponseStream.HostRetry
+	cfg.ResponseStreamHostRetryBudgetSec = router.ResponseStream.HostRetryBudgetSec
 	cfg.ThinkingMarkerMint = router.ThinkingMarkers.Mint
 	cfg.KeepUnservedClaudeThinking = router.ThinkingSignatures.KeepUnserved
 	cfg.SkipProcessing = router.SkipProcessing

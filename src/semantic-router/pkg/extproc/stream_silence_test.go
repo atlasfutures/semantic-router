@@ -144,8 +144,13 @@ func TestAnItemStartIsNotContent(t *testing.T) {
 		{Type: llmprotocol.EventUsageUpdated},
 	})
 	assert.False(t, ctx.StreamContentSeen)
+	assert.True(t, ctx.StreamFirstContentAt.IsZero(), "a keepalive set the first-content time")
 	observeStreamContent(ctx, []llmprotocol.Event{{Type: llmprotocol.EventReasoningDelta}})
 	assert.True(t, ctx.StreamContentSeen)
+	first := ctx.StreamFirstContentAt
+	require.False(t, first.IsZero())
+	observeStreamContent(ctx, []llmprotocol.Event{{Type: llmprotocol.EventOutputTextDelta}})
+	assert.Equal(t, first, ctx.StreamFirstContentAt, "later content moved the first-content time")
 }
 
 // A message that falls due with the timer is taken, not lost to the cut.

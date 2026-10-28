@@ -69,6 +69,12 @@ type llmUsageRecord struct {
 	// the upstream's own time to first byte. Null when not observed.
 	TTFTMS           *int64 `json:"ttft_ms"`
 	RoutingLatencyMS *int64 `json:"routing_latency_ms"`
+	// FirstContentMS is request-body start to the first streamed content
+	// event (text, reasoning or tool-call delta). A provider's keepalive
+	// comments reach the first byte, and so TTFTMS, without any content: a
+	// stalled turn has a TTFTMS and a null FirstContentMS. Null when no
+	// content arrived, on a buffered turn, and on a re-sent turn.
+	FirstContentMS *int64 `json:"first_content_ms"`
 	// UsageSource says whether the counts are the upstream's or the Router's
 	// own estimate of a turn it cut.
 	UsageSource string `json:"usage_source"`
@@ -165,6 +171,23 @@ type llmUsageRecord struct {
 	// signature_attempt on the refused call, stripped_resend on the re-send.
 	// Null on every other call.
 	ThinkingSignatureRetry *string `json:"thinking_signature_retry"`
+	// HostRetry marks the calls of a streamed turn re-sent on its arm's next
+	// provider host after a call failed before any content
+	// (stream_host_retry.go): host_attempt on each call the cell went on
+	// from, host_retry on the last call, which served the client whatever
+	// its outcome. HostAttempt is the call's place in the turn, from 1;
+	// UpstreamHost the host it is attributed to, and UpstreamHostSource how
+	// that was known: response (the stream named it) or order (the first
+	// host not yet tried). HostAttemptStartedMS is when the call was sent,
+	// from the turn's start. Null on every other call.
+	HostRetry            *string `json:"host_retry"`
+	HostAttempt          *int    `json:"host_attempt"`
+	UpstreamHost         *string `json:"upstream_host"`
+	UpstreamHostSource   *string `json:"upstream_host_source"`
+	HostAttemptStartedMS *int64  `json:"host_attempt_started_ms"`
+	// UpstreamResponseID is the id the upstream gave a streamed response (an
+	// OpenRouter generation id), null when none arrived.
+	UpstreamResponseID *string `json:"upstream_response_id"`
 	// ProviderEndpoint is the endpoint tag the call is known to be served
 	// by, null when OpenRouter could choose; ProviderEndpointsTried are the
 	// turn's endpoints dispatched so far when it picked one of several;
@@ -302,6 +325,10 @@ func (r *OpenAIRouter) newLLMUsageRecord(ctx *RequestContext, usage responseUsag
 		ttft := int64(ctx.TTFTSeconds * 1000)
 		record.TTFTMS = &ttft
 	}
+	if !ctx.StreamFirstContentAt.IsZero() && !ctx.ProcessingStartTime.IsZero() && !resent {
+		first := ctx.StreamFirstContentAt.Sub(ctx.ProcessingStartTime).Milliseconds()
+		record.FirstContentMS = &first
+	}
 	if ctx.RoutingLatency > 0 {
 		routing := ctx.RoutingLatency.Milliseconds()
 		record.RoutingLatencyMS = &routing
@@ -363,6 +390,10 @@ func (r *OpenAIRouter) newLLMUsageRecord(ctx *RequestContext, usage responseUsag
 		record.UpstreamProvider = nonEmpty(state.provider)
 		record.UpstreamServiceTier = nonEmpty(state.serviceTier)
 	}
+	if state := ctx.SemanticStreamState; state != nil {
+		record.UpstreamResponseID = nonEmpty(state.upstreamResponseID)
+	}
+	addHostRetryFields(&record, ctx)
 	addUsageRecordARCAttribution(&record, ctx)
 	return record
 }

@@ -26,8 +26,11 @@ type semanticResponseStreamState struct {
 	// line written from here can only be joined to its turn by timestamp.
 	requestID  string
 	responseID string
-	model      string
-	stop       llmprotocol.StopReason
+	// upstreamResponseID is the id the upstream gave the response (an
+	// OpenRouter generation id), before the Router's own public id replaced it.
+	upstreamResponseID string
+	model              string
+	stop               llmprotocol.StopReason
 	// sourceStop and provider are what the upstream said about itself: the stop
 	// string it sent and the provider that served the turn.
 	sourceStop string
@@ -88,11 +91,22 @@ func (r *OpenAIRouter) handleSemanticStreamingResponseBody(
 	recordStreamingTTFT(ctx)
 	r.initializeSemanticResponseStream(ctx)
 	buffers := semanticStreamBuffers{}
+	held := r.holdingForHostRetry(ctx)
 	buffers.push(responseBody, ctx)
+	if held && r.retryAfterStreamFailure(ctx) {
+		// The call failed in-band before any content; the arm's next host
+		// takes the turn over, and its error never reaches the client.
+		return droppedHostChunk(ctx)
+	}
 	overran := r.responseStreamOverran(ctx)
 	// Checked after this chunk's content was observed, so a chunk that
 	// carries content is never cut for the silence before it.
-	silent := !overran && !endOfStream && r.streamSilenceExceeded(ctx)
+	silent := !overran && !endOfStream && (r.streamSilenceExceeded(ctx) || ctx.HostRetry != nil && ctx.HostRetry.exhausted)
+	if silent && r.retryOnNextHost(ctx, turnFailureTimeout, streamFirstContentTimeoutCode) {
+		// The arm's next host takes the turn over; nothing of this call
+		// reaches the client.
+		return droppedHostChunk(ctx)
+	}
 	// A body the Router read itself that ended in a read error is cut there,
 	// even when its last frame looked final.
 	readCut := !overran && endOfStream && ctx.UpstreamBodyCut != nil
@@ -117,11 +131,12 @@ func (r *OpenAIRouter) handleSemanticStreamingResponseBody(
 		if cut {
 			releaseCutTurn(ctx)
 		}
+		ctx.HostRetry.stop()
 	}
 	// The turn is over either way here: the upstream reached its end, or the
 	// Router ended it. Both have to end the response, or the client waits for
 	// an EOF that only the platform will send.
-	return buffers.processingResponse(ctx, cut || endOfStream)
+	return r.holdHostRetryFrames(ctx, buffers.processingResponse(ctx, cut || endOfStream))
 }
 
 func (r *OpenAIRouter) initializeSemanticResponseStream(ctx *RequestContext) {
@@ -282,6 +297,9 @@ func (r *OpenAIRouter) ensureSemanticResponseStream(ctx *RequestContext) error {
 		// upstream's id, kept before a public one replaces it: it reaches
 		// the logs even when the turn is cut before any content.
 		observeUpstreamStreamEventID(ctx, *event, streamContext)
+		if event.ResponseID != "" && ctx.SemanticStreamState != nil {
+			ctx.SemanticStreamState.upstreamResponseID = event.ResponseID
+		}
 		if responseID != "" {
 			event.ResponseID = responseID
 		}
@@ -646,6 +664,10 @@ func (r *OpenAIRouter) classStreamFailure(
 	if ctx.StreamEndedAtSend {
 		// The chunk whose Send failed delivered nothing: only what earlier,
 		// sent chunks carried reached the client, whatever the class.
+		sent = ctx.DeliveredStreamItems > 0
+	}
+	if plan := ctx.HostRetry; plan != nil && !plan.exposed {
+		// Held for a host retry, the call's frames never reached the client.
 		sent = ctx.DeliveredStreamItems > 0
 	}
 	var inBand *llmprotocol.ProtocolError

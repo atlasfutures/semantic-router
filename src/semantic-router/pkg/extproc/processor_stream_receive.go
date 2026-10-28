@@ -36,6 +36,9 @@ type receivedMessage struct {
 	// end the turn as a clean EOF.
 	panicValue any
 	panicked   bool
+	// spliced is a chunk of a re-send on the arm's next host
+	// (stream_host_retry.go) rather than a message from Envoy.
+	spliced *hostRetryChunk
 }
 
 // receiveOnce isolates one Recv so a panic inside it can be carried rather
@@ -99,7 +102,7 @@ func (receiver *streamReceiver) holdBody(wait time.Duration, limit int) ([]recei
 		if remaining <= 0 {
 			return held, body, false
 		}
-		message, stalled := receiver.next(remaining)
+		message, stalled := receiver.next(remaining, nil)
 		if stalled {
 			return held, body, false
 		}
@@ -147,22 +150,27 @@ func startStreamReceiver(stream ext_proc.ExternalProcessor_ProcessServer) *strea
 	return receiver
 }
 
-// next returns the next message, or reports that the wait ran out first. A
-// timeout of zero waits for as long as it takes, which is what a router with
-// no accumulation deadline configured does.
-func (receiver *streamReceiver) next(timeout time.Duration) (receivedMessage, bool) {
+// next returns the next message: one a phase read ahead and put back first,
+// then whatever comes from Envoy or from a re-send in flight (spliced, nil
+// when there is none), or reports that the wait ran out first. A timeout of
+// zero waits for as long as it takes, which is what a router with no
+// accumulation deadline configured does.
+func (receiver *streamReceiver) next(timeout time.Duration, spliced <-chan hostRetryChunk) (receivedMessage, bool) {
 	if message, ok := receiver.popPending(); ok {
 		return message, false
 	}
-	if timeout <= 0 {
-		return receiver.receive(), false
+	var expired <-chan time.Time
+	if timeout > 0 {
+		timer := time.NewTimer(timeout)
+		defer timer.Stop()
+		expired = timer.C
 	}
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
 	select {
 	case message, ok := <-receiver.messages:
 		return repanicOnLoopGoroutine(closedAsEOF(message, ok)), false
-	case <-timer.C:
+	case chunk := <-spliced:
+		return receivedMessage{spliced: &chunk}, false
+	case <-expired:
 		return receivedMessage{}, true
 	}
 }
@@ -180,14 +188,6 @@ func (receiver *streamReceiver) poll() (receivedMessage, bool) {
 	default:
 		return receivedMessage{}, false
 	}
-}
-
-func (receiver *streamReceiver) receive() receivedMessage {
-	if message, ok := receiver.popPending(); ok {
-		return message
-	}
-	message, ok := <-receiver.messages
-	return repanicOnLoopGoroutine(closedAsEOF(message, ok))
 }
 
 // A closed channel is the reader having given up on a stream that is gone.
@@ -222,7 +222,11 @@ func (r *OpenAIRouter) endSilentStream(
 	stream ext_proc.ExternalProcessor_ProcessServer,
 	ctx *RequestContext,
 ) error {
-	return sendResponse(stream, r.handleSemanticStreamingResponseBody(nil, false, ctx), "response body")
+	response := r.handleSemanticStreamingResponseBody(nil, false, ctx)
+	if ctx.HostRetry.started() {
+		return r.sendSplicedReply(stream, ctx, response)
+	}
+	return sendResponse(stream, response, "response body")
 }
 
 // heldResponseBodyWait is how long the loop may wait before the bytes it is

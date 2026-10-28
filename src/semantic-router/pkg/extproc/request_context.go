@@ -96,6 +96,9 @@ type RequestContext struct {
 	// whether any content has arrived (processor_res_stream_silence.go).
 	StreamContentSince time.Time
 	StreamContentSeen  bool
+	// StreamFirstContentAt is when the streamed turn's first content event
+	// arrived. Keepalives and other non-content frames do not set it.
+	StreamFirstContentAt time.Time
 	// StreamEndedByReceiveError is true when the ext_proc exchange ended
 	// (the client or the proxy went away) before the stream did.
 	StreamEndedByReceiveError bool
@@ -169,6 +172,9 @@ type RequestContext struct {
 	// FlexResend is the standard re-send staged for a discount-endpoint
 	// dispatch (flex_resend.go); nil for every arm without a standard twin.
 	FlexResend *flexResendPlan
+	// HostRetry is the re-send on the arm's next provider host staged for a
+	// dispatch whose pin lists several (stream_host_retry.go); nil otherwise.
+	HostRetry *hostRetryPlan
 	// UpstreamBodyCut is set when the Router read the provider's body itself
 	// and the read ended in an error: the stream that ends with it is cut,
 	// not complete, whatever its last frame said.

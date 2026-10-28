@@ -54,6 +54,12 @@ func (r *OpenAIRouter) processResponseTrailers(
 	_ *ext_proc.ProcessingRequest_ResponseTrailers,
 	ctx *RequestContext,
 ) error {
+	if ctx.HostRetry.started() && !ctx.StreamingComplete {
+		// These are the replaced call's trailers. The re-send is still
+		// serving, so their reply waits for its end (sendSplicedReply).
+		ctx.HostRetry.trailersPending = true
+		return nil
+	}
 	final, err := r.endResponseBodyAtTrailers(ctx)
 	if err != nil {
 		logging.Errorf("ending the response body at its trailers failed: %v", err)
@@ -64,6 +70,10 @@ func (r *OpenAIRouter) processResponseTrailers(
 			return err
 		}
 	}
+	return sendResponseTrailersReply(stream, ctx)
+}
+
+func sendResponseTrailersReply(stream ext_proc.ExternalProcessor_ProcessServer, ctx *RequestContext) error {
 	response := &ext_proc.ProcessingResponse{
 		Response: &ext_proc.ProcessingResponse_ResponseTrailers{
 			ResponseTrailers: &ext_proc.TrailersResponse{},

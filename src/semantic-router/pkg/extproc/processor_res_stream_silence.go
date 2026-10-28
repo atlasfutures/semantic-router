@@ -29,14 +29,33 @@ func (r *OpenAIRouter) streamSilenceLimit(ctx *RequestContext) time.Duration {
 	if r == nil || r.Config == nil || ctx == nil {
 		return 0
 	}
-	seconds := r.Config.ResponseStreamFirstContentSec
+	// An arm may set its own first-content limit.
+	seconds := r.Config.FirstContentSecForModel(ctx.RequestModel)
 	if ctx.StreamContentSeen {
 		seconds = r.Config.ResponseStreamIdleSec
 	}
 	if seconds <= 0 {
 		return 0
 	}
-	return time.Duration(seconds) * time.Second
+	limit := time.Duration(seconds) * time.Second
+	if left, capped := r.hostRetryBudgetLeft(ctx); capped && left < limit {
+		// A re-send waits for its first content only as long as the turn's
+		// host-retry budget has left.
+		limit = max(left, time.Millisecond)
+	}
+	return limit
+}
+
+// hostRetryBudgetLeft is how long a re-send in flight, from its own start,
+// may wait for its first content before the turn's host-retry budget
+// (response_stream.host_retry_budget_sec) is spent; capped is false when no
+// budget applies.
+func (r *OpenAIRouter) hostRetryBudgetLeft(ctx *RequestContext) (time.Duration, bool) {
+	budget := r.Config.ResponseStreamHostRetryBudgetSec
+	if budget <= 0 || ctx.StreamContentSeen || !ctx.HostRetry.started() || ctx.StartTime.IsZero() {
+		return 0, false
+	}
+	return ctx.StartTime.Add(time.Duration(budget) * time.Second).Sub(ctx.StreamContentSince), true
 }
 
 // streamSilenceWait is how long the loop may wait for a message before the
@@ -84,12 +103,22 @@ func observeStreamContent(ctx *RequestContext, events []llmprotocol.Event) {
 		return
 	}
 	for _, event := range events {
-		if streamContentEvent(event.Type) {
+		if streamContentEvent(event.Type) && !bareToolCallStart(event) {
 			ctx.StreamContentSince = time.Now()
+			if !ctx.StreamContentSeen {
+				ctx.StreamFirstContentAt = ctx.StreamContentSince
+			}
 			ctx.StreamContentSeen = true
 			return
 		}
 	}
+}
+
+// bareToolCallStart is a tool-call delta that carries no arguments yet: a
+// Chat stream names the call (id and name) in its first delta, which is an
+// item's start, not content.
+func bareToolCallStart(event llmprotocol.Event) bool {
+	return event.Type == llmprotocol.EventToolCallDelta && (event.ToolCall == nil || event.ToolCall.Arguments == "")
 }
 
 func streamContentEvent(eventType llmprotocol.EventType) bool {
