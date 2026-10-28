@@ -10,13 +10,13 @@ func TestThinkingRunAnchorsOnceAndEndsOtherRuns(t *testing.T) {
 	opaque := WithReasoningProvenance(nil, "claude", []string{"redacted-blob"})
 
 	provenance := WithThinkingRun(opaque, sonnet, []string{opus}, false, "sig-1")
-	if got := ThinkingRunAnchors(provenance, sonnet); fmt.Sprint(got) != fmt.Sprint([]string{ReasoningBlockDigest("sig-1")}) {
+	if got := ThinkingRunAnchors(provenance, sonnet); fmt.Sprint(got) != fmt.Sprint([]string{ThinkingRunAnchorDigest("sig-1")}) {
 		t.Fatalf("anchors = %v", got)
 	}
 	// An anchored turn and a turn that signed nothing keep the anchor.
 	provenance = WithThinkingRun(provenance, sonnet, []string{opus}, true, "sig-2")
 	provenance = WithThinkingRun(provenance, sonnet, []string{opus}, false, "")
-	if got := ThinkingRunAnchors(provenance, sonnet); len(got) != 1 || got[0] != ReasoningBlockDigest("sig-1") {
+	if got := ThinkingRunAnchors(provenance, sonnet); len(got) != 1 || got[0] != ThinkingRunAnchorDigest("sig-1") {
 		t.Fatalf("anchors moved: %v", got)
 	}
 	// A turn on another model ends the run; opaque provenance is untouched.
@@ -39,7 +39,7 @@ func TestThinkingRunKeepsItsAnchorsWithinBounds(t *testing.T) {
 		provenance = WithThinkingRun(provenance, worker, nil, false, fmt.Sprintf("sig-%d", index))
 	}
 	anchors := ThinkingRunAnchors(provenance, worker)
-	if len(anchors) != MaxThinkingRunAnchors || anchors[len(anchors)-1] != ReasoningBlockDigest(fmt.Sprintf("sig-%d", MaxThinkingRunAnchors+1)) {
+	if len(anchors) != MaxThinkingRunAnchors || anchors[len(anchors)-1] != ThinkingRunAnchorDigest(fmt.Sprintf("sig-%d", MaxThinkingRunAnchors+1)) {
 		t.Fatalf("anchors = %v", anchors)
 	}
 	// Opaque blocks recorded after the anchor never push it out: the run's
@@ -52,5 +52,15 @@ func TestThinkingRunKeepsItsAnchorsWithinBounds(t *testing.T) {
 	provenance = WithThinkingRun(provenance, worker, nil, true, "")
 	if len(provenance) > MaxReasoningProvenance || len(ThinkingRunAnchors(provenance, worker)) != MaxThinkingRunAnchors {
 		t.Fatalf("provenance = %d entries, anchors %v", len(provenance), ThinkingRunAnchors(provenance, worker))
+	}
+}
+
+// An anchor at a redacted_thinking block is never read as that block's
+// issuer record: the opaque layer leaves the block to its own rules.
+func TestThinkingRunAnchorIsNotAnOpaqueIssuerRecord(t *testing.T) {
+	worker := ThinkingRunWorker("opus")
+	provenance := WithThinkingRun(nil, worker, nil, false, "redacted-data")
+	if ReasoningIssuedElsewhere(provenance, "redacted-data", "opus-target") {
+		t.Fatalf("a run anchor read as an opaque issuer: %+v", provenance)
 	}
 }

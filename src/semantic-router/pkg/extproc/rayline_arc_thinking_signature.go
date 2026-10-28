@@ -199,7 +199,7 @@ func thinkingRunStart(messages []llmprotocol.Message, anchors []string) int {
 		// A signed block's signature or a redacted block's data: a run may
 		// start at either (an adopted redacted-only loop message).
 		for _, key := range protocolcodec.MessageThinkingKeys(message) {
-			if anchored[reasoning.ReasoningBlockDigest(key)] {
+			if anchored[reasoning.ThinkingRunAnchorDigest(key)] {
 				return index
 			}
 		}

@@ -305,7 +305,7 @@ func TestCommittedClaudeTurnAnchorsItsRun(t *testing.T) {
 		return reread.ReasoningProvenance
 	}
 	sonnet, opus := reasoning.ThinkingRunWorker("sonnet"), reasoning.ThinkingRunWorker("opus")
-	digest := reasoning.ReasoningBlockDigest
+	digest := reasoning.ThinkingRunAnchorDigest
 
 	provenance := commit(sonnet, []string{opus}, false, "sig-1")
 	if anchors := reasoning.ThinkingRunAnchors(provenance, sonnet); fmt.Sprint(anchors) != fmt.Sprint([]string{digest("sig-1")}) {
@@ -357,7 +357,7 @@ func TestThinkingRunAdoptsAndRestarts(t *testing.T) {
 		_ = store.Abort(context.Background(), next)
 		return reasoning.ThinkingRunAnchors(reread.ReasoningProvenance, worker)
 	}
-	digest := reasoning.ReasoningBlockDigest
+	digest := reasoning.ThinkingRunAnchorDigest
 	if got := commit(false, false, "sig-loop"); fmt.Sprint(got) != fmt.Sprint([]string{digest("sig-loop")}) {
 		t.Fatalf("adopted run = %v", got)
 	}
@@ -636,7 +636,7 @@ func TestRunAnchoredAtRedactedThinkingIsFound(t *testing.T) {
 			Format: llmprotocol.AnthropicMessagesV1, Type: "redacted_thinking", Raw: []byte(`{"type":"redacted_thinking","data":"blob"}`),
 		}}}},
 	}
-	if start := thinkingRunStart(messages, []string{reasoning.ReasoningBlockDigest("blob")}); start != 1 {
+	if start := thinkingRunStart(messages, []string{reasoning.ThinkingRunAnchorDigest("blob")}); start != 1 {
 		t.Fatalf("run start = %d, want 1", start)
 	}
 }
@@ -677,7 +677,7 @@ func TestOpaqueBlocksNeverEvictTheRunAnchor(t *testing.T) {
 	}
 	_ = store.Abort(context.Background(), next)
 	if len(reread.ReasoningProvenance) > reasoning.MaxReasoningProvenance ||
-		fmt.Sprint(reasoning.ThinkingRunAnchors(reread.ReasoningProvenance, worker)) != fmt.Sprint([]string{reasoning.ReasoningBlockDigest("sig-anchor")}) {
+		fmt.Sprint(reasoning.ThinkingRunAnchors(reread.ReasoningProvenance, worker)) != fmt.Sprint([]string{reasoning.ThinkingRunAnchorDigest("sig-anchor")}) {
 		t.Fatalf("provenance = %d entries, anchors %v", len(reread.ReasoningProvenance), reasoning.ThinkingRunAnchors(reread.ReasoningProvenance, worker))
 	}
 }

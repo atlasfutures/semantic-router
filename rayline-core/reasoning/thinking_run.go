@@ -23,7 +23,19 @@ package reasoning
 // transcripts under one episode re-anchors on each), the most recent kept.
 const MaxThinkingRunAnchors = 4
 
-const thinkingRunPrefix = "thinking-run\x00"
+const (
+	thinkingRunPrefix = "thinking-run\x00"
+	// thinkingRunAnchorPrefix keeps an anchor's block digest apart from an
+	// opaque block's: an anchor at a redacted_thinking block must never read
+	// as that block's issuer record (ReasoningIssuedElsewhere).
+	thinkingRunAnchorPrefix = "thinking-run-anchor\x00"
+)
+
+// ThinkingRunAnchorDigest is the block digest an anchor at key (a thinking
+// signature, or a redacted_thinking block's data) is recorded under.
+func ThinkingRunAnchorDigest(key string) string {
+	return ReasoningBlockDigest(thinkingRunAnchorPrefix + key)
+}
 
 // ThinkingRunWorker names the provenance worker of a thinking run on a
 // Claude target: the thinking issuer, in a namespace of its own so a run's
@@ -78,7 +90,7 @@ func WithThinkingRun(
 		}
 	}
 	if !anchored && signature != "" {
-		block := ReasoningBlockDigest(signature)
+		block := ThinkingRunAnchorDigest(signature)
 		kept := anchors[:0]
 		for _, anchor := range anchors {
 			if anchor.Block != block {
