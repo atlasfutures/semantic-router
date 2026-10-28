@@ -31,6 +31,25 @@ type CanonicalRouterGlobal struct {
 	ModelSelection            ModelSelectionConfig     `yaml:"model_selection"`
 	Learning                  RouterLearningConfig     `yaml:"learning,omitempty"`
 	ThinkingMarkers           CanonicalThinkingMarkers `yaml:"thinking_markers,omitempty"`
+	// ThinkingSignatures governs the Claude thinking signatures a request's
+	// history carries to a Claude worker.
+	ThinkingSignatures CanonicalThinkingSignatures `yaml:"thinking_signatures,omitempty"`
+}
+
+// CanonicalThinkingSignatures controls what a worker is sent of the signed or
+// encrypted reasoning in a request's history. By default the Router strips
+// that reasoning from every earlier assistant turn it did not itself serve on
+// the same model (the episode's thinking run): a Claude worker loses such a
+// turn's reasoning whole, any other worker its signatures, redacted blocks
+// and reasoning_details. A call refused for an invalid thinking signature, or
+// for another provider's encrypted reasoning, is re-sent once with the
+// earlier turns' reasoning stripped (extproc rayline_arc_thinking_signature.go).
+// A signature or blob verifies only on the model and provider family that
+// wrote it, so a resent foreign one fails the turn with a 400 on every retry.
+type CanonicalThinkingSignatures struct {
+	// KeepUnserved turns both off: the history's reasoning reaches the worker
+	// as the reasoning carry rules leave it, and a refusal is not re-sent.
+	KeepUnserved bool `yaml:"keep_unserved,omitempty"`
 }
 
 // CanonicalThinkingMarkers controls the Router's thinking markers
@@ -392,6 +411,7 @@ func applyCanonicalRouterGlobal(cfg *RouterConfig, router CanonicalRouterGlobal)
 	cfg.ResponseStreamIdleSec = router.ResponseStream.IdleSec
 	cfg.FlexResendBudgetSec = router.ResponseStream.ResendBudgetSec
 	cfg.ThinkingMarkerMint = router.ThinkingMarkers.Mint
+	cfg.KeepUnservedClaudeThinking = router.ThinkingSignatures.KeepUnserved
 	cfg.SkipProcessing = router.SkipProcessing
 	cfg.ModelSelection = router.ModelSelection
 	cfg.RouterLearning = router.Learning

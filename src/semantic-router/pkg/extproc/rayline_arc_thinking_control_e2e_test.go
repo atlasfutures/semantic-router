@@ -131,6 +131,10 @@ func v5Turn(t *testing.T, router *OpenAIRouter, fake *fakePolicyService, action,
 // default base, reaches the provider as the golden corpus's bytes.
 func TestV5DispatchMatchesTheGoldenCorpusOnMessages(t *testing.T) {
 	router, fake := v5Router(t, "anthropic")
+	// The golden corpus pins the thinking control and the codecs, beneath
+	// the thinking-signature guard, which would strip its unserved history
+	// (rayline_arc_thinking_signature_test.go covers the guard).
+	router.Config.KeepUnservedClaudeThinking = true
 	dir := filepath.Join(v5Golden, "messages", "claude_code_body_default")
 	client, err := os.ReadFile(filepath.Join(dir, "client-00.json"))
 	if err != nil {

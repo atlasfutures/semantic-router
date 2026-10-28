@@ -321,6 +321,9 @@ func CanonicalGlobalFromRouterConfig(cfg *RouterConfig) *CanonicalGlobal {
 			ThinkingMarkers: CanonicalThinkingMarkers{
 				Mint: cfg.ThinkingMarkerMint,
 			},
+			ThinkingSignatures: CanonicalThinkingSignatures{
+				KeepUnserved: cfg.KeepUnservedClaudeThinking,
+			},
 		},
 		Services: CanonicalServiceGlobal{
 			API:           cfg.API,

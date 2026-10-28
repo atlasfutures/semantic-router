@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -24,7 +25,8 @@ import (
 // other member. The message is redacted as the client's copy is
 // (llmprotocol.RedactProviderText), its links are dropped, every quoted span
 // is replaced by [quoted] (a provider that echoes a request value quotes it:
-// "Invalid value: 'x'"), its whitespace is folded, and it is cut at
+// "Invalid value: 'x'") except a backticked plain identifier, which names a
+// protocol member ("Invalid `signature` in `thinking` block"), its whitespace is folded, and it is cut at
 // upstreamErrorTextMax bytes. An echo the provider did not quote is not
 // caught; the cut bounds it. An account refusal (401, 402) is left out: its
 // text names the cell's provider account. A slug is kept only when it has a
@@ -104,7 +106,10 @@ func loggableUpstreamMessage(message string) string {
 	return message[:cut]
 }
 
-// withoutQuotedSpans replaces each quoted span with [quoted]. An apostrophe
+// withoutQuotedSpans replaces each quoted span with [quoted], except a
+// backticked protocol member name (plainIdentifier), which names a
+// member rather than echoing a value: "Invalid `signature` in `thinking`
+// block" reads as Anthropic wrote it. An apostrophe
 // inside a word (can't) opens nothing; a backslash escapes the next rune; a
 // span left open runs to the end of the message, so no part of a quoted
 // value is ever kept.
@@ -131,13 +136,53 @@ func withoutQuotedSpans(message string) string {
 				break
 			}
 		}
-		out.WriteString("[quoted]")
 		if end < 0 {
+			out.WriteString("[quoted]")
 			break
+		}
+		if inner := string(runes[index+1 : end]); closer == '`' && plainIdentifier(inner) {
+			out.WriteString("`" + inner + "`")
+		} else {
+			out.WriteString("[quoted]")
 		}
 		index = end
 	}
 	return out.String()
+}
+
+// upstreamErrorIdentifierPattern is a protocol member's name as a provider
+// backticks it in an error: lower case, digits, underscores and dots, at most
+// upstreamErrorIdentifierMax bytes. Shape alone is not enough, since a
+// client's own value can have it (a tool name, an id), so every dot-separated
+// segment must also be a known protocol word or an index.
+var upstreamErrorIdentifierPattern = regexp.MustCompile(`^[a-z_][a-z0-9_.]*$`)
+
+const upstreamErrorIdentifierMax = 40
+
+// upstreamErrorProtocolWords are the Messages, Chat and Responses member and
+// type names a provider names in its errors.
+var upstreamErrorProtocolWords = map[string]bool{
+	"thinking": true, "redacted_thinking": true, "signature": true, "data": true, "text": true,
+	"type": true, "content": true, "role": true, "user": true, "assistant": true, "system": true,
+	"messages": true, "tools": true, "tool_choice": true, "tool_use": true, "tool_result": true,
+	"tool_use_id": true, "tool_calls": true, "tool_call_id": true, "input": true, "name": true, "id": true,
+	"image": true, "document": true, "source": true, "cache_control": true, "max_tokens": true,
+	"budget_tokens": true, "temperature": true, "top_p": true, "top_k": true, "stop_sequences": true,
+	"stream": true, "metadata": true, "model": true, "enabled": true, "disabled": true, "adaptive": true,
+	"output_config": true, "effort": true, "context_management": true, "edits": true, "reasoning": true,
+	"reasoning_content": true, "reasoning_details": true, "encrypted_content": true, "summary": true,
+}
+
+func plainIdentifier(text string) bool {
+	if len(text) > upstreamErrorIdentifierMax || !upstreamErrorIdentifierPattern.MatchString(text) {
+		return false
+	}
+	for _, segment := range strings.Split(text, ".") {
+		if _, err := strconv.Atoi(segment); err != nil && !upstreamErrorProtocolWords[segment] {
+			return false
+		}
+	}
+	return true
 }
 
 // pythonLiteralPrefixes open a quoted literal (b'...', rb'...') where an

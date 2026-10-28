@@ -61,6 +61,68 @@ func repanicOnLoopGoroutine(message receivedMessage) receivedMessage {
 
 type streamReceiver struct {
 	messages chan receivedMessage
+	// pending are messages a phase read ahead and put back; they are
+	// returned, in order, before anything still on the stream.
+	pending []receivedMessage
+}
+
+// pushBack returns messages read ahead, to be received again in order.
+func (receiver *streamReceiver) pushBack(messages []receivedMessage) {
+	if len(messages) == 0 {
+		return
+	}
+	receiver.pending = append(append([]receivedMessage(nil), messages...), receiver.pending...)
+}
+
+func (receiver *streamReceiver) popPending() (receivedMessage, bool) {
+	if len(receiver.pending) == 0 {
+		return receivedMessage{}, false
+	}
+	message := receiver.pending[0]
+	receiver.pending = receiver.pending[1:]
+	return message, true
+}
+
+// holdBody reads a response's body ahead, before its headers are answered:
+// every message up to the one that ends the body (a body chunk with
+// end_of_stream, or the trailers), within wait and limit. It returns the
+// messages read, which the caller hands back with pushBack when it does not
+// replace the response, the body they carry, and whether the whole body
+// arrived. Only FULL_DUPLEX_STREAMED sends the body before the headers are
+// answered; in any other mode this waits out wait and reads nothing.
+func (receiver *streamReceiver) holdBody(wait time.Duration, limit int) ([]receivedMessage, []byte, bool) {
+	deadline := time.Now().Add(wait)
+	var held []receivedMessage
+	var body []byte
+	for {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return held, body, false
+		}
+		message, stalled := receiver.next(remaining)
+		if stalled {
+			return held, body, false
+		}
+		held = append(held, message)
+		if message.err != nil || message.request == nil {
+			return held, body, false
+		}
+		switch {
+		case message.request.GetResponseBody() != nil:
+			chunk := message.request.GetResponseBody()
+			body = append(body, chunk.GetBody()...)
+			if len(body) > limit {
+				return held, body, false
+			}
+			if chunk.GetEndOfStream() {
+				return held, body, true
+			}
+		case message.request.GetResponseTrailers() != nil:
+			return held, body, true
+		default:
+			return held, body, false
+		}
+	}
 }
 
 // startStreamReceiver reads the stream until it fails. The buffer of one lets
@@ -89,6 +151,9 @@ func startStreamReceiver(stream ext_proc.ExternalProcessor_ProcessServer) *strea
 // timeout of zero waits for as long as it takes, which is what a router with
 // no accumulation deadline configured does.
 func (receiver *streamReceiver) next(timeout time.Duration) (receivedMessage, bool) {
+	if message, ok := receiver.popPending(); ok {
+		return message, false
+	}
 	if timeout <= 0 {
 		return receiver.receive(), false
 	}
@@ -106,6 +171,9 @@ func (receiver *streamReceiver) next(timeout time.Duration) (receivedMessage, bo
 // timer and a message can fall due together, and select picks either; the
 // message is the one that must not be lost.
 func (receiver *streamReceiver) poll() (receivedMessage, bool) {
+	if message, ok := receiver.popPending(); ok {
+		return message, true
+	}
 	select {
 	case message, ok := <-receiver.messages:
 		return repanicOnLoopGoroutine(closedAsEOF(message, ok)), true
@@ -115,6 +183,9 @@ func (receiver *streamReceiver) poll() (receivedMessage, bool) {
 }
 
 func (receiver *streamReceiver) receive() receivedMessage {
+	if message, ok := receiver.popPending(); ok {
+		return message
+	}
 	message, ok := <-receiver.messages
 	return repanicOnLoopGoroutine(closedAsEOF(message, ok))
 }

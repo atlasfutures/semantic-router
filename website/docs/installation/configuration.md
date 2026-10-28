@@ -430,6 +430,42 @@ global:
   was trained on thinking replayed this way: it changes what those clients
   send from text to thinking.
 
+### Thinking signatures
+
+A thinking signature, or a provider's encrypted reasoning, verifies only on
+the model and provider family that wrote it. Anthropic refuses a history
+holding thinking another model signed ("Invalid `signature` in `thinking`
+block"), and OpenRouter refuses one holding another provider's encrypted
+reasoning ("can only be processed by the provider that created it"), for
+example after a switch from Claude to an OpenAI model. Either fails the turn
+on every retry.
+
+```yaml
+global:
+  router:
+    thinking_signatures:
+      keep_unserved: false
+```
+
+- By default a worker is sent the signed or encrypted reasoning of an
+  earlier assistant turn only when the Router served that turn on the same
+  model, in the episode's current run on it. Outside the run, a Claude
+  worker loses the turn's reasoning whole, and any other worker loses its
+  signatures, redacted blocks and reasoning_details while keeping its
+  reasoning text. Over Messages, which takes thinking only signed, the
+  reasoning goes whole. The latest assistant message of an active tool loop
+  is kept for Claude, which requires it.
+- A call refused for either reason is re-sent once, before anything reaches
+  the client, with the signed and encrypted reasoning of every assistant
+  turn stripped, the active tool loop's latest reply included: Anthropic
+  binds a signature to the history before it, so no block survives the
+  removal of an earlier one. When the loop's reply loses its thinking,
+  thinking is turned off for that one call where the model's reasoning
+  family allows it; an always-on model keeps its settings. The refusal can
+  be read before its headers are answered only under `FULL_DUPLEX_STREAMED`
+  response bodies.
+- `keep_unserved: true` turns both off.
+
 ### Catalog-backed models
 
 Built-in support is additive to the same `version: v0.3` hierarchy. Set the

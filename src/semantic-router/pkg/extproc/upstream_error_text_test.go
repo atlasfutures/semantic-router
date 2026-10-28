@@ -122,3 +122,25 @@ func TestCredentialShapedTokensNeverReachTheLog(t *testing.T) {
 		t.Fatalf("slugs = %q %v", text.pinnedSlug, text.acceptingSlugs)
 	}
 }
+
+// A backticked plain identifier names a protocol member and is kept, so
+// Anthropic's signature refusal reads as written; every other quoted span,
+// a backticked value included, is still dropped.
+func TestBacktickedIdentifiersAreKept(t *testing.T) {
+	for message, want := range map[string]string{
+		"messages.19.content.12: Invalid `signature` in `thinking` block": "messages.19.content.12: Invalid `signature` in `thinking` block",
+		"Unknown field `context_management.edits` in body":                "Unknown field `context_management.edits` in body",
+		"Invalid value `customer-private-input` for model":                "Invalid value [quoted] for model",
+		"Invalid value `Customer` for role":                               "Invalid value [quoted] for role",
+		"Invalid value `customer_private_input` for field":                "Invalid value [quoted] for field",
+		"Unknown tool `deploy_prod.secret_step`":                          "Unknown tool [quoted]",
+		"Bad `two words` here":                                            "Bad [quoted] here",
+		"Unclosed `signature":                                             "Unclosed [quoted]",
+		"Too long `an_identifier_well_past_forty_bytes_of_length_x`":      "Too long [quoted]",
+		`Quoted 'signature' and "thinking" stay dropped`:                  `Quoted [quoted] and [quoted] stay dropped`,
+	} {
+		if got := loggableUpstreamMessage(message); got != want {
+			t.Fatalf("%q became %q, want %q", message, got, want)
+		}
+	}
+}

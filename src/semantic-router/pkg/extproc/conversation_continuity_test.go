@@ -67,6 +67,14 @@ const (
 	// the top-level tools on OpenRouter (req_filter_tool_changes.go). A
 	// system message that is left empty goes too.
 	transformToolChangesToTools = "tool_changes_to_tools"
+	// An arm reached over Messages is sent no thinking from an earlier
+	// assistant turn the cell did not serve on its model (rayline_arc_thinking_signature.go):
+	// a captured conversation's thinking was signed elsewhere, so every
+	// assistant message loses its thinking but the active tool loop's latest
+	// on Claude, and a message left empty goes.
+	transformUnservedThinkingStripped = "unserved_thinking_stripped"
+	// A worker that is not Claude loses the active loop's thinking too.
+	transformUnservedLoopThinkingStripped = "unserved_loop_thinking_stripped"
 )
 
 type continuityCase struct {
@@ -383,7 +391,21 @@ func conversationShape(raw []byte) ([]messageShape, error) {
 // instead, in conversationKept.
 func expectedConversation(client []messageShape, transforms map[string]bool) []messageShape {
 	out := make([]messageShape, 0, len(client))
-	for _, message := range client {
+	loopStart, loopEnd := activeLoopShape(client)
+	for index, message := range client {
+		if transforms[transformUnservedThinkingStripped] && message.Role == "assistant" &&
+			(loopEnd < 0 || index < loopStart || index > loopEnd || transforms[transformUnservedLoopThinkingStripped]) {
+			kept := make([]blockShape, 0, len(message.Blocks))
+			for _, block := range message.Blocks {
+				if block.Type != "thinking" && block.Type != "redacted_thinking" {
+					kept = append(kept, block)
+				}
+			}
+			if len(kept) == 0 {
+				continue
+			}
+			message.Blocks = kept
+		}
 		if transforms[transformDeveloperAsSystem] && message.Role == "developer" {
 			message.Role = "system"
 		}
@@ -412,6 +434,39 @@ func expectedConversation(client []messageShape, transforms map[string]bool) []m
 		out = append(out, message)
 	}
 	return out
+}
+
+// activeLoopShape is the active tool loop's latest reply as the indexes of
+// its first and last assistant message, or -1, -1: the consecutive assistant
+// messages before the trailing results, when those answer any of its calls.
+func activeLoopShape(messages []messageShape) (int, int) {
+	last := len(messages) - 1
+	for last >= 0 && messages[last].Role != "assistant" {
+		last--
+	}
+	if last < 0 || last == len(messages)-1 {
+		return -1, -1
+	}
+	answered := map[string]bool{}
+	for _, message := range messages[last+1:] {
+		for _, block := range message.Blocks {
+			if block.Type == "tool_result" && block.Link != "" {
+				answered[block.Link] = true
+			}
+		}
+	}
+	start := last
+	for start > 0 && messages[start-1].Role == "assistant" {
+		start--
+	}
+	for _, message := range messages[start : last+1] {
+		for _, block := range message.Blocks {
+			if block.Type == "tool_use" && answered[block.Link] {
+				return start, last
+			}
+		}
+	}
+	return -1, -1
 }
 
 // conversationKept reports how the provider's conversation differs from the
@@ -686,6 +741,11 @@ func TestConversationContinuityOfCapturedClients(t *testing.T) {
 				transforms := fixture.Case.Transforms
 				if action.ID == v5GLMUp {
 					transforms = append([]string{transformSteerTailText}, transforms...)
+				}
+				// Every arm here reads Messages, which takes thinking only signed.
+				transforms = append([]string{transformUnservedThinkingStripped}, transforms...)
+				if action.ID != v5OpusAction {
+					transforms = append([]string{transformUnservedLoopThinkingStripped}, transforms...)
 				}
 				err := errors.Join(
 					conversationKept(fixture.Client, result.Provider, transforms),

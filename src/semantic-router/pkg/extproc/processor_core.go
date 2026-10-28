@@ -120,6 +120,7 @@ func (r *OpenAIRouter) processWithContext(
 	}()
 
 	receiver := startStreamReceiver(stream)
+	ctx.streamReceiver = receiver
 	for {
 		message, stalled := receiver.next(r.loopWait(ctx))
 		if stalled {
@@ -353,6 +354,9 @@ func (r *OpenAIRouter) processResponseHeaders(
 	resent := r.flexResendOnResponseHeaders(v, ctx)
 	if resent == nil {
 		resent = r.endpointResendOnResponseHeaders(v, ctx)
+	}
+	if resent == nil {
+		resent = r.thinkingSignatureRetryOnResponseHeaders(v, ctx)
 	}
 	if resent != nil {
 		if err := sendResponse(stream, resent, "response header"); err != nil {

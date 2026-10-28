@@ -215,6 +215,12 @@ func reasoningValueAllowed(values []string, candidate string) bool {
 	return false
 }
 
+// ModelCanDisableReasoning reports whether a model's reasoning family can turn
+// reasoning off; false for an always-on family or a model with none.
+func (rc *RouterConfig) ModelCanDisableReasoning(model string) bool {
+	return rc != nil && reasoningFamilyCanDisableConfig(rc.GetModelReasoningFamily(model))
+}
+
 func reasoningFamilyCanDisableConfig(family *ReasoningFamilyConfig) bool {
 	if family == nil {
 		return false

@@ -84,6 +84,26 @@ type raylineARCEpisodeTransaction struct {
 	// record, with the turn, which worker issued each block.
 	dispatchWorker  string
 	opaqueReasoning []string
+	// thinkingWorker is the thinking run of the Claude model this turn was
+	// dispatched to (rayline_arc_thinking_signature.go), thinkingOthers the
+	// runs of the cell's other Claude models, which this turn ends,
+	// thinkingAnchored whether the request's history held the run's anchor,
+	// and thinkingSignature the response's anchor key
+	// (protocolcodec.ResponseAnchorKey), the anchor of a new run.
+	// thinkingAdopted is the signature of the active tool loop's latest
+	// thinking when the run did not cover it and it was sent anyway: a new
+	// run starts at it, so the message keeps its thinking on later turns and
+	// the prefix the turn's own signature was written over stays as sent.
+	// thinkingRestart says the turn was re-sent with the run's thinking
+	// stripped, so the run starts again from this turn.
+	thinkingWorker    string
+	thinkingOthers    []string
+	thinkingAnchored  bool
+	thinkingSignature string
+	thinkingAdopted   string
+	thinkingRestart   bool
+	// thinkingReplyIndex is where the reply will sit in the next history.
+	thinkingReplyIndex int
 	// call is the cache evidence of this turn's policy-service call: the
 	// action it served, the TTL its dispatched body stated and the
 	// provider's usage. It is recorded on the served arm's warmth with the
@@ -674,8 +694,28 @@ func (transaction *raylineARCEpisodeTransaction) nextState() (*raylinearc.Episod
 		nextState.Controls = raylinearc.WithControlPlacement(nextState.Controls, *transaction.controlPlacement)
 	}
 	if len(transaction.opaqueReasoning) > 0 && transaction.dispatchWorker != "" {
-		nextState.ReasoningProvenance = reasoning.WithReasoningProvenance(
-			nextState.ReasoningProvenance, transaction.dispatchWorker, transaction.opaqueReasoning,
+		// The live thinking run's anchors are set aside, so the opaque
+		// blocks are trimmed against the rest of the record alone.
+		own, rest := reasoning.SplitThinkingRun(nextState.ReasoningProvenance, transaction.thinkingWorker)
+		if transaction.thinkingWorker == "" {
+			own, rest = nil, nextState.ReasoningProvenance
+		}
+		rest = reasoning.WithReasoningProvenance(rest, transaction.dispatchWorker, transaction.opaqueReasoning)
+		if limit := reasoning.MaxReasoningProvenance - len(own); len(rest) > limit {
+			rest = rest[len(rest)-max(limit, 0):]
+		}
+		nextState.ReasoningProvenance = append(rest, own...)
+	}
+	if transaction.thinkingWorker != "" {
+		provenance, anchored, anchor := nextState.ReasoningProvenance, transaction.thinkingAnchored, transaction.thinkingAdopted
+		if transaction.thinkingRestart {
+			provenance, anchored = reasoning.WithoutThinkingRun(provenance, transaction.thinkingWorker), false
+		}
+		if anchor == "" {
+			anchor = transaction.thinkingSignature
+		}
+		nextState.ReasoningProvenance = reasoning.WithThinkingRun(
+			provenance, transaction.thinkingWorker, transaction.thinkingOthers, anchored, anchor,
 		)
 	}
 	if transaction.reasoningIssuersStaged {
@@ -982,4 +1022,5 @@ func (transaction *raylineARCEpisodeTransaction) observeOpaqueReasoning(requestC
 		return
 	}
 	transaction.opaqueReasoning = protocolcodec.ResponseOpaqueReasoning(requestContext.SemanticResponse)
+	transaction.thinkingSignature = protocolcodec.ResponseAnchorKey(requestContext.SemanticResponse, transaction.thinkingReplyIndex)
 }

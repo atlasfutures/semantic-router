@@ -27,6 +27,10 @@ func TestPolicyDecideRequestCarriesTheClientBytes(t *testing.T) {
 		t.Fatalf("no captured Messages bodies: %v", err)
 	}
 	router, fake := v5RouterForCaptures(t)
+	// The golden corpus pins the thinking control and the codecs, beneath
+	// the thinking-signature guard, which would strip its unserved history
+	// (rayline_arc_thinking_signature_test.go covers the guard).
+	router.Config.KeepUnservedClaudeThinking = true
 	for index, path := range clients {
 		client, err := os.ReadFile(path)
 		if err != nil {

@@ -258,6 +258,9 @@ type RouterOptions struct {
 	// ThinkingMarkerMint signs thinking a non-Anthropic upstream wrote with a
 	// Router thinking marker on Messages output (semantic-router #191).
 	ThinkingMarkerMint bool `yaml:"thinking_marker_mint,omitempty"`
+	// KeepUnservedClaudeThinking turns off the thinking-signature guard; see
+	// CanonicalThinkingSignatures. Off, so the guard is on, by default.
+	KeepUnservedClaudeThinking bool `yaml:"keep_unserved_claude_thinking,omitempty"`
 }
 
 // SkipProcessingConfig gates the x-vsr-skip-processing request header.
