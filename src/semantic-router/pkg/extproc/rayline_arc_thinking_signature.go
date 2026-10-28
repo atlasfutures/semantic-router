@@ -155,7 +155,7 @@ func (r *OpenAIRouter) guardHistoryReasoning(
 	if ctx == nil {
 		return 0
 	}
-	ctx.thinkingRetryKeep, ctx.thinkingRetryKeepActive = nil, false
+	ctx.thinkingRetryKeep = nil
 	if request == nil || !r.thinkingSignatureGuardOn(dispatch) || ctx.RaylineARCTransaction == nil {
 		return 0
 	}
@@ -170,6 +170,7 @@ func (r *OpenAIRouter) guardHistoryReasoning(
 	}
 	runStart := thinkingRunStart(request.Messages, reasoning.ThinkingRunAnchors(provenance, worker))
 	transaction.thinkingAnchored = runStart >= 0
+	transaction.thinkingReplyIndex = len(request.Messages)
 	covered := func(index int) bool { return runStart >= 0 && index >= runStart }
 	active := activeToolLoopAssistant(request.Messages)
 	transaction.thinkingAdopted = ""
@@ -180,13 +181,12 @@ func (r *OpenAIRouter) guardHistoryReasoning(
 		// covers it.
 		keepActive = true
 		ctx.thinkingRetryKeep = protocolcodec.MessageThinkingKeys(request.Messages[active])
-		ctx.thinkingRetryKeepActive = true
 	case active >= 0 && claude:
 		// Sent though the run does not cover it: if Claude takes it, a new
 		// run starts at it, so later turns keep it and the prefix this turn's
 		// thinking is signed over does not change.
 		keepActive = true
-		if keys := protocolcodec.MessageAnchorKeys(request.Messages[active]); len(keys) > 0 {
+		if keys := protocolcodec.MessageAnchorKeys(request.Messages[active], active); len(keys) > 0 {
 			transaction.thinkingAdopted = keys[0]
 		}
 	}
@@ -227,7 +227,7 @@ func thinkingRunStart(messages []llmprotocol.Message, anchors []string) int {
 		if message.Role != llmprotocol.RoleAssistant {
 			continue
 		}
-		for _, key := range protocolcodec.MessageAnchorKeys(message) {
+		for _, key := range protocolcodec.MessageAnchorKeys(message, index) {
 			if anchored[reasoning.ThinkingRunAnchorDigest(key)] {
 				return index
 			}
@@ -273,9 +273,6 @@ type thinkingSignatureRetryPlan struct {
 	dispatch   *providerDispatch
 	dispatched []byte
 	keep       map[string]bool
-	// keepActive says the run covers the active loop's latest message, which
-	// a Chat re-send then keeps whole.
-	keepActive bool
 }
 
 // stageThinkingSignatureRetry keeps what the re-send needs for a Claude
@@ -294,7 +291,7 @@ func (r *OpenAIRouter) stageThinkingSignatureRetry(ctx *RequestContext, dispatch
 		keep[key] = true
 	}
 	ctx.ThinkingSignatureRetry = &thinkingSignatureRetryPlan{
-		dispatch: dispatch, dispatched: body, keep: keep, keepActive: ctx.thinkingRetryKeepActive,
+		dispatch: dispatch, dispatched: body, keep: keep,
 	}
 }
 
@@ -347,12 +344,10 @@ func (plan *thinkingSignatureRetryPlan) retryBody(refusal []byte) ([]byte, think
 		}
 		return retryBody, change, changed
 	case llmprotocol.OpenAIChatV1:
-		keepActive := plan.keepActive && len(refusedMessagePattern.FindSubmatch(refusal)) > 0
-		retryBody, change, changed := chatRetryBody(plan.dispatched, keepActive)
-		if !changed && keepActive {
-			retryBody, change, changed = chatRetryBody(plan.dispatched, false)
-		}
-		return retryBody, change, changed
+		// A Chat refusal's message index (Anthropic's, behind OpenRouter)
+		// does not name a Chat message, so the loop's own reasoning_details
+		// cannot be shown not to be the refused ones: they go too.
+		return chatRetryBody(plan.dispatched)
 	case llmprotocol.OpenAIResponsesV1:
 		return responsesRetryBody(plan.dispatched)
 	}
@@ -361,18 +356,16 @@ func (plan *thinkingSignatureRetryPlan) retryBody(refusal []byte) ([]byte, think
 
 // chatRetryBody is a dispatched Chat body with every assistant message's
 // reasoning_details removed (the encrypted and signed reasoning OpenRouter
-// carries), except the active tool loop's latest message when keepActive.
-// The reasoning text is kept.
-func chatRetryBody(body []byte, keepActive bool) ([]byte, thinkingRetryChange, bool) {
+// carries). The reasoning text is kept.
+func chatRetryBody(body []byte) ([]byte, thinkingRetryChange, bool) {
 	var change thinkingRetryChange
 	var members map[string]json.RawMessage
 	var messages []map[string]json.RawMessage
 	if json.Unmarshal(body, &members) != nil || json.Unmarshal(members["messages"], &messages) != nil {
 		return nil, change, false
 	}
-	active := activeChatToolLoopAssistant(messages)
-	for index, message := range messages {
-		if wireRole(message) != "assistant" || index == active && keepActive {
+	for _, message := range messages {
+		if wireRole(message) != "assistant" {
 			continue
 		}
 		if _, held := message["reasoning_details"]; held {
@@ -390,32 +383,6 @@ func chatRetryBody(body []byte, keepActive bool) ([]byte, thinkingRetryChange, b
 	members["messages"] = encoded
 	out, err := json.Marshal(members)
 	return out, change, err == nil
-}
-
-// activeChatToolLoopAssistant is the assistant message whose tool calls the
-// trailing tool messages of a Chat body answer, or -1.
-func activeChatToolLoopAssistant(messages []map[string]json.RawMessage) int {
-	answered := map[string]bool{}
-	index := len(messages) - 1
-	for ; index >= 0 && wireRole(messages[index]) == "tool"; index-- {
-		var id string
-		if json.Unmarshal(messages[index]["tool_call_id"], &id) == nil && id != "" {
-			answered[id] = true
-		}
-	}
-	if index < 0 || len(answered) == 0 || wireRole(messages[index]) != "assistant" {
-		return -1
-	}
-	var calls []struct {
-		ID string `json:"id"`
-	}
-	_ = json.Unmarshal(messages[index]["tool_calls"], &calls)
-	for _, call := range calls {
-		if answered[call.ID] {
-			return index
-		}
-	}
-	return -1
 }
 
 // responsesRetryBody is a dispatched Responses body without its encrypted

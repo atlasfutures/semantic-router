@@ -799,8 +799,8 @@ func TestSameModelRunKeepsItsEncryptedReasoning(t *testing.T) {
 			if !strings.Contains(wire, `"reasoning_content":"gpt reasoning"`) {
 				t.Fatalf("the reasoning text was lost: %s", wire)
 			}
-			if ctx.ThinkingSignatureRetry == nil || ctx.ThinkingSignatureRetry.keepActive != tc.seed {
-				t.Fatalf("re-send plan = %+v", ctx.ThinkingSignatureRetry)
+			if ctx.ThinkingSignatureRetry == nil {
+				t.Fatal("no re-send was staged for a worker that is not Claude")
 			}
 		})
 	}
@@ -850,4 +850,42 @@ func armDispatch(t *testing.T, router *OpenAIRouter, arm string) *providerDispat
 		t.Fatal(err)
 	}
 	return dispatch
+}
+
+// Reasoning a Chat client holds only inside reasoning_details keeps its text
+// when the details are stripped for a worker that is not Claude.
+func TestStrippedReasoningDetailsKeepTheirText(t *testing.T) {
+	router, _ := newThinkingGuardRouter(t, "think")
+	_, body := dispatchThinkingTurnAt(t, router, "episode-details-text-only", "/v1/chat/completions", piChatHistory(
+		`"reasoning_details":[{"type":"reasoning.text","text":"claude reasoning","signature":"claude-signature","format":"anthropic-claude-v1","index":0}]`))
+	wire := string(body["messages"])
+	if strings.Contains(wire, "reasoning_details") || !strings.Contains(wire, `"reasoning_content":"claude reasoning"`) {
+		t.Fatalf("the details' text was lost or the details sent: %s", wire)
+	}
+}
+
+// A reply's text repeated from another model's earlier turn does not anchor
+// the run there: a text anchor names its place in the history.
+func TestRepeatedTextDoesNotMoveTheRun(t *testing.T) {
+	done := func() llmprotocol.Message {
+		return llmprotocol.Message{Role: llmprotocol.RoleAssistant, Content: []llmprotocol.Content{{Kind: llmprotocol.ContentText, Text: "Done."}}}
+	}
+	user := llmprotocol.Message{Role: llmprotocol.RoleUser, Content: []llmprotocol.Content{{Kind: llmprotocol.ContentText, Text: "next"}}}
+	messages := []llmprotocol.Message{user, done(), user, done(), user}
+	reply := &llmprotocol.Response{Output: []llmprotocol.OutputItem{{Role: llmprotocol.RoleAssistant, Content: done().Content}}}
+	anchor := reasoning.ThinkingRunAnchorDigest(protocolcodec.ResponseAnchorKey(reply, 3))
+	if start := thinkingRunStart(messages, []string{anchor}); start != 3 {
+		t.Fatalf("run start = %d, want the reply's own place, 3", start)
+	}
+}
+
+// A Chat re-send strips the loop's own reasoning_details too: a refusal's
+// index cannot show they are not the refused ones.
+func TestChatRetryStripsTheLoopsDetails(t *testing.T) {
+	dispatched := []byte(piChatHistory(claudeChatReasoning))
+	retried, change, ok := chatRetryBody(dispatched)
+	if !ok || change.stripped != 1 || strings.Contains(string(retried), "reasoning_details") ||
+		!strings.Contains(string(retried), "claude reasoning") {
+		t.Fatalf("ok=%v change=%+v body=%s", ok, change, retried)
+	}
 }

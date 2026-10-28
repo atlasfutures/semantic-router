@@ -98,6 +98,8 @@ type raylineARCEpisodeTransaction struct {
 	thinkingSignature string
 	thinkingAdopted   string
 	thinkingRestart   bool
+	// thinkingReplyIndex is where the reply will sit in the next history.
+	thinkingReplyIndex int
 	// call is the cache evidence of this turn's policy-service call: the
 	// action it served, the TTL its dispatched body stated and the
 	// provider's usage. It is recorded on the served arm's warmth with the
@@ -997,5 +999,5 @@ func (transaction *raylineARCEpisodeTransaction) observeOpaqueReasoning(requestC
 		return
 	}
 	transaction.opaqueReasoning = protocolcodec.ResponseOpaqueReasoning(requestContext.SemanticResponse)
-	transaction.thinkingSignature = protocolcodec.ResponseAnchorKey(requestContext.SemanticResponse)
+	transaction.thinkingSignature = protocolcodec.ResponseAnchorKey(requestContext.SemanticResponse, transaction.thinkingReplyIndex)
 }

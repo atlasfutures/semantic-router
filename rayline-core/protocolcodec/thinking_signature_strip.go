@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"strconv"
 	"strings"
 
 	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
@@ -114,9 +115,11 @@ func RedactedAnchorKey(data string) string { return anchorKeyRedacted + data }
 // ToolCallAnchorKey is the anchor key of a tool call's id.
 func ToolCallAnchorKey(id string) string { return anchorKeyToolCall + id }
 
-// MessageAnchorKeys lists the anchor keys a message holds, signatures and
-// redacted data first, then tool call ids, then its visible text.
-func MessageAnchorKeys(message llmprotocol.Message) []string {
+// MessageAnchorKeys lists the anchor keys a message at index holds,
+// signatures and redacted data first, then tool call ids, then its visible
+// text with its index: a reply's text alone may repeat an earlier turn's
+// ("Done."), its text at its place in the history does not.
+func MessageAnchorKeys(message llmprotocol.Message, index int) []string {
 	var keys, calls []string
 	var text strings.Builder
 	for _, content := range message.Content {
@@ -136,14 +139,15 @@ func MessageAnchorKeys(message llmprotocol.Message) []string {
 	keys = append(keys, calls...)
 	if text.Len() > 0 {
 		digest := sha256.Sum256([]byte(text.String()))
-		keys = append(keys, anchorKeyText+hex.EncodeToString(digest[:16]))
+		keys = append(keys, anchorKeyText+strconv.Itoa(index)+"\x00"+hex.EncodeToString(digest[:16]))
 	}
 	return keys
 }
 
-// ResponseAnchorKey is the anchor key of a served reply: the first key of
-// its output read as one assistant message, or "" when it holds none.
-func ResponseAnchorKey(response *llmprotocol.Response) string {
+// ResponseAnchorKey is the anchor key of a served reply that will sit at
+// index in the next history: the first key of its output read as one
+// assistant message, or "" when it holds none.
+func ResponseAnchorKey(response *llmprotocol.Response, index int) string {
 	if response == nil {
 		return ""
 	}
@@ -151,7 +155,7 @@ func ResponseAnchorKey(response *llmprotocol.Response) string {
 	for _, item := range response.Output {
 		message.Content = append(message.Content, item.Content...)
 	}
-	if keys := MessageAnchorKeys(message); len(keys) > 0 {
+	if keys := MessageAnchorKeys(message, index); len(keys) > 0 {
 		return keys[0]
 	}
 	return ""
@@ -204,6 +208,11 @@ func DropForeignOpaqueReasoning(
 			changed++
 			content.Signature = ""
 			if details != nil {
+				if content.Text == "" {
+					// The carrier was the reasoning's only text: its
+					// plaintext stays.
+					content.Text = reasoningDetailsPlaintext(details)
+				}
 				content.Extensions = withoutReasoningDetailsMember(content.Extensions)
 			}
 			if content.Text == "" && content.Extensions == nil {
@@ -239,4 +248,22 @@ func withoutReasoningDetailsMember(fields *llmprotocol.UnmodeledFields) *llmprot
 	copied := *fields
 	copied.Fields = kept
 	return &copied
+}
+
+// reasoningDetailsPlaintext is the readable text a reasoning_details array
+// holds: its items' text and summaries, in order.
+func reasoningDetailsPlaintext(details json.RawMessage) string {
+	var items []struct {
+		Text    string `json:"text"`
+		Summary string `json:"summary"`
+	}
+	if json.Unmarshal(details, &items) != nil {
+		return ""
+	}
+	var text strings.Builder
+	for _, item := range items {
+		text.WriteString(item.Text)
+		text.WriteString(item.Summary)
+	}
+	return text.String()
 }
