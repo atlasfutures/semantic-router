@@ -116,7 +116,7 @@ func withoutQuotedSpans(message string) string {
 	}
 	for index := 0; index < len(runes); index++ {
 		closer, opens := upstreamErrorQuoteClosers[runes[index]]
-		if !opens || runes[index] == '\'' && isWord(index-1) {
+		if !opens || runes[index] == '\'' && isWord(index-1) && !literalPrefixBefore(runes, index) {
 			out.WriteRune(runes[index])
 			continue
 		}
@@ -138,6 +138,20 @@ func withoutQuotedSpans(message string) string {
 		index = end
 	}
 	return out.String()
+}
+
+// pythonLiteralPrefixes open a quoted literal (b'...', rb'...') where an
+// apostrophe after letters would otherwise be a contraction.
+var pythonLiteralPrefixes = map[string]bool{"b": true, "u": true, "r": true, "f": true, "br": true, "rb": true, "fr": true, "rf": true}
+
+// literalPrefixBefore reports that the letters right before index are a
+// whole token naming a Python literal prefix.
+func literalPrefixBefore(runes []rune, index int) bool {
+	start := index
+	for start > 0 && (unicode.IsLetter(runes[start-1]) || unicode.IsDigit(runes[start-1]) || runes[start-1] == '_') {
+		start--
+	}
+	return pythonLiteralPrefixes[strings.ToLower(string(runes[start:index]))]
 }
 
 // loggableSlug is a provider slug, or "" for anything that is not one.
