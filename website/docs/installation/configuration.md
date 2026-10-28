@@ -456,11 +456,14 @@ global:
   reasoning goes whole. The latest assistant message of an active tool loop
   is kept for Claude, which requires it.
 - A call refused for either reason is re-sent once, before anything reaches
-  the client, with the earlier turns' reasoning stripped. The active tool
-  loop's latest reasoning is kept only when the Router served it; on Claude,
-  thinking is otherwise turned off for that one call. The refusal can be read
-  before its headers are answered only under `FULL_DUPLEX_STREAMED` response
-  bodies.
+  the client, with the signed and encrypted reasoning of every assistant
+  turn stripped, the active tool loop's latest reply included: Anthropic
+  binds a signature to the history before it, so no block survives the
+  removal of an earlier one. When the loop's reply loses its thinking,
+  thinking is turned off for that one call where the model's reasoning
+  family allows it; an always-on model keeps its settings. The refusal can
+  be read before its headers are answered only under `FULL_DUPLEX_STREAMED`
+  response bodies.
 - `keep_unserved: true` turns both off.
 
 ### Catalog-backed models
