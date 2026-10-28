@@ -1,22 +1,13 @@
 package protocolcodec
 
-import "github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"strings"
 
-// ResponseThinkingSignature returns the first thinking signature a response
-// holds, or "" when it holds none.
-func ResponseThinkingSignature(response *llmprotocol.Response) string {
-	if response == nil {
-		return ""
-	}
-	for _, item := range response.Output {
-		for _, content := range item.Content {
-			if signature, ok := providerThinkingSignature(content); ok {
-				return signature
-			}
-		}
-	}
-	return ""
-}
+	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
+)
 
 // MessageThinkingSignatures lists the provider signatures of a message's
 // signed thinking, in order.
@@ -98,4 +89,154 @@ func providerThinkingSignature(content llmprotocol.Content) (string, bool) {
 		return "", false
 	}
 	return content.Signature, true
+}
+
+// The keys a thinking run is anchored by. A served assistant message is found
+// again in a later history by what the client resends of it unchanged: a
+// thinking signature, a redacted_thinking block's data, a tool call's id, or
+// failing those its visible text. The first key of a served reply is the
+// run's anchor, so it must be one the client keeps: a streamed Chat reply's
+// reconstruction keeps no reasoning_details, but it keeps its tool calls and
+// text.
+const (
+	anchorKeySignature = "s\x00"
+	anchorKeyRedacted  = "r\x00"
+	anchorKeyToolCall  = "t\x00"
+	anchorKeyText      = "x\x00"
+)
+
+// SignatureAnchorKey and RedactedAnchorKey are the anchor keys of a thinking
+// block's signature and of a redacted_thinking block's data.
+func SignatureAnchorKey(signature string) string { return anchorKeySignature + signature }
+
+func RedactedAnchorKey(data string) string { return anchorKeyRedacted + data }
+
+// ToolCallAnchorKey is the anchor key of a tool call's id.
+func ToolCallAnchorKey(id string) string { return anchorKeyToolCall + id }
+
+// MessageAnchorKeys lists the anchor keys a message holds, signatures and
+// redacted data first, then tool call ids, then its visible text.
+func MessageAnchorKeys(message llmprotocol.Message) []string {
+	var keys, calls []string
+	var text strings.Builder
+	for _, content := range message.Content {
+		switch {
+		case content.Kind == llmprotocol.ContentReasoning && content.Signature != "":
+			keys = append(keys, anchorKeySignature+content.Signature)
+		case content.Kind == llmprotocol.ContentToolCall && content.ToolCall != nil && content.ToolCall.ID != "":
+			calls = append(calls, anchorKeyToolCall+content.ToolCall.ID)
+		case content.Kind == llmprotocol.ContentText:
+			text.WriteString(content.Text)
+		default:
+			if data, ok := OpaqueReasoningData(content); ok {
+				keys = append(keys, anchorKeyRedacted+data)
+			}
+		}
+	}
+	keys = append(keys, calls...)
+	if text.Len() > 0 {
+		digest := sha256.Sum256([]byte(text.String()))
+		keys = append(keys, anchorKeyText+hex.EncodeToString(digest[:16]))
+	}
+	return keys
+}
+
+// ResponseAnchorKey is the anchor key of a served reply: the first key of
+// its output read as one assistant message, or "" when it holds none.
+func ResponseAnchorKey(response *llmprotocol.Response) string {
+	if response == nil {
+		return ""
+	}
+	message := llmprotocol.Message{Role: llmprotocol.RoleAssistant}
+	for _, item := range response.Output {
+		message.Content = append(message.Content, item.Content...)
+	}
+	if keys := MessageAnchorKeys(message); len(keys) > 0 {
+		return keys[0]
+	}
+	return ""
+}
+
+// DropForeignOpaqueReasoning removes, on fresh slices, what of a message's
+// reasoning only its issuer can read, from each message drop selects, for a
+// worker that is not Claude: redacted_thinking blocks, thinking signatures,
+// and the reasoning_details OpenRouter carries (Anthropic signatures, OpenAI
+// encrypted reasoning, Gemini thought signatures). The reasoning's text is
+// kept, as the reasoning carry rules keep it for a Chat or Responses target:
+// DeepSeek and MiMo expect reasoning_content on every tool-calling turn of a
+// history. A Messages target accepts thinking only signed, so there a
+// selected message loses its reasoning whole. A content or message left
+// empty goes. It returns how many contents it changed or removed.
+func DropForeignOpaqueReasoning(
+	request *llmprotocol.Request,
+	messagesTarget bool,
+	drop func(index int, message llmprotocol.Message) bool,
+) int {
+	if request == nil {
+		return 0
+	}
+	changed := 0
+	messages := make([]llmprotocol.Message, 0, len(request.Messages))
+	for index, message := range request.Messages {
+		if !MessageHoldsThinking(message) || !drop(index, message) {
+			messages = append(messages, message)
+			continue
+		}
+		contents := make([]llmprotocol.Content, 0, len(message.Content))
+		for _, content := range message.Content {
+			if redactedThinkingBlock(content) {
+				changed++
+				continue
+			}
+			if content.Kind != llmprotocol.ContentReasoning {
+				contents = append(contents, content)
+				continue
+			}
+			if messagesTarget {
+				changed++
+				continue
+			}
+			details, _ := reasoningDetailsOf(content)
+			if content.Signature == "" && details == nil {
+				contents = append(contents, content)
+				continue
+			}
+			changed++
+			content.Signature = ""
+			if details != nil {
+				content.Extensions = withoutReasoningDetailsMember(content.Extensions)
+			}
+			if content.Text == "" && content.Extensions == nil {
+				continue
+			}
+			contents = append(contents, content)
+		}
+		if len(contents) == 0 {
+			continue
+		}
+		message.Content = contents
+		messages = append(messages, message)
+	}
+	if changed > 0 {
+		request.Messages = messages
+	}
+	return changed
+}
+
+func withoutReasoningDetailsMember(fields *llmprotocol.UnmodeledFields) *llmprotocol.UnmodeledFields {
+	if fields == nil {
+		return nil
+	}
+	kept := make(map[string]json.RawMessage, len(fields.Fields))
+	for name, value := range fields.Fields {
+		if name != chatReasoningDetailsMember {
+			kept[name] = value
+		}
+	}
+	if len(kept) == 0 && len(fields.Children) == 0 {
+		return nil
+	}
+	copied := *fields
+	copied.Fields = kept
+	return &copied
 }

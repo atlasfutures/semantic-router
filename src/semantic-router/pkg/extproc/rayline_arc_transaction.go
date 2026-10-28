@@ -84,8 +84,8 @@ type raylineARCEpisodeTransaction struct {
 	// dispatched to (rayline_arc_thinking_signature.go), thinkingOthers the
 	// runs of the cell's other Claude models, which this turn ends,
 	// thinkingAnchored whether the request's history held the run's anchor,
-	// and thinkingSignature the first thinking signature the response held,
-	// the anchor of a new run.
+	// and thinkingSignature the response's anchor key
+	// (protocolcodec.ResponseAnchorKey), the anchor of a new run.
 	// thinkingAdopted is the signature of the active tool loop's latest
 	// thinking when the run did not cover it and it was sent anyway: a new
 	// run starts at it, so the message keeps its thinking on later turns and
@@ -997,5 +997,5 @@ func (transaction *raylineARCEpisodeTransaction) observeOpaqueReasoning(requestC
 		return
 	}
 	transaction.opaqueReasoning = protocolcodec.ResponseOpaqueReasoning(requestContext.SemanticResponse)
-	transaction.thinkingSignature = protocolcodec.ResponseThinkingSignature(requestContext.SemanticResponse)
+	transaction.thinkingSignature = protocolcodec.ResponseAnchorKey(requestContext.SemanticResponse)
 }

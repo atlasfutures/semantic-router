@@ -2269,10 +2269,11 @@ global:
     # cell recognises markers and the policy package was trained on them.
     thinking_markers:
       mint: false
-    # A Claude worker reached over Messages is sent the thinking of earlier
-    # assistant turns only when the cell served them on that model (the
-    # episode's thinking run), and a call refused for an invalid thinking
-    # signature is re-sent once with the earlier turns' thinking stripped.
+    # A worker is sent the signed or encrypted reasoning of earlier assistant
+    # turns only when the cell served them on that model (the episode's
+    # thinking run), and a call refused for an invalid thinking signature or
+    # another provider's encrypted reasoning is re-sent once with the earlier
+    # turns' reasoning stripped.
     # On by default; keep_unserved: true sends the history's thinking as the
     # client sent it and never re-sends.
     thinking_signatures:

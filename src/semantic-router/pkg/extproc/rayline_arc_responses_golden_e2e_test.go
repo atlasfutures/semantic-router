@@ -161,6 +161,10 @@ func assertResponsesLeverThroughTheRouter(t *testing.T, dir string, c responsesG
 	}
 	awaitPolicySelectorArmed(t, router)
 	episode := "golden-" + filepath.Base(dir)
+	// The golden corpus pins the thinking control and the codecs, beneath
+	// the thinking-signature guard, which would strip its unserved history
+	// (rayline_arc_thinking_signature_test.go covers the guard).
+	router.Config.KeepUnservedClaudeThinking = true
 	for index, call := range c.Calls {
 		if call.ControlID == nil {
 			t.Fatalf("call %d names no control", index)

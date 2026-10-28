@@ -67,12 +67,14 @@ const (
 	// the top-level tools on OpenRouter (req_filter_tool_changes.go). A
 	// system message that is left empty goes too.
 	transformToolChangesToTools = "tool_changes_to_tools"
-	// A Claude arm is sent no thinking from an earlier assistant turn the
-	// cell did not serve on its model (rayline_arc_thinking_signature.go):
+	// An arm reached over Messages is sent no thinking from an earlier
+	// assistant turn the cell did not serve on its model (rayline_arc_thinking_signature.go):
 	// a captured conversation's thinking was signed elsewhere, so every
-	// assistant message but the active tool loop's latest loses its
-	// thinking, and a message left empty goes.
+	// assistant message loses its thinking but the active tool loop's latest
+	// on Claude, and a message left empty goes.
 	transformUnservedThinkingStripped = "unserved_thinking_stripped"
+	// A worker that is not Claude loses the active loop's thinking too.
+	transformUnservedLoopThinkingStripped = "unserved_loop_thinking_stripped"
 )
 
 type continuityCase struct {
@@ -391,7 +393,8 @@ func expectedConversation(client []messageShape, transforms map[string]bool) []m
 	out := make([]messageShape, 0, len(client))
 	activeLoop := activeLoopShape(client)
 	for index, message := range client {
-		if transforms[transformUnservedThinkingStripped] && message.Role == "assistant" && index != activeLoop {
+		if transforms[transformUnservedThinkingStripped] && message.Role == "assistant" &&
+			(index != activeLoop || transforms[transformUnservedLoopThinkingStripped]) {
 			kept := make([]blockShape, 0, len(message.Blocks))
 			for _, block := range message.Blocks {
 				if block.Type != "thinking" && block.Type != "redacted_thinking" {
@@ -732,8 +735,10 @@ func TestConversationContinuityOfCapturedClients(t *testing.T) {
 				if action.ID == v5GLMUp {
 					transforms = append([]string{transformSteerTailText}, transforms...)
 				}
-				if action.ID == v5OpusAction {
-					transforms = append([]string{transformUnservedThinkingStripped}, transforms...)
+				// Every arm here reads Messages, which takes thinking only signed.
+				transforms = append([]string{transformUnservedThinkingStripped}, transforms...)
+				if action.ID != v5OpusAction {
+					transforms = append([]string{transformUnservedLoopThinkingStripped}, transforms...)
 				}
 				err := errors.Join(
 					conversationKept(fixture.Client, result.Provider, transforms),

@@ -86,7 +86,8 @@ func seedThinkingRun(t *testing.T, router *OpenAIRouter, episode, worker, signat
 	if err != nil {
 		t.Fatal(err)
 	}
-	state.ReasoningProvenance = reasoning.WithThinkingRun(state.ReasoningProvenance, worker, nil, false, signature)
+	state.ReasoningProvenance = reasoning.WithThinkingRun(state.ReasoningProvenance, worker, nil, false,
+		protocolcodec.SignatureAnchorKey(signature))
 	if err := state.Commit(0, 10, time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
@@ -109,6 +110,12 @@ func armThinkingRunWorker(t *testing.T, router *OpenAIRouter, arm string) string
 // phases and returns its context and the provider-bound body.
 func dispatchThinkingTurn(t *testing.T, router *OpenAIRouter, episode, client string) (*RequestContext, map[string]json.RawMessage) {
 	t.Helper()
+	return dispatchThinkingTurnAt(t, router, episode, "/v1/messages", client)
+}
+
+// dispatchThinkingTurnAt is dispatchThinkingTurn for a client sending to path.
+func dispatchThinkingTurnAt(t *testing.T, router *OpenAIRouter, episode, path, client string) (*RequestContext, map[string]json.RawMessage) {
+	t.Helper()
 	ctx := &RequestContext{
 		Headers: map[string]string{}, RequestID: "thinking-guard-" + episode,
 		StartTime: time.Now(), TraceContext: context.Background(),
@@ -116,7 +123,7 @@ func dispatchThinkingTurn(t *testing.T, router *OpenAIRouter, episode, client st
 	headers := &ext_proc.ProcessingRequest_RequestHeaders{RequestHeaders: &ext_proc.HttpHeaders{
 		Headers: &core.HeaderMap{Headers: []*core.HeaderValue{
 			{Key: ":method", Value: "POST"},
-			{Key: ":path", Value: "/v1/messages"},
+			{Key: ":path", Value: path},
 			{Key: "content-type", Value: "application/json"},
 			{Key: "x-rayline-session", Value: episode},
 		}},
@@ -203,16 +210,16 @@ func TestClaudeWorkerGetsOnlyItsOwnRunsThinking(t *testing.T) {
 			}
 			for _, entry := range logs.All() {
 				fields := entry.ContextMap()
-				if fields["event"] != "claude_thinking_unserved_stripped" {
+				if fields["event"] != "unserved_reasoning_stripped" {
 					continue
 				}
 				if fmt.Sprint(fields["stripped"]) != tc.wantStrippedLog {
-					t.Fatalf("claude_thinking_unserved_stripped = %v, want stripped %s", fields, tc.wantStrippedLog)
+					t.Fatalf("unserved_reasoning_stripped = %v, want stripped %s", fields, tc.wantStrippedLog)
 				}
 				return
 			}
 			if tc.wantStrippedLog != "" {
-				t.Fatal("no claude_thinking_unserved_stripped event")
+				t.Fatal("no unserved_reasoning_stripped event")
 			}
 		})
 	}
@@ -261,7 +268,7 @@ func TestActiveToolLoopThinkingIsKept(t *testing.T) {
 			if plan == nil {
 				t.Fatal("no re-send was staged for a Claude dispatch over Messages")
 			}
-			wantAdopted := map[bool]string{true: "", false: "sig-loop"}[tc.wantKeep]
+			wantAdopted := map[bool]string{true: "", false: protocolcodec.SignatureAnchorKey("sig-loop")}[tc.wantKeep]
 			if adopted := ctx.RaylineARCTransaction.thinkingAdopted; adopted != wantAdopted {
 				t.Fatalf("adopted = %q, want %q: a sent unserved loop message starts the next run", adopted, wantAdopted)
 			}
@@ -305,7 +312,9 @@ func TestCommittedClaudeTurnAnchorsItsRun(t *testing.T) {
 		return reread.ReasoningProvenance
 	}
 	sonnet, opus := reasoning.ThinkingRunWorker("sonnet"), reasoning.ThinkingRunWorker("opus")
-	digest := reasoning.ThinkingRunAnchorDigest
+	digest := func(signature string) string {
+		return reasoning.ThinkingRunAnchorDigest(protocolcodec.SignatureAnchorKey(signature))
+	}
 
 	provenance := commit(sonnet, []string{opus}, false, "sig-1")
 	if anchors := reasoning.ThinkingRunAnchors(provenance, sonnet); fmt.Sprint(anchors) != fmt.Sprint([]string{digest("sig-1")}) {
@@ -361,7 +370,7 @@ func TestThinkingRunAdoptsAndRestarts(t *testing.T) {
 	if got := commit(false, false, "sig-loop"); fmt.Sprint(got) != fmt.Sprint([]string{digest("sig-loop")}) {
 		t.Fatalf("adopted run = %v", got)
 	}
-	if got := commit(true, true, ""); fmt.Sprint(got) != fmt.Sprint([]string{digest("sig-reply")}) {
+	if got := commit(true, true, ""); fmt.Sprint(got) != fmt.Sprint([]string{digest(protocolcodec.SignatureAnchorKey("sig-reply"))}) {
 		t.Fatalf("restarted run = %v, want only the re-send's reply", got)
 	}
 	if got := commit(true, true, "sig-kept"); fmt.Sprint(got) != fmt.Sprint([]string{digest("sig-kept")}) {
@@ -491,6 +500,14 @@ func refusedThinkingTurn(
 		seedThinkingRun(t, router, episode, armThinkingRunWorker(t, router, "claude"), anchor)
 	}
 	ctx, _ := dispatchThinkingTurn(t, router, episode, toolLoopHistory("sig-earlier", "sig-loop"))
+	return ctx, answerRefusal(t, router, ctx, upstream, status, body)
+}
+
+// answerRefusal points a dispatched turn's staged re-send at upstream and
+// answers the dispatch with status and body the way FULL_DUPLEX_STREAMED
+// delivers them, returning what the Router sent Envoy.
+func answerRefusal(t *testing.T, router *OpenAIRouter, ctx *RequestContext, upstream *claudeUpstream, status int, body string) *MockStream {
+	t.Helper()
 	plan := ctx.ThinkingSignatureRetry
 	if plan == nil {
 		t.Fatal("no re-send was staged")
@@ -520,7 +537,7 @@ func refusedThinkingTurn(
 	if len(envoy.Responses) != 1 {
 		t.Fatalf("the Router sent %d replies, want 1", len(envoy.Responses))
 	}
-	return ctx, envoy
+	return envoy
 }
 
 // A signature refusal is re-sent exactly once, before anything reaches the
@@ -531,7 +548,8 @@ func TestSignatureRefusalIsResentOnceWithoutEarlierThinking(t *testing.T) {
 	logs := captureLogs(t)
 	upstream := newClaudeUpstream(t, http.StatusOK, claudeServedReply)
 	ctx, envoy := refusedThinkingTurn(t, "episode-thinking-retry", upstream, http.StatusBadRequest, signatureRefusal, "sig-earlier")
-	if transaction := ctx.RaylineARCTransaction; !transaction.thinkingRestart || transaction.thinkingAdopted != "sig-loop" {
+	if transaction := ctx.RaylineARCTransaction; !transaction.thinkingRestart ||
+		transaction.thinkingAdopted != protocolcodec.SignatureAnchorKey("sig-loop") {
 		t.Fatalf("restart = %v, adopted = %q: the run must start again at the kept loop message",
 			transaction.thinkingRestart, transaction.thinkingAdopted)
 	}
@@ -636,7 +654,7 @@ func TestRunAnchoredAtRedactedThinkingIsFound(t *testing.T) {
 			Format: llmprotocol.AnthropicMessagesV1, Type: "redacted_thinking", Raw: []byte(`{"type":"redacted_thinking","data":"blob"}`),
 		}}}},
 	}
-	if start := thinkingRunStart(messages, []string{reasoning.ThinkingRunAnchorDigest("blob")}); start != 1 {
+	if start := thinkingRunStart(messages, []string{reasoning.ThinkingRunAnchorDigest(protocolcodec.RedactedAnchorKey("blob"))}); start != 1 {
 		t.Fatalf("run start = %d, want 1", start)
 	}
 }
@@ -650,7 +668,7 @@ func TestOpaqueBlocksNeverEvictTheRunAnchor(t *testing.T) {
 	episode := raylinearc.HashEpisodeID(t.Name())
 	worker := reasoning.ThinkingRunWorker("opus")
 	seed := func(state *raylinearc.EpisodeState) {
-		state.ReasoningProvenance = reasoning.WithThinkingRun(nil, worker, nil, false, "sig-anchor")
+		state.ReasoningProvenance = reasoning.WithThinkingRun(nil, worker, nil, false, protocolcodec.SignatureAnchorKey("sig-anchor"))
 	}
 	lease, state, err := store.Prepare(context.Background(), episode, 2)
 	if err != nil {
@@ -677,7 +695,159 @@ func TestOpaqueBlocksNeverEvictTheRunAnchor(t *testing.T) {
 	}
 	_ = store.Abort(context.Background(), next)
 	if len(reread.ReasoningProvenance) > reasoning.MaxReasoningProvenance ||
-		fmt.Sprint(reasoning.ThinkingRunAnchors(reread.ReasoningProvenance, worker)) != fmt.Sprint([]string{reasoning.ThinkingRunAnchorDigest("sig-anchor")}) {
+		fmt.Sprint(reasoning.ThinkingRunAnchors(reread.ReasoningProvenance, worker)) != fmt.Sprint([]string{reasoning.ThinkingRunAnchorDigest(protocolcodec.SignatureAnchorKey("sig-anchor"))}) {
 		t.Fatalf("provenance = %d entries, anchors %v", len(reread.ReasoningProvenance), reasoning.ThinkingRunAnchors(reread.ReasoningProvenance, worker))
 	}
+}
+
+// claudeChatReasoning is a Chat client's replay of Claude's reasoning as
+// OpenRouter returns it: signed text and a redacted blob.
+const claudeChatReasoning = `"reasoning_content":"claude reasoning",` +
+	`"reasoning_details":[{"type":"reasoning.text","text":"claude reasoning","signature":"claude-signature","format":"anthropic-claude-v1","index":0},` +
+	`{"type":"reasoning.encrypted","data":"claude-redacted-blob","format":"anthropic-claude-v1","index":1}]`
+
+// gptChatReasoning is a Chat client's replay of an OpenAI model's reasoning:
+// its encrypted reasoning, readable only by OpenAI.
+const gptChatReasoning = `"reasoning_content":"gpt reasoning",` +
+	`"reasoning_details":[{"type":"reasoning.encrypted","data":"gAAAA-gpt-blob","format":"openai-responses-v1","index":0}]`
+
+// A switch from Claude to a model that is not Claude: the history's Claude
+// signatures, redacted blocks and signed reasoning_details never reach it,
+// over Chat (OpenRouter refuses them, "encrypted reasoning ... can only be
+// processed by the provider that created it") or from a Messages client; the
+// reasoning's text does, as reasoning_content.
+func TestClaudeToOtherModelSwitchDropsClaudesEncryptedReasoning(t *testing.T) {
+	router, _ := newThinkingGuardRouter(t, "think")
+	t.Run("a Chat client's reasoning_details", func(t *testing.T) {
+		_, body := dispatchThinkingTurnAt(t, router, "episode-switch-claude-gpt-chat", "/v1/chat/completions",
+			piChatHistory(claudeChatReasoning))
+		assertJSONField(t, body, "model", `"vendor/think"`)
+		wire := string(body["messages"])
+		if strings.Contains(wire, "reasoning_details") || strings.Contains(wire, "claude-signature") ||
+			strings.Contains(wire, "claude-redacted-blob") || !strings.Contains(wire, `"reasoning_content":"claude reasoning"`) {
+			t.Fatalf("Claude's encrypted reasoning reached another model, or its text did not: %s", wire)
+		}
+	})
+	t.Run("a Messages client's thinking", func(t *testing.T) {
+		_, body := dispatchThinkingTurn(t, router, "episode-switch-claude-gpt-messages", messagesHistory(
+			`{"role":"user","content":"start"}`,
+			assistantTurn(thinkingBlock("sig-claude"), `{"type":"redacted_thinking","data":"claude-redacted-blob"}`,
+				`{"type":"text","text":"turn one"}`),
+			`{"role":"user","content":"go on"}`,
+		))
+		wire := string(body["messages"])
+		if strings.Contains(wire, `"sig-claude"`) || strings.Contains(wire, "signature") ||
+			strings.Contains(wire, "claude-redacted-blob") || !strings.Contains(wire, "turn one") {
+			t.Fatalf("Claude's signed or redacted thinking reached another model: %s", wire)
+		}
+	})
+}
+
+// A switch from another model to Claude: that model's encrypted reasoning
+// never reaches Claude.
+func TestOtherModelToClaudeSwitchDropsItsEncryptedReasoning(t *testing.T) {
+	router, _ := newThinkingGuardRouter(t, "claude")
+	_, body := dispatchThinkingTurnAt(t, router, "episode-switch-gpt-claude", "/v1/chat/completions",
+		piChatHistory(gptChatReasoning))
+	assertJSONField(t, body, "model", `"anthropic/claude-opus-5"`)
+	wire := string(body["messages"])
+	if strings.Contains(wire, "gAAAA-gpt-blob") || strings.Contains(wire, "gpt reasoning") {
+		t.Fatalf("another model's reasoning reached Claude: %s", wire)
+	}
+	if !strings.Contains(wire, "call_1") {
+		t.Fatalf("the tool call was lost: %s", wire)
+	}
+}
+
+// The model's own run keeps its encrypted reasoning, the active tool loop's
+// included; without the run, the loop's encrypted reasoning is stripped too
+// for a worker that is not Claude.
+func TestSameModelRunKeepsItsEncryptedReasoning(t *testing.T) {
+	router, _ := newThinkingGuardRouter(t, "think")
+	worker := router.thinkingRunWorker(armDispatch(t, router, "think").backendName, armDispatch(t, router, "think").upstreamModel)
+	history := `{"model":"auto","max_completion_tokens":32000,"messages":[` +
+		`{"role":"user","content":"Create fib.py and run it."},` +
+		`{"role":"assistant","content":null,` + gptChatReasoning + `,` +
+		`"tool_calls":[{"id":"call_1","type":"function","function":{"name":"bash","arguments":"{}"}}]},` +
+		`{"role":"tool","tool_call_id":"call_1","content":"ok"}],` +
+		`"tools":[{"type":"function","function":{"name":"bash","parameters":{"type":"object","properties":{}}}}]}`
+	for _, tc := range []struct {
+		name string
+		seed bool
+	}{{"served", true}, {"unserved", false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			episode := "episode-same-model-" + tc.name
+			if tc.seed {
+				store := router.RaylineARCEpisodeStore
+				lease, state, err := store.Prepare(context.Background(), raylinearc.HashEpisodeID(episode), 4)
+				if err != nil {
+					t.Fatal(err)
+				}
+				state.ReasoningProvenance = reasoning.WithThinkingRun(nil, worker, nil, false, protocolcodec.ToolCallAnchorKey("call_1"))
+				if err := state.Commit(0, 10, time.Now().UTC()); err != nil {
+					t.Fatal(err)
+				}
+				if err := store.Commit(context.Background(), lease, lease.Version(), state); err != nil {
+					t.Fatal(err)
+				}
+			}
+			ctx, body := dispatchThinkingTurnAt(t, router, episode, "/v1/chat/completions", history)
+			wire := string(body["messages"])
+			if kept := strings.Contains(wire, "gAAAA-gpt-blob"); kept != tc.seed {
+				t.Fatalf("encrypted reasoning kept = %v, want %v: %s", kept, tc.seed, wire)
+			}
+			if !strings.Contains(wire, `"reasoning_content":"gpt reasoning"`) {
+				t.Fatalf("the reasoning text was lost: %s", wire)
+			}
+			if ctx.ThinkingSignatureRetry == nil || ctx.ThinkingSignatureRetry.keepActive != tc.seed {
+				t.Fatalf("re-send plan = %+v", ctx.ThinkingSignatureRetry)
+			}
+		})
+	}
+}
+
+// The re-send is not Claude's alone: a worker that is not Claude refused
+// with OpenRouter's encrypted-reasoning 400 is re-sent once without any
+// reasoning_details.
+func TestEncryptedReasoningRefusalIsResentForAnyWorker(t *testing.T) {
+	router, _ := newThinkingGuardRouter(t, "think")
+	dispatch := armDispatch(t, router, "think")
+	worker := router.thinkingRunWorker(dispatch.backendName, dispatch.upstreamModel)
+	episode := "episode-gpt-retry"
+	store := router.RaylineARCEpisodeStore
+	lease, state, err := store.Prepare(context.Background(), raylinearc.HashEpisodeID(episode), 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.ReasoningProvenance = reasoning.WithThinkingRun(nil, worker, nil, false, protocolcodec.ToolCallAnchorKey("call_1"))
+	if err := state.Commit(0, 10, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Commit(context.Background(), lease, lease.Version(), state); err != nil {
+		t.Fatal(err)
+	}
+	ctx, body := dispatchThinkingTurnAt(t, router, episode, "/v1/chat/completions", piChatHistory(gptChatReasoning))
+	if !strings.Contains(string(body["messages"]), "gAAAA-gpt-blob") {
+		t.Fatalf("the run's own reasoning was not sent: %s", body["messages"])
+	}
+	upstream := newClaudeUpstream(t, http.StatusOK, flexTwinChatReply)
+	refusal := `{"error":{"message":"Your request contains encrypted reasoning or compaction content that can only be processed by the provider that created it (anthropic) or by azure, azure/eu, azure/us","code":400}}`
+	envoy := answerRefusal(t, router, ctx, upstream, http.StatusBadRequest, refusal)
+	if envoy.Responses[0].GetImmediateResponse() == nil {
+		t.Fatalf("the refusal was not re-sent: %v", envoy.Responses[0])
+	}
+	calls := upstream.calls()
+	if len(calls) != 1 || strings.Contains(string(calls[0]), "reasoning_details") ||
+		!strings.Contains(string(calls[0]), "gpt reasoning") {
+		t.Fatalf("re-sends = %d: %s", len(calls), calls)
+	}
+}
+
+func armDispatch(t *testing.T, router *OpenAIRouter, arm string) *providerDispatch {
+	t.Helper()
+	dispatch, err := router.resolveProviderDispatch(arm, "", false, llmprotocol.OpenAIChatV1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dispatch
 }

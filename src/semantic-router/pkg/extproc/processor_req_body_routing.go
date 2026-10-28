@@ -140,7 +140,7 @@ func (r *OpenAIRouter) carryReasoningForDispatch(
 	if r.dropRaylineARCOpaqueReasoningIssuedElsewhere(request, dispatch, ctx) {
 		changed = true
 	}
-	if r.guardClaudeThinking(request, dispatch, ctx) > 0 {
+	if r.guardHistoryReasoning(request, dispatch, ctx) > 0 {
 		changed = true
 	}
 	return changed

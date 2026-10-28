@@ -36,18 +36,19 @@ type CanonicalRouterGlobal struct {
 	ThinkingSignatures CanonicalThinkingSignatures `yaml:"thinking_signatures,omitempty"`
 }
 
-// CanonicalThinkingSignatures controls what a Claude worker reached over
-// Messages is sent of the signed thinking in a request's history. By default
-// the Router strips the thinking of every earlier assistant turn it did not
-// itself serve on the same Claude model (the episode's thinking run), and
-// re-sends a call Anthropic refused for an invalid thinking signature once
-// with the earlier turns' thinking stripped (extproc
-// rayline_arc_thinking_signature.go). A signature verifies only on the model
-// and provider family that wrote it, so a resent foreign block fails the turn
-// with a 400 on every retry.
+// CanonicalThinkingSignatures controls what a worker is sent of the signed or
+// encrypted reasoning in a request's history. By default the Router strips
+// that reasoning from every earlier assistant turn it did not itself serve on
+// the same model (the episode's thinking run): a Claude worker loses such a
+// turn's reasoning whole, any other worker its signatures, redacted blocks
+// and reasoning_details. A call refused for an invalid thinking signature, or
+// for another provider's encrypted reasoning, is re-sent once with the
+// earlier turns' reasoning stripped (extproc rayline_arc_thinking_signature.go).
+// A signature or blob verifies only on the model and provider family that
+// wrote it, so a resent foreign one fails the turn with a 400 on every retry.
 type CanonicalThinkingSignatures struct {
-	// KeepUnserved turns both off: the history's thinking reaches a Claude
-	// worker as the client sent it, and a refusal is not re-sent.
+	// KeepUnserved turns both off: the history's reasoning reaches the worker
+	// as the reasoning carry rules leave it, and a refusal is not re-sent.
 	KeepUnserved bool `yaml:"keep_unserved,omitempty"`
 }
 

@@ -162,6 +162,7 @@ type RequestContext struct {
 	ThinkingSignatureRetry   *thinkingSignatureRetryPlan
 	ThinkingSignatureRetried bool
 	thinkingRetryKeep        []string
+	thinkingRetryKeepActive  bool
 	// streamReceiver is the ext_proc stream's receiver, so a phase that must
 	// read ahead (the guard's re-send) can, and put back what it read.
 	streamReceiver *streamReceiver

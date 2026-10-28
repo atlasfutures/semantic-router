@@ -87,6 +87,10 @@ func TestForeignReasoningNeverReachesAClaudeWorkerOverChat(t *testing.T) {
 		t.Fatalf("build router: %v", err)
 	}
 	awaitPolicySelectorArmed(t, router)
+	// The golden corpus pins the thinking control and the codecs, beneath
+	// the thinking-signature guard, which would strip its unserved history
+	// (rayline_arc_thinking_signature_test.go covers the guard).
+	router.Config.KeepUnservedClaudeThinking = true
 	assistantOf := func(t *testing.T, body map[string]json.RawMessage) map[string]json.RawMessage {
 		t.Helper()
 		var messages []map[string]json.RawMessage
@@ -186,6 +190,10 @@ func TestClaudeOverChatReasoningGolden(t *testing.T) {
 		t.Fatalf("build router: %v", err)
 	}
 	awaitPolicySelectorArmed(t, router)
+	// The golden corpus pins the thinking control and the codecs, beneath
+	// the thinking-signature guard, which would strip its unserved history
+	// (rayline_arc_thinking_signature_test.go covers the guard).
+	router.Config.KeepUnservedClaudeThinking = true
 	body := dispatchPolicyClientRequest(t, router, "episode-family-golden", "/v1/chat/completions", string(golden.Request))
 	assertJSONField(t, body, "model", `"anthropic/claude-opus-5"`)
 	var got, want any
@@ -206,8 +214,9 @@ func TestClaudeOverChatReasoningGolden(t *testing.T) {
 // The reverse direction, end to end: Claude's reasoning in a history reaches
 // a kimi or glm worker over Chat by the disposition table's rule. Signed
 // thinking keeps its text as reasoning_content and loses the signature no
-// other host can verify, and reasoning_details reach the worker as the client
-// sent them. Nothing is counted as foreign.
+// other host can verify, and a Chat client's Claude reasoning_details, which
+// the cell did not serve, reach it as their text alone. Nothing is counted as
+// foreign.
 func TestClaudeReasoningReachesAnOpenWeightWorkerOverChat(t *testing.T) {
 	t.Setenv("POLICY_E2E_PROVIDER_KEY", "public-e2e-provider-key")
 	actions := relaxedPolicyActions()
@@ -244,8 +253,12 @@ func TestClaudeReasoningReachesAnOpenWeightWorkerOverChat(t *testing.T) {
 				`"reasoning_content":"claude reasoning",`+
 					`"reasoning_details":[{"type":"reasoning.text","text":"claude reasoning","signature":"claude-signature","format":"anthropic-claude-v1","index":0}]`))
 			wire := string(body["messages"])
-			if !strings.Contains(wire, `"reasoning_content":"claude reasoning"`) || !strings.Contains(wire, "anthropic-claude-v1") {
-				t.Fatalf("Claude's reasoning did not reach the worker as the client sent it: %s", wire)
+			// The text reaches the worker; Claude's signed reasoning_details,
+			// which OpenRouter refuses to send to another provider, do not
+			// (the thinking-signature guard: the cell did not serve them).
+			if !strings.Contains(wire, `"reasoning_content":"claude reasoning"`) ||
+				strings.Contains(wire, "anthropic-claude-v1") || strings.Contains(wire, "claude-signature") {
+				t.Fatalf("Claude's reasoning did not reach the worker as text alone: %s", wire)
 			}
 		})
 	}
