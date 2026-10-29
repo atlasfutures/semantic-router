@@ -23,6 +23,7 @@ import (
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
 
@@ -260,6 +261,7 @@ func logInvalidTurnSignal(header string, episodeIDHash string) {
 // the main turn it is served as.
 func logRaylineARCPolicyTurn(
 	episodeIDHash string,
+	fork *selection.RaylineARCForkPlacement,
 	signals raylinearc.PolicyTurnSignals,
 	transition string,
 	completedTurns uint64,
@@ -279,10 +281,28 @@ func logRaylineARCPolicyTurn(
 		"model_held":        held,
 		"boundary_retained": boundaryRetained,
 	}
+	addRaylineARCForkFields(fields, fork)
 	if subagent := signals.Subagent; subagent != nil {
 		fields["subagent_key_source"] = subagent.KeySource
 		fields["parent_episode_id_hash"] = subagent.ParentEpisodeIDHash
 		fields["parent_agent_id_hash"] = subagent.ParentAgentIDHash
 	}
 	logging.ComponentEvent("extproc", "rayline_arc_policy_turn", fields)
+}
+
+// addRaylineARCForkFields adds where fork detection placed the request: on a
+// sibling (fork, with its root episode as fork_of) or on the episode its
+// header names, and how many siblings that root has. A request fork
+// detection did not run on reports fork false and no count.
+func addRaylineARCForkFields(fields map[string]interface{}, fork *selection.RaylineARCForkPlacement) {
+	fields["fork"], fields["fork_of"], fields["sibling_count"], fields["fork_reason"] = false, nil, nil, nil
+	if fork == nil {
+		return
+	}
+	fields["fork"] = fork.Fork
+	if fork.Fork {
+		fields["fork_of"] = fork.ForkOf
+	}
+	fields["sibling_count"] = fork.SiblingCount
+	fields["fork_reason"] = fork.Reason
 }

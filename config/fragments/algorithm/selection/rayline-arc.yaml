@@ -149,6 +149,10 @@ routing:
             # the lease (eval and training). relaxed: no lease, a commit lands
             # only if no other turn committed meanwhile (serving).
             consistency: strict
+            # Parallel requests sharing one episode id (a forked subagent, an
+            # app's parallel runs) are served on sibling episodes of their own,
+            # told apart by their transcripts (policy-service cells; default on).
+            fork_detection: true
             redis:
               address: redis:6379
               db: 0

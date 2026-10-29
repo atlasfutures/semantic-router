@@ -666,7 +666,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	} else {
 		held = offeredHeld
 	}
-	logRaylineARCPolicyTurn(arcContext.EpisodeIDHash, signals, transition, state.TurnIndex, turn, held >= 0, retained)
+	logRaylineARCPolicyTurn(arcContext.EpisodeIDHash, arcContext.Fork, signals, transition, state.TurnIndex, turn, held >= 0, retained)
 	// Every model excluded leaves nothing to serve, and the turn fails.
 	if len(available) == 0 {
 		logRaylineARCEmptyOffer(arcContext, scorer, emptyOffer{

@@ -364,6 +364,15 @@ type RaylineARCEpisodeConfig struct {
 	// commits only if no other turn committed meanwhile: a collision never
 	// fails a request, it only drops that turn's state update (serving).
 	Consistency string `yaml:"consistency,omitempty"`
+	// ForkDetection separates parallel requests that share one episode id
+	// (a forked subagent, parallel app requests) onto sibling episodes, each
+	// with its own lease and state, by their transcripts. Omitted is on.
+	ForkDetection *bool `yaml:"fork_detection,omitempty"`
+}
+
+// ForkDetectionEnabled reports whether fork detection is on; omitted is on.
+func (cfg RaylineARCEpisodeConfig) ForkDetectionEnabled() bool {
+	return cfg.ForkDetection == nil || *cfg.ForkDetection
 }
 
 const (

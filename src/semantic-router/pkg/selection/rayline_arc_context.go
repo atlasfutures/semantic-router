@@ -129,6 +129,10 @@ type RaylineARCSelectionContext struct {
 	// that kind. Empty when the request was not classified ahead of selection.
 	PolicyCallKind       raylinearc.PolicyCallKind
 	PolicyCallKindSource string
+	// Fork is how the request was placed among its root episode's streams
+	// (rayline_arc_episode_forks.go): nil when fork detection did not run.
+	// A fork's EpisodeIDHash is its sibling's.
+	Fork *RaylineARCForkPlacement
 }
 
 // RaylineARCTrace records bounded, privacy-safe artifact policy diagnostics.
@@ -457,4 +461,17 @@ type RaylineARCTrace struct {
 type RaylineARCServedModel struct {
 	Source string
 	Model  string
+}
+
+// RaylineARCForkPlacement is a request's fork resolution, as logged.
+type RaylineARCForkPlacement struct {
+	// Fork reports the request is served on a sibling episode.
+	Fork bool
+	// ForkOf is the root episode's hash (the one the header names).
+	ForkOf string
+	// Reason is the resolution rule that placed it.
+	Reason       string
+	SiblingCount int
+	// New reports the request created its sibling.
+	New bool
 }
