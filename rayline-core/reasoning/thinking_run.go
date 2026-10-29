@@ -137,3 +137,11 @@ func SplitThinkingRun(provenance []ReasoningProvenance, worker string) (own, res
 	}
 	return own, rest
 }
+
+// ThinkingRefusedWorker is the provenance worker of the thinking a provider
+// refused for its signature: the anchor keys of the blocks a signature 400
+// named. A later history strips the thinking of every assistant message up
+// to the last one holding a refused block, whatever the run says, so a block
+// a host refused is never sent again. It keeps at most MaxThinkingRunAnchors
+// keys, the most recent.
+var ThinkingRefusedWorker = ThinkingRunWorker("\x00refused")

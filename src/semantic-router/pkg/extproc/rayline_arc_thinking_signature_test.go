@@ -103,7 +103,7 @@ func armThinkingRunWorker(t *testing.T, router *OpenAIRouter, arm string) string
 	if err != nil {
 		t.Fatal(err)
 	}
-	return router.thinkingRunWorker(dispatch.backendName, dispatch.upstreamModel)
+	return thinkingRunWorkerFor(router.thinkingRunBase(dispatch.backendName, dispatch.upstreamModel), router.expectedHostFamily(dispatch))
 }
 
 // dispatchThinkingTurn runs one Messages client turn through the request
@@ -761,7 +761,7 @@ func TestOtherModelToClaudeSwitchDropsItsEncryptedReasoning(t *testing.T) {
 // for a worker that is not Claude.
 func TestSameModelRunKeepsItsEncryptedReasoning(t *testing.T) {
 	router, _ := newThinkingGuardRouter(t, "think")
-	worker := router.thinkingRunWorker(armDispatch(t, router, "think").backendName, armDispatch(t, router, "think").upstreamModel)
+	worker := armThinkingRunWorker(t, router, "think")
 	history := `{"model":"auto","max_completion_tokens":32000,"messages":[` +
 		`{"role":"user","content":"Create fib.py and run it."},` +
 		`{"role":"assistant","content":null,` + gptChatReasoning + `,` +
@@ -809,7 +809,7 @@ func TestSameModelRunKeepsItsEncryptedReasoning(t *testing.T) {
 func TestEncryptedReasoningRefusalIsResentForAnyWorker(t *testing.T) {
 	router, _ := newThinkingGuardRouter(t, "think")
 	dispatch := armDispatch(t, router, "think")
-	worker := router.thinkingRunWorker(dispatch.backendName, dispatch.upstreamModel)
+	worker := thinkingRunWorkerFor(router.thinkingRunBase(dispatch.backendName, dispatch.upstreamModel), router.expectedHostFamily(dispatch))
 	episode := "episode-gpt-retry"
 	store := router.RaylineARCEpisodeStore
 	lease, state, err := store.Prepare(context.Background(), raylinearc.HashEpisodeID(episode), 4)
@@ -1016,5 +1016,208 @@ func TestThinkingRetryBodyTreatsASplitReplyAsOne(t *testing.T) {
 	retried, change, ok := thinkingRetryBody(body, true)
 	if !ok || !change.thinkingDisabled || change.stripped != 2 || strings.Contains(string(retried), `"sig-loop"`) {
 		t.Fatalf("ok=%v change=%+v body=%s", ok, change, retried)
+	}
+}
+
+// A signature verifies only within the host family that wrote it.
+func TestSignatureHostFamilies(t *testing.T) {
+	for provider, want := range map[string]string{
+		"anthropic": hostFamilyAnthropic, "Anthropic": hostFamilyAnthropic, "azure/global": hostFamilyAnthropic,
+		"azure/us": hostFamilyAnthropic, "claude-on-aws": hostFamilyAnthropic,
+		"google-vertex/global": hostFamilyVertex, "Google Vertex": hostFamilyVertex, "google-vertex": hostFamilyVertex,
+		"amazon-bedrock": hostFamilyBedrock, "Amazon Bedrock": hostFamilyBedrock,
+		"openai": "openai", "": "",
+	} {
+		if got := signatureHostFamily(provider); got != want {
+			t.Fatalf("%q: family %q, want %q", provider, got, want)
+		}
+	}
+}
+
+// The family a dispatch is expected in is its provider list's first host's;
+// an OpenRouter arm with no list has none.
+func TestExpectedHostFamilyIsTheFirstListedHosts(t *testing.T) {
+	noFallbacks := false
+	openRouter := &config.ProviderProfile{Type: "openrouter", BaseURL: "https://openrouter.ai/api/v1"}
+	for _, tc := range []struct {
+		pin  *config.OpenRouterProviderPreferences
+		want string
+	}{
+		{&config.OpenRouterProviderPreferences{Order: []string{"google-vertex/global", "anthropic"}, AllowFallbacks: &noFallbacks}, hostFamilyVertex},
+		{&config.OpenRouterProviderPreferences{Order: []string{"anthropic", "azure/global"}}, hostFamilyAnthropic},
+		{&config.OpenRouterProviderPreferences{Only: []string{"amazon-bedrock"}}, hostFamilyBedrock},
+		{nil, ""},
+	} {
+		cfg := &config.RouterConfig{}
+		cfg.ModelConfig = map[string]config.ModelParams{"opus": {ProviderPreferences: tc.pin}}
+		router := &OpenAIRouter{Config: cfg}
+		if got := router.expectedHostFamily(&providerDispatch{logicalModel: "opus", profile: openRouter}); got != tc.want {
+			t.Fatalf("pin %+v: family %q, want %q", tc.pin, got, tc.want)
+		}
+	}
+	direct := &OpenAIRouter{Config: &config.RouterConfig{}}
+	if got := direct.expectedHostFamily(&providerDispatch{logicalModel: "opus", profile: &config.ProviderProfile{Type: "anthropic"}}); got != hostFamilyAnthropic {
+		t.Fatalf("a direct Anthropic backend's family = %q", got)
+	}
+}
+
+// A run served on another host family is stripped before a send expected on
+// this one; the same family's run is kept.
+func TestRunOnAnotherHostFamilyIsStripped(t *testing.T) {
+	router, _ := newThinkingGuardRouter(t, "claude")
+	dispatch, err := router.resolveProviderDispatch("claude", "", false, llmprotocol.AnthropicMessagesV1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := router.thinkingRunBase(dispatch.backendName, dispatch.upstreamModel)
+	for _, tc := range []struct {
+		family   string
+		wantKept bool
+	}{{hostFamilyVertex, false}, {hostFamilyBedrock, false}, {hostFamilyAnthropic, true}} {
+		t.Run(tc.family, func(t *testing.T) {
+			episode := "episode-host-family-" + tc.family
+			seedThinkingRun(t, router, episode, thinkingRunWorkerFor(base, tc.family), "sig-first")
+			_, body := dispatchThinkingTurn(t, router, episode, twoTurnHistory("sig-first", "sig-second"))
+			if kept := strings.Contains(string(body["messages"]), `"sig-first"`); kept != tc.wantKept {
+				t.Fatalf("family %s: thinking kept = %v, want %v: %s", tc.family, kept, tc.wantKept, body["messages"])
+			}
+		})
+	}
+}
+
+// A turn served in another host family than expected ends the expected run
+// and anchors the family that served it.
+func TestTurnServedInAnotherFamilyMovesTheRun(t *testing.T) {
+	store, err := raylinearc.NewMemoryEpisodeStore(raylinearc.MemoryEpisodeStoreConfig{MaxEpisodes: 4, IdleTTL: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	episode := raylinearc.HashEpisodeID(t.Name())
+	anthropic, vertex := thinkingRunWorkerFor("opus", hostFamilyAnthropic), thinkingRunWorkerFor("opus", hostFamilyVertex)
+	commit := func(served string, anchored bool, signature string) []reasoning.ReasoningProvenance {
+		t.Helper()
+		lease, state, err := store.Prepare(context.Background(), episode, 2)
+		if err != nil {
+			t.Fatal(err)
+		}
+		transaction := newRaylineARCEpisodeTransaction(store, lease, state, episode, time.Minute, nil)
+		transaction.markSelection(0, 10)
+		transaction.thinkingWorker, transaction.thinkingBase, transaction.thinkingFamily = anthropic, "opus", hostFamilyAnthropic
+		transaction.thinkingOthers, transaction.thinkingAnchored = []string{vertex}, anchored
+		response := &llmprotocol.Response{UpstreamProvider: served, Output: []llmprotocol.OutputItem{{Role: llmprotocol.RoleAssistant,
+			Content: []llmprotocol.Content{{Kind: llmprotocol.ContentReasoning, Text: "thought", Signature: signature}}}}}
+		if err := transaction.commit(context.Background(), &RequestContext{SemanticResponse: response}); err != nil {
+			t.Fatalf("commit: %v", err)
+		}
+		next, reread, err := store.Prepare(context.Background(), episode, 2)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = store.Abort(context.Background(), next)
+		return reread.ReasoningProvenance
+	}
+	digest := func(signature string) string {
+		return reasoning.ThinkingRunAnchorDigest(protocolcodec.SignatureAnchorKey(signature))
+	}
+	provenance := commit("Anthropic", false, "sig-1")
+	if got := reasoning.ThinkingRunAnchors(provenance, anthropic); fmt.Sprint(got) != fmt.Sprint([]string{digest("sig-1")}) {
+		t.Fatalf("a turn served as expected: anchors %v", got)
+	}
+	provenance = commit("Google Vertex", true, "sig-2")
+	if got := reasoning.ThinkingRunAnchors(provenance, anthropic); len(got) != 0 {
+		t.Fatalf("a turn served on Vertex left the Anthropic run: %v", got)
+	}
+	if got := reasoning.ThinkingRunAnchors(provenance, vertex); fmt.Sprint(got) != fmt.Sprint([]string{digest("sig-2")}) {
+		t.Fatalf("the Vertex run = %v", got)
+	}
+}
+
+// A block a host refused is never sent again, even inside the run: nothing up
+// to the message holding it is covered.
+func TestRefusedBlockIsStrippedOnLaterTurns(t *testing.T) {
+	router, _ := newThinkingGuardRouter(t, "claude")
+	episode := "episode-refused-block"
+	store := router.RaylineARCEpisodeStore
+	lease, state, err := store.Prepare(context.Background(), raylinearc.HashEpisodeID(episode), 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	provenance := reasoning.WithThinkingRun(nil, armThinkingRunWorker(t, router, "claude"), nil, false, protocolcodec.SignatureAnchorKey("sig-first"))
+	state.ReasoningProvenance = reasoning.WithThinkingRun(provenance, reasoning.ThinkingRefusedWorker, nil, false, protocolcodec.SignatureAnchorKey("sig-first"))
+	if err := state.Commit(0, 10, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Commit(context.Background(), lease, lease.Version(), state); err != nil {
+		t.Fatal(err)
+	}
+	_, body := dispatchThinkingTurn(t, router, episode, twoTurnHistory("sig-first", "sig-second"))
+	assertSignatures(t, "refused", body["messages"], []string{"sig-second"}, []string{`"sig-first"`})
+}
+
+// After a signature re-send, the refused block is recorded, and the next turn
+// strips it before the send: the 400 does not come back.
+func TestSignatureRetryTeachesTheNextTurn(t *testing.T) {
+	upstream := newClaudeUpstream(t, http.StatusOK, claudeServedReply)
+	ctx, envoy := refusedThinkingTurn(t, "episode-retry-learns", upstream, http.StatusBadRequest, signatureRefusal, "sig-earlier")
+	if envoy.Responses[0].GetImmediateResponse() == nil {
+		t.Fatalf("the refusal was not re-sent: %v", envoy.Responses[0])
+	}
+	transaction := ctx.RaylineARCTransaction
+	if fmt.Sprint(transaction.thinkingRefused) != fmt.Sprint([]string{protocolcodec.SignatureAnchorKey("sig-earlier")}) {
+		t.Fatalf("refused = %q, want the block messages.1.content.0 names", transaction.thinkingRefused)
+	}
+	provenance := transaction.nextThinkingProvenance(nil)
+	if got := reasoning.ThinkingRunAnchors(provenance, reasoning.ThinkingRefusedWorker); len(got) != 1 {
+		t.Fatalf("refused record = %v", got)
+	}
+	// The next turn, its run anchored before the refused block: the block
+	// is stripped, so the provider is never sent it again.
+	messages := []llmprotocol.Message{
+		{Role: llmprotocol.RoleUser, Content: []llmprotocol.Content{{Kind: llmprotocol.ContentText, Text: "start"}}},
+		{Role: llmprotocol.RoleAssistant, Content: []llmprotocol.Content{{Kind: llmprotocol.ContentReasoning, Text: "t", Signature: "sig-earlier"}}},
+		{Role: llmprotocol.RoleUser, Content: []llmprotocol.Content{{Kind: llmprotocol.ContentText, Text: "next"}}},
+	}
+	if through := lastMessageHolding(messages, reasoning.ThinkingRunAnchors(provenance, reasoning.ThinkingRefusedWorker)); through != 1 {
+		t.Fatalf("refused through = %d, want 1", through)
+	}
+}
+
+// End to end: a turn refused for a block, re-sent, and committed; the next
+// turn on the episode is not sent that block even where a run on record
+// would cover it (the conditions of prod episode 633c37c8, where the run
+// held a block a host no longer verified), so its 400 does not recur.
+func TestNextTurnAfterARetryIsNotSentTheRefusedBlock(t *testing.T) {
+	router, _ := newThinkingGuardRouter(t, "claude")
+	episode := "episode-retry-next-turn"
+	worker := armThinkingRunWorker(t, router, "claude")
+	seedThinkingRun(t, router, episode, worker, "sig-earlier")
+	upstream := newClaudeUpstream(t, http.StatusOK, claudeServedReply)
+	ctx, _ := dispatchThinkingTurn(t, router, episode, toolLoopHistory("sig-earlier", "sig-loop"))
+	if envoy := answerRefusal(t, router, ctx, upstream, http.StatusBadRequest, signatureRefusal); envoy.Responses[0].GetImmediateResponse() == nil {
+		t.Fatalf("the refusal was not re-sent: %v", envoy.Responses[0])
+	}
+	if err := ctx.RaylineARCTransaction.commit(context.Background(), ctx); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	// A run on record that covers the refused block again.
+	store := router.RaylineARCEpisodeStore
+	lease, state, err := store.Prepare(context.Background(), raylinearc.HashEpisodeID(episode), 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := reasoning.ThinkingRunAnchors(state.ReasoningProvenance, reasoning.ThinkingRefusedWorker); len(got) != 1 {
+		t.Fatalf("the retry's refused block was not committed: %v", got)
+	}
+	state.ReasoningProvenance = reasoning.WithThinkingRun(state.ReasoningProvenance, worker, nil, false,
+		protocolcodec.SignatureAnchorKey("sig-earlier"))
+	if err := state.Commit(0, 10, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Commit(context.Background(), lease, lease.Version(), state); err != nil {
+		t.Fatal(err)
+	}
+	_, body := dispatchThinkingTurn(t, router, episode, toolLoopHistory("sig-earlier", "sig-loop"))
+	if strings.Contains(string(body["messages"]), `"sig-earlier"`) {
+		t.Fatalf("the next turn was sent the refused block: %s", body["messages"])
 	}
 }
