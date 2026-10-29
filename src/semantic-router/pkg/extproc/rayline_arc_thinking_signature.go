@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
 
 // The thinking-signature guard (config router.thinking_signatures; on unless
@@ -97,34 +99,135 @@ func (r *OpenAIRouter) thinkingSignatureGuardOn(dispatch *providerDispatch) bool
 	return r != nil && r.Config != nil && !r.Config.KeepUnservedClaudeThinking && dispatch != nil
 }
 
-// thinkingRunWorker names the thinking run of the model a backend serves: the provider endpoint the call goes to (its type and base URL) and
-// the model id it is sent with. Arms that differ only in their thinking
-// settings, or in the name of their backend entry, are one run. The provider
-// OpenRouter picks does not enter: a signature another provider family cannot
-// verify is the re-send's to answer.
-func (r *OpenAIRouter) thinkingRunWorker(backendName, upstreamModel string) string {
+// thinkingRunBase names the model a backend serves: the provider endpoint
+// the call goes to (its type and base URL) and the model id it is sent with.
+// Arms that differ only in their thinking settings, or in the name of their
+// backend entry, share it.
+func (r *OpenAIRouter) thinkingRunBase(backendName, upstreamModel string) string {
 	endpoint := backendName
 	if profile, err := r.Config.GetProviderProfileForEndpoint(backendName); err == nil && profile != nil {
 		endpoint = profile.Type + "\x00" + strings.TrimRight(profile.BaseURL, "/")
 	}
-	return reasoning.ThinkingRunWorker(endpoint + "\x00" + upstreamModel)
+	return endpoint + "\x00" + upstreamModel
 }
 
-// otherThinkingRunWorkers are the run workers of every other model the cell
-// serves. A turn on one ends the runs of the others.
+// thinkingRunWorkerFor names a thinking run: a model (thinkingRunBase) on a
+// host family (signatureHostFamily). A signature verifies only within the
+// family of hosts that wrote it, so a model's turns on two families are two
+// runs.
+func thinkingRunWorkerFor(base, family string) string {
+	return reasoning.ThinkingRunWorker(base + "\x00" + family)
+}
+
+// The host families a thinking signature verifies within. OpenRouter's
+// "encrypted reasoning ... can only be processed by the provider that created
+// it (anthropic) or by azure/global, claude-on-aws, azure/us" names
+// Anthropic's: Anthropic, Azure and Claude on AWS. Google Vertex and Amazon
+// Bedrock are each their own.
+const (
+	hostFamilyAnthropic = "anthropic"
+	hostFamilyVertex    = "vertex"
+	hostFamilyBedrock   = "bedrock"
+)
+
+// signatureHostFamily is the host family of a provider, named by its slug
+// ("google-vertex/global") or its display name ("Google Vertex", or "Google"
+// as OpenRouter names Vertex); Google AI Studio and any other
+// provider is a family of its own, named by its folded name; "" for none.
+func signatureHostFamily(provider string) string {
+	base, _, _ := strings.Cut(strings.TrimSpace(provider), "/")
+	key := raylinearc.ProviderSlugKey(base)
+	switch {
+	case key == "":
+		return ""
+	case strings.HasPrefix(key, "anthropic"), strings.HasPrefix(key, "azure"), strings.HasPrefix(key, "claudeonaws"):
+		return hostFamilyAnthropic
+	case key == "google", strings.HasPrefix(key, "googlevertex"), strings.HasPrefix(key, "vertex"):
+		return hostFamilyVertex
+	case strings.HasPrefix(key, "amazon"), strings.HasPrefix(key, "bedrock"):
+		return hostFamilyBedrock
+	}
+	return key
+}
+
+// expectedHostFamily is the host family a dispatch is expected to be served
+// in. OpenRouter picks the host within the provider list it is sent only at
+// the call, so it is the family of that list's first host (its order, else
+// its only list): the arm's pin as the endpoint pick narrows it for this
+// session (pickArmEndpoint, run here as the dispatch will run it, its record
+// on the context reset, as providerPreferencesMember resets it). On any other
+// backend it is the backend's own type. An OpenRouter dispatch with no list
+// has no expected family (""): its run is one whatever host serves it. A turn
+// served in another family than the expected one moves the run to that
+// family at commit.
+func (r *OpenAIRouter) expectedHostFamily(dispatch *providerDispatch, ctx *RequestContext) string {
+	if providerIsOpenRouter(dispatch.profile) {
+		if r.Config == nil {
+			return ""
+		}
+		pin, _ := providerPreferencesForDispatch(dispatch, r.Config)
+		if ctx != nil {
+			pin = pickArmEndpoint(ctx, dispatch, pin)
+			resetDispatchedEndpoint(ctx)
+		}
+		if pin != nil {
+			for _, list := range [][]string{pin.Order, pin.Only} {
+				if len(list) > 0 {
+					return signatureHostFamily(list[0])
+				}
+			}
+		}
+		return ""
+	}
+	if dispatch.profile != nil {
+		return signatureHostFamily(dispatch.profile.Type)
+	}
+	return ""
+}
+
+// hostFamiliesInConfig are the host families any arm's provider list or
+// backend can be served in, the families a run can be recorded under.
+func (r *OpenAIRouter) hostFamiliesInConfig() []string {
+	families := []string{"", hostFamilyAnthropic, hostFamilyVertex, hostFamilyBedrock}
+	add := func(family string) {
+		if !slices.Contains(families, family) {
+			families = append(families, family)
+		}
+	}
+	for name := range r.Config.ModelConfig {
+		if pin := r.Config.ProviderPreferencesForModel(name); pin != nil {
+			for _, host := range append(append([]string(nil), pin.Order...), pin.Only...) {
+				add(signatureHostFamily(host))
+			}
+		}
+		if _, backend, found, err := r.Config.ResolvePrimaryBackendForModel(name); err == nil && found {
+			if profile, err := r.Config.GetProviderProfileForEndpoint(backend); err == nil && profile != nil {
+				add(signatureHostFamily(profile.Type))
+			}
+		}
+	}
+	return families
+}
+
+// otherThinkingRunWorkers are the run workers of every other model, and of
+// every other host family, the cell serves. A turn on one ends the runs of
+// the others.
 func (r *OpenAIRouter) otherThinkingRunWorkers(own string) []string {
 	if r == nil || r.Config == nil {
 		return nil
 	}
+	families := r.hostFamiliesInConfig()
 	var others []string
 	for name := range r.Config.ModelConfig {
 		_, backend, found, err := r.Config.ResolvePrimaryBackendForModel(name)
 		if err != nil || !found {
 			continue
 		}
-		worker := r.thinkingRunWorker(backend, r.Config.ResolveExternalModelID(name, backend))
-		if worker != own && !slices.Contains(others, worker) {
-			others = append(others, worker)
+		base := r.thinkingRunBase(backend, r.Config.ResolveExternalModelID(name, backend))
+		for _, family := range families {
+			if worker := thinkingRunWorkerFor(base, family); worker != own && !slices.Contains(others, worker) {
+				others = append(others, worker)
+			}
 		}
 	}
 	slices.Sort(others)
@@ -162,17 +265,23 @@ func (r *OpenAIRouter) guardHistoryReasoning(
 	}
 	transaction := ctx.RaylineARCTransaction
 	claude := r.armFamily(dispatch.logicalModel) == anthropicFamily
-	worker := r.thinkingRunWorker(dispatch.backendName, dispatch.upstreamModel)
-	transaction.thinkingWorker = worker
+	base := r.thinkingRunBase(dispatch.backendName, dispatch.upstreamModel)
+	family := r.expectedHostFamily(dispatch, ctx)
+	worker := thinkingRunWorkerFor(base, family)
+	transaction.thinkingWorker, transaction.thinkingBase, transaction.thinkingFamily = worker, base, family
 	transaction.thinkingOthers = r.otherThinkingRunWorkers(worker)
 	var provenance []reasoning.ReasoningProvenance
 	if transaction.state != nil {
 		provenance = transaction.state.ReasoningProvenance
 	}
 	runStart := thinkingRunStart(request.Messages, reasoning.ThinkingRunAnchors(provenance, worker))
+	// A block a host refused is never sent again: nothing up to the last
+	// message holding one is covered, whatever the run says.
+	refusedThrough := lastMessageHolding(request.Messages,
+		reasoning.ThinkingRunAnchors(provenance, reasoning.ThinkingRefusedWorker))
 	transaction.thinkingAnchored = runStart >= 0
 	transaction.thinkingReplyIndex = len(request.Messages)
-	covered := func(index int) bool { return runStart >= 0 && index >= runStart }
+	covered := func(index int) bool { return runStart >= 0 && index >= runStart && index > refusedThrough }
 	// The active loop's latest reply: the assistant message holding the
 	// answered call and the assistant messages right before it, which a
 	// Responses client sends as items of the same reply (its reasoning, then
@@ -184,7 +293,7 @@ func (r *OpenAIRouter) guardHistoryReasoning(
 	switch {
 	case active >= 0 && covered(activeStart):
 		keepActive = true
-	case active >= 0 && claude:
+	case active >= 0 && claude && activeStart > refusedThrough:
 		// Sent though the run does not cover it: if Claude takes it, a new
 		// run starts at it, so later turns keep it and the prefix this turn's
 		// thinking is signed over does not change.
@@ -209,12 +318,14 @@ func (r *OpenAIRouter) guardHistoryReasoning(
 	}
 	if stripped > 0 {
 		logging.ComponentEvent("extproc", "unserved_reasoning_stripped", map[string]interface{}{
-			"request_id":   ctx.RequestID,
-			"model":        dispatch.logicalModel,
-			"wire_format":  dispatch.targetFormat,
-			"stripped":     stripped,
-			"run_anchored": runStart >= 0,
-			"tool_loop":    active >= 0,
+			"request_id":      ctx.RequestID,
+			"model":           dispatch.logicalModel,
+			"wire_format":     dispatch.targetFormat,
+			"stripped":        stripped,
+			"run_anchored":    runStart >= 0,
+			"host_family":     family,
+			"refused_through": refusedThrough,
+			"tool_loop":       active >= 0,
 		})
 	}
 	return stripped
@@ -251,6 +362,28 @@ func thinkingRunStart(messages []llmprotocol.Message, anchors []string) int {
 		start = end - 1
 	}
 	return -1
+}
+
+// lastMessageHolding is the index of the last message holding one of keys
+// (anchor-key digests), or -1.
+func lastMessageHolding(messages []llmprotocol.Message, keys []string) int {
+	if len(keys) == 0 {
+		return -1
+	}
+	held := make(map[string]bool, len(keys))
+	for _, key := range keys {
+		held[key] = true
+	}
+	last := -1
+	for index, message := range messages {
+		for _, key := range protocolcodec.MessageAnchorKeys(message, index) {
+			if held[reasoning.ThinkingRunAnchorDigest(key)] {
+				last = index
+				break
+			}
+		}
+	}
+	return last
 }
 
 // activeToolLoopReply is the active tool loop's latest reply as indexes of
@@ -487,6 +620,55 @@ func responsesRetryBody(body []byte) ([]byte, thinkingRetryChange, bool) {
 func hasJSONMember(members map[string]json.RawMessage, name string) bool {
 	value, present := members[name]
 	return present && len(value) > 0 && string(value) != "null" && string(value) != `""`
+}
+
+// refusedBlockPattern reads the block a refusal names
+// ("messages.7.content.0: Invalid `signature` in `thinking` block").
+var refusedBlockPattern = regexp.MustCompile(`messages\.(\d+)\.content\.(\d+)`)
+
+// refusedThinkingKeys are the anchor keys of the thinking a Messages
+// refusal names: the block at its index when it is thinking, else every
+// thinking block of the message it names. A refusal that names no block, or
+// one on another wire, names none.
+func refusedThinkingKeys(dispatched []byte, format llmprotocol.WireFormat, refusal []byte) []string {
+	match := refusedBlockPattern.FindSubmatch(refusal)
+	if format != llmprotocol.AnthropicMessagesV1 || match == nil {
+		return nil
+	}
+	messageIndex, errMessage := strconv.Atoi(string(match[1]))
+	blockIndex, errBlock := strconv.Atoi(string(match[2]))
+	var members map[string]json.RawMessage
+	var messages []map[string]json.RawMessage
+	if errMessage != nil || errBlock != nil || json.Unmarshal(dispatched, &members) != nil ||
+		json.Unmarshal(members["messages"], &messages) != nil || messageIndex >= len(messages) {
+		return nil
+	}
+	var blocks []map[string]json.RawMessage
+	if json.Unmarshal(messages[messageIndex]["content"], &blocks) != nil {
+		return nil
+	}
+	anchorKey := func(block map[string]json.RawMessage) string {
+		key, thinking := wireThinkingKey(block)
+		if !thinking || key == "" {
+			return ""
+		}
+		if wireBlockType(block) == "redacted_thinking" {
+			return protocolcodec.RedactedAnchorKey(key)
+		}
+		return protocolcodec.SignatureAnchorKey(key)
+	}
+	if blockIndex < len(blocks) {
+		if key := anchorKey(blocks[blockIndex]); key != "" {
+			return []string{key}
+		}
+	}
+	var keys []string
+	for _, block := range blocks {
+		if key := anchorKey(block); key != "" {
+			keys = append(keys, key)
+		}
+	}
+	return keys
 }
 
 // thinkingRetryBody is the dispatched Messages body with the thinking of
@@ -776,6 +958,8 @@ func (r *OpenAIRouter) thinkingSignatureRetryOnResponseHeaders(
 	if transaction := ctx.RaylineARCTransaction; transaction != nil && transaction.thinkingWorker != "" {
 		// The re-send kept no reasoning: the run starts again at its reply.
 		transaction.thinkingRestart, transaction.thinkingAdopted = true, ""
+		// The block the refusal named is never sent again.
+		transaction.thinkingRefused = refusedThinkingKeys(plan.dispatched, plan.dispatch.targetFormat, body)
 	}
 	result := callFlexTwin(ctx, call, r.flexResendBodyLimit(), received.Add(budget))
 	fields := map[string]interface{}{

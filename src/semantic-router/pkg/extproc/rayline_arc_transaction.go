@@ -104,6 +104,14 @@ type raylineARCEpisodeTransaction struct {
 	thinkingRestart   bool
 	// thinkingReplyIndex is where the reply will sit in the next history.
 	thinkingReplyIndex int
+	// thinkingBase and thinkingFamily name the model and the host family the
+	// turn was expected to be served in, thinkingServed the provider that
+	// served it, and thinkingRefused the anchor keys of the thinking a
+	// signature 400 named on this turn.
+	thinkingBase    string
+	thinkingFamily  string
+	thinkingServed  string
+	thinkingRefused []string
 	// call is the cache evidence of this turn's policy-service call: the
 	// action it served, the TTL its dispatched body stated and the
 	// provider's usage. It is recorded on the served arm's warmth with the
@@ -700,6 +708,10 @@ func (transaction *raylineARCEpisodeTransaction) nextState() (*raylinearc.Episod
 		if transaction.thinkingWorker == "" {
 			own, rest = nil, nextState.ReasoningProvenance
 		}
+		// The refused blocks are kept apart too: a block a host refused must
+		// never be sent again.
+		refused, rest := reasoning.SplitThinkingRun(rest, reasoning.ThinkingRefusedWorker)
+		own = append(refused, own...)
 		rest = reasoning.WithReasoningProvenance(rest, transaction.dispatchWorker, transaction.opaqueReasoning)
 		if limit := reasoning.MaxReasoningProvenance - len(own); len(rest) > limit {
 			rest = rest[len(rest)-max(limit, 0):]
@@ -707,16 +719,7 @@ func (transaction *raylineARCEpisodeTransaction) nextState() (*raylinearc.Episod
 		nextState.ReasoningProvenance = append(rest, own...)
 	}
 	if transaction.thinkingWorker != "" {
-		provenance, anchored, anchor := nextState.ReasoningProvenance, transaction.thinkingAnchored, transaction.thinkingAdopted
-		if transaction.thinkingRestart {
-			provenance, anchored = reasoning.WithoutThinkingRun(provenance, transaction.thinkingWorker), false
-		}
-		if anchor == "" {
-			anchor = transaction.thinkingSignature
-		}
-		nextState.ReasoningProvenance = reasoning.WithThinkingRun(
-			provenance, transaction.thinkingWorker, transaction.thinkingOthers, anchored, anchor,
-		)
+		nextState.ReasoningProvenance = transaction.nextThinkingProvenance(nextState.ReasoningProvenance)
 	}
 	if transaction.reasoningIssuersStaged {
 		nextState.ReasoningIssuers = append([]string(nil), transaction.reasoningIssuers...)
@@ -1014,12 +1017,56 @@ func arcTurnIndexForTelemetry(value uint64) int {
 	return int(value) // #nosec G115 -- value is bounded above by maximum.
 }
 
+// nextThinkingProvenance is the reasoning provenance after this turn's
+// thinking run. A turn served in the host family it was expected in extends
+// (or restarts) its run. A turn served in another family ends the expected
+// run and starts, or extends, the run of the family that served it: its
+// signatures verify only there. The thinking a refusal named is recorded
+// either way.
+func (transaction *raylineARCEpisodeTransaction) nextThinkingProvenance(
+	provenance []reasoning.ReasoningProvenance,
+) []reasoning.ReasoningProvenance {
+	worker, others := transaction.thinkingWorker, transaction.thinkingOthers
+	anchored, anchor := transaction.thinkingAnchored, transaction.thinkingAdopted
+	if transaction.thinkingRestart {
+		provenance, anchored = reasoning.WithoutThinkingRun(provenance, worker), false
+	}
+	if served := signatureHostFamily(transaction.thinkingServed); served != "" && transaction.thinkingFamily != "" &&
+		served != transaction.thinkingFamily && transaction.thinkingBase != "" {
+		provenance = reasoning.WithoutThinkingRun(provenance, worker)
+		others = append(append([]string(nil), others...), worker)
+		worker, anchored = thinkingRunWorkerFor(transaction.thinkingBase, served), false
+		if transaction.thinkingRestart {
+			// The re-send stripped every turn's thinking: no run survives it,
+			// the serving family's included.
+			provenance = reasoning.WithoutThinkingRun(provenance, worker)
+		}
+	}
+	if anchor == "" {
+		anchor = transaction.thinkingSignature
+	}
+	provenance = reasoning.WithThinkingRun(provenance, worker, others, anchored, anchor)
+	for _, key := range transaction.thinkingRefused {
+		provenance = reasoning.WithThinkingRun(provenance, reasoning.ThinkingRefusedWorker, nil, false, key)
+	}
+	return provenance
+}
+
 // observeOpaqueReasoning records the opaque reasoning blocks this turn's
 // response held, read from the response decoded for the client. A turn that
 // commits at its headers has none decoded yet and records nothing.
 func (transaction *raylineARCEpisodeTransaction) observeOpaqueReasoning(requestContext *RequestContext) {
-	if transaction == nil || requestContext == nil || requestContext.SemanticResponse == nil {
+	if transaction == nil || requestContext == nil {
 		return
+	}
+	if state := requestContext.SemanticStreamState; state != nil {
+		transaction.thinkingServed = state.provider
+	}
+	if requestContext.SemanticResponse == nil {
+		return
+	}
+	if served := requestContext.SemanticResponse.UpstreamProvider; served != "" {
+		transaction.thinkingServed = served
 	}
 	transaction.opaqueReasoning = protocolcodec.ResponseOpaqueReasoning(requestContext.SemanticResponse)
 	transaction.thinkingSignature = protocolcodec.ResponseAnchorKey(requestContext.SemanticResponse, transaction.thinkingReplyIndex)
