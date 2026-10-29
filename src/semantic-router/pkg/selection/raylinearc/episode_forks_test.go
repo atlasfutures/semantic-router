@@ -377,3 +377,16 @@ func TestEditedFirstTurnRetryStays(t *testing.T) {
 		t.Fatalf("different shell = %+v, want a fork", got)
 	}
 }
+
+// A sibling's own failed turn, edited and retried, stays on the sibling,
+// though the main stream's newest turn shares its base.
+func TestSiblingEditedRetryStaysOnTheSibling(t *testing.T) {
+	world := newForkWorld(t)
+	world.admit(forkRequest("s", "u1"), false)
+	world.admit(forkRequest("s", "u1", "a1", "uA"), true)       // A in flight
+	b := world.admit(forkRequest("s", "u1", "a1", "uB"), false) // B forks, then fails
+	world.finish(EpisodeForkMainStream)
+	if got := world.admit(forkRequest("s", "u1", "a1", "uB edited"), false); got.Stream != b.Stream || got.Reason != ForkReasonRetryEdit {
+		t.Fatalf("B's edited retry = %+v, want retry_edit on %q", got, b.Stream)
+	}
+}

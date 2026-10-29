@@ -265,8 +265,10 @@ func (r *OpenAIRouter) prepareRaylineARCForkedTurn(
 	for {
 		placed, ok := check.resolve(parent, "")
 		if !ok {
-			reqCtx.RaylineARCAcquireTimeout = 0
-			return r.prepareOrJoinRaylineARCTurn(arcConfig, reqCtx, check.rootHash, workerCount, false)
+			// A registry that cannot be read cannot place the request: it
+			// fails (and the gateway replays it) rather than risk serving a
+			// fork on its parent's episode.
+			return nil, nil, "episode_store"
 		}
 		remaining := deadline.Sub(check.now())
 		probe := raylineARCForkProbe
@@ -289,21 +291,19 @@ func (r *OpenAIRouter) prepareRaylineARCForkedTurn(
 		// The registry is read again under the lease, so the admission is
 		// written over what the stream holds now.
 		if again, ok := check.resolve(parent, placed.hash); ok {
-			if again.hash != placed.hash && moves < raylineARCForkMaxMoves {
+			if again.hash != placed.hash {
 				// Admitted elsewhere while this one waited: the episode this
-				// lease holds is no longer its stream.
-				moves++
+				// lease holds is no longer its stream. Out of moves, it fails
+				// as contention rather than be served on the wrong stream.
 				r.finalizeRaylineARCAbort(reqCtx, "episode_fork_moved")
 				reqCtx.RaylineARCTransaction, reqCtx.SelectionTransaction, reqCtx.RaylineARCInflight = nil, nil, nil
+				if moves++; moves > raylineARCForkMaxMoves {
+					r.applyRaylineARCForkPlacement(result, again)
+					return nil, nil, "episode_timeout"
+				}
 				continue
 			}
-			if again.hash == placed.hash {
-				placed = again
-			} else {
-				// Out of moves: it stays where its lease is, admitted over
-				// that stream's current record rather than the stale one.
-				placed.view = again.view
-			}
+			placed = again
 		}
 		check.admit(placed)
 		r.applyRaylineARCForkPlacement(result, placed)

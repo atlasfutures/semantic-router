@@ -125,8 +125,10 @@ func (stream *EpisodeForkStream) Busy(time.Time) bool {
 	return stream != nil && stream.Leased
 }
 
+// live reports whether the stream is still in use: admitted within the idle
+// TTL, or with a turn in flight however long it has run.
 func (stream *EpisodeForkStream) live(now time.Time, idleTTL time.Duration) bool {
-	return stream != nil && now.Sub(time.UnixMilli(stream.AdmittedAtMS)) < idleTTL
+	return stream != nil && (stream.Leased || now.Sub(time.UnixMilli(stream.AdmittedAtMS)) < idleTTL)
 }
 
 // Clone is a deep copy.
@@ -436,15 +438,20 @@ func ResolveEpisodeFork(
 	// stays on that stream. When in doubt the request stays: a stream whose
 	// commit cannot be read counts as not committed. Beside a turn in flight the same shape is a parallel request
 	// (a second run with a new message), which rule 3 forks.
-	retried, retriedLen := "", -1
+	retried, retriedLen, retriedAt := "", -1, int64(0)
 	for _, name := range names {
 		stream := streams[name]
 		latest, ok := stream.Latest()
 		if !ok || stream.Busy(now) || request.Committed[name] || latest.BaseLen < homeLen ||
-			latest.BaseLen <= retriedLen || !request.retries(latest) {
+			latest.BaseLen < retriedLen || !request.retries(latest) {
 			continue
 		}
-		retried, retriedLen = name, latest.BaseLen
+		// The longest base; on a tie the turn admitted last, which is the
+		// one that just failed.
+		if latest.BaseLen == retriedLen && stream.AdmittedAtMS <= retriedAt {
+			continue
+		}
+		retried, retriedLen, retriedAt = name, latest.BaseLen, stream.AdmittedAtMS
 	}
 	if retried != "" {
 		resolution.Stream, resolution.Parent, resolution.Reason = retried, retried, ForkReasonRetryEdit
@@ -469,7 +476,7 @@ func ResolveEpisodeFork(
 		// A recognised compaction is the home's own next context.
 	case branched:
 		resolution.Reason = ForkReasonForkBranch
-	case homeStream.Root == "" || homeStream.Root == request.Root:
+	case homeStream.Root == "" || homeStream.Root == request.Root || homeStream.lastRoot() == request.Root:
 		resolution.Reason = ForkReasonRewrite
 	default:
 		resolution.Reason = ForkReasonForkRoot
