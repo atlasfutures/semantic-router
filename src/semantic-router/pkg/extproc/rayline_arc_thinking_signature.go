@@ -131,7 +131,8 @@ const (
 )
 
 // signatureHostFamily is the host family of a provider, named by its slug
-// ("google-vertex/global") or its display name ("Google Vertex"); any other
+// ("google-vertex/global") or its display name ("Google Vertex", or "Google"
+// as OpenRouter names Vertex); Google AI Studio and any other
 // provider is a family of its own, named by its folded name; "" for none.
 func signatureHostFamily(provider string) string {
 	base, _, _ := strings.Cut(strings.TrimSpace(provider), "/")
@@ -141,7 +142,7 @@ func signatureHostFamily(provider string) string {
 		return ""
 	case strings.HasPrefix(key, "anthropic"), strings.HasPrefix(key, "azure"), strings.HasPrefix(key, "claudeonaws"):
 		return hostFamilyAnthropic
-	case strings.HasPrefix(key, "google"), strings.HasPrefix(key, "vertex"):
+	case key == "google", strings.HasPrefix(key, "googlevertex"), strings.HasPrefix(key, "vertex"):
 		return hostFamilyVertex
 	case strings.HasPrefix(key, "amazon"), strings.HasPrefix(key, "bedrock"):
 		return hostFamilyBedrock
@@ -150,20 +151,29 @@ func signatureHostFamily(provider string) string {
 }
 
 // expectedHostFamily is the host family a dispatch is expected to be served
-// in. OpenRouter picks the host within the arm's provider list only at the
-// call, so it is the family of the list's first host (its order, else its
-// only list); on any other backend, the backend's own type. An OpenRouter
-// arm with no list has no expected family (""): its run is one whatever host
-// serves it. A turn served in another family than the expected one moves the
-// run to that family at commit.
-func (r *OpenAIRouter) expectedHostFamily(dispatch *providerDispatch) string {
+// in. OpenRouter picks the host within the provider list it is sent only at
+// the call, so it is the family of that list's first host (its order, else
+// its only list): the arm's pin as the endpoint pick narrows it for this
+// session (pickArmEndpoint, run here as the dispatch will run it, its record
+// on the context reset, as providerPreferencesMember resets it). On any other
+// backend it is the backend's own type. An OpenRouter dispatch with no list
+// has no expected family (""): its run is one whatever host serves it. A turn
+// served in another family than the expected one moves the run to that
+// family at commit.
+func (r *OpenAIRouter) expectedHostFamily(dispatch *providerDispatch, ctx *RequestContext) string {
 	if providerIsOpenRouter(dispatch.profile) {
-		if r.Config != nil {
-			if pin := r.Config.ProviderPreferencesForModel(dispatch.logicalModel); pin != nil {
-				for _, list := range [][]string{pin.Order, pin.Only} {
-					if len(list) > 0 {
-						return signatureHostFamily(list[0])
-					}
+		if r.Config == nil {
+			return ""
+		}
+		pin, _ := providerPreferencesForDispatch(dispatch, r.Config)
+		if ctx != nil {
+			pin = pickArmEndpoint(ctx, dispatch, pin)
+			resetDispatchedEndpoint(ctx)
+		}
+		if pin != nil {
+			for _, list := range [][]string{pin.Order, pin.Only} {
+				if len(list) > 0 {
+					return signatureHostFamily(list[0])
 				}
 			}
 		}
@@ -256,7 +266,7 @@ func (r *OpenAIRouter) guardHistoryReasoning(
 	transaction := ctx.RaylineARCTransaction
 	claude := r.armFamily(dispatch.logicalModel) == anthropicFamily
 	base := r.thinkingRunBase(dispatch.backendName, dispatch.upstreamModel)
-	family := r.expectedHostFamily(dispatch)
+	family := r.expectedHostFamily(dispatch, ctx)
 	worker := thinkingRunWorkerFor(base, family)
 	transaction.thinkingWorker, transaction.thinkingBase, transaction.thinkingFamily = worker, base, family
 	transaction.thinkingOthers = r.otherThinkingRunWorkers(worker)

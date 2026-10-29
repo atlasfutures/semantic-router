@@ -708,6 +708,10 @@ func (transaction *raylineARCEpisodeTransaction) nextState() (*raylinearc.Episod
 		if transaction.thinkingWorker == "" {
 			own, rest = nil, nextState.ReasoningProvenance
 		}
+		// The refused blocks are kept apart too: a block a host refused must
+		// never be sent again.
+		refused, rest := reasoning.SplitThinkingRun(rest, reasoning.ThinkingRefusedWorker)
+		own = append(refused, own...)
 		rest = reasoning.WithReasoningProvenance(rest, transaction.dispatchWorker, transaction.opaqueReasoning)
 		if limit := reasoning.MaxReasoningProvenance - len(own); len(rest) > limit {
 			rest = rest[len(rest)-max(limit, 0):]
@@ -1032,6 +1036,11 @@ func (transaction *raylineARCEpisodeTransaction) nextThinkingProvenance(
 		provenance = reasoning.WithoutThinkingRun(provenance, worker)
 		others = append(append([]string(nil), others...), worker)
 		worker, anchored = thinkingRunWorkerFor(transaction.thinkingBase, served), false
+		if transaction.thinkingRestart {
+			// The re-send stripped every turn's thinking: no run survives it,
+			// the serving family's included.
+			provenance = reasoning.WithoutThinkingRun(provenance, worker)
+		}
 	}
 	if anchor == "" {
 		anchor = transaction.thinkingSignature

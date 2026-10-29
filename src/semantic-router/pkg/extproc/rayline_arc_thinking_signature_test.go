@@ -103,7 +103,7 @@ func armThinkingRunWorker(t *testing.T, router *OpenAIRouter, arm string) string
 	if err != nil {
 		t.Fatal(err)
 	}
-	return thinkingRunWorkerFor(router.thinkingRunBase(dispatch.backendName, dispatch.upstreamModel), router.expectedHostFamily(dispatch))
+	return thinkingRunWorkerFor(router.thinkingRunBase(dispatch.backendName, dispatch.upstreamModel), router.expectedHostFamily(dispatch, nil))
 }
 
 // dispatchThinkingTurn runs one Messages client turn through the request
@@ -809,7 +809,7 @@ func TestSameModelRunKeepsItsEncryptedReasoning(t *testing.T) {
 func TestEncryptedReasoningRefusalIsResentForAnyWorker(t *testing.T) {
 	router, _ := newThinkingGuardRouter(t, "think")
 	dispatch := armDispatch(t, router, "think")
-	worker := thinkingRunWorkerFor(router.thinkingRunBase(dispatch.backendName, dispatch.upstreamModel), router.expectedHostFamily(dispatch))
+	worker := thinkingRunWorkerFor(router.thinkingRunBase(dispatch.backendName, dispatch.upstreamModel), router.expectedHostFamily(dispatch, nil))
 	episode := "episode-gpt-retry"
 	store := router.RaylineARCEpisodeStore
 	lease, state, err := store.Prepare(context.Background(), raylinearc.HashEpisodeID(episode), 4)
@@ -1026,7 +1026,8 @@ func TestSignatureHostFamilies(t *testing.T) {
 		"azure/us": hostFamilyAnthropic, "claude-on-aws": hostFamilyAnthropic,
 		"google-vertex/global": hostFamilyVertex, "Google Vertex": hostFamilyVertex, "google-vertex": hostFamilyVertex,
 		"amazon-bedrock": hostFamilyBedrock, "Amazon Bedrock": hostFamilyBedrock,
-		"openai": "openai", "": "",
+		"openai": "openai", "": "", "Google": hostFamilyVertex,
+		"google-ai-studio": "googleaistudio", "Google AI Studio": "googleaistudio",
 	} {
 		if got := signatureHostFamily(provider); got != want {
 			t.Fatalf("%q: family %q, want %q", provider, got, want)
@@ -1051,12 +1052,12 @@ func TestExpectedHostFamilyIsTheFirstListedHosts(t *testing.T) {
 		cfg := &config.RouterConfig{}
 		cfg.ModelConfig = map[string]config.ModelParams{"opus": {ProviderPreferences: tc.pin}}
 		router := &OpenAIRouter{Config: cfg}
-		if got := router.expectedHostFamily(&providerDispatch{logicalModel: "opus", profile: openRouter}); got != tc.want {
+		if got := router.expectedHostFamily(&providerDispatch{logicalModel: "opus", profile: openRouter}, nil); got != tc.want {
 			t.Fatalf("pin %+v: family %q, want %q", tc.pin, got, tc.want)
 		}
 	}
 	direct := &OpenAIRouter{Config: &config.RouterConfig{}}
-	if got := direct.expectedHostFamily(&providerDispatch{logicalModel: "opus", profile: &config.ProviderProfile{Type: "anthropic"}}); got != hostFamilyAnthropic {
+	if got := direct.expectedHostFamily(&providerDispatch{logicalModel: "opus", profile: &config.ProviderProfile{Type: "anthropic"}}, nil); got != hostFamilyAnthropic {
 		t.Fatalf("a direct Anthropic backend's family = %q", got)
 	}
 }
@@ -1219,5 +1220,60 @@ func TestNextTurnAfterARetryIsNotSentTheRefusedBlock(t *testing.T) {
 	_, body := dispatchThinkingTurn(t, router, episode, toolLoopHistory("sig-earlier", "sig-loop"))
 	if strings.Contains(string(body["messages"]), `"sig-earlier"`) {
 		t.Fatalf("the next turn was sent the refused block: %s", body["messages"])
+	}
+}
+
+// A re-send that lands in another family leaves no run behind, the serving
+// family's old one included.
+func TestRestartedTurnInAnotherFamilyLeavesNoOldRun(t *testing.T) {
+	anthropic, vertex := thinkingRunWorkerFor("opus", hostFamilyAnthropic), thinkingRunWorkerFor("opus", hostFamilyVertex)
+	provenance := reasoning.WithThinkingRun(nil, vertex, nil, false, protocolcodec.SignatureAnchorKey("sig-old-vertex"))
+	transaction := &raylineARCEpisodeTransaction{
+		thinkingWorker: anthropic, thinkingBase: "opus", thinkingFamily: hostFamilyAnthropic,
+		thinkingOthers: []string{vertex}, thinkingRestart: true, thinkingServed: "google-vertex",
+		thinkingSignature: protocolcodec.SignatureAnchorKey("sig-reply"),
+	}
+	next := transaction.nextThinkingProvenance(provenance)
+	if got := reasoning.ThinkingRunAnchors(next, vertex); fmt.Sprint(got) !=
+		fmt.Sprint([]string{reasoning.ThinkingRunAnchorDigest(protocolcodec.SignatureAnchorKey("sig-reply"))}) {
+		t.Fatalf("the Vertex run = %v, want only the re-send's reply", got)
+	}
+}
+
+// Opaque blocks a turn records never push a refused block out.
+func TestOpaqueBlocksNeverEvictARefusedBlock(t *testing.T) {
+	store, err := raylinearc.NewMemoryEpisodeStore(raylinearc.MemoryEpisodeStoreConfig{MaxEpisodes: 4, IdleTTL: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	episode := raylinearc.HashEpisodeID(t.Name())
+	lease, state, err := store.Prepare(context.Background(), episode, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.ReasoningProvenance = reasoning.WithThinkingRun(nil, reasoning.ThinkingRefusedWorker, nil, false, protocolcodec.SignatureAnchorKey("sig-refused"))
+	transaction := newRaylineARCEpisodeTransaction(store, lease, state, episode, time.Minute, nil)
+	transaction.markSelection(0, 10)
+	transaction.thinkingWorker, transaction.dispatchWorker = reasoning.ThinkingRunWorker("opus"), "claude"
+	output := []llmprotocol.Content{}
+	for index := range reasoning.MaxReasoningProvenance + 4 {
+		output = append(output, llmprotocol.Content{Kind: llmprotocol.ContentUnmodeled, Unmodeled: &llmprotocol.UnmodeledBlock{
+			Format: llmprotocol.AnthropicMessagesV1, Type: "redacted_thinking",
+			Raw: []byte(fmt.Sprintf(`{"type":"redacted_thinking","data":"blob-%d"}`, index)),
+		}})
+	}
+	response := &llmprotocol.Response{Output: []llmprotocol.OutputItem{{Role: llmprotocol.RoleAssistant, Content: output}}}
+	if err := transaction.commit(context.Background(), &RequestContext{SemanticResponse: response}); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	next, reread, err := store.Prepare(context.Background(), episode, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = store.Abort(context.Background(), next)
+	if len(reread.ReasoningProvenance) > reasoning.MaxReasoningProvenance ||
+		len(reasoning.ThinkingRunAnchors(reread.ReasoningProvenance, reasoning.ThinkingRefusedWorker)) != 1 {
+		t.Fatalf("provenance = %d entries, refused %v", len(reread.ReasoningProvenance),
+			reasoning.ThinkingRunAnchors(reread.ReasoningProvenance, reasoning.ThinkingRefusedWorker))
 	}
 }
