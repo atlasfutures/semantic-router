@@ -154,6 +154,7 @@ func observePolicyPrefix(
 		}
 	}
 	addPolicyRequestShapeFields(fields, arcContext, clientRequest)
+	addRaylineARCForkFields(fields, arcContext.Fork)
 	logging.ComponentEvent("extproc", "rayline_arc_policy_prefix_diagnostic", fields)
 	return current
 }

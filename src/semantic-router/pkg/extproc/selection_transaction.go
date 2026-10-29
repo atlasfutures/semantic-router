@@ -232,6 +232,7 @@ func finalizeSelectionAbort(
 	if err != nil {
 		logSelectionTransactionFailure(
 			ctx.RequestID,
+			selectionEpisodeIDHash(ctx),
 			ctx.SelectionTransaction.kind,
 			"abort",
 			err,
@@ -288,7 +289,7 @@ func finalizeSelectionResponseHeaders(
 			finalizeContext,
 			"lease_lost",
 		); abortErr != nil {
-			logSelectionTransactionFailure(ctx.RequestID, ctx.SelectionTransaction.kind, "abort", abortErr)
+			logSelectionTransactionFailure(ctx.RequestID, selectionEpisodeIDHash(ctx), ctx.SelectionTransaction.kind, "abort", abortErr)
 		}
 		return err
 	}
@@ -409,6 +410,7 @@ func finalizeSelectionSettlement(
 		// replace a successful provider response or rerun selection.
 		logSelectionTransactionFailure(
 			ctx.RequestID,
+			selectionEpisodeIDHash(ctx),
 			ctx.SelectionTransaction.kind,
 			"settle",
 			err,
@@ -478,6 +480,7 @@ func selectionOutcomeFromContext(
 // the turn's other records (turn_failed, llm_usage) and the gateway's route.
 func logSelectionTransactionFailure(
 	requestID string,
+	episodeIDHash string,
 	kind string,
 	stage string,
 	err error,
@@ -486,10 +489,11 @@ func logSelectionTransactionFailure(
 		"extproc",
 		"selection_transaction_failed",
 		map[string]interface{}{
-			"request_id":    requestID,
-			"algorithm":     kind,
-			"stage":         stage,
-			"failure_class": boundedSelectionTransactionFailure(err),
+			"request_id":      requestID,
+			"episode_id_hash": episodeIDHash,
+			"algorithm":       kind,
+			"stage":           stage,
+			"failure_class":   boundedSelectionTransactionFailure(err),
 		},
 	)
 }
@@ -526,7 +530,7 @@ func recordSelectionLifecycleFailure(
 	if ctx != nil {
 		requestID = ctx.RequestID
 	}
-	logSelectionTransactionFailure(requestID, kind, stage, err)
+	logSelectionTransactionFailure(requestID, selectionEpisodeIDHash(ctx), kind, stage, err)
 }
 
 // selectionUnavailableMessage is the single client-visible wording for an
@@ -562,4 +566,13 @@ func boundedSelectionTransactionFailure(err error) string {
 	default:
 		return "transaction"
 	}
+}
+
+// selectionEpisodeIDHash is the episode a request's ARC transaction holds
+// (a fork's sibling), or "" when it has none.
+func selectionEpisodeIDHash(ctx *RequestContext) string {
+	if ctx == nil || ctx.RaylineARCTransaction == nil {
+		return ""
+	}
+	return ctx.RaylineARCTransaction.episodeIDHash
 }

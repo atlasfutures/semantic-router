@@ -22,6 +22,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"hash"
 	"sort"
 	"strconv"
 )
@@ -462,6 +463,10 @@ func MessagesDigest(messages []json.RawMessage, n int) string {
 type PrefixDigests struct {
 	messages  []json.RawMessage
 	canonical [][]byte
+	// running hashes the messages digested so far, and sums[n] is the
+	// digest of the first n: every prefix length is digested in one pass.
+	running hash.Hash
+	sums    []string
 }
 
 // NewPrefixDigests memoizes messages' digests. It computes nothing until
@@ -485,14 +490,19 @@ func (digests *PrefixDigests) Canonical(index int) []byte {
 
 // Digest is MessagesDigest of the first n messages.
 func (digests *PrefixDigests) Digest(n int) string {
-	hash := sha256.New()
-	for index := range digests.messages[:n] {
-		canonical := digests.Canonical(index)
-		hash.Write([]byte(strconv.Itoa(len(canonical))))
-		hash.Write([]byte{':'})
-		hash.Write(canonical)
+	_ = digests.messages[:n]
+	if digests.running == nil {
+		digests.running = sha256.New()
+		digests.sums = []string{hex.EncodeToString(digests.running.Sum(nil))}
 	}
-	return hex.EncodeToString(hash.Sum(nil))
+	for index := len(digests.sums) - 1; index < n; index++ {
+		canonical := digests.Canonical(index)
+		digests.running.Write([]byte(strconv.Itoa(len(canonical))))
+		digests.running.Write([]byte{':'})
+		digests.running.Write(canonical)
+		digests.sums = append(digests.sums, hex.EncodeToString(digests.running.Sum(nil)))
+	}
+	return digests.sums[n]
 }
 
 // canonicalPrefixMessage is a message as the prefix comparison sees it,

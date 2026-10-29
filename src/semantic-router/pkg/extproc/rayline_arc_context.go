@@ -186,19 +186,36 @@ func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 		reqCtx.RaylineARCPrivacyMode = raylineARCPrivacyMode(signalHeaders)
 		reqCtx.RaylineARCPrivacyAllowedArms = raylineARCPrivacyAllowedArms(reqCtx.RaylineARCPrivacyMode, signalHeaders)
 		reqCtx.RaylineARCPrivacyAllowedEndpoints = raylineARCPrivacyAllowedEndpoints(reqCtx.RaylineARCPrivacyMode, signalHeaders)
-		result.PolicyCallKind, result.PolicyCallKindSource = raylineARCPolicyCallKindOfBody(
+		result.PolicyCallKind, result.PolicyCallKindSource = raylineARCPolicyCallKindOfBodyForked(
 			signalHeaders, policyRequestFormat(reqCtx.SourceFormat), reqCtx.RaylineARCRawBody, result.EpisodeIDHash,
+			raylineARCForksSubagents(algorithm.RaylineARC, policyRequestFormat(reqCtx.SourceFormat)),
 		)
 	}
 	reqCtx.RaylineARCSessionKey, reqCtx.RaylineARCSessionKeySource = raylineARCSessionKey(signalHeaders, rawEpisodeID)
 	if rawEpisodeID != "" {
-		state, coalesced, failure := r.prepareOrJoinRaylineARCTurn(
-			algorithm.RaylineARC,
-			reqCtx,
-			result.EpisodeIDHash,
-			len(modelRefs),
-			result.PolicyCallKind == raylinearc.PolicyCallSide,
+		var (
+			state     *raylinearc.EpisodeState
+			coalesced *selection.SelectionResult
+			failure   string
 		)
+		// A request that shares its episode id with a parallel one (a forked
+		// subagent, an app's parallel requests) is placed on a sibling
+		// episode of its own before any lease is taken
+		// (rayline_arc_episode_forks.go).
+		if check := r.newRaylineARCForkCheck(
+			algorithm.RaylineARC, reqCtx, rawEpisodeID, result.EpisodeIDHash,
+			policyRequestFormat(reqCtx.SourceFormat), signalHeaders, result.PolicyCallKind, len(modelRefs),
+		); check != nil {
+			state, coalesced, failure = r.prepareRaylineARCForkedTurn(algorithm.RaylineARC, reqCtx, check, result, len(modelRefs))
+		} else {
+			state, coalesced, failure = r.prepareOrJoinRaylineARCTurn(
+				algorithm.RaylineARC,
+				reqCtx,
+				result.EpisodeIDHash,
+				len(modelRefs),
+				result.PolicyCallKind == raylinearc.PolicyCallSide,
+			)
+		}
 		if failure != "" {
 			result.PreparationFailure = failure
 			return result
@@ -560,12 +577,12 @@ func (r *OpenAIRouter) prepareRaylineARCTransaction(
 	if prepareContext == nil {
 		prepareContext = context.Background()
 	}
-	prepareContext, cancel := context.WithTimeout(
-		prepareContext,
-		time.Duration(
-			arcConfig.Episode.AcquireTimeoutSeconds,
-		)*time.Second,
-	)
+	acquireTimeout := time.Duration(arcConfig.Episode.AcquireTimeoutSeconds) * time.Second
+	if reqCtx.RaylineARCAcquireTimeout > 0 {
+		// A fork-detecting request waits in probes (prepareRaylineARCForkedTurn).
+		acquireTimeout = reqCtx.RaylineARCAcquireTimeout
+	}
+	prepareContext, cancel := context.WithTimeout(prepareContext, acquireTimeout)
 	defer cancel()
 	// The owning stream already holds this router open (processWithContext),
 	// so the episode store cannot be closed underneath this lease.

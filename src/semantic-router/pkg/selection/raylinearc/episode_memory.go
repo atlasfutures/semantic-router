@@ -60,6 +60,8 @@ type MemoryEpisodeStore struct {
 	// was removed since, the episode cannot have been created and dropped in
 	// between, so it is still the absence that was read.
 	removals uint64
+	// forks is the fork registry by root episode (EpisodeForkRegistry).
+	forks map[string]*memoryForkRecord
 }
 
 func NewMemoryEpisodeStore(

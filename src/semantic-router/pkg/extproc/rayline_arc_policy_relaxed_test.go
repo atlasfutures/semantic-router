@@ -3,6 +3,7 @@ package extproc
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"sync"
@@ -193,21 +194,29 @@ func policyTurnStatusWithHeaders(router *OpenAIRouter, episode, content string, 
 }
 
 // End to end: concurrent turns on one episode of a relaxed policy cell all
-// reach the policy service together and are all forwarded; on a strict cell
-// they queue behind the episode lease.
+// reach the policy service together and are all forwarded. On a strict cell
+// they are three different conversations sharing an episode id: fork
+// detection serves them on sibling episodes, together; with it off they
+// queue behind the episode lease.
 func TestRelaxedPolicyCellDecidesConcurrentTurnsTogether(t *testing.T) {
 	t.Setenv("POLICY_E2E_PROVIDER_KEY", "public-e2e-provider-key")
 	const turns = 3
 	for _, tc := range []struct {
 		consistency string
+		forksOff    bool
 		wantPeak    int
 	}{
-		{config.RaylineARCConsistencyRelaxed, turns},
-		{config.RaylineARCConsistencyStrict, 1},
+		{config.RaylineARCConsistencyRelaxed, false, turns},
+		{config.RaylineARCConsistencyStrict, false, turns},
+		{config.RaylineARCConsistencyStrict, true, 1},
 	} {
-		t.Run(tc.consistency, func(t *testing.T) {
+		t.Run(fmt.Sprintf("%s/forks_off=%v", tc.consistency, tc.forksOff), func(t *testing.T) {
 			fake := newRelaxedPolicyFake(t)
-			router, err := NewOpenAIRouter(writeConsistentPolicyConfig(t, fake.URL(), tc.consistency))
+			consistency := tc.consistency
+			if tc.forksOff {
+				consistency += "\n            fork_detection: false"
+			}
+			router, err := NewOpenAIRouter(writeConsistentPolicyConfig(t, fake.URL(), consistency))
 			if err != nil {
 				t.Fatalf("build router: %v", err)
 			}
@@ -229,8 +238,8 @@ func TestRelaxedPolicyCellDecidesConcurrentTurnsTogether(t *testing.T) {
 				if errs[i] != nil {
 					t.Fatalf("turn %d: %v", i, errs[i])
 				}
-				if tc.consistency == config.RaylineARCConsistencyRelaxed && statuses[i] != 0 {
-					t.Fatalf("relaxed turn %d answered %d, want forwarded", i, statuses[i])
+				if tc.wantPeak == turns && statuses[i] != 0 {
+					t.Fatalf("turn %d answered %d, want forwarded", i, statuses[i])
 				}
 			}
 			if peak := fake.peakConcurrency(); peak != tc.wantPeak {

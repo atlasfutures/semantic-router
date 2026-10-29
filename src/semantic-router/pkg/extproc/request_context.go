@@ -330,6 +330,7 @@ type RequestContext struct {
 	VSRRaylineARC                   *selection.RaylineARCTrace             // Privacy-safe ARC selection trace; never prompt or embedding data.
 	RaylineARCDispatch              *raylinearc.WorkerManifest             // Private artifact-owned transport budget; never emit in traces.
 	RaylineARCTransaction           *raylineARCEpisodeTransaction          // Fenced ARC state lease; finalized exactly once.
+	RaylineARCAcquireTimeout        time.Duration                          // A fork-detecting request's lease probe, overriding acquire_timeout_seconds; zero otherwise.
 	RaylineARCInflight              *raylineARCInflightEntry               // Set when this request leads a decision identical resends may join.
 	RaylineARCCloseRequested        bool                                   // Exact configured final-turn signal; triggers post-2xx session close fanout.
 	RaylineARCThinking              *raylineARCThinkingTrace               // What the thinking lever did this turn; non-nil once it ran.

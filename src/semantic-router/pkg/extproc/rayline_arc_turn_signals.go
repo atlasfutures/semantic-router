@@ -23,6 +23,7 @@ import (
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
 
@@ -93,10 +94,15 @@ const (
 	callKindSourceClaudeSubagentOwn  = "claude_code_subagent_own_episode"
 	callKindSourceGatewaySubagentOwn = "gateway_subagent_own_episode"
 	callKindSourceGatewaySubagent    = "gateway_subagent_shared_key"
-	callKindSourceClaudeCompactionRq = "claude_code_compaction_request"
-	callKindSourceClaudeTitle        = "claude_code_title"
-	callKindSourceClaudeSuggestion   = "claude_code_suggestion"
-	callKindSourceCodexCompactionRq  = "codex_compaction_request"
+	// A subagent keyed on a shared key (a role, a task digest) on a cell
+	// whose fork detection separates the subagents sharing it: each decides
+	// as its own main turn, on its own sibling episode.
+	callKindSourceGatewaySubagentForked = "gateway_subagent_shared_key_forked"
+	callKindSourceClaudeSubagentForked  = "claude_code_subagent_shared_key_forked"
+	callKindSourceClaudeCompactionRq    = "claude_code_compaction_request"
+	callKindSourceClaudeTitle           = "claude_code_title"
+	callKindSourceClaudeSuggestion      = "claude_code_suggestion"
+	callKindSourceCodexCompactionRq     = "codex_compaction_request"
 )
 
 // raylineARCPolicyTurnSignals reads what this request says about itself:
@@ -168,6 +174,24 @@ func raylineARCPolicyCallKind(
 	input []json.RawMessage,
 	episodeIDHash string,
 ) (raylinearc.PolicyCallKind, string) {
+	return raylineARCPolicyCallKindForked(headers, format, system, messages, input, episodeIDHash, false)
+}
+
+// raylineARCPolicyCallKindForked is raylineARCPolicyCallKind on a cell whose
+// fork detection separates requests sharing an episode id (forked): there a
+// subagent keyed on a shared role or task key is a main turn of its own
+// (D-arc-subagent-own-decision), since its distinct task places it on its
+// own sibling episode. Its title, compaction and suggestion helpers stay
+// side calls either way.
+func raylineARCPolicyCallKindForked(
+	headers map[string]string,
+	format string,
+	system json.RawMessage,
+	messages []json.RawMessage,
+	input []json.RawMessage,
+	episodeIDHash string,
+	forked bool,
+) (raylinearc.PolicyCallKind, string) {
 	switch value := strings.ToLower(strings.TrimSpace(headers[raylineARCCallKindHeader])); value {
 	case "":
 	case string(raylinearc.PolicyCallMain), string(raylinearc.PolicyCallSide):
@@ -195,6 +219,9 @@ func raylineARCPolicyCallKind(
 			if strings.TrimSpace(headers[raylineARCAgentKeySourceHeader]) == raylinearc.SubagentKeySourceAgent {
 				return raylinearc.PolicyCallMain, callKindSourceClaudeSubagentOwn
 			}
+			if source := strings.TrimSpace(headers[raylineARCAgentKeySourceHeader]); forked && (source == "role" || source == "task") {
+				return raylinearc.PolicyCallMain, callKindSourceClaudeSubagentForked
+			}
 			return raylinearc.PolicyCallSide, callKindSourceClaudeSubagent
 		}
 	case policyFormatResponses:
@@ -210,6 +237,9 @@ func raylineARCPolicyCallKind(
 	case raylinearc.SubagentKeySourceAgent:
 		return raylinearc.PolicyCallMain, callKindSourceGatewaySubagentOwn
 	case "role", "task":
+		if forked {
+			return raylinearc.PolicyCallMain, callKindSourceGatewaySubagentForked
+		}
 		return raylinearc.PolicyCallSide, callKindSourceGatewaySubagent
 	}
 	return raylinearc.PolicyCallUnknown, ""
@@ -225,6 +255,19 @@ func raylineARCPolicyCallKindOfBody(
 	format string,
 	body []byte,
 	episodeIDHash string,
+) (raylinearc.PolicyCallKind, string) {
+	return raylineARCPolicyCallKindOfBodyForked(headers, format, body, episodeIDHash, false)
+}
+
+// raylineARCPolicyCallKindOfBodyForked is raylineARCPolicyCallKindOfBody
+// with the cell's fork detection in force or not
+// (raylineARCPolicyCallKindForked).
+func raylineARCPolicyCallKindOfBodyForked(
+	headers map[string]string,
+	format string,
+	body []byte,
+	episodeIDHash string,
+	forked bool,
 ) (raylinearc.PolicyCallKind, string) {
 	var request struct {
 		System   json.RawMessage `json:"system"`
@@ -246,7 +289,7 @@ func raylineARCPolicyCallKindOfBody(
 			_ = json.Unmarshal(request.Input, &input)
 		}
 	}
-	return raylineARCPolicyCallKind(headers, format, request.System, messages, input, episodeIDHash)
+	return raylineARCPolicyCallKindForked(headers, format, request.System, messages, input, episodeIDHash, forked)
 }
 
 func logInvalidTurnSignal(header string, episodeIDHash string) {
@@ -260,6 +303,7 @@ func logInvalidTurnSignal(header string, episodeIDHash string) {
 // the main turn it is served as.
 func logRaylineARCPolicyTurn(
 	episodeIDHash string,
+	fork *selection.RaylineARCForkPlacement,
 	signals raylinearc.PolicyTurnSignals,
 	transition string,
 	completedTurns uint64,
@@ -279,10 +323,28 @@ func logRaylineARCPolicyTurn(
 		"model_held":        held,
 		"boundary_retained": boundaryRetained,
 	}
+	addRaylineARCForkFields(fields, fork)
 	if subagent := signals.Subagent; subagent != nil {
 		fields["subagent_key_source"] = subagent.KeySource
 		fields["parent_episode_id_hash"] = subagent.ParentEpisodeIDHash
 		fields["parent_agent_id_hash"] = subagent.ParentAgentIDHash
 	}
 	logging.ComponentEvent("extproc", "rayline_arc_policy_turn", fields)
+}
+
+// addRaylineARCForkFields adds where fork detection placed the request: on a
+// sibling (fork, with its root episode as fork_of) or on the episode its
+// header names, and how many siblings that root has. A request fork
+// detection did not run on reports fork false and no count.
+func addRaylineARCForkFields(fields map[string]interface{}, fork *selection.RaylineARCForkPlacement) {
+	fields["fork"], fields["fork_of"], fields["sibling_count"], fields["fork_reason"] = false, nil, nil, nil
+	if fork == nil {
+		return
+	}
+	fields["fork"] = fork.Fork
+	if fork.Fork {
+		fields["fork_of"] = fork.ForkOf
+	}
+	fields["sibling_count"] = fork.SiblingCount
+	fields["fork_reason"] = fork.Reason
 }
