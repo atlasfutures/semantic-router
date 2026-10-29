@@ -66,16 +66,21 @@ func (OpenAIChatCodec) NewEncoder(context llmprotocol.StreamContext, policy llmp
 // chatChunkWire always writes choices: the include_usage chunk carries
 // "choices": [] beside usage (encodeChatStreamFrame), as OpenAI's does.
 type chatChunkWire struct {
-	ID                string                    `json:"id"`
-	Object            string                    `json:"object,omitempty"`
-	Created           int64                     `json:"created,omitempty"`
-	Model             string                    `json:"model,omitempty"`
-	Choices           []chatChunkChoiceWire     `json:"choices"`
-	Usage             *chatUsageWire            `json:"usage,omitempty"`
-	Provider          *string                   `json:"provider,omitempty"`
-	Moderation        json.RawMessage           `json:"moderation,omitempty"`
-	Obfuscation       string                    `json:"obfuscation,omitempty"`
-	Error             *chatErrorWire            `json:"error,omitempty"`
+	ID          string                `json:"id"`
+	Object      string                `json:"object,omitempty"`
+	Created     int64                 `json:"created,omitempty"`
+	Model       string                `json:"model,omitempty"`
+	Choices     []chatChunkChoiceWire `json:"choices"`
+	Usage       *chatUsageWire        `json:"usage,omitempty"`
+	Provider    *string               `json:"provider,omitempty"`
+	Moderation  json.RawMessage       `json:"moderation,omitempty"`
+	Obfuscation string                `json:"obfuscation,omitempty"`
+	Error       *chatErrorWire        `json:"error,omitempty"`
+	// Rayline is this Router's own member (stream_rayline_truncated.go). It
+	// is raw on the way in so that whatever an upstream puts under the name
+	// -- a boolean, a number, a shape of its own -- is carried as bytes and
+	// discarded, never decoded and never a reason to fail the stream.
+	Rayline           json.RawMessage           `json:"rayline,omitempty"`
 	ServiceTier       *chatServiceTierWire      `json:"service_tier,omitempty"`
 	SystemFingerprint *string                   `json:"system_fingerprint,omitempty"`
 	PromptLogprobs    *chatNullOnlyWire         `json:"prompt_logprobs,omitempty"`
@@ -845,6 +850,9 @@ func (encoder *chatStreamEncoder) encodeDirectEvent(event llmprotocol.Event) ([]
 	case llmprotocol.EventResponseCompleted:
 		return encoder.encodeCompletion(event)
 	case llmprotocol.EventResponseFailed:
+		if event.Failure == llmprotocol.FailureTruncated {
+			return encoder.encodeChatTruncation(event)
+		}
 		encoder.terminal = true
 		if event.Error == nil {
 			return nil, nil, llmprotocol.NewError(llmprotocol.ErrorInternal, "error_event_invalid", "error event is invalid", nil)
@@ -870,16 +878,39 @@ func (encoder *chatStreamEncoder) encodeDirectEvent(event llmprotocol.Event) ([]
 func (encoder *chatStreamEncoder) encodeCompletion(
 	event llmprotocol.Event,
 ) ([][]byte, llmprotocol.Diagnostics, error) {
+	return encoder.encodeChatTerminal(event, "")
+}
+
+// encodeChatTerminal writes the three frames this format ends a turn with: the
+// chunk that names the stop, the usage-only chunk where the client asked for
+// one, and the sentinel. truncated, when set, is the cause a turn the Router
+// ended states beside its stop (stream_rayline_truncated.go).
+func (encoder *chatStreamEncoder) encodeChatTerminal(
+	event llmprotocol.Event,
+	truncated string,
+) ([][]byte, llmprotocol.Diagnostics, error) {
 	encoder.terminal = true
 	var diagnostics llmprotocol.Diagnostics
 	if err := appendChatStopReasonDiagnostic(&diagnostics, event.StopReason, encoder.context.Source, encoder.policy); err != nil {
 		return nil, diagnostics, err
 	}
 	reason := encodeChatStop(event.StopReason)
-	finishFrame, err := encodeChatStreamFrame(encoder.context, chatChunkWire{
+	finishChunk := chatChunkWire{
 		ID: event.ResponseID, Object: "chat.completion.chunk", Model: event.Model,
 		Choices: []chatChunkChoiceWire{{Index: 0, Delta: chatChunkDeltaWire{}, FinishReason: &reason}},
-	})
+	}
+	if truncated != "" {
+		// Beside the stop it qualifies, on the chunk that states it: a header
+		// cannot be sent once the stream has started, and a client reading the
+		// stop has the cause in the same frame rather than having to correlate
+		// two.
+		member, err := json.Marshal(raylineChunkWire{Truncated: truncated})
+		if err != nil {
+			return nil, nil, err
+		}
+		finishChunk.Rayline = member
+	}
+	finishFrame, err := encodeChatStreamFrame(encoder.context, finishChunk)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -895,6 +926,40 @@ func (encoder *chatStreamEncoder) encodeCompletion(
 		return [][]byte{finishFrame, usageFrame, []byte("data: [DONE]\n\n")}, diagnostics, nil
 	}
 	return [][]byte{finishFrame, []byte("data: [DONE]\n\n")}, diagnostics, nil
+}
+
+// encodeChatTruncation ends a turn the Router cut in the only terminal Chat
+// Completions defines.
+//
+// The format has no error frame that also carries usage, and a bare error
+// frame is what left every cut turn unbilled: no finish_reason, no usage, no
+// [DONE], so a client could neither close the turn nor account for the
+// generation the upstream charged for. So the turn ends the way the format ends
+// a turn stopped at a limit -- a final chunk naming the stop, the usage chunk,
+// the sentinel -- which is true of what happened: the Router stopped the model
+// where it stood. Nothing here is invented; these are the same three frames
+// encodeCompletion writes, from the same helpers.
+//
+// The stop is "length", because that is the nearest thing this format's closed
+// vocabulary has to a turn infrastructure ended (encodeChatStop). Read
+// literally it says the model exhausted its budget, which is true of a deadline
+// and not of a connection that broke, so the cause travels beside it in one
+// namespaced member and a client choosing between retrying and asking for less
+// work reads that (stream_rayline_truncated.go).
+func (encoder *chatStreamEncoder) encodeChatTruncation(
+	event llmprotocol.Event,
+) ([][]byte, llmprotocol.Diagnostics, error) {
+	// A count the client never asked to be told is still dropped here, as it is
+	// on any other terminal: the usage-only chunk is opt-in in this format
+	// (streamUsageRequested). That is the client's choice rather than a
+	// capability this encoder lacks, so it is named and the turn still closes.
+	if event.Usage != nil && event.Usage.State == llmprotocol.UsageAvailable &&
+		!streamUsageRequested(encoder.context) {
+		reportUnwritableTruncationUsage(
+			"chat", "the client did not request the stream usage chunk (stream_options.include_usage)",
+		)
+	}
+	return encoder.encodeChatTerminal(event, event.Truncation)
 }
 
 func encodeChatStreamFrame(context llmprotocol.StreamContext, chunk chatChunkWire) ([]byte, error) {

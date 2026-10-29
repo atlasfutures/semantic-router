@@ -2,6 +2,7 @@ package protocolcodec
 
 import (
 	"encoding/json"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -41,6 +42,15 @@ func (encoder *responsesStreamEncoder) encodeDirectResponsesEvent(
 	if event.Type == llmprotocol.EventResponseFailed {
 		if event.Failure == llmprotocol.FailureResponse {
 			return nil, nil, false, nil
+		}
+		// A turn the Router cut ends as the resource Responses defines for one
+		// that stopped early, response.incomplete with incomplete_details, and
+		// that resource states usage. The bare error event this would otherwise
+		// write carries none, which is what left a cut turn unbilled
+		// (stream_truncation_usage.go).
+		if event.Failure == llmprotocol.FailureTruncated {
+			frames, diagnostics, err := encoder.encodeResponsesTruncation(event)
+			return frames, diagnostics, true, err
 		}
 		frames, err := encoder.encodeResponsesTransportFailure(event)
 		return frames, nil, true, err
@@ -106,8 +116,20 @@ func (encoder *responsesStreamEncoder) encodeResponsesItemStart(event llmprotoco
 		return nil, nil
 	}
 	if event.ToolCall != nil {
-		frames, _, err := encoder.ensureResponsesOutputStarted(event, responsesOutputTool)
-		return frames, err
+		frames, key, err := encoder.ensureResponsesOutputStarted(event, responsesOutputTool)
+		if err != nil {
+			return nil, err
+		}
+		// The call is known from its start, so a cut before its first
+		// argument delta can still close it as the call it was. The start's
+		// "{}" is a placeholder the deltas replace, not an argument, and is
+		// not kept (streamState keeps the same rule for the accumulated call).
+		seed := *event.ToolCall
+		if strings.TrimSpace(seed.Arguments) == "{}" {
+			seed.Arguments = ""
+		}
+		encoder.recordOpenToolCall(key, &seed)
+		return frames, nil
 	}
 	if event.Content != nil && event.Content.Kind == llmprotocol.ContentGeneratedImage {
 		frames, _, err := encoder.ensureResponsesOutputStarted(event, responsesOutputImage)
@@ -223,6 +245,7 @@ func (encoder *responsesStreamEncoder) encodeResponsesToolDelta(event llmprotoco
 	if err != nil {
 		return nil, nil, err
 	}
+	encoder.recordOpenToolCall(key, event.ToolCall)
 	wire := responsesEventWire{
 		Type:        "response.function_call_arguments.delta",
 		Sequence:    encoder.nextWireSequence(),
@@ -302,6 +325,182 @@ func (encoder *responsesStreamEncoder) responsesFailureWire(
 		Type:     "response.failed",
 		Response: &response,
 	}, nil, nil
+}
+
+// encodeResponsesTruncation ends a turn the Router cut as the Responses
+// resource for a response that stopped early.
+//
+// response.incomplete with incomplete_details is what the protocol defines for
+// exactly this, and unlike the error event it already states usage, so the
+// count the Router handed over reaches the client without a member being
+// invented for it. The reason is "max_output_tokens": one of the two values
+// this repo's own provider validation accepts (validateResponsesIncompleteDetails)
+// and one of the four the OpenAI SDKs narrow the field to, so an SDK reading it
+// sees a value it knows. There is no enum value for a router deadline, and
+// coining one would be a string the SDKs' Literal types do not contain.
+//
+// A turn cut before anything was generated has no count to state. It still
+// terminates as a resource the client can close, rather than as a usage of
+// zeros that would bill a turn that produced nothing.
+func (encoder *responsesStreamEncoder) encodeResponsesTruncation(
+	event llmprotocol.Event,
+) ([][]byte, llmprotocol.Diagnostics, error) {
+	truncated := event
+	if truncated.StopReason == llmprotocol.StopError || truncated.StopReason == "" {
+		truncated.StopReason = llmprotocol.StopMaxTokens
+	}
+	if !truncationUsageAvailable(truncated.Usage) {
+		// responsesCompletionWire requires a usage to render the resource's
+		// own member; an unavailable one renders as stated-but-unknown, which
+		// is what this turn's count is.
+		truncated.Usage = &llmprotocol.Usage{State: llmprotocol.UsageUnavailable}
+	}
+	// A search the upstream asked for but never answered stays open, as every
+	// web search open at the cut does (closeOpenResponsesItems): flushing it
+	// would state a done item still in progress, which this codec's own
+	// decoder refuses. The queries it carried are not output the client had.
+	var frames [][]byte
+	// The item the cut landed in is still open. This terminal follows the
+	// completion lifecycle, where an active item is a lifecycle error the
+	// decoder refuses (stream_item_incomplete), and the resource's output is
+	// assembled only from items that finished -- so an item left open both
+	// breaks the round trip and drops the text the client was already streamed.
+	// It is closed here, as the Messages encoder closes its open blocks.
+	closed, err := encoder.closeOpenResponsesItems(truncated)
+	if err != nil {
+		return frames, nil, err
+	}
+	frames = append(frames, closed...)
+	wire, diagnostics, err := encoder.responsesCompletionWire(truncated)
+	if err != nil || wire.Type == "" {
+		return frames, diagnostics, err
+	}
+	wire.Sequence = encoder.nextWireSequence()
+	frame, err := encoder.encodeResponsesStreamFrame(wire)
+	if err != nil {
+		return frames, diagnostics, err
+	}
+	return append(frames, frame), diagnostics, nil
+}
+
+// recordOpenToolCall keeps a started function call as it streams. The deltas
+// pass straight through, so without this the encoder could not state the call
+// it had opened if the turn ended before the call did.
+func (encoder *responsesStreamEncoder) recordOpenToolCall(
+	key responsesOutputKey,
+	call *llmprotocol.ToolCall,
+) {
+	if call == nil {
+		return
+	}
+	open := encoder.openToolCalls[key]
+	if open == nil {
+		open = &llmprotocol.ToolCall{ID: call.ID, Name: call.Name, Namespace: call.Namespace}
+		encoder.openToolCalls[key] = open
+	}
+	if call.ID != "" {
+		open.ID = call.ID
+	}
+	if call.Name != "" {
+		open.Name = call.Name
+	}
+	open.Arguments += call.Arguments
+}
+
+// closeOpenResponsesItems finishes every output item this stream started and
+// has not completed, in the order they were started, so the terminal states a
+// resource whose lifecycle is whole.
+//
+// Items are closed in the order their wire outputs were assigned, which is the
+// order the client saw them start, rather than in neutral item order: the
+// resource's output is assembled by wire index, and a client reading the
+// closures reads them against the starts they answer.
+func (encoder *responsesStreamEncoder) closeOpenResponsesItems(
+	event llmprotocol.Event,
+) ([][]byte, error) {
+	encoder.closingAtCut = true
+	defer func() { encoder.closingAtCut = false }()
+	type openItem struct {
+		itemIndex, outputIndex int
+		kind                   responsesOutputKind
+	}
+	open := make([]openItem, 0, len(encoder.itemOutputKeys))
+	for itemIndex, keys := range encoder.itemOutputKeys {
+		for _, key := range keys {
+			if _, done := encoder.completedOutput[encoder.outputIndexes[key]]; done {
+				continue
+			}
+			open = append(open, openItem{itemIndex: itemIndex, outputIndex: encoder.outputIndexes[key], kind: key.kind})
+			break
+		}
+	}
+	sort.Slice(open, func(left, right int) bool {
+		return open[left].outputIndex < open[right].outputIndex
+	})
+	var frames [][]byte
+	for _, item := range open {
+		closing := event
+		closing.Type = llmprotocol.EventOutputItemCompleted
+		closing.ItemIndex = item.itemIndex
+		// A function call closes as the call it had streamed. The completion
+		// event the engine synthesized carries no call of its own, and without
+		// one the tool encoder refuses the item -- which left the turn with no
+		// terminal at all, worse than the open item this exists to fix. The
+		// call is marked incomplete, because the turn ended in the middle of
+		// its arguments: a caller that read them as whole would parse a
+		// fragment as an argument object.
+		if call := encoder.openToolCallFor(item.itemIndex); call != nil {
+			cut := *call
+			cut.Incomplete = true
+			closing.ToolCall = &cut
+		}
+		// An image generation closes only with its image, which will never
+		// come: it closes as failed, the one terminal status the format gives
+		// an image without a result. A web search closes as incomplete, as
+		// any other item the cut landed in does. Leaving either open was
+		// tried and left a hole in the output indexes that no reader of the
+		// resource could resolve.
+		if item.kind == responsesOutputImage {
+			status := llmprotocol.ImageGenerationFailed
+			if encoder.imageProgressCompleted[responsesOutputKey{item: item.itemIndex, kind: responsesOutputImage}] {
+				// The provider had already said the image was complete; only
+				// the item's close was cut off. The item closes as the
+				// progress said, since a failed close would contradict it.
+				status = llmprotocol.ImageGenerationCompleted
+			}
+			closing.Content = &llmprotocol.Content{
+				Kind:           llmprotocol.ContentGeneratedImage,
+				GeneratedImage: &llmprotocol.GeneratedImage{Status: status},
+			}
+		}
+		// The item is closed as the turn ended, not as a completed answer.
+		closed, _, err := encoder.encodeCompletedResponsesItem(closing)
+		if err != nil {
+			return frames, err
+		}
+		frames = append(frames, closed...)
+	}
+	return frames, nil
+}
+
+// closedItemStatus is the status an item closes with: "incomplete" while the
+// items a cut landed in are being closed, since the turn ended in the middle
+// of each, and "completed" for an item the model finished.
+func (encoder *responsesStreamEncoder) closedItemStatus() string {
+	if encoder.closingAtCut {
+		return "incomplete"
+	}
+	return "completed"
+}
+
+// openToolCallFor is the function call an item had streamed, if it is one.
+func (encoder *responsesStreamEncoder) openToolCallFor(itemIndex int) *llmprotocol.ToolCall {
+	for _, key := range encoder.itemOutputKeys[itemIndex] {
+		if call := encoder.openToolCalls[key]; call != nil {
+			return call
+		}
+	}
+	return nil
 }
 
 func (encoder *responsesStreamEncoder) encodeResponsesTransportFailure(event llmprotocol.Event) ([][]byte, error) {
@@ -560,7 +759,9 @@ func (encoder *responsesStreamEncoder) encodeCompletedResponsesWebSearch(
 	}
 	index := encoder.outputIndexes[key]
 	item.Type, item.ID = "web_search_call", encoder.outputIDs[key]
-	if item.Status == "" {
+	if encoder.closingAtCut {
+		item.Status = "incomplete"
+	} else if item.Status == "" {
 		item.Status = "completed"
 	}
 	wire := responsesEventWire{
@@ -589,27 +790,37 @@ func (encoder *responsesStreamEncoder) encodeCompletedResponsesOutput(
 		return nil, nil, llmprotocol.NewError(llmprotocol.ErrorInternal, "tool_event_invalid", "tool event is invalid", nil)
 	}
 	index, id := encoder.outputIndexes[key], encoder.outputIDs[key]
+	arguments := event.ToolCall.Arguments
+	if encoder.closingAtCut && arguments == "" {
+		// A call the cut closed before any argument reached the client. The
+		// done event's value has to be a JSON object -- this codec's own
+		// decoder refuses "" there, and refuses an item closed without the
+		// event -- so the call states the empty object, which is what an
+		// Anthropic tool_use opens with, and the item says it is incomplete.
+		arguments = "{}"
+	}
 	done := responsesEventWire{
 		Type: "response.function_call_arguments.done", Sequence: encoder.nextWireSequence(),
 		ItemID: id, OutputIndex: responsesOutputIndex(index),
-		Name: event.ToolCall.Name, Arguments: event.ToolCall.Arguments,
+		Name: event.ToolCall.Name, Arguments: arguments,
 	}
 	doneFrame, err := encoder.encodeResponsesStreamFrame(done)
 	if err != nil {
 		return nil, nil, err
 	}
+	frames := [][]byte{doneFrame}
 	wire := responsesEventWire{
 		Type: "response.output_item.done", Sequence: encoder.nextWireSequence(), OutputIndex: responsesOutputIndex(index),
 	}
 	item := responsesItemWire{
 		Type: "function_call", ID: id, Status: responsesToolCallStatus(event.ToolCall),
-		CallID: event.ToolCall.ID, Name: event.ToolCall.Name, Arguments: event.ToolCall.Arguments,
+		CallID: event.ToolCall.ID, Name: event.ToolCall.Name, Arguments: arguments,
 		Namespace: event.ToolCall.Namespace,
 	}
 	wire.Item = marshalResponsesEventItem(item)
 	encoder.recordResponsesCompletedOutput(index, wire.Item)
 	frame, err := encoder.encodeResponsesStreamFrame(wire)
-	return [][]byte{doneFrame, frame}, nil, err
+	return append(frames, frame), nil, err
 }
 
 // responsesToolCallStatus is a function_call item's final status. A call the
@@ -638,7 +849,7 @@ func (encoder *responsesStreamEncoder) encodeCompletedResponsesContent(
 		return nil, nil, err
 	}
 	index, id := encoder.outputIndexes[outputKey], encoder.outputIDs[outputKey]
-	item, err := marshalCompletedResponsesItem(outputKey, id, parts)
+	item, err := marshalCompletedResponsesItem(outputKey, id, parts, encoder.closedItemStatus())
 	if err != nil {
 		return nil, nil, err
 	}

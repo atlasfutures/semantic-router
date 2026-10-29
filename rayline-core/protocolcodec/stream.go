@@ -189,11 +189,52 @@ func validateSSEFrameBytes(frame []byte, limit int) error {
 		return llmprotocol.NewError(llmprotocol.ErrorUpstreamUnavailable, "sse_frame_limit", "SSE frame is empty or too large", nil)
 	}
 	if !utf8.Valid(frame) {
+		if utf8RuneCutAtTail(frame) {
+			// Valid up to a character the bytes stopped inside: what a cut
+			// leaves behind, not what a provider sends.
+			return llmprotocol.NewError(
+				llmprotocol.ErrorUpstreamUnavailable, upstreamUTF8CutCode, "upstream SSE frame ends inside a UTF-8 character", nil,
+			)
+		}
 		return llmprotocol.NewError(
 			llmprotocol.ErrorUpstreamUnavailable, "invalid_upstream_utf8", "upstream SSE frame is not valid UTF-8", nil,
 		)
 	}
 	return nil
+}
+
+// upstreamUTF8CutCode names a frame whose only fault is a multibyte character
+// cut in half at its end. Appending the missing bytes would have made it
+// valid, which is never true of an invalid byte; the two must not share a
+// code, because a cut turn bills and a malformed one does not.
+const upstreamUTF8CutCode = "upstream_utf8_cut"
+
+// utf8RuneCutAtTail reports whether a frame is valid UTF-8 except for an
+// incomplete multibyte sequence at its very end.
+func utf8RuneCutAtTail(frame []byte) bool {
+	for i := 0; i < len(frame); {
+		r, size := utf8.DecodeRune(frame[i:])
+		if r != utf8.RuneError || size != 1 {
+			i += size
+			continue
+		}
+		tail := frame[i:]
+		if len(tail) >= utf8.UTFMax || utf8.FullRune(tail) {
+			return false
+		}
+		// The tail is a lead byte and continuation bytes of a longer sequence
+		// that never finished; any other arrangement is simply invalid.
+		if tail[0] < 0xc2 || tail[0] > 0xf4 {
+			return false
+		}
+		for _, b := range tail[1:] {
+			if b&0xc0 != 0x80 {
+				return false
+			}
+		}
+		return true
+	}
+	return false
 }
 
 func normalizeSSEFrame(frame []byte, first bool) ([]byte, error) {

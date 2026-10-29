@@ -89,3 +89,37 @@ func settlementTotalTokenCount(usage llmprotocol.Usage, input, output int) (int,
 		return 0, true, false
 	}
 }
+
+// responseUsageFromRestatedUsage reads a count a cut turn's terminal restated.
+//
+// responseUsageFromSemanticUsage admits only authoritative counts, because the
+// row it builds is a settlement. A truncated terminal's count is not one: its
+// output leg is the larger of what the upstream stated and what the Router
+// estimated (reconciledTruncationUsage), and carries estimated provenance to
+// say so. The row takes the values as they are and says it is an estimate.
+func responseUsageFromRestatedUsage(usage llmprotocol.Usage) responseUsageMetrics {
+	if usage.State != llmprotocol.UsageAvailable || usage.InputTotal.Value == nil || usage.OutputTotal.Value == nil {
+		invalid := invalidResponseTerminalUsage("restated_usage_incomplete")
+		invalid.providerCost = usage.ProviderCost
+		return invalid
+	}
+	count := func(value llmprotocol.TokenCount) (int, bool) {
+		if value.Value == nil {
+			return 0, false
+		}
+		return int(*value.Value), true
+	}
+	prompt, _ := count(usage.InputTotal)
+	completion, _ := count(usage.OutputTotal)
+	cacheRead, cacheReadReported := count(usage.InputCacheRead)
+	cacheWrite, cacheWriteReported := count(usage.InputCacheWrite)
+	return normalizeResponseUsage(responseUsageMetrics{
+		providerCost: usage.ProviderCost,
+		promptTokens: prompt, promptTokensReported: true,
+		completionTokens: completion, completionTokensReported: true,
+		totalTokens: prompt + completion, totalTokensReported: true,
+		cachedPromptTokens: cacheRead, cachedPromptTokensReported: cacheReadReported,
+		cacheWriteTokens: cacheWrite, cacheWriteTokensReported: cacheWriteReported,
+		estimated: true,
+	})
+}
