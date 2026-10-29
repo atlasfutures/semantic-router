@@ -302,3 +302,17 @@ func TestShorterIdleMatchDoesNotTakeAForkOfABusySibling(t *testing.T) {
 		t.Fatalf("parallel to the busy sibling = %+v, want a new fork of %q", got, sub.Stream)
 	}
 }
+
+// Main busy, an idle sibling with the same messages and another root: a
+// request of the main's root sent beside the main's turn forks from main,
+// and never joins the other root's sibling.
+func TestEqualLengthOtherRootSiblingDoesNotTakeTheRequest(t *testing.T) {
+	world := newForkWorld(t)
+	world.admit(forkRequest("s", "u1"), false)
+	world.admit(forkRequest("s", "u1", "a1", "u2"), true)
+	other := world.admit(forkRequest("other", "u1", "a1", "u2"), false)
+	got := world.admit(forkRequest("s", "u1", "a1", "u2", "user:directive"), true)
+	if !got.Fork() || got.Stream == other.Stream || got.Parent != EpisodeForkMainStream {
+		t.Fatalf("directive beside main's turn = %+v, want a new fork of main (not %q)", got, other.Stream)
+	}
+}
