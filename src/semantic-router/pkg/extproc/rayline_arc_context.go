@@ -186,8 +186,9 @@ func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 		reqCtx.RaylineARCPrivacyMode = raylineARCPrivacyMode(signalHeaders)
 		reqCtx.RaylineARCPrivacyAllowedArms = raylineARCPrivacyAllowedArms(reqCtx.RaylineARCPrivacyMode, signalHeaders)
 		reqCtx.RaylineARCPrivacyAllowedEndpoints = raylineARCPrivacyAllowedEndpoints(reqCtx.RaylineARCPrivacyMode, signalHeaders)
-		result.PolicyCallKind, result.PolicyCallKindSource = raylineARCPolicyCallKindOfBody(
+		result.PolicyCallKind, result.PolicyCallKindSource = raylineARCPolicyCallKindOfBodyForked(
 			signalHeaders, policyRequestFormat(reqCtx.SourceFormat), reqCtx.RaylineARCRawBody, result.EpisodeIDHash,
+			raylineARCForksSubagents(algorithm.RaylineARC, policyRequestFormat(reqCtx.SourceFormat)),
 		)
 	}
 	reqCtx.RaylineARCSessionKey, reqCtx.RaylineARCSessionKeySource = raylineARCSessionKey(signalHeaders, rawEpisodeID)

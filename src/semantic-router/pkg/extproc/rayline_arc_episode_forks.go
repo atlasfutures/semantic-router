@@ -329,3 +329,12 @@ func mapValues(streams map[string]*raylinearc.EpisodeForkStream) []*raylinearc.E
 	}
 	return values
 }
+
+// raylineARCForksSubagents reports whether fork detection runs on this
+// cell's requests of format: then a subagent keyed on a shared role or task
+// key decides as its own main turn, and fork detection keeps the subagents
+// sharing that key apart.
+func raylineARCForksSubagents(arcConfig *config.RaylineARCAlgorithmConfig, format string) bool {
+	return arcConfig != nil && arcConfig.PolicyService != nil && arcConfig.Episode.ForkDetectionEnabled() &&
+		(format == policyFormatAnthropic || format == policyFormatOpenAI)
+}

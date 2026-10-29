@@ -141,6 +141,10 @@ class RaylineARCEpisodeConfig(BaseModel):
     # only if unchanged; a collision drops that turn's state update instead of
     # failing the request (serving cells).
     consistency: Literal["strict", "relaxed"] | None = None
+    # Parallel requests sharing one episode id are served on sibling episodes
+    # of their own (policy-service cells); the Go loader holds the same
+    # contract. Omitted is on.
+    fork_detection: bool | None = None
 
     @model_validator(mode="after")
     def _relaxed_holds_no_lease_to_close_under(self):

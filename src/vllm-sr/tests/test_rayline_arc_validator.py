@@ -458,6 +458,15 @@ def test_episode_consistency_matches_the_go_loader():
         RaylineARCEpisodeConfig.model_validate(_episode_with(consistency="eventual"))
 
 
+def test_episode_fork_detection_matches_the_go_loader():
+    # Omitted (on), true and false are the Go loader's values.
+    for value in (None, True, False):
+        parsed = RaylineARCEpisodeConfig.model_validate(
+            _episode_with(fork_detection=value)
+        )
+        assert parsed.fork_detection is value
+
+
 def test_relaxed_episode_refuses_a_close_header():
     with pytest.raises(
         ValidationError, match="close_header is not served with consistency=relaxed"

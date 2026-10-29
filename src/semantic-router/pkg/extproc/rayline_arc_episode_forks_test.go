@@ -307,3 +307,99 @@ func TestForkDetectionOffKeepsTodaysBehaviour(t *testing.T) {
 		t.Fatalf("fork detection off: failure=%q fork=%+v", other.arc.PreparationFailure, other.arc.Fork)
 	}
 }
+
+// subagentCell trusts the gateway's turn-signal headers, as the serving
+// cells do.
+func subagentCell(t *testing.T, forks bool) *forkCell {
+	cell := newForkCell(t)
+	cell.algorithm.RaylineARC.PolicyService.TrustTurnSignalHeaders = true
+	cell.algorithm.RaylineARC.Episode.ForkDetection = &forks
+	return cell
+}
+
+func (cell *forkCell) subagentTurn(format llmprotocol.WireFormat, body []byte) forkTurn {
+	ctx := cell.request(body, format)
+	ctx.Headers[testEpisodeIDHeader] = forkTestEpisode + ":sub-explore"
+	ctx.Headers[raylineARCAgentKeySourceHeader] = "role"
+	began := time.Now()
+	arc := cell.router.buildRaylineARCSelectionContext(cell.algorithm, ctx, missingSessionModelRefs(), raylineARCEpisodeRequired)
+	return forkTurn{arc: arc, ctx: ctx, elapsed: time.Since(began)}
+}
+
+func forkAnthropicBody(t *testing.T, system string, user string) []byte {
+	t.Helper()
+	body, err := json.Marshal(map[string]any{
+		"model": "auto", "max_tokens": 1024, "system": system,
+		"messages": []map[string]string{{"role": "user", "content": user}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return body
+}
+
+// D-arc-subagent-own-decision: with fork detection on, a role-keyed subagent
+// decides as a main turn of its own episode, and same-role subagents with
+// different tasks run concurrently on separate siblings.
+func TestRoleKeyedSubagentsDecideOnTheirOwnEpisodes(t *testing.T) {
+	cell := subagentCell(t, true)
+	var wait sync.WaitGroup
+	turns := make([]forkTurn, 2)
+	for index := range turns {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			turns[index] = cell.subagentTurn(llmprotocol.OpenAIChatV1, chatBody(t, fmt.Sprintf("task %d", index)))
+		}()
+	}
+	wait.Wait()
+	for index, turn := range turns {
+		defer turn.finish(t)
+		if turn.arc.PreparationFailure != "" || turn.elapsed > time.Second {
+			t.Fatalf("subagent %d: failure %q after %s", index, turn.arc.PreparationFailure, turn.elapsed)
+		}
+		if turn.arc.PolicyCallKind != raylinearc.PolicyCallMain ||
+			turn.arc.PolicyCallKindSource != callKindSourceGatewaySubagentForked || turn.arc.Fork == nil {
+			t.Fatalf("subagent %d: %s/%s fork=%+v, want its own main turn", index,
+				turn.arc.PolicyCallKind, turn.arc.PolicyCallKindSource, turn.arc.Fork)
+		}
+	}
+	if turns[0].arc.EpisodeIDHash == turns[1].arc.EpisodeIDHash {
+		t.Fatal("two same-role subagents with different tasks share an episode")
+	}
+}
+
+// Its title helper stays a side call; with fork detection off a role-keyed
+// subagent is a side call as before.
+func TestRoleKeyedSubagentHelpersAndFlagOffStaySideCalls(t *testing.T) {
+	cell := subagentCell(t, true)
+	title := cell.subagentTurn(llmprotocol.AnthropicMessagesV1,
+		forkAnthropicBody(t, raylinearc.ClaudeCodeTitlePrompt+" the session", "name it"))
+	defer title.finish(t)
+	if title.arc.PolicyCallKind != raylinearc.PolicyCallSide || title.arc.Fork != nil {
+		t.Fatalf("title helper: %s/%s fork=%+v, want a side call", title.arc.PolicyCallKind, title.arc.PolicyCallKindSource, title.arc.Fork)
+	}
+	off := subagentCell(t, false)
+	turn := off.subagentTurn(llmprotocol.OpenAIChatV1, chatBody(t, "task"))
+	defer turn.finish(t)
+	if turn.arc.PolicyCallKind != raylinearc.PolicyCallSide || turn.arc.PolicyCallKindSource != callKindSourceGatewaySubagent {
+		t.Fatalf("fork detection off: %s/%s, want a side call", turn.arc.PolicyCallKind, turn.arc.PolicyCallKindSource)
+	}
+}
+
+// The Claude Code claim path: a subagent the billing block declares, keyed
+// on a role, is a main turn with fork detection on.
+func TestClaudeCodeRoleKeyedSubagentClaimIsMainWhenForked(t *testing.T) {
+	for _, forks := range []bool{true, false} {
+		kind, source := raylineARCPolicyCallKindForked(
+			map[string]string{raylineARCAgentKeySourceHeader: "role"}, policyFormatAnthropic,
+			json.RawMessage(`[{"type":"text","text":"x-anthropic-billing-header: cc_is_subagent=true"}]`), nil, nil, "e", forks)
+		want, wantSource := raylinearc.PolicyCallSide, callKindSourceClaudeSubagent
+		if forks {
+			want, wantSource = raylinearc.PolicyCallMain, callKindSourceClaudeSubagentForked
+		}
+		if kind != want || source != wantSource {
+			t.Fatalf("forks=%v: %s/%s, want %s/%s", forks, kind, source, want, wantSource)
+		}
+	}
+}
