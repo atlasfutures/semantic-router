@@ -958,7 +958,11 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	// package's fallback action in their place.
 	if errors.As(err, &cold) && cold.Class == raylinearc.PolicySelectionRefusedClass &&
 		raylinearc.PolicyRefusalReason(cold.Detail) == "unknown_price_model" {
-		return nil, arcSelectionFailure(arcFailureRoutesUnknownPriceModel)
+		failure := arcSelectionFailure(arcFailureRoutesUnknownPriceModel)
+		if routeControls != nil {
+			failure.models = routeRefusedPriceModels(cold.Detail, routeControls.PricedModels)
+		}
+		return nil, failure
 	}
 	if errors.As(err, &cold) && (cold.Class == raylinearc.PolicyStageOneHeldUnknownClass ||
 		cold.Class == raylinearc.PolicySelectionRefusedClass) {
@@ -999,6 +1003,15 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 			}
 		}
 		fields := map[string]interface{}{"class": class, "episode_id_hash": arcContext.EpisodeIDHash}
+		// A caller price world the service refused answers its own code,
+		// not the generic request_shape 400.
+		if failure != nil && class == "unsupported_request" && routeControls != nil && routeControls.Prices != nil {
+			if refused := routeCallerPricesRefusal(failure.Detail); refused != "" {
+				fields["reason"] = failure.Detail["reason"]
+				logging.ComponentErrorEvent("extproc", "rayline_arc_policy_service_failed", fields)
+				return nil, arcSelectionFailure(refused)
+			}
+		}
 		// A timeout or transport failure names what failed (a dial, TLS or
 		// read error, and the status when one was answered); the client has
 		// already dropped the URL and redacted the credentials.

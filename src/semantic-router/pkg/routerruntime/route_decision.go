@@ -44,6 +44,11 @@ type RouteDecisionRequest struct {
 	// that to the legacy consult would silently move it off its fail-closed
 	// ambiguity and onto a policy its caller never selected.
 	Surface RouteDecisionSurface
+	// Recipe names the routing recipe whose ARC decision serves the lookup:
+	// the recipe the request's tier id resolved to on POST /v1/routes. Empty
+	// keeps the top-level decisions (the default recipe), which is all the
+	// legacy consult reads.
+	Recipe string
 	// Ephemeral asks for a decision that joins no trajectory: no episode
 	// lease, no episode store read or write, and nothing left behind.
 	//

@@ -14,17 +14,44 @@ func (r *OpenAIRouter) resolveEntrypointForRequest(originalModel string, ctx *Re
 	if r == nil || r.Config == nil || ctx == nil {
 		return
 	}
-	recipe, ok := r.Config.RecipeForRoutingModel(originalModel)
+	recipe, ok := r.generationRecipeFor(originalModel)
 	if !ok {
 		ctx.Routing.SelectPassthrough()
 		return
 	}
 	ctx.Routing.SelectRecipe(recipe)
+	if recipeServesRaylineARC(recipe) {
+		ctx.RaylineARCIdentity = raylineARCIdentityFor(r.Config, recipe, originalModel)
+	}
 	logging.ComponentDebugEvent("extproc", "entrypoint_recipe_resolved", map[string]interface{}{
 		"request_id": ctx.RequestID,
 		"model":      originalModel,
 		"recipe":     recipe.Name,
 	})
+}
+
+// generationRecipeFor is the recipe a generation turn's model selects. A
+// configured name selects its recipe exactly as before; another spelling of
+// a public ARC tier (arc-sage, rayline/arc-sage-1.0) selects the recipe that
+// serves the tier, as a lookup does.
+func (r *OpenAIRouter) generationRecipeFor(model string) (*config.RoutingRecipe, bool) {
+	recipe, ok := r.Config.RecipeForRoutingModel(model)
+	if !ok && raylineARCCanonicalTier(model) != "" {
+		recipe, ok = raylineARCRecipeForModel(r.Config, model)
+	}
+	return recipe, ok && recipe != nil
+}
+
+// stateGenerationIdentity records the ARC identity of a generation turn
+// refused before its recipe is resolved (a refused routing block), so the
+// refusal says which tier refused it.
+func (r *OpenAIRouter) stateGenerationIdentity(model string, ctx *RequestContext) {
+	if r == nil || r.Config == nil || ctx == nil || ctx.RaylineARCIdentity != nil {
+		return
+	}
+	if recipe, ok := r.generationRecipeFor(model); ok && recipeServesRaylineARC(recipe) {
+		ctx.RaylineARCIdentity = raylineARCIdentityFor(r.Config, recipe, model)
+	}
 }
 
 func (r *OpenAIRouter) classifierForRequest(ctx *RequestContext) *classification.Classifier {
@@ -62,7 +89,16 @@ func (r *OpenAIRouter) requestModelActsAsAuto(modelName string) bool {
 	if r == nil || r.Config == nil {
 		return false
 	}
-	return r.Config.IsAutoModelName(modelName) || r.Config.IsEntrypointModelName(modelName)
+	if r.Config.IsAutoModelName(modelName) || r.Config.IsEntrypointModelName(modelName) {
+		return true
+	}
+	// Any other spelling of a public ARC tier this cell serves is resolved
+	// by the router too (resolveEntrypointForRequest), never forwarded.
+	if raylineARCCanonicalTier(modelName) != "" {
+		_, ok := raylineARCRecipeForModel(r.Config, modelName)
+		return ok
+	}
+	return false
 }
 
 // decisionCandidatesForRequest scopes evaluation to exactly one recipe. Direct

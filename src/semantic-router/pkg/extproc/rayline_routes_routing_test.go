@@ -182,9 +182,15 @@ func TestRoutesPriceSHA256MatchesTheContractVectors(t *testing.T) {
 		t.Fatalf("vectors: %v", err)
 	}
 	for index, vector := range vectors {
-		prices, refusal := routesReadPrices(vector.Prices)
-		if refusal != nil {
-			t.Fatalf("vector %d refused: %+v", index, refusal)
+		// Decoded directly: the vectors exercise number formatting beyond
+		// the admitted leg bound (1e21), which the hash must still match.
+		var legs map[string]map[string]float64
+		if err := json.Unmarshal(vector.Prices, &legs); err != nil {
+			t.Fatalf("vector %d: %v", index, err)
+		}
+		prices := map[string][4]float64{}
+		for model, leg := range legs {
+			prices[model] = [4]float64{leg["input"], leg["cache_read"], leg["cache_write"], leg["output"]}
 		}
 		if got := routesPriceJCS(prices, vector.Exclusive); got != vector.JCS {
 			t.Errorf("vector %d preimage\n got %s\nwant %s", index, got, vector.JCS)

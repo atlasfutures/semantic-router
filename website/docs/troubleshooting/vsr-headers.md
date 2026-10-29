@@ -50,6 +50,20 @@ A Rayline ARC turn that reached its provider also names what served it, on a `2x
 
 The `llm_usage` record carries the first and the last as `served_model` and `policy_cost_weight`, null when unknown, and the endpoint as `provider_endpoint`, with `provider_endpoints_tried`, `session_key_source` and `endpoint_resend`.
 
+## Rayline ARC identity
+
+Every Rayline ARC response the cell answers states what decided it: a `POST /v1/routes` lookup and a generation turn (`/v1/messages`, `/v1/chat/completions`, `/v1/responses`), on a `2xx`, an upstream error and the cell's own refusals alike, once the tier is known. The cell replaces any copy an upstream sent and strips them from every response no ARC recipe decided. They are `x-rayline-*`, so an ARC ingress that scrubs `x-vsr-*` passes them without a keep-set entry. Design: `docs/architecture/rayline-arc-one-cell-all-tiers.md`.
+
+| Header | Description |
+| ------ | ----------- |
+| `x-rayline-tier` | The public tier id, with its version, that decided the request: `arc-1.0`, `arc-swift-1.0` or `arc-sage-1.0`, whichever spelling the caller sent (`arc-sage`, `rayline/arc-sage`, `arc-sage-1.0` all read `arc-sage-1.0`). Absent when the deciding recipe serves no public tier. |
+| `x-rayline-recipe` | The cell-local recipe that decided it: `default`, `arc-swift`, `arc-sage`. |
+| `x-rayline-arm` | The arm ARC chose (the worker id, e.g. `kimi-k3@thinking-off`). Absent before an arm was chosen, e.g. on a refusal. |
+| `x-rayline-model` | The provider model id of that arm: on a generation turn the model the call was dispatched to (as `x-vsr-served-model`), on a lookup the chosen worker's model (the body's `model`). |
+| `x-rayline-price-profile` | The price world of the decision: `catalog` (the cell's own prices; always on generation, which refuses caller prices) or `inline` (the lookup's `routing.prices`). A gateway that built the inline prices from a saved profile restates it as `profile:<id>@<version>`. |
+
+A tier the cell does not serve is refused on `/v1/routes` as `404 model_not_served`, and any other ARC-shaped id as `400 unknown_model`; neither is decided on another tier's recipe.
+
 ## Request headers
 
 | Header | Direction | Description |

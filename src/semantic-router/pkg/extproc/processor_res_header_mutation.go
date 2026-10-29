@@ -256,11 +256,13 @@ func (builder *responseHeaderMutationBuilder) mutation() *ext_proc.HeaderMutatio
 	return &ext_proc.HeaderMutation{SetHeaders: builder.setHeaders, RemoveHeaders: builder.removeHeaders}
 }
 
-// privacyModeRemoval strips x-vsr-privacy-mode and x-vsr-served-endpoint
+// privacyModeRemoval strips x-vsr-privacy-mode, x-vsr-served-endpoint and the x-rayline-* identity
 // from a response the router does not otherwise mutate: only the router
 // states them, and no ARC selection stands behind such a response.
 func privacyModeRemoval() *ext_proc.HeaderMutation {
-	return &ext_proc.HeaderMutation{RemoveHeaders: []string{headers.VSRPrivacyMode, headers.VSRServedEndpoint}}
+	// The ARC identity headers too: these responses are never an ARC turn's.
+	removed := []string{headers.VSRPrivacyMode, headers.VSRServedEndpoint}
+	return &ext_proc.HeaderMutation{RemoveHeaders: append(removed, raylineARCIdentityHeaders...)}
 }
 
 // addPrivacyMode states the data mode an ARC turn was served under, replacing
@@ -287,6 +289,9 @@ func buildResponseHeaderMutation(
 	builder := newResponseHeaderMutationBuilder()
 	builder.addPrivacyMode(ctx)
 	builder.addRaylineARCServedEndpoint(ctx, isSuccessful)
+	// What decided an ARC turn rides on every response to it, success or
+	// upstream error alike.
+	builder.addRaylineARCIdentity(ctx)
 
 	// The keystone headers, protocol markers, and protocol warnings ride on
 	// every non-cache-hit response (success or 4xx/5xx). Cache-hit responses

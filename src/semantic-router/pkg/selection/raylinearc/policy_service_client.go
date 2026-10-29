@@ -167,6 +167,33 @@ var policyRefusalReasons = map[string]bool{
 	"policy_schedule_not_admitted":  true,
 }
 
+// policyCallerPricesRefusalReasons are the unsupported_request reasons a
+// caller's price world is refused with (pathfinder#5668).
+var policyCallerPricesRefusalReasons = map[string]bool{
+	"caller_prices_unsupported":  true,
+	"caller_prices_inconsistent": true,
+}
+
+// maxPolicyRefusalModels bounds the models a refusal may name: a caller
+// prices at most 256.
+const maxPolicyRefusalModels = 256
+
+// policyRefusalModels are the string entries of a refusal's detail.models,
+// bounded; nil when it has none.
+func policyRefusalModels(detail map[string]any) []any {
+	list, ok := detail["models"].([]any)
+	if !ok {
+		return nil
+	}
+	models := []any{}
+	for _, entry := range list {
+		if model, ok := entry.(string); ok && len(models) < maxPolicyRefusalModels {
+			models = append(models, model)
+		}
+	}
+	return models
+}
+
 // PolicyRefusalReason is a selection refusal's bounded reason.
 func PolicyRefusalReason(detail map[string]any) string {
 	reason, _ := detail["reason"].(string)
@@ -499,6 +526,19 @@ func (client *PolicyServiceClient) do(
 				refusal.Detail = capacityRefusalDetail(failure.Detail)
 			case PolicySelectionRefusedClass, PolicyStageOneHeldUnknownClass:
 				refusal.Detail = map[string]any{"reason": PolicyRefusalReason(failure.Detail)}
+				// An unknown_price_model refusal keeps the models it names,
+				// as strings only; the cell keeps those the caller priced.
+				if refusal.Detail["reason"] == "unknown_price_model" {
+					if models := policyRefusalModels(failure.Detail); models != nil {
+						refusal.Detail["models"] = models
+					}
+				}
+			case "unsupported_request":
+				// The caller price world refusals (pathfinder#5668) keep
+				// their bounded reason, so the cell answers each its code.
+				if reason, _ := failure.Detail["reason"].(string); policyCallerPricesRefusalReasons[reason] {
+					refusal.Detail = map[string]any{"reason": reason}
+				}
 			case PolicyMediaRefusedClass:
 				refusal.Detail = map[string]any{"sub_reason": PolicyMediaRefusalSubReason(failure.Detail)}
 			case PolicyDecisionsV2RefusedClass, PolicyExplorationRefusedClass, PolicySignalRefusedClass:
