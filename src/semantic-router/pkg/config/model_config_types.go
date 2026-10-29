@@ -436,6 +436,8 @@ type ModelParams struct {
 	// FirstContentSec is the arm's own first-content limit; see
 	// FirstContentSecForModel.
 	FirstContentSec int `yaml:"first_content_sec,omitempty"`
+	// IdleSec is the arm's own mid-stream idle limit; see IdleSecForModel.
+	IdleSec int `yaml:"idle_sec,omitempty"`
 	// HostRetry is the arm's own host-retry switch; see HostRetryForModel.
 	HostRetry *bool `yaml:"host_retry,omitempty"`
 }

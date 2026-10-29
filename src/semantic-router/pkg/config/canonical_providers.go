@@ -51,6 +51,12 @@ type CanonicalProviderModel struct {
 	// A non-thinking arm can be held to a shorter wait than an arm that
 	// reasons in silence. Absent or zero, the global limit applies.
 	FirstContentSec int `yaml:"first_content_sec,omitempty"`
+	// IdleSec overrides global.router.response_stream.idle_sec for this arm:
+	// how long its streamed turn may go between content once content has
+	// started. A host that buffers a tool call's arguments and sends them at
+	// once can be given a longer gap than arms that stream them. Absent or
+	// zero, the global limit applies.
+	IdleSec int `yaml:"idle_sec,omitempty"`
 	// HostRetry turns global.router.response_stream.host_retry on or off for
 	// this arm. Absent, the global flag applies. An arm whose silence is its
 	// own (Claude's native thinking with display omitted streams nothing

@@ -1851,6 +1851,9 @@ class Model(BaseModel):
     # Mirrors CanonicalProviderModel.FirstContentSec: the arm's own
     # first-content limit, replacing global response_stream.first_content_sec.
     first_content_sec: Optional[int] = Field(default=None, ge=0)
+    # Mirrors CanonicalProviderModel.IdleSec: the arm's own mid-stream idle
+    # limit, replacing global response_stream.idle_sec.
+    idle_sec: Optional[int] = Field(default=None, ge=0)
     # Mirrors CanonicalProviderModel.HostRetry: the arm's own host-retry
     # switch; absent follows global response_stream.host_retry.
     host_retry: Optional[bool] = None

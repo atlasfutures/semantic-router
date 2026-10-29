@@ -79,3 +79,59 @@ func TestClaudeArmWaitsLongerAndIsNotRetried(t *testing.T) {
 		t.Fatal("an arm without its own switch did not follow the global flag")
 	}
 }
+
+// An arm's idle limit replaces the global response_stream.idle_sec for that
+// arm only, and leaves its first-content limit to its own key.
+func TestArmIdleSecOverridesTheGlobalLimit(t *testing.T) {
+	source := providerPreferencesConfigYAML("      idle_sec: 300\n") + `global:
+  router:
+    response_stream:
+      first_content_sec: 90
+      idle_sec: 120
+`
+	parsed, err := ParseYAMLBytes([]byte(source))
+	if err != nil {
+		t.Fatalf("ParseYAMLBytes: %v", err)
+	}
+	if got := parsed.IdleSecForModel("model-a"); got != 300 {
+		t.Fatalf("arm idle limit = %d, want 300", got)
+	}
+	if got := parsed.IdleSecForModel("another-model"); got != 120 {
+		t.Fatalf("an arm without its own idle limit has %d, want the global 120", got)
+	}
+	if got := parsed.FirstContentSecForModel("model-a"); got != 90 {
+		t.Fatalf("the idle override changed the arm's first-content limit to %d, want the global 90", got)
+	}
+	var raw map[string]interface{}
+	if err := yamlv3.Unmarshal([]byte(source), &raw); err != nil {
+		t.Fatalf("unmarshal raw canonical config: %v", err)
+	}
+	if warnings := collectUnknownFields(raw, reflect.TypeOf(CanonicalConfig{})); len(warnings) != 0 {
+		t.Fatalf("the keys are not known canonical keys: %v", warnings)
+	}
+}
+
+func TestArmIdleSecAbsentFollowsTheGlobalLimit(t *testing.T) {
+	source := providerPreferencesConfigYAML("      first_content_sec: 300\n") + `global:
+  router:
+    response_stream:
+      idle_sec: 120
+`
+	parsed, err := ParseYAMLBytes([]byte(source))
+	if err != nil {
+		t.Fatalf("ParseYAMLBytes: %v", err)
+	}
+	if got := parsed.IdleSecForModel("model-a"); got != 120 {
+		t.Fatalf("arm idle limit = %d, want the global 120", got)
+	}
+	if got := parsed.FirstContentSecForModel("model-a"); got != 300 {
+		t.Fatalf("arm first-content limit = %d, want 300", got)
+	}
+}
+
+func TestNegativeArmIdleSecIsRefused(t *testing.T) {
+	_, err := ParseYAMLBytes([]byte(providerPreferencesConfigYAML("      idle_sec: -1\n")))
+	if err == nil || !strings.Contains(err.Error(), "providers.models[model-a].idle_sec") {
+		t.Fatalf("err = %v", err)
+	}
+}

@@ -188,6 +188,11 @@ providers:
       # global one. A Claude 5.x arm thinks natively with its display
       # omitted and streams nothing while it does: give it 300.
       first_content_sec: 0
+      # This arm's own mid-stream idle limit, replacing the global
+      # response_stream.idle_sec, above or below it. 0 keeps the global one.
+      # An arm whose host buffers a tool call's arguments and sends them at
+      # once (silent meanwhile) needs a longer gap than arms that stream them.
+      idle_sec: 0
       # This arm's own host-retry switch (response_stream.host_retry);
       # absent follows the global flag. Set false on the Claude arms
       # (claude-haiku-5.5, claude-sonnet-5.5, claude-opus-5.5): their silence
@@ -2268,7 +2273,8 @@ global:
       # End a streamed turn whose upstream sends no content (keepalives do not
       # count) for this long after its headers, or between content after that.
       # With nothing yet sent, the turn is a timeout: the arm is excluded and
-      # the client's retry is decided afresh. Zero turns either off.
+      # the client's retry is decided afresh. Zero turns either off. An arm
+      # may set its own providers.models[].first_content_sec and idle_sec.
       first_content_sec: 0
       idle_sec: 0
       # Re-send a streamed turn on its arm's next provider host when the
