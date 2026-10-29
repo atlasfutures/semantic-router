@@ -27,7 +27,9 @@ func forkRequest(system string, turns ...string) EpisodeForkRequest {
 	}
 	digests := NewPrefixDigests(messages)
 	systemJSON, _ := json.Marshal(system)
-	return EpisodeForkRequest{Digests: digests, Roles: roles, Root: ForkRootDigest(digests, systemJSON, nil)}
+	return EpisodeForkRequest{
+		Digests: digests, Roles: roles, Root: ForkRootDigest(digests, systemJSON, nil), Shell: ForkShellDigest(systemJSON, nil),
+	}
 }
 
 type forkWorld struct {
@@ -359,5 +361,19 @@ func TestRecordDeletesExpiredSiblings(t *testing.T) {
 	world.store.mu.Unlock()
 	if streams != 1 {
 		t.Fatalf("registry holds %d streams after the sibling expired, want main alone", streams)
+	}
+}
+
+// An edit of a failed first turn (no assistant message yet) keeps its shell
+// and stays on the stream; a different system prompt is another
+// conversation.
+func TestEditedFirstTurnRetryStays(t *testing.T) {
+	world := newForkWorld(t)
+	world.admit(forkRequest("s", "u1"), false) // fails upstream
+	if got := world.admit(forkRequest("s", "u1 edited"), false); got.Fork() || got.Reason != ForkReasonRetryEdit {
+		t.Fatalf("edited first turn = %+v, want retry_edit on main", got)
+	}
+	if got := world.admit(forkRequest("subagent", "task"), false); !got.Fork() {
+		t.Fatalf("different shell = %+v, want a fork", got)
 	}
 }

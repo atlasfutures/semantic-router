@@ -83,6 +83,10 @@ type EpisodeForkPrefix struct {
 	// message is an edited retry of this turn when no turn is in flight.
 	BaseLen    int    `json:"bl,omitempty"`
 	BaseDigest string `json:"bd,omitempty"`
+	// Shell digests the system prompt and tools of a turn with no assistant
+	// message (a first turn), whose base is empty: an edit of that turn's
+	// message keeps its shell.
+	Shell string `json:"s,omitempty"`
 }
 
 // EpisodeForkStream is one stream's registry record.
@@ -198,6 +202,8 @@ type EpisodeForkRequest struct {
 	Roles []string
 	// Root is ForkRootDigest of the request.
 	Root string
+	// Shell is ForkShellDigest of the request.
+	Shell string
 	// Compaction is a recognised compaction continuation.
 	Compaction bool
 	// Committed lists the streams whose newest admitted turn committed (its
@@ -212,6 +218,8 @@ func (request EpisodeForkRequest) Prefix() EpisodeForkPrefix {
 	prefix := EpisodeForkPrefix{Len: count, Digest: request.Digests.Digest(count)}
 	if base := request.lastAssistant() + 1; base > 0 && base < count {
 		prefix.BaseLen, prefix.BaseDigest = base, request.Digests.Digest(base)
+	} else if base == 0 {
+		prefix.Shell = request.Shell
 	}
 	return prefix
 }
@@ -232,7 +240,11 @@ func (request EpisodeForkRequest) lastAssistant() int {
 // message), carries no assistant message after it, and differs from the
 // turn only in what follows.
 func (request EpisodeForkRequest) retries(prefix EpisodeForkPrefix) bool {
-	if prefix.BaseLen <= 0 || prefix.BaseLen >= len(request.Digests.Messages()) ||
+	if prefix.BaseLen == 0 {
+		// A first turn: the same shell, and still no assistant message.
+		return prefix.Shell != "" && prefix.Shell == request.Shell && request.lastAssistant() < 0
+	}
+	if prefix.BaseLen < 0 || prefix.BaseLen >= len(request.Digests.Messages()) ||
 		request.Digests.Digest(prefix.BaseLen) != prefix.BaseDigest {
 		return false
 	}
@@ -301,6 +313,17 @@ func ForkRootDigest(digests *PrefixDigests, system, tools json.RawMessage) strin
 		hash.Write([]byte(strconv.Itoa(len(first))))
 		hash.Write([]byte{':'})
 		hash.Write(first)
+	}
+	return hex.EncodeToString(hash.Sum(nil))
+}
+
+// ForkShellDigest digests a request's system prompt and tool definitions.
+func ForkShellDigest(system, tools json.RawMessage) string {
+	hash := sha256.New()
+	for _, part := range [][]byte{canonicalSystem(system), canonicalTools(tools)} {
+		hash.Write([]byte(strconv.Itoa(len(part))))
+		hash.Write([]byte{':'})
+		hash.Write(part)
 	}
 	return hex.EncodeToString(hash.Sum(nil))
 }

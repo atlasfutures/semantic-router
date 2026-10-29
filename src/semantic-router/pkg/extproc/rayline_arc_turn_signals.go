@@ -219,7 +219,7 @@ func raylineARCPolicyCallKindForked(
 			if strings.TrimSpace(headers[raylineARCAgentKeySourceHeader]) == raylinearc.SubagentKeySourceAgent {
 				return raylinearc.PolicyCallMain, callKindSourceClaudeSubagentOwn
 			}
-			if forked {
+			if source := strings.TrimSpace(headers[raylineARCAgentKeySourceHeader]); forked && (source == "role" || source == "task") {
 				return raylinearc.PolicyCallMain, callKindSourceClaudeSubagentForked
 			}
 			return raylinearc.PolicyCallSide, callKindSourceClaudeSubagent

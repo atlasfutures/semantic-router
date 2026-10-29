@@ -105,6 +105,7 @@ func (r *OpenAIRouter) newRaylineARCForkCheck(
 			Digests:    digests,
 			Roles:      roles,
 			Root:       raylinearc.ForkRootDigest(digests, body.System, body.Tools),
+			Shell:      raylinearc.ForkShellDigest(body.System, body.Tools),
 			Compaction: signals.Compaction != nil,
 		},
 		idleTTL:     idle,
@@ -147,10 +148,17 @@ func (check *raylineARCForkCheck) resolve(ctx context.Context, held string) (ray
 		}
 	}
 	resolution := raylinearc.ResolveEpisodeFork(view, check.request, check.now(), check.idleTTL)
-	if resolution.Reason == raylinearc.ForkReasonRetryEdit && check.latestCommitted(ctx, view, resolution.Stream) {
-		// The turn it would retry committed: the request is a branch off it.
-		request := check.request
-		request.Committed = map[string]bool{resolution.Stream: true}
+	// A retry of a turn that committed is a branch off it: rule the
+	// committed candidates out one by one until the retried turn did not
+	// commit or the request is no retry.
+	request := check.request
+	for tries := 0; resolution.Reason == raylinearc.ForkReasonRetryEdit &&
+		tries <= raylinearc.MaxEpisodeForkSiblings && check.latestCommitted(ctx, view, resolution.Stream); tries++ {
+		committed := map[string]bool{resolution.Stream: true}
+		for name := range request.Committed {
+			committed[name] = true
+		}
+		request.Committed = committed
 		resolution = raylinearc.ResolveEpisodeFork(view, request, check.now(), check.idleTTL)
 	}
 	result := raylineARCForkResult{

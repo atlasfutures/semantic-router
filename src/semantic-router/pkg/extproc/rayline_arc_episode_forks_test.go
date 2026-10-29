@@ -390,6 +390,11 @@ func TestRoleKeyedSubagentHelpersAndFlagOffStaySideCalls(t *testing.T) {
 // The Claude Code claim path: a subagent the billing block declares, keyed
 // on a role, is a main turn with fork detection on.
 func TestClaudeCodeRoleKeyedSubagentClaimIsMainWhenForked(t *testing.T) {
+	// Without a role or task key source the claim stays a side call.
+	if kind, _ := raylineARCPolicyCallKindForked(nil, policyFormatAnthropic,
+		json.RawMessage(`[{"type":"text","text":"x-anthropic-billing-header: cc_is_subagent=true"}]`), nil, nil, "e", true); kind != raylinearc.PolicyCallSide {
+		t.Fatalf("unkeyed subagent claim = %s, want side", kind)
+	}
 	for _, forks := range []bool{true, false} {
 		kind, source := raylineARCPolicyCallKindForked(
 			map[string]string{raylineARCAgentKeySourceHeader: "role"}, policyFormatAnthropic,
