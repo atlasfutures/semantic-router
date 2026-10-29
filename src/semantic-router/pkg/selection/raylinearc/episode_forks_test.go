@@ -35,6 +35,9 @@ type forkWorld struct {
 	store *MemoryEpisodeStore
 	root  string
 	now   time.Time
+	// tokens counts admissions; last is each stream's latest token.
+	tokens int
+	last   map[string]string
 }
 
 func newForkWorld(t *testing.T) *forkWorld {
@@ -70,21 +73,26 @@ func (world *forkWorld) admit(request EpisodeForkRequest, busy bool) EpisodeFork
 		evict = ""
 	}
 	if err := world.store.RecordForkStream(context.Background(), world.root, resolution.Stream,
-		current.Admitted(request, world.now, busyUntil), evict); err != nil {
+		current.Admitted(request, world.now, busyUntil, world.token(resolution.Stream)), evict); err != nil {
 		world.t.Fatal(err)
 	}
 	return resolution
 }
 
-// finish clears stream's busy mark.
-func (world *forkWorld) finish(stream string) {
-	view, _ := world.store.ForkView(context.Background(), world.root)
-	record := view.Main
-	if stream != EpisodeForkMainStream {
-		record = view.Siblings[stream]
+// token is the admission token for stream's next admission.
+func (world *forkWorld) token(stream string) string {
+	world.tokens++
+	token := fmt.Sprintf("t%d", world.tokens)
+	if world.last == nil {
+		world.last = map[string]string{}
 	}
-	record.BusyUntilMS = 0
-	_ = world.store.RecordForkStream(context.Background(), world.root, stream, record, "")
+	world.last[stream] = token
+	return token
+}
+
+// finish clears the busy mark of stream's last admission.
+func (world *forkWorld) finish(stream string) {
+	_ = world.store.ClearForkBusy(context.Background(), world.root, stream, world.last[stream])
 }
 
 func TestForkContinuationStaysOnMain(t *testing.T) {
@@ -107,7 +115,7 @@ func TestForkWhileMainInFlightGetsOneSibling(t *testing.T) {
 	world.admit(forkRequest("s", "u1", "a1", "uA"), true) // A in flight
 	for _, b := range []EpisodeForkRequest{
 		forkRequest("s", "u1", "a1", "uA", "user:uB"), // history incl. A's prompt, no reply
-		forkRequest("s", "u1", "a1", "uB"),       // a different last user message
+		forkRequest("s", "u1", "a1", "uB"),            // a different last user message
 	} {
 		got := world.admit(b, true)
 		if !got.Fork() || got.Reason != ForkReasonForkBusy || !got.New {
@@ -220,5 +228,44 @@ func TestNextTurnBeforeMarkClearsIsAContinuation(t *testing.T) {
 	}
 	if got := world.admit(forkRequest("s", "u1", "a1", "u2"), true); got.Fork() {
 		t.Fatalf("retry of the in-flight turn = %+v", got)
+	}
+}
+
+// A finished turn clears only its own busy mark: a turn admitted on the
+// stream after it keeps the stream busy.
+func TestFinishedTurnKeepsANewerAdmissionBusy(t *testing.T) {
+	world := newForkWorld(t)
+	world.admit(forkRequest("s", "u1"), true)
+	stale := world.last[EpisodeForkMainStream]
+	world.admit(forkRequest("s", "u1", "a1", "u2"), true)
+	_ = world.store.ClearForkBusy(context.Background(), world.root, EpisodeForkMainStream, stale)
+	if got := world.admit(forkRequest("s", "u1", "a1", "user:beside"), true); !got.Fork() || got.Reason != ForkReasonForkBusy {
+		t.Fatalf("request beside the newer turn = %+v, want fork_parent_busy", got)
+	}
+}
+
+// The same messages under a different system prompt beside a turn in
+// flight are another conversation, not a retry.
+func TestDifferentSystemBesideATurnInFlightForks(t *testing.T) {
+	world := newForkWorld(t)
+	world.admit(forkRequest("s", "u1"), false)
+	world.admit(forkRequest("s", "u1", "a1", "u2"), true)
+	if got := world.admit(forkRequest("other system", "u1", "a1", "u2"), true); !got.Fork() {
+		t.Fatalf("different system = %+v, want a fork", got)
+	}
+}
+
+// A compaction that extends no prefix belongs to the stream that spoke last,
+// not by default to the main stream.
+func TestSiblingCompactionStaysOnTheSibling(t *testing.T) {
+	world := newForkWorld(t)
+	world.admit(forkRequest("s", "u1"), false)
+	world.admit(forkRequest("s", "u1", "a1", "u2"), false)
+	fork := world.admit(forkRequest("sub", "task"), false)
+	world.admit(forkRequest("sub", "task", "r1", "t2"), false)
+	compaction := forkRequest("sub", "summary", "ok", "t3")
+	compaction.Compaction = true
+	if got := world.admit(compaction, false); got.Stream != fork.Stream {
+		t.Fatalf("sibling compaction = %+v, want %q", got, fork.Stream)
 	}
 }

@@ -21,6 +21,8 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
@@ -154,7 +156,8 @@ func (result raylineARCForkResult) streamRecord() *raylinearc.EpisodeForkStream 
 // records the branch it displaced. Registry writes are best effort.
 func (check *raylineARCForkCheck) admit(reqCtx *RequestContext, result raylineARCForkResult) {
 	now := check.now()
-	record := result.streamRecord().Admitted(check.request, now, now.Add(raylineARCForkBusyMark))
+	token := uuid.NewString()
+	record := result.streamRecord().Admitted(check.request, now, now.Add(raylineARCForkBusyMark), token)
 	stream := result.resolution.Stream
 	evict := result.resolution.Evict
 	ctx, cancel := context.WithTimeout(context.Background(), episodeFinalizeTimeout)
@@ -165,12 +168,17 @@ func (check *raylineARCForkCheck) admit(reqCtx *RequestContext, result raylineAR
 	}
 	check.write(ctx, stream, record, evict)
 	if transaction := reqCtx.RaylineARCTransaction; transaction != nil {
-		idle := record.Clone()
-		idle.BusyUntilMS = 0
 		transaction.onFinalize = chainFinalize(transaction.onFinalize, func() {
 			ctx, cancel := context.WithTimeout(context.Background(), episodeFinalizeTimeout)
 			defer cancel()
-			check.write(ctx, stream, idle, "")
+			// Only this admission's mark: a later turn admitted on the
+			// stream once the lease was released keeps its own.
+			if err := check.registry.ClearForkBusy(ctx, check.rootHash, stream, token); err != nil {
+				logging.ComponentWarnEvent("extproc", "rayline_arc_episode_fork_record_failed", map[string]interface{}{
+					"episode_id_hash": check.rootHash,
+					"failure_class":   boundedARCPrepareFailure(err),
+				})
+			}
 		})
 	}
 }
@@ -242,16 +250,17 @@ func (r *OpenAIRouter) prepareRaylineARCForkedTurn(
 			r.applyRaylineARCForkPlacement(result, placed)
 			return state, coalesced, failure
 		}
-		if !lastAttempt {
-			again, ok := check.resolve(parent)
-			if ok && again.hash != placed.hash {
+		// The registry is read again under the lease, so the admission is
+		// written over what the stream holds now.
+		if again, ok := check.resolve(parent); ok {
+			if again.hash != placed.hash && !lastAttempt {
 				// Admitted elsewhere while this one waited: the episode this
 				// lease holds is no longer its stream.
 				r.finalizeRaylineARCAbort(reqCtx, "episode_fork_moved")
 				reqCtx.RaylineARCTransaction, reqCtx.SelectionTransaction, reqCtx.RaylineARCInflight = nil, nil, nil
 				continue
 			}
-			if ok {
+			if again.hash == placed.hash {
 				placed = again
 			}
 		}
