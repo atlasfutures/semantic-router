@@ -35,9 +35,8 @@ type forkWorld struct {
 	store *MemoryEpisodeStore
 	root  string
 	now   time.Time
-	// tokens counts admissions; last is each stream's latest token.
-	tokens int
-	last   map[string]string
+	// busy are the streams whose lease is held.
+	busy map[string]bool
 }
 
 func newForkWorld(t *testing.T) *forkWorld {
@@ -50,22 +49,31 @@ func newForkWorld(t *testing.T) *forkWorld {
 	return world
 }
 
-// admit resolves and admits request; busy leaves the turn in flight.
-func (world *forkWorld) admit(request EpisodeForkRequest, busy bool) EpisodeForkResolution {
-	world.t.Helper()
-	world.now = world.now.Add(time.Second)
+// view is the registry with the streams world holds leases on marked busy.
+func (world *forkWorld) view() EpisodeForkView {
 	view, err := world.store.ForkView(context.Background(), world.root)
 	if err != nil {
 		world.t.Fatal(err)
 	}
+	if view.Main != nil {
+		view.Main.Leased = world.busy[EpisodeForkMainStream]
+	}
+	for name, stream := range view.Siblings {
+		stream.Leased = world.busy[name]
+	}
+	return view
+}
+
+// admit resolves and admits request; busy leaves its turn in flight (the
+// stream's lease held).
+func (world *forkWorld) admit(request EpisodeForkRequest, busy bool) EpisodeForkResolution {
+	world.t.Helper()
+	world.now = world.now.Add(time.Second)
+	view := world.view()
 	resolution := ResolveEpisodeFork(view, request, world.now, time.Hour)
 	current := view.Main
 	if resolution.Fork() {
 		current = view.Siblings[resolution.Stream]
-	}
-	busyUntil := world.now
-	if busy {
-		busyUntil = world.now.Add(time.Minute)
 	}
 	evict := resolution.Evict
 	if resolution.DisplacedRecord != nil {
@@ -73,26 +81,19 @@ func (world *forkWorld) admit(request EpisodeForkRequest, busy bool) EpisodeFork
 		evict = ""
 	}
 	if err := world.store.RecordForkStream(context.Background(), world.root, resolution.Stream,
-		current.Admitted(request, world.now, busyUntil, world.token(resolution.Stream)), evict); err != nil {
+		current.Admitted(request, world.now, HashEpisodeID(resolution.Stream)), evict); err != nil {
 		world.t.Fatal(err)
 	}
+	if world.busy == nil {
+		world.busy = map[string]bool{}
+	}
+	world.busy[resolution.Stream] = busy
 	return resolution
 }
 
-// token is the admission token for stream's next admission.
-func (world *forkWorld) token(stream string) string {
-	world.tokens++
-	token := fmt.Sprintf("t%d", world.tokens)
-	if world.last == nil {
-		world.last = map[string]string{}
-	}
-	world.last[stream] = token
-	return token
-}
-
-// finish clears the busy mark of stream's last admission.
+// finish releases stream's lease.
 func (world *forkWorld) finish(stream string) {
-	_ = world.store.ClearForkBusy(context.Background(), world.root, stream, world.last[stream])
+	world.busy[stream] = false
 }
 
 func TestForkContinuationStaysOnMain(t *testing.T) {
@@ -110,13 +111,13 @@ func TestForkContinuationStaysOnMain(t *testing.T) {
 // fork, its retries and next turns stay on its sibling, and A's next turn
 // stays on the main stream.
 func TestForkWhileMainInFlightGetsOneSibling(t *testing.T) {
-	world := newForkWorld(t)
-	world.admit(forkRequest("s", "u1"), false)
-	world.admit(forkRequest("s", "u1", "a1", "uA"), true) // A in flight
 	for _, b := range []EpisodeForkRequest{
 		forkRequest("s", "u1", "a1", "uA", "user:uB"), // history incl. A's prompt, no reply
 		forkRequest("s", "u1", "a1", "uB"),            // a different last user message
 	} {
+		world := newForkWorld(t)
+		world.admit(forkRequest("s", "u1"), false)
+		world.admit(forkRequest("s", "u1", "a1", "uA"), true) // A in flight
 		got := world.admit(b, true)
 		if !got.Fork() || got.Reason != ForkReasonForkBusy || !got.New {
 			t.Fatalf("B = %+v, want a new fork of a busy main", got)
@@ -126,6 +127,10 @@ func TestForkWhileMainInFlightGetsOneSibling(t *testing.T) {
 		}
 		world.finish(got.Stream)
 	}
+	world := newForkWorld(t)
+	world.admit(forkRequest("s", "u1"), false)
+	world.admit(forkRequest("s", "u1", "a1", "uA"), true) // A in flight
+	world.admit(forkRequest("s", "u1", "a1", "uB"), false)
 	b := forkRequest("s", "u1", "a1", "uB")
 	view, _ := world.store.ForkView(context.Background(), world.root)
 	sibling := ResolveEpisodeFork(view, b, world.now, time.Hour).Stream
@@ -145,7 +150,10 @@ func TestIdleBranchIsAFork(t *testing.T) {
 	world.admit(forkRequest("s", "u1"), false)
 	world.admit(forkRequest("s", "u1", "a1", "u2"), false)
 	world.admit(forkRequest("s", "u1", "a1", "u2", "a2", "u3"), false)
-	got := world.admit(forkRequest("s", "u1", "a1", "u2", "a2", "uB"), false)
+	// The main stream's newest turn committed: B departs from its message.
+	branch := forkRequest("s", "u1", "a1", "u2", "a2", "uB")
+	branch.Committed = map[string]bool{EpisodeForkMainStream: true}
+	got := world.admit(branch, false)
 	if !got.Fork() || got.Reason != ForkReasonForkBranch {
 		t.Fatalf("idle branch = %+v, want fork_branch", got)
 	}
@@ -195,7 +203,7 @@ func TestSiblingCapEvictsLeastRecentlyAdmitted(t *testing.T) {
 	world.admit(forkRequest("s", "u1", "a1", "u2"), true)
 	first := ""
 	for index := range MaxEpisodeForkSiblings + 1 {
-		got := world.admit(forkRequest("s", "u1", "a1", fmt.Sprintf("fork %d", index)), false)
+		got := world.admit(forkRequest("s", "u1", "a1", fmt.Sprintf("fork %d", index)), true)
 		if !got.Fork() || !got.New {
 			t.Fatalf("fork %d = %+v", index, got)
 		}
@@ -231,16 +239,33 @@ func TestNextTurnBeforeMarkClearsIsAContinuation(t *testing.T) {
 	}
 }
 
-// A finished turn clears only its own busy mark: a turn admitted on the
-// stream after it keeps the stream busy.
-func TestFinishedTurnKeepsANewerAdmissionBusy(t *testing.T) {
+// An interrupted turn (its lease released on abort) leaves its stream idle
+// at once: a "continue" sent after it stays on the stream.
+func TestInterruptedTurnThenContinueStaysOnMain(t *testing.T) {
 	world := newForkWorld(t)
-	world.admit(forkRequest("s", "u1"), true)
-	stale := world.last[EpisodeForkMainStream]
+	world.admit(forkRequest("s", "u1"), false)
 	world.admit(forkRequest("s", "u1", "a1", "u2"), true)
-	_ = world.store.ClearForkBusy(context.Background(), world.root, EpisodeForkMainStream, stale)
-	if got := world.admit(forkRequest("s", "u1", "a1", "user:beside"), true); !got.Fork() || got.Reason != ForkReasonForkBusy {
-		t.Fatalf("request beside the newer turn = %+v, want fork_parent_busy", got)
+	world.finish(EpisodeForkMainStream) // aborted: the lease is gone
+	if got := world.admit(forkRequest("s", "u1", "a1", "u2", "user:continue"), false); got.Fork() {
+		t.Fatalf("continue after an interrupted turn = %+v, want main", got)
+	}
+}
+
+// An edited retry after a failed turn stays on the stream; the same shape
+// beside a turn in flight is a parallel request and forks.
+func TestEditedRetryAfterFailureStaysAndBesideATurnForks(t *testing.T) {
+	world := newForkWorld(t)
+	world.admit(forkRequest("s", "u1"), false)
+	world.admit(forkRequest("s", "u1", "a1", "u2"), false)
+	world.admit(forkRequest("s", "u1", "a1", "u2", "a2", "u3"), false) // failed upstream
+	got := world.admit(forkRequest("s", "u1", "a1", "u2", "a2", "u3 edited"), false)
+	if got.Fork() || got.Reason != ForkReasonRetryEdit {
+		t.Fatalf("edited retry = %+v, want retry_edit on main", got)
+	}
+	world.busy[EpisodeForkMainStream] = true // the edited retry's turn is in flight
+	beside := world.admit(forkRequest("s", "u1", "a1", "u2", "a2", "another message"), true)
+	if !beside.Fork() || beside.Reason != ForkReasonForkBusy {
+		t.Fatalf("parallel request = %+v, want fork_parent_busy", beside)
 	}
 }
 
@@ -314,5 +339,25 @@ func TestEqualLengthOtherRootSiblingDoesNotTakeTheRequest(t *testing.T) {
 	got := world.admit(forkRequest("s", "u1", "a1", "u2", "user:directive"), true)
 	if !got.Fork() || got.Stream == other.Stream || got.Parent != EpisodeForkMainStream {
 		t.Fatalf("directive beside main's turn = %+v, want a new fork of main (not %q)", got, other.Stream)
+	}
+}
+
+// A write deletes siblings idle past the TTL, so a long-lived root's
+// registry stays bounded.
+func TestRecordDeletesExpiredSiblings(t *testing.T) {
+	world := newForkWorld(t)
+	world.admit(forkRequest("s", "u1"), false)
+	world.admit(forkRequest("s", "u1", "a1", "u2"), true)
+	world.admit(forkRequest("s", "u1", "a1", "user:old fork"), true)
+	world.finish(EpisodeForkMainStream)
+	world.now = world.now.Add(40 * time.Minute)
+	world.admit(forkRequest("s", "u1", "a1", "u2", "a2", "u3"), false)
+	world.now = world.now.Add(40 * time.Minute)
+	world.admit(forkRequest("s", "u1", "a1", "u2", "a2", "u3", "a3", "u4"), false)
+	world.store.mu.Lock()
+	streams := len(world.store.forks[world.root].streams)
+	world.store.mu.Unlock()
+	if streams != 1 {
+		t.Fatalf("registry holds %d streams after the sibling expired, want main alone", streams)
 	}
 }

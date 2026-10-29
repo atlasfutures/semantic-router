@@ -21,8 +21,6 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/google/uuid"
-
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
@@ -36,13 +34,6 @@ import (
 // rather than waiting out the other's turn.
 const raylineARCForkProbe = 250 * time.Millisecond
 
-// raylineARCForkBusyMark bounds how long an admitted turn marks its stream
-// busy when its finalize never clears the mark (the replica died). A turn's
-// lease is renewed for as long as it streams, which can be minutes, so the
-// mark is not the lease TTL; a stale mark only makes a non-continuation a
-// fork instead of a rewrite until it lapses.
-const raylineARCForkBusyMark = 15 * time.Minute
-
 // raylineARCForkMaxMoves bounds how often one request releases a lease it
 // no longer belongs on and moves; each move follows another request's
 // admission, so the bound is reached only under a storm of them.
@@ -52,6 +43,8 @@ const raylineARCForkMaxMoves = 3
 // registry compares it, and the registry it reads.
 type raylineARCForkCheck struct {
 	registry    raylinearc.EpisodeForkRegistry
+	snapshots   raylinearc.EpisodeSnapshotStore
+	workerCount int
 	rootRawID   string
 	rootHash    string
 	request     raylinearc.EpisodeForkRequest
@@ -74,16 +67,19 @@ func (r *OpenAIRouter) newRaylineARCForkCheck(
 	format string,
 	signalHeaders map[string]string,
 	callKind raylinearc.PolicyCallKind,
+	workerCount int,
 ) *raylineARCForkCheck {
 	if arcConfig == nil || arcConfig.PolicyService == nil || !arcConfig.Episode.ForkDetectionEnabled() ||
 		rawEpisodeID == "" || callKind == raylinearc.PolicyCallSide ||
 		(format != policyFormatAnthropic && format != policyFormatOpenAI) {
 		return nil
 	}
-	registry, ok := r.raylineARCEpisodeStoreFor(reqCtx).(raylinearc.EpisodeForkRegistry)
+	store := r.raylineARCEpisodeStoreFor(reqCtx)
+	registry, ok := store.(raylinearc.EpisodeForkRegistry)
 	if !ok {
 		return nil
 	}
+	snapshots, _ := store.(raylinearc.EpisodeSnapshotStore)
 	var body policyClientRequest
 	if err := json.Unmarshal(reqCtx.RaylineARCRawBody, &body); err != nil || len(body.Messages) == 0 {
 		return nil
@@ -100,9 +96,11 @@ func (r *OpenAIRouter) newRaylineARCForkCheck(
 		idle = time.Hour
 	}
 	return &raylineARCForkCheck{
-		registry:  registry,
-		rootRawID: rawEpisodeID,
-		rootHash:  rootHash,
+		registry:    registry,
+		snapshots:   snapshots,
+		workerCount: max(workerCount, 1),
+		rootRawID:   rawEpisodeID,
+		rootHash:    rootHash,
 		request: raylinearc.EpisodeForkRequest{
 			Digests:    digests,
 			Roles:      roles,
@@ -127,7 +125,10 @@ type raylineARCForkResult struct {
 
 // resolve reads the registry and places the request. A registry that cannot
 // be read places it on the root episode, as before fork detection.
-func (check *raylineARCForkCheck) resolve(ctx context.Context) (raylineARCForkResult, bool) {
+//
+// held is the episode whose lease this request already holds, or "": its
+// own lease does not make its stream busy to it.
+func (check *raylineARCForkCheck) resolve(ctx context.Context, held string) (raylineARCForkResult, bool) {
 	readContext, cancel := context.WithTimeout(ctx, check.readTimeout)
 	defer cancel()
 	view, err := check.registry.ForkView(readContext, check.rootHash)
@@ -138,7 +139,20 @@ func (check *raylineARCForkCheck) resolve(ctx context.Context) (raylineARCForkRe
 		})
 		return raylineARCForkResult{}, false
 	}
+	if held != "" {
+		for _, stream := range append([]*raylinearc.EpisodeForkStream{view.Main}, mapValues(view.Siblings)...) {
+			if stream != nil && stream.EpisodeHash == held {
+				stream.Leased = false
+			}
+		}
+	}
 	resolution := raylinearc.ResolveEpisodeFork(view, check.request, check.now(), check.idleTTL)
+	if resolution.Reason == raylinearc.ForkReasonRetryEdit && check.latestCommitted(ctx, view, resolution.Stream) {
+		// The turn it would retry committed: the request is a branch off it.
+		request := check.request
+		request.Committed = map[string]bool{resolution.Stream: true}
+		resolution = raylinearc.ResolveEpisodeFork(view, request, check.now(), check.idleTTL)
+	}
 	result := raylineARCForkResult{
 		resolution: resolution, view: view, rawID: check.rootRawID, hash: check.rootHash, root: check.rootHash,
 	}
@@ -149,6 +163,27 @@ func (check *raylineARCForkCheck) resolve(ctx context.Context) (raylineARCForkRe
 	return result, true
 }
 
+// latestCommitted reports whether stream's newest admitted turn committed:
+// its episode's recorded prefix is that turn's. A state that cannot be read
+// counts as not committed, which keeps the request on the stream.
+func (check *raylineARCForkCheck) latestCommitted(ctx context.Context, view raylinearc.EpisodeForkView, stream string) bool {
+	record := view.Main
+	if stream != raylinearc.EpisodeForkMainStream {
+		record = view.Siblings[stream]
+	}
+	latest, ok := record.Latest()
+	if !ok || check.snapshots == nil {
+		return false
+	}
+	readContext, cancel := context.WithTimeout(ctx, check.readTimeout)
+	defer cancel()
+	state, _, err := check.snapshots.Snapshot(readContext, record.EpisodeHash, check.workerCount)
+	if err != nil || state == nil || state.Policy == nil {
+		return false
+	}
+	return state.Policy.PrefixLen == latest.Len && state.Policy.PrefixDigest == latest.Digest
+}
+
 func (result raylineARCForkResult) streamRecord() *raylinearc.EpisodeForkStream {
 	if result.resolution.Stream == raylinearc.EpisodeForkMainStream {
 		return result.view.Main
@@ -157,35 +192,22 @@ func (result raylineARCForkResult) streamRecord() *raylinearc.EpisodeForkStream 
 }
 
 // admit records the request on its stream once it holds that stream's
-// lease, and marks the stream busy until the turn finalizes; a rewrite also
-// records the branch it displaced. Registry writes are best effort.
-func (check *raylineARCForkCheck) admit(reqCtx *RequestContext, result raylineARCForkResult) {
+// lease; a rewrite also records the branch it displaced. A stream reads as
+// busy from its lease alone, so admission marks nothing that must be
+// cleared. Registry writes are best effort.
+func (check *raylineARCForkCheck) admit(result raylineARCForkResult) {
 	now := check.now()
-	token := uuid.NewString()
-	record := result.streamRecord().Admitted(check.request, now, now.Add(raylineARCForkBusyMark), token)
-	stream := result.resolution.Stream
+	record := result.streamRecord().Admitted(check.request, now, result.hash)
 	evict := result.resolution.Evict
 	ctx, cancel := context.WithTimeout(context.Background(), episodeFinalizeTimeout)
 	defer cancel()
-	if result.resolution.Displaced != "" && result.resolution.DisplacedRecord != nil {
-		check.write(ctx, result.resolution.Displaced, result.resolution.DisplacedRecord, evict)
+	if displaced := result.resolution.Displaced; displaced != "" && result.resolution.DisplacedRecord != nil {
+		dormant := result.resolution.DisplacedRecord.Clone()
+		dormant.EpisodeHash = raylinearc.HashEpisodeID(raylinearc.SiblingEpisodeID(check.rootRawID, displaced))
+		check.write(ctx, displaced, dormant, evict)
 		evict = ""
 	}
-	check.write(ctx, stream, record, evict)
-	if transaction := reqCtx.RaylineARCTransaction; transaction != nil {
-		transaction.onFinalize = chainFinalize(transaction.onFinalize, func() {
-			ctx, cancel := context.WithTimeout(context.Background(), episodeFinalizeTimeout)
-			defer cancel()
-			// Only this admission's mark: a later turn admitted on the
-			// stream once the lease was released keeps its own.
-			if err := check.registry.ClearForkBusy(ctx, check.rootHash, stream, token); err != nil {
-				logging.ComponentWarnEvent("extproc", "rayline_arc_episode_fork_record_failed", map[string]interface{}{
-					"episode_id_hash": check.rootHash,
-					"failure_class":   boundedARCPrepareFailure(err),
-				})
-			}
-		})
-	}
+	check.write(ctx, result.resolution.Stream, record, evict)
 }
 
 func (check *raylineARCForkCheck) write(ctx context.Context, stream string, record *raylinearc.EpisodeForkStream, evict string) {
@@ -233,7 +255,7 @@ func (r *OpenAIRouter) prepareRaylineARCForkedTurn(
 	defer func() { reqCtx.RaylineARCAcquireTimeout = 0 }()
 	moves := 0
 	for {
-		placed, ok := check.resolve(parent)
+		placed, ok := check.resolve(parent, "")
 		if !ok {
 			reqCtx.RaylineARCAcquireTimeout = 0
 			return r.prepareOrJoinRaylineARCTurn(arcConfig, reqCtx, check.rootHash, workerCount, false)
@@ -258,7 +280,7 @@ func (r *OpenAIRouter) prepareRaylineARCForkedTurn(
 		}
 		// The registry is read again under the lease, so the admission is
 		// written over what the stream holds now.
-		if again, ok := check.resolve(parent); ok {
+		if again, ok := check.resolve(parent, placed.hash); ok {
 			if again.hash != placed.hash && moves < raylineARCForkMaxMoves {
 				// Admitted elsewhere while this one waited: the episode this
 				// lease holds is no longer its stream.
@@ -275,7 +297,7 @@ func (r *OpenAIRouter) prepareRaylineARCForkedTurn(
 				placed.view = again.view
 			}
 		}
-		check.admit(reqCtx, placed)
+		check.admit(placed)
 		r.applyRaylineARCForkPlacement(result, placed)
 		return state, nil, ""
 	}
@@ -298,4 +320,12 @@ func (r *OpenAIRouter) applyRaylineARCForkPlacement(
 		"sibling_count":   placement.SiblingCount,
 		"fork_parent":     placed.resolution.Parent != raylinearc.EpisodeForkMainStream,
 	})
+}
+
+func mapValues(streams map[string]*raylinearc.EpisodeForkStream) []*raylinearc.EpisodeForkStream {
+	values := make([]*raylinearc.EpisodeForkStream, 0, len(streams))
+	for _, stream := range streams {
+		values = append(values, stream)
+	}
+	return values
 }

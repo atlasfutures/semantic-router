@@ -203,7 +203,7 @@ func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 		// (rayline_arc_episode_forks.go).
 		if check := r.newRaylineARCForkCheck(
 			algorithm.RaylineARC, reqCtx, rawEpisodeID, result.EpisodeIDHash,
-			policyRequestFormat(reqCtx.SourceFormat), signalHeaders, result.PolicyCallKind,
+			policyRequestFormat(reqCtx.SourceFormat), signalHeaders, result.PolicyCallKind, len(modelRefs),
 		); check != nil {
 			state, coalesced, failure = r.prepareRaylineARCForkedTurn(algorithm.RaylineARC, reqCtx, check, result, len(modelRefs))
 		} else {

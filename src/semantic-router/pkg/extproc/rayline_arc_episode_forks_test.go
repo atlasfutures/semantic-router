@@ -28,6 +28,11 @@ func newForkCell(t *testing.T) *forkCell {
 	algorithm.RaylineARC.PolicyService = &config.RaylineARCPolicyServiceConfig{BaseURL: "http://policy.invalid"}
 	// Long enough that a request waiting out a parallel turn is visible.
 	algorithm.RaylineARC.Episode.AcquireTimeoutSeconds = 3
+	store, err := raylinearc.NewMemoryEpisodeStore(raylinearc.MemoryEpisodeStoreConfig{MaxEpisodes: 64, IdleTTL: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	router.RaylineARCEpisodeStore = store
 	return &forkCell{t: t, router: router, algorithm: algorithm}
 }
 
@@ -229,7 +234,9 @@ func TestSiblingCapIsSixteen(t *testing.T) {
 	parent := cell.start("u1", "a1", "u2")
 	defer parent.finish(t)
 	for index := range raylinearc.MaxEpisodeForkSiblings + 2 {
-		turn := cell.run("u1", "a1", fmt.Sprintf("fork %d", index))
+		// The forks run in parallel: each holds its own lease.
+		turn := cell.start("u1", "a1", fmt.Sprintf("fork %d", index))
+		defer turn.finish(t)
 		if !turn.arc.Fork.Fork || turn.arc.Fork.SiblingCount > raylinearc.MaxEpisodeForkSiblings {
 			t.Fatalf("fork %d: %+v", index, turn.arc.Fork)
 		}
@@ -245,20 +252,25 @@ func TestSiblingCapIsSixteen(t *testing.T) {
 }
 
 // A compaction of the idle main stream (the same system prompt and first
-// message, a shorter history) stays on the episode; an idle branch that
-// leaves out the last reply is a fork.
-func TestIdleCompactionStaysAndIdleBranchForks(t *testing.T) {
+// message, a shorter history) stays on the episode. So does an edited retry
+// after a turn that failed (its lease released by the abort), and a
+// "continue" after an interrupted one: single-stream safety comes first.
+func TestIdleCompactionEditedRetryAndContinueStay(t *testing.T) {
 	cell := newForkCell(t)
 	cell.run("u1")
 	cell.run("u1", "a1", "u2")
-	cell.run("u1", "a1", "u2", "a2", "u3")
-	branch := cell.run("u1", "a1", "u2", "a2", "user:uB")
-	if !branch.arc.Fork.Fork || branch.arc.Fork.Reason != raylinearc.ForkReasonForkBranch {
-		t.Fatalf("idle branch = %+v, want fork_branch", branch.arc.Fork)
+	cell.run("u1", "a1", "u2", "a2", "u3") // fails upstream: aborted
+	edited := cell.run("u1", "a1", "u2", "a2", "u3 edited")
+	if edited.arc.EpisodeIDHash != forkTestRoot || edited.arc.Fork.Reason != raylinearc.ForkReasonRetryEdit {
+		t.Fatalf("edited retry on %s %+v, want the root as retry_edit", edited.arc.EpisodeIDHash, edited.arc.Fork)
+	}
+	resumed := cell.run("u1", "a1", "u2", "a2", "u3 edited", "user:continue")
+	if resumed.arc.EpisodeIDHash != forkTestRoot {
+		t.Fatalf("continue after an interrupted turn on %s %+v, want the root", resumed.arc.EpisodeIDHash, resumed.arc.Fork)
 	}
 	compacted := cell.run("u1", "summary of the conversation", "u4")
-	if compacted.arc.EpisodeIDHash != forkTestRoot || compacted.arc.Fork.Reason != raylinearc.ForkReasonRewrite {
-		t.Fatalf("compaction on %s %+v, want the root as a rewrite", compacted.arc.EpisodeIDHash, compacted.arc.Fork)
+	if compacted.arc.EpisodeIDHash != forkTestRoot {
+		t.Fatalf("compaction on %s %+v, want the root", compacted.arc.EpisodeIDHash, compacted.arc.Fork)
 	}
 }
 

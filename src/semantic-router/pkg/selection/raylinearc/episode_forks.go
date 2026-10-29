@@ -23,7 +23,6 @@ import (
 	"encoding/json"
 	"sort"
 	"strconv"
-	"strings"
 	"time"
 )
 
@@ -63,6 +62,7 @@ const (
 	ForkReasonForkRoot     = "fork_root_differs"
 	ForkReasonForkBranch   = "fork_branch"
 	ForkReasonCompaction   = "compaction"
+	ForkReasonRetryEdit    = "retry_edit"
 )
 
 // EpisodeForkPrefix is one admitted request's message prefix: its length and
@@ -77,6 +77,12 @@ type EpisodeForkPrefix struct {
 	// it; one that does not carry it (a compaction keeping the opening
 	// message) did not.
 	Reply string `json:"n,omitempty"`
+	// BaseLen and BaseDigest are the prefix up to and including its last
+	// assistant message: the context its trailing user message was written
+	// against. A request on that same context with another trailing user
+	// message is an edited retry of this turn when no turn is in flight.
+	BaseLen    int    `json:"bl,omitempty"`
+	BaseDigest string `json:"bd,omitempty"`
 }
 
 // EpisodeForkStream is one stream's registry record.
@@ -91,35 +97,14 @@ type EpisodeForkStream struct {
 	LastRoot string `json:"lr,omitempty"`
 	// AdmittedAtMS is the last admission, unix milliseconds.
 	AdmittedAtMS int64 `json:"t"`
-	// BusyUntilMS is when an in-flight turn's mark lapses, zero when no turn
-	// is in flight, and BusyToken names the admission that set it. The mark
-	// is stored apart from the record (EpisodeForkBusyField), so a finished
-	// turn clears only its own mark (ClearForkBusy), never a later
-	// admission's.
-	BusyUntilMS int64  `json:"-"`
-	BusyToken   string `json:"-"`
-}
-
-// EpisodeForkBusyField is the registry field holding stream's busy mark.
-func EpisodeForkBusyField(stream string) string {
-	return stream + "|busy"
-}
-
-func episodeForkBusyValue(record *EpisodeForkStream) string {
-	if record == nil || record.BusyToken == "" {
-		return ""
-	}
-	return record.BusyToken + "|" + strconv.FormatInt(record.BusyUntilMS, 10)
-}
-
-// parseEpisodeForkBusy reads a busy mark's token and lapse time.
-func parseEpisodeForkBusy(value string) (string, int64, bool) {
-	token, until, ok := strings.Cut(value, "|")
-	if !ok {
-		return "", 0, false
-	}
-	ms, err := strconv.ParseInt(until, 10, 64)
-	return token, ms, err == nil
+	// EpisodeHash is the stream's episode id hash, whose lease says whether
+	// a turn is in flight on it.
+	EpisodeHash string `json:"h,omitempty"`
+	// Leased is read with the view, from the stream's episode lease: a turn
+	// is in flight. It lives and dies with the lease (renewed while the turn
+	// streams, released on commit or abort, lapsing at lease_ttl_seconds
+	// when its replica died), and is never stored.
+	Leased bool `json:"-"`
 }
 
 // Latest is the stream's newest admitted prefix.
@@ -130,9 +115,10 @@ func (stream *EpisodeForkStream) Latest() (EpisodeForkPrefix, bool) {
 	return stream.Prefixes[len(stream.Prefixes)-1], true
 }
 
-// Busy reports whether a turn is in flight on the stream at now.
-func (stream *EpisodeForkStream) Busy(now time.Time) bool {
-	return stream != nil && stream.BusyUntilMS > now.UnixMilli()
+// Busy reports whether a turn is in flight on the stream: its episode's
+// lease is held.
+func (stream *EpisodeForkStream) Busy(time.Time) bool {
+	return stream != nil && stream.Leased
 }
 
 func (stream *EpisodeForkStream) live(now time.Time, idleTTL time.Duration) bool {
@@ -149,10 +135,10 @@ func (stream *EpisodeForkStream) Clone() *EpisodeForkStream {
 	return &clone
 }
 
-// Admitted is the stream with request admitted at now and marked busy, by
-// token, until busyUntil: its prefix is appended unless it is already the newest, and a
-// newest prefix it extends learns its reply.
-func (stream *EpisodeForkStream) Admitted(request EpisodeForkRequest, now, busyUntil time.Time, token string) *EpisodeForkStream {
+// Admitted is the stream, served on episodeHash, with request admitted at
+// now: its prefix is appended unless it is already the newest, and a newest
+// prefix it extends learns its reply.
+func (stream *EpisodeForkStream) Admitted(request EpisodeForkRequest, now time.Time, episodeHash string) *EpisodeForkStream {
 	next := stream.Clone()
 	if next == nil {
 		next = &EpisodeForkStream{}
@@ -174,8 +160,8 @@ func (stream *EpisodeForkStream) Admitted(request EpisodeForkRequest, now, busyU
 	}
 	next.LastRoot = root
 	next.AdmittedAtMS = now.UnixMilli()
-	next.BusyUntilMS = busyUntil.UnixMilli()
-	next.BusyToken = token
+	next.EpisodeHash = episodeHash
+	next.Leased = false
 	return next
 }
 
@@ -192,9 +178,10 @@ type EpisodeForkView struct {
 // concurrent writers of one stream do not arise in normal operation.
 type EpisodeForkRegistry interface {
 	ForkView(ctx context.Context, rootEpisodeIDHash string) (EpisodeForkView, error)
-	// RecordForkStream writes stream's record (and its busy mark, when the
-	// record carries a token) and removes evict (a sibling anchor, or "") in
-	// one step.
+	// RecordForkStream writes stream's record and removes evict (a sibling
+	// anchor, or "") in one step. It also deletes siblings idle past the
+	// TTL and, past MaxEpisodeForkSiblings, the least recently admitted
+	// ones, so the registry stays bounded whatever the writers raced on.
 	RecordForkStream(
 		ctx context.Context,
 		rootEpisodeIDHash string,
@@ -202,8 +189,6 @@ type EpisodeForkRegistry interface {
 		record *EpisodeForkStream,
 		evict string,
 	) error
-	// ClearForkBusy removes stream's busy mark if token set it.
-	ClearForkBusy(ctx context.Context, rootEpisodeIDHash, stream, token string) error
 }
 
 // EpisodeForkRequest is what fork resolution reads of one request.
@@ -215,12 +200,43 @@ type EpisodeForkRequest struct {
 	Root string
 	// Compaction is a recognised compaction continuation.
 	Compaction bool
+	// Committed lists the streams whose newest admitted turn committed (its
+	// reply reached the client). A request that departs from a committed
+	// turn's message is a branch, not an edited retry of a failed one.
+	Committed map[string]bool
 }
 
-// Prefix is the request's whole message prefix.
+// Prefix is the request's whole message prefix, with its base.
 func (request EpisodeForkRequest) Prefix() EpisodeForkPrefix {
 	count := len(request.Digests.Messages())
-	return EpisodeForkPrefix{Len: count, Digest: request.Digests.Digest(count)}
+	prefix := EpisodeForkPrefix{Len: count, Digest: request.Digests.Digest(count)}
+	if base := request.lastAssistant() + 1; base > 0 && base < count {
+		prefix.BaseLen, prefix.BaseDigest = base, request.Digests.Digest(base)
+	}
+	return prefix
+}
+
+// lastAssistant is the index of the request's last assistant message, -1
+// when it has none.
+func (request EpisodeForkRequest) lastAssistant() int {
+	for index := min(len(request.Roles), len(request.Digests.Messages())) - 1; index >= 0; index-- {
+		if request.Roles[index] == "assistant" {
+			return index
+		}
+	}
+	return -1
+}
+
+// retries reports whether the request is an edited retry of the turn on
+// prefix: it shares that turn's base (everything up to its last assistant
+// message), carries no assistant message after it, and differs from the
+// turn only in what follows.
+func (request EpisodeForkRequest) retries(prefix EpisodeForkPrefix) bool {
+	if prefix.BaseLen <= 0 || prefix.BaseLen >= len(request.Digests.Messages()) ||
+		request.Digests.Digest(prefix.BaseLen) != prefix.BaseDigest {
+		return false
+	}
+	return request.lastAssistant() < prefix.BaseLen
 }
 
 func (request EpisodeForkRequest) extends(prefix EpisodeForkPrefix) bool {
@@ -392,6 +408,25 @@ func ResolveEpisodeFork(
 		resolution.Stream, resolution.Parent, resolution.Reason = continued, continued, ForkReasonContinuation
 		return resolution
 	}
+	// An edited retry of an idle stream's newest turn that never committed
+	// (the turn failed or was interrupted, and the user changed the message)
+	// stays on that stream. When in doubt the request stays: a stream whose
+	// commit cannot be read counts as not committed. Beside a turn in flight the same shape is a parallel request
+	// (a second run with a new message), which rule 3 forks.
+	retried, retriedLen := "", -1
+	for _, name := range names {
+		stream := streams[name]
+		latest, ok := stream.Latest()
+		if !ok || stream.Busy(now) || request.Committed[name] || latest.BaseLen < homeLen ||
+			latest.BaseLen <= retriedLen || !request.retries(latest) {
+			continue
+		}
+		retried, retriedLen = name, latest.BaseLen
+	}
+	if retried != "" {
+		resolution.Stream, resolution.Parent, resolution.Reason = retried, retried, ForkReasonRetryEdit
+		return resolution
+	}
 	if homeLen < 0 && request.Compaction {
 		// A compaction replaces the history it would have extended, so no
 		// prefix names its stream. It is the stream that spoke last: a
@@ -510,7 +545,8 @@ func unmarshalEpisodeForkStream(payload string) (*EpisodeForkStream, bool) {
 	return &record, true
 }
 
-// ForkView reads a root episode's fork registry.
+// ForkView reads a root episode's fork registry, each stream marked busy
+// while its episode's lease is held.
 func (store *MemoryEpisodeStore) ForkView(_ context.Context, rootEpisodeIDHash string) (EpisodeForkView, error) {
 	store.mu.Lock()
 	defer store.mu.Unlock()
@@ -525,8 +561,12 @@ func (store *MemoryEpisodeStore) ForkView(_ context.Context, rootEpisodeIDHash s
 	}
 	for name, stream := range record.streams {
 		clone := stream.Clone()
-		if busy, ok := record.busy[name]; ok {
-			clone.BusyToken, clone.BusyUntilMS, _ = parseEpisodeForkBusy(busy)
+		episode := clone.EpisodeHash
+		if episode == "" && name == EpisodeForkMainStream {
+			episode = rootEpisodeIDHash
+		}
+		if entry := store.entries[episode]; entry != nil {
+			clone.Leased = entry.leased
 		}
 		if name == EpisodeForkMainStream {
 			view.Main = clone
@@ -567,39 +607,57 @@ func (store *MemoryEpisodeStore) RecordForkStream(
 			}
 			delete(store.forks, oldest)
 		}
-		entry = &memoryForkRecord{streams: map[string]*EpisodeForkStream{}, busy: map[string]string{}}
+		entry = &memoryForkRecord{streams: map[string]*EpisodeForkStream{}}
 		store.forks[rootEpisodeIDHash] = entry
 	}
 	entry.lastAccess = now
 	stored := record.Clone()
-	stored.BusyToken, stored.BusyUntilMS = "", 0
+	stored.Leased = false
 	entry.streams[stream] = stored
-	if busy := episodeForkBusyValue(record); busy != "" {
-		entry.busy[stream] = busy
-	}
 	if evict != "" && evict != stream {
 		delete(entry.streams, evict)
-		delete(entry.busy, evict)
 	}
+	pruneEpisodeForkStreams(entry.streams, stream, now, store.idleTTL)
 	return nil
 }
 
-// ClearForkBusy removes stream's busy mark if token set it.
-func (store *MemoryEpisodeStore) ClearForkBusy(_ context.Context, rootEpisodeIDHash, stream, token string) error {
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	entry := store.forks[rootEpisodeIDHash]
-	if entry == nil {
-		return nil
+// pruneEpisodeForkStreams deletes siblings idle past idleTTL and then, past
+// MaxEpisodeForkSiblings, the least recently admitted, never keep (the one
+// just written) or the main stream. The Redis store does the same in its
+// write script.
+func pruneEpisodeForkStreams(streams map[string]*EpisodeForkStream, keep string, now time.Time, idleTTL time.Duration) {
+	siblings := 0
+	for name, stream := range streams {
+		if name == EpisodeForkMainStream || name == keep {
+			continue
+		}
+		if !stream.live(now, idleTTL) {
+			delete(streams, name)
+			continue
+		}
+		siblings++
 	}
-	if current, _, ok := parseEpisodeForkBusy(entry.busy[stream]); ok && current == token {
-		delete(entry.busy, stream)
+	if keep != EpisodeForkMainStream {
+		siblings++
 	}
-	return nil
+	for ; siblings > MaxEpisodeForkSiblings; siblings-- {
+		oldest, oldestAt := "", int64(0)
+		for name, stream := range streams {
+			if name == EpisodeForkMainStream || name == keep {
+				continue
+			}
+			if oldest == "" || stream.AdmittedAtMS < oldestAt || stream.AdmittedAtMS == oldestAt && name < oldest {
+				oldest, oldestAt = name, stream.AdmittedAtMS
+			}
+		}
+		if oldest == "" {
+			return
+		}
+		delete(streams, oldest)
+	}
 }
 
 type memoryForkRecord struct {
 	streams    map[string]*EpisodeForkStream
-	busy       map[string]string
 	lastAccess time.Time
 }
