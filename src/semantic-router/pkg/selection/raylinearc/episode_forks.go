@@ -359,7 +359,7 @@ func ResolveEpisodeFork(
 	}
 	resolution := EpisodeForkResolution{SiblingCount: siblings}
 
-	continued, continuedLen := "", -1
+	continued, continuedLen, continuedRoot := "", -1, false
 	home, homeLen := EpisodeForkMainStream, -1
 	branched := false
 	for _, name := range names {
@@ -369,8 +369,12 @@ func ResolveEpisodeFork(
 				continue
 			}
 			latest := index == len(stream.Prefixes)-1
-			if latest && prefix.Len > continuedLen && (!stream.Busy(now) || request.nextTurnOf(prefix) && stream.lastRoot() == request.Root) {
-				continued, continuedLen = name, prefix.Len
+			sameRoot := stream.lastRoot() == request.Root
+			if latest && (!stream.Busy(now) || request.nextTurnOf(prefix) && sameRoot) &&
+				(prefix.Len > continuedLen || prefix.Len == continuedLen && sameRoot && !continuedRoot) {
+				// Longest first; on a tie the stream whose root the request
+				// keeps, then the main stream (names are main first).
+				continued, continuedLen, continuedRoot = name, prefix.Len, sameRoot
 			}
 			if prefix.Len > homeLen {
 				home, homeLen = name, prefix.Len
@@ -378,7 +382,10 @@ func ResolveEpisodeFork(
 			}
 		}
 	}
-	if continued != "" {
+	// A continuation is accepted only when no stream holds a longer prefix
+	// the request extends: a shorter idle match must not take a request
+	// that departs from a longer, busier stream.
+	if continued != "" && continuedLen >= homeLen {
 		resolution.Stream, resolution.Parent, resolution.Reason = continued, continued, ForkReasonContinuation
 		return resolution
 	}

@@ -43,6 +43,11 @@ const raylineARCForkProbe = 250 * time.Millisecond
 // fork instead of a rewrite until it lapses.
 const raylineARCForkBusyMark = 15 * time.Minute
 
+// raylineARCForkMaxMoves bounds how often one request releases a lease it
+// no longer belongs on and moves; each move follows another request's
+// admission, so the bound is reached only under a storm of them.
+const raylineARCForkMaxMoves = 3
+
 // raylineARCForkCheck is one request's fork detection: its prefix, as the
 // registry compares it, and the registry it reads.
 type raylineARCForkCheck struct {
@@ -226,6 +231,7 @@ func (r *OpenAIRouter) prepareRaylineARCForkedTurn(
 	acquire := time.Duration(arcConfig.Episode.AcquireTimeoutSeconds) * time.Second
 	deadline := check.now().Add(acquire)
 	defer func() { reqCtx.RaylineARCAcquireTimeout = 0 }()
+	moves := 0
 	for {
 		placed, ok := check.resolve(parent)
 		if !ok {
@@ -253,15 +259,20 @@ func (r *OpenAIRouter) prepareRaylineARCForkedTurn(
 		// The registry is read again under the lease, so the admission is
 		// written over what the stream holds now.
 		if again, ok := check.resolve(parent); ok {
-			if again.hash != placed.hash && !lastAttempt {
+			if again.hash != placed.hash && moves < raylineARCForkMaxMoves {
 				// Admitted elsewhere while this one waited: the episode this
 				// lease holds is no longer its stream.
+				moves++
 				r.finalizeRaylineARCAbort(reqCtx, "episode_fork_moved")
 				reqCtx.RaylineARCTransaction, reqCtx.SelectionTransaction, reqCtx.RaylineARCInflight = nil, nil, nil
 				continue
 			}
 			if again.hash == placed.hash {
 				placed = again
+			} else {
+				// Out of moves: it stays where its lease is, admitted over
+				// that stream's current record rather than the stale one.
+				placed.view = again.view
 			}
 		}
 		check.admit(reqCtx, placed)

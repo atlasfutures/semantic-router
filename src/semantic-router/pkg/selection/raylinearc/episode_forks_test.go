@@ -269,3 +269,36 @@ func TestSiblingCompactionStaysOnTheSibling(t *testing.T) {
 		t.Fatalf("sibling compaction = %+v, want %q", got, fork.Stream)
 	}
 }
+
+// A sibling made by a different system prompt keeps its next turns once the
+// main stream is idle again, though both streams' prefixes match.
+func TestSameMessagesDifferentRootKeepsItsSibling(t *testing.T) {
+	world := newForkWorld(t)
+	world.admit(forkRequest("s", "u1"), false)
+	world.admit(forkRequest("s", "u1", "a1", "u2"), true)
+	fork := world.admit(forkRequest("other", "u1", "a1", "u2"), false)
+	if !fork.Fork() {
+		t.Fatalf("different root beside a busy turn = %+v", fork)
+	}
+	world.finish(EpisodeForkMainStream)
+	if got := world.admit(forkRequest("other", "u1", "a1", "u2", "a2", "u3"), false); got.Stream != fork.Stream {
+		t.Fatalf("its next turn = %+v, want %q", got, fork.Stream)
+	}
+}
+
+// A request departing from a longer, busy sibling forks from it; a shorter
+// idle match on the main stream does not take it.
+func TestShorterIdleMatchDoesNotTakeAForkOfABusySibling(t *testing.T) {
+	world2 := newForkWorld(t)
+	world2.admit(forkRequest("s", "u"), false)
+	world2.admit(forkRequest("s", "u", "a", "x"), true)
+	sub := world2.admit(forkRequest("s", "u", "a", "user:sub"), true)
+	if !sub.Fork() {
+		t.Fatalf("sub = %+v", sub)
+	}
+	world2.finish(EpisodeForkMainStream)
+	got := world2.admit(forkRequest("s", "u", "a", "user:sub", "user:parallel"), true)
+	if !got.Fork() || got.Stream == sub.Stream || got.Parent != sub.Stream {
+		t.Fatalf("parallel to the busy sibling = %+v, want a new fork of %q", got, sub.Stream)
+	}
+}
