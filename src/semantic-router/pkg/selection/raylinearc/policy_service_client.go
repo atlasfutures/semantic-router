@@ -73,6 +73,9 @@ type PolicyServiceError struct {
 	// sub_reason); nil
 	// otherwise, so no free-form service text travels further.
 	Detail map[string]any
+	// HTTPTiming is the httptrace of the exchange that failed, set by
+	// doTraced; a held selection built from an answered refusal logs it.
+	HTTPTiming *PolicyHTTPTiming
 	// Cause is, for a timeout or transport failure, what the HTTP client
 	// reported (a dial, TLS or read error), without the request URL and with
 	// any credential the request carried redacted, bounded for a log field.
@@ -433,7 +436,7 @@ func (client *PolicyServiceClient) Decide(
 	if err != nil {
 		return nil, &PolicyServiceError{Class: "request"}
 	}
-	body, err := client.do(ctx, http.MethodPost, "/v1/rayline/arc/policy/decide", payload)
+	body, timing, err := client.doTraced(ctx, http.MethodPost, "/v1/rayline/arc/policy/decide", payload)
 	if err != nil {
 		return nil, err
 	}
@@ -441,6 +444,7 @@ func (client *PolicyServiceClient) Decide(
 	if err != nil {
 		return nil, &PolicyServiceError{Class: "decode"}
 	}
+	response.HTTPTiming = timing
 	return response, nil
 }
 
@@ -477,8 +481,36 @@ func (client *PolicyServiceClient) do(
 	path string,
 	payload []byte,
 ) ([]byte, error) {
+	body, _, err := client.doTraced(ctx, method, path, payload)
+	return body, err
+}
+
+// doTraced is do with the exchange's httptrace timing, read once the body is
+// in; the timing is nil only when the request could not be built.
+func (client *PolicyServiceClient) doTraced(
+	ctx context.Context,
+	method string,
+	path string,
+	payload []byte,
+) ([]byte, *PolicyHTTPTiming, error) {
 	ctx, cancel := context.WithTimeout(ctx, client.config.TotalTimeout)
 	defer cancel()
+	ctx, trace := withPolicyHTTPTrace(ctx)
+	body, err := client.exchange(ctx, method, path, payload)
+	timing := trace.snapshot()
+	var failure *PolicyServiceError
+	if errors.As(err, &failure) {
+		failure.HTTPTiming = timing
+	}
+	return body, timing, err
+}
+
+func (client *PolicyServiceClient) exchange(
+	ctx context.Context,
+	method string,
+	path string,
+	payload []byte,
+) ([]byte, error) {
 	var reader io.Reader
 	if payload != nil {
 		reader = bytes.NewReader(payload)

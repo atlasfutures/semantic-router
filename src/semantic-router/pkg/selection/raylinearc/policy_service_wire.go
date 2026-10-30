@@ -847,6 +847,9 @@ type PolicyPricing struct {
 }
 
 type PolicyDecisionResponse struct {
+	// HTTPTiming is the client's httptrace of the exchange that returned
+	// this response, set by PolicyServiceClient.Decide; never on the wire.
+	HTTPTiming               *PolicyHTTPTiming    `json:"-"`
 	Package                  PolicyPackageRef     `json:"package"`
 	PolicyID                 string               `json:"policy_id"`
 	Decision                 PolicyDecision       `json:"decision"`

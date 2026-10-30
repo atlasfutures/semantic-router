@@ -270,6 +270,10 @@ type RaylineARCTrace struct {
 	// PolicyLatency is the decide call's round trip as the router timed it;
 	// EncoderLatency stays the encode alone.
 	PolicyLatency time.Duration
+	// PolicyHTTP is the decide call's client-side httptrace: connection reuse
+	// and idle time, and the dial, write and first-byte phases. Nil outside
+	// the policy-service mode and on a decision no decide call answered.
+	PolicyHTTP *raylinearc.PolicyHTTPTiming
 	// PolicyDecisionMode is how a delta cell's staged turn was decided (ADR
 	// 0155): delta (on a turn_delta) or sync (sent in full). Empty on a sync
 	// cell, whose records are as before.

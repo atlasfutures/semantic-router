@@ -1128,6 +1128,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	}
 	result := selector.selectionResult(armed, selCtx, arcContext, state, encoded, decision, encodeLatency)
 	result.RaylineARC.PolicyLatency = latency
+	result.RaylineARC.PolicyHTTP = response.HTTPTiming
 	result.RaylineARC.EncoderLatencyUnknown = response.TimingMillis.Encode == nil
 	result.RaylineARC.PolicyDecisionMode = decisionMode
 	if staging {
