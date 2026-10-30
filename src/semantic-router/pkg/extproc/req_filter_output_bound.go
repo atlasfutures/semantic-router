@@ -24,7 +24,15 @@ const (
 	outputBoundSourceCard     = "card"
 	outputBoundSourceFallback = "fallback"
 	outputBoundSourceFloor    = "floor"
+	outputBoundSourceClient   = "client"
 )
+
+// outputBoundLoweredToArm marks a caller's stated limit that was lowered to
+// the chosen ARC arm's ceiling, as logged. It is the counterpart of the
+// restored reason: the caller's number did not survive the dispatch, so the
+// event says so rather than leaving the lowering to be inferred from the
+// number alone.
+const outputBoundLoweredToArm = "lowered_to_arm_ceiling"
 
 // errThinkingControlOverCap is a v5 control whose thinking budget the
 // decision's max_tokens_limit cannot hold at Anthropic's minimum.
@@ -49,7 +57,9 @@ func thinkingControlOverCapError(plan outputBoundPlan) error {
 
 // applyDispatchOutputBound sets the output limit of a request whose caller
 // stated none, as planDispatchOutputBound decides it, and logs the plan as the
-// dispatch_output_bound event. A limit the caller stated is never touched.
+// dispatch_output_bound event. A limit the caller stated is never touched,
+// except on a rayline_arc decision, where it is lowered to the chosen arm's
+// ceiling (applyARCArmOutputCeiling).
 //
 // It runs after every other output-allowance rule (request_params cap and
 // floor, a policy action's budget), so it only fills what they left unset.
@@ -117,7 +127,7 @@ func (r *OpenAIRouter) applyDispatchOutputBound(
 			return true, nil
 		}
 	default:
-		return false, nil
+		return r.applyARCArmOutputCeiling(request, dispatch, ctx, budget, window)
 	}
 	if plan.source == "" {
 		return false, nil
@@ -187,6 +197,144 @@ func (r *OpenAIRouter) applyDispatchOutputBound(
 	event["max_output_tokens"] = bound
 	logging.ComponentEvent("extproc", "dispatch_output_bound", event)
 	return true, nil
+}
+
+// applyARCArmOutputCeiling lowers a caller-stated output limit to the chosen
+// arm's card max_output_tokens on a rayline_arc decision, and logs it as the
+// dispatch_output_bound event with the lowered_to_arm_ceiling reason.
+//
+// Everywhere else the router leaves a stated limit alone, because on a plain
+// decision the caller named the model: the limit is between them and a model
+// they chose, and a limit the model refuses is their own doing. Under ARC the
+// caller names no arm -- the router picks one from the basket, per turn -- so
+// a limit that was well within the ceiling of the arm the caller had in mind
+// can exceed the ceiling of the arm the router chose. The caller cannot have
+// aimed a number at an arm they never saw, so the router that chose it owes
+// them the clamp; forwarding the number verbatim spends their turn on a
+// provider rejection instead.
+//
+// Only lowering. max_tokens is a ceiling the caller set, not an allowance the
+// router may raise on their behalf: a stated limit at or under the arm's
+// ceiling is theirs and stands. An arm whose card declares no ceiling clamps
+// nothing, since there is no figure to clamp to and a guess would truncate an
+// answer the provider would have given -- the same reason a card that declares
+// no context window is not clamped either.
+//
+// The arm's ceiling goes through planOutputBound as the bound, so the
+// decision's max_tokens_limit, the room the prompt leaves in the context
+// window, the target's minimum and a Messages thinking budget all apply to it
+// by the one set of rules the card path uses. The limit dispatched is
+// therefore the least of the caller's number, the ceiling, the cap and the
+// room. Composing them in a single pass rather than clamping twice is what
+// keeps one clamp from undoing another: the ceiling is passed as the cap as
+// well as the bound, so the thinking expansion that would sit on top of a card
+// limit cannot raise this limit back over the arm's figure, and the context
+// room is read from that same cap, so neither clamp can lift the other's.
+//
+// The lowered limit is the caller's own allowance still, not the router's, so
+// RouterSetMaxOutputTokens stays unset and a derived reasoning bound keeps
+// coming from it (ClientOutputAllowance). ClientMaxOutputTokens is left unset
+// too: it records a number a plugin raised the allowance above, and the Chat
+// encoder re-asserts it over whatever dispatch settled on, which would send
+// the caller's original number and undo this clamp.
+func (r *OpenAIRouter) applyARCArmOutputCeiling(
+	request *llmprotocol.Request,
+	dispatch *providerDispatch,
+	ctx *RequestContext,
+	thinkingBudget *int64,
+	window int64,
+) (bool, error) {
+	stated := request.Sampling.MaxOutputTokens
+	if stated == nil || !raylineARCChoseTheArm(ctx) {
+		return false, nil
+	}
+	ceiling := int64(0)
+	if r.Config != nil {
+		ceiling = int64(r.Config.GetModelMaxOutputTokens(dispatch.logicalModel))
+	}
+	if ceiling <= 0 || *stated <= ceiling {
+		return false, nil
+	}
+	// The cap the plan is held to is the tighter of the arm's ceiling and the
+	// decision's, so the ceiling bounds the thinking expansion as well as the
+	// bound itself.
+	armCap := ceiling
+	if limit := decisionMaxTokensLimit(ctx); limit > 0 && limit < armCap {
+		armCap = limit
+	}
+	plan := planOutputBound(
+		ceiling, outputBoundSourceClient, dispatch.targetFormat,
+		armCap, thinkingBudget, window, r.dispatchContextTokens(request, ctx),
+	)
+	if plan.belowMinimum == outputBoundLeftUnbounded {
+		// The target's own minimum is above the cap, so there is no limit the
+		// arm would accept: the caller's number stands, as it does when the
+		// router has no bound of its own to send.
+		return false, nil
+	}
+	// Thinking the cap cannot hold at Anthropic's minimum leaves the plan no
+	// bound of its own; the clamp is still owed, and the cap is what the
+	// request comes down to, with the thinking that did not fit turned off
+	// below.
+	bound := plan.maxTokens
+	if plan.thinking == outputBoundThinkingDisabled {
+		bound = armCap
+	}
+	if bound <= 0 || bound >= *stated {
+		return false, nil
+	}
+	event := map[string]interface{}{
+		"request_id": ctx.RequestID, "model": dispatch.logicalModel, "wire_format": dispatch.targetFormat,
+		"source": plan.source, "reason": outputBoundLoweredToArm, "arm_max_output_tokens": ceiling,
+		"client_max_output_tokens": *stated, "max_output_tokens": bound,
+	}
+	if plan.context != "" {
+		event["context"], event["context_room"] = plan.context, plan.contextRoom
+	}
+	if plan.limitedBy != "" {
+		event["limited_by"] = plan.limitedBy
+	}
+	if plan.thinking != "" {
+		event["thinking"] = plan.thinking
+	}
+	// Messages counts thinking inside max_tokens and refuses a budget that is
+	// not below it, so a budget the lowered limit cannot hold comes down with
+	// it, exactly as it does for a card limit; the arm would refuse the pair
+	// otherwise. A limit so low that thinking cannot run at Anthropic's
+	// minimum fails the turn when a v5 control owns thinking -- turning that
+	// control off would serve an action the policy did not choose -- and
+	// otherwise turns thinking off for the dispatch.
+	control := plannedMessagesControl(ctx, dispatch.targetFormat)
+	if control != nil {
+		event["thinking_source"] = "v5_control"
+	}
+	switch plan.thinking {
+	case outputBoundThinkingBudgetLowered:
+		lowered := plan.thinkingBudget
+		event["thinking_budget_tokens"] = lowered
+		if control != nil {
+			control.control.BudgetTokens = &lowered
+		} else {
+			request.ReasoningBudgetTokens = &lowered
+		}
+	case outputBoundThinkingDisabled:
+		if control != nil {
+			logging.ComponentWarnEvent("extproc", "dispatch_output_bound", event)
+			return false, thinkingControlOverCapError(plan)
+		}
+		request.ReasoningMode, request.ReasoningBudgetTokens = llmprotocol.ReasoningModeDisabled, nil
+	}
+	request.Sampling.MaxOutputTokens = &bound
+	logging.ComponentEvent("extproc", "dispatch_output_bound", event)
+	return true, nil
+}
+
+// raylineARCChoseTheArm reports whether the selected decision routes by the
+// rayline_arc algorithm, and so whether the router, not the caller, chose the
+// model this request dispatches to.
+func raylineARCChoseTheArm(ctx *RequestContext) bool {
+	decision := ctx.VSRSelectedDecision
+	return decision != nil && decision.Algorithm != nil && decision.Algorithm.RaylineARC != nil
 }
 
 // completionFloorToHold reports whether the request's output limit is the

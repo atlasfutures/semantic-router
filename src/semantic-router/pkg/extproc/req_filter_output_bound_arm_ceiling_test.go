@@ -1,0 +1,208 @@
+package extproc
+
+import (
+	"testing"
+
+	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
+)
+
+// armCeilingDecision is a rayline_arc decision, under which the router chose
+// the arm, with the given request_params max_tokens_limit when one is set.
+func armCeilingDecision(t *testing.T, limit int) *config.Decision {
+	t.Helper()
+	decision := &config.Decision{
+		Name: "arc",
+		Algorithm: &config.AlgorithmConfig{
+			Type: config.RaylineARCAlgorithmType, RaylineARC: &config.RaylineARCAlgorithmConfig{},
+		},
+	}
+	if limit > 0 {
+		decision.Plugins = maxTokensLimitDecision(t, limit).Plugins
+	}
+	return decision
+}
+
+// plainDecision routes by an algorithm that leaves the model to the caller, so
+// the "a stated limit is never touched" invariant holds as it always has.
+func plainDecision() *config.Decision {
+	return &config.Decision{Name: "plain", Algorithm: &config.AlgorithmConfig{Type: config.RaylineARCAlgorithmType}}
+}
+
+const armCeilingBody = `{"model":"m","input":"write the long tool call","max_output_tokens":100000}`
+
+// On a rayline_arc decision the caller never named the arm, so a stated limit
+// above the chosen arm's card max_output_tokens is lowered to it rather than
+// forwarded for the provider to refuse. A limit already at or under the
+// ceiling is the caller's own and stands, and an arm whose card declares no
+// ceiling clamps nothing.
+func TestARCArmCeilingLowersAStatedLimitToTheArm(t *testing.T) {
+	for name, test := range map[string]struct {
+		card int
+		body string
+		want string
+	}{
+		"above the ceiling is lowered": {16384, armCeilingBody, "max_output_tokens=16384"},
+		"below the ceiling stands": {
+			16384, `{"model":"m","input":"write the long tool call","max_output_tokens":8000}`, "max_output_tokens=8000",
+		},
+		"at the ceiling stands": {
+			16384, `{"model":"m","input":"write the long tool call","max_output_tokens":16384}`, "max_output_tokens=16384",
+		},
+		"no declared ceiling clamps nothing": {0, armCeilingBody, "max_output_tokens=100000"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			request, wire := dispatchWithOutputBound(t, dispatchOutputBoundCase{
+				target: llmprotocol.OpenAIResponsesV1, card: test.card, body: test.body,
+				decision: armCeilingDecision(t, 0),
+			})
+			if got := wireOutputLimit(wire); got != test.want {
+				t.Fatalf("dispatched %q, want %q", got, test.want)
+			}
+			// The lowered limit is still the caller's allowance, not a limit the
+			// router invented for a caller that stated none, so a reasoning
+			// bound keeps deriving from it.
+			if request.RouterSetMaxOutputTokens {
+				t.Fatal("a clamped caller limit was marked as the router's own")
+			}
+			// Setting this would have the Chat encoder re-assert the caller's
+			// original number over the clamp (ClientOutputAllowance).
+			if request.ClientMaxOutputTokens != nil {
+				t.Fatalf("ClientMaxOutputTokens = %v, want it left unset", *request.ClientMaxOutputTokens)
+			}
+		})
+	}
+}
+
+// The clamp reaches every target format the arms accept, and on Chat it
+// survives the encoder, which re-asserts ClientMaxOutputTokens when a plugin
+// raised the allowance above the caller's number.
+func TestARCArmCeilingLowersOnEveryTargetFormat(t *testing.T) {
+	for _, target := range []llmprotocol.WireFormat{
+		llmprotocol.AnthropicMessagesV1, llmprotocol.OpenAIChatV1, llmprotocol.OpenAIResponsesV1,
+	} {
+		_, wire := dispatchWithOutputBound(t, dispatchOutputBoundCase{
+			target: target, card: 16384, body: armCeilingBody, decision: armCeilingDecision(t, 0),
+		})
+		got := wireOutputLimit(wire)
+		if got == "" || got[len(got)-6:] != "=16384" {
+			t.Fatalf("-> %s: dispatched %q, want the arm's 16384", target, got)
+		}
+	}
+}
+
+// A plain decision leaves a stated limit alone, whatever the card says: the
+// caller picked that model themselves, so the limit is between them and it.
+func TestARCArmCeilingLeavesAPlainDecisionAlone(t *testing.T) {
+	for name, decision := range map[string]*config.Decision{
+		"no decision at all":             nil,
+		"a decision with no algorithm":   maxTokensLimitDecision(t, 200000),
+		"an arc type without its config": plainDecision(),
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, wire := dispatchWithOutputBound(t, dispatchOutputBoundCase{
+				target: llmprotocol.OpenAIResponsesV1, card: 16384, body: armCeilingBody, decision: decision,
+			})
+			if got := wireOutputLimit(wire); got != "max_output_tokens=100000" {
+				t.Fatalf("dispatched %q, want the caller's 100000 untouched", got)
+			}
+		})
+	}
+}
+
+// The arm's ceiling, the decision's max_tokens_limit and the room the prompt
+// leaves in the arm's context window compose as one rule, so the limit
+// dispatched is the least of them and the caller's own number. Reading them
+// from a single cap is what stops one clamp undoing another: a ceiling above
+// the room cannot raise the limit back over the room, nor a room above the
+// ceiling over the ceiling.
+func TestARCArmCeilingComposesWithTheContextAndDecisionClamps(t *testing.T) {
+	for name, test := range map[string]struct {
+		card          int
+		limit         int
+		window        int
+		contextTokens int
+		want          string
+	}{
+		"the ceiling is tightest":       {16384, 0, 1000000, 100, "max_output_tokens=16384"},
+		"the context room is tightest":  {16384, 0, 20000, 10000, "max_output_tokens=10000"},
+		"the decision cap is tightest":  {16384, 4000, 1000000, 100, "max_output_tokens=4000"},
+		"the room is above the ceiling": {16384, 0, 1000000, 900000, "max_output_tokens=16384"},
+		"no room leaves the ceiling":    {16384, 0, 10000, 10000, "max_output_tokens=16384"},
+		"no window leaves the ceiling":  {16384, 0, 0, 10000, "max_output_tokens=16384"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, wire := dispatchWithOutputBound(t, dispatchOutputBoundCase{
+				target: llmprotocol.OpenAIResponsesV1, card: test.card, body: armCeilingBody,
+				decision: armCeilingDecision(t, test.limit),
+				window:   test.window, contextTokens: test.contextTokens,
+			})
+			if got := wireOutputLimit(wire); got != test.want {
+				t.Fatalf("dispatched %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+// A request that states no limit still takes the card-default path: the clamp
+// only ever lowers a number the caller stated, and adds nothing where the
+// router already supplies one.
+func TestARCArmCeilingLeavesTheCardDefaultPathAlone(t *testing.T) {
+	request, wire := dispatchWithOutputBound(t, dispatchOutputBoundCase{
+		target: llmprotocol.AnthropicMessagesV1, card: 16384, body: unboundedResponsesBody,
+		decision: armCeilingDecision(t, 0),
+	})
+	if got := wireOutputLimit(wire); got != "max_tokens=16384" {
+		t.Fatalf("dispatched %q, want the card's 16384", got)
+	}
+	if !request.RouterSetMaxOutputTokens {
+		t.Fatal("the router's own bound is not marked as the router's")
+	}
+}
+
+// Messages refuses a thinking budget that is not below max_tokens, so a budget
+// the lowered limit cannot hold comes down with it, as it does for a card
+// limit. The arm would refuse the pair otherwise.
+func TestARCArmCeilingLowersAThinkingBudgetItCannotHold(t *testing.T) {
+	budget := int64(40000)
+	request, wire := dispatchWithOutputBound(t, dispatchOutputBoundCase{
+		target: llmprotocol.AnthropicMessagesV1, card: 8000,
+		body:     `{"model":"m","input":"write the long tool call","max_output_tokens":100000}`,
+		decision: armCeilingDecision(t, 10000),
+		mutate: func(request *llmprotocol.Request) {
+			request.ReasoningMode = llmprotocol.ReasoningModeEnabled
+			request.ReasoningBudgetTokens = &budget
+		},
+	})
+	if got := wireOutputLimit(wire); got != "max_tokens=8000" {
+		t.Fatalf("dispatched %q, want the arm's 8000", got)
+	}
+	// The budget is reconciled against the limit the request leaves with, not
+	// the one it arrived with: the arm validates the pair it is sent.
+	if got := request.ReasoningBudgetTokens; got == nil || *got != minimumAnthropicThinkingBudget {
+		t.Fatalf("thinking budget = %v, want it lowered to %d under the arm's 8000", got, minimumAnthropicThinkingBudget)
+	}
+}
+
+// An arm whose ceiling cannot hold the minimum thinking budget and an output
+// token still gets the clamp: the limit comes down to the arm and the thinking
+// that does not fit beside it is turned off, rather than sent as a pair the arm
+// refuses.
+func TestARCArmCeilingTurnsOffThinkingTheArmCannotHold(t *testing.T) {
+	budget := int64(40000)
+	request, wire := dispatchWithOutputBound(t, dispatchOutputBoundCase{
+		target: llmprotocol.AnthropicMessagesV1, card: 1000,
+		body:     `{"model":"m","input":"write the long tool call","max_output_tokens":100000}`,
+		decision: armCeilingDecision(t, 0),
+		mutate: func(request *llmprotocol.Request) {
+			request.ReasoningMode = llmprotocol.ReasoningModeEnabled
+			request.ReasoningBudgetTokens = &budget
+		},
+	})
+	if got := wireOutputLimit(wire); got != "max_tokens=1000" {
+		t.Fatalf("dispatched %q, want the arm's 1000", got)
+	}
+	if request.ReasoningBudgetTokens != nil || request.ReasoningMode != llmprotocol.ReasoningModeDisabled {
+		t.Fatalf("thinking = %v/%v, want it turned off", request.ReasoningMode, request.ReasoningBudgetTokens)
+	}
+}
