@@ -308,6 +308,10 @@ func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 	result.ImageBearing = imageBearing
 	result.NonVisionArms = r.nonVisionArms(modelRefs)
 	result.OverContextArms = r.overContextArms(modelRefs, result.ContextTokens)
+	result.RequestedOutputTokens = requestedOutputTokens(reqCtx.SemanticRequest)
+	result.OverOutputArms = r.overOutputArms(modelRefs, result.RequestedOutputTokens)
+	reqCtx.RaylineARCRequestedOutputTokens = result.RequestedOutputTokens
+	reqCtx.RaylineARCOverOutputArms = result.OverOutputArms
 	result.DisabledArms = r.disabledArms(modelRefs)
 	result.PrivacyExcludedArms = privacyExcludedArms(reqCtx.RaylineARCPrivacyMode, reqCtx.RaylineARCPrivacyAllowedArms, modelRefs)
 	result.PrivacyExcludedArms, result.PrivacyArmEndpoints = r.withPrivacyEndpointConstraints(

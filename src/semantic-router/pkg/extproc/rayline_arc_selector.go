@@ -414,6 +414,10 @@ func hardExcludedArms(
 	if err != nil {
 		return nil, err
 	}
+	excluded, err = withOverOutputArms(arcContext, armCount, excluded)
+	if err != nil {
+		return nil, err
+	}
 	excluded, err = withDisabledArms(arcContext, armCount, excluded)
 	if err != nil {
 		return nil, err
