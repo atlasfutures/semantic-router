@@ -222,6 +222,15 @@ func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 		}
 		result.State = state
 		result.Coalesced = coalesced
+		// A delta cell's strict main turn reads and writes its staged-turn
+		// record beside the episode, so the next turn finds it on any
+		// instance (rayline_arc_policy_delta.go).
+		if algorithm.RaylineARC.PolicyService.SendsTurnDeltas() && result.PolicyCallKind != raylinearc.PolicyCallSide &&
+			coalesced == nil && reqCtx.RaylineARCTransaction != nil {
+			if shared, ok := r.raylineARCEpisodeStoreFor(reqCtx).(raylinearc.EpisodeStagedTurnStore); ok {
+				result.PolicyStagedTurns = shared
+			}
+		}
 		// Only an episode with no memory of its model reads the records a
 		// two-stage package's refusal is answered from
 		// (rayline_arc_derived_hold.go).

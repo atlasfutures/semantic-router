@@ -199,6 +199,9 @@ type policyStaging struct {
 	clientBody []byte
 	// appendTimeout bounds the append.
 	appendTimeout time.Duration
+	// shared is where the record is kept for the episode's other cell
+	// instances, or nil (raylinearc.EpisodeStagedTurnStore).
+	shared raylinearc.EpisodeStagedTurnStore
 }
 
 // policyDeltaEligible reports whether this cell's turn may stage at all: a
@@ -436,6 +439,119 @@ func (scorer *policyServiceScorer) newPolicyStaging(
 		messages:      messages,
 		roles:         roles,
 		appendTimeout: scorer.appendTimeout,
+		shared:        policySharedStagedTurns(arcContext),
+	}
+}
+
+// policySharedStagedTurnTimeout bounds each read or write of the shared
+// record: a slow store costs the turn a full send, never its decision.
+const policySharedStagedTurnTimeout = 250 * time.Millisecond
+
+func policySharedStagedTurns(arcContext *selection.RaylineARCSelectionContext) raylinearc.EpisodeStagedTurnStore {
+	if arcContext == nil {
+		return nil
+	}
+	shared, _ := arcContext.PolicyStagedTurns.(raylinearc.EpisodeStagedTurnStore)
+	return shared
+}
+
+// policyStagedRecord is the shared form of a staged turn: digests, counts
+// and the turn it belongs to, never conversation content.
+type policyStagedRecord struct {
+	Version       int    `json:"v"`
+	TurnIndex     uint64 `json:"turn"`
+	ContextEpoch  string `json:"epoch"`
+	RequestFormat string `json:"format"`
+	Count         int    `json:"count"`
+	PrefixDigest  string `json:"prefix"`
+	Digest        string `json:"digest"`
+	AppendedFrom  int    `json:"from"`
+	HistoryDigest string `json:"history"`
+	Unsettled     bool   `json:"unsettled,omitempty"`
+}
+
+const policyStagedRecordVersion = 1
+
+func encodePolicyStagedTurn(turn policyStagedTurn) []byte {
+	encoded, _ := json.Marshal(policyStagedRecord{
+		Version: policyStagedRecordVersion, TurnIndex: turn.turnIndex, ContextEpoch: turn.contextEpoch,
+		RequestFormat: turn.requestFormat, Count: turn.count, PrefixDigest: turn.prefixDigest, Digest: turn.digest,
+		AppendedFrom: turn.appendedFrom, HistoryDigest: turn.historyDigest, Unsettled: turn.unsettled,
+	})
+	return encoded
+}
+
+func decodePolicyStagedTurn(encoded []byte) (policyStagedTurn, bool) {
+	var record policyStagedRecord
+	if json.Unmarshal(encoded, &record) != nil || record.Version != policyStagedRecordVersion {
+		return policyStagedTurn{}, false
+	}
+	if !record.Unsettled && (record.Count <= 0 || record.PrefixDigest == "" || record.Digest == "" ||
+		record.AppendedFrom < 0 || record.AppendedFrom > record.Count) {
+		return policyStagedTurn{}, false
+	}
+	return policyStagedTurn{
+		turnIndex: record.TurnIndex, contextEpoch: record.ContextEpoch, requestFormat: record.RequestFormat,
+		count: record.Count, prefixDigest: record.PrefixDigest, digest: record.Digest,
+		appendedFrom: record.AppendedFrom, historyDigest: record.HistoryDigest, unsettled: record.Unsettled,
+	}, true
+}
+
+// hydratePolicyStagedTurn brings the episode's shared record into this
+// process when its own entry does not belong to the committed turn: the
+// previous turn was served by another instance, or this one restarted. It
+// runs under the episode lease, before the turn reads its entry. A record
+// for another turn, one that does not decode, or a failed read leaves the
+// process's entry as it was, and the turn decides as it would have.
+func (scorer *policyServiceScorer) hydratePolicyStagedTurn(
+	ctx context.Context,
+	arcContext *selection.RaylineARCSelectionContext,
+	turnIndex uint64,
+) {
+	shared := policySharedStagedTurns(arcContext)
+	if !scorer.delta || shared == nil {
+		return
+	}
+	if local, ok := scorer.staged.get(arcContext.EpisodeIDHash); ok && local.turnIndex == turnIndex {
+		return
+	}
+	readContext, cancel := context.WithTimeout(ctx, policySharedStagedTurnTimeout)
+	encoded, err := shared.LoadStagedTurn(readContext, arcContext.EpisodeIDHash)
+	cancel()
+	outcome := "absent"
+	switch {
+	case err != nil:
+		outcome = "read_failed"
+	case encoded != nil:
+		turn, ok := decodePolicyStagedTurn(encoded)
+		switch {
+		case !ok:
+			outcome = "undecodable"
+		case turn.turnIndex != turnIndex:
+			outcome = "stale_turn"
+		default:
+			outcome = "hydrated"
+			scorer.staged.put(arcContext.EpisodeIDHash, turn)
+		}
+	}
+	logging.ComponentEvent("extproc", "rayline_arc_policy_staged_shared", map[string]interface{}{
+		"request_id": arcContext.RequestID, "episode_id_hash": arcContext.EpisodeIDHash, "outcome": outcome,
+	})
+}
+
+// writeShared mirrors one change of the process's entry to the shared
+// record, on its own bounded context: a failed write leaves the next turn
+// on another instance to send in full.
+func (staging *policyStaging) writeShared(parent context.Context, write func(context.Context, raylinearc.EpisodeStagedTurnStore) error) {
+	if staging.shared == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), policySharedStagedTurnTimeout)
+	defer cancel()
+	if err := write(ctx, staging.shared); err != nil {
+		logging.ComponentWarnEvent("extproc", "rayline_arc_policy_staged_shared_write_failed", map[string]interface{}{
+			"request_id": staging.requestID, "episode_id_hash": staging.episodeIDHash,
+		})
 	}
 }
 
@@ -784,22 +900,32 @@ func addPolicyDecisionModeFields(fields map[string]interface{}, trace *selection
 // the commit, under the lease, so the next turn's prepare cannot read the
 // committed state beside the previous entry; a commit that then fails takes
 // the entry back (retractPolicyStagedTurn).
-func (transaction *raylineARCEpisodeTransaction) publishPolicyStagedTurn(turnIndex uint64, staged *policyStagedTurn) {
+func (transaction *raylineARCEpisodeTransaction) publishPolicyStagedTurn(
+	ctx context.Context,
+	turnIndex uint64,
+	staged *policyStagedTurn,
+) {
 	staging := transaction.policyStaging
 	if staging == nil {
 		return
 	}
 	if staged == nil {
 		staging.turns.drop(staging.episodeIDHash)
+		staging.writeShared(ctx, func(ctx context.Context, shared raylinearc.EpisodeStagedTurnStore) error {
+			return shared.DeleteStagedTurn(ctx, staging.episodeIDHash, nil)
+		})
 		return
 	}
 	staged.turnIndex = turnIndex
 	staging.turns.put(staging.episodeIDHash, *staged)
+	staging.writeShared(ctx, func(ctx context.Context, shared raylinearc.EpisodeStagedTurnStore) error {
+		return shared.StoreStagedTurn(ctx, staging.episodeIDHash, encodePolicyStagedTurn(*staged))
+	})
 }
 
 // retractPolicyStagedTurn drops the entry publishPolicyStagedTurn wrote
 // when its commit failed, unless a later turn has replaced it.
-func (transaction *raylineARCEpisodeTransaction) retractPolicyStagedTurn(staged *policyStagedTurn) {
+func (transaction *raylineARCEpisodeTransaction) retractPolicyStagedTurn(ctx context.Context, staged *policyStagedTurn) {
 	staging := transaction.policyStaging
 	if staging == nil || staged == nil {
 		return
@@ -807,12 +933,18 @@ func (transaction *raylineARCEpisodeTransaction) retractPolicyStagedTurn(staged 
 	staging.turns.dropIf(staging.episodeIDHash, func(current policyStagedTurn) bool {
 		return current.turnIndex == staged.turnIndex && current.prefixDigest == staged.prefixDigest
 	})
+	staging.writeShared(ctx, func(ctx context.Context, shared raylinearc.EpisodeStagedTurnStore) error {
+		return shared.DeleteStagedTurn(ctx, staging.episodeIDHash, encodePolicyStagedTurn(*staged))
+	})
 }
 
 // dropPolicyStagedTurn forgets the episode's staged turn after a commit that
 // did not happen: the service may hold an append the episode never recorded.
-func (transaction *raylineARCEpisodeTransaction) dropPolicyStagedTurn() {
+func (transaction *raylineARCEpisodeTransaction) dropPolicyStagedTurn(ctx context.Context) {
 	if staging := transaction.policyStaging; staging != nil {
 		staging.turns.drop(staging.episodeIDHash)
+		staging.writeShared(ctx, func(ctx context.Context, shared raylinearc.EpisodeStagedTurnStore) error {
+			return shared.DeleteStagedTurn(ctx, staging.episodeIDHash, nil)
+		})
 	}
 }
