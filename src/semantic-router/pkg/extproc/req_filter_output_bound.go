@@ -34,10 +34,24 @@ const (
 // number alone.
 const outputBoundLoweredToArm = "lowered_to_arm_ceiling"
 
+// outputBoundArmCeilingUnsendable marks a clamp the rules left no sendable
+// number for, so the caller keeps a limit above the arm's ceiling: the room and
+// the target's minimum cannot both be met. Logged as a warning, since the turn
+// may still meet the provider refusal the clamp exists to prevent.
+const outputBoundArmCeilingUnsendable = "arm_ceiling_unsendable"
+
 // errThinkingControlOverCap is a v5 control whose thinking budget the
 // decision's max_tokens_limit cannot hold at Anthropic's minimum.
 var errThinkingControlOverCap = errors.New(
 	"the decision's max_tokens_limit cannot hold the v5 control's thinking budget at its 1024-token minimum",
+)
+
+// errThinkingControlOverArm is the same refusal when the chosen ARC arm's
+// max_output_tokens, not an operator setting, is what cannot hold the budget:
+// naming the decision's cap would send an operator after a limit they never
+// set, and the fix is a different arm or a smaller budget.
+var errThinkingControlOverArm = errors.New(
+	"the chosen arm's max_output_tokens cannot hold the v5 control's thinking budget at its 1024-token minimum",
 )
 
 // errThinkingControlOverContext is the same refusal when the room the request
@@ -49,10 +63,14 @@ var errThinkingControlOverContext = errors.New(
 
 // thinkingControlOverCapError names the constraint that refused the control.
 func thinkingControlOverCapError(plan outputBoundPlan) error {
-	if plan.limitedBy == outputBoundLimitedByContext {
+	switch plan.limitedBy {
+	case outputBoundLimitedByContext:
 		return errThinkingControlOverContext
+	case outputBoundLimitedByArm:
+		return errThinkingControlOverArm
+	default:
+		return errThinkingControlOverCap
 	}
-	return errThinkingControlOverCap
 }
 
 // applyDispatchOutputBound sets the output limit of a request whose caller
@@ -232,9 +250,11 @@ func (r *OpenAIRouter) applyDispatchOutputBound(
 // The lowered limit is the caller's own allowance still, not the router's, so
 // RouterSetMaxOutputTokens stays unset and a derived reasoning bound keeps
 // coming from it (ClientOutputAllowance). ClientMaxOutputTokens is left unset
-// too: it records a number a plugin raised the allowance above, and the Chat
-// encoder re-asserts it over whatever dispatch settled on, which would send
-// the caller's original number and undo this clamp.
+// too, which matters for the same reason: it records a number a plugin raised
+// the allowance above, and ClientOutputAllowance prefers it, so setting it
+// here would derive a Chat reasoning budget from the caller's original number
+// -- a budget the lowered limit cannot hold. The output field itself is read
+// from Sampling.MaxOutputTokens, so the clamp reaches the wire either way.
 func (r *OpenAIRouter) applyARCArmOutputCeiling(
 	request *llmprotocol.Request,
 	dispatch *providerDispatch,
@@ -268,12 +288,32 @@ func (r *OpenAIRouter) applyARCArmOutputCeiling(
 		ceiling, outputBoundSourceClient, dispatch.targetFormat,
 		armCap, thinkingBudget, window, r.dispatchContextTokens(request, ctx),
 	)
+	// The planner knows a cap only as the decision's, so a cap that was really
+	// the arm's is relabelled before anything reads it: an operator sent after
+	// a max_tokens_limit they never set has nothing to change, and the v5
+	// refusal below takes its wording from this field.
+	if plan.limitedBy == outputBoundLimitedByDecision && armCap == ceiling {
+		plan.limitedBy = outputBoundLimitedByArm
+	}
 	// A bound the target's minimum leaves unsendable is no clamp: the caller's
 	// number stands, as it does when the router has no bound of its own. The
 	// same holds when the cap cannot seat the minimum thinking budget beside an
 	// output token, which leaves the plan no bound at all, so the thinking
 	// switch below never runs and the caller's pair goes as they sent it.
+	//
+	// The caller keeps a limit above the arm's ceiling either way, so the turn
+	// may still meet the refusal this clamp exists to prevent. That is recorded
+	// rather than passed over in silence: there is no number here that satisfies
+	// the arm, the target's minimum and the room at once, and #7219 already
+	// flags a silent exclusion as the thing not to repeat.
 	if plan.belowMinimum == outputBoundLeftUnbounded || plan.maxTokens <= 0 {
+		logging.ComponentWarnEvent("extproc", "dispatch_output_bound", map[string]interface{}{
+			"request_id": ctx.RequestID, "model": dispatch.logicalModel,
+			"wire_format": dispatch.targetFormat, "source": plan.source,
+			"reason": outputBoundArmCeilingUnsendable, "arm_max_output_tokens": ceiling,
+			"client_max_output_tokens": *stated, "below_target_minimum": plan.belowMinimum,
+			"context": plan.context, "context_room": plan.contextRoom, "limited_by": plan.limitedBy,
+		})
 		return false, nil
 	}
 	// The plan's answer is sent as given. Re-deriving a bound from the ceiling
@@ -376,6 +416,10 @@ const (
 const (
 	outputBoundLimitedByDecision = "decision"
 	outputBoundLimitedByContext  = "context"
+	// outputBoundLimitedByArm is the chosen ARC arm's card ceiling. Only the
+	// ARC clamp passes it, as the cap, so planOutputBound -- which knows a cap
+	// only as the decision's -- cannot name it and the clamp relabels the plan.
+	outputBoundLimitedByArm = "arm"
 )
 
 // dispatchContextTokens is the size of the prompt as it will be dispatched.

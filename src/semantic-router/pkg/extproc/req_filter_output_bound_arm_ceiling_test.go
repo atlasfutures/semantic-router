@@ -1,9 +1,11 @@
 package extproc
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
+	"github.com/atlasfutures/semantic-router/rayline-core/thinkingcontrol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 )
 
@@ -23,10 +25,18 @@ func armCeilingDecision(t *testing.T, limit int) *config.Decision {
 	return decision
 }
 
-// plainDecision routes by an algorithm that leaves the model to the caller, so
-// the "a stated limit is never touched" invariant holds as it always has.
+// plainDecision routes by an ordinary algorithm, where the caller's own
+// modelRef picks the model, so the "a stated limit is never touched"
+// invariant holds as it always has.
 func plainDecision() *config.Decision {
-	return &config.Decision{Name: "plain", Algorithm: &config.AlgorithmConfig{Type: config.RaylineARCAlgorithmType}}
+	return &config.Decision{Name: "plain", Algorithm: &config.AlgorithmConfig{Type: "static"}}
+}
+
+// arcTypeWithoutItsBlock is the predicate's other side: the rayline_arc type
+// with no rayline_arc block, which the loader rejects but which must not be
+// read as "the router chose the arm" if it ever reaches dispatch.
+func arcTypeWithoutItsBlock() *config.Decision {
+	return &config.Decision{Name: "arc-typed", Algorithm: &config.AlgorithmConfig{Type: config.RaylineARCAlgorithmType}}
 }
 
 const armCeilingBody = `{"model":"m","input":"write the long tool call","max_output_tokens":100000}`
@@ -97,7 +107,8 @@ func TestARCArmCeilingLeavesAPlainDecisionAlone(t *testing.T) {
 	for name, decision := range map[string]*config.Decision{
 		"no decision at all":             nil,
 		"a decision with no algorithm":   maxTokensLimitDecision(t, 200000),
-		"an arc type without its config": plainDecision(),
+		"a plain static decision":        plainDecision(),
+		"an arc type without its config": arcTypeWithoutItsBlock(),
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, wire := dispatchWithOutputBound(t, dispatchOutputBoundCase{
@@ -124,12 +135,18 @@ func TestARCArmCeilingComposesWithTheContextAndDecisionClamps(t *testing.T) {
 		contextTokens int
 		want          string
 	}{
-		"the ceiling is tightest":       {16384, 0, 1000000, 100, "max_output_tokens=16384"},
-		"the context room is tightest":  {16384, 0, 20000, 10000, "max_output_tokens=10000"},
-		"the decision cap is tightest":  {16384, 4000, 1000000, 100, "max_output_tokens=4000"},
-		"the room is above the ceiling": {16384, 0, 1000000, 900000, "max_output_tokens=16384"},
-		"no room leaves the ceiling":    {16384, 0, 10000, 10000, "max_output_tokens=16384"},
-		"no window leaves the ceiling":  {16384, 0, 0, 10000, "max_output_tokens=16384"},
+		"the ceiling is tightest":      {16384, 0, 1000000, 100, "max_output_tokens=16384"},
+		"the context room is tightest": {16384, 0, 20000, 10000, "max_output_tokens=10000"},
+		// The request_params plugin has already capped the caller to 4000 by
+		// the time dispatch runs, so this one checks the two agree rather than
+		// the planner's own cap arithmetic; the case below does that.
+		"the decision cap is tightest": {16384, 4000, 1000000, 100, "max_output_tokens=4000"},
+		// A cap under the ceiling with the room tighter still: the planner, not
+		// the earlier cap, has to take the least of the three.
+		"the room beats a cap under the ceiling": {16384, 9000, 20000, 18000, "max_output_tokens=2000"},
+		"the room is above the ceiling":          {16384, 0, 1000000, 900000, "max_output_tokens=16384"},
+		"no room leaves the ceiling":             {16384, 0, 10000, 10000, "max_output_tokens=16384"},
+		"no window leaves the ceiling":           {16384, 0, 0, 10000, "max_output_tokens=16384"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, wire := dispatchWithOutputBound(t, dispatchOutputBoundCase{
@@ -256,5 +273,34 @@ func TestARCArmCeilingLeavesTheCallerWhenTheRoomIsUnderTheTargetMinimum(t *testi
 	})
 	if got := wireOutputLimit(wire); got != "max_output_tokens=100000" {
 		t.Fatalf("dispatched %q, want the caller's 100000 where no limit is sendable", got)
+	}
+}
+
+// A v5 control the arm's ceiling cannot hold names the arm, not an operator's
+// max_tokens_limit. The planner only knows a cap as the decision's, so the
+// clamp relabels it: an operator sent after a cap they never set has nothing
+// to change.
+func TestARCArmCeilingBlamesTheArmNotTheDecisionForAV5Refusal(t *testing.T) {
+	router, model := routingTestRouterForFormat(llmprotocol.AnthropicMessagesV1)
+	params := router.Config.ModelConfig[model]
+	params.MaxOutputTokens = 1000
+	router.Config.ModelConfig[model] = params
+	budget := int64(40000)
+	ctx := routingTestContext(llmprotocol.OpenAIResponsesV1, nil)
+	// No request_params plugin at all, so no max_tokens_limit is configured.
+	ctx.VSRSelectedDecision = armCeilingDecision(t, 0)
+	ctx.RaylineARCThinkingControl = &plannedThinkingControl{
+		control: thinkingcontrol.Control{Native: "enabled", BudgetTokens: &budget},
+	}
+	request := testNeutralRequest(model, "hi")
+	request.Sampling.MaxOutputTokens = llmprotocol.Int64(100000)
+	ctx.SemanticRequest = request
+	dispatch, err := router.prepareProviderDispatch(request, model, "", false, ctx)
+	if err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	_, err = router.boundDispatchRequest(request, dispatch, ctx)
+	if !errors.Is(err, errThinkingControlOverArm) {
+		t.Fatalf("bound = %v, want the arm's own refusal", err)
 	}
 }
