@@ -130,10 +130,21 @@ func TestEmptyOutputUnderContextWindowStopIsASuccess(t *testing.T) {
 				t.Fatalf("stream failed: %v\n%s", err, wire)
 			}
 			assertNoStreamErrorFrame(t, wire)
-			assertWireContains(t, wire, emptyLengthStopWant[target].stream[len(emptyLengthStopWant[target].stream)-1:])
-			if target == llmprotocol.AnthropicMessagesV1 {
-				assertWireContains(t, body, []string{`"content":[]`, `"stop_reason":"model_context_window_exceeded"`})
-				assertWireContains(t, wire, []string{`"stop_reason":"model_context_window_exceeded"`})
+			want := map[llmprotocol.WireFormat]struct{ buffered, stream []string }{
+				llmprotocol.OpenAIChatV1: {
+					buffered: []string{`"message":{"role":"assistant","content":""}`, `"finish_reason":"length"`},
+					stream:   []string{`"finish_reason":"length"`, "data: [DONE]"},
+				},
+				llmprotocol.AnthropicMessagesV1: {
+					buffered: []string{`"content":[]`, `"stop_reason":"model_context_window_exceeded"`},
+					stream:   []string{`"stop_reason":"model_context_window_exceeded"`, "event: message_stop"},
+				},
+				llmprotocol.OpenAIResponsesV1: emptyLengthStopWant[llmprotocol.OpenAIResponsesV1],
+			}[target]
+			assertWireContains(t, body, want.buffered)
+			assertWireContains(t, wire, want.stream)
+			if target == llmprotocol.OpenAIResponsesV1 && bytes.Contains(wire, []byte("response.completed")) {
+				t.Fatalf("an incomplete stream ended on response.completed:\n%s", wire)
 			}
 		})
 	}
