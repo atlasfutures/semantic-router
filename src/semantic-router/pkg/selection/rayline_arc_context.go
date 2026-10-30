@@ -46,6 +46,11 @@ type RaylineARCSelectionContext struct {
 	// previous arm. They name a held model for a two-stage policy package's
 	// stage_one_held_unknown refusal; nil otherwise.
 	ServedModels []RaylineARCServedModel
+	// PolicyStagedTurns is where a delta cell's staged-turn record is shared
+	// across cell instances (raylinearc.EpisodeStagedTurnStore), set on a
+	// strict main turn whose episode store keeps one; nil otherwise. The
+	// record is read and written only under the episode lease.
+	PolicyStagedTurns any
 	// NonVisionArms marks, by arm ordinal, the candidates whose model card
 	// declares no image input. It is indexed like CandidateModels and is nil
 	// when every arm is vision-capable, which is the unmarked default.

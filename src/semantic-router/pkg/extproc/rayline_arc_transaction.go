@@ -573,14 +573,14 @@ func (transaction *raylineARCEpisodeTransaction) commit(
 		transaction.stopRenewal()
 		if !transaction.selectionReady || transaction.leaseLost.Load() {
 			transaction.finalizeErr = ErrRaylineARCEpisodeLeaseLost
-			transaction.dropPolicyStagedTurn()
+			transaction.dropPolicyStagedTurn(ctx)
 			transaction.abortStore(ctx)
 			return
 		}
 		nextState, err := transaction.nextState()
 		if err != nil {
 			transaction.finalizeErr = err
-			transaction.dropPolicyStagedTurn()
+			transaction.dropPolicyStagedTurn(ctx)
 			transaction.abortStore(ctx)
 			return
 		}
@@ -598,7 +598,7 @@ func (transaction *raylineARCEpisodeTransaction) commit(
 			requestContext,
 			nextState,
 		)
-		transaction.publishPolicyStagedTurn(nextState.TurnIndex, staged)
+		transaction.publishPolicyStagedTurn(ctx, nextState.TurnIndex, staged)
 		transaction.finalizeErr = transaction.store.Commit(
 			ctx,
 			transaction.lease,
@@ -608,7 +608,7 @@ func (transaction *raylineARCEpisodeTransaction) commit(
 		if transaction.finalizeErr != nil {
 			// The abort stages the refusal instead.
 			transaction.handedOver = refused
-			transaction.retractPolicyStagedTurn(staged)
+			transaction.retractPolicyStagedTurn(ctx, staged)
 			transaction.abortStore(ctx)
 			return
 		}
@@ -761,7 +761,7 @@ func (transaction *raylineARCEpisodeTransaction) abort(
 		}
 		// An unrecorded turn leaves no staged turn to build on: the
 		// service's staged turn is now this attempt's.
-		transaction.dropPolicyStagedTurn()
+		transaction.dropPolicyStagedTurn(ctx)
 		transaction.stopRenewal()
 		transaction.applyHandedOverRefusal(ctx)
 		transaction.finalizeErr = transaction.store.Abort(

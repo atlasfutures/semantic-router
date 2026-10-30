@@ -46,6 +46,9 @@ type deltaFixture struct {
 	episode string
 	// decided is the action the service's decide picks.
 	decided string
+	// shared, when set, is the staged-turn record store the cell's
+	// instances share.
+	shared raylinearc.EpisodeStagedTurnStore
 }
 
 func newDeltaFixture(t *testing.T, mode string, edit func(*config.RaylineARCPolicyServiceConfig)) *deltaFixture {
@@ -98,7 +101,11 @@ func (fixture *deltaFixture) turn(t *testing.T, body []byte) (*selection.Selecti
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := fixture.selectOn(t, state, body)
+	result, err := fixture.selectOnWith(t, state, body, func(arcContext *selection.RaylineARCSelectionContext) {
+		if fixture.shared != nil {
+			arcContext.PolicyStagedTurns = fixture.shared
+		}
+	})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -833,6 +833,9 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		staged := true
 		request.Stage = &staged
 	}
+	if scorer.delta && !sideCall {
+		scorer.hydratePolicyStagedTurn(ctx, arcContext, state.TurnIndex)
+	}
 	var deltaBase policyStagedTurn
 	deltaOutcome := ""
 	if staging {
