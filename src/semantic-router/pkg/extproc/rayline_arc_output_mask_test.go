@@ -173,8 +173,8 @@ func TestRaylineARCSelectorExcludesArmsUnderTheRequestedOutput(t *testing.T) {
 }
 
 // A turn above every arm's output limit fails closed before the encoder, with
-// its own class, as the same 503 the over-context refusal answers and a
-// message that names the cause.
+// its own class, as a 400 max_tokens_exceeds_limit (the caller's error, not an
+// outage) with a message that names the cause.
 func TestRaylineARCSelectorRefusesOutputAboveEveryArm(t *testing.T) {
 	state, err := raylinearc.NewEpisodeState(2)
 	if err != nil {
@@ -191,7 +191,7 @@ func TestRaylineARCSelectorRefusesOutputAboveEveryArm(t *testing.T) {
 		t.Fatalf("encoder calls = %d, want 0", encoder.calls)
 	}
 	if failure.contended() {
-		t.Fatalf("%s must answer 503, not 429", arcFailureNoOutputArm)
+		t.Fatalf("%s must answer 400, not 429", arcFailureNoOutputArm)
 	}
 	response := (&OpenAIRouter{}).authoritativeSelectionFailureResponse(
 		&modelSelectionFailure{algorithm: "rayline_arc", class: arcFailureNoOutputArm}, &RequestContext{},
@@ -200,8 +200,8 @@ func TestRaylineARCSelectorRefusesOutputAboveEveryArm(t *testing.T) {
 		t.Fatal("no_output_arm produced no admission response")
 	}
 	immediate := response.GetImmediateResponse()
-	if status := int(immediate.GetStatus().GetCode()); status != http.StatusServiceUnavailable {
-		t.Fatalf("no_output_arm status = %d, want %d", status, http.StatusServiceUnavailable)
+	if status := int(immediate.GetStatus().GetCode()); status != http.StatusBadRequest {
+		t.Fatalf("no_output_arm status = %d, want %d", status, http.StatusBadRequest)
 	}
 	if !strings.Contains(string(immediate.GetBody()), "max_tokens exceeds every arm's output limit") {
 		t.Fatalf("no_output_arm body = %s, want the output-limit message", immediate.GetBody())
@@ -237,22 +237,45 @@ func TestRaylineARCSelectionLogCarriesTheOutputMask(t *testing.T) {
 }
 
 // The refusal keeps its message through the client's final encoding, in
-// every wire format, and stays a 503.
+// every wire format, and stays a 400 that states the limit.
 func TestRaylineARCNoOutputArmMessageSurvivesClientEncoding(t *testing.T) {
 	for _, format := range []llmprotocol.WireFormat{
 		llmprotocol.AnthropicMessagesV1, llmprotocol.OpenAIChatV1, llmprotocol.OpenAIResponsesV1,
 	} {
 		router := &OpenAIRouter{}
 		ctx := routingTestContext(format, testNeutralRequest("auto", "hi"))
+		ctx.RaylineARCOutputLimit = 262144
 		response := router.authoritativeSelectionFailureResponse(
 			&modelSelectionFailure{algorithm: "rayline_arc", class: arcFailureNoOutputArm}, ctx,
 		)
 		encoded := router.encodeImmediateResponseForClient(response, ctx).GetImmediateResponse()
-		if status := int(encoded.GetStatus().GetCode()); status != http.StatusServiceUnavailable {
-			t.Fatalf("%s: status = %d, want 503", format, status)
+		if status := int(encoded.GetStatus().GetCode()); status != http.StatusBadRequest {
+			t.Fatalf("%s: status = %d, want 400", format, status)
 		}
-		if !ctx.ImmediateResponseEncoded || !strings.Contains(string(encoded.GetBody()), "max_tokens exceeds every arm's output limit") {
-			t.Fatalf("%s: encoded body = %s, want the output-limit message", format, encoded.GetBody())
+		body := string(encoded.GetBody())
+		if !ctx.ImmediateResponseEncoded || !strings.Contains(body, "the largest is 262144 tokens") {
+			t.Fatalf("%s: encoded body = %s, want the stated limit", format, body)
 		}
+	}
+}
+
+// The stated limit is the largest card among the arms the turn's own
+// constraints admit: an image turn ignores a non-vision arm's larger card, and
+// an admitted arm with no declared limit means no limit can be stated.
+func TestAdmissibleOutputLimit(t *testing.T) {
+	limit := func(n int) config.ModelParams { return config.ModelParams{MaxOutputTokens: n} }
+	router := &OpenAIRouter{Config: &config.RouterConfig{}}
+	router.Config.ModelConfig = map[string]config.ModelParams{"a": limit(128000), "b": limit(943718), "c": {}}
+	refs := []config.ModelRef{{Model: "a"}, {Model: "b"}}
+	arc := &selection.RaylineARCSelectionContext{}
+	if got := router.admissibleOutputLimit(refs, arc); got != 943718 {
+		t.Fatalf("text turn limit = %d, want 943718", got)
+	}
+	arc = &selection.RaylineARCSelectionContext{ImageBearing: true, NonVisionArms: []bool{false, true}}
+	if got := router.admissibleOutputLimit(refs, arc); got != 128000 {
+		t.Fatalf("image turn limit = %d, want 128000 (the non-vision arm is not admitted)", got)
+	}
+	if got := router.admissibleOutputLimit(append(refs, config.ModelRef{Model: "c"}), &selection.RaylineARCSelectionContext{}); got != 0 {
+		t.Fatalf("limit with an unlimited arm = %d, want 0", got)
 	}
 }

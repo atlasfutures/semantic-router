@@ -2,6 +2,7 @@ package extproc
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
 
 	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
@@ -13,14 +14,55 @@ import (
 )
 
 // arcFailureNoOutputArm is the bounded class for a turn that asks for more
-// output than every arm's card declares. It answers 503 through the same path
-// as no_context_arm, with a message that names the cause; the router does not
-// clamp the caller's max_tokens to fit an arm.
+// output than every arm its own constraints admit can produce. It is the
+// caller's request that cannot be served, so it answers 400
+// invalid_request_error with code max_tokens_exceeds_limit and the limit it
+// may ask for; the router does not clamp the caller's max_tokens to fit an arm.
+// The mask runs before the operator's disables and the privacy allow-list and
+// reads no health state, so a refusal here is never an outage.
 const arcFailureNoOutputArm = "no_output_arm"
 
-// noOutputArmMessage is the refusal text for arcFailureNoOutputArm. It names
-// the field and no number, so it carries nothing from the request.
+// noOutputArmMessage is the refusal text for arcFailureNoOutputArm when no
+// limit can be stated. It carries nothing from the request.
 const noOutputArmMessage = "max_tokens exceeds every arm's output limit."
+
+// noOutputArmCode is the public error code of the refusal.
+const noOutputArmCode = "max_tokens_exceeds_limit"
+
+// noOutputArmMessageFor names the largest output this request may ask for.
+func noOutputArmMessageFor(limit int64) string {
+	if limit <= 0 {
+		return noOutputArmMessage
+	}
+	return "max_tokens exceeds the output limit of every model this request can use; the largest is " +
+		strconv.FormatInt(limit, 10) + " tokens."
+}
+
+// admissibleOutputLimit is the largest card output limit among the arms the
+// request's own constraints admit: vision on an image turn, capability and
+// context window. Zero when no arm is admitted or an admitted arm declares no
+// limit (a request then always fits that arm).
+func (r *OpenAIRouter) admissibleOutputLimit(modelRefs []config.ModelRef, arc *selection.RaylineARCSelectionContext) int64 {
+	if r == nil || r.Config == nil || arc == nil {
+		return 0
+	}
+	marked := func(mask []bool, index int) bool { return index < len(mask) && mask[index] }
+	var largest int64
+	for index, ref := range modelRefs {
+		if (arc.ImageBearing && marked(arc.NonVisionArms, index)) ||
+			marked(arc.IncapableArms, index) || marked(arc.OverContextArms, index) {
+			continue
+		}
+		params, known := r.Config.ModelConfig[strings.TrimSpace(ref.Model)]
+		if !known || params.MaxOutputTokens <= 0 {
+			return 0
+		}
+		if limit := int64(params.MaxOutputTokens); limit > largest {
+			largest = limit
+		}
+	}
+	return largest
+}
 
 // requestedOutputTokens reads the output allowance the caller asked for, from
 // the neutral request, so Anthropic max_tokens, Chat max_tokens or
@@ -136,17 +178,22 @@ func addOutputMaskFields(fields map[string]interface{}, ctx *RequestContext) {
 	fields["over_output_arms_count"] = len(maskedArmIndices(ctx.RaylineARCOverOutputArms))
 }
 
-// noOutputArmResponse is the same 503 the no_context_arm refusal answers,
-// with a protocol error that names the cause, so the client's final encoding
-// keeps the message instead of a generic unavailable.
+// noOutputArmResponse refuses the turn as the caller's error: a 400 with code
+// max_tokens_exceeds_limit and the largest limit it may ask for. It is not a
+// 503: no backend was called, the router is healthy, and the same request is
+// refused identically every time, so a 503 would read as provider downtime and
+// invite a retry that cannot succeed. The protocol error rides the request so
+// the client's final encoding keeps the message.
 func (r *OpenAIRouter) noOutputArmResponse(ctx *RequestContext) *ext_proc.ProcessingResponse {
+	message := noOutputArmMessage
 	if ctx != nil {
+		message = noOutputArmMessageFor(ctx.RaylineARCOutputLimit)
 		ctx.ImmediateProtocolError = llmprotocol.NewError(
-			llmprotocol.ErrorUpstreamUnavailable,
-			arcFailureNoOutputArm,
-			noOutputArmMessage,
+			llmprotocol.ErrorInvalidRequest,
+			noOutputArmCode,
+			message,
 			nil,
 		)
 	}
-	return r.createErrorResponse(http.StatusServiceUnavailable, noOutputArmMessage)
+	return r.createErrorResponse(http.StatusBadRequest, message)
 }
