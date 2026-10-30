@@ -97,7 +97,12 @@ func TestStandardTwinRefusesUnsafePairings(t *testing.T) {
 		"twin's private pin admits the flex endpoint": {
 			"      standard_twin: luna\n",
 			standardTwinIgnorePin + "      private_provider_preferences:\n        only:\n          - openai/flex\n",
-			`private_provider_preferences must exclude its endpoint "openai/flex"`,
+			`private-turn pin must exclude the private endpoint "openai/flex"`,
+		},
+		"twin's private pin admits the discount's private endpoint": {
+			"      standard_twin: luna\n      private_provider_preferences:\n        only:\n          - azure\n",
+			standardTwinIgnorePin + "      private_provider_preferences:\n        only:\n          - azure\n",
+			`private-turn pin must exclude the private endpoint "azure"`,
 		},
 		"twin pins nothing": {
 			"      standard_twin: luna\n", "", "must set provider_preferences",
