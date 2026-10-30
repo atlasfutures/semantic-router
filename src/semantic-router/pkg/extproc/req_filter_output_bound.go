@@ -214,22 +214,20 @@ func (r *OpenAIRouter) applyDispatchOutputBound(
 // provider rejection instead.
 //
 // Only lowering. max_tokens is a ceiling the caller set, not an allowance the
-// router may raise on their behalf: a stated limit at or under the arm's
-// ceiling is theirs and stands. An arm whose card declares no ceiling clamps
-// nothing, since there is no figure to clamp to and a guess would truncate an
-// answer the provider would have given -- the same reason a card that declares
-// no context window is not clamped either.
+// router may raise on their behalf, so the limit sent is never above what they
+// stated. An arm whose card declares no ceiling clamps nothing, since there is
+// no figure to clamp to and a guess would truncate an answer the provider would
+// have given -- the same reason a card that declares no context window is not
+// clamped either.
 //
-// The arm's ceiling goes through planOutputBound as the bound, so the
-// decision's max_tokens_limit, the room the prompt leaves in the context
-// window, the target's minimum and a Messages thinking budget all apply to it
-// by the one set of rules the card path uses. The limit dispatched is
-// therefore the least of the caller's number, the ceiling, the cap and the
-// room. Composing them in a single pass rather than clamping twice is what
-// keeps one clamp from undoing another: the ceiling is passed as the cap as
-// well as the bound, so the thinking expansion that would sit on top of a card
-// limit cannot raise this limit back over the arm's figure, and the context
-// room is read from that same cap, so neither clamp can lift the other's.
+// The limit dispatched is the least of the caller's number, the arm's ceiling,
+// the decision's max_tokens_limit and the room the prompt leaves in the
+// context window. A caller already under the ceiling is still held to the
+// room: the clamp does not return early on that comparison, or the ARC path
+// would be the one place a stated limit escaped the context window.
+//
+// One pass of planOutputBound settles all of it, and its answer is sent as
+// given.
 //
 // The lowered limit is the caller's own allowance still, not the router's, so
 // RouterSetMaxOutputTokens stays unset and a derived reasoning bound keeps
@@ -252,12 +250,16 @@ func (r *OpenAIRouter) applyARCArmOutputCeiling(
 	if r.Config != nil {
 		ceiling = int64(r.Config.GetModelMaxOutputTokens(dispatch.logicalModel))
 	}
-	if ceiling <= 0 || *stated <= ceiling {
+	if ceiling <= 0 {
 		return false, nil
 	}
-	// The cap the plan is held to is the tighter of the arm's ceiling and the
-	// decision's, so the ceiling bounds the thinking expansion as well as the
-	// bound itself.
+	// The ceiling is the cap as well as the bound. For a card limit the cap is
+	// the operator's and a thinking budget is added on top, because the card
+	// bounds an answer rather than the request; the arm's ceiling is what the
+	// provider validates max_tokens against, thinking included, so the budget
+	// comes down to fit under it instead of sitting on top. The decision's cap
+	// tightens it further, and planOutputBound holds the result to the context
+	// room by the same comparison the card path uses.
 	armCap := ceiling
 	if limit := decisionMaxTokensLimit(ctx); limit > 0 && limit < armCap {
 		armCap = limit
@@ -266,21 +268,22 @@ func (r *OpenAIRouter) applyARCArmOutputCeiling(
 		ceiling, outputBoundSourceClient, dispatch.targetFormat,
 		armCap, thinkingBudget, window, r.dispatchContextTokens(request, ctx),
 	)
-	if plan.belowMinimum == outputBoundLeftUnbounded {
-		// The target's own minimum is above the cap, so there is no limit the
-		// arm would accept: the caller's number stands, as it does when the
-		// router has no bound of its own to send.
+	// A bound the target's minimum leaves unsendable is no clamp: the caller's
+	// number stands, as it does when the router has no bound of its own. The
+	// same holds when the cap cannot seat the minimum thinking budget beside an
+	// output token, which leaves the plan no bound at all, so the thinking
+	// switch below never runs and the caller's pair goes as they sent it.
+	if plan.belowMinimum == outputBoundLeftUnbounded || plan.maxTokens <= 0 {
 		return false, nil
 	}
-	// Thinking the cap cannot hold at Anthropic's minimum leaves the plan no
-	// bound of its own; the clamp is still owed, and the cap is what the
-	// request comes down to, with the thinking that did not fit turned off
-	// below.
+	// The plan's answer is sent as given. Re-deriving a bound from the ceiling
+	// here is what lets one clamp undo another: it discards the context room
+	// the planner already applied.
 	bound := plan.maxTokens
-	if plan.thinking == outputBoundThinkingDisabled {
-		bound = armCap
-	}
-	if bound <= 0 || bound >= *stated {
+	if bound >= *stated {
+		// The caller's own number is the tightest of them, so it stands, as a
+		// stated limit does -- with the thinking beside it, which the arm
+		// accepted as they sent it.
 		return false, nil
 	}
 	event := map[string]interface{}{

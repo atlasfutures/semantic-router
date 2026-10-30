@@ -206,3 +206,55 @@ func TestARCArmCeilingTurnsOffThinkingTheArmCannotHold(t *testing.T) {
 		t.Fatalf("thinking = %v/%v, want it turned off", request.ReasoningMode, request.ReasoningBudgetTokens)
 	}
 }
+
+// The context room binds the clamped limit even when the thinking beside it is
+// turned off for not fitting. An earlier revision re-derived the limit from the
+// arm's ceiling once thinking went, which sent the ceiling whole into a window
+// that had no room for it -- the very refusal the context clamp exists to stop.
+func TestARCArmCeilingKeepsTheContextRoomWhenThinkingIsTurnedOff(t *testing.T) {
+	budget := int64(40000)
+	request, wire := dispatchWithOutputBound(t, dispatchOutputBoundCase{
+		target: llmprotocol.AnthropicMessagesV1, card: 8000, body: armCeilingBody,
+		decision: armCeilingDecision(t, 0),
+		// 500 tokens of room, far under the arm's 8000 ceiling.
+		window: 20000, contextTokens: 19500,
+		mutate: func(request *llmprotocol.Request) {
+			request.ReasoningMode = llmprotocol.ReasoningModeEnabled
+			request.ReasoningBudgetTokens = &budget
+		},
+	})
+	if got := wireOutputLimit(wire); got != "max_tokens=500" {
+		t.Fatalf("dispatched %q, want the context room of 500, not the arm's 8000", got)
+	}
+	if request.ReasoningMode != llmprotocol.ReasoningModeDisabled {
+		t.Fatalf("thinking = %v, want it turned off under a 500-token room", request.ReasoningMode)
+	}
+}
+
+// A caller already at or under the arm's ceiling still has the context room
+// applied to it. An earlier revision returned early on that comparison, which
+// skipped the context clamp for every caller-stated limit on the ARC path.
+func TestARCArmCeilingAppliesTheContextRoomUnderTheCeiling(t *testing.T) {
+	_, wire := dispatchWithOutputBound(t, dispatchOutputBoundCase{
+		target: llmprotocol.OpenAIResponsesV1, card: 16384,
+		body: `{"model":"m","input":"write the long tool call","max_output_tokens":8000}`,
+		// 2000 tokens of room: under the caller's 8000 and under the ceiling.
+		decision: armCeilingDecision(t, 0), window: 20000, contextTokens: 18000,
+	})
+	if got := wireOutputLimit(wire); got != "max_output_tokens=2000" {
+		t.Fatalf("dispatched %q, want the context room of 2000", got)
+	}
+}
+
+// A room too small for the target's own minimum sends the caller's number
+// rather than a limit the target would refuse, as the card path does. Responses
+// refuses max_output_tokens below 16.
+func TestARCArmCeilingLeavesTheCallerWhenTheRoomIsUnderTheTargetMinimum(t *testing.T) {
+	_, wire := dispatchWithOutputBound(t, dispatchOutputBoundCase{
+		target: llmprotocol.OpenAIResponsesV1, card: 16384, body: armCeilingBody,
+		decision: armCeilingDecision(t, 0), window: 20000, contextTokens: 19988,
+	})
+	if got := wireOutputLimit(wire); got != "max_output_tokens=100000" {
+		t.Fatalf("dispatched %q, want the caller's 100000 where no limit is sendable", got)
+	}
+}
