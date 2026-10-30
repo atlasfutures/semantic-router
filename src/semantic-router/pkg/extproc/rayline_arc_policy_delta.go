@@ -640,17 +640,21 @@ func anthropicEchoContent(raw json.RawMessage) (json.RawMessage, bool) {
 
 // policyReplyThinks reports whether the reply the client received holds
 // reasoning whose echo the delta digest cannot be shown to read as the
-// service does, read before any normalization: a Messages redacted_thinking
-// block or a thinking block that is anything but {type, thinking} with an
-// optional string signature, a Chat message's reasoning members, a Responses
-// reasoning item. An unreadable reply counts as thinking.
+// service does, read before any normalization: a Messages thinking block
+// that is anything but {type, thinking} with an optional string signature, a
+// redacted_thinking block that is anything but {type, data} with non-empty
+// string data, a Chat message's reasoning members, a Responses reasoning
+// item. An unreadable reply counts as thinking.
 //
 // A Messages thinking block is appended, signed or not: the service encodes
 // its text and drops its signature whatever its value, as the digest does,
 // so Claude Code 2.1.309's unchanged echo (testdata/continuity/cc-2.1.309-
 // thread-create-thinking-tool-turn, message 11) and Workshop's, which sends
-// an unsigned block's signature as "", both extend it. A client that echoes
-// the text otherwise costs only a full resend (appended_mismatch).
+// an unsigned block's signature as "", both extend it. A redacted_thinking
+// block is appended too: the service's projection keeps it whole, so its data
+// is compared exactly and only an unchanged echo, in its place among the
+// reply's blocks, extends it. A client that echoes the text or data
+// otherwise costs only a full resend (appended_mismatch).
 func policyReplyThinks(format string, body []byte) bool {
 	switch format {
 	case policyFormatAnthropic:
@@ -665,7 +669,12 @@ func policyReplyThinks(format string, body []byte) bool {
 			_ = json.Unmarshal(block["type"], &kind)
 			switch kind {
 			case "redacted_thinking":
-				return true
+				// Staged as replied: the service encodes its data verbatim, and
+				// the digest compares it byte for byte.
+				var data string
+				if len(block) != 2 || json.Unmarshal(block["data"], &data) != nil || data == "" {
+					return true
+				}
 			case "thinking":
 				var text, signature string
 				if json.Unmarshal(block["thinking"], &text) != nil || string(block["thinking"]) == "null" {

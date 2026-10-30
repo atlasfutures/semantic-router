@@ -715,7 +715,7 @@ func TestDeltaThinkingReplyIsNotAppended(t *testing.T) {
 	fixture := newDeltaFixture(t, config.RaylineARCDecideModeDelta, nil)
 	_, ctx := fixture.turn(t, policyTestRequest(t, deltaUser))
 	reply, _ := json.Marshal(map[string]any{"type": "message", "role": "assistant", "content": []any{
-		map[string]any{"type": "redacted_thinking", "data": "x"},
+		map[string]any{"type": "redacted_thinking", "data": "x", "extra": 1},
 		map[string]any{"type": "text", "text": "done"},
 	}})
 	complete(t, ctx, reply)
@@ -733,7 +733,11 @@ func TestPolicyReplyThinksInEveryFormat(t *testing.T) {
 		body   string
 		thinks bool
 	}{
-		{policyFormatAnthropic, `{"role":"assistant","content":[{"type":"redacted_thinking","data":"x"}]}`, true},
+		{policyFormatAnthropic, `{"role":"assistant","content":[{"type":"redacted_thinking","data":"x"}]}`, false},
+		{policyFormatAnthropic, `{"role":"assistant","content":[{"type":"redacted_thinking","data":""}]}`, true},
+		{policyFormatAnthropic, `{"role":"assistant","content":[{"type":"redacted_thinking"}]}`, true},
+		{policyFormatAnthropic, `{"role":"assistant","content":[{"type":"redacted_thinking","data":7}]}`, true},
+		{policyFormatAnthropic, `{"role":"assistant","content":[{"type":"redacted_thinking","data":"x","signature":"s"}]}`, true},
 		{policyFormatAnthropic, `{"role":"assistant","content":[{"type":"text","text":"a"}]}`, false},
 		{policyFormatAnthropic, `{"role":"assistant","content":[{"type":"thinking","thinking":"t","signature":"s"},{"type":"text","text":"a"}]}`, false},
 		{policyFormatAnthropic, `{"role":"assistant","content":[{"type":"thinking","thinking":"t","signature":""}]}`, false},
@@ -748,7 +752,7 @@ func TestPolicyReplyThinksInEveryFormat(t *testing.T) {
 		{policyFormatAnthropic, `{"role":"assistant","content":[{"type":"thinking","thinking":{"t":1}}]}`, true},
 		{policyFormatAnthropic, `{"role":"assistant","content":[{"type":"thinking","thinking":"t","signature":"s","extra":1}]}`, true},
 		{policyFormatAnthropic, `{"role":"assistant","content":[{"type":"thinking","thinking":"t","extra":1}]}`, true},
-		{policyFormatAnthropic, `{"role":"assistant","content":[{"type":"thinking","thinking":"t","signature":"s"},{"type":"redacted_thinking","data":"x"}]}`, true},
+		{policyFormatAnthropic, `{"role":"assistant","content":[{"type":"thinking","thinking":"t","signature":"s"},{"type":"redacted_thinking","data":"x"}]}`, false},
 		{policyFormatOpenAI, `{"choices":[{"message":{"role":"assistant","content":"a","reasoning":"why"}}]}`, true},
 		{policyFormatOpenAI, `{"choices":[{"message":{"role":"assistant","content":"a","reasoning_details":[{"type":"reasoning.text"}]}}]}`, true},
 		{policyFormatOpenAI, `{"choices":[{"message":{"role":"assistant","content":"a","reasoning":null}}]}`, false},

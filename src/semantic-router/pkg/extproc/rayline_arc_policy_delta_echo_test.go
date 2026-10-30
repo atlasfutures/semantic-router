@@ -235,6 +235,39 @@ func TestDeltaReplayParityWorkshopEcho(t *testing.T) {
 	}
 }
 
+// A reply with redacted_thinking beside signed thinking, as Claude replies.
+var redactedReply = []any{
+	map[string]any{"type": "thinking", "thinking": "list first", "signature": "sig-1"},
+	map[string]any{"type": "redacted_thinking", "data": "EmwKAhgBEgy3va3pzix"},
+	workshopSignedReply[2],
+}
+
+// A redacted_thinking reply echoed unchanged, as Workshop rebuilds it (no
+// caller, re-sorted input) or as Claude Code replays it, extends the staged
+// turn and is decided as the sync cell decides it.
+func TestDeltaRedactedThinkingEchoExtends(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		echo map[string]any
+	}{
+		{"workshop", map[string]any{"role": "assistant", "content": []any{
+			redactedReply[0], redactedReply[1], workshopSignedEcho["content"].([]any)[2]}}},
+		{"claude_code", map[string]any{"role": "assistant", "content": []any{
+			redactedReply[0], redactedReply[1],
+			map[string]any{"type": "tool_use", "id": "toolu_1", "name": "Bash", "input": map[string]any{"command": "ls", "cwd": "/"}, "caller": map[string]any{"type": "direct"}}}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			modes := replayParity(t, []parityTurn{
+				{policyTestRequest(t, deltaUser), anthropicReply(t, redactedReply)},
+				{policyTestRequest(t, deltaUser, tc.echo, workshopToolResult("toolu_1", "README.md")), deltaReply(t)},
+			})
+			if modes[1] != policyDecisionModeDelta {
+				t.Fatalf("held turn went %s, want delta", modes[1])
+			}
+		})
+	}
+}
+
 // What the service encodes and a client changed sends the held turn in
 // full, decided as the sync cell decides it.
 func TestDeltaWorkshopEchoMismatchesGoInFull(t *testing.T) {
@@ -259,15 +292,15 @@ func TestDeltaWorkshopEchoMismatchesGoInFull(t *testing.T) {
 			workshopSignedReply[2]},
 			map[string]any{"role": "assistant", "content": []any{
 				map[string]any{"type": "thinking", "thinking": "ab", "signature": "s1s2"}, workshopSignedEcho["content"].([]any)[2]}}},
-		// E: redacted_thinking is not appended, whatever the echo.
-		{"redacted_thinking", []any{
-			map[string]any{"type": "thinking", "thinking": "list first", "signature": "sig-1"},
-			map[string]any{"type": "redacted_thinking", "data": "x"},
-			workshopSignedReply[2]},
-			map[string]any{"role": "assistant", "content": []any{
-				map[string]any{"type": "thinking", "thinking": "list first", "signature": "sig-1"},
-				map[string]any{"type": "redacted_thinking", "data": "x"},
-				workshopSignedEcho["content"].([]any)[2]}}},
+		// E: redacted_thinking is appended, and only its unchanged echo in
+		// place extends it: changed data, a reordered or a dropped block goes
+		// in full.
+		{"redacted_data_changed", redactedReply, map[string]any{"role": "assistant", "content": []any{
+			redactedReply[0], map[string]any{"type": "redacted_thinking", "data": "y"}, workshopSignedEcho["content"].([]any)[2]}}},
+		{"redacted_reordered", redactedReply, map[string]any{"role": "assistant", "content": []any{
+			redactedReply[1], redactedReply[0], workshopSignedEcho["content"].([]any)[2]}}},
+		{"redacted_dropped", redactedReply, map[string]any{"role": "assistant", "content": []any{
+			redactedReply[0], workshopSignedEcho["content"].([]any)[2]}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			modes := replayParity(t, []parityTurn{
