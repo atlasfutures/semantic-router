@@ -32,6 +32,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/headers"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/routerruntime"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
@@ -187,41 +188,109 @@ func (r *OpenAIRouter) raylineRoutesAPIEnabled() bool {
 	return r.raylineRoutesConfig() != nil
 }
 
-// raylineRoutesEncodesToolNames reports whether this cell shows the selector
-// the turn's tool names, which decides what the tools warning can honestly
-// claim.
-func (r *OpenAIRouter) raylineRoutesEncodesToolNames() bool {
-	if r == nil || r.Config == nil {
-		return false
-	}
-	for index := range r.Config.Decisions {
-		algorithm := r.Config.Decisions[index].Algorithm
+// raylineRoutesDecisionIn is the ARC decision among decisions that turns
+// the endpoint on, or nil.
+func raylineRoutesDecisionIn(decisions []config.Decision) *config.Decision {
+	for index := range decisions {
+		algorithm := decisions[index].Algorithm
 		if !raylineARCSelection(algorithm) || algorithm.RaylineARC == nil {
 			continue
 		}
 		if algorithm.RaylineARC.RoutesAPI.Enabled {
-			return algorithm.RaylineARC.IncludeToolNames
-		}
-	}
-	return false
-}
-
-// raylineRoutesConfig returns the endpoint's configuration, or nil where this
-// deployment does not serve it.
-func (r *OpenAIRouter) raylineRoutesConfig() *config.RaylineARCRoutesAPIConfig {
-	if r == nil || r.Config == nil {
-		return nil
-	}
-	for index := range r.Config.Decisions {
-		algorithm := r.Config.Decisions[index].Algorithm
-		if !raylineARCSelection(algorithm) || algorithm.RaylineARC == nil {
-			continue
-		}
-		if algorithm.RaylineARC.RoutesAPI.Enabled {
-			return &algorithm.RaylineARC.RoutesAPI
+			return &decisions[index]
 		}
 	}
 	return nil
+}
+
+// raylineRoutesDecision is the routes-enabled ARC decision of a recipe (the
+// top-level decisions for the default recipe), or nil where that recipe does
+// not serve lookups.
+func (r *OpenAIRouter) raylineRoutesDecision(recipe *config.RoutingRecipe) *config.Decision {
+	if r == nil || r.Config == nil {
+		return nil
+	}
+	if recipe == nil || recipe.Name == config.DefaultRecipeName {
+		return raylineRoutesDecisionIn(r.Config.Decisions)
+	}
+	return raylineRoutesDecisionIn(recipe.Profile.Decisions)
+}
+
+// raylineRoutesEncodesToolNames reports whether the decision shows the
+// selector the turn's tool names, which decides what the tools warning can
+// honestly claim.
+func raylineRoutesEncodesToolNames(decision *config.Decision) bool {
+	return decision != nil && decision.Algorithm.RaylineARC.IncludeToolNames
+}
+
+// raylineRoutesConfig returns the endpoint's configuration, or nil where this
+// deployment does not serve it: the default recipe's, which is what turns the
+// endpoint on.
+func (r *OpenAIRouter) raylineRoutesConfig() *config.RaylineARCRoutesAPIConfig {
+	decision := r.raylineRoutesDecision(nil)
+	if decision == nil {
+		return nil
+	}
+	return &decision.Algorithm.RaylineARC.RoutesAPI
+}
+
+// raylineRoutesTier resolves the lookup's model to the recipe and decision
+// that serve it. A body whose model cannot be read resolves to the default
+// recipe, and the body checks that follow refuse it. A tier this cell does
+// not serve is refused (404 model_not_served), and any other ARC-shaped name
+// as unknown_model: neither is ever decided on another tier's recipe.
+func (r *OpenAIRouter) raylineRoutesTier(body []byte) (*config.RoutingRecipe, *config.Decision, *routesContractError) {
+	var envelope struct {
+		Model json.RawMessage `json:"model"`
+	}
+	var model string
+	if json.Unmarshal(body, &envelope) != nil || json.Unmarshal(envelope.Model, &model) != nil {
+		return r.Config.DefaultRecipe(), r.raylineRoutesDecision(nil), nil
+	}
+	// A public tier this cell does not serve is the contract's 404
+	// model_not_served; any other ARC-shaped name is not an ARC id at all.
+	refusal := &routesContractError{
+		status: 404, errType: "not_found_error", code: "model_not_served", message: "Model not found: " + model,
+	}
+	if raylineARCCanonicalTier(model) == "" {
+		refusal = routesInvalid("unknown_model", "Unknown ARC model or pin: "+model+
+			". ARC ids are arc-1.0, arc-sage, arc-swift.")
+	}
+	recipe, ok := raylineARCRecipeForModel(r.Config, model)
+	if !ok {
+		return nil, nil, refusal
+	}
+	decision := r.raylineRoutesDecision(recipe)
+	if decision == nil {
+		if raylineARCCanonicalTier(model) != "" || raylineARCShapedModel(model) {
+			return nil, nil, refusal
+		}
+		// A name outside the ARC namespace that some non-ARC recipe
+		// selects is not a tier: a lookup reads it as it always has.
+		recipe = r.Config.DefaultRecipe()
+		decision = r.raylineRoutesDecision(recipe)
+	}
+	return recipe, decision, nil
+}
+
+// raylineRoutesModelOf is the body's top-level model, or "".
+func raylineRoutesModelOf(body []byte) string {
+	var envelope struct {
+		Model string `json:"model"`
+	}
+	_ = json.Unmarshal(body, &envelope)
+	return envelope.Model
+}
+
+// raylineRoutesCellModelNames are the names this cell itself serves besides
+// the public ids: its auto model names and its entrypoint names (the tiers'
+// versioned ids on a multi-recipe cell).
+func (r *OpenAIRouter) raylineRoutesCellModelNames() []string {
+	names := append([]string{}, r.Config.EffectiveAutoModelNames()...)
+	for _, entrypoint := range r.Config.Entrypoints {
+		names = append(names, entrypoint.ModelNames...)
+	}
+	return names
 }
 
 // raylineRoutesCheckpoint composes the public checkpoint identity.
@@ -276,8 +345,17 @@ func (r *OpenAIRouter) handleRaylineRoutesAPI(
 		return r.createRaylineRoutesError(ctx, 405, "invalid_request_error", "method not allowed")
 	}
 
-	settings := r.raylineRoutesConfig()
-	wireFormat, warnings, detail := readRaylineRoutesBody(body, r.raylineRoutesEncodesToolNames(), raylineRoutesHeader(ctx, raylineRoutesFormatHeader))
+	// The tier first: every setting below is the deciding recipe's own. A
+	// tier this cell does not serve is refused after the body checks, so a
+	// malformed body is still told what is wrong with it.
+	recipe, target, tierRefusal := r.raylineRoutesTier(body)
+	if tierRefusal != nil {
+		target = r.raylineRoutesDecision(nil)
+	} else if ctx != nil {
+		ctx.RaylineARCIdentity = raylineARCIdentityFor(r.Config, recipe, raylineRoutesModelOf(body))
+	}
+	settings := &target.Algorithm.RaylineARC.RoutesAPI
+	wireFormat, warnings, detail := readRaylineRoutesBody(body, raylineRoutesEncodesToolNames(target), raylineRoutesHeader(ctx, raylineRoutesFormatHeader))
 	if detail != "" {
 		return r.createRaylineRoutesError(ctx, 400, "invalid_request_error", detail)
 	}
@@ -293,15 +371,21 @@ func (r *OpenAIRouter) handleRaylineRoutesAPI(
 			message: "this ARC cell does not serve routing controls",
 		})
 	}
-	routing, body, refusal := readRaylineRoutesRouting(body, r.Config.EffectiveAutoModelNames())
+	routing, body, refusal := readRaylineRoutesRouting(body, r.raylineRoutesCellModelNames())
 	if refusal != nil {
 		return r.createRaylineRoutesCodedError(ctx, refusal)
 	}
+	if tierRefusal != nil {
+		return r.createRaylineRoutesCodedError(ctx, tierRefusal)
+	}
+	if routing != nil && routing.prices != nil && ctx != nil && ctx.RaylineARCIdentity != nil {
+		ctx.RaylineARCIdentity.priceProfile = headers.RaylinePriceProfileInline
+	}
 	var controls *selection.RaylineARCRouteControls
 	if settings.Routing != nil {
-		if unknown := raylineRoutesUnknownPriceModels(routing, r.raylineRoutesDecisionWorkerModels()); len(unknown) > 0 {
-			return r.createRaylineRoutesCodedError(ctx, routesInvalid("unknown_price_model",
-				"routing.prices names a model this ARC release does not offer: "+strings.Join(unknown, ", ")+"."))
+		if unknown := raylineRoutesUnknownPriceModels(routing, r.raylineRoutesDecisionWorkerModels(target)); len(unknown) > 0 {
+			return r.createRaylineRoutesCodedError(ctx, routesUnknownPriceModel(
+				"routing.prices names a model this ARC release does not offer: "+strings.Join(unknown, ", ")+".", unknown))
 		}
 		controls = raylineRoutesControls(routing, settings.Routing, time.Now())
 	}
@@ -351,7 +435,7 @@ func (r *OpenAIRouter) handleRaylineRoutesAPI(
 	started := time.Now()
 	decision, err := runtime.RouteDecision(
 		lookupContext,
-		raylineRoutesConsultWithControls(body, routeID, episode, ephemeral, wireFormat, controls, ctx.Headers),
+		raylineRoutesConsultWithControls(body, routeID, episode, ephemeral, wireFormat, controls, ctx.Headers, recipe.Name),
 	)
 	if err != nil {
 		return r.raylineRoutesFailure(ctx, lookupContext, routeID, err)
@@ -362,7 +446,11 @@ func (r *OpenAIRouter) handleRaylineRoutesAPI(
 		"selected_worker":     decision.SelectedWorker,
 		"worker_model":        decision.WorkerModel,
 		"interface":           "routes",
+		"recipe":              string(recipe.Name),
 	})
+	if ctx != nil && ctx.RaylineARCIdentity != nil {
+		ctx.RaylineARCIdentity.arm, ctx.RaylineARCIdentity.model = decision.SelectedWorker, decision.WorkerModel
+	}
 	// Same claim as the error path: this body is the route contract, not an
 	// inference response to be re-encoded into a client protocol.
 	payload := raylineRoutesPayload(
@@ -423,6 +511,25 @@ var errRaylineRoutesStatelessPath = errors.New("route does not continue a stored
 // unknown_price_model.
 var errRaylineRoutesUnknownPriceModel = errors.New("routing.prices names a model the package does not offer")
 
+// errRaylineRoutesCallerPricesUnsupported and ...Inconsistent tag the
+// service's refusal of the caller's price world, each answered 400 with its
+// own code (caller_prices_unsupported, caller_prices_inconsistent) rather
+// than the generic request-shape refusal.
+var (
+	errRaylineRoutesCallerPricesUnsupported  = errors.New("the package cannot decide under caller prices")
+	errRaylineRoutesCallerPricesInconsistent = errors.New("routing.prices prices one model group more than one way")
+)
+
+// raylineRoutesRefusedPriceModels are the models a service unknown_price_model
+// refusal names; empty when it names none.
+func raylineRoutesRefusedPriceModels(err error) []string {
+	var failure *raylineARCSelectionFailure
+	if errors.As(err, &failure) && failure.models != nil {
+		return failure.models
+	}
+	return []string{}
+}
+
 // wrong on the way.
 func (r *OpenAIRouter) raylineRoutesFailure(
 	ctx *RequestContext,
@@ -458,8 +565,16 @@ func (r *OpenAIRouter) raylineRoutesFailure(
 	// request carries. The message distinguishes them, because "could not be
 	// read as messages" is wrong for a body that parsed.
 	if invalid && errors.Is(err, errRaylineRoutesUnknownPriceModel) {
-		return r.createRaylineRoutesCodedError(ctx, routesInvalid("unknown_price_model",
-			"routing.prices names a model this ARC release does not offer."))
+		return r.createRaylineRoutesCodedError(ctx, routesUnknownPriceModel(
+			"routing.prices names a model this ARC release does not offer.", raylineRoutesRefusedPriceModels(err)))
+	}
+	if invalid && errors.Is(err, errRaylineRoutesCallerPricesUnsupported) {
+		return r.createRaylineRoutesCodedError(ctx, routesInvalid("caller_prices_unsupported",
+			"this ARC release cannot decide under caller prices; send the lookup without routing.prices."))
+	}
+	if invalid && errors.Is(err, errRaylineRoutesCallerPricesInconsistent) {
+		return r.createRaylineRoutesCodedError(ctx, routesInvalid("caller_prices_inconsistent",
+			"routing.prices prices one ARC model group more than one way; price every model of a group alike."))
 	}
 	if invalid {
 		detail := "request body could not be read as " + string(wireFormatOf(ctx)) + " messages"
@@ -987,7 +1102,7 @@ func raylineRoutesConsult(
 	wireFormat llmprotocol.WireFormat,
 	headers map[string]string,
 ) routerruntime.RouteDecisionRequest {
-	return raylineRoutesConsultWithControls(body, routeID, episode, ephemeral, wireFormat, nil, headers)
+	return raylineRoutesConsultWithControls(body, routeID, episode, ephemeral, wireFormat, nil, headers, "")
 }
 
 // raylineRoutesConsultWithControls is the consult with the lookup's routing
@@ -1000,8 +1115,10 @@ func raylineRoutesConsultWithControls(
 	wireFormat llmprotocol.WireFormat,
 	controls *selection.RaylineARCRouteControls,
 	headers map[string]string,
+	recipe config.RecipeName,
 ) routerruntime.RouteDecisionRequest {
 	return routerruntime.RouteDecisionRequest{
+		Recipe:     string(recipe),
 		Routing:    controls,
 		Body:       body,
 		DecisionID: routeID,

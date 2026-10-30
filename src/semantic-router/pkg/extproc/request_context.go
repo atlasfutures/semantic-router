@@ -287,6 +287,10 @@ type RequestContext struct {
 	// Routing is the single source of truth for entrypoint resolution. A
 	// resolved context with no recipe represents concrete-model passthrough.
 	Routing RequestRoutingContext
+	// RaylineARCIdentity is what decided an ARC request, stated on every
+	// response the cell answers for it (x-rayline-tier and the rest; see
+	// rayline_arc_tier.go). Nil for a request no ARC recipe decides.
+	RaylineARCIdentity *raylineARCIdentity
 
 	// VSR decision tracking
 	VSRSelectedCategory           string  // The category from domain classification (MMLU category)

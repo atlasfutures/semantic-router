@@ -62,7 +62,7 @@ func (service *raylineARCDecisionService) RouteDecision(
 	if service == nil || service.router == nil {
 		return routerruntime.RouteDecision{}, errors.New("router is unavailable")
 	}
-	decision, algorithm, err := service.router.decisionOnlyRoutingTarget(request.Surface)
+	decision, algorithm, err := service.router.decisionOnlyRoutingTarget(request.Surface, request.Recipe)
 	if err != nil {
 		return routerruntime.RouteDecision{}, err
 	}
@@ -71,9 +71,19 @@ func (service *raylineARCDecisionService) RouteDecision(
 	// action never becomes a committed previous arm and no later turn is
 	// attributed to it, whatever routes_api.episode_writes says. It is
 	// training_data: not_allowed by contract.
-	untracked := false
-	if request.Routing != nil && request.Routing.Exploration != nil && !request.Ephemeral {
-		request.Ephemeral, untracked = true, true
+	//
+	// Nor is a caller's price world. A lookup decided under routing.prices
+	// (or exclusive) joins no episode either: committed, its pick would
+	// become the previous arm that later paid turns hold to, so the caller's
+	// prices would steer what the cell executes.
+	untracked, unpriced := false, false
+	if request.Routing != nil && !request.Ephemeral {
+		if request.Routing.Exploration != nil {
+			request.Ephemeral, untracked = true, true
+		}
+		if request.Routing.Prices != nil || request.Routing.Exclusive {
+			request.Ephemeral, unpriced = true, true
+		}
 	}
 
 	requestContext, err := service.decisionOnlyRequestContext(ctx, algorithm, request)
@@ -153,6 +163,9 @@ func (service *raylineARCDecisionService) RouteDecision(
 	}
 	if untracked {
 		decisionFacts.Warnings = append(decisionFacts.Warnings, raylineRoutesExplorationUntracked)
+	}
+	if unpriced {
+		decisionFacts.Warnings = append(decisionFacts.Warnings, raylineRoutesPricesUntracked)
 	}
 	trace := selected.result.RaylineARC
 	decisionFacts.ThinkingLevel = trace.ThinkingLevel
@@ -252,6 +265,12 @@ func routeResults(
 // conversation's episode did not, because it drew at a caller temperature.
 const raylineRoutesExplorationUntracked = "exploration_untracked: a lookup that draws at routing.temperature joins no " +
 	"episode; a Decisions draw never becomes trajectory state"
+
+// raylineRoutesPricesUntracked says a lookup that would have joined its
+// conversation's episode did not, because it was decided under the caller's
+// prices.
+const raylineRoutesPricesUntracked = "prices_untracked: a lookup decided under routing.prices joins no " +
+	"episode; a caller's price world never becomes trajectory state"
 
 // selectedRoute is everything one decision publishes, kept together so the
 // assembly above reads facts rather than re-deriving them.
@@ -732,7 +751,13 @@ func (service *raylineARCDecisionService) decisionOnlyRequestContext(
 			headers[name] = value
 		}
 	}
-	return &RequestContext{
+	// The recipe's own selector, episode store and classifier, as a
+	// generation turn on the same tier uses.
+	recipe, err := service.router.routeDecisionRecipe(request.Recipe)
+	if err != nil {
+		return nil, err
+	}
+	requestContext := &RequestContext{
 		Headers:              headers,
 		RaylineARCRawBody:    request.Body,
 		RequestID:            request.DecisionID,
@@ -740,10 +765,12 @@ func (service *raylineARCDecisionService) decisionOnlyRequestContext(
 		SemanticRequest:      &decoded,
 		ProtocolEnvelope:     envelope,
 		TraceContext:         ctx,
-		VSRContextTokenCount: service.consultContextTokenCount(&decoded),
+		VSRContextTokenCount: service.consultContextTokenCount(recipe, &decoded),
 		// The controls live outside the body the key digests.
 		RaylineRoutesControlsKey: raylineRoutesRoutingControlsKey(request.Routing),
-	}, nil
+	}
+	requestContext.Routing.SelectRecipe(recipe)
+	return requestContext, nil
 }
 
 // consultContextTokenCount is the token estimate a routed turn of this body
@@ -753,12 +780,16 @@ func (service *raylineARCDecisionService) decisionOnlyRequestContext(
 // The routed path counts with the recipe's context signal when the recipe
 // declares one -- a counter that may be calibrated from observed provider
 // usage -- and with the character heuristic otherwise. The consult serves the
-// flat profile, which is the default recipe, so that recipe's classifier is
-// asked first and the heuristic is the fallback, on the same text and floor.
-func (service *raylineARCDecisionService) consultContextTokenCount(request *llmprotocol.Request) int {
+// recipe its tier resolved to, so that recipe's classifier is asked first and
+// the heuristic is the fallback, on the same text and floor.
+func (service *raylineARCDecisionService) consultContextTokenCount(recipe *config.RoutingRecipe, request *llmprotocol.Request) int {
 	snapshot := extractSemanticRequestSignals(request)
 	signalInput := service.router.prepareSignalEvaluationInput(signalConversationHistoryFromSnapshot(snapshot))
-	if count, ok := service.router.recipeClassifier(config.DefaultRecipeName).ContextTokenCount(
+	name := config.DefaultRecipeName
+	if recipe != nil {
+		name = recipe.Name
+	}
+	if count, ok := service.router.recipeClassifier(name).ContextTokenCount(
 		signalInput.allMessagesText, snapshot.ContextTokenFloor,
 	); ok {
 		return count
@@ -781,8 +812,16 @@ func (service *raylineARCDecisionService) consultContextTokenCount(request *llmp
 // letting the claim decide for it would silently move it onto a policy its
 // caller never selected the moment some unrelated decision turned the new
 // endpoint on.
+//
+// recipeName scopes the search to one recipe's decisions: the recipe the
+// lookup's tier id resolved to. Scanning only the top-level decisions, as
+// this did before, decided every tier on a multi-recipe cell with the
+// default recipe's policy and answered 200 (the wrong-tier bug,
+// docs/architecture/rayline-arc-one-cell-all-tiers.md). Empty keeps the
+// top-level decisions, the default recipe.
 func (r *OpenAIRouter) decisionOnlyRoutingTarget(
 	surface routerruntime.RouteDecisionSurface,
+	recipeName string,
 ) (
 	*config.Decision,
 	*config.AlgorithmConfig,
@@ -791,10 +830,20 @@ func (r *OpenAIRouter) decisionOnlyRoutingTarget(
 	if r.Config == nil {
 		return nil, nil, errors.New("router configuration is unavailable")
 	}
+	recipe, err := r.routeDecisionRecipe(recipeName)
+	if err != nil {
+		return nil, nil, err
+	}
+	candidates := recipe.Profile.Decisions
+	if recipe.Name == config.DefaultRecipeName {
+		// The flat fields are the default recipe's decisions; reading them
+		// keeps the legacy consult exactly as it was.
+		candidates = r.Config.Decisions
+	}
 	var arcDecisions []*config.Decision
 	var enabled []*config.Decision
-	for index := range r.Config.Decisions {
-		decision := &r.Config.Decisions[index]
+	for index := range candidates {
+		decision := &candidates[index]
 		// The algorithm block, not just the type name. A decision can name
 		// rayline_arc without carrying its configuration; config validation
 		// normally catches that, but this path answers over the network and
@@ -854,6 +903,22 @@ func (r *OpenAIRouter) decisionOnlyRoutingTarget(
 	)
 }
 
+// routeDecisionRecipe is the recipe a consult names: the default recipe for
+// "", which is all the legacy consult reads.
+func (r *OpenAIRouter) routeDecisionRecipe(recipeName string) (*config.RoutingRecipe, error) {
+	if r == nil || r.Config == nil {
+		return nil, errors.New("router configuration is unavailable")
+	}
+	if recipeName == "" || config.RecipeName(recipeName) == config.DefaultRecipeName {
+		return r.Config.DefaultRecipe(), nil
+	}
+	recipe, ok := r.Config.RecipeByName(config.RecipeName(recipeName))
+	if !ok {
+		return nil, fmt.Errorf("decision-only routing names an unknown recipe %q", recipeName)
+	}
+	return recipe, nil
+}
+
 // prepareFailureError classifies a preparation failure for the caller.
 //
 // Contention failures are wrapped so the adapter can answer 429: the router is
@@ -898,6 +963,14 @@ func selectionFailureError(err error) error {
 		if failure.class == arcFailureRoutesUnknownPriceModel {
 			return fmt.Errorf("%w: %w: %w",
 				routerruntime.ErrRouteDecisionInvalidBody, errRaylineRoutesUnknownPriceModel, err)
+		}
+		if failure.class == arcFailureRoutesCallerPricesUnsupported {
+			return fmt.Errorf("%w: %w: %w",
+				routerruntime.ErrRouteDecisionInvalidBody, errRaylineRoutesCallerPricesUnsupported, err)
+		}
+		if failure.class == arcFailureRoutesCallerPricesInconsistent {
+			return fmt.Errorf("%w: %w: %w",
+				routerruntime.ErrRouteDecisionInvalidBody, errRaylineRoutesCallerPricesInconsistent, err)
 		}
 		if routesInconsistentClasses[failure.class] {
 			return fmt.Errorf("%w: %w", routerruntime.ErrRouteDecisionInconsistent, err)

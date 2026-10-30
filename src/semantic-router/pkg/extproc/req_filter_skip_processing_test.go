@@ -285,7 +285,7 @@ func TestHandleResponseHeadersSkipProcessingBypassesVSRHeaders(t *testing.T) {
 	// and x-vsr-served-endpoint, which only the router may state.
 	mutation := response.GetResponseHeaders().Response.HeaderMutation
 	if len(mutation.GetSetHeaders()) != 0 ||
-		!slices.Equal(mutation.GetRemoveHeaders(), []string{headers.VSRPrivacyMode, headers.VSRServedEndpoint}) {
+		!slices.Equal(mutation.GetRemoveHeaders(), append([]string{headers.VSRPrivacyMode, headers.VSRServedEndpoint}, raylineARCIdentityHeaders...)) {
 		t.Fatalf("expected only the router-stated strips when skipping processing, got %v", mutation)
 	}
 	if response.ModeOverride != nil {

@@ -188,6 +188,10 @@ type raylineARCSelector struct {
 
 type raylineARCSelectionFailure struct {
 	class string
+	// models are the priced models a routes_unknown_price_model refusal
+	// names: those the service named, among the ones the caller priced.
+	// Empty when the service named none.
+	models []string
 }
 
 func (failure *raylineARCSelectionFailure) Error() string {

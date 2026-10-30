@@ -301,6 +301,7 @@ func (r *OpenAIRouter) processRequestHeaders(
 		return err
 	}
 	response = r.encodeImmediateResponseForClient(response, ctx)
+	stateRaylineARCIdentity(response, ctx)
 	if err := sendResponse(stream, response, "request header"); err != nil {
 		logging.Errorf("sendResponse for headers failed: %v", err)
 		return err
@@ -322,6 +323,7 @@ func (r *OpenAIRouter) processRequestBody(
 		}
 	}
 	response = r.encodeImmediateResponseForClient(response, ctx)
+	stateRaylineARCIdentity(response, ctx)
 	r.persistImmediateResponseObject(response, ctx)
 	// FULL_DUPLEX_STREAMED explicitly permits the processor to buffer any
 	// number of input chunks before sending a StreamedBodyResponse. A nil
@@ -371,6 +373,7 @@ func (r *OpenAIRouter) processResponseHeaders(
 		resent = r.thinkingSignatureRetryOnResponseHeaders(v, ctx)
 	}
 	if resent != nil {
+		stateRaylineARCIdentity(resent, ctx)
 		if err := sendResponse(stream, resent, "response header"); err != nil {
 			return err
 		}
@@ -381,6 +384,7 @@ func (r *OpenAIRouter) processResponseHeaders(
 	if err != nil {
 		return err
 	}
+	stateRaylineARCIdentity(response, ctx)
 	return sendResponse(stream, response, "response header")
 }
 
@@ -391,7 +395,9 @@ func (r *OpenAIRouter) processResponseBody(
 ) error {
 	complete, guardBreach := r.completeResponseBody(v, ctx)
 	if guardBreach != nil {
-		return sendResponse(stream, r.responseBodyGuardResponse(ctx, guardBreach), "response body")
+		breach := r.responseBodyGuardResponse(ctx, guardBreach)
+		stateRaylineARCIdentity(breach, ctx)
+		return sendResponse(stream, breach, "response body")
 	}
 	if complete == nil {
 		return sendResponse(stream, heldResponseBodyChunk(), "response body")
@@ -401,6 +407,7 @@ func (r *OpenAIRouter) processResponseBody(
 		return err
 	}
 	response = r.normalizeFullDuplexResponseBody(response, ctx, complete.ResponseBody)
+	stateRaylineARCIdentity(response, ctx)
 	if err := sendResponse(stream, response, "response body"); err != nil {
 		return err
 	}

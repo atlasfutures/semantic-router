@@ -26,6 +26,13 @@ const (
 	// no arm of its package dispatches (selection_refused,
 	// unknown_price_model): the caller's to fix, a 400.
 	arcFailureRoutesUnknownPriceModel = "routes_unknown_price_model"
+	// arcFailureRoutesCallerPricesUnsupported and ...Inconsistent: the
+	// service refused the caller's price world (unsupported_request,
+	// caller_prices_unsupported: its package cannot score caller prices;
+	// caller_prices_inconsistent: the prices price one model group more
+	// than one way). Each answers its own 400 code.
+	arcFailureRoutesCallerPricesUnsupported  = "routes_caller_prices_unsupported"
+	arcFailureRoutesCallerPricesInconsistent = "routes_caller_prices_inconsistent"
 	// arcFailureRoutesPredictionsInconsistent: the service answered a
 	// predictions request without its table, or a tier pick names a row
 	// that is not its model's offered candidate (or names one off a
@@ -197,4 +204,41 @@ func routePredictionsConsistent(controls *selection.RaylineARCRouteControls, res
 		}
 	}
 	return true
+}
+
+// routeCallerPricesRefusal maps the service's refusal of a caller price world
+// (unsupported_request with detail.reason caller_prices_unsupported or
+// caller_prices_inconsistent, pathfinder#5668) to its failure class; "" for
+// any other refusal.
+func routeCallerPricesRefusal(detail map[string]any) string {
+	switch reason, _ := detail["reason"].(string); reason {
+	case "caller_prices_unsupported":
+		return arcFailureRoutesCallerPricesUnsupported
+	case "caller_prices_inconsistent":
+		return arcFailureRoutesCallerPricesInconsistent
+	default:
+		return ""
+	}
+}
+
+// routeRefusedPriceModels are the models an unknown_price_model refusal
+// names (detail.models), kept only where the caller priced them: no service
+// text reaches the caller that the caller did not send. Empty, never nil,
+// when it names none.
+func routeRefusedPriceModels(detail map[string]any, priced []string) []string {
+	named := map[string]bool{}
+	if list, ok := detail["models"].([]any); ok {
+		for _, entry := range list {
+			if model, ok := entry.(string); ok {
+				named[model] = true
+			}
+		}
+	}
+	models := []string{}
+	for _, model := range priced {
+		if named[model] {
+			models = append(models, model)
+		}
+	}
+	return models
 }

@@ -53,10 +53,17 @@ var routesPresets = []struct {
 var routesPublicModels = map[string]float64{
 	"arc-swift": 0.1, "rayline/arc-swift": 0.1,
 	"arc-sage": 4.5, "rayline/arc-sage": 4.5,
+	// The tiers' versioned ids, as the standing cell's entrypoints name them.
+	"arc-swift-1.0": 0.1, "rayline/arc-swift-1.0": 0.1,
+	"arc-sage-1.0": 4.5, "rayline/arc-sage-1.0": 4.5,
 	"arc-1.0": 0, "arc-1": 0, "rayline/arc-1": 0, "rayline/arc-1.0": 0,
 }
 
 var routesPriceLegNames = [4]string{"input", "cache_read", "cache_write", "output"}
+
+// routesMaxPriceLegUSD bounds every price leg, as the public contract and a
+// saved price profile do: [0, 1e9] USD per million tokens.
+const routesMaxPriceLegUSD = 1e9
 
 // routesContractError is a lookup the public contract refuses, with its
 // machine-readable code.
@@ -65,10 +72,24 @@ type routesContractError struct {
 	errType string
 	code    string
 	message string
+	// models is error.models: the priced models an unknown_price_model
+	// refusal names, sorted (empty when the refusal could not name them).
+	// Nil on every other refusal, which then carries no models member.
+	models []string
 }
 
 func routesInvalid(code string, message string) *routesContractError {
 	return &routesContractError{status: 400, errType: "invalid_request_error", code: code, message: message}
+}
+
+// routesUnknownPriceModel is the unknown_price_model refusal with its
+// structured error.models, so a caller drops the named models without
+// parsing the message.
+func routesUnknownPriceModel(message string, models []string) *routesContractError {
+	refusal := routesInvalid("unknown_price_model", message)
+	refusal.models = append([]string{}, models...)
+	sort.Strings(refusal.models)
+	return refusal
 }
 
 // raylineRoutesRouting is a validated routing block. A member the caller did
@@ -349,9 +370,9 @@ func routesReadPrices(raw json.RawMessage) (map[string][4]float64, *routesContra
 		var parsed [4]float64
 		for index, leg := range routesPriceLegNames {
 			value, finite := routesFiniteNumber(legs[leg])
-			if !finite || value < 0 {
+			if !finite || value < 0 || value > routesMaxPriceLegUSD {
 				return nil, routesInvalid("price_leg_invalid", fmt.Sprintf(
-					"routing.prices[%q].%s must be a finite number >= 0 USD per million tokens.", model, leg))
+					"routing.prices[%q].%s must be a finite number in [0, %g] USD per million tokens.", model, leg, routesMaxPriceLegUSD))
 			}
 			parsed[index] = value
 		}
@@ -961,13 +982,17 @@ func (r *OpenAIRouter) createRaylineRoutesCodedError(
 	ctx *RequestContext,
 	failure *routesContractError,
 ) *ext_proc.ProcessingResponse {
+	member := map[string]interface{}{
+		"type":    failure.errType,
+		"message": failure.message,
+		"code":    failure.code,
+	}
+	if failure.models != nil {
+		member["models"] = failure.models
+	}
 	response := r.createJSONResponse(failure.status, map[string]interface{}{
-		"type": "error",
-		"error": map[string]interface{}{
-			"type":    failure.errType,
-			"message": failure.message,
-			"code":    failure.code,
-		},
+		"type":  "error",
+		"error": member,
 	})
 	if ctx != nil {
 		ctx.ImmediateResponseEncoded = true
@@ -977,21 +1002,13 @@ func (r *OpenAIRouter) createRaylineRoutesCodedError(
 
 // raylineRoutesDecisionWorkerModels are the provider model ids the lookup's
 // decision dispatches: the ids routing.prices may name.
-func (r *OpenAIRouter) raylineRoutesDecisionWorkerModels() map[string]bool {
+func (r *OpenAIRouter) raylineRoutesDecisionWorkerModels(decision *config.Decision) map[string]bool {
 	models := map[string]bool{}
-	if r == nil || r.Config == nil {
+	if r == nil || r.Config == nil || decision == nil {
 		return models
 	}
-	for index := range r.Config.Decisions {
-		decision := &r.Config.Decisions[index]
-		if !raylineARCSelection(decision.Algorithm) || decision.Algorithm.RaylineARC == nil ||
-			!decision.Algorithm.RaylineARC.RoutesAPI.Enabled {
-			continue
-		}
-		for _, ref := range decision.ModelRefs {
-			models[policyWorkerManifest(r.Config, ref).Model] = true
-		}
-		return models
+	for _, ref := range decision.ModelRefs {
+		models[policyWorkerManifest(r.Config, ref).Model] = true
 	}
 	return models
 }
