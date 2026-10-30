@@ -516,7 +516,7 @@ func (scorer *policyServiceScorer) hydratePolicyStagedTurn(
 		return
 	}
 	var encoded []byte
-	err := boundPolicySharedStagedCall(ctx, policySharedReadWait(ctx), func(callContext context.Context) error {
+	err := boundPolicySharedStagedCall(ctx, policySharedWait(ctx), func(callContext context.Context) error {
 		record, err := shared.LoadStagedTurn(callContext, arcContext.EpisodeIDHash)
 		encoded = record
 		return err
@@ -572,10 +572,11 @@ func boundPolicySharedStagedCall(parent context.Context, wait time.Duration, cal
 	}
 }
 
-// policySharedReadWait is how long a turn waits for its shared record before
-// deciding: policySharedStagedTurnTimeout, but never more than a tenth of
-// what is left of the turn's own deadline, which the decide needs.
-func policySharedReadWait(ctx context.Context) time.Duration {
+// policySharedWait is how long a turn waits for a shared-record call:
+// policySharedStagedTurnTimeout, but never more than a tenth of what is left
+// of the context's deadline -- the decide's before it, a decision-only
+// consult's commit after it.
+func policySharedWait(ctx context.Context) time.Duration {
 	wait := policySharedStagedTurnTimeout
 	if deadline, ok := ctx.Deadline(); ok {
 		wait = raylineARCDurationMin(wait, time.Until(deadline)/10)
@@ -590,7 +591,7 @@ func (staging *policyStaging) writeShared(parent context.Context, write func(con
 	if staging.shared == nil {
 		return
 	}
-	if err := boundPolicySharedStagedCall(parent, policySharedStagedTurnTimeout, func(ctx context.Context) error {
+	if err := boundPolicySharedStagedCall(parent, policySharedWait(parent), func(ctx context.Context) error {
 		return write(ctx, staging.shared)
 	}); err != nil {
 		logging.ComponentWarnEvent("extproc", "rayline_arc_policy_staged_shared_write_failed", map[string]interface{}{

@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -267,22 +268,39 @@ func TestDeltaAbortLeavesALaterTurnsRecord(t *testing.T) {
 // A turn waits for its shared record at most a tenth of what is left of its
 // own deadline, so the decide keeps the rest.
 func TestPolicySharedReadWaitLeavesTheDecideItsDeadline(t *testing.T) {
-	if wait := policySharedReadWait(context.Background()); wait != policySharedStagedTurnTimeout {
+	if wait := policySharedWait(context.Background()); wait != policySharedStagedTurnTimeout {
 		t.Fatalf("no deadline: waited %v", wait)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
-	if wait := policySharedReadWait(ctx); wait <= 0 || wait > 10*time.Millisecond {
+	if wait := policySharedWait(ctx); wait <= 0 || wait > 10*time.Millisecond {
 		t.Fatalf("100 ms deadline: waited %v", wait)
 	}
 	expired, cancelExpired := context.WithTimeout(context.Background(), -time.Second)
 	defer cancelExpired()
 	started := time.Now()
-	err := boundPolicySharedStagedCall(expired, policySharedReadWait(expired), func(context.Context) error {
+	err := boundPolicySharedStagedCall(expired, policySharedWait(expired), func(context.Context) error {
 		time.Sleep(time.Second)
 		return nil
 	})
 	if err == nil || time.Since(started) > 50*time.Millisecond {
 		t.Fatalf("expired deadline: %v after %v", err, time.Since(started))
+	}
+}
+
+// A shared write under a short commit deadline (a decision-only consult's)
+// is waited on at most a tenth of it.
+func TestDeltaSharedWriteKeepsTheCommitDeadline(t *testing.T) {
+	shared := newFakeStagedTurnStore()
+	shared.delay = 4 * policySharedStagedTurnTimeout
+	staging := &policyStaging{shared: shared, episodeIDHash: strings.Repeat("e", 64), turns: newPolicyStagedTurns()}
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	staging.writeShared(ctx, func(ctx context.Context, store raylinearc.EpisodeStagedTurnStore) error {
+		return store.DeleteStagedTurn(ctx, staging.episodeIDHash, 1, nil)
+	})
+	if waited := time.Since(started); waited > 50*time.Millisecond {
+		t.Fatalf("the write waited %v under a 100 ms deadline", waited)
 	}
 }
