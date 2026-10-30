@@ -161,6 +161,15 @@ func (r *OpenAIRouter) compressionOutputReserve(
 	switch {
 	case request.Sampling.MaxOutputTokens != nil:
 		reserve = *request.Sampling.MaxOutputTokens
+		// Under ARC dispatch will lower this to the chosen arm's ceiling
+		// (applyARCArmOutputCeiling), so reserving the caller's whole number
+		// would free room the turn never sends: on a 128k window, a 100k
+		// caller limit against a 16k arm would discard input down to 28k when
+		// 112k could have stayed. The reserve reads the same ceiling dispatch
+		// will, so the two cannot disagree.
+		if ceiling := raylineARCArmOutputCeiling(r, model, ctx); ceiling > 0 && ceiling < reserve {
+			reserve = ceiling
+		}
 	case r == nil || r.Config == nil || model == "":
 	default:
 		if format, err := r.dispatchTargetFormat(model, ctx.SourceFormat); err == nil {
