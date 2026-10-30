@@ -35,6 +35,13 @@ type CanonicalProviderModel struct {
 	// because which provider serves an arm is an access detail, not a routing
 	// signal.
 	ProviderPreferences *OpenRouterProviderPreferences `yaml:"provider_preferences,omitempty"`
+	// PrivateProviderPreferences pins the providers a private (privacy or
+	// zdr) turn on this binding may use, in place of ProviderPreferences: an
+	// arm whose standard providers retain data can serve private turns from
+	// zero-data-retention ones without moving its standard turns. Same schema
+	// and validation as ProviderPreferences. Absent, private turns send
+	// ProviderPreferences.
+	PrivateProviderPreferences *OpenRouterProviderPreferences `yaml:"private_provider_preferences,omitempty"`
 	// StandardTwin declares this binding a discount endpoint (an OpenRouter
 	// flex or contributor pin) and names its standard twin: the
 	// providers.models entry serving the same model at the standard endpoint.

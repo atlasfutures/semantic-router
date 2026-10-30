@@ -63,6 +63,16 @@ without `allow_fallbacks: false` is a preference rather than a pin: OpenRouter
 may still serve the request from an unlisted provider. See
 [Provider Routing](https://openrouter.ai/docs/features/provider-routing).
 
+`providers.models[].private_provider_preferences` takes the same keys and
+rules. When set, a private turn (`x-rayline-privacy-mode` `privacy` or `zdr`)
+sends it in place of `provider_preferences`, so an arm whose standard providers
+retain data can serve private turns from zero-data-retention providers without
+moving its standard turns. The private turn's data-use members
+(`allow_fallbacks: false`, `data_collection: deny`, and `zdr: true` on a zdr
+turn) are added to it as they are to `provider_preferences`. The `/v1/models`
+listing publishes it per candidate as `private_provider_pin`, beside
+`provider_pin`, and omits it when the key is absent.
+
 A discount endpoint (an OpenRouter flex or contributor pin) can name its
 standard twin with `providers.models[].standard_twin`: another
 `providers.models` entry serving the same provider model at the standard

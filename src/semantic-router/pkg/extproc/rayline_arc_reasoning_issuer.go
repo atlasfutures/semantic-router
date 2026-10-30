@@ -117,7 +117,7 @@ func (r *OpenAIRouter) dropRaylineARCOpaqueReasoningIssuedElsewhere(
 		return false
 	}
 	transaction := ctx.RaylineARCTransaction
-	issuer := r.opaqueReasoningIssuerFor(dispatch)
+	issuer := r.opaqueReasoningIssuerFor(dispatch, ctx.RaylineARCPrivacyMode)
 	transaction.dispatchWorker = issuer
 	if transaction.state == nil || len(transaction.state.ReasoningProvenance) == 0 {
 		return false
@@ -143,11 +143,12 @@ func (r *OpenAIRouter) dropRaylineARCOpaqueReasoningIssuedElsewhere(
 // resent anywhere (as reasoningIssuerFor treats encrypted Responses reasoning).
 // The credential does not enter: an Anthropic-format block is the model's,
 // not the account's.
-func (r *OpenAIRouter) opaqueReasoningIssuerFor(dispatch *providerDispatch) string {
+// The pin read is the one the turn's privacy mode sends (armProviderPin).
+func (r *OpenAIRouter) opaqueReasoningIssuerFor(dispatch *providerDispatch, privacyMode string) string {
 	openRouter := providerIsOpenRouter(dispatch.profile)
 	pinnedProvider := ""
 	if openRouter && r.Config != nil {
-		pin := r.Config.ProviderPreferencesForModel(dispatch.logicalModel)
+		pin := armProviderPin(r.Config, dispatch.logicalModel, privacyMode)
 		if pin != nil && pin.AllowFallbacks != nil && !*pin.AllowFallbacks && len(pin.Order) == 1 {
 			pinnedProvider = pin.Order[0]
 		}

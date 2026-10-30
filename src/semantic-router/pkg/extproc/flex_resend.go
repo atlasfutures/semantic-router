@@ -157,7 +157,7 @@ func (r *OpenAIRouter) planFlexResend(
 	case twinDispatch.targetFormat != dispatch.targetFormat:
 		return nil, "different_wire_format"
 	}
-	pin := r.Config.ProviderPreferencesForModel(twin)
+	pin := armProviderPin(r.Config, twin, ctx.RaylineARCPrivacyMode)
 	if pin == nil {
 		return nil, "twin_unpinned"
 	}

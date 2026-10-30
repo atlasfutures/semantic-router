@@ -266,6 +266,10 @@ func newPolicyServiceScorer(
 // route here: Envoy balances its calls across them, so a failure cannot be
 // pinned on one, and excluding the whole worker would also take its healthy
 // endpoints out of the offer.
+//
+// The route and the manifest below read the standard pin only: a private pin
+// (private_provider_preferences) changes which host serves a private turn,
+// not the worker the policy decides over, so declaring one is not a new route.
 func policyWorkerRoute(cfg *config.RouterConfig, modelRef config.ModelRef) string {
 	if len(cfg.GetEndpointsForModel(modelRef.Model)) > 1 {
 		return ""
