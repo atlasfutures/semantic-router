@@ -50,6 +50,12 @@ func (r *OpenAIRouter) emitRoutingDecision(ctx *RequestContext) {
 	// is the response-side fact llm_usage carries, and equating the two would
 	// silently count a request that asked to stream as a response that did.
 	record["streaming_requested"] = ctx.ExpectStreamingResponse
+	// The recipe that decided the turn, as a /v1/routes lookup logs it: one
+	// cell serves every ARC tier, so this is what splits generation by tier.
+	// A concrete model routes by no recipe and carries no recipe field.
+	if recipe := ctx.Routing.RecipeName(); recipe != "" {
+		record["recipe"] = string(recipe)
+	}
 	if ctx.DispatchedReasoningEffort != "" {
 		record["reasoning_effort"] = ctx.DispatchedReasoningEffort
 	}
