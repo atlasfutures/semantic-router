@@ -516,7 +516,7 @@ func (scorer *policyServiceScorer) hydratePolicyStagedTurn(
 		return
 	}
 	var encoded []byte
-	err := boundPolicySharedStagedCall(ctx, func(callContext context.Context) error {
+	err := boundPolicySharedStagedCall(ctx, policySharedReadWait(ctx), func(callContext context.Context) error {
 		record, err := shared.LoadStagedTurn(callContext, arcContext.EpisodeIDHash)
 		encoded = record
 		return err
@@ -552,14 +552,17 @@ var errPolicySharedStagedTimeout = errors.New("ARC staged turn store timed out")
 // ignored, so a late read is a miss; a late write lands later, fenced by its
 // turn like any other, and a wrong record is still caught by the turn
 // index and both digests.
-func boundPolicySharedStagedCall(parent context.Context, call func(context.Context) error) error {
+func boundPolicySharedStagedCall(parent context.Context, wait time.Duration, call func(context.Context) error) error {
+	if wait <= 0 {
+		return errPolicySharedStagedTimeout
+	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), policySharedStagedTurnTimeout)
 	done := make(chan error, 1)
 	go func() {
 		defer cancel()
 		done <- call(ctx)
 	}()
-	timer := time.NewTimer(policySharedStagedTurnTimeout)
+	timer := time.NewTimer(wait)
 	defer timer.Stop()
 	select {
 	case err := <-done:
@@ -569,6 +572,17 @@ func boundPolicySharedStagedCall(parent context.Context, call func(context.Conte
 	}
 }
 
+// policySharedReadWait is how long a turn waits for its shared record before
+// deciding: policySharedStagedTurnTimeout, but never more than a tenth of
+// what is left of the turn's own deadline, which the decide needs.
+func policySharedReadWait(ctx context.Context) time.Duration {
+	wait := policySharedStagedTurnTimeout
+	if deadline, ok := ctx.Deadline(); ok {
+		wait = raylineARCDurationMin(wait, time.Until(deadline)/10)
+	}
+	return wait
+}
+
 // writeShared mirrors one change of the process's entry to the shared
 // record, bounded as every shared call is: a failed write leaves the next
 // turn on another instance to send in full.
@@ -576,7 +590,7 @@ func (staging *policyStaging) writeShared(parent context.Context, write func(con
 	if staging.shared == nil {
 		return
 	}
-	if err := boundPolicySharedStagedCall(parent, func(ctx context.Context) error {
+	if err := boundPolicySharedStagedCall(parent, policySharedStagedTurnTimeout, func(ctx context.Context) error {
 		return write(ctx, staging.shared)
 	}); err != nil {
 		logging.ComponentWarnEvent("extproc", "rayline_arc_policy_staged_shared_write_failed", map[string]interface{}{

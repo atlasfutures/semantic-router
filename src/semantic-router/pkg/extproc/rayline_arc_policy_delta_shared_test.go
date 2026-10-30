@@ -263,3 +263,26 @@ func TestDeltaAbortLeavesALaterTurnsRecord(t *testing.T) {
 		t.Fatal("an aborted turn deleted a later turn's record")
 	}
 }
+
+// A turn waits for its shared record at most a tenth of what is left of its
+// own deadline, so the decide keeps the rest.
+func TestPolicySharedReadWaitLeavesTheDecideItsDeadline(t *testing.T) {
+	if wait := policySharedReadWait(context.Background()); wait != policySharedStagedTurnTimeout {
+		t.Fatalf("no deadline: waited %v", wait)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	if wait := policySharedReadWait(ctx); wait <= 0 || wait > 10*time.Millisecond {
+		t.Fatalf("100 ms deadline: waited %v", wait)
+	}
+	expired, cancelExpired := context.WithTimeout(context.Background(), -time.Second)
+	defer cancelExpired()
+	started := time.Now()
+	err := boundPolicySharedStagedCall(expired, policySharedReadWait(expired), func(context.Context) error {
+		time.Sleep(time.Second)
+		return nil
+	})
+	if err == nil || time.Since(started) > 50*time.Millisecond {
+		t.Fatalf("expired deadline: %v after %v", err, time.Since(started))
+	}
+}
