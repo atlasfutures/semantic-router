@@ -515,9 +515,12 @@ func (scorer *policyServiceScorer) hydratePolicyStagedTurn(
 	if local, ok := scorer.staged.get(arcContext.EpisodeIDHash); ok && local.turnIndex == turnIndex {
 		return
 	}
-	readContext, cancel := context.WithTimeout(ctx, policySharedStagedTurnTimeout)
-	encoded, err := shared.LoadStagedTurn(readContext, arcContext.EpisodeIDHash)
-	cancel()
+	var encoded []byte
+	err := boundPolicySharedStagedCall(ctx, func(callContext context.Context) error {
+		record, err := shared.LoadStagedTurn(callContext, arcContext.EpisodeIDHash)
+		encoded = record
+		return err
+	})
 	outcome := "absent"
 	switch {
 	case err != nil:
@@ -539,16 +542,43 @@ func (scorer *policyServiceScorer) hydratePolicyStagedTurn(
 	})
 }
 
+// errPolicySharedStagedTimeout is a shared-record call VSR stopped waiting
+// for.
+var errPolicySharedStagedTimeout = errors.New("ARC staged turn store timed out")
+
+// boundPolicySharedStagedCall runs one shared-record call and waits for it
+// at most policySharedStagedTurnTimeout, whatever the store's own I/O
+// deadlines: the call runs on, unwaited, past that. Its result is then
+// ignored, so a late read is a miss; a late write lands later, fenced by its
+// turn like any other, and a wrong record is still caught by the turn
+// index and both digests.
+func boundPolicySharedStagedCall(parent context.Context, call func(context.Context) error) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), policySharedStagedTurnTimeout)
+	done := make(chan error, 1)
+	go func() {
+		defer cancel()
+		done <- call(ctx)
+	}()
+	timer := time.NewTimer(policySharedStagedTurnTimeout)
+	defer timer.Stop()
+	select {
+	case err := <-done:
+		return err
+	case <-timer.C:
+		return errPolicySharedStagedTimeout
+	}
+}
+
 // writeShared mirrors one change of the process's entry to the shared
-// record, on its own bounded context: a failed write leaves the next turn
-// on another instance to send in full.
+// record, bounded as every shared call is: a failed write leaves the next
+// turn on another instance to send in full.
 func (staging *policyStaging) writeShared(parent context.Context, write func(context.Context, raylinearc.EpisodeStagedTurnStore) error) {
 	if staging.shared == nil {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), policySharedStagedTurnTimeout)
-	defer cancel()
-	if err := write(ctx, staging.shared); err != nil {
+	if err := boundPolicySharedStagedCall(parent, func(ctx context.Context) error {
+		return write(ctx, staging.shared)
+	}); err != nil {
 		logging.ComponentWarnEvent("extproc", "rayline_arc_policy_staged_shared_write_failed", map[string]interface{}{
 			"request_id": staging.requestID, "episode_id_hash": staging.episodeIDHash,
 		})
@@ -912,14 +942,15 @@ func (transaction *raylineARCEpisodeTransaction) publishPolicyStagedTurn(
 	if staged == nil {
 		staging.turns.drop(staging.episodeIDHash)
 		staging.writeShared(ctx, func(ctx context.Context, shared raylinearc.EpisodeStagedTurnStore) error {
-			return shared.DeleteStagedTurn(ctx, staging.episodeIDHash, nil)
+			return shared.DeleteStagedTurn(ctx, staging.episodeIDHash, turnIndex, nil)
 		})
 		return
 	}
 	staged.turnIndex = turnIndex
 	staging.turns.put(staging.episodeIDHash, *staged)
+	record := encodePolicyStagedTurn(*staged)
 	staging.writeShared(ctx, func(ctx context.Context, shared raylinearc.EpisodeStagedTurnStore) error {
-		return shared.StoreStagedTurn(ctx, staging.episodeIDHash, encodePolicyStagedTurn(*staged))
+		return shared.StoreStagedTurn(ctx, staging.episodeIDHash, turnIndex, record)
 	})
 }
 
@@ -934,17 +965,24 @@ func (transaction *raylineARCEpisodeTransaction) retractPolicyStagedTurn(ctx con
 		return current.turnIndex == staged.turnIndex && current.prefixDigest == staged.prefixDigest
 	})
 	staging.writeShared(ctx, func(ctx context.Context, shared raylinearc.EpisodeStagedTurnStore) error {
-		return shared.DeleteStagedTurn(ctx, staging.episodeIDHash, encodePolicyStagedTurn(*staged))
+		return shared.DeleteStagedTurn(ctx, staging.episodeIDHash, staged.turnIndex, encodePolicyStagedTurn(*staged))
 	})
 }
 
 // dropPolicyStagedTurn forgets the episode's staged turn after a commit that
 // did not happen: the service may hold an append the episode never recorded.
+// The shared record is deleted only if it belongs to the turn this one
+// started from or an earlier one: a turn that lost its lease leaves the
+// record of a turn committed after it.
 func (transaction *raylineARCEpisodeTransaction) dropPolicyStagedTurn(ctx context.Context) {
 	if staging := transaction.policyStaging; staging != nil {
 		staging.turns.drop(staging.episodeIDHash)
+		var started uint64
+		if transaction.state != nil {
+			started = transaction.state.TurnIndex
+		}
 		staging.writeShared(ctx, func(ctx context.Context, shared raylinearc.EpisodeStagedTurnStore) error {
-			return shared.DeleteStagedTurn(ctx, staging.episodeIDHash, nil)
+			return shared.DeleteStagedTurn(ctx, staging.episodeIDHash, started, nil)
 		})
 	}
 }

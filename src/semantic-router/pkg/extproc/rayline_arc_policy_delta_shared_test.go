@@ -22,50 +22,71 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
 
-// fakeStagedTurnStore is the record store a cell's instances share.
+// fakeStagedTurnStore is the record store a cell's instances share, fenced
+// by turn as the Redis store is.
 type fakeStagedTurnStore struct {
 	mu      sync.Mutex
 	records map[string][]byte
+	turns   map[string]uint64
 	failing bool
+	// delay holds every call that long, past VSR's wait.
+	delay time.Duration
 }
 
 func newFakeStagedTurnStore() *fakeStagedTurnStore {
-	return &fakeStagedTurnStore{records: map[string][]byte{}}
+	return &fakeStagedTurnStore{records: map[string][]byte{}, turns: map[string]uint64{}}
 }
 
-func (store *fakeStagedTurnStore) LoadStagedTurn(_ context.Context, episode string) ([]byte, error) {
+func (store *fakeStagedTurnStore) enter() error {
 	store.mu.Lock()
-	defer store.mu.Unlock()
-	if store.failing {
-		return nil, errors.New("unavailable")
-	}
-	return store.records[episode], nil
-}
-
-func (store *fakeStagedTurnStore) StoreStagedTurn(_ context.Context, episode string, record []byte) error {
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	if store.failing {
+	delay, failing := store.delay, store.failing
+	store.mu.Unlock()
+	time.Sleep(delay)
+	if failing {
 		return errors.New("unavailable")
 	}
-	store.records[episode] = bytes.Clone(record)
 	return nil
 }
 
-func (store *fakeStagedTurnStore) DeleteStagedTurn(_ context.Context, episode string, match []byte) error {
+func (store *fakeStagedTurnStore) LoadStagedTurn(_ context.Context, episode string) ([]byte, error) {
+	if err := store.enter(); err != nil {
+		return nil, err
+	}
 	store.mu.Lock()
 	defer store.mu.Unlock()
-	if store.failing {
-		return errors.New("unavailable")
+	return store.records[episode], nil
+}
+
+func (store *fakeStagedTurnStore) StoreStagedTurn(_ context.Context, episode string, turn uint64, record []byte) error {
+	if err := store.enter(); err != nil {
+		return err
 	}
-	if match == nil || bytes.Equal(store.records[episode], match) {
-		delete(store.records, episode)
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if _, ok := store.records[episode]; ok && store.turns[episode] > turn {
+		return nil
 	}
+	store.records[episode], store.turns[episode] = bytes.Clone(record), turn
+	return nil
+}
+
+func (store *fakeStagedTurnStore) DeleteStagedTurn(_ context.Context, episode string, turn uint64, match []byte) error {
+	if err := store.enter(); err != nil {
+		return err
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if store.turns[episode] > turn || (match != nil && !bytes.Equal(store.records[episode], match)) {
+		return nil
+	}
+	delete(store.records, episode)
+	delete(store.turns, episode)
 	return nil
 }
 
@@ -189,5 +210,56 @@ func TestPolicyStagedRecordRoundTrip(t *testing.T) {
 		if _, ok := decodePolicyStagedTurn([]byte(bad)); ok {
 			t.Errorf("%s decoded", bad)
 		}
+	}
+}
+
+// A store slower than VSR's wait costs the turn a full send, never its
+// decision or its deadline.
+func TestDeltaSlowSharedRecordIsAMiss(t *testing.T) {
+	fixture := newDeltaFixture(t, config.RaylineARCDecideModeDelta, nil)
+	shared := newFakeStagedTurnStore()
+	fixture.shared = shared
+	_, first := fixture.turn(t, policyTestRequest(t, deltaUser))
+	complete(t, first, anthropicReply(t, deltaReplyContent))
+	otherInstance(fixture)
+	shared.mu.Lock()
+	shared.delay = 4 * policySharedStagedTurnTimeout
+	shared.mu.Unlock()
+	started := time.Now()
+	result, second := fixture.turn(t, policyTestRequest(t, deltaUser, deltaAssistant, deltaToolResult))
+	if waited := time.Since(started); waited > 3*policySharedStagedTurnTimeout {
+		t.Fatalf("the turn waited %v on the store", waited)
+	}
+	if mode := result.RaylineARC.PolicyDecisionMode; mode != policyDecisionModeSync {
+		t.Fatalf("held turn went %s, want sync", mode)
+	}
+	started = time.Now()
+	complete(t, second, deltaReply(t))
+	if waited := time.Since(started); waited > 4*policySharedStagedTurnTimeout {
+		t.Fatalf("the commit waited %v on the store", waited)
+	}
+}
+
+// A turn that lost its lease, aborting after the turn after it committed,
+// leaves that turn's record.
+func TestDeltaAbortLeavesALaterTurnsRecord(t *testing.T) {
+	fixture := newDeltaFixture(t, config.RaylineARCDecideModeDelta, nil)
+	shared := newFakeStagedTurnStore()
+	fixture.shared = shared
+	_, first := fixture.turn(t, policyTestRequest(t, deltaUser))
+	complete(t, first, anthropicReply(t, deltaReplyContent))
+	_, stale := fixture.turn(t, policyTestRequest(t, deltaUser, deltaAssistant, deltaToolResult))
+	// The turn after it commits a record of turn 2 meanwhile.
+	later := encodePolicyStagedTurn(policyStagedTurn{
+		turnIndex: 2, requestFormat: policyFormatAnthropic, count: 4, prefixDigest: "p", digest: "d", appendedFrom: 3,
+	})
+	if err := shared.StoreStagedTurn(context.Background(), fixture.episode, 2, later); err != nil {
+		t.Fatal(err)
+	}
+	if err := stale.RaylineARCTransaction.abort(context.Background(), "test"); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(shared.records[fixture.episode], later) {
+		t.Fatal("an aborted turn deleted a later turn's record")
 	}
 }
