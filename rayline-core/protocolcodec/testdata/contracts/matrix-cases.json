@@ -56,6 +56,15 @@
       }
     },
     {
+      "name": "max_tokens response with no output",
+      "kind": "response",
+      "inputs": {
+        "chat": "011-chat-max-tokens-empty-in.json",
+        "responses": "012-responses-max-tokens-empty-in.json",
+        "anthropic": "013-anthropic-max-tokens-empty-in.json"
+      }
+    },
+    {
       "name": "transport error",
       "kind": "error",
       "inputs": {
@@ -152,6 +161,15 @@
         "chat": "035-chat-success-then-deadline-in.json",
         "responses": "036-responses-success-then-deadline-in.json",
         "anthropic": "037-anthropic-success-then-deadline-in.json"
+      }
+    },
+    {
+      "name": "max_tokens stream with no output",
+      "kind": "stream",
+      "inputs": {
+        "chat": "042-chat-max-tokens-empty-in.json",
+        "responses": "043-responses-max-tokens-empty-in.json",
+        "anthropic": "044-anthropic-max-tokens-empty-in.json"
       }
     }
   ]

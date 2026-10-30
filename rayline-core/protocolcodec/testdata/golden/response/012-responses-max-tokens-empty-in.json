@@ -1,0 +1,16 @@
+{
+  "id": "resp_fixture_max_tokens_empty",
+  "object": "response",
+  "created_at": 1793318400,
+  "model": "provider-model",
+  "status": "incomplete",
+  "incomplete_details": {
+    "reason": "max_output_tokens"
+  },
+  "output": [],
+  "usage": {
+    "input_tokens": 12,
+    "output_tokens": 1,
+    "total_tokens": 13
+  }
+}

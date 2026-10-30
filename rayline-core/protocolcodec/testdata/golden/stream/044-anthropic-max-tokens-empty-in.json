@@ -1,0 +1,8 @@
+{
+  "note": "A max_tokens 1 turn whose single completion token produced no output part: the stream opens, writes nothing, and ends on a length stop.",
+  "public_model": "public-model",
+  "provider_model": "claude-haiku-5.5",
+  "chunks": [
+    "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_fixture_max_tokens_empty\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"model\":\"claude-haiku-5.5\",\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{\"input_tokens\":12,\"output_tokens\":1}}}\n\nevent: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"max_tokens\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":1}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+  ]
+}
