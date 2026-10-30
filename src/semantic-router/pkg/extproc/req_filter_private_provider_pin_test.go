@@ -116,3 +116,37 @@ func TestOpaqueReasoningIssuerReadsTheTurnsPin(t *testing.T) {
 		t.Fatalf("issuer standard=%q zdr=%q: the zdr turn should be issued by its private pin's single provider", standard, zdr)
 	}
 }
+
+// A private turn never falls back, so a private pin that orders one provider
+// fixes the issuer even when the card leaves fallbacks allowed.
+func TestOpaqueReasoningIssuerAppliesThePrivateDataMode(t *testing.T) {
+	fallbacks := true
+	private := &config.OpenRouterProviderPreferences{Order: []string{"azure"}, AllowFallbacks: &fallbacks}
+	router := privateProviderPinRouter(providerPinPreferences(), private)
+	dispatch, err := router.resolveProviderDispatch(providerPinArm, "", false, llmprotocol.OpenAIChatV1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if issuer := router.opaqueReasoningIssuerFor(dispatch, raylineARCPrivacyModePrivacy); issuer == reasoning.ReasoningIssuerUnknown {
+		t.Fatal("a private turn pinned to one provider has no known issuer")
+	}
+}
+
+// A private turn's failure is recorded against its own route: an arm with a
+// private pin has a separate private route, one without shares the standard.
+func TestPolicyWorkerRouteSeparatesThePrivatePin(t *testing.T) {
+	router := privateProviderPinRouter(providerPinPreferences(), privateProviderPinPreferences())
+	ref := config.ModelRef{Model: providerPinArm}
+	standard, private := policyWorkerRoute(router.Config, ref, false), policyWorkerRoute(router.Config, ref, true)
+	if standard == "" || private == "" || standard == private {
+		t.Fatalf("routes standard=%q private=%q, want two distinct routes", standard, private)
+	}
+	shared := privateProviderPinRouter(providerPinPreferences(), nil)
+	if policyWorkerRoute(shared.Config, ref, false) != policyWorkerRoute(shared.Config, ref, true) {
+		t.Fatal("an arm without a private pin has a separate private route")
+	}
+	scorer := &policyServiceScorer{routes: []string{"standard"}, privateRoutes: []string{"private"}}
+	if scorer.routeFor(0, false) != "standard" || scorer.routeFor(0, true) != "private" {
+		t.Fatal("routeFor did not pick the turn's route")
+	}
+}

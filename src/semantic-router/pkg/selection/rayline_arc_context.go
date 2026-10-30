@@ -65,6 +65,10 @@ type RaylineARCSelectionContext struct {
 	// (extproc/rayline_arc_privacy.go). Nil for a standard request, which
 	// leaves selection exactly as it was.
 	PrivacyExcludedArms []bool
+	// PrivateTurn is true on a privacy or zdr request. Such a turn sends an
+	// arm's private provider pin when it declares one, so its failures are
+	// recorded against that route, not the standard one.
+	PrivateTurn bool
 	// PrivacyArmEndpoints is, by arm ordinal, each OpenRouter arm's endpoint
 	// constraint on a private request whose gateway listed the endpoints
 	// each allowed arm may use (x-rayline-privacy-allowed-endpoints); nil

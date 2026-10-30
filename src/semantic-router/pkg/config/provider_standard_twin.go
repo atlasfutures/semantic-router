@@ -76,6 +76,13 @@ func validateStandardTwin(discount CanonicalProviderModel, byName map[string]Can
 				twinName, name, slug,
 			)
 		}
+		// A private turn's re-send goes out on the twin's private pin.
+		if twin.PrivateProviderPreferences != nil && providerPinAdmits(twin.PrivateProviderPreferences, slug) {
+			return fmt.Errorf(
+				"providers.models[%s] is the standard twin of %s and its private_provider_preferences must exclude its endpoint %q (ignore it, or leave it out of only)",
+				twinName, name, slug,
+			)
+		}
 	}
 	return nil
 }
