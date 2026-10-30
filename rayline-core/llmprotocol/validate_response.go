@@ -97,7 +97,7 @@ func validateResponseStopReason(response Response) error {
 }
 
 func validateResponseOutputCardinality(response Response, limits Limits) error {
-	if len(response.Output) == 0 && response.StopReason != StopContentFilter {
+	if len(response.Output) == 0 && !EmptyOutputStop(response.StopReason) {
 		return NewError(ErrorUpstreamUnavailable, "empty_response_output", "successful upstream response has no primary output", nil)
 	}
 	if limits.Alternatives > 0 && len(response.Alternatives) > limits.Alternatives {

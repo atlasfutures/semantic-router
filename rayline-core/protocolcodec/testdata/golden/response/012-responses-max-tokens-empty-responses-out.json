@@ -1,0 +1,31 @@
+{
+  "created_at": 1793318400,
+  "error": null,
+  "id": "resp_fixture_max_tokens_empty",
+  "incomplete_details": {
+    "reason": "max_output_tokens"
+  },
+  "instructions": null,
+  "metadata": {},
+  "model": "routed-model",
+  "object": "response",
+  "output": [],
+  "parallel_tool_calls": true,
+  "status": "incomplete",
+  "temperature": null,
+  "tool_choice": "auto",
+  "tools": [],
+  "top_p": null,
+  "usage": {
+    "input_tokens": 12,
+    "input_tokens_details": {
+      "cache_write_tokens": 0,
+      "cached_tokens": 0
+    },
+    "output_tokens": 1,
+    "output_tokens_details": {
+      "reasoning_tokens": 0
+    },
+    "total_tokens": 13
+  }
+}

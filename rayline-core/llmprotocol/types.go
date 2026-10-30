@@ -497,6 +497,17 @@ func CutToolCallStop(stop StopReason) bool {
 	return LengthStop(stop) || stop == StopContentFilter
 }
 
+// EmptyOutputStop reports a stop under which a successful response may carry
+// no primary output: a refusal, where the provider stopped the model before
+// it wrote anything, or a length stop the limit reached before the first
+// part (a request with max_tokens 1 can spend its only token on a part the
+// provider never emits, and a prompt that fills the context window leaves no
+// room to write). Any other stop with nothing written is a malformed
+// response.
+func EmptyOutputStop(stop StopReason) bool {
+	return LengthStop(stop) || stop == StopContentFilter
+}
+
 type UsageProvenance string
 
 const (

@@ -1,0 +1,9 @@
+{
+  "note": "A max_tokens 1 turn whose single completion token produced no output part: the stream opens, writes nothing, and ends on a length stop.",
+  "public_model": "public-model",
+  "provider_model": "provider-model",
+  "chunks": [
+    "event: response.created\ndata: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_fixture_max_tokens_empty\",\"object\":\"response\",\"created_at\":1793318400,\"model\":\"provider-model\",\"status\":\"in_progress\",\"output\":[]}}\n\n",
+    "event: response.incomplete\ndata: {\"type\":\"response.incomplete\",\"sequence_number\":1,\"response\":{\"id\":\"resp_fixture_max_tokens_empty\",\"object\":\"response\",\"created_at\":1793318400,\"model\":\"provider-model\",\"status\":\"incomplete\",\"output\":[],\"incomplete_details\":{\"reason\":\"max_output_tokens\"},\"usage\":{\"input_tokens\":12,\"input_tokens_details\":{\"cached_tokens\":0},\"output_tokens\":1,\"output_tokens_details\":{\"reasoning_tokens\":0},\"total_tokens\":13}}}\n\n"
+  ]
+}
