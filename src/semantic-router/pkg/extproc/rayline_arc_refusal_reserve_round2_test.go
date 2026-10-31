@@ -153,12 +153,14 @@ func TestStripServerSideFallbackBetaHeader(t *testing.T) {
 // limitByModel denies the models it names and records each usage report.
 type limitByModel struct {
 	denied  map[string]bool
+	checks  []string
 	reports []string
 }
 
 func (l *limitByModel) Name() string { return "test-limiter" }
 
 func (l *limitByModel) Check(ctx ratelimit.Context) (*ratelimit.Decision, error) {
+	l.checks = append(l.checks, ctx.Model)
 	return &ratelimit.Decision{Allowed: !l.denied[ctx.Model]}, nil
 }
 
@@ -192,4 +194,25 @@ func TestRequestContentInjected(t *testing.T) {
 	assert.True(t, requestContentInjected(&RequestContext{RAGRetrievedContext: "doc"}))
 	assert.True(t, requestContentInjected(&RequestContext{MemoryContext: "memory"}))
 	assert.True(t, requestContentInjected(&RequestContext{ContextCompressionApplied: true}))
+}
+
+// A re-serve abandoned at its last bound never checks, so never consumes,
+// the next arm's quota.
+func TestAbandonedRefusalReserveConsumesNoQuota(t *testing.T) {
+	upstream := newHostUpstream(t, map[string]string{reserveGLMHost: "content"})
+	router := reserveRouter(upstream.server.URL)
+	limiter := &limitByModel{}
+	router.RateLimiter = ratelimit.NewRateLimitResolver(limiter)
+	stream := NewMockStream(nil)
+	ctx, _ := startReserveTurn(t, router)
+	ctx.RefusalReserve.budget = 20 * time.Millisecond
+	ctx.RefusalReserve.redecide = func(*RequestContext) (*config.ModelRef, string, error) {
+		time.Sleep(40 * time.Millisecond)
+		return &config.ModelRef{Model: reserveGLMArm}, "test", nil
+	}
+
+	require.NoError(t, router.handleProcessRequest(stream, fullDuplexResponseBodyRequest(reserveRoleChunk, false), ctx))
+	require.NoError(t, router.handleProcessRequest(stream, fullDuplexResponseBodyRequest(reserveRefusalChunk, true), ctx))
+	assert.False(t, ctx.HostRetry.started())
+	assert.Empty(t, limiter.checks, "an abandoned re-serve consumed the next arm's quota")
 }

@@ -407,12 +407,6 @@ func (r *OpenAIRouter) reserveRefusedTurn(ctx *RequestContext) bool {
 	if err := selectionDispatchAllowed(ctx); err != nil {
 		return restore("lease_lost")
 	}
-	// The next arm answers to its own rate limits, as a first dispatch
-	// would; its usage is then reported against it.
-	refusedLimit := ctx.RateLimitCtx
-	if r.applyRateLimit(ctx, model) != nil {
-		return restore("rate_limited")
-	}
 	// The refusing family is excluded for the session before the last
 	// check, since the store write takes time. A refusal passed through
 	// records the same exclusion (declineRefusedTurn), so a re-serve that
@@ -424,6 +418,13 @@ func (r *OpenAIRouter) reserveRefusedTurn(ctx *RequestContext) bool {
 	// bounds are checked again, so no paid call starts past them.
 	if time.Since(plan.firstRefusal) >= plan.budget || plan.holdExpired(ctx) || r.responseStreamOverran(ctx) {
 		return restore("budget_spent")
+	}
+	// The next arm answers to its own rate limits, as a first dispatch
+	// would; its usage is then reported against it. Checked last, as the
+	// check consumes quota: nothing after it abandons the re-serve.
+	refusedLimit := ctx.RateLimitCtx
+	if r.applyRateLimit(ctx, model) != nil {
+		return restore("rate_limited")
 	}
 
 	// The re-serve takes over: the refused call is settled on its own line
