@@ -335,6 +335,19 @@ class RaylineARCPolicyBindingConfig(BaseModel):
     reasoning_max_tokens: int | None = Field(default=None, gt=0)
 
 
+class RaylineARCRefusalReserveConfig(BaseModel):
+    """Bounds of the in-place re-serve of a refused turn (Go loader bounds;
+    0 means the router's default)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    max_reserves: int = Field(default=0, ge=0, le=2)
+    budget_seconds: int = Field(default=0, ge=0, le=120)
+    hold_max_seconds: int = Field(default=0, ge=0, le=300)
+    hold_families: list[Literal["claude", "gpt"]] = Field(default_factory=list)
+
+
 class RaylineARCPolicyFallbackConfig(BaseModel):
     """ADR 0120's fallback: a refusing model is excluded for the rest of its
     context and the next turn decides among the others; a route that failed
@@ -345,6 +358,14 @@ class RaylineARCPolicyFallbackConfig(BaseModel):
     enabled: bool = False
     # 0 means the router's default (30 s).
     cell_exclusion_seconds: int = Field(default=0, ge=0, le=3600)
+    # A refusal also excludes its model's vendor family (claude, gpt) for the
+    # session, across the contexts it opens (pathfinder#6066 D3); 0 hours
+    # means the router's default (24).
+    family_exclusion: bool = False
+    family_exclusion_hours: int = Field(default=0, ge=0, le=168)
+    # In-place re-serve of a streamed turn refused before any text or tool
+    # call (pathfinder#6066 P1c). Refused on an eval cell by the Go loader.
+    reserve: RaylineARCRefusalReserveConfig | None = None
 
 
 class RaylineARCRoutingPricesConfig(BaseModel):

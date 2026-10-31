@@ -136,8 +136,14 @@ const (
 	VSRFault = "x-vsr-fault"
 
 	// FaultUpstreamDecode makes the response-body phase treat the upstream
-	// response as one the codec could not decode. It is the only fault value.
+	// response as one the codec could not decode.
 	FaultUpstreamDecode = "upstream_decode"
+
+	// FaultRefusalPrelude makes a held streamed turn's first attempt end as
+	// a refusal at its first text or tool call, before the client sees it,
+	// so the in-place re-serve of a refused turn can be exercised on a cell
+	// (rayline_arc_refusal_reserve.go). Re-serves themselves are not faulted.
+	FaultRefusalPrelude = "refusal_prelude"
 
 	// VSRSchemaVersion stamps the response-header contract revision so clients
 	// know which contract they are parsing. Value: SchemaVersionValue.

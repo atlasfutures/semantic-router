@@ -70,6 +70,12 @@ func (r *OpenAIRouter) processResponseTrailers(
 			return err
 		}
 	}
+	if ctx.HostRetry.started() && !ctx.StreamingComplete {
+		// Ending the body here found a refusal and started its re-serve
+		// (rayline_arc_refusal_reserve.go): the reply waits for its end.
+		ctx.HostRetry.trailersPending = true
+		return nil
+	}
 	return sendResponseTrailersReply(stream, ctx)
 }
 

@@ -81,8 +81,9 @@ func requestedFault(arc *config.RaylineARCAlgorithmConfig, reqCtx *RequestContex
 	if arc == nil || !arc.FaultInjection.Enabled {
 		return ""
 	}
-	if strings.TrimSpace(reqCtx.Headers[headers.VSRFault]) == headers.FaultUpstreamDecode {
-		return headers.FaultUpstreamDecode
+	switch fault := strings.TrimSpace(reqCtx.Headers[headers.VSRFault]); fault {
+	case headers.FaultUpstreamDecode, headers.FaultRefusalPrelude:
+		return fault
 	}
 	return ""
 }
@@ -183,6 +184,7 @@ func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 	var signalHeaders map[string]string
 	if algorithm.RaylineARC.PolicyService != nil {
 		signalHeaders = raylineARCTrustedSignalHeaders(algorithm.RaylineARC.PolicyService, reqCtx.Headers)
+		reqCtx.RefusalFallbackOptOut = raylineARCRefusalFallbackOff(signalHeaders)
 		reqCtx.RaylineARCPrivacyMode = raylineARCPrivacyMode(signalHeaders)
 		reqCtx.RaylineARCPrivacyAllowedArms = raylineARCPrivacyAllowedArms(reqCtx.RaylineARCPrivacyMode, signalHeaders)
 		reqCtx.RaylineARCPrivacyAllowedEndpoints = raylineARCPrivacyAllowedEndpoints(reqCtx.RaylineARCPrivacyMode, signalHeaders)
@@ -222,6 +224,9 @@ func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 		}
 		result.State = state
 		result.Coalesced = coalesced
+		if result.PolicyCallKind != raylinearc.PolicyCallSide {
+			result.FamilyExclusions = r.loadRaylineARCFamilyExclusions(algorithm.RaylineARC.PolicyService, reqCtx)
+		}
 		// A delta cell's strict main turn reads and writes its staged-turn
 		// record beside the episode, so the next turn finds it on any
 		// instance (rayline_arc_policy_delta.go).

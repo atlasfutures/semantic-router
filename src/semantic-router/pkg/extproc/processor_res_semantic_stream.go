@@ -93,6 +93,12 @@ func (r *OpenAIRouter) handleSemanticStreamingResponseBody(
 	buffers := semanticStreamBuffers{}
 	held := r.holdingForHostRetry(ctx)
 	buffers.push(responseBody, ctx)
+	// A refusal while the frames are held is re-served in place on the
+	// policy's next choice (rayline_arc_refusal_reserve.go). It comes first:
+	// another host of the refusing model would refuse again.
+	if r.reserveRefusedTurn(ctx) {
+		return droppedHostChunk(ctx)
+	}
 	if held && r.retryAfterStreamFailure(ctx) {
 		// The call failed in-band before any content; the arm's next host
 		// takes the turn over, and its error never reaches the client.
@@ -127,6 +133,11 @@ func (r *OpenAIRouter) handleSemanticStreamingResponseBody(
 			r.attachTruncatedStreamUsage(ctx)
 		}
 		buffers.finalize(ctx)
+		// A codec that states the stop only when its stream is finalized
+		// (Messages) shows the refusal here, still before anything was sent.
+		if !cut && r.reserveRefusedTurn(ctx) {
+			return droppedHostChunk(ctx)
+		}
 		r.finalizeSemanticStreamingResponse(ctx, buffers.streamErr)
 		if cut {
 			releaseCutTurn(ctx)

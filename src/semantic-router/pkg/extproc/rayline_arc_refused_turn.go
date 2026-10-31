@@ -40,6 +40,9 @@ func declineRefusedTurn(ctx *RequestContext) {
 		refusal.context = ctx.VSRRaylineARC.PolicyTurnState
 		refusal.decidedFrom = ctx.RaylineARCTransaction.storedPolicy()
 		refusal.committed = ctx.VSRRaylineARC.PolicyNextState
+		// pathfinder#6066 D3: the refusing model's vendor family stays out
+		// for the rest of the session, past this context's end.
+		noteRaylineARCFamilyExclusion(ctx, refusal.exclude)
 	}
 	clearContext, cancel := context.WithTimeout(context.Background(), episodeFinalizeTimeout)
 	defer cancel()

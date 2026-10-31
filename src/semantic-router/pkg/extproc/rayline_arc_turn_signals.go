@@ -53,7 +53,17 @@ const (
 	// arm's OpenRouter endpoint by (hex sha256 of user:conversation), so the
 	// cell picks the endpoint the gateway bills (rayline_arc_endpoint_pick.go).
 	raylineARCSessionKeyHeader = "x-rayline-session-key"
+	// raylineARCRefusalFallbackHeader is the gateway's per-request opt-out
+	// of the in-place re-serve of a refused turn: "off" turns it off for the
+	// request; absent or any other value leaves the cell's default
+	// (rayline_arc_refusal_reserve.go).
+	raylineARCRefusalFallbackHeader = "x-rayline-refusal-fallback"
 )
+
+// raylineARCRefusalFallbackOff reports the trusted opt-out.
+func raylineARCRefusalFallbackOff(signalHeaders map[string]string) bool {
+	return strings.EqualFold(strings.TrimSpace(signalHeaders[raylineARCRefusalFallbackHeader]), "off")
+}
 
 // raylineARCTrustedSignalHeaders returns the turn-signal headers this cell
 // reads: the request's, when a gateway is configured to set them, and none
@@ -84,6 +94,7 @@ func raylineARCTurnSignalHeadersForRemoval() []string {
 		raylineARCAgentKeySourceHeader, raylineARCParentSessionHeader, raylineARCParentAgentHeader,
 		raylineARCPrivacyModeHeader, raylineARCTrainingDataHeader, raylineARCExplorationTemperatureHeader,
 		raylineARCPrivacyAllowedArmsHeader, raylineARCPrivacyAllowedEndpointsHeader, raylineARCSessionKeyHeader,
+		raylineARCRefusalFallbackHeader,
 	}
 }
 

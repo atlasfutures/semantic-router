@@ -258,13 +258,16 @@ func (r *OpenAIRouter) holdHostRetryFrames(ctx *RequestContext, response *ext_pr
 	if plan == nil || streamed == nil {
 		return response
 	}
-	if r.holdingForHostRetry(ctx) && len(plan.held)+len(streamed.Body) > hostRetryMaxHeld {
+	if r.holdingResponse(ctx) && len(plan.held)+len(streamed.Body) > hostRetryMaxHeld {
 		plan.exposed = true
 	}
-	if r.holdingForHostRetry(ctx) {
+	if r.holdingResponse(ctx) {
 		if len(streamed.Body) > 0 {
 			plan.held = append(plan.held, streamed.Body...)
 			streamed.Body = bytes.Clone(hostRetryHoldFrame)
+			if reserve := ctx.RefusalReserve; reserve != nil {
+				reserve.lastKeepAlive = time.Now()
+			}
 		}
 		return response
 	}
@@ -274,8 +277,9 @@ func (r *OpenAIRouter) holdHostRetryFrames(ctx *RequestContext, response *ext_pr
 	}
 	if len(streamed.Body) > 0 {
 		plan.exposed = true
+		r.noteRefusalReserveRelease(ctx)
 	}
-	return response
+	return withRefusalAttemptsComment(ctx, response)
 }
 
 // retryOnNextHost starts the re-send of a turn whose call in flight failed

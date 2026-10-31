@@ -185,6 +185,14 @@ type llmUsageRecord struct {
 	UpstreamHost         *string `json:"upstream_host"`
 	UpstreamHostSource   *string `json:"upstream_host_source"`
 	HostAttemptStartedMS *int64  `json:"host_attempt_started_ms"`
+	// RefusalReserve marks the calls of a streamed ARC turn refused before
+	// any text or tool call and re-served in place on the policy's next
+	// choice (rayline_arc_refusal_reserve.go): refused_attempt on each
+	// refused call, refusal_reserve on the last call, which served the
+	// client whatever its outcome. RefusalReserveAttempt is the call's place
+	// in the turn, from 1. Null on every other call.
+	RefusalReserve        *string `json:"refusal_reserve"`
+	RefusalReserveAttempt *int    `json:"refusal_reserve_attempt"`
 	// UpstreamResponseID is the id the upstream gave a streamed response (an
 	// OpenRouter generation id), null when none arrived.
 	UpstreamResponseID *string `json:"upstream_response_id"`
@@ -396,6 +404,7 @@ func (r *OpenAIRouter) newLLMUsageRecord(ctx *RequestContext, usage responseUsag
 		record.UpstreamResponseID = nonEmpty(state.upstreamResponseID)
 	}
 	addHostRetryFields(&record, ctx)
+	addRefusalReserveFields(&record, ctx)
 	addUsageRecordARCAttribution(&record, ctx)
 	return record
 }

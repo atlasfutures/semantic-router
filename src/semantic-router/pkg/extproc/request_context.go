@@ -186,6 +186,16 @@ type RequestContext struct {
 	// HostRetry is the re-send on the arm's next provider host staged for a
 	// dispatch whose pin lists several (stream_host_retry.go); nil otherwise.
 	HostRetry *hostRetryPlan
+	// RefusalReserve is the in-place re-serve of a refused turn staged for
+	// a held streamed ARC turn (rayline_arc_refusal_reserve.go); nil
+	// otherwise.
+	RefusalReserve *refusalReservePlan
+	// raylineARCReselect is what the turn's ARC selection was made from,
+	// kept so a refused turn can be decided again in place.
+	raylineARCReselect *raylineARCReselect
+	// RefusalFallbackOptOut is the gateway's trusted
+	// x-rayline-refusal-fallback: off for this request.
+	RefusalFallbackOptOut bool
 	// UpstreamBodyCut is set when the Router read the provider's body itself
 	// and the read ended in an error: the stream that ends with it is cut,
 	// not complete, whatever its last frame said.
