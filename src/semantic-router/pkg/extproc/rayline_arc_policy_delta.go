@@ -617,12 +617,17 @@ func (transaction *raylineARCEpisodeTransaction) appendPolicyStagedTurn(parent c
 	if staging == nil || staging.appender == nil || transaction.policyNext == nil {
 		return nil
 	}
-	fail := func(class string) *policyStagedTurn {
-		logging.ComponentWarnEvent("extproc", "rayline_arc_policy_append_failed", map[string]interface{}{
+	failStatus := func(class string, status int) *policyStagedTurn {
+		fields := map[string]interface{}{
 			"request_id": staging.requestID, "episode_id_hash": staging.episodeIDHash, "class": class,
-		})
+		}
+		if status != 0 {
+			fields["status"] = status
+		}
+		logging.ComponentWarnEvent("extproc", "rayline_arc_policy_append_failed", fields)
 		return nil
 	}
+	fail := func(class string) *policyStagedTurn { return failStatus(class, 0) }
 	assistant, ok := policyAssistantOutput(staging.requestFormat, staging.clientBody)
 	if !ok {
 		return fail("no_assistant_output")
@@ -661,12 +666,12 @@ func (transaction *raylineARCEpisodeTransaction) appendPolicyStagedTurn(parent c
 	cancel()
 	release()
 	if err != nil {
-		class := "transport"
+		class, status := "transport", 0
 		var failure *raylinearc.PolicyServiceError
 		if errors.As(err, &failure) {
-			class = failure.Class
+			class, status = failure.Class, failure.Status
 		}
-		fail(class)
+		failStatus(class, status)
 		if !policyServiceAnswered(err) && !raylinearc.PolicySessionUnanswered(err) {
 			// The service may still be appending under its episode lock.
 			return &policyStagedTurn{unsettled: true}
