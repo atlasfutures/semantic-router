@@ -186,3 +186,51 @@ func TestRaylineARCFamilyExclusionReadsNothingWhenOff(t *testing.T) {
 		t.Fatalf("no session: %v", got)
 	}
 }
+
+// The re-serve's re-decision: the refusing model is excluded in place in the
+// state the selection context reads, the retained boundary on its arm is
+// cleared, and the policy decides again among the rest, with the same inputs.
+// The decision the turn then commits holds the exclusion.
+func TestRefusalReserveRedecidesWithoutTheRefusingModel(t *testing.T) {
+	fixture, store, claudeAction := familyFixture(t, true)
+	session := raylinearc.SessionKeyDigest("user-1", "conv-1")
+	body := policyTestRequest(t, map[string]any{"role": "user", "content": "audit this binary"})
+	episode := strings.Repeat("f", 64)
+	lease, state, err := store.Prepare(context.Background(), episode, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reqCtx := &RequestContext{RequestID: "req-1", TraceContext: context.Background(), RaylineARCSessionKey: session}
+	selCtx := &selection.SelectionContext{
+		DecisionName: fixture.decision.Name, CandidateModels: fixture.decision.ModelRefs,
+		RaylineARC: &selection.RaylineARCSelectionContext{
+			EpisodeIDHash: episode, RequestID: "req-1", State: state, RawRequest: body, RequestFormat: policyFormatAnthropic,
+		},
+	}
+	decided, err := fixture.selector.Select(context.Background(), selCtx)
+	if err != nil || decided.RaylineARC.PolicyActionID != claudeAction {
+		t.Fatalf("first decision %+v, %v", decided, err)
+	}
+	reqCtx.RaylineARCTransaction = newRaylineARCEpisodeTransaction(store, lease, state, episode, time.Minute, nil)
+	reqCtx.RaylineARCTransaction.markSelection(decided.RaylineARC.SelectedArm, 10)
+	stageRaylineARCPolicySelection(reqCtx, decided.RaylineARC, "")
+	reqCtx.VSRRaylineARC, reqCtx.VSRSelectedDecision = decided.RaylineARC, fixture.decision
+
+	excludeRefusedModelInPlace(reqCtx, &raylineARCReselect{selCtx: selCtx})
+	if family := noteRaylineARCFamilyExclusion(reqCtx, refusedModel(reqCtx)); family != "claude" {
+		t.Fatalf("family %q", family)
+	}
+	if !selCtx.RaylineARC.State.Policy.Excludes("anthropic/claude-opus-5.5") {
+		t.Fatalf("the re-decision's state lacks the exclusion: %+v", selCtx.RaylineARC.State.Policy.Exclusions)
+	}
+	again, err := fixture.selector.Select(context.Background(), selCtx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.RaylineARC.PolicyActionID == claudeAction || slices.Contains(offeredActions(fixture, 1), claudeAction) {
+		t.Fatalf("the re-decision offered %v and chose %s", offeredActions(fixture, 1), again.RaylineARC.PolicyActionID)
+	}
+	if next := again.RaylineARC.PolicyNextState; next == nil || !next.Excludes("anthropic/claude-opus-5.5") {
+		t.Fatalf("the served turn would not commit the exclusion: %+v", next)
+	}
+}

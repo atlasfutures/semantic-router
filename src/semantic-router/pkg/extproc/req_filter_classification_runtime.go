@@ -359,6 +359,9 @@ func (r *OpenAIRouter) selectDecisionRuntimeModel(
 	if err != nil {
 		return "", entropy.ReasoningDecision{}, err
 	}
+	if selectedModelRef != nil {
+		keepRaylineARCReselect(ctx, selCtx, result.Decision.Algorithm, decisionName, evaluationConfidence)
+	}
 	if selectedModelRef == nil {
 		selectedModel := r.Config.DefaultModel
 		ctx.VSRSelectedModel = selectedModel

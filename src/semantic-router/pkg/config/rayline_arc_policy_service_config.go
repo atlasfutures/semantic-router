@@ -202,6 +202,100 @@ type RaylineARCPolicyFallbackConfig struct {
 	// FamilyExclusionHours is how long a session's family exclusion lasts
 	// after its latest refusal. Zero means the default.
 	FamilyExclusionHours int `yaml:"family_exclusion_hours,omitempty"`
+	// Reserve re-serves a streamed turn the model refused before any text
+	// or tool call reached the client, in place, on the policy's next choice
+	// (pathfinder#6066 P1c). Absent or disabled, a refusal is passed through
+	// as before.
+	Reserve *RaylineARCRefusalReserveConfig `yaml:"reserve,omitempty"`
+}
+
+// RaylineARCRefusalReserveConfig bounds the in-place re-serve of a refused
+// turn.
+type RaylineARCRefusalReserveConfig struct {
+	Enabled bool `yaml:"enabled"`
+	// MaxReserves is how many re-serves one request may take; zero means
+	// the default, and more than RaylineARCMaxRefusalReserves is refused.
+	MaxReserves int `yaml:"max_reserves,omitempty"`
+	// BudgetSeconds bounds the re-serves, from the first refusal: no new
+	// attempt starts after it. Zero means the default.
+	BudgetSeconds int `yaml:"budget_seconds,omitempty"`
+	// HoldMaxSeconds bounds how long, from the request's start, the
+	// response's frames are held while no text or tool call has arrived.
+	// Past it the frames are released and a later refusal is passed
+	// through. Zero means the default.
+	HoldMaxSeconds int `yaml:"hold_max_seconds,omitempty"`
+	// HoldFamilies are the vendor families whose turns are held, so that a
+	// refusal before their first text or tool call can be re-served. Empty
+	// means the default, claude.
+	HoldFamilies []string `yaml:"hold_families,omitempty"`
+}
+
+const (
+	DefaultRaylineARCRefusalReserves      = 2
+	RaylineARCMaxRefusalReserves          = 2
+	DefaultRaylineARCReserveBudgetSeconds = 45
+	DefaultRaylineARCReserveHoldSeconds   = 60
+)
+
+// DefaultRaylineARCReserveHoldFamilies are the families held by default:
+// every refusal served in prod to date was a Claude model's.
+var DefaultRaylineARCReserveHoldFamilies = []string{"claude"}
+
+// RefusalReserveEnabled reports whether the cell re-serves refused turns.
+// An eval cell never does: its turns are scored as the policy chose them.
+func (cfg *RaylineARCPolicyServiceConfig) RefusalReserveEnabled() bool {
+	return cfg.FallbackEnabled() && cfg.Fallback.Reserve != nil && cfg.Fallback.Reserve.Enabled && !cfg.EvalCell
+}
+
+// RefusalReserveLimits are the re-serve bounds, defaults applied.
+func (cfg *RaylineARCPolicyServiceConfig) RefusalReserveLimits() (maxReserves int, budget, hold time.Duration, families []string) {
+	maxReserves, budgetSeconds, holdSeconds := DefaultRaylineARCRefusalReserves,
+		DefaultRaylineARCReserveBudgetSeconds, DefaultRaylineARCReserveHoldSeconds
+	families = DefaultRaylineARCReserveHoldFamilies
+	if cfg != nil && cfg.Fallback != nil && cfg.Fallback.Reserve != nil {
+		reserve := cfg.Fallback.Reserve
+		if reserve.MaxReserves > 0 {
+			maxReserves = reserve.MaxReserves
+		}
+		if reserve.BudgetSeconds > 0 {
+			budgetSeconds = reserve.BudgetSeconds
+		}
+		if reserve.HoldMaxSeconds > 0 {
+			holdSeconds = reserve.HoldMaxSeconds
+		}
+		if len(reserve.HoldFamilies) > 0 {
+			families = reserve.HoldFamilies
+		}
+	}
+	return maxReserves, time.Duration(budgetSeconds) * time.Second, time.Duration(holdSeconds) * time.Second, families
+}
+
+func validateRaylineARCRefusalReserve(cfg *RaylineARCPolicyServiceConfig) error {
+	if cfg == nil || cfg.Fallback == nil || cfg.Fallback.Reserve == nil {
+		return nil
+	}
+	reserve := cfg.Fallback.Reserve
+	if reserve.Enabled && cfg.EvalCell {
+		return fmt.Errorf("policy_service fallback.reserve cannot be enabled on an eval_cell: eval turns are served as the policy chose them")
+	}
+	if reserve.Enabled && !cfg.Fallback.Enabled {
+		return fmt.Errorf("policy_service fallback.reserve needs fallback.enabled")
+	}
+	if reserve.MaxReserves < 0 || reserve.MaxReserves > RaylineARCMaxRefusalReserves {
+		return fmt.Errorf("policy_service fallback.reserve.max_reserves must be between 0 and %d", RaylineARCMaxRefusalReserves)
+	}
+	if reserve.BudgetSeconds < 0 || reserve.BudgetSeconds > 120 {
+		return fmt.Errorf("policy_service fallback.reserve.budget_seconds must be between 0 and 120")
+	}
+	if reserve.HoldMaxSeconds < 0 || reserve.HoldMaxSeconds > 300 {
+		return fmt.Errorf("policy_service fallback.reserve.hold_max_seconds must be between 0 and 300")
+	}
+	for _, family := range reserve.HoldFamilies {
+		if family != "claude" && family != "gpt" {
+			return fmt.Errorf("policy_service fallback.reserve.hold_families names %q; only claude and gpt are held", family)
+		}
+	}
+	return nil
 }
 
 // DefaultRaylineARCFamilyExclusionHours is a session's family exclusion
@@ -610,6 +704,9 @@ func validateRaylineARCPolicyBindings(decision Decision) error {
 	}
 	if cfg.Fallback != nil && (cfg.Fallback.FamilyExclusionHours < 0 || cfg.Fallback.FamilyExclusionHours > 168) {
 		return fmt.Errorf("policy_service fallback family_exclusion_hours must be between 0 and 168")
+	}
+	if err := validateRaylineARCRefusalReserve(cfg); err != nil {
+		return err
 	}
 	refs := make(map[string]bool, len(decision.ModelRefs))
 	for _, modelRef := range decision.ModelRefs {

@@ -209,10 +209,15 @@ func (r *OpenAIRouter) loopWait(ctx *RequestContext) time.Duration {
 		// Otherwise the next chunk checks instead.
 		silence = r.streamSilenceWait(ctx)
 	}
+	wait := held
 	if held <= 0 || silence > 0 && silence < held {
-		return silence
+		wait = silence
 	}
-	return held
+	// A held turn's keepalive is due on its own clock.
+	if keepAlive := r.refusalReserveKeepAliveWait(ctx); keepAlive > 0 && (wait <= 0 || keepAlive < wait) {
+		wait = keepAlive
+	}
+	return wait
 }
 
 // endSilentStream ends a streamed turn that went silent with no message to
