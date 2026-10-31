@@ -125,6 +125,17 @@ type RequestContext struct {
 	// gateway headers: "" for a standard request, else privacy or zdr. It is
 	// decided once, when the ARC context is built, and the provider pin reads it.
 	RaylineARCPrivacyMode string
+	// RaylineARCRequestedOutputTokens is the output the caller asked for, as
+	// the output-length mask read it (requestedOutputTokens); zero when the
+	// request stated no limit. RaylineARCOverOutputArms is that mask by arm
+	// ordinal, nil when no arm is masked. Both are logged as numbers only.
+	RaylineARCRequestedOutputTokens int64
+	RaylineARCOverOutputArms        []bool
+	// RaylineARCOutputLimit is the largest output limit among the arms this
+	// request's own constraints admit (vision, capability, context window),
+	// stated in the no_output_arm refusal; zero when an admitted arm declares
+	// no limit or none is admitted.
+	RaylineARCOutputLimit int64
 	// RaylineARCPrivacyAllowedArms is a private request's allowed set as its
 	// trusted header states it, sorted and deduplicated; nil for a standard
 	// request. Logged only as a count and a digest.

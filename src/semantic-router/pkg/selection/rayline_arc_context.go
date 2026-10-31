@@ -88,6 +88,14 @@ type RaylineARCSelectionContext struct {
 	// that filter removes a candidate from the list, and the arm list is
 	// positional, so the arm has to be masked where it stands instead.
 	OverContextArms []bool
+	// RequestedOutputTokens is the output the caller asked for: max_tokens,
+	// max_completion_tokens or max_output_tokens, or a larger thinking
+	// budget. Zero when the request stated no limit, which excludes nothing.
+	RequestedOutputTokens int64
+	// OverOutputArms marks, by arm ordinal, the candidates whose model card
+	// declares a max_output_tokens smaller than RequestedOutputTokens. Nil
+	// when no arm is under it; an arm with no declared limit is never marked.
+	OverOutputArms []bool
 	// RequiredCapabilities names what this turn needs an arm to hold, from
 	// llmprotocol.RequiredRoutingCapabilities. It is empty for almost every
 	// turn: only a server tool or an image inside a tool result puts a name
@@ -262,6 +270,10 @@ type RaylineARCTrace struct {
 	// PolicyLatency is the decide call's round trip as the router timed it;
 	// EncoderLatency stays the encode alone.
 	PolicyLatency time.Duration
+	// PolicyHTTP is the decide call's client-side httptrace: connection reuse
+	// and idle time, and the dial, write and first-byte phases. Nil outside
+	// the policy-service mode and on a decision no decide call answered.
+	PolicyHTTP *raylinearc.PolicyHTTPTiming
 	// PolicyDecisionMode is how a delta cell's staged turn was decided (ADR
 	// 0155): delta (on a turn_delta) or sync (sent in full). Empty on a sync
 	// cell, whose records are as before.
