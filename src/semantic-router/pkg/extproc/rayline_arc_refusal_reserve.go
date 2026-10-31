@@ -12,6 +12,7 @@ import (
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/headers"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/metrics"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/ratelimit"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc/thinkinglever"
@@ -146,6 +147,12 @@ func (r *OpenAIRouter) stageRefusalReserve(ctx *RequestContext, dispatch *provid
 	// body would not materialize that history again. Such turns pass a
 	// refusal through as before.
 	if responseHistoryRetained(ctx.ResponseObjectState) {
+		return
+	}
+	// Nor is a turn the request path added to (RAG, memory) or compressed:
+	// the rebuild from the client's body would not carry those again, and
+	// the next arm would answer without what the first was given.
+	if requestContentInjected(ctx) {
 		return
 	}
 	transaction := ctx.RaylineARCTransaction
@@ -400,6 +407,12 @@ func (r *OpenAIRouter) reserveRefusedTurn(ctx *RequestContext) bool {
 	if err := selectionDispatchAllowed(ctx); err != nil {
 		return restore("lease_lost")
 	}
+	// The next arm answers to its own rate limits, as a first dispatch
+	// would; its usage is then reported against it.
+	refusedLimit := ctx.RateLimitCtx
+	if r.applyRateLimit(ctx, model) != nil {
+		return restore("rate_limited")
+	}
 	// The refusing family is excluded for the session before the last
 	// check, since the store write takes time. A refusal passed through
 	// records the same exclusion (declineRefusedTurn), so a re-serve that
@@ -417,6 +430,7 @@ func (r *OpenAIRouter) reserveRefusedTurn(ctx *RequestContext) bool {
 	// and the new call spliced in.
 	emitLLMUsageRecord(refusedRecord)
 	recordUsageRecordCost(&refusedRecord, refusedPricedModel)
+	r.reportRefusedRateLimitUsage(ctx, refusedLimit)
 	plan.attempts = append(plan.attempts, attempt)
 	fields["outcome"] = "reserved"
 	fields["served_model"] = model
@@ -481,6 +495,7 @@ type reserveSnapshot struct {
 	endpointOrder, endpointsTried      []string
 	providerOrder                      []string
 	providerPrivacy                    dispatchedProviderPrivacy
+	rateLimit                          *ratelimit.Context
 }
 
 func snapshotReserveState(ctx *RequestContext, reselect *raylineARCReselect) reserveSnapshot {
@@ -496,6 +511,7 @@ func snapshotReserveState(ctx *RequestContext, reselect *raylineARCReselect) res
 		dispatchedEndpoint: ctx.RaylineARCDispatchedEndpoint,
 		endpointOrder:      ctx.RaylineARCEndpointOrder, endpointsTried: ctx.RaylineARCEndpointsTried,
 		providerOrder: ctx.DispatchedProviderOrder, providerPrivacy: ctx.DispatchedProviderPrivacy,
+		rateLimit: ctx.RateLimitCtx,
 	}
 	if transaction := ctx.RaylineARCTransaction; transaction != nil {
 		snapshot.transactionState = transaction.state
@@ -527,6 +543,7 @@ func (snapshot reserveSnapshot) restore(ctx *RequestContext, reselect *raylineAR
 	ctx.RaylineARCDispatchedEndpoint = snapshot.dispatchedEndpoint
 	ctx.RaylineARCEndpointOrder, ctx.RaylineARCEndpointsTried = snapshot.endpointOrder, snapshot.endpointsTried
 	ctx.DispatchedProviderOrder, ctx.DispatchedProviderPrivacy = snapshot.providerOrder, snapshot.providerPrivacy
+	ctx.RateLimitCtx = snapshot.rateLimit
 	ctx.FlexResend, ctx.RaylineARCEndpointResend, ctx.ThinkingSignatureRetry = nil, nil, nil
 	if transaction := ctx.RaylineARCTransaction; transaction != nil {
 		transaction.state = snapshot.transactionState
@@ -850,6 +867,26 @@ func refusedCallUsageIn(ctx *RequestContext) bool {
 	}
 	usage := partialStreamUsage(ctx.SemanticStreamState.usage)
 	return usage.completionTokensReported
+}
+
+// requestContentInjected reports a request the request path added content
+// to (RAG, memory) or compressed before its dispatch.
+func requestContentInjected(ctx *RequestContext) bool {
+	return ctx.RAGRetrievedContext != "" || ctx.MemoryContext != "" || ctx.ContextCompressionApplied
+}
+
+// reportRefusedRateLimitUsage reports the refused call's tokens against the
+// refused arm's own limit: the turn's report at its end names the next arm.
+func (r *OpenAIRouter) reportRefusedRateLimitUsage(ctx *RequestContext, limit *ratelimit.Context) {
+	if r.RateLimiter == nil || limit == nil || ctx.SemanticStreamState == nil {
+		return
+	}
+	usage := partialStreamUsage(ctx.SemanticStreamState.usage)
+	if total := responseUsageTotal(usage); total > 0 {
+		r.RateLimiter.Report(*limit, ratelimit.TokenUsage{
+			InputTokens: usage.promptTokens, OutputTokens: usage.completionTokens, TotalTokens: total,
+		})
+	}
 }
 
 // awaitingRefusalReserve reports a held turn whose call refused and whose

@@ -13,6 +13,7 @@ import (
 	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/ratelimit"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
 
@@ -147,4 +148,48 @@ func TestStripServerSideFallbackBetaHeader(t *testing.T) {
 	headers.Set(anthropicBetaHeader, "prompt-caching-2024-07-31")
 	stripServerSideFallbackBetaHeader(headers)
 	assert.Equal(t, "prompt-caching-2024-07-31", headers.Get(anthropicBetaHeader))
+}
+
+// limitByModel denies the models it names and records each usage report.
+type limitByModel struct {
+	denied  map[string]bool
+	reports []string
+}
+
+func (l *limitByModel) Name() string { return "test-limiter" }
+
+func (l *limitByModel) Check(ctx ratelimit.Context) (*ratelimit.Decision, error) {
+	return &ratelimit.Decision{Allowed: !l.denied[ctx.Model]}, nil
+}
+
+func (l *limitByModel) Report(ctx ratelimit.Context, _ ratelimit.TokenUsage) error {
+	l.reports = append(l.reports, ctx.Model)
+	return nil
+}
+
+// The next arm answers to its own rate limits: one out of quota is not
+// dispatched, and the turn keeps the refused arm's limit context.
+func TestRefusalReserveRespectsTheNextArmsRateLimit(t *testing.T) {
+	upstream := newHostUpstream(t, map[string]string{reserveGLMHost: "content"})
+	router := reserveRouter(upstream.server.URL)
+	limiter := &limitByModel{denied: map[string]bool{reserveGLMArm: true}}
+	router.RateLimiter = ratelimit.NewRateLimitResolver(limiter)
+	stream := NewMockStream(nil)
+	ctx, _ := startReserveTurn(t, router)
+	ctx.RateLimitCtx = &ratelimit.Context{Model: reserveClaudeArm}
+
+	require.NoError(t, router.handleProcessRequest(stream, fullDuplexResponseBodyRequest(reserveRoleChunk, false), ctx))
+	require.NoError(t, router.handleProcessRequest(stream, fullDuplexResponseBodyRequest(reserveRefusalChunk, true), ctx))
+	assert.False(t, ctx.HostRetry.started(), "an arm out of quota was dispatched")
+	assert.Empty(t, upstream.calls())
+	require.NotNil(t, ctx.RateLimitCtx)
+	assert.Equal(t, reserveClaudeArm, ctx.RateLimitCtx.Model)
+}
+
+// A turn the request path added to or compressed is not rebuilt.
+func TestRequestContentInjected(t *testing.T) {
+	assert.False(t, requestContentInjected(&RequestContext{}))
+	assert.True(t, requestContentInjected(&RequestContext{RAGRetrievedContext: "doc"}))
+	assert.True(t, requestContentInjected(&RequestContext{MemoryContext: "memory"}))
+	assert.True(t, requestContentInjected(&RequestContext{ContextCompressionApplied: true}))
 }
