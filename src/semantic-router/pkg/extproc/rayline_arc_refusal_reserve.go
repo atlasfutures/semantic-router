@@ -515,8 +515,17 @@ func (attempt *refusalAttempt) fillFromStream(state *semanticResponseStreamState
 	attempt.GenerationID = nonEmpty(state.upstreamResponseID)
 	usage := partialStreamUsage(state.usage)
 	if usage.promptTokensReported || usage.completionTokensReported {
+		// The record's fields are named as Anthropic's are, and mean what
+		// Anthropic's mean: input_tokens is the UNCACHED input, the cache
+		// reads and writes are counted apart from it. The stream's input
+		// total includes both, so they come off it here; the gateway prices
+		// the three as separate legs.
+		uncached := usage.promptTokens - usage.cachedPromptTokens - usage.cacheWriteTokens
+		if uncached < 0 {
+			uncached = 0
+		}
 		attempt.Usage = &refusalAttemptUsage{
-			InputTokens: int64(usage.promptTokens), OutputTokens: int64(usage.completionTokens),
+			InputTokens: int64(uncached), OutputTokens: int64(usage.completionTokens),
 			CacheReadInputTokens: int64(usage.cachedPromptTokens), CacheCreationInputTokens: int64(usage.cacheWriteTokens),
 		}
 	}

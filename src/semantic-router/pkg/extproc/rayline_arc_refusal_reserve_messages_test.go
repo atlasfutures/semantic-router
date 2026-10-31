@@ -4,6 +4,8 @@ package extproc
 
 import (
 	"net/http"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -97,4 +99,31 @@ func TestRefusalReserve_StopDetailsCyberAfterThinking(t *testing.T) {
 	assert.Equal(t, "content_filter", refused["signal"])
 	assert.Equal(t, "cyber", refused["stop_category"])
 	assert.Equal(t, "served", attempts[1].(map[string]interface{})["outcome"])
+	// Anthropic's own split: input_tokens is the uncached input, not the
+	// stream's input total, so the gateway does not price the cache reads
+	// twice.
+	usage := refused["usage"].(map[string]interface{})
+	assert.Equal(t, float64(99000), usage["input_tokens"])
+	assert.Equal(t, float64(98000), usage["cache_read_input_tokens"])
+	assert.Equal(t, float64(0), usage["cache_creation_input_tokens"])
+	assert.Equal(t, float64(160), usage["output_tokens"])
+
+	// The gateway's parser is tested against this exact line
+	// (memex-desktop firebase/router/tests/fixtures/vsr_attempts_cell.txt).
+	start := strings.Index(sent, refusalAttemptsCommentPrefix)
+	line := sent[start : start+strings.Index(sent[start:], "\n")]
+	assertGolden(t, "testdata/vsr_attempts_messages_cyber.golden", line+"\n")
+}
+
+// assertGolden compares got with the file at path; VSR_UPDATE_GOLDEN=1
+// rewrites the file instead.
+func assertGolden(t *testing.T, path, got string) {
+	t.Helper()
+	if os.Getenv("VSR_UPDATE_GOLDEN") == "1" {
+		require.NoError(t, os.WriteFile(path, []byte(got), 0o644))
+		return
+	}
+	want, err := os.ReadFile(path)
+	require.NoError(t, err, "missing golden %s: run with VSR_UPDATE_GOLDEN=1", path)
+	assert.Equal(t, string(want), got)
 }
