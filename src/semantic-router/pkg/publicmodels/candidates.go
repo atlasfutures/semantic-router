@@ -61,6 +61,13 @@ type RoutingCandidate struct {
 	// turn's native Responses body carries none). Absent when the arm is not
 	// dispatched through OpenRouter, where no provider object is sent.
 	ProviderPin *CandidateProviderPin `json:"provider_pin,omitempty"`
+	// PrivateProviderPin is the pin a private (privacy or zdr) turn on the
+	// arm sends in place of ProviderPin, from the card's
+	// private_provider_preferences, in the same shape. Present, it is what
+	// privacy and zdr turns send (with the data mode added); absent, they
+	// send ProviderPin. Absent too when the arm is not dispatched through
+	// OpenRouter.
+	PrivateProviderPin *CandidateProviderPin `json:"private_provider_pin,omitempty"`
 }
 
 // CandidateProviderPin is an OpenRouter arm's provider routing. Pinned is
@@ -246,6 +253,10 @@ func routingCandidateOf(cfg *config.RouterConfig, modelRef config.ModelRef, outp
 		}
 		if profile, err := cfg.GetProviderProfileForEndpoint(endpointName); err == nil && profile.IsOpenRouter() {
 			candidate.ProviderPin = providerPinOf(cfg.ProviderPreferencesForModel(model))
+			// The dispatch reads the same field (ProviderPreferencesForTurn).
+			if private := cfg.PrivateProviderPreferencesForModel(model); private != nil {
+				candidate.PrivateProviderPin = providerPinOf(private)
+			}
 		}
 	}
 	if pricing, ok := cfg.GetFullModelPricing(model); ok {

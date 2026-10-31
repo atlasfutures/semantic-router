@@ -55,6 +55,12 @@ providers:
         max_price:
           prompt: 0.5
           completion: 1.5
+      # The pin a private (privacy or zdr) turn sends instead; same keys.
+      private_provider_preferences:
+        order:
+          - together
+        only:
+          - together
       backend_refs:
         - name: local-primary
           endpoint: 127.0.0.1:8000

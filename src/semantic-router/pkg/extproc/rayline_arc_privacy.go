@@ -171,7 +171,9 @@ func (r *OpenAIRouter) armEndpointConstraint(model string, allowed []string) *ra
 		return nil
 	}
 	constraint := &raylinearc.ArmEndpoints{Model: r.Config.ResolveExternalModelID(model, backend), Allowed: allowed}
-	if pin := r.Config.ProviderPreferencesForModel(model); pin != nil {
+	// Only a private turn narrows by endpoint, so the constraint is the arm's
+	// private pin when it declares one: the endpoints the turn can reach.
+	if pin := armProviderPin(r.Config, model, raylineARCPrivacyModePrivacy); pin != nil {
 		constraint.Only, constraint.Order, constraint.Ignore = pin.Only, pin.Order, pin.Ignore
 	}
 	return constraint
@@ -270,8 +272,23 @@ func withPrivacyExcludedArms(
 	return combined, nil
 }
 
+// armProviderPin is the pin a turn in the given privacy mode sends for the
+// model before its data-use members are added: on a private turn (privacy or
+// zdr) the card's private_provider_preferences when it declares one, otherwise
+// its provider_preferences. A standard turn ("") always gets the latter.
+func armProviderPin(
+	cfg *config.RouterConfig,
+	model string,
+	privacyMode string,
+) *config.OpenRouterProviderPreferences {
+	if cfg == nil {
+		return nil
+	}
+	return cfg.ProviderPreferencesForTurn(model, privacyMode != "")
+}
+
 // privacyProviderPreferences is the provider object a private turn sends: the
-// arm's pin, or on an unpinned arm nothing but the data-use members, with
+// arm's pin (armProviderPin), or on an unpinned arm nothing but the data-use members, with
 // OpenRouter told to use only providers that do not collect the data and not
 // to fall back past them; a zdr turn also asks for zero-data-retention
 // endpoints only. It replaces any provider object the request carries: the

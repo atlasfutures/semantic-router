@@ -495,3 +495,36 @@ func TestARCAliasAdvertisesTheServedEndpointHeaderOnlyWithTheFeed(t *testing.T) 
 		}
 	}
 }
+
+// An OpenRouter arm lists the pin its private turns send as
+// private_provider_pin, in provider_pin's shape, only when its card declares
+// one; the gateway judges a private turn's candidate by it when present and by
+// provider_pin when absent.
+func TestCandidatesListTheirPrivateProviderPinOnlyWhenDeclared(t *testing.T) {
+	t.Setenv("PUBLICMODELS_CANDIDATES_TEST_KEY", "public-candidates-test-key")
+	cfg, err := config.ParseYAMLBytes([]byte(candidatesConfig))
+	if err != nil {
+		t.Fatalf("the candidates config did not load: %v", err)
+	}
+	fallbacks := true
+	declared := cfg.ModelConfig["z-ai/glm-5.2@thinking-off"]
+	declared.ProviderPreferences = &config.OpenRouterProviderPreferences{Order: []string{"z-ai"}}
+	declared.PrivateProviderPreferences = &config.OpenRouterProviderPreferences{
+		Order: []string{"phala", "novita"}, Only: []string{"phala", "novita"}, AllowFallbacks: &fallbacks,
+		MaxPrice: map[string]float64{"completion": 3},
+	}
+	cfg.ModelConfig["z-ai/glm-5.2@thinking-off"] = declared
+	candidates := candidatesOf(t, marshalListing(t, NewOpenAIModelList(cfg, 123)), "rayline/arc-dev")
+
+	first := candidates[0].(map[string]interface{})
+	private, _ := json.Marshal(first["private_provider_pin"])
+	if want := `{"allow_fallbacks":true,"max_price":{"completion":3},"only":["phala","novita"],"order":["phala","novita"],"pinned":true}`; string(private) != want {
+		t.Fatalf("private_provider_pin = %s, want %s", private, want)
+	}
+	if standard, _ := json.Marshal(first["provider_pin"]); string(standard) != `{"order":["z-ai"],"pinned":true}` {
+		t.Fatalf("provider_pin changed beside a private pin: %s", standard)
+	}
+	if _, present := candidates[1].(map[string]interface{})["private_provider_pin"]; present {
+		t.Fatal("an arm without private_provider_preferences lists a private_provider_pin")
+	}
+}

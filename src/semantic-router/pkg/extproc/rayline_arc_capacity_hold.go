@@ -124,7 +124,7 @@ func (selector *raylineARCSelector) policyCapacityHold(
 	result.RaylineARC.ThinkingLevel = binding.level
 	result.RaylineARC.PolicyActionModel = binding.model
 	result.RaylineARC.WorkerProviderModel = scorer.workers[binding.arm].Model
-	result.RaylineARC.WorkerRoute = scorer.routes[binding.arm]
+	result.RaylineARC.WorkerRoute = scorer.routeFor(binding.arm, arcContext.PrivateTurn)
 	result.RaylineARC.PolicySideCall = sideCall
 	if !sideCall {
 		result.RaylineARC.PolicyTurnState = turn.Clone()

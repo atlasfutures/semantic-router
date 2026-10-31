@@ -101,7 +101,7 @@ func seedOpaqueReasoningIssuer(t *testing.T, router *OpenAIRouter, episode, work
 	if err != nil {
 		t.Fatal(err)
 	}
-	issuer := router.opaqueReasoningIssuerFor(dispatch)
+	issuer := router.opaqueReasoningIssuerFor(dispatch, "")
 	if issuer == reasoning.ReasoningIssuerUnknown {
 		t.Fatalf("worker %s has no fixed issuer in the test config", worker)
 	}
@@ -128,7 +128,7 @@ func TestOpaqueReasoningIssuerOnOpenRouter(t *testing.T) {
 		logicalModel: "gpt", upstreamModel: "openai/gpt-5.6",
 		profile: &config.ProviderProfile{Type: "openrouter", BaseURL: "https://openrouter.ai/api/v1"},
 	}
-	if issuer := router.opaqueReasoningIssuerFor(dispatch); issuer != reasoning.ReasoningIssuerUnknown {
+	if issuer := router.opaqueReasoningIssuerFor(dispatch, ""); issuer != reasoning.ReasoningIssuerUnknown {
 		t.Fatalf("unpinned OpenRouter issuer = %q, want unknown", issuer)
 	}
 	for _, tc := range []struct {
@@ -140,7 +140,7 @@ func TestOpaqueReasoningIssuerOnOpenRouter(t *testing.T) {
 		{config.OpenRouterProviderPreferences{Order: []string{"openai", "azure"}, AllowFallbacks: &off}, false},
 	} {
 		router.Config = routerConfigWithPin("gpt", tc.pin)
-		known := router.opaqueReasoningIssuerFor(dispatch) != reasoning.ReasoningIssuerUnknown
+		known := router.opaqueReasoningIssuerFor(dispatch, "") != reasoning.ReasoningIssuerUnknown
 		if known != tc.want {
 			t.Fatalf("pin %+v: issuer known = %v, want %v", tc.pin, known, tc.want)
 		}

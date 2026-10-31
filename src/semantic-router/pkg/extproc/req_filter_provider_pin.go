@@ -64,7 +64,7 @@ func providerPreferencesMember(
 		privacyMode = ctx.RaylineARCPrivacyMode
 	}
 	resetDispatchedEndpoint(ctx)
-	pin, openRouter := providerPreferencesForDispatch(dispatch, routerConfig)
+	pin, openRouter := providerPreferencesForDispatch(dispatch, routerConfig, privacyMode)
 	if !openRouter || (pin == nil && privacyMode == "") {
 		return nil, nil
 	}
@@ -81,16 +81,17 @@ func providerPreferencesMember(
 
 // providerPreferencesForDispatch answers both gates in one place, so the
 // mutation above reads as a mutation and the policy stays testable on its own:
-// whether the dispatch reaches OpenRouter, and the arm's pin, nil when it pins
-// nothing.
+// whether the dispatch reaches OpenRouter, and the arm's pin for the turn's
+// privacy mode (armProviderPin), nil when it pins nothing.
 func providerPreferencesForDispatch(
 	dispatch *providerDispatch,
 	routerConfig *config.RouterConfig,
+	privacyMode string,
 ) (*config.OpenRouterProviderPreferences, bool) {
 	if dispatch == nil || routerConfig == nil || !providerIsOpenRouter(dispatch.profile) {
 		return nil, false
 	}
-	return routerConfig.ProviderPreferencesForModel(dispatch.logicalModel), true
+	return armProviderPin(routerConfig, dispatch.logicalModel, privacyMode), true
 }
 
 // recordDispatchedProviderPin names the providers the request actually pinned,

@@ -615,7 +615,7 @@ func TestPolicyWorkerRouteNamesTheEndpoint(t *testing.T) {
 				{Name: "modal-a", Address: "10.0.0.1", Port: 8000, Weight: 1},
 				{Name: "modal-b", Address: "10.0.0.2", Port: 8000, Weight: 1},
 			},
-		}}, ref)
+		}}, ref, false)
 	}
 	base := route("modal-a", nil)
 	if base == route("modal-b", nil) {
@@ -656,7 +656,7 @@ func TestPolicyWorkerRouteSkipsBalancedWorkers(t *testing.T) {
 		cfg := &config.RouterConfig{BackendModels: config.BackendModels{
 			ModelConfig: map[string]config.ModelParams{"kimi": params}, VLLMEndpoints: endpoints,
 		}}
-		if route := policyWorkerRoute(cfg, config.ModelRef{Model: "kimi"}); (route != "") != routed {
+		if route := policyWorkerRoute(cfg, config.ModelRef{Model: "kimi"}, false); (route != "") != routed {
 			t.Fatalf("%s endpoint(s): route %q", preferred, route)
 		}
 	}
