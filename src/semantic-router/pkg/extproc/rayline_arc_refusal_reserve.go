@@ -140,6 +140,13 @@ func (r *OpenAIRouter) stageRefusalReserve(ctx *RequestContext, dispatch *provid
 		ctx.RefusalFallbackOptOut || ctx.VSRRaylineARC == nil {
 		return
 	}
+	// A Responses turn that carries retained history (previous_response_id
+	// or a stored conversation) is not held: the rebuild from the client's
+	// body would not materialize that history again. Such turns pass a
+	// refusal through as before.
+	if ctx.ResponseObjectState != nil {
+		return
+	}
 	transaction := ctx.RaylineARCTransaction
 	if transaction == nil || transaction.sideCall || transaction.borrowed || transaction.relaxed || transaction.stateless {
 		return
@@ -257,6 +264,11 @@ func (r *OpenAIRouter) reserveRefusedTurn(ctx *RequestContext) bool {
 		!ctx.FullDuplexResponseBody {
 		return false
 	}
+	if plan.holdExpired(ctx) {
+		// Past the hold, the frames are the client's: nothing is re-served.
+		plan.released = true
+		return false
+	}
 	state := ctx.SemanticStreamState
 	signal := ""
 	visible := streamShowsVisibleContent(state)
@@ -295,7 +307,8 @@ func (r *OpenAIRouter) reserveRefusedTurn(ctx *RequestContext) bool {
 		fields["outcome"] = outcome
 		logging.ComponentWarnEvent("extproc", "rayline_arc_refusal_reserve", fields)
 		metrics.RecordRaylineARCRefusalReserve(outcome, family)
-		// Nothing more is held: the refusal reaches the client as before.
+		// Nothing more is held: the refusal reaches the client as before,
+		// and is settled once, on the turn's own line.
 		plan.released = true
 		return false
 	}
@@ -315,24 +328,34 @@ func (r *OpenAIRouter) reserveRefusedTurn(ctx *RequestContext) bool {
 	if redecide == nil {
 		return passThrough("not_reselectable")
 	}
+	// A lease lost while the frames were held: another request may own the
+	// episode, and a re-serve could never commit.
+	if err := selectionDispatchAllowed(ctx); err != nil {
+		return passThrough("lease_lost")
+	}
 	decisionName, confidence := ctx.VSRSelectedDecisionName, 0.0
 	if reselect != nil {
 		decisionName, confidence = reselect.decisionName, reselect.confidence
 	}
-	// The refused call's usage line, then the exclusions the re-decision
-	// reads: the model in this context, its family for the session.
-	r.settleRefusedReserveAttempt(ctx, len(plan.attempts)+1)
+	// The refused call's usage line is written only once a re-serve takes
+	// over; a refusal passed through is settled by the turn's own line.
+	refusedRecord := r.refusedReserveAttemptRecord(ctx, len(plan.attempts)+1)
+	// Everything the re-decision and the rebuild change, so a re-serve that
+	// does not start leaves the turn as the refused arm's.
+	snapshot := snapshotReserveState(ctx, reselect)
+	restore := func(outcome string) bool {
+		snapshot.restore(ctx, reselect)
+		return passThrough(outcome)
+	}
 	excludeRefusedModelInPlace(ctx, reselect)
-	if excluded := noteRaylineARCFamilyExclusion(ctx, refusing); excluded != "" {
-		fields["family_excluded"] = excluded
-		if reselect != nil && reselect.selCtx.RaylineARC != nil {
+	if reselect != nil && reselect.selCtx.RaylineARC != nil {
+		if excluded := raylinearc.ModelFamily(refusing); excluded != "" && familyExclusionOn(ctx) {
 			arcContext := reselect.selCtx.RaylineARC
 			if !containsFold(arcContext.FamilyExclusions, excluded) {
 				arcContext.FamilyExclusions = append(append([]string(nil), arcContext.FamilyExclusions...), excluded)
 			}
 		}
 	}
-	plan.attempts = append(plan.attempts, attempt)
 
 	decideStarted := time.Now()
 	selected, method, err := redecide(ctx)
@@ -341,7 +364,7 @@ func (r *OpenAIRouter) reserveRefusedTurn(ctx *RequestContext) bool {
 		if err != nil {
 			fields["redecide_error"] = err.Error()
 		}
-		return passThrough("no_eligible_arm")
+		return restore("no_eligible_arm")
 	}
 	model := selected.Model
 	if selected.LoRAName != "" {
@@ -352,20 +375,31 @@ func (r *OpenAIRouter) reserveRefusedTurn(ctx *RequestContext) bool {
 	if armModelOf(ctx) == refusing {
 		// The policy chose the refusing model again (an exclusion that could
 		// not be recorded): serving it again would only be refused again.
-		return passThrough("no_eligible_arm")
+		return restore("no_eligible_arm")
 	}
 	reasoning := applyReasoningModeFromSelectedModel(selected, decisionName, confidence, ctx)
 
-	dispatch, body, unavailable := r.rebuildDispatchForReserve(ctx, model, decisionName, reasoning.UseReasoning)
+	dispatch, body, staged, unavailable := r.rebuildDispatchForReserve(ctx, model, decisionName, reasoning.UseReasoning)
 	if dispatch == nil {
 		fields["reason"] = unavailable
-		return passThrough("dispatch_unavailable")
+		return restore("dispatch_unavailable")
 	}
 	call, unavailable := r.buildResendCall(ctx, dispatch.logicalModel, dispatch, body)
 	if call == nil {
 		fields["reason"] = unavailable
-		return passThrough("dispatch_unavailable")
+		return restore("dispatch_unavailable")
 	}
+	if err := selectionDispatchAllowed(ctx); err != nil {
+		return restore("lease_lost")
+	}
+
+	// The re-serve takes over: the refused call is settled on its own line,
+	// its family excluded for the session, and the new call spliced in.
+	emitLLMUsageRecord(refusedRecord)
+	if excluded := noteRaylineARCFamilyExclusion(ctx, refusing); excluded != "" {
+		fields["family_excluded"] = excluded
+	}
+	plan.attempts = append(plan.attempts, attempt)
 	fields["outcome"] = "reserved"
 	fields["served_model"] = model
 	fields["served_family"] = raylinearc.ModelFamily(armModelOf(ctx))
@@ -375,10 +409,87 @@ func (r *OpenAIRouter) reserveRefusedTurn(ctx *RequestContext) bool {
 	logging.ComponentEvent("extproc", "rayline_arc_refusal_reserve", fields)
 	metrics.RecordRaylineARCRefusalReserve("reserved", family)
 
-	r.spliceReserve(ctx, dispatch, body, call)
+	r.spliceReserve(ctx, dispatch, body, staged, call)
 	plan.family = raylinearc.ModelFamily(armModelOf(ctx))
 	plan.attemptStarted = time.Now()
 	return true
+}
+
+// holdExpired reports that the hold ran past hold_max_seconds.
+func (plan *refusalReservePlan) holdExpired(ctx *RequestContext) bool {
+	return !ctx.StartTime.IsZero() && time.Since(ctx.StartTime) >= plan.hold
+}
+
+// familyExclusionOn reports that the turn's cell excludes refusing families.
+func familyExclusionOn(ctx *RequestContext) bool {
+	decision := ctx.VSRSelectedDecision
+	return decision != nil && decision.Algorithm != nil && decision.Algorithm.RaylineARC != nil &&
+		decision.Algorithm.RaylineARC.PolicyService.FamilyExclusionEnabled()
+}
+
+// reserveSnapshot is the turn as the refused arm left it.
+type reserveSnapshot struct {
+	trace                                       *selection.RaylineARCTrace
+	selectedModel, method, reasoningMode, model string
+	request                                     *llmprotocol.Request
+	envelope                                    llmprotocol.Envelope
+	targetFormat                                llmprotocol.WireFormat
+	thinking                                    *plannedThinkingControl
+	outbound                                    *dispatchedOutboundParams
+	autoCache                                   *dispatchAutoCache
+	serviceTier                                 string
+	hostedTools                                 []string
+	namesToolResults, toOpenRouter              bool
+	transactionState, selectionState            *raylinearc.EpisodeState
+	families                                    []string
+}
+
+func snapshotReserveState(ctx *RequestContext, reselect *raylineARCReselect) reserveSnapshot {
+	snapshot := reserveSnapshot{
+		trace: ctx.VSRRaylineARC, selectedModel: ctx.VSRSelectedModel, method: ctx.VSRSelectionMethod,
+		reasoningMode: ctx.VSRReasoningMode, model: ctx.RequestModel,
+		request: ctx.SemanticRequest, envelope: ctx.ProtocolEnvelope, targetFormat: ctx.TargetFormat,
+		thinking: ctx.RaylineARCThinkingControl, outbound: ctx.DispatchedOutbound, autoCache: ctx.DispatchAutoCache,
+		serviceTier: ctx.DispatchedServiceTier, hostedTools: ctx.DispatchHostedTools,
+		namesToolResults: ctx.DispatchNamesToolResults, toOpenRouter: ctx.DispatchedToOpenRouter,
+	}
+	if transaction := ctx.RaylineARCTransaction; transaction != nil {
+		snapshot.transactionState = transaction.state
+	}
+	if reselect != nil && reselect.selCtx != nil && reselect.selCtx.RaylineARC != nil {
+		snapshot.selectionState = reselect.selCtx.RaylineARC.State
+		snapshot.families = reselect.selCtx.RaylineARC.FamilyExclusions
+	}
+	return snapshot
+}
+
+// restore puts the refused arm's turn back: its trace, its selection in the
+// transaction, its dispatch identity and the episode state as read, so the
+// refusal passed through is excluded, staged and settled as it would have
+// been without the attempt.
+func (snapshot reserveSnapshot) restore(ctx *RequestContext, reselect *raylineARCReselect) {
+	ctx.VSRRaylineARC = snapshot.trace
+	ctx.VSRSelectedModel, ctx.VSRSelectionMethod = snapshot.selectedModel, snapshot.method
+	ctx.VSRReasoningMode, ctx.RequestModel = snapshot.reasoningMode, snapshot.model
+	ctx.SemanticRequest, ctx.ProtocolEnvelope, ctx.TargetFormat = snapshot.request, snapshot.envelope, snapshot.targetFormat
+	ctx.RaylineARCThinkingControl, ctx.DispatchedOutbound = snapshot.thinking, snapshot.outbound
+	ctx.DispatchAutoCache, ctx.DispatchedServiceTier = snapshot.autoCache, snapshot.serviceTier
+	ctx.DispatchHostedTools, ctx.DispatchNamesToolResults = snapshot.hostedTools, snapshot.namesToolResults
+	ctx.DispatchedToOpenRouter = snapshot.toOpenRouter
+	ctx.FlexResend, ctx.RaylineARCEndpointResend, ctx.ThinkingSignatureRetry = nil, nil, nil
+	if transaction := ctx.RaylineARCTransaction; transaction != nil {
+		transaction.state = snapshot.transactionState
+		if trace := snapshot.trace; trace != nil {
+			transaction.markSelectionWithAffinity(trace.SelectedArm, trace.SerializedTokens,
+				trace.EncoderReplicaID, trace.EncoderVisitedReplicaIDs)
+			transaction.markPolicySession(trace.PolicySession, trace.PolicySessionCleared, trace.PolicySessionReplaced)
+			stageRaylineARCPolicySelection(ctx, trace, snapshot.selectedModel)
+		}
+	}
+	if reselect != nil && reselect.selCtx != nil && reselect.selCtx.RaylineARC != nil {
+		reselect.selCtx.RaylineARC.State = snapshot.selectionState
+		reselect.selCtx.RaylineARC.FamilyExclusions = snapshot.families
+	}
 }
 
 // refusedAttemptOf is the refused call as the attempt record states it.
@@ -424,11 +535,11 @@ func dispatchedModel(ctx *RequestContext) string {
 	return ctx.VSRSelectedModel
 }
 
-// settleRefusedReserveAttempt writes the refused call's usage line: what it
+// refusedReserveAttemptRecord is the refused call's usage line: what it
 // stated it used, classed as a refusal, marked as a re-served turn's call.
-// The turn has not failed, so its own failure state is left for the call
-// that takes over.
-func (r *OpenAIRouter) settleRefusedReserveAttempt(ctx *RequestContext, index int) {
+// It is emitted only when a re-serve takes over; the turn's own failure
+// state is left for the call that does.
+func (r *OpenAIRouter) refusedReserveAttemptRecord(ctx *RequestContext, index int) llmUsageRecord {
 	latency := time.Duration(0)
 	if !ctx.StartTime.IsZero() {
 		latency = time.Since(ctx.StartTime)
@@ -446,7 +557,7 @@ func (r *OpenAIRouter) settleRefusedReserveAttempt(ctx *RequestContext, index in
 	record.RefusalReserve = nonEmpty(refusalReserveRefused)
 	record.RefusalReserveAttempt = &index
 	r.priceUsageRecord(&record, ctx, ctx.RequestModel, usage)
-	emitLLMUsageRecord(record)
+	return record
 }
 
 // addRefusalReserveFields marks the served call of a re-served turn.
@@ -496,72 +607,74 @@ func armModelOf(ctx *RequestContext) string {
 // rebuildDispatchForReserve builds the dispatch of the re-decided arm from
 // the client's own body, as the request path built the first: decoded
 // again, the pre-dispatch tools policy, the arm's model, reasoning, pins and
-// output bound. It returns the dispatch and its encoded body, or why there
-// is none.
+// output bound. It returns the dispatch, its encoded body and the host retry
+// plan the new arm's pin stages (nil when none), or why there is none. The
+// turn's own hold and splice plan stays installed until the splice starts.
 func (r *OpenAIRouter) rebuildDispatchForReserve(
 	ctx *RequestContext, model, decisionName string, useReasoning bool,
-) (*providerDispatch, []byte, string) {
+) (*providerDispatch, []byte, *hostRetryPlan, string) {
 	engine, err := r.protocolEngine()
 	if err != nil || len(ctx.RaylineARCRawBody) == 0 {
-		return nil, nil, "protocol_unavailable"
+		return nil, nil, nil, "protocol_unavailable"
 	}
 	request, envelope, _, err := engine.DecodeRequestForMutation(ctx.SourceFormat, ctx.RaylineARCRawBody)
 	if err != nil {
-		return nil, nil, "decode_failed"
+		return nil, nil, nil, "decode_failed"
 	}
 	request.Trusted.SourceFormat = ctx.SourceFormat
 	request.Trusted.CorrelationID = ctx.RequestID
 	ctx.SemanticRequest = &request
 	ctx.ProtocolEnvelope = envelope
 	if _, err := r.applyPreDispatchToolsPolicy(ctx); err != nil {
-		return nil, nil, "tools_policy_failed"
+		return nil, nil, nil, "tools_policy_failed"
 	}
 	// The plans the first dispatch staged answer at the response headers,
 	// which are gone; the re-serve's own staging must not replace the hold
 	// and splice the turn runs under.
 	held := ctx.HostRetry
+	defer func() { ctx.HostRetry = held }()
 	dispatch, err := r.prepareProviderDispatch(ctx.SemanticRequest, model, decisionName, useReasoning, ctx)
 	if err != nil {
-		ctx.HostRetry = held
-		return nil, nil, "prepare_failed"
+		return nil, nil, nil, "prepare_failed"
 	}
 	response := r.buildProviderDispatchResponse(dispatch, ctx)
 	if response.GetRequestBody() == nil {
-		ctx.HostRetry = held
-		return nil, nil, "credential_unavailable"
+		return nil, nil, nil, "credential_unavailable"
 	}
 	response, err = r.completeProviderDispatch(ctx.SemanticRequest, dispatch, response, ctx)
 	staged := ctx.HostRetry
-	ctx.HostRetry = held
 	ctx.FlexResend, ctx.RaylineARCEndpointResend, ctx.ThinkingSignatureRetry = nil, nil, nil
 	if err != nil || response == nil {
-		return nil, nil, "complete_failed"
+		return nil, nil, nil, "complete_failed"
 	}
 	body := response.GetRequestBody().GetResponse().GetBodyMutation().GetBody()
 	if len(body) == 0 {
-		return nil, nil, "empty_body"
+		return nil, nil, nil, "empty_body"
 	}
 	ctx.RequestModel = model
-	// A host retry the new arm's pin stages takes over the hold and the
-	// splice from here.
-	if staged != nil && staged != held {
-		staged.trailersPending = held != nil && held.trailersPending
-		ctx.HostRetry = staged
-		if held != nil && held != staged {
-			held.stop()
-		}
+	if staged == held {
+		staged = nil
 	}
-	return dispatch, body, ""
+	return dispatch, body, staged, ""
 }
 
-// spliceReserve streams the re-served call into the open response.
-func (r *OpenAIRouter) spliceReserve(ctx *RequestContext, dispatch *providerDispatch, body []byte, call *flexTwinCall) {
-	plan := ctx.HostRetry
+// spliceReserve streams the re-served call into the open response. The new
+// arm gets a plan of its own -- the host retry its pin staged, or a fresh
+// one that never re-sends on a host -- so nothing of the refused arm's
+// hosts carries over; only the original call's pending trailers do.
+func (r *OpenAIRouter) spliceReserve(
+	ctx *RequestContext, dispatch *providerDispatch, body []byte, staged *hostRetryPlan, call *flexTwinCall,
+) {
+	old := ctx.HostRetry
+	plan := staged
 	if plan == nil {
 		plan = &hostRetryPlan{}
-		ctx.HostRetry = plan
 	}
-	plan.stop()
+	if old != nil {
+		old.stop()
+		plan.trailersPending = old.trailersPending
+	}
+	ctx.HostRetry = plan
 	plan.dispatch = dispatch
 	plan.dispatched = body
 	plan.attempts = []hostAttempt{{started: time.Now()}}
@@ -646,6 +759,11 @@ func (r *OpenAIRouter) refusalReserveKeepAliveWait(ctx *RequestContext) time.Dur
 	// Only once the body is under way: the first body reply follows the
 	// upstream's first chunk, as every other one does.
 	if plan == nil || plan.released || !streamSilenceTimerArmed(ctx) || !ctx.IsStreamingResponse || ctx.StreamingComplete {
+		return 0
+	}
+	// Past the hold nothing is held, and no keepalive is owed unless a
+	// re-serve is waiting on its first bytes.
+	if plan.holdExpired(ctx) && !ctx.HostRetry.started() {
 		return 0
 	}
 	wait := refusalReserveKeepAlive - time.Since(plan.lastKeepAliveOr(ctx.StartTime))
