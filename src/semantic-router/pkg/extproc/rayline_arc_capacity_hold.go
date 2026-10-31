@@ -109,6 +109,7 @@ func (selector *raylineARCSelector) policyCapacityHold(
 	// rather than all-zero ones a consumer would read as a real result.
 	result.RaylineARC.RawScores, result.RaylineARC.AdjustedScores = nil, nil
 	result.RaylineARC.PolicyLatency = latency
+	result.RaylineARC.PolicyHTTP = refusal.HTTPTiming
 	result.RaylineARC.EncoderLatencyUnknown = true
 	// A runtime that refuses before counting reports no token count; the
 	// counts are unknown, not zero.
@@ -123,7 +124,7 @@ func (selector *raylineARCSelector) policyCapacityHold(
 	result.RaylineARC.ThinkingLevel = binding.level
 	result.RaylineARC.PolicyActionModel = binding.model
 	result.RaylineARC.WorkerProviderModel = scorer.workers[binding.arm].Model
-	result.RaylineARC.WorkerRoute = scorer.routes[binding.arm]
+	result.RaylineARC.WorkerRoute = scorer.routeFor(binding.arm, arcContext.PrivateTurn)
 	result.RaylineARC.PolicySideCall = sideCall
 	if !sideCall {
 		result.RaylineARC.PolicyTurnState = turn.Clone()

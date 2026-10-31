@@ -46,6 +46,9 @@ type deltaFixture struct {
 	episode string
 	// decided is the action the service's decide picks.
 	decided string
+	// shared, when set, is the staged-turn record store the cell's
+	// instances share.
+	shared raylinearc.EpisodeStagedTurnStore
 }
 
 func newDeltaFixture(t *testing.T, mode string, edit func(*config.RaylineARCPolicyServiceConfig)) *deltaFixture {
@@ -98,7 +101,11 @@ func (fixture *deltaFixture) turn(t *testing.T, body []byte) (*selection.Selecti
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := fixture.selectOn(t, state, body)
+	result, err := fixture.selectOnWith(t, state, body, func(arcContext *selection.RaylineARCSelectionContext) {
+		if fixture.shared != nil {
+			arcContext.PolicyStagedTurns = fixture.shared
+		}
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -199,11 +206,14 @@ func TestDeltaSendsOnlyTheNewTurn(t *testing.T) {
 	}
 }
 
-// fakeCanonicalRequest is a decided request as the service's projections
-// read it (canonical-conversation.v1 and transcript-projection.v9 alike):
-// cache_control dropped everywhere and string content as one text block,
-// JSON key order and whitespace insignificant. The two differences VSR's
-// prefix digest tolerates are exactly these.
+// fakeCanonicalRequest is a decided request as the service's canonical
+// projection reads it (canonical-conversation.v1, the only form it serves a
+// delta for): cache_control dropped everywhere, string content as one text
+// block, and the members canonical_conversation.py _clean removes (a
+// tool_use or server_tool_use block's caller, a thinking block's signature,
+// a text block's null or [] citations); JSON key order and whitespace
+// insignificant. The differences VSR's prefix digest tolerates are exactly
+// these.
 func fakeCanonicalRequest(t *testing.T, request raylinearc.PolicyClientRequest) string {
 	var messages []any
 	if request.Input != nil {
@@ -235,6 +245,25 @@ func fakeCanonicalRequest(t *testing.T, request raylinearc.PolicyClientRequest) 
 		}
 		return value
 	}
+	// _clean runs on each message's content blocks and a tool_result's,
+	// never on data nested deeper (a tool's input).
+	var cleanBlocks func(any)
+	cleanBlocks = func(content any) {
+		blocks, _ := content.([]any)
+		for _, block := range blocks {
+			if fields, ok := block.(map[string]any); ok {
+				fakeClean(fields)
+				if fields["type"] == "tool_result" {
+					cleanBlocks(fields["content"])
+				}
+			}
+		}
+	}
+	for _, message := range messages {
+		if fields, ok := message.(map[string]any); ok {
+			cleanBlocks(fields["content"])
+		}
+	}
 	var system, tools any
 	_ = json.Unmarshal(request.System, &system)
 	_ = json.Unmarshal(request.Tools, &tools)
@@ -245,6 +274,23 @@ func fakeCanonicalRequest(t *testing.T, request raylinearc.PolicyClientRequest) 
 		t.Error(err)
 	}
 	return string(encoded)
+}
+
+// fakeClean removes what canonical_conversation.py _clean removes from one
+// content block beside cache_control.
+func fakeClean(fields map[string]any) {
+	switch fields["type"] {
+	case "text":
+		if citations, ok := fields["citations"]; ok {
+			if list, isList := citations.([]any); citations == nil || (isList && len(list) == 0) {
+				delete(fields, "citations")
+			}
+		}
+	case "tool_use", "server_tool_use":
+		delete(fields, "caller")
+	case "thinking":
+		delete(fields, "signature")
+	}
 }
 
 // newDeltaRefusingProxy answers every delta decide as a service that
@@ -626,8 +672,9 @@ func TestDeltaAppendTakesNoDecideSlot(t *testing.T) {
 	}
 }
 
-// Claude Code's appended reply must reproduce the echo the client sends;
-// one echoed otherwise is told apart as the appended reply's mismatch.
+// Claude Code's appended reply must reproduce the echo the client sends
+// byte for byte; a bare echo (no citations or caller, as Workshop's agent
+// sends) reads the same to the service and extends it too.
 func TestDeltaClaudeCodeEchoShapes(t *testing.T) {
 	resend := readThreadFixture(t, "claude-code-2.1.309-thread-create-resend.request.json")
 	var body struct {
@@ -654,8 +701,8 @@ func TestDeltaClaudeCodeEchoShapes(t *testing.T) {
 	_ = json.Unmarshal(requestMessages(t, policyTestRequest(t, deltaUser, bare, deltaToolResult)), &messages)
 	_, reason := policyDeltaFor(fixture.scorer(), fixture.episode, &raylinearc.EpisodeState{TurnIndex: 1},
 		&raylinearc.PolicyEpisodeState{}, raylinearc.PolicyTransitionExtends, policyFormatAnthropic, messages)
-	if reason != "appended_mismatch" {
-		t.Fatalf("delta reason %q, want appended_mismatch", reason)
+	if reason != policyDecisionModeDelta {
+		t.Fatalf("delta reason %q, want delta", reason)
 	}
 }
 
@@ -675,7 +722,7 @@ func TestDeltaThinkingReplyIsNotAppended(t *testing.T) {
 	fixture := newDeltaFixture(t, config.RaylineARCDecideModeDelta, nil)
 	_, ctx := fixture.turn(t, policyTestRequest(t, deltaUser))
 	reply, _ := json.Marshal(map[string]any{"type": "message", "role": "assistant", "content": []any{
-		map[string]any{"type": "redacted_thinking", "data": "x"},
+		map[string]any{"type": "redacted_thinking", "data": "x", "extra": 1},
 		map[string]any{"type": "text", "text": "done"},
 	}})
 	complete(t, ctx, reply)
@@ -693,11 +740,26 @@ func TestPolicyReplyThinksInEveryFormat(t *testing.T) {
 		body   string
 		thinks bool
 	}{
-		{policyFormatAnthropic, `{"role":"assistant","content":[{"type":"redacted_thinking","data":"x"}]}`, true},
+		{policyFormatAnthropic, `{"role":"assistant","content":[{"type":"redacted_thinking","data":"x"}]}`, false},
+		{policyFormatAnthropic, `{"role":"assistant","content":[{"type":"redacted_thinking","data":""}]}`, true},
+		{policyFormatAnthropic, `{"role":"assistant","content":[{"type":"redacted_thinking"}]}`, true},
+		{policyFormatAnthropic, `{"role":"assistant","content":[{"type":"redacted_thinking","data":7}]}`, true},
+		{policyFormatAnthropic, `{"role":"assistant","content":[{"type":"redacted_thinking","data":"x","signature":"s"}]}`, true},
 		{policyFormatAnthropic, `{"role":"assistant","content":[{"type":"text","text":"a"}]}`, false},
 		{policyFormatAnthropic, `{"role":"assistant","content":[{"type":"thinking","thinking":"t","signature":"s"},{"type":"text","text":"a"}]}`, false},
-		{policyFormatAnthropic, `{"role":"assistant","content":[{"type":"thinking","thinking":"t","signature":""}]}`, true},
-		{policyFormatAnthropic, `{"role":"assistant","content":[{"type":"thinking","thinking":"t"}]}`, true},
+		{policyFormatAnthropic, `{"role":"assistant","content":[{"type":"thinking","thinking":"t","signature":""}]}`, false},
+		{policyFormatAnthropic, `{"role":"assistant","content":[{"type":"thinking","thinking":"t"}]}`, false},
+		{policyFormatAnthropic, `{"role":"assistant","content":[{"type":"thinking","thinking":"t","signature":null}]}`, true},
+		{policyFormatAnthropic, `{"role":"assistant","content":[{"type":"thinking","thinking":"t","signature":7}]}`, true},
+		{policyFormatAnthropic, `{"role":"assistant","content":[{"type":"thinking","signature":"s"}]}`, true},
+		{policyFormatAnthropic, `{"role":"assistant","content":[{"type":"thinking","thinking":null}]}`, true},
+		{policyFormatAnthropic, `{"role":"assistant","content":[{"type":"thinking","thinking":7}]}`, true},
+		{policyFormatAnthropic, `{"role":"assistant","content":[{"type":"thinking","thinking":true}]}`, true},
+		{policyFormatAnthropic, `{"role":"assistant","content":[{"type":"thinking","thinking":["t"]}]}`, true},
+		{policyFormatAnthropic, `{"role":"assistant","content":[{"type":"thinking","thinking":{"t":1}}]}`, true},
+		{policyFormatAnthropic, `{"role":"assistant","content":[{"type":"thinking","thinking":"t","signature":"s","extra":1}]}`, true},
+		{policyFormatAnthropic, `{"role":"assistant","content":[{"type":"thinking","thinking":"t","extra":1}]}`, true},
+		{policyFormatAnthropic, `{"role":"assistant","content":[{"type":"thinking","thinking":"t","signature":"s"},{"type":"redacted_thinking","data":"x"}]}`, false},
 		{policyFormatOpenAI, `{"choices":[{"message":{"role":"assistant","content":"a","reasoning":"why"}}]}`, true},
 		{policyFormatOpenAI, `{"choices":[{"message":{"role":"assistant","content":"a","reasoning_details":[{"type":"reasoning.text"}]}}]}`, true},
 		{policyFormatOpenAI, `{"choices":[{"message":{"role":"assistant","content":"a","reasoning":null}}]}`, false},
@@ -789,7 +851,7 @@ func TestDeltaDigestKeepsNestedCacheControl(t *testing.T) {
 	}
 	for name, pair := range map[string][2]string{
 		"changed text":   {`{"role":"user","content":[{"type":"text","text":"hi"}]}`, `{"role":"user","content":"hi "}`},
-		"another member": {`{"role":"user","content":[{"type":"text","text":"hi","citations":[]}]}`, `{"role":"user","content":"hi"}`},
+		"another member": {`{"role":"user","content":[{"type":"text","text":"hi","citations":[{"type":"char_location"}]}]}`, `{"role":"user","content":"hi"}`},
 		"two blocks":     {`{"role":"user","content":[{"type":"text","text":"h"},{"type":"text","text":"i"}]}`, `{"role":"user","content":"hi"}`},
 		"assistant":      {`{"role":"assistant","content":[{"type":"text","text":"hi"}]}`, `{"role":"assistant","content":"hi"}`},
 	} {
@@ -909,9 +971,11 @@ func TestDeltaReplayParityClaudeCodeThinkingTurn(t *testing.T) {
 	}
 }
 
-// A client that alters or strips an appended signed thinking block breaks
-// the digest gate: the held turn goes in full (appended_mismatch), and is
-// decided as the sync cell decides it.
+// A client that alters an appended thinking block's text, or drops the
+// block, breaks the digest gate: the held turn goes in full
+// (appended_mismatch), and is decided as the sync cell decides it. Its
+// signature is not encoded (canonical_conversation.py _clean), so an echo
+// that changes, empties or drops it extends the staged turn.
 func TestDeltaAlteredThinkingEchoForcesAFullResend(t *testing.T) {
 	signed := []any{
 		map[string]any{"type": "thinking", "thinking": "list first", "signature": "sig-1"},
@@ -932,8 +996,9 @@ func TestDeltaAlteredThinkingEchoForcesAFullResend(t *testing.T) {
 		mode string
 	}{
 		{"unchanged", echo(map[string]any{"type": "thinking", "thinking": "list first", "signature": "sig-1"}), policyDecisionModeDelta},
-		{"signature_changed", echo(map[string]any{"type": "thinking", "thinking": "list first", "signature": "sig-2"}), policyDecisionModeSync},
-		{"signature_stripped", echo(map[string]any{"type": "thinking", "thinking": "list first"}), policyDecisionModeSync},
+		{"signature_changed", echo(map[string]any{"type": "thinking", "thinking": "list first", "signature": "sig-2"}), policyDecisionModeDelta},
+		{"signature_emptied", echo(map[string]any{"type": "thinking", "thinking": "list first", "signature": ""}), policyDecisionModeDelta},
+		{"signature_stripped", echo(map[string]any{"type": "thinking", "thinking": "list first"}), policyDecisionModeDelta},
 		{"text_changed", echo(map[string]any{"type": "thinking", "thinking": "list", "signature": "sig-1"}), policyDecisionModeSync},
 		{"block_stripped", echo(nil), policyDecisionModeSync},
 	} {

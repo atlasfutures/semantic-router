@@ -39,6 +39,9 @@ func (r *OpenAIRouter) handleRequestBody(
 	if routesResponse := r.handleRaylineRoutesAPI(requestBody, ctx); routesResponse != nil {
 		return routesResponse, nil
 	}
+	// What decides an ARC turn is known from its model alone, so every
+	// refusal from here on, before the recipe is formally resolved, says so.
+	r.stateGenerationIdentity(raylineRoutesModelOf(requestBody), ctx)
 	// A generation turn's routing block is read and removed before anything
 	// else reads the body: it never reaches the codec, the encoder or the
 	// provider.

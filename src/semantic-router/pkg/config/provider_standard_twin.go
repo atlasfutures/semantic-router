@@ -77,6 +77,32 @@ func validateStandardTwin(discount CanonicalProviderModel, byName map[string]Can
 			)
 		}
 	}
+	// A private turn is sent on each side's private pin when it declares
+	// one: its re-send must not land on the endpoint its private call used.
+	if discount.PrivateProviderPreferences == nil && twin.PrivateProviderPreferences == nil {
+		return nil
+	}
+	privateDiscount, privateTwin := discount.ProviderPreferences, twin.ProviderPreferences
+	if discount.PrivateProviderPreferences != nil {
+		privateDiscount = discount.PrivateProviderPreferences
+	}
+	if twin.PrivateProviderPreferences != nil {
+		privateTwin = twin.PrivateProviderPreferences
+	}
+	if len(privateDiscount.Only) == 0 {
+		return fmt.Errorf(
+			"providers.models[%s].standard_twin needs private_provider_preferences.only naming the discount endpoint",
+			name,
+		)
+	}
+	for _, slug := range privateDiscount.Only {
+		if providerPinAdmits(privateTwin, slug) {
+			return fmt.Errorf(
+				"providers.models[%s] is the standard twin of %s and its private-turn pin must exclude the private endpoint %q (ignore it, or leave it out of only)",
+				twinName, name, slug,
+			)
+		}
+	}
 	return nil
 }
 

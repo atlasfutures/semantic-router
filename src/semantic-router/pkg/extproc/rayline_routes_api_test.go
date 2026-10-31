@@ -1004,7 +1004,7 @@ func TestDecisionOnlyRoutingTargetHonoursTheSurface(t *testing.T) {
 	t.Parallel()
 	router := twoARCDecisionRouter()
 
-	decision, _, err := router.decisionOnlyRoutingTarget(routerruntime.RouteDecisionSurfaceRoutes)
+	decision, _, err := router.decisionOnlyRoutingTarget(routerruntime.RouteDecisionSurfaceRoutes, "")
 	if err != nil {
 		t.Fatalf("routes surface: err = %v, want the claiming decision", err)
 	}
@@ -1012,14 +1012,14 @@ func TestDecisionOnlyRoutingTargetHonoursTheSurface(t *testing.T) {
 		t.Fatalf("routes surface picked %q, want the decision that enabled routes_api", decision.Name)
 	}
 
-	if _, _, err := router.decisionOnlyRoutingTarget(routerruntime.RouteDecisionSurfaceConsult); err == nil {
+	if _, _, err := router.decisionOnlyRoutingTarget(routerruntime.RouteDecisionSurfaceConsult, ""); err == nil {
 		t.Fatal("the legacy consult resolved a target from another surface's claim, want its own ambiguity error")
 	} else if !strings.Contains(err.Error(), "ambiguous") {
 		t.Fatalf("consult err = %v, want the ambiguity refusal", err)
 	}
 
 	// One ARC decision is unambiguous for both, claim or no claim.
-	if _, _, err := routesRouter(true).decisionOnlyRoutingTarget(routerruntime.RouteDecisionSurfaceConsult); err != nil {
+	if _, _, err := routesRouter(true).decisionOnlyRoutingTarget(routerruntime.RouteDecisionSurfaceConsult, ""); err != nil {
 		t.Fatalf("single-decision consult: err = %v, want the only decision", err)
 	}
 }

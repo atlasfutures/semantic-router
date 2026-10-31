@@ -97,6 +97,10 @@ type policyServiceScorer struct {
 	fallback bool
 	// routes names each worker's route in the cell exclusion table.
 	routes []string
+	// privateRoutes are the routes a private turn takes: an arm's private
+	// provider pin in place of its standard one. Equal to routes at an arm
+	// that declares none, so such an arm's exclusions stay shared.
+	privateRoutes []string
 	// episodeMode is the decide request's episode_mode: empty (strict) or
 	// relaxed.
 	episodeMode string
@@ -226,11 +230,13 @@ func newPolicyServiceScorer(
 		index[modelRef.Model] = arm
 		scorer.workerIDs = append(scorer.workerIDs, modelRef.Model)
 		scorer.workers = append(scorer.workers, policyWorkerManifest(cfg, modelRef))
-		route := policyWorkerRoute(cfg, modelRef)
+		route, privateRoute := policyWorkerRoute(cfg, modelRef, false), policyWorkerRoute(cfg, modelRef, true)
 		if route != "" {
 			route = generation + "\x00" + route
+			privateRoute = generation + "\x00" + privateRoute
 		}
 		scorer.routes = append(scorer.routes, route)
+		scorer.privateRoutes = append(scorer.privateRoutes, privateRoute)
 	}
 	for _, binding := range policy.Bindings {
 		level, model := binding.Level, binding.Model
@@ -266,12 +272,18 @@ func newPolicyServiceScorer(
 // route here: Envoy balances its calls across them, so a failure cannot be
 // pinned on one, and excluding the whole worker would also take its healthy
 // endpoints out of the offer.
-func policyWorkerRoute(cfg *config.RouterConfig, modelRef config.ModelRef) string {
+//
+// A private turn's route carries the arm's private pin
+// (private_provider_preferences) when it declares one, so a private host's
+// failure excludes the arm for private turns only. The worker manifest below
+// reads the standard pin only: a private pin changes which host serves a
+// private turn, not the worker the policy decides over.
+func policyWorkerRoute(cfg *config.RouterConfig, modelRef config.ModelRef, private bool) string {
 	if len(cfg.GetEndpointsForModel(modelRef.Model)) > 1 {
 		return ""
 	}
 	address, endpoint, _, _ := cfg.ResolvePrimaryBackendForModel(modelRef.Model)
-	preferences, _ := json.Marshal(cfg.ProviderPreferencesForModel(modelRef.Model))
+	preferences, _ := json.Marshal(cfg.ProviderPreferencesForTurn(modelRef.Model, private))
 	return strings.Join([]string{
 		modelRef.Model, endpoint, address, cfg.ResolveExternalModelID(modelRef.Model, endpoint), string(preferences),
 	}, "\x00")
@@ -613,7 +625,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	// which never retains a boundary for a side call (retainPolicyBoundary).
 	var cellOut map[int]string
 	if scorer.fallback && !sideCall && turn != nil {
-		cellOut = scorer.cellExclusions(selector.now())
+		cellOut = scorer.cellExclusions(selector.now(), arcContext.PrivateTurn)
 	}
 	fallback := scorer.fallback && !sideCall && turn != nil && (len(turn.Exclusions) > 0 || len(cellOut) > 0)
 	offer := func(cellOut map[int]string) ([]string, int, bool) {
@@ -833,6 +845,9 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		staged := true
 		request.Stage = &staged
 	}
+	if scorer.delta && !sideCall {
+		scorer.hydratePolicyStagedTurn(ctx, arcContext, state.TurnIndex)
+	}
 	var deltaBase policyStagedTurn
 	deltaOutcome := ""
 	if staging {
@@ -958,7 +973,11 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	// package's fallback action in their place.
 	if errors.As(err, &cold) && cold.Class == raylinearc.PolicySelectionRefusedClass &&
 		raylinearc.PolicyRefusalReason(cold.Detail) == "unknown_price_model" {
-		return nil, arcSelectionFailure(arcFailureRoutesUnknownPriceModel)
+		failure := arcSelectionFailure(arcFailureRoutesUnknownPriceModel)
+		if routeControls != nil {
+			failure.models = routeRefusedPriceModels(cold.Detail, routeControls.PricedModels)
+		}
+		return nil, failure
 	}
 	if errors.As(err, &cold) && (cold.Class == raylinearc.PolicyStageOneHeldUnknownClass ||
 		cold.Class == raylinearc.PolicySelectionRefusedClass) {
@@ -999,6 +1018,15 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 			}
 		}
 		fields := map[string]interface{}{"class": class, "episode_id_hash": arcContext.EpisodeIDHash}
+		// A caller price world the service refused answers its own code,
+		// not the generic request_shape 400.
+		if failure != nil && class == "unsupported_request" && routeControls != nil && routeControls.Prices != nil {
+			if refused := routeCallerPricesRefusal(failure.Detail); refused != "" {
+				fields["reason"] = failure.Detail["reason"]
+				logging.ComponentErrorEvent("extproc", "rayline_arc_policy_service_failed", fields)
+				return nil, arcSelectionFailure(refused)
+			}
+		}
 		// A timeout or transport failure names what failed (a dial, TLS or
 		// read error, and the status when one was answered); the client has
 		// already dropped the URL and redacted the credentials.
@@ -1112,6 +1140,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	}
 	result := selector.selectionResult(armed, selCtx, arcContext, state, encoded, decision, encodeLatency)
 	result.RaylineARC.PolicyLatency = latency
+	result.RaylineARC.PolicyHTTP = response.HTTPTiming
 	result.RaylineARC.EncoderLatencyUnknown = response.TimingMillis.Encode == nil
 	result.RaylineARC.PolicyDecisionMode = decisionMode
 	if staging {
@@ -1127,7 +1156,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	result.RaylineARC.ThinkingLevel = binding.level
 	result.RaylineARC.PolicyActionModel = binding.model
 	result.RaylineARC.WorkerProviderModel = scorer.workers[binding.arm].Model
-	result.RaylineARC.WorkerRoute = scorer.routes[binding.arm]
+	result.RaylineARC.WorkerRoute = scorer.routeFor(binding.arm, arcContext.PrivateTurn)
 	result.RaylineARC.PolicySideCall = sideCall
 	result.RaylineARC.OfferKind = policyOfferKind(derivedOffer, forced, retained, held)
 	result.RaylineARC.MaskedArms = policyMaskedArms(scorer, workerIDs, excluded, fallback, turn, offeredRoutes)
@@ -1271,11 +1300,21 @@ func (scorer *policyServiceScorer) actionModel(actionID string) string {
 	return scorer.armModel(binding.arm)
 }
 
+// routeFor is the route an arm's turn takes: its private route on a private
+// turn, otherwise its standard one.
+func (scorer *policyServiceScorer) routeFor(arm int, private bool) string {
+	if private && arm < len(scorer.privateRoutes) {
+		return scorer.privateRoutes[arm]
+	}
+	return scorer.routes[arm]
+}
+
 // cellExclusions are the arms whose routes the cell has excluded at now,
 // with the failure class that excluded each.
-func (scorer *policyServiceScorer) cellExclusions(now time.Time) map[int]string {
+func (scorer *policyServiceScorer) cellExclusions(now time.Time, private bool) map[int]string {
 	var out map[int]string
-	for arm, route := range scorer.routes {
+	for arm := range scorer.routes {
+		route := scorer.routeFor(arm, private)
 		if route == "" {
 			continue
 		}

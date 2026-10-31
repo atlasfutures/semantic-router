@@ -162,3 +162,59 @@ func TestPollTakesAWaitingMessage(t *testing.T) {
 	_, ok = receiver.poll()
 	assert.True(t, ok)
 }
+
+// silenceRouterWithArm is silenceRouter plus one arm carrying its own
+// first-content and idle limits.
+func silenceRouterWithArm(firstContentSec, idleSec int, arm string, armFirstContentSec, armIdleSec int) *OpenAIRouter {
+	router := silenceRouter(firstContentSec, idleSec)
+	router.Config.ModelConfig = map[string]config.ModelParams{
+		arm: {FirstContentSec: armFirstContentSec, IdleSec: armIdleSec},
+	}
+	return router
+}
+
+// An arm whose host buffers a tool call's arguments keeps its own longer idle
+// limit; every other arm keeps the global one, and the arm's first-content
+// limit is not touched by its idle override.
+func TestAnArmIdleLimitReplacesTheGlobalOneForThatArmOnly(t *testing.T) {
+	router := silenceRouterWithArm(60, 120, "buffering-arm", 0, 300)
+
+	buffering := &RequestContext{RequestModel: "buffering-arm"}
+	assert.Equal(t, 60*time.Second, router.streamSilenceLimit(buffering), "the idle override changed the first-content limit")
+	buffering.StreamContentSeen = true
+	assert.Equal(t, 300*time.Second, router.streamSilenceLimit(buffering))
+
+	streaming := &RequestContext{RequestModel: "streaming-arm", StreamContentSeen: true}
+	assert.Equal(t, 120*time.Second, router.streamSilenceLimit(streaming), "an arm without its own idle limit must keep the global one")
+
+	both := silenceRouterWithArm(60, 120, "buffering-arm", 300, 0)
+	ctx := &RequestContext{RequestModel: "buffering-arm"}
+	assert.Equal(t, 300*time.Second, both.streamSilenceLimit(ctx))
+	ctx.StreamContentSeen = true
+	assert.Equal(t, 120*time.Second, both.streamSilenceLimit(ctx), "a first-content override changed the idle limit")
+}
+
+// 207 s of mid-stream silence on the buffering arm is under its 300 s idle
+// limit and is not cut, although the global limit is 120 s.
+func TestABufferingArmIsNotCutAtTheGlobalIdleLimit(t *testing.T) {
+	router := silenceRouterWithArm(60, 120, "buffering-arm", 0, 300)
+	ctx, transaction := silentStreamContext(t, 207*time.Second)
+	ctx.StartTime = time.Now().Add(-207 * time.Second) // short of the 590 s stream deadline
+	ctx.RequestModel = "buffering-arm"
+	ctx.StreamContentSeen = true
+	stream := NewMockStream(nil)
+	require.NoError(t, router.handleProcessRequest(stream, fullDuplexResponseBodyRequest(openRouterKeepaliveChunk, false), ctx))
+	streamed := stream.Responses[0].GetResponseBody().GetResponse().GetBodyMutation().GetStreamedResponse()
+	assert.False(t, streamed.GetEndOfStream(), "the buffering arm was cut under its own idle limit")
+	assert.Empty(t, ctx.ResponseFailureClass)
+	assert.Equal(t, 0, transaction.aborts)
+
+	// The same silence on an arm without its own limit is cut at the global 120 s.
+	other, _ := silentStreamContext(t, 207*time.Second)
+	other.RequestModel = "streaming-arm"
+	other.StreamContentSeen = true
+	otherStream := NewMockStream(nil)
+	require.NoError(t, router.handleProcessRequest(otherStream, fullDuplexResponseBodyRequest(openRouterKeepaliveChunk, false), other))
+	assert.True(t, otherStream.Responses[0].GetResponseBody().GetResponse().GetBodyMutation().GetStreamedResponse().GetEndOfStream())
+	assert.Equal(t, turnFailureTimeout, other.ResponseFailureClass)
+}

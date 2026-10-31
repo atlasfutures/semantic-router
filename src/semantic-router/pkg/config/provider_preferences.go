@@ -87,13 +87,23 @@ var providerMaxPriceKeys = map[string]bool{"prompt": true, "completion": true, "
 // rather than at dispatch. A cell that starts with an unusable pin serves every
 // turn to a provider the operator ruled out, or none at all.
 func validateProviderPreferences(modelName string, preferences *OpenRouterProviderPreferences) error {
+	return validateProviderPreferencesField(modelName, "provider_preferences", preferences)
+}
+
+// validatePrivateProviderPreferences holds a private pin to the same rules,
+// its errors naming its own key.
+func validatePrivateProviderPreferences(modelName string, preferences *OpenRouterProviderPreferences) error {
+	return validateProviderPreferencesField(modelName, "private_provider_preferences", preferences)
+}
+
+func validateProviderPreferencesField(modelName string, key string, preferences *OpenRouterProviderPreferences) error {
 	if preferences == nil {
 		return nil
 	}
 	if len(preferences.Order) == 0 && len(preferences.Only) == 0 {
 		return fmt.Errorf(
-			"providers.models[%s].provider_preferences must set order or only",
-			modelName,
+			"providers.models[%s].%s must set order or only",
+			modelName, key,
 		)
 	}
 	for field, slugs := range map[string][]string{
@@ -101,15 +111,16 @@ func validateProviderPreferences(modelName string, preferences *OpenRouterProvid
 		"only":   preferences.Only,
 		"ignore": preferences.Ignore,
 	} {
-		if err := validateProviderSlugs(modelName, field, slugs); err != nil {
+		if err := validateProviderSlugs(modelName, key, field, slugs); err != nil {
 			return err
 		}
 	}
 	for kind, ceiling := range preferences.MaxPrice {
 		if !providerMaxPriceKeys[kind] || math.IsNaN(ceiling) || math.IsInf(ceiling, 0) || ceiling < 0 {
 			return fmt.Errorf(
-				"providers.models[%s].provider_preferences.max_price.%s must be prompt, completion, request or image with a non-negative price",
+				"providers.models[%s].%s.max_price.%s must be prompt, completion, request or image with a non-negative price",
 				modelName,
+				key,
 				kind,
 			)
 		}
@@ -119,20 +130,22 @@ func validateProviderPreferences(modelName string, preferences *OpenRouterProvid
 		return nil
 	default:
 		return fmt.Errorf(
-			"providers.models[%s].provider_preferences.data_collection must be %q or %q",
+			"providers.models[%s].%s.data_collection must be %q or %q",
 			modelName,
+			key,
 			ProviderDataCollectionAllow,
 			ProviderDataCollectionDeny,
 		)
 	}
 }
 
-func validateProviderSlugs(modelName string, field string, slugs []string) error {
+func validateProviderSlugs(modelName string, key string, field string, slugs []string) error {
 	for index, slug := range slugs {
 		if strings.TrimSpace(slug) == "" {
 			return fmt.Errorf(
-				"providers.models[%s].provider_preferences.%s[%d] must be a non-empty provider slug",
+				"providers.models[%s].%s.%s[%d] must be a non-empty provider slug",
 				modelName,
+				key,
 				field,
 				index,
 			)
@@ -151,6 +164,31 @@ func (c *RouterConfig) ProviderPreferencesForModel(modelName string) *OpenRouter
 		return nil
 	}
 	return params.ProviderPreferences
+}
+
+// ProviderPreferencesForTurn returns the pin a turn on the model sends: on a
+// private (privacy or zdr) turn the model's private_provider_preferences when
+// it declares one, and otherwise the same pin ProviderPreferencesForModel
+// returns. A standard turn never sees the private pin. The /v1/models listing
+// publishes both from the same fields, so it cannot advertise a private pin
+// the dispatch does not apply.
+func (c *RouterConfig) ProviderPreferencesForTurn(modelName string, private bool) *OpenRouterProviderPreferences {
+	if private {
+		if pin := c.PrivateProviderPreferencesForModel(modelName); pin != nil {
+			return pin
+		}
+	}
+	return c.ProviderPreferencesForModel(modelName)
+}
+
+// PrivateProviderPreferencesForModel returns the model's private-turn pin, or
+// nil when it declares none.
+func (c *RouterConfig) PrivateProviderPreferencesForModel(modelName string) *OpenRouterProviderPreferences {
+	params, found := c.resolveModelConfig(modelName)
+	if !found {
+		return nil
+	}
+	return params.PrivateProviderPreferences
 }
 
 // copyProviderPreferences keeps the loaded config free of shared slices, the

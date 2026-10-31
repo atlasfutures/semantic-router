@@ -276,11 +276,17 @@ func validateCanonicalProviderModel(
 	if err := validateProviderPreferences(model.Name, model.ProviderPreferences); err != nil {
 		return "", err
 	}
+	if err := validatePrivateProviderPreferences(model.Name, model.PrivateProviderPreferences); err != nil {
+		return "", err
+	}
 	if err := validateProviderServiceTier(model.Name, model.ServiceTier); err != nil {
 		return "", err
 	}
 	if model.FirstContentSec < 0 {
 		return "", fmt.Errorf("providers.models[%s].first_content_sec must not be negative", model.Name)
+	}
+	if model.IdleSec < 0 {
+		return "", fmt.Errorf("providers.models[%s].idle_sec must not be negative", model.Name)
 	}
 	if err := validateCanonicalProviderModelMetadata(model); err != nil {
 		return "", err
@@ -497,7 +503,7 @@ func canonicalProviderModelHasMetadata(model CanonicalProviderModel) bool {
 	if model.Catalog != "" || model.Reasoning != nil || model.ProviderModelID != "" || model.APIFormat != "" || len(model.ExternalModelIDs) > 0 {
 		return true
 	}
-	if model.ProviderPreferences != nil || len(model.AcceptedFormats) > 0 {
+	if model.ProviderPreferences != nil || model.PrivateProviderPreferences != nil || len(model.AcceptedFormats) > 0 {
 		return true
 	}
 	return model.Pricing != (ModelPricing{}) ||

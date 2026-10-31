@@ -1839,6 +1839,9 @@ class Model(BaseModel):
     accepted_formats: Optional[List[Literal["openai", "responses", "anthropic"]]] = None
     external_model_ids: Optional[Dict[str, str]] = None
     provider_preferences: Optional[OpenRouterProviderPreferences] = None
+    # Mirrors CanonicalProviderModel.PrivateProviderPreferences: the pin a
+    # privacy or zdr turn sends instead of provider_preferences.
+    private_provider_preferences: Optional[OpenRouterProviderPreferences] = None
     # Mirrors CanonicalProviderModel.StandardTwin: the providers.models entry a
     # discount endpoint's 429 or pre-byte timeout is re-sent on, once. The Go
     # loader validates the pairing.
@@ -1851,6 +1854,9 @@ class Model(BaseModel):
     # Mirrors CanonicalProviderModel.FirstContentSec: the arm's own
     # first-content limit, replacing global response_stream.first_content_sec.
     first_content_sec: Optional[int] = Field(default=None, ge=0)
+    # Mirrors CanonicalProviderModel.IdleSec: the arm's own mid-stream idle
+    # limit, replacing global response_stream.idle_sec.
+    idle_sec: Optional[int] = Field(default=None, ge=0)
     # Mirrors CanonicalProviderModel.HostRetry: the arm's own host-retry
     # switch; absent follows global response_stream.host_retry.
     host_retry: Optional[bool] = None

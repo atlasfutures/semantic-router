@@ -14,6 +14,7 @@ import (
 	"github.com/atlasfutures/semantic-router/rayline-core/reasoning"
 	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
@@ -165,7 +166,11 @@ func (r *OpenAIRouter) expectedHostFamily(dispatch *providerDispatch, ctx *Reque
 		if r.Config == nil {
 			return ""
 		}
-		pin, _ := providerPreferencesForDispatch(dispatch, r.Config)
+		privacyMode := ""
+		if ctx != nil {
+			privacyMode = ctx.RaylineARCPrivacyMode
+		}
+		pin, _ := providerPreferencesForDispatch(dispatch, r.Config, privacyMode)
 		if ctx != nil {
 			pin = pickArmEndpoint(ctx, dispatch, pin)
 			resetDispatchedEndpoint(ctx)
@@ -195,7 +200,13 @@ func (r *OpenAIRouter) hostFamiliesInConfig() []string {
 		}
 	}
 	for name := range r.Config.ModelConfig {
-		if pin := r.Config.ProviderPreferencesForModel(name); pin != nil {
+		// A private pin's hosts serve the arm too, on private turns.
+		for _, pin := range []*config.OpenRouterProviderPreferences{
+			r.Config.ProviderPreferencesForModel(name), r.Config.PrivateProviderPreferencesForModel(name),
+		} {
+			if pin == nil {
+				continue
+			}
 			for _, host := range append(append([]string(nil), pin.Order...), pin.Only...) {
 				add(signatureHostFamily(host))
 			}

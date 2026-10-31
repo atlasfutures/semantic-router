@@ -46,6 +46,11 @@ type RaylineARCSelectionContext struct {
 	// previous arm. They name a held model for a two-stage policy package's
 	// stage_one_held_unknown refusal; nil otherwise.
 	ServedModels []RaylineARCServedModel
+	// PolicyStagedTurns is where a delta cell's staged-turn record is shared
+	// across cell instances (raylinearc.EpisodeStagedTurnStore), set on a
+	// strict main turn whose episode store keeps one; nil otherwise. The
+	// record is read and written only under the episode lease.
+	PolicyStagedTurns any
 	// NonVisionArms marks, by arm ordinal, the candidates whose model card
 	// declares no image input. It is indexed like CandidateModels and is nil
 	// when every arm is vision-capable, which is the unmarked default.
@@ -60,6 +65,10 @@ type RaylineARCSelectionContext struct {
 	// (extproc/rayline_arc_privacy.go). Nil for a standard request, which
 	// leaves selection exactly as it was.
 	PrivacyExcludedArms []bool
+	// PrivateTurn is true on a privacy or zdr request. Such a turn sends an
+	// arm's private provider pin when it declares one, so its failures are
+	// recorded against that route, not the standard one.
+	PrivateTurn bool
 	// PrivacyArmEndpoints is, by arm ordinal, each OpenRouter arm's endpoint
 	// constraint on a private request whose gateway listed the endpoints
 	// each allowed arm may use (x-rayline-privacy-allowed-endpoints); nil
@@ -83,6 +92,14 @@ type RaylineARCSelectionContext struct {
 	// that filter removes a candidate from the list, and the arm list is
 	// positional, so the arm has to be masked where it stands instead.
 	OverContextArms []bool
+	// RequestedOutputTokens is the output the caller asked for: max_tokens,
+	// max_completion_tokens or max_output_tokens, or a larger thinking
+	// budget. Zero when the request stated no limit, which excludes nothing.
+	RequestedOutputTokens int64
+	// OverOutputArms marks, by arm ordinal, the candidates whose model card
+	// declares a max_output_tokens smaller than RequestedOutputTokens. Nil
+	// when no arm is under it; an arm with no declared limit is never marked.
+	OverOutputArms []bool
 	// RequiredCapabilities names what this turn needs an arm to hold, from
 	// llmprotocol.RequiredRoutingCapabilities. It is empty for almost every
 	// turn: only a server tool or an image inside a tool result puts a name
@@ -257,6 +274,10 @@ type RaylineARCTrace struct {
 	// PolicyLatency is the decide call's round trip as the router timed it;
 	// EncoderLatency stays the encode alone.
 	PolicyLatency time.Duration
+	// PolicyHTTP is the decide call's client-side httptrace: connection reuse
+	// and idle time, and the dial, write and first-byte phases. Nil outside
+	// the policy-service mode and on a decision no decide call answered.
+	PolicyHTTP *raylinearc.PolicyHTTPTiming
 	// PolicyDecisionMode is how a delta cell's staged turn was decided (ADR
 	// 0155): delta (on a turn_delta) or sync (sent in full). Empty on a sync
 	// cell, whose records are as before.

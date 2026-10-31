@@ -356,7 +356,7 @@ func (r *OpenAIRouter) stageEndpointResend(ctx *RequestContext, dispatch *provid
 		return
 	}
 	// An unpinned arm's re-send is pinned as its pick was, from nothing.
-	pin := r.Config.ProviderPreferencesForModel(dispatch.logicalModel)
+	pin := armProviderPin(r.Config, dispatch.logicalModel, ctx.RaylineARCPrivacyMode)
 	ctx.RaylineARCEndpointResend = &endpointResendPlan{
 		dispatch:    dispatch,
 		pin:         pin,

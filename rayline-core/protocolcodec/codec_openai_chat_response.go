@@ -1,6 +1,7 @@
 package protocolcodec
 
 import (
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -107,11 +108,17 @@ func decodeChatChoices(wire chatResponseWire, response *llmprotocol.Response, po
 			return err
 		}
 		if choiceIndex == 0 {
-			response.Output = append(response.Output, item)
 			response.Evidence.TokenLogprobs = decodeChatTokenLogprobs(choice.Logprobs)
 			if choice.FinishReason != nil {
 				response.SourceStopReason = *choice.FinishReason
 				response.StopReason = decodeChatChoiceStop(*choice.FinishReason, choice.NativeFinishReason)
+			}
+			// A message with no content (null, or "") under a length stop or
+			// a refusal is a reply that wrote nothing (max_tokens 1 can end
+			// that way), not an empty output item: the response carries no
+			// primary output.
+			if !chatItemWritesNothing(item) || !llmprotocol.EmptyOutputStop(response.StopReason) {
+				response.Output = append(response.Output, item)
 			}
 			if choice.NativeFinishReason != nil {
 				response.ProviderStopReason = boundStopTelemetry(*choice.NativeFinishReason)
@@ -123,6 +130,18 @@ func decodeChatChoices(wire chatResponseWire, response *llmprotocol.Response, po
 	}
 	markChatCutToolCall(response, policy.Limits.JSONDepth)
 	return nil
+}
+
+// chatItemWritesNothing reports a decoded Chat message that carries nothing:
+// no content at all, or only the empty string Chat providers send for a
+// reply with no text.
+func chatItemWritesNothing(item llmprotocol.OutputItem) bool {
+	for _, content := range item.Content {
+		if content.Kind != llmprotocol.ContentText || content.Text != "" || len(content.Citations) != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // markChatCutToolCall marks the tool call a length stop cut off, as the Chat
@@ -285,6 +304,11 @@ func encodeChatOutput(items []llmprotocol.OutputItem, index int, stop llmprotoco
 	message, err := encodeChatMessage(combined)
 	if err != nil {
 		return chatChoiceWire{}, err
+	}
+	if len(combined.Content) == 0 {
+		// A reply that wrote nothing still carries its message: Chat
+		// clients read choices[0].message.content as a string.
+		message.Content = json.RawMessage(`""`)
 	}
 	reason := encodeChatStop(stop)
 	return chatChoiceWire{Index: index, Message: message, FinishReason: &reason}, nil

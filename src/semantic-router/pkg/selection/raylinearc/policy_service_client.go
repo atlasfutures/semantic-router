@@ -73,6 +73,9 @@ type PolicyServiceError struct {
 	// sub_reason); nil
 	// otherwise, so no free-form service text travels further.
 	Detail map[string]any
+	// HTTPTiming is the httptrace of the exchange that failed, set by
+	// doTraced; a held selection built from an answered refusal logs it.
+	HTTPTiming *PolicyHTTPTiming
 	// Cause is, for a timeout or transport failure, what the HTTP client
 	// reported (a dial, TLS or read error), without the request URL and with
 	// any credential the request carried redacted, bounded for a log field.
@@ -165,6 +168,33 @@ var policyRefusalReasons = map[string]bool{
 	"no_feasible_target":            true,
 	"policy_preset_not_admitted":    true,
 	"policy_schedule_not_admitted":  true,
+}
+
+// policyCallerPricesRefusalReasons are the unsupported_request reasons a
+// caller's price world is refused with (pathfinder#5668).
+var policyCallerPricesRefusalReasons = map[string]bool{
+	"caller_prices_unsupported":  true,
+	"caller_prices_inconsistent": true,
+}
+
+// maxPolicyRefusalModels bounds the models a refusal may name: a caller
+// prices at most 256.
+const maxPolicyRefusalModels = 256
+
+// policyRefusalModels are the string entries of a refusal's detail.models,
+// bounded; nil when it has none.
+func policyRefusalModels(detail map[string]any) []any {
+	list, ok := detail["models"].([]any)
+	if !ok {
+		return nil
+	}
+	models := []any{}
+	for _, entry := range list {
+		if model, ok := entry.(string); ok && len(models) < maxPolicyRefusalModels {
+			models = append(models, model)
+		}
+	}
+	return models
 }
 
 // PolicyRefusalReason is a selection refusal's bounded reason.
@@ -406,7 +436,7 @@ func (client *PolicyServiceClient) Decide(
 	if err != nil {
 		return nil, &PolicyServiceError{Class: "request"}
 	}
-	body, err := client.do(ctx, http.MethodPost, "/v1/rayline/arc/policy/decide", payload)
+	body, timing, err := client.doTraced(ctx, http.MethodPost, "/v1/rayline/arc/policy/decide", payload)
 	if err != nil {
 		return nil, err
 	}
@@ -414,6 +444,7 @@ func (client *PolicyServiceClient) Decide(
 	if err != nil {
 		return nil, &PolicyServiceError{Class: "decode"}
 	}
+	response.HTTPTiming = timing
 	return response, nil
 }
 
@@ -450,8 +481,36 @@ func (client *PolicyServiceClient) do(
 	path string,
 	payload []byte,
 ) ([]byte, error) {
+	body, _, err := client.doTraced(ctx, method, path, payload)
+	return body, err
+}
+
+// doTraced is do with the exchange's httptrace timing, read once the body is
+// in; the timing is nil only when the request could not be built.
+func (client *PolicyServiceClient) doTraced(
+	ctx context.Context,
+	method string,
+	path string,
+	payload []byte,
+) ([]byte, *PolicyHTTPTiming, error) {
 	ctx, cancel := context.WithTimeout(ctx, client.config.TotalTimeout)
 	defer cancel()
+	ctx, trace := withPolicyHTTPTrace(ctx)
+	body, err := client.exchange(ctx, method, path, payload)
+	timing := trace.snapshot()
+	var failure *PolicyServiceError
+	if errors.As(err, &failure) {
+		failure.HTTPTiming = timing
+	}
+	return body, timing, err
+}
+
+func (client *PolicyServiceClient) exchange(
+	ctx context.Context,
+	method string,
+	path string,
+	payload []byte,
+) ([]byte, error) {
 	var reader io.Reader
 	if payload != nil {
 		reader = bytes.NewReader(payload)
@@ -499,6 +558,19 @@ func (client *PolicyServiceClient) do(
 				refusal.Detail = capacityRefusalDetail(failure.Detail)
 			case PolicySelectionRefusedClass, PolicyStageOneHeldUnknownClass:
 				refusal.Detail = map[string]any{"reason": PolicyRefusalReason(failure.Detail)}
+				// An unknown_price_model refusal keeps the models it names,
+				// as strings only; the cell keeps those the caller priced.
+				if refusal.Detail["reason"] == "unknown_price_model" {
+					if models := policyRefusalModels(failure.Detail); models != nil {
+						refusal.Detail["models"] = models
+					}
+				}
+			case "unsupported_request":
+				// The caller price world refusals (pathfinder#5668) keep
+				// their bounded reason, so the cell answers each its code.
+				if reason, _ := failure.Detail["reason"].(string); policyCallerPricesRefusalReasons[reason] {
+					refusal.Detail = map[string]any{"reason": reason}
+				}
 			case PolicyMediaRefusedClass:
 				refusal.Detail = map[string]any{"sub_reason": PolicyMediaRefusalSubReason(failure.Detail)}
 			case PolicyDecisionsV2RefusedClass, PolicyExplorationRefusedClass, PolicySignalRefusedClass:

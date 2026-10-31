@@ -35,6 +35,13 @@ type CanonicalProviderModel struct {
 	// because which provider serves an arm is an access detail, not a routing
 	// signal.
 	ProviderPreferences *OpenRouterProviderPreferences `yaml:"provider_preferences,omitempty"`
+	// PrivateProviderPreferences pins the providers a private (privacy or
+	// zdr) turn on this binding may use, in place of ProviderPreferences: an
+	// arm whose standard providers retain data can serve private turns from
+	// zero-data-retention ones without moving its standard turns. Same schema
+	// and validation as ProviderPreferences. Absent, private turns send
+	// ProviderPreferences.
+	PrivateProviderPreferences *OpenRouterProviderPreferences `yaml:"private_provider_preferences,omitempty"`
 	// StandardTwin declares this binding a discount endpoint (an OpenRouter
 	// flex or contributor pin) and names its standard twin: the
 	// providers.models entry serving the same model at the standard endpoint.
@@ -51,6 +58,12 @@ type CanonicalProviderModel struct {
 	// A non-thinking arm can be held to a shorter wait than an arm that
 	// reasons in silence. Absent or zero, the global limit applies.
 	FirstContentSec int `yaml:"first_content_sec,omitempty"`
+	// IdleSec overrides global.router.response_stream.idle_sec for this arm:
+	// how long its streamed turn may go between content once content has
+	// started. A host that buffers a tool call's arguments and sends them at
+	// once can be given a longer gap than arms that stream them. Absent or
+	// zero, the global limit applies.
+	IdleSec int `yaml:"idle_sec,omitempty"`
 	// HostRetry turns global.router.response_stream.host_retry on or off for
 	// this arm. Absent, the global flag applies. An arm whose silence is its
 	// own (Claude's native thinking with display omitted streams nothing

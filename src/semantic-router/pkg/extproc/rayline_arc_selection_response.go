@@ -304,6 +304,8 @@ func (r *OpenAIRouter) authoritativeSelectionFailureResponse(
 		response = r.noPrivateArmResponse(ctx)
 	case failure.class == arcFailureResponsesPreviousID:
 		response = r.statelessPathResponse(ctx)
+	case failure.class == arcFailureNoOutputArm:
+		response = r.noOutputArmResponse(ctx)
 	case selectionFailureIsCallerError(failure.class):
 		// The bounded class is already counted where it is constructed, which
 		// is the one place that sees both entrypoints. Counting it again here

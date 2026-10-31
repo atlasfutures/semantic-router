@@ -201,3 +201,16 @@ def test_arm_first_content_limit_and_host_retry_parse_beside_the_pin():
     model["first_content_sec"] = -1
     with pytest.raises(ValueError):
         UserConfig(**raw)
+
+
+def test_arm_idle_limit_parses_beside_the_first_content_limit():
+    raw = _provider_model(order=["together"], allow_fallbacks=False)
+    model = raw["providers"]["models"][0]
+    assert UserConfig(**raw).providers.models[0].idle_sec is None
+    model["idle_sec"] = 300
+    config = UserConfig(**raw)
+    assert config.providers.models[0].idle_sec == 300
+    assert config.providers.models[0].first_content_sec is None
+    model["idle_sec"] = -1
+    with pytest.raises(ValueError):
+        UserConfig(**raw)

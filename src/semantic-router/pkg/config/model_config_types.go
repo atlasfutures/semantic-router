@@ -427,6 +427,11 @@ type ModelParams struct {
 	// Absent leaves the choice to OpenRouter's own ranking; see
 	// OpenRouterProviderPreferences.
 	ProviderPreferences *OpenRouterProviderPreferences `yaml:"provider_preferences,omitempty"`
+	// PrivateProviderPreferences is the pin a private (privacy or zdr) turn
+	// sends instead of ProviderPreferences; see
+	// ProviderPreferencesForTurn. Absent, a private turn sends
+	// ProviderPreferences as a standard turn does.
+	PrivateProviderPreferences *OpenRouterProviderPreferences `yaml:"private_provider_preferences,omitempty"`
 	// StandardTwin names the standard-endpoint twin a discount endpoint's
 	// refused or timed-out call is re-sent on, once; see StandardTwinForModel.
 	StandardTwin string `yaml:"standard_twin,omitempty"`
@@ -436,6 +441,8 @@ type ModelParams struct {
 	// FirstContentSec is the arm's own first-content limit; see
 	// FirstContentSecForModel.
 	FirstContentSec int `yaml:"first_content_sec,omitempty"`
+	// IdleSec is the arm's own mid-stream idle limit; see IdleSecForModel.
+	IdleSec int `yaml:"idle_sec,omitempty"`
 	// HostRetry is the arm's own host-retry switch; see HostRetryForModel.
 	HostRetry *bool `yaml:"host_retry,omitempty"`
 }

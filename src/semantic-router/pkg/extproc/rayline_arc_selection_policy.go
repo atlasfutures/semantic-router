@@ -8,6 +8,7 @@ import (
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 	routermetrics "github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/metrics"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
 
 // modelSelectionFailure is the bounded error an authoritative, fail-closed
@@ -235,6 +236,7 @@ func observeRaylineARCSelection(
 		"recipe":                 raylineARCRecipeLabel(ctx.Routing.RecipeName()),
 	}
 	addPrivacyFields(fields, ctx)
+	addOutputMaskFields(fields, ctx)
 	// The policy-service facts exist only when a policy service decided; an
 	// artifact-mode selection carries none rather than zeros.
 	if trace.OfferKind != "" {
@@ -245,6 +247,7 @@ func observeRaylineARCSelection(
 		fields["policy_action_id"] = trace.PolicyActionID
 		fields["thinking_level"] = trace.ThinkingLevel
 		fields["policy_latency_millis"] = trace.PolicyLatency.Milliseconds()
+		addPolicyHTTPTimingFields(fields, trace.PolicyHTTP)
 		fields["policy_action_model"] = trace.PolicyActionModel
 		fields["worker_provider_model"] = trace.WorkerProviderModel
 		addPolicyDispatchEffortFields(fields, ctx)
@@ -263,4 +266,29 @@ func observeRaylineARCSelection(
 		fields["retained_prefix_tokens"], fields["appended_tokens"] = policyTokenSplit(trace)
 	}
 	logging.ComponentEvent("extproc", "rayline_arc_selection", fields)
+}
+
+// addPolicyHTTPTimingFields puts the decide call's httptrace on the selection
+// log as numbers under policy_http_: whether the connection was reused and
+// was idle (0 or 1), how long it idled, and the client-side phases in
+// milliseconds. A decision with no traced call carries none.
+func addPolicyHTTPTimingFields(fields map[string]interface{}, timing *raylinearc.PolicyHTTPTiming) {
+	if timing == nil {
+		return
+	}
+	flag := func(value bool) int {
+		if value {
+			return 1
+		}
+		return 0
+	}
+	fields["policy_http_reused"] = flag(timing.Reused)
+	fields["policy_http_was_idle"] = flag(timing.WasIdle)
+	fields["policy_http_idle_ms"] = timing.IdleMillis
+	fields["policy_http_got_conn_ms"] = timing.GotConnMillis
+	fields["policy_http_dns_ms"] = timing.DNSMillis
+	fields["policy_http_connect_ms"] = timing.ConnectMillis
+	fields["policy_http_tls_ms"] = timing.TLSMillis
+	fields["policy_http_wrote_request_ms"] = timing.WroteMillis
+	fields["policy_http_first_byte_ms"] = timing.FirstByteMillis
 }

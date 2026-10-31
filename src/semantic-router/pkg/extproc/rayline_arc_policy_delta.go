@@ -199,6 +199,9 @@ type policyStaging struct {
 	clientBody []byte
 	// appendTimeout bounds the append.
 	appendTimeout time.Duration
+	// shared is where the record is kept for the episode's other cell
+	// instances, or nil (raylinearc.EpisodeStagedTurnStore).
+	shared raylinearc.EpisodeStagedTurnStore
 }
 
 // policyDeltaEligible reports whether this cell's turn may stage at all: a
@@ -257,15 +260,24 @@ func policyDeltaFor(
 }
 
 // policyDeltaDigest digests the first n messages as the delta check
-// compares them: what the service's projections (canonical-conversation.v1
-// and transcript-projection.v9) read the same. Only Claude Code's two
-// per-request rewrites of history are insignificant: a cache_control marker
-// on a message or on one of its top-level content blocks (never one nested
-// deeper, such as a tool's input), and a system or user message whose content
-// is one text block, which is its text (Claude Code demotes its trailing
-// system message so, Claude Desktop its newest user prompt; both projections
-// read a string as that one block). Object key order and whitespace are
-// insignificant. Anything else that differs makes the turn go in full.
+// compares them: what the service's canonical conversation projection
+// (canonical_v1 and canonical_v2 packages, the only ones it serves a delta
+// for) reads the same. Insignificant are:
+//   - a cache_control marker on a message or on one of its top-level content
+//     blocks (never one nested deeper, such as a tool's input);
+//   - the members the projection removes from a top-level content block
+//     whatever their value (pathfinder canonical_conversation.py _clean): a
+//     tool_use or server_tool_use block's caller and a thinking block's
+//     signature; and a text block's citations when null or [] (non-empty
+//     citations are encoded, so they still count);
+//   - a system or user message whose content is one text block, which is its
+//     text (Claude Code demotes its trailing system message so, Claude
+//     Desktop its newest user prompt; the projection reads a string as that
+//     one block).
+//
+// Object key order and whitespace are insignificant. Anything else that
+// differs, thinking text and redacted_thinking data included, makes the turn
+// go in full.
 func policyDeltaDigest(messages []json.RawMessage, n int) string {
 	hash := sha256.New()
 	for _, message := range messages[:n] {
@@ -289,6 +301,7 @@ func policyDeltaCanonical(message json.RawMessage) []byte {
 		for _, block := range blocks {
 			if fields, ok := block.(map[string]any); ok {
 				delete(fields, "cache_control")
+				policyDeltaCleanBlock(fields)
 			}
 		}
 		if role := object["role"]; (role == "system" || role == "user") && len(blocks) == 1 {
@@ -306,6 +319,26 @@ func policyDeltaCanonical(message json.RawMessage) []byte {
 		return message
 	}
 	return canonical
+}
+
+// policyDeltaCleanBlock removes from one top-level content block exactly
+// the members the service's canonical projection removes from it (beside
+// cache_control), so a client that echoes them otherwise -- Workshop's agent
+// sends no citations or caller and an unsigned thinking block's signature as
+// "" -- extends the staged turn as the full request encodes it.
+func policyDeltaCleanBlock(fields map[string]any) {
+	switch fields["type"] {
+	case "text":
+		if citations, ok := fields["citations"]; ok {
+			if list, isList := citations.([]any); citations == nil || (isList && len(list) == 0) {
+				delete(fields, "citations")
+			}
+		}
+	case "tool_use", "server_tool_use":
+		delete(fields, "caller")
+	case "thinking":
+		delete(fields, "signature")
+	}
 }
 
 // policyShellOf is a full request's shell: everything but its conversation.
@@ -406,6 +439,164 @@ func (scorer *policyServiceScorer) newPolicyStaging(
 		messages:      messages,
 		roles:         roles,
 		appendTimeout: scorer.appendTimeout,
+		shared:        policySharedStagedTurns(arcContext),
+	}
+}
+
+// policySharedStagedTurnTimeout bounds each read or write of the shared
+// record: a slow store costs the turn a full send, never its decision.
+const policySharedStagedTurnTimeout = 250 * time.Millisecond
+
+func policySharedStagedTurns(arcContext *selection.RaylineARCSelectionContext) raylinearc.EpisodeStagedTurnStore {
+	if arcContext == nil {
+		return nil
+	}
+	shared, _ := arcContext.PolicyStagedTurns.(raylinearc.EpisodeStagedTurnStore)
+	return shared
+}
+
+// policyStagedRecord is the shared form of a staged turn: digests, counts
+// and the turn it belongs to, never conversation content.
+type policyStagedRecord struct {
+	Version       int    `json:"v"`
+	TurnIndex     uint64 `json:"turn"`
+	ContextEpoch  string `json:"epoch"`
+	RequestFormat string `json:"format"`
+	Count         int    `json:"count"`
+	PrefixDigest  string `json:"prefix"`
+	Digest        string `json:"digest"`
+	AppendedFrom  int    `json:"from"`
+	HistoryDigest string `json:"history"`
+	Unsettled     bool   `json:"unsettled,omitempty"`
+}
+
+const policyStagedRecordVersion = 1
+
+func encodePolicyStagedTurn(turn policyStagedTurn) []byte {
+	encoded, _ := json.Marshal(policyStagedRecord{
+		Version: policyStagedRecordVersion, TurnIndex: turn.turnIndex, ContextEpoch: turn.contextEpoch,
+		RequestFormat: turn.requestFormat, Count: turn.count, PrefixDigest: turn.prefixDigest, Digest: turn.digest,
+		AppendedFrom: turn.appendedFrom, HistoryDigest: turn.historyDigest, Unsettled: turn.unsettled,
+	})
+	return encoded
+}
+
+func decodePolicyStagedTurn(encoded []byte) (policyStagedTurn, bool) {
+	var record policyStagedRecord
+	if json.Unmarshal(encoded, &record) != nil || record.Version != policyStagedRecordVersion {
+		return policyStagedTurn{}, false
+	}
+	if !record.Unsettled && (record.Count <= 0 || record.PrefixDigest == "" || record.Digest == "" ||
+		record.AppendedFrom < 0 || record.AppendedFrom > record.Count) {
+		return policyStagedTurn{}, false
+	}
+	return policyStagedTurn{
+		turnIndex: record.TurnIndex, contextEpoch: record.ContextEpoch, requestFormat: record.RequestFormat,
+		count: record.Count, prefixDigest: record.PrefixDigest, digest: record.Digest,
+		appendedFrom: record.AppendedFrom, historyDigest: record.HistoryDigest, unsettled: record.Unsettled,
+	}, true
+}
+
+// hydratePolicyStagedTurn brings the episode's shared record into this
+// process when its own entry does not belong to the committed turn: the
+// previous turn was served by another instance, or this one restarted. It
+// runs under the episode lease, before the turn reads its entry. A record
+// for another turn, one that does not decode, or a failed read leaves the
+// process's entry as it was, and the turn decides as it would have.
+func (scorer *policyServiceScorer) hydratePolicyStagedTurn(
+	ctx context.Context,
+	arcContext *selection.RaylineARCSelectionContext,
+	turnIndex uint64,
+) {
+	shared := policySharedStagedTurns(arcContext)
+	if !scorer.delta || shared == nil {
+		return
+	}
+	if local, ok := scorer.staged.get(arcContext.EpisodeIDHash); ok && local.turnIndex == turnIndex {
+		return
+	}
+	var encoded []byte
+	err := boundPolicySharedStagedCall(ctx, policySharedWait(ctx), func(callContext context.Context) error {
+		record, err := shared.LoadStagedTurn(callContext, arcContext.EpisodeIDHash)
+		encoded = record
+		return err
+	})
+	outcome := "absent"
+	switch {
+	case err != nil:
+		outcome = "read_failed"
+	case encoded != nil:
+		turn, ok := decodePolicyStagedTurn(encoded)
+		switch {
+		case !ok:
+			outcome = "undecodable"
+		case turn.turnIndex != turnIndex:
+			outcome = "stale_turn"
+		default:
+			outcome = "hydrated"
+			scorer.staged.put(arcContext.EpisodeIDHash, turn)
+		}
+	}
+	logging.ComponentEvent("extproc", "rayline_arc_policy_staged_shared", map[string]interface{}{
+		"request_id": arcContext.RequestID, "episode_id_hash": arcContext.EpisodeIDHash, "outcome": outcome,
+	})
+}
+
+// errPolicySharedStagedTimeout is a shared-record call VSR stopped waiting
+// for.
+var errPolicySharedStagedTimeout = errors.New("ARC staged turn store timed out")
+
+// boundPolicySharedStagedCall runs one shared-record call and waits for it
+// at most policySharedStagedTurnTimeout, whatever the store's own I/O
+// deadlines: the call runs on, unwaited, past that. Its result is then
+// ignored, so a late read is a miss; a late write lands later, fenced by its
+// turn like any other, and a wrong record is still caught by the turn
+// index and both digests.
+func boundPolicySharedStagedCall(parent context.Context, wait time.Duration, call func(context.Context) error) error {
+	if wait <= 0 {
+		return errPolicySharedStagedTimeout
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), policySharedStagedTurnTimeout)
+	done := make(chan error, 1)
+	go func() {
+		defer cancel()
+		done <- call(ctx)
+	}()
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	select {
+	case err := <-done:
+		return err
+	case <-timer.C:
+		return errPolicySharedStagedTimeout
+	}
+}
+
+// policySharedWait is how long a turn waits for a shared-record call:
+// policySharedStagedTurnTimeout, but never more than a tenth of what is left
+// of the context's deadline -- the decide's before it, a decision-only
+// consult's commit after it.
+func policySharedWait(ctx context.Context) time.Duration {
+	wait := policySharedStagedTurnTimeout
+	if deadline, ok := ctx.Deadline(); ok {
+		wait = raylineARCDurationMin(wait, time.Until(deadline)/10)
+	}
+	return wait
+}
+
+// writeShared mirrors one change of the process's entry to the shared
+// record, bounded as every shared call is: a failed write leaves the next
+// turn on another instance to send in full.
+func (staging *policyStaging) writeShared(parent context.Context, write func(context.Context, raylinearc.EpisodeStagedTurnStore) error) {
+	if staging.shared == nil {
+		return
+	}
+	if err := boundPolicySharedStagedCall(parent, policySharedWait(parent), func(ctx context.Context) error {
+		return write(ctx, staging.shared)
+	}); err != nil {
+		logging.ComponentWarnEvent("extproc", "rayline_arc_policy_staged_shared_write_failed", map[string]interface{}{
+			"request_id": staging.requestID, "episode_id_hash": staging.episodeIDHash,
+		})
 	}
 }
 
@@ -576,14 +767,15 @@ func policyAssistantOutput(format string, body []byte) ([]json.RawMessage, bool)
 	}
 }
 
-// anthropicEchoContent is a Messages reply's content as Claude Code echoes
-// it in the next request's history (testdata/thread_continuation, Claude
-// Code 2.1.309): a text block carries "citations": [] where the reply had
-// none, and a tool_use block "caller": {"type":"direct"} where it named
-// none. Every other block and member is kept as the reply had it. The next
-// turn's digest check is what proves the echo matched; a client that echoes
-// otherwise costs only a full resend (delta_mismatch_reason
-// appended_mismatch).
+// anthropicEchoContent is a Messages reply's content as the service stages
+// it: a text block carries "citations": [] where the reply had none, and a
+// tool_use block "caller": {"type":"direct"} where it named none, as Claude
+// Code 2.1.309 echoes it (testdata/thread_continuation). Every other block
+// and member is kept as the reply had it. Both members are ones the delta
+// digest ignores at those values (policyDeltaCleanBlock), so a client that
+// echoes them otherwise matches too; the next turn's digest check is what
+// proves the echo matched, and a mismatch costs only a full resend
+// (delta_mismatch_reason appended_mismatch).
 func anthropicEchoContent(raw json.RawMessage) (json.RawMessage, bool) {
 	var blocks []map[string]json.RawMessage
 	if json.Unmarshal(raw, &blocks) != nil {
@@ -608,16 +800,22 @@ func anthropicEchoContent(raw json.RawMessage) (json.RawMessage, bool) {
 }
 
 // policyReplyThinks reports whether the reply the client received holds
-// reasoning whose echo no captured client shows, read before any
-// normalization: a Messages redacted_thinking block or a thinking block
-// that is anything but {type, thinking, signature} with a signature, a Chat
-// message's reasoning members, a Responses reasoning item. An unreadable
-// reply counts as thinking.
+// reasoning whose echo the delta digest cannot be shown to read as the
+// service does, read before any normalization: a Messages thinking block
+// that is anything but {type, thinking} with an optional string signature, a
+// redacted_thinking block that is anything but {type, data} with non-empty
+// string data, a Chat message's reasoning members, a Responses reasoning
+// item. An unreadable reply counts as thinking.
 //
-// A signed Messages thinking block is appended: Claude Code 2.1.309 echoes
-// it unchanged (testdata/continuity/cc-2.1.309-thread-create-thinking-tool-
-// turn, message 11). A client that echoes it otherwise costs only a full
-// resend (appended_mismatch).
+// A Messages thinking block is appended, signed or not: the service encodes
+// its text and drops its signature whatever its value, as the digest does,
+// so Claude Code 2.1.309's unchanged echo (testdata/continuity/cc-2.1.309-
+// thread-create-thinking-tool-turn, message 11) and Workshop's, which sends
+// an unsigned block's signature as "", both extend it. A redacted_thinking
+// block is appended too: the service's projection keeps it whole, so its data
+// is compared exactly and only an unchanged echo, in its place among the
+// reply's blocks, extends it. A client that echoes the text or data
+// otherwise costs only a full resend (appended_mismatch).
 func policyReplyThinks(format string, body []byte) bool {
 	switch format {
 	case policyFormatAnthropic:
@@ -632,13 +830,25 @@ func policyReplyThinks(format string, body []byte) bool {
 			_ = json.Unmarshal(block["type"], &kind)
 			switch kind {
 			case "redacted_thinking":
-				return true
-			case "thinking":
-				var signature string
-				if len(block) != 3 || json.Unmarshal(block["signature"], &signature) != nil || signature == "" {
+				// Staged as replied: the service encodes its data verbatim, and
+				// the digest compares it byte for byte.
+				var data string
+				if len(block) != 2 || json.Unmarshal(block["data"], &data) != nil || data == "" {
 					return true
 				}
-				if _, ok := block["thinking"]; !ok {
+			case "thinking":
+				var text, signature string
+				if json.Unmarshal(block["thinking"], &text) != nil || string(block["thinking"]) == "null" {
+					return true
+				}
+				members := 2
+				if raw, ok := block["signature"]; ok {
+					if json.Unmarshal(raw, &signature) != nil || string(raw) == "null" {
+						return true
+					}
+					members++
+				}
+				if len(block) != members {
 					return true
 				}
 			}
@@ -735,22 +945,33 @@ func addPolicyDecisionModeFields(fields map[string]interface{}, trace *selection
 // the commit, under the lease, so the next turn's prepare cannot read the
 // committed state beside the previous entry; a commit that then fails takes
 // the entry back (retractPolicyStagedTurn).
-func (transaction *raylineARCEpisodeTransaction) publishPolicyStagedTurn(turnIndex uint64, staged *policyStagedTurn) {
+func (transaction *raylineARCEpisodeTransaction) publishPolicyStagedTurn(
+	ctx context.Context,
+	turnIndex uint64,
+	staged *policyStagedTurn,
+) {
 	staging := transaction.policyStaging
 	if staging == nil {
 		return
 	}
 	if staged == nil {
 		staging.turns.drop(staging.episodeIDHash)
+		staging.writeShared(ctx, func(ctx context.Context, shared raylinearc.EpisodeStagedTurnStore) error {
+			return shared.DeleteStagedTurn(ctx, staging.episodeIDHash, turnIndex, nil)
+		})
 		return
 	}
 	staged.turnIndex = turnIndex
 	staging.turns.put(staging.episodeIDHash, *staged)
+	record := encodePolicyStagedTurn(*staged)
+	staging.writeShared(ctx, func(ctx context.Context, shared raylinearc.EpisodeStagedTurnStore) error {
+		return shared.StoreStagedTurn(ctx, staging.episodeIDHash, turnIndex, record)
+	})
 }
 
 // retractPolicyStagedTurn drops the entry publishPolicyStagedTurn wrote
 // when its commit failed, unless a later turn has replaced it.
-func (transaction *raylineARCEpisodeTransaction) retractPolicyStagedTurn(staged *policyStagedTurn) {
+func (transaction *raylineARCEpisodeTransaction) retractPolicyStagedTurn(ctx context.Context, staged *policyStagedTurn) {
 	staging := transaction.policyStaging
 	if staging == nil || staged == nil {
 		return
@@ -758,12 +979,25 @@ func (transaction *raylineARCEpisodeTransaction) retractPolicyStagedTurn(staged 
 	staging.turns.dropIf(staging.episodeIDHash, func(current policyStagedTurn) bool {
 		return current.turnIndex == staged.turnIndex && current.prefixDigest == staged.prefixDigest
 	})
+	staging.writeShared(ctx, func(ctx context.Context, shared raylinearc.EpisodeStagedTurnStore) error {
+		return shared.DeleteStagedTurn(ctx, staging.episodeIDHash, staged.turnIndex, encodePolicyStagedTurn(*staged))
+	})
 }
 
 // dropPolicyStagedTurn forgets the episode's staged turn after a commit that
 // did not happen: the service may hold an append the episode never recorded.
-func (transaction *raylineARCEpisodeTransaction) dropPolicyStagedTurn() {
+// The shared record is deleted only if it belongs to the turn this one
+// started from or an earlier one: a turn that lost its lease leaves the
+// record of a turn committed after it.
+func (transaction *raylineARCEpisodeTransaction) dropPolicyStagedTurn(ctx context.Context) {
 	if staging := transaction.policyStaging; staging != nil {
 		staging.turns.drop(staging.episodeIDHash)
+		var started uint64
+		if transaction.state != nil {
+			started = transaction.state.TurnIndex
+		}
+		staging.writeShared(ctx, func(ctx context.Context, shared raylinearc.EpisodeStagedTurnStore) error {
+			return shared.DeleteStagedTurn(ctx, staging.episodeIDHash, started, nil)
+		})
 	}
 }

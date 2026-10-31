@@ -395,6 +395,37 @@ const (
 	VSRProtocolWarnings = "x-vsr-protocol-warnings"
 )
 
+// Rayline ARC identity headers. Every ARC response the cell answers, a
+// POST /v1/routes lookup or a generation turn, success or error, states what
+// decided it, so a caller never has to infer the tier from the cell it reached
+// (docs/architecture/rayline-arc-one-cell-all-tiers.md). They are x-rayline-*
+// rather than x-vsr-* so the ARC ingress's x-vsr-* response scrub passes them
+// without a keep-set entry. The cell replaces any copy an upstream sent.
+const (
+	// RaylineTier is the public tier id with its version that decided the
+	// request (arc-1.0, arc-swift-1.0, arc-sage-1.0), whatever spelling the
+	// caller sent. Absent when the deciding recipe serves no public tier.
+	RaylineTier = "x-rayline-tier"
+	// RaylineRecipe is the cell-local recipe that decided the request
+	// (default, arc-swift, arc-sage).
+	RaylineRecipe = "x-rayline-recipe"
+	// RaylineArm is the ARC arm the decision chose (the worker id, e.g.
+	// kimi-k3@thinking-off). Absent when no arm was chosen.
+	RaylineArm = "x-rayline-arm"
+	// RaylineModel is the provider model id of that arm: on a generation
+	// turn the model the call was dispatched to, on a lookup the chosen
+	// worker's model. Absent when none is known.
+	RaylineModel = "x-rayline-model"
+	// RaylinePriceProfile is the price world the decision was taken in:
+	// "catalog" (the cell's own prices) or "inline" (the caller's
+	// routing.prices). A gateway that built inline prices from a saved
+	// profile restates it as "profile:<id>@<version>".
+	RaylinePriceProfile = "x-rayline-price-profile"
+
+	RaylinePriceProfileCatalog = "catalog"
+	RaylinePriceProfileInline  = "inline"
+)
+
 // Response Warnings Header (v0.4)
 // VSRResponseWarnings consolidates the response-quality warnings into a single
 // comma-separated header on the default response surface (#2204, #2200). The

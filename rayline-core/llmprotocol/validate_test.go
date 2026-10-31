@@ -597,3 +597,31 @@ func validSemanticRequest() Request {
 func authoritativeTestCount(value int64) TokenCount {
 	return TokenCount{Value: Int64(value), Provenance: UsageAuthoritative}
 }
+
+// A successful response may carry no primary output only under a stop that
+// can end a reply before its first part: a refusal or a length stop.
+func TestValidateResponseEmptyOutputOnlyUnderRefusalOrLengthStop(t *testing.T) {
+	allowedStops := map[StopReason]bool{StopMaxTokens: true, StopContextWindow: true, StopContentFilter: true}
+	for _, stop := range []StopReason{
+		"", StopEndTurn, StopMaxTokens, StopToolCall, StopContentFilter,
+		StopPaused, StopContextWindow, StopCanceled, StopUnknown,
+	} {
+		t.Run(string(stop), func(t *testing.T) {
+			if EmptyOutputStop(stop) != allowedStops[stop] {
+				t.Fatalf("EmptyOutputStop(%q) = %v, want %v", stop, EmptyOutputStop(stop), allowedStops[stop])
+			}
+			err := ValidateResponse(Response{
+				Generation: 1, ID: "response", StopReason: stop,
+				Usage: Usage{State: UsageUnavailable},
+			}, DefaultPolicy().Limits)
+			if allowed := allowedStops[stop]; allowed && err != nil {
+				t.Fatalf("empty output under %q rejected: %v", stop, err)
+			} else if !allowed {
+				protocolError, ok := err.(*ProtocolError)
+				if !ok || protocolError.Code != "empty_response_output" {
+					t.Fatalf("empty output under %q: error = %v, want empty_response_output", stop, err)
+				}
+			}
+		})
+	}
+}
