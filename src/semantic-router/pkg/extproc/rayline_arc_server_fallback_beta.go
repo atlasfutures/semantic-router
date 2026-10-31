@@ -1,6 +1,7 @@
 package extproc
 
 import (
+	"net/http"
 	"strings"
 
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
@@ -32,6 +33,23 @@ func withoutServerSideFallbackBetas(value string) (string, bool) {
 		kept = append(kept, beta)
 	}
 	return strings.Join(kept, ","), removed
+}
+
+// stripServerSideFallbackBetaHeader takes the server-side fallback betas out
+// of a re-send's own anthropic-beta; with none left the header goes.
+func stripServerSideFallbackBetaHeader(headers http.Header) {
+	value := headers.Get(anthropicBetaHeader)
+	if value == "" {
+		return
+	}
+	stripped, removed := withoutServerSideFallbackBetas(value)
+	switch {
+	case !removed:
+	case stripped == "":
+		headers.Del(anthropicBetaHeader)
+	default:
+		headers.Set(anthropicBetaHeader, stripped)
+	}
 }
 
 // stripServerSideFallbackBeta takes the server-side fallback betas out of an

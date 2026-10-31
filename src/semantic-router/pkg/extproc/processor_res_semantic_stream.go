@@ -104,7 +104,7 @@ func (r *OpenAIRouter) handleSemanticStreamingResponseBody(
 		r.reserveRefusedTurn(ctx) {
 		return droppedHostChunk(ctx)
 	}
-	if held && r.retryAfterStreamFailure(ctx) {
+	if held && !awaitingRefusalReserve(ctx) && r.retryAfterStreamFailure(ctx) {
 		// The call failed in-band before any content; the arm's next host
 		// takes the turn over, and its error never reaches the client.
 		return droppedHostChunk(ctx)

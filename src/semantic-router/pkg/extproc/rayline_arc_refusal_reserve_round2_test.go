@@ -3,11 +3,14 @@
 package extproc
 
 import (
+	"net/http"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
@@ -98,8 +101,10 @@ func TestReserveSnapshotRestoresDispatchAttribution(t *testing.T) {
 		RaylineARCDispatch: worker, RaylineARCThinking: trace,
 		RaylineARCEndpointSource: "feed", RaylineARCDispatchedEndpoint: "anthropic",
 		RaylineARCEndpointOrder: []string{"anthropic"}, RaylineARCEndpointsTried: []string{"anthropic"},
+		DispatchedProviderOrder: []string{"anthropic"},
 	}
 	snapshot := snapshotReserveState(ctx, nil)
+	ctx.DispatchedProviderOrder = []string{"z-ai"}
 	ctx.RaylineARCDispatch = &raylinearc.WorkerManifest{ID: "glm-worker"}
 	ctx.RaylineARCThinking, ctx.RaylineARCEndpointSource, ctx.RaylineARCDispatchedEndpoint = nil, "", "z-ai"
 	ctx.RaylineARCEndpointOrder, ctx.RaylineARCEndpointsTried = []string{"z-ai"}, []string{"z-ai"}
@@ -111,4 +116,35 @@ func TestReserveSnapshotRestoresDispatchAttribution(t *testing.T) {
 	assert.Equal(t, "anthropic", ctx.RaylineARCDispatchedEndpoint)
 	assert.Equal(t, []string{"anthropic"}, ctx.RaylineARCEndpointOrder)
 	assert.Equal(t, []string{"anthropic"}, ctx.RaylineARCEndpointsTried)
+	assert.Equal(t, []string{"anthropic"}, ctx.DispatchedProviderOrder)
+}
+
+// A held turn whose call refused waits for its re-serve: a host retry would
+// take the refusal for an upstream error and ask the refusing model again.
+func TestAwaitingRefusalReserve(t *testing.T) {
+	refused := &semanticResponseStreamState{stop: llmprotocol.StopContentFilter}
+	assert.False(t, awaitingRefusalReserve(&RequestContext{SemanticStreamState: refused}))
+	assert.False(t, awaitingRefusalReserve(&RequestContext{RefusalReserve: &refusalReservePlan{},
+		SemanticStreamState: &semanticResponseStreamState{}}))
+	assert.False(t, awaitingRefusalReserve(&RequestContext{RefusalReserve: &refusalReservePlan{released: true},
+		SemanticStreamState: refused}))
+	assert.True(t, awaitingRefusalReserve(&RequestContext{RefusalReserve: &refusalReservePlan{},
+		SemanticStreamState: refused}))
+}
+
+// A re-send's own anthropic-beta loses the server-side fallback betas and
+// keeps the rest; with none left the header goes.
+func TestStripServerSideFallbackBetaHeader(t *testing.T) {
+	headers := http.Header{}
+	headers.Set(anthropicBetaHeader, "prompt-caching-2024-07-31, server-side-fallback-2026-06-01")
+	stripServerSideFallbackBetaHeader(headers)
+	assert.Equal(t, "prompt-caching-2024-07-31", headers.Get(anthropicBetaHeader))
+
+	headers.Set(anthropicBetaHeader, "server-side-fallback-2026-06-01")
+	stripServerSideFallbackBetaHeader(headers)
+	assert.Empty(t, headers.Values(anthropicBetaHeader))
+
+	headers.Set(anthropicBetaHeader, "prompt-caching-2024-07-31")
+	stripServerSideFallbackBetaHeader(headers)
+	assert.Equal(t, "prompt-caching-2024-07-31", headers.Get(anthropicBetaHeader))
 }

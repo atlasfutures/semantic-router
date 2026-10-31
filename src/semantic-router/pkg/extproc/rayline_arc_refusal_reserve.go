@@ -400,19 +400,23 @@ func (r *OpenAIRouter) reserveRefusedTurn(ctx *RequestContext) bool {
 	if err := selectionDispatchAllowed(ctx); err != nil {
 		return restore("lease_lost")
 	}
-	// The re-decision and the rebuild took time: the bounds are checked
-	// again, so no paid call starts past them.
+	// The refusing family is excluded for the session before the last
+	// check, since the store write takes time. A refusal passed through
+	// records the same exclusion (declineRefusedTurn), so a re-serve that
+	// does not start leaves nothing it would not have.
+	if excluded := noteRaylineARCFamilyExclusion(ctx, refusing); excluded != "" {
+		fields["family_excluded"] = excluded
+	}
+	// The re-decision, the rebuild and the store write took time: the
+	// bounds are checked again, so no paid call starts past them.
 	if time.Since(plan.firstRefusal) >= plan.budget || plan.holdExpired(ctx) || r.responseStreamOverran(ctx) {
 		return restore("budget_spent")
 	}
 
-	// The re-serve takes over: the refused call is settled on its own line,
-	// its family excluded for the session, and the new call spliced in.
+	// The re-serve takes over: the refused call is settled on its own line
+	// and the new call spliced in.
 	emitLLMUsageRecord(refusedRecord)
 	recordUsageRecordCost(&refusedRecord, refusedPricedModel)
-	if excluded := noteRaylineARCFamilyExclusion(ctx, refusing); excluded != "" {
-		fields["family_excluded"] = excluded
-	}
 	plan.attempts = append(plan.attempts, attempt)
 	fields["outcome"] = "reserved"
 	fields["served_model"] = model
@@ -475,6 +479,8 @@ type reserveSnapshot struct {
 	endpointFeed                       *raylinearc.RoutingPriceSettlement
 	endpointSource, dispatchedEndpoint string
 	endpointOrder, endpointsTried      []string
+	providerOrder                      []string
+	providerPrivacy                    dispatchedProviderPrivacy
 }
 
 func snapshotReserveState(ctx *RequestContext, reselect *raylineARCReselect) reserveSnapshot {
@@ -489,6 +495,7 @@ func snapshotReserveState(ctx *RequestContext, reselect *raylineARCReselect) res
 		endpointFeed: ctx.RaylineARCEndpointFeed, endpointSource: ctx.RaylineARCEndpointSource,
 		dispatchedEndpoint: ctx.RaylineARCDispatchedEndpoint,
 		endpointOrder:      ctx.RaylineARCEndpointOrder, endpointsTried: ctx.RaylineARCEndpointsTried,
+		providerOrder: ctx.DispatchedProviderOrder, providerPrivacy: ctx.DispatchedProviderPrivacy,
 	}
 	if transaction := ctx.RaylineARCTransaction; transaction != nil {
 		snapshot.transactionState = transaction.state
@@ -519,6 +526,7 @@ func (snapshot reserveSnapshot) restore(ctx *RequestContext, reselect *raylineAR
 	ctx.RaylineARCEndpointFeed, ctx.RaylineARCEndpointSource = snapshot.endpointFeed, snapshot.endpointSource
 	ctx.RaylineARCDispatchedEndpoint = snapshot.dispatchedEndpoint
 	ctx.RaylineARCEndpointOrder, ctx.RaylineARCEndpointsTried = snapshot.endpointOrder, snapshot.endpointsTried
+	ctx.DispatchedProviderOrder, ctx.DispatchedProviderPrivacy = snapshot.providerOrder, snapshot.providerPrivacy
 	ctx.FlexResend, ctx.RaylineARCEndpointResend, ctx.ThinkingSignatureRetry = nil, nil, nil
 	if transaction := ctx.RaylineARCTransaction; transaction != nil {
 		transaction.state = snapshot.transactionState
@@ -842,6 +850,14 @@ func refusedCallUsageIn(ctx *RequestContext) bool {
 	}
 	usage := partialStreamUsage(ctx.SemanticStreamState.usage)
 	return usage.completionTokensReported
+}
+
+// awaitingRefusalReserve reports a held turn whose call refused and whose
+// re-serve waits for the call's usage or its end: a host retry must not take
+// the refusal for an upstream error and ask the refusing model again.
+func awaitingRefusalReserve(ctx *RequestContext) bool {
+	plan := ctx.RefusalReserve
+	return plan != nil && !plan.released && streamRefusalSignal(ctx.SemanticStreamState) != ""
 }
 
 // refusalReserveStreaming reports a streamed turn under a re-serve plan, on

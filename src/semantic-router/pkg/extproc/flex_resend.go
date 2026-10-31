@@ -223,6 +223,11 @@ func (r *OpenAIRouter) buildResendCall(
 	if err != nil {
 		return nil, "address_invalid"
 	}
+	if ctx.VSRRaylineARC != nil {
+		// A profile's own anthropic-beta comes back with its headers: an ARC
+		// call never carries the server-side fallback betas (ADR 0145).
+		stripServerSideFallbackBetaHeader(headers)
+	}
 	return &flexTwinCall{url: target, headers: headers, body: body}, ""
 }
 
