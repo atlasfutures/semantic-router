@@ -69,6 +69,11 @@ type RaylineARCSelectionContext struct {
 	// arm's private provider pin when it declares one, so its failures are
 	// recorded against that route, not the standard one.
 	PrivateTurn bool
+	// FamilyExclusions are the vendor families this turn's session excludes
+	// after a refusal (pathfinder#6066 D3), read from the episode store when
+	// the cell's fallback excludes families. A main turn is offered no model
+	// of these families while another can serve it.
+	FamilyExclusions []string
 	// PrivacyArmEndpoints is, by arm ordinal, each OpenRouter arm's endpoint
 	// constraint on a private request whose gateway listed the endpoints
 	// each allowed arm may use (x-rayline-privacy-allowed-endpoints); nil

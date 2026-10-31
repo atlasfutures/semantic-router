@@ -222,6 +222,9 @@ func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 		}
 		result.State = state
 		result.Coalesced = coalesced
+		if result.PolicyCallKind != raylinearc.PolicyCallSide {
+			result.FamilyExclusions = r.loadRaylineARCFamilyExclusions(algorithm.RaylineARC.PolicyService, reqCtx)
+		}
 		// A delta cell's strict main turn reads and writes its staged-turn
 		// record beside the episode, so the next turn finds it on any
 		// instance (rayline_arc_policy_delta.go).

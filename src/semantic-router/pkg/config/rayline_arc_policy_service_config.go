@@ -194,6 +194,33 @@ type RaylineARCPolicyFallbackConfig struct {
 	// offer after a 429, a 5xx or a timeout (Phase 1b). Zero means the
 	// default.
 	CellExclusionSeconds int `yaml:"cell_exclusion_seconds,omitempty"`
+	// FamilyExclusion excludes a refusing model's vendor family (claude,
+	// gpt) for the rest of the session, across the contexts its turns open
+	// (pathfinder#6066 D3). Off by default: a refusal then excludes its model
+	// for its context only, as before.
+	FamilyExclusion bool `yaml:"family_exclusion,omitempty"`
+	// FamilyExclusionHours is how long a session's family exclusion lasts
+	// after its latest refusal. Zero means the default.
+	FamilyExclusionHours int `yaml:"family_exclusion_hours,omitempty"`
+}
+
+// DefaultRaylineARCFamilyExclusionHours is a session's family exclusion
+// when none is configured: the rest of a working day's session.
+const DefaultRaylineARCFamilyExclusionHours = 24
+
+// FamilyExclusionEnabled reports whether a refusal excludes its model's
+// vendor family for the session.
+func (cfg *RaylineARCPolicyServiceConfig) FamilyExclusionEnabled() bool {
+	return cfg.FallbackEnabled() && cfg.Fallback.FamilyExclusion
+}
+
+// FamilyExclusionTTL is how long a session's family exclusion lasts.
+func (cfg *RaylineARCPolicyServiceConfig) FamilyExclusionTTL() time.Duration {
+	hours := DefaultRaylineARCFamilyExclusionHours
+	if cfg != nil && cfg.Fallback != nil && cfg.Fallback.FamilyExclusionHours > 0 {
+		hours = cfg.Fallback.FamilyExclusionHours
+	}
+	return time.Duration(hours) * time.Hour
 }
 
 // DefaultRaylineARCCellExclusionSeconds is the cell exclusion when none is
@@ -580,6 +607,9 @@ func validateRaylineARCPolicyBindings(decision Decision) error {
 	}
 	if cfg.Fallback != nil && (cfg.Fallback.CellExclusionSeconds < 0 || cfg.Fallback.CellExclusionSeconds > 3600) {
 		return fmt.Errorf("policy_service fallback cell_exclusion_seconds must be between 0 and 3600")
+	}
+	if cfg.Fallback != nil && (cfg.Fallback.FamilyExclusionHours < 0 || cfg.Fallback.FamilyExclusionHours > 168) {
+		return fmt.Errorf("policy_service fallback family_exclusion_hours must be between 0 and 168")
 	}
 	refs := make(map[string]bool, len(decision.ModelRefs))
 	for _, modelRef := range decision.ModelRefs {
