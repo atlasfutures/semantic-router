@@ -477,6 +477,26 @@ func (r *OpenAIRouter) pricingSnapshot() string {
 // carried the feed and the feed can name the call's price, otherwise from
 // the rate card.
 func (r *OpenAIRouter) priceUsageRecord(record *llmUsageRecord, ctx *RequestContext, model string, usage responseUsageMetrics) {
+	r.priceUsageRecordQuietly(record, ctx, model, usage)
+	recordUsageRecordCost(record, model)
+}
+
+// recordUsageRecordCost counts a priced record's cost in the model-cost
+// metric. A record written later than it is priced counts it when written.
+func recordUsageRecordCost(record *llmUsageRecord, model string) {
+	if record.Cost == nil {
+		return
+	}
+	currency := ""
+	if record.Currency != nil {
+		currency = *record.Currency
+	}
+	metrics.RecordModelCost(model, currency, *record.Cost)
+}
+
+// priceUsageRecordQuietly prices the record and counts nothing: the caller
+// decides whether the record is written.
+func (r *OpenAIRouter) priceUsageRecordQuietly(record *llmUsageRecord, ctx *RequestContext, model string, usage responseUsageMetrics) {
 	// A call the provider stated no usage for has nothing to price.
 	if responseUsageSource(usage) == usageSourceUnknown {
 		record.Pricing = usagePricingNoUsage
@@ -502,7 +522,6 @@ func (r *OpenAIRouter) priceUsageRecord(record *llmUsageRecord, ctx *RequestCont
 		return
 	}
 	cost := modelpricing.Cost(modelPricingUsage(usage), rates)
-	metrics.RecordModelCost(model, rates.Currency, cost)
 	cacheWriteRate := rates.EffectiveCacheWritePer1M()
 	record.Pricing = usagePricingPriced
 	record.Cost = &cost

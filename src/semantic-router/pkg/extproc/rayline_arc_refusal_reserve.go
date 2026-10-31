@@ -14,6 +14,7 @@ import (
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/metrics"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc/thinkinglever"
 )
 
 // In-place re-serve of a refused turn (pathfinder#6066 P1c, "S2").
@@ -144,7 +145,7 @@ func (r *OpenAIRouter) stageRefusalReserve(ctx *RequestContext, dispatch *provid
 	// or a stored conversation) is not held: the rebuild from the client's
 	// body would not materialize that history again. Such turns pass a
 	// refusal through as before.
-	if ctx.ResponseObjectState != nil {
+	if responseHistoryRetained(ctx.ResponseObjectState) {
 		return
 	}
 	transaction := ctx.RaylineARCTransaction
@@ -340,6 +341,7 @@ func (r *OpenAIRouter) reserveRefusedTurn(ctx *RequestContext) bool {
 	// The refused call's usage line is written only once a re-serve takes
 	// over; a refusal passed through is settled by the turn's own line.
 	refusedRecord := r.refusedReserveAttemptRecord(ctx, len(plan.attempts)+1)
+	refusedPricedModel := ctx.RequestModel
 	// Everything the re-decision and the rebuild change, so a re-serve that
 	// does not start leaves the turn as the refused arm's.
 	snapshot := snapshotReserveState(ctx, reselect)
@@ -379,6 +381,12 @@ func (r *OpenAIRouter) reserveRefusedTurn(ctx *RequestContext) bool {
 	}
 	reasoning := applyReasoningModeFromSelectedModel(selected, decisionName, confidence, ctx)
 
+	// The new arm's lever and control run afresh; the refused arm's staged
+	// ones are restored if the re-serve does not start.
+	ctx.RaylineARCThinking, ctx.RaylineARCWorkerThinking = nil, nil
+	if transaction := ctx.RaylineARCTransaction; transaction != nil {
+		transaction.thinkingLedger, transaction.controlPlacement = nil, nil
+	}
 	dispatch, body, staged, unavailable := r.rebuildDispatchForReserve(ctx, model, decisionName, reasoning.UseReasoning)
 	if dispatch == nil {
 		fields["reason"] = unavailable
@@ -392,10 +400,16 @@ func (r *OpenAIRouter) reserveRefusedTurn(ctx *RequestContext) bool {
 	if err := selectionDispatchAllowed(ctx); err != nil {
 		return restore("lease_lost")
 	}
+	// The re-decision and the rebuild took time: the bounds are checked
+	// again, so no paid call starts past them.
+	if time.Since(plan.firstRefusal) >= plan.budget || plan.holdExpired(ctx) || r.responseStreamOverran(ctx) {
+		return restore("budget_spent")
+	}
 
 	// The re-serve takes over: the refused call is settled on its own line,
 	// its family excluded for the session, and the new call spliced in.
 	emitLLMUsageRecord(refusedRecord)
+	recordUsageRecordCost(&refusedRecord, refusedPricedModel)
 	if excluded := noteRaylineARCFamilyExclusion(ctx, refusing); excluded != "" {
 		fields["family_excluded"] = excluded
 	}
@@ -413,6 +427,15 @@ func (r *OpenAIRouter) reserveRefusedTurn(ctx *RequestContext) bool {
 	plan.family = raylinearc.ModelFamily(armModelOf(ctx))
 	plan.attemptStarted = time.Now()
 	return true
+}
+
+// responseHistoryRetained reports that a Responses turn depends on history
+// the router keeps (previous_response_id, a stored conversation), which a
+// rebuild from the client's body would not carry. Every Responses turn has
+// object state; a stateless one has none of these.
+func responseHistoryRetained(state *ResponseObjectState) bool {
+	return state != nil &&
+		(state.PreviousResponseID != "" || state.ConversationID != "" || len(state.ConversationHistory) > 0)
 }
 
 // holdExpired reports that the hold ran past hold_max_seconds.
@@ -442,6 +465,16 @@ type reserveSnapshot struct {
 	namesToolResults, toOpenRouter              bool
 	transactionState, selectionState            *raylinearc.EpisodeState
 	families                                    []string
+	// Attempt-local dispatch attribution: the worker, its thinking lever
+	// and control as staged, and the endpoint the call went to.
+	worker                             *raylinearc.WorkerManifest
+	thinkingTrace                      *raylineARCThinkingTrace
+	workerThinking                     *config.RaylineARCWorkerThinkingConfig
+	thinkingLedger                     *thinkinglever.Ledger
+	controlPlacement                   *raylinearc.ControlPlacement
+	endpointFeed                       *raylinearc.RoutingPriceSettlement
+	endpointSource, dispatchedEndpoint string
+	endpointOrder, endpointsTried      []string
 }
 
 func snapshotReserveState(ctx *RequestContext, reselect *raylineARCReselect) reserveSnapshot {
@@ -452,9 +485,14 @@ func snapshotReserveState(ctx *RequestContext, reselect *raylineARCReselect) res
 		thinking: ctx.RaylineARCThinkingControl, outbound: ctx.DispatchedOutbound, autoCache: ctx.DispatchAutoCache,
 		serviceTier: ctx.DispatchedServiceTier, hostedTools: ctx.DispatchHostedTools,
 		namesToolResults: ctx.DispatchNamesToolResults, toOpenRouter: ctx.DispatchedToOpenRouter,
+		worker: ctx.RaylineARCDispatch, thinkingTrace: ctx.RaylineARCThinking, workerThinking: ctx.RaylineARCWorkerThinking,
+		endpointFeed: ctx.RaylineARCEndpointFeed, endpointSource: ctx.RaylineARCEndpointSource,
+		dispatchedEndpoint: ctx.RaylineARCDispatchedEndpoint,
+		endpointOrder:      ctx.RaylineARCEndpointOrder, endpointsTried: ctx.RaylineARCEndpointsTried,
 	}
 	if transaction := ctx.RaylineARCTransaction; transaction != nil {
 		snapshot.transactionState = transaction.state
+		snapshot.thinkingLedger, snapshot.controlPlacement = transaction.thinkingLedger, transaction.controlPlacement
 	}
 	if reselect != nil && reselect.selCtx != nil && reselect.selCtx.RaylineARC != nil {
 		snapshot.selectionState = reselect.selCtx.RaylineARC.State
@@ -476,9 +514,15 @@ func (snapshot reserveSnapshot) restore(ctx *RequestContext, reselect *raylineAR
 	ctx.DispatchAutoCache, ctx.DispatchedServiceTier = snapshot.autoCache, snapshot.serviceTier
 	ctx.DispatchHostedTools, ctx.DispatchNamesToolResults = snapshot.hostedTools, snapshot.namesToolResults
 	ctx.DispatchedToOpenRouter = snapshot.toOpenRouter
+	ctx.RaylineARCDispatch, ctx.RaylineARCThinking, ctx.RaylineARCWorkerThinking =
+		snapshot.worker, snapshot.thinkingTrace, snapshot.workerThinking
+	ctx.RaylineARCEndpointFeed, ctx.RaylineARCEndpointSource = snapshot.endpointFeed, snapshot.endpointSource
+	ctx.RaylineARCDispatchedEndpoint = snapshot.dispatchedEndpoint
+	ctx.RaylineARCEndpointOrder, ctx.RaylineARCEndpointsTried = snapshot.endpointOrder, snapshot.endpointsTried
 	ctx.FlexResend, ctx.RaylineARCEndpointResend, ctx.ThinkingSignatureRetry = nil, nil, nil
 	if transaction := ctx.RaylineARCTransaction; transaction != nil {
 		transaction.state = snapshot.transactionState
+		transaction.thinkingLedger, transaction.controlPlacement = snapshot.thinkingLedger, snapshot.controlPlacement
 		if trace := snapshot.trace; trace != nil {
 			transaction.markSelectionWithAffinity(trace.SelectedArm, trace.SerializedTokens,
 				trace.EncoderReplicaID, trace.EncoderVisitedReplicaIDs)
@@ -565,7 +609,10 @@ func (r *OpenAIRouter) refusedReserveAttemptRecord(ctx *RequestContext, index in
 	record.ContentSentBeforeFailure = &contentSent
 	record.RefusalReserve = nonEmpty(refusalReserveRefused)
 	record.RefusalReserveAttempt = &index
-	r.priceUsageRecord(&record, ctx, ctx.RequestModel, usage)
+	// Priced now, as the refused arm's call, but counted in the cost metric
+	// only if the record is written: a re-serve that does not start leaves
+	// the refusal to the turn's own line, which counts it.
+	r.priceUsageRecordQuietly(&record, ctx, ctx.RequestModel, usage)
 	return record
 }
 
@@ -632,6 +679,11 @@ func (r *OpenAIRouter) rebuildDispatchForReserve(
 	}
 	request.Trusted.SourceFormat = ctx.SourceFormat
 	request.Trusted.CorrelationID = ctx.RequestID
+	if ctx.ResponseObjectState != nil {
+		// The router keeps the response object (store, metadata, ...); the
+		// provider never sees those controls, as on the first dispatch.
+		clearResponseObjectControls(&request)
+	}
 	ctx.SemanticRequest = &request
 	ctx.ProtocolEnvelope = envelope
 	if _, err := r.applyPreDispatchToolsPolicy(ctx); err != nil {
@@ -780,6 +832,23 @@ func (r *OpenAIRouter) refusalReserveKeepAliveWait(ctx *RequestContext) time.Dur
 		wait = 10 * time.Millisecond
 	}
 	return wait
+}
+
+// refusedCallUsageIn reports that the call in flight stated its usage, so a
+// refusal seen now can be settled with it.
+func refusedCallUsageIn(ctx *RequestContext) bool {
+	if ctx == nil || ctx.SemanticStreamState == nil {
+		return false
+	}
+	usage := partialStreamUsage(ctx.SemanticStreamState.usage)
+	return usage.completionTokensReported
+}
+
+// refusalReserveStreaming reports a streamed turn under a re-serve plan, on
+// which a loop wake with no message is the keepalive clock's, never a held
+// body's deadline: a streamed body is not held in ResponseBodyChunks.
+func refusalReserveStreaming(ctx *RequestContext) bool {
+	return ctx != nil && ctx.RefusalReserve != nil && ctx.IsStreamingResponse && !ctx.StreamingComplete
 }
 
 // sendRefusalReserveKeepAlive sends a held turn's client an SSE comment.

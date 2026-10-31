@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/headers"
 	"sort"
 	"time"
 
@@ -96,7 +97,11 @@ func (r *OpenAIRouter) handleSemanticStreamingResponseBody(
 	// A refusal while the frames are held is re-served in place on the
 	// policy's next choice (rayline_arc_refusal_reserve.go). It comes first:
 	// another host of the refusing model would refuse again.
-	if r.reserveRefusedTurn(ctx) {
+	// A Chat stream states its usage on a chunk after the stop, so the
+	// re-serve waits for it (or for the stream's end, below): the refused
+	// call is settled with what it used.
+	if !endOfStream && (refusedCallUsageIn(ctx) || ctx.InjectedFault == headers.FaultRefusalPrelude) &&
+		r.reserveRefusedTurn(ctx) {
 		return droppedHostChunk(ctx)
 	}
 	if held && r.retryAfterStreamFailure(ctx) {

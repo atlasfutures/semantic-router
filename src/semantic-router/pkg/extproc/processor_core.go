@@ -135,10 +135,12 @@ func (r *OpenAIRouter) processWithContext(
 			// retry staged this can start a re-send, so a failed Send is
 			// settled like any other below.
 			err = r.endSilentStream(stream, ctx)
-		case stalled && r.refusalReserveKeepAliveWait(ctx) > 0 && len(ctx.ResponseBodyChunks) == 0 &&
+		case stalled && refusalReserveStreaming(ctx) && len(ctx.ResponseBodyChunks) == 0 &&
 			!(streamSilenceTimerArmed(ctx) && r.streamSilenceExceeded(ctx)):
 			// The wake was a held turn's keepalive clock: its client, or one
-			// waiting on a re-serve's first bytes, is owed a keepalive.
+			// waiting on a re-serve's first bytes, may be owed a keepalive.
+			// A wake past the hold, with the clock no longer running, owes
+			// nothing: the stream goes on, it has not stalled.
 			if r.refusalReserveKeepAliveDue(ctx) {
 				err = sendRefusalReserveKeepAlive(stream, ctx)
 			}
