@@ -376,6 +376,14 @@ func (r *OpenAIRouter) retryOnNextHost(ctx *RequestContext, class, detail string
 	if plan.sameHost {
 		// The same host again, asked exactly as before: the pin is left whole,
 		// so the re-send can reach no host the first call could not.
+		//
+		// Privacy invariant: a same-host re-send carries the exact bytes the
+		// first call dispatched. Its privacy clearance (contributor, standard
+		// and zdr arms) rests on that alone. Any change that rebuilds or edits
+		// the provider object here (re-reading the catalog or policy, setting
+		// allow_fallbacks, adding to ignore) needs a fresh privacy review
+		// before response_stream.single_host_resend is enabled.
+		// TestSameHostReSendSendsTheDispatchedBytes holds this.
 		next = []string{host}
 	} else {
 		if len(next) == 0 {

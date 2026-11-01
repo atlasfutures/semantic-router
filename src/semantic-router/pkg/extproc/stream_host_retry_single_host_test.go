@@ -3,6 +3,7 @@
 package extproc
 
 import (
+	"bytes"
 	"net/http"
 	"testing"
 	"time"
@@ -204,4 +205,45 @@ func TestSameHostWaitPastTheDeadlineDialsNothing(t *testing.T) {
 	assert.Empty(t, upstream.calls())
 	event := findLogEvent(t, logs, "stream_host_retry_unavailable")
 	assertFields(t, "unavailable", event, map[string]interface{}{"reason": "deadline_within_wait", "wait_ms": 2000})
+}
+
+// The privacy invariant: whatever ends the first call before content, the
+// same-host re-send carries the exact bytes that call dispatched, so its
+// provider object (only, ignore, order, allow_fallbacks, zdr,
+// data_collection) is the one privacy routing cleared. A change that rebuilds
+// the provider object for the re-send must fail here.
+func TestSameHostReSendSendsTheDispatchedBytes(t *testing.T) {
+	cases := map[string][]string{
+		"first-content stall": {hostRetryPreContentChunk, openRouterKeepaliveChunk},
+		"in-band rate limit":  {openRouterKeepaliveChunk, hostRetryRateLimitChunk},
+	}
+	for name, chunks := range cases {
+		t.Run(name, func(t *testing.T) {
+			shortenSameHostWaits(t, time.Millisecond, time.Millisecond)
+			upstream := newHostUpstream(t, map[string]string{singleHost: "content"})
+			router := singleHostRouter(upstream.server.URL, true)
+			stream := NewMockStream(nil)
+
+			ctx, _ := routeFlexTurn(t, router, hostRetryArm, true)
+			require.NotNil(t, ctx.HostRetry, "no same-host plan was staged")
+			dispatched := bytes.Clone(ctx.HostRetry.dispatched)
+			require.NotEmpty(t, dispatched)
+			ctx.ProcessingStartTime = ctx.StartTime
+			require.NoError(t, router.processResponseHeaders(NewMockStream(nil), flexUpstreamHeaders(http.StatusOK, "text/event-stream"), ctx))
+			for _, chunk := range chunks {
+				require.NoError(t, router.handleProcessRequest(stream, fullDuplexResponseBodyRequest(chunk, false), ctx))
+			}
+			if !ctx.HostRetry.started() {
+				ctx.StreamContentSince = time.Now().Add(-91 * time.Second)
+				require.True(t, router.streamSilenceExceeded(ctx))
+				require.NoError(t, router.endSilentStream(stream, ctx))
+			}
+			require.True(t, ctx.HostRetry.started(), "nothing was re-sent")
+			drainSpliced(t, router, ctx, stream)
+
+			received := upstream.received()
+			require.Len(t, received, 1)
+			assert.Equal(t, string(dispatched), string(received[0]), "the same-host re-send changed the dispatched body")
+		})
+	}
 }
