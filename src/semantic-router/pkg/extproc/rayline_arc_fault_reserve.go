@@ -179,7 +179,7 @@ func rewriteChat(frame map[string]interface{}) bool {
 			continue
 		}
 		if delta, ok := choice["delta"].(map[string]interface{}); ok {
-			for _, key := range []string{"content", "tool_calls", "function_call"} {
+			for _, key := range []string{"content", "refusal", "annotations", "tool_calls", "function_call"} {
 				if value, present := delta[key]; present {
 					if text, isText := value.(string); !isText || text != "" {
 						dropped = true

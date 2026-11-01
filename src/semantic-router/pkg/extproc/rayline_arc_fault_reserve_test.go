@@ -219,3 +219,13 @@ func TestReserveFaultClearsTheStopSequence(t *testing.T) {
 	assert.Contains(t, out, `"stop_sequence":null`)
 	assert.NotContains(t, out, "END")
 }
+
+// Refusal text and citations go with the content they belong to.
+func TestReserveFaultDropsRefusalTextAndCitations(t *testing.T) {
+	ctx := reserveFaultContext(llmprotocol.OpenAIChatV1)
+	out := string(faultReservedChunk(ctx, []byte(`data: {"choices":[{"index":0,"delta":{"content":"source","annotations":[{"type":"url_citation","url_citation":{"url":"https://example.com","start_index":0,"end_index":6}}]},"finish_reason":null}]}`+"\n\n"+
+		`data: {"choices":[{"index":0,"delta":{"refusal":"I cannot help with that request."},"finish_reason":"stop"}]}`+"\n\n")))
+	assert.NotContains(t, out, "annotations")
+	assert.NotContains(t, out, "cannot help")
+	assert.Contains(t, out, `"finish_reason":"content_filter"`)
+}
