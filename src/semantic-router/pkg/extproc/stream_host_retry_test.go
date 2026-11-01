@@ -95,6 +95,16 @@ func newHostUpstream(t *testing.T, behaviour map[string]string) *hostUpstream {
 				"event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"refusal\","+
 				"\"stop_sequence\":null},\"usage\":{\"output_tokens\":3}}\n\n"+
 				"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n")
+		case "chat_refusal":
+			// A Chat stream that refuses before any content and ends with no
+			// usage line.
+			w.Header().Set("content-type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			_, _ = io.WriteString(w, `data: {"id":"gen-served-refusal","object":"chat.completion.chunk","created":1,`+
+				`"model":"z-ai/glm-5.3","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}`+"\n\n"+
+				`data: {"id":"gen-served-refusal","object":"chat.completion.chunk","created":1,`+
+				`"model":"z-ai/glm-5.3","choices":[{"index":0,"delta":{},"finish_reason":"content_filter"}]}`+"\n\n"+
+				"data: [DONE]\n\n")
 		case "sse_error":
 			w.Header().Set("content-type", "text/event-stream")
 			w.WriteHeader(http.StatusOK)

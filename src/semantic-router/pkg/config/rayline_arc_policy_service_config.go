@@ -231,8 +231,10 @@ type RaylineARCRefusalReserveConfig struct {
 }
 
 const (
-	DefaultRaylineARCRefusalReserves      = 2
-	RaylineARCMaxRefusalReserves          = 2
+	// One re-serve at most: the re-served arm is never held, so a refusal
+	// on it passes through (design review 2026-11-01, option 1).
+	DefaultRaylineARCRefusalReserves      = 1
+	RaylineARCMaxRefusalReserves          = 1
 	DefaultRaylineARCReserveBudgetSeconds = 45
 	DefaultRaylineARCReserveHoldSeconds   = 60
 )

@@ -342,7 +342,7 @@ class RaylineARCRefusalReserveConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     enabled: bool = False
-    max_reserves: int = Field(default=0, ge=0, le=2)
+    max_reserves: int = Field(default=0, ge=0, le=1)
     budget_seconds: int = Field(default=0, ge=0, le=120)
     hold_max_seconds: int = Field(default=0, ge=0, le=300)
     hold_families: list[Literal["claude", "gpt"]] = Field(default_factory=list)

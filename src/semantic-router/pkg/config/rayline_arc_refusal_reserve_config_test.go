@@ -27,7 +27,7 @@ func TestRaylineARCRefusalReserveContract(t *testing.T) {
 		"on":                   {func(*RaylineARCPolicyServiceConfig) {}, true},
 		"on an eval cell":      {func(p *RaylineARCPolicyServiceConfig) { p.EvalCell = true }, false},
 		"without the fallback": {func(p *RaylineARCPolicyServiceConfig) { p.Fallback.Enabled = false }, false},
-		"three re-serves":      {func(p *RaylineARCPolicyServiceConfig) { p.Fallback.Reserve.MaxReserves = 3 }, false},
+		"two re-serves":        {func(p *RaylineARCPolicyServiceConfig) { p.Fallback.Reserve.MaxReserves = 2 }, false},
 		"a glm hold":           {func(p *RaylineARCPolicyServiceConfig) { p.Fallback.Reserve.HoldFamilies = []string{"glm"} }, false},
 		"budget past 120 s":    {func(p *RaylineARCPolicyServiceConfig) { p.Fallback.Reserve.BudgetSeconds = 121 }, false},
 		"a week of exclusion":  {func(p *RaylineARCPolicyServiceConfig) { p.Fallback.FamilyExclusionHours = 169 }, false},

@@ -30,7 +30,7 @@ func TestRefusalReserveIsOffOnEvalCellsAndByDefault(t *testing.T) {
 	assert.False(t, reservePolicy(false, false).RefusalReserveEnabled())
 	assert.False(t, (&config.RaylineARCPolicyServiceConfig{Fallback: &config.RaylineARCPolicyFallbackConfig{Enabled: true}}).RefusalReserveEnabled())
 	maxReserves, budget, hold, families := reservePolicy(true, false).RefusalReserveLimits()
-	assert.Equal(t, 2, maxReserves)
+	assert.Equal(t, 1, maxReserves)
 	assert.Equal(t, 45.0, budget.Seconds())
 	assert.Equal(t, 60.0, hold.Seconds())
 	assert.Equal(t, []string{"claude"}, families)

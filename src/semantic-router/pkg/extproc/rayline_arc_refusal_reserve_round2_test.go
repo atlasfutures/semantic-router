@@ -242,9 +242,10 @@ func TestRefusalReserveLeavesTheRateLimitCheckItsTimeout(t *testing.T) {
 }
 
 // A re-served arm whose own Messages stream refuses before any content block
-// is a refusal, found when its stream is finalized: the turn is re-served
-// again on the next arm, never cut as a host's failure.
-func TestReservedArmsBareMessagesRefusalIsReservedAgain(t *testing.T) {
+// is a refusal, found when its stream is finalized: one re-serve is the
+// most, so it reaches the client as a refusal, never cut as a host's
+// failure and never re-served again.
+func TestReservedArmsBareMessagesRefusalPassesThrough(t *testing.T) {
 	const kimiArm, kimiHost = "kimi", "moonshotai"
 	upstream := newHostUpstream(t, map[string]string{reserveGLMHost: "messages_refusal", kimiHost: "content"})
 	router := reserveRouter(upstream.server.URL)
@@ -274,9 +275,63 @@ func TestReservedArmsBareMessagesRefusalIsReservedAgain(t *testing.T) {
 
 	sent, ended := clientBytes(stream)
 	assert.True(t, ended)
-	assert.Contains(t, sent, "served on "+kimiHost, "the bare refusal was not re-served on the next arm")
-	assert.NotEqual(t, turnFailureTimeout, ctx.ResponseFailureClass)
-	assert.Len(t, attemptsRecord(t, sent)["attempts"].([]interface{}), 3)
+	assert.Len(t, upstream.calls(), 1, "the re-served arm's refusal was re-served again")
+	assert.NotContains(t, sent, "served on "+kimiHost)
+	assert.Equal(t, turnFailureRefusal, ctx.ResponseFailureClass)
+	attempts := attemptsRecord(t, sent)["attempts"].([]interface{})
+	require.Len(t, attempts, 2)
+	assert.Equal(t, "refused", attempts[1].(map[string]interface{})["outcome"])
+}
+
+// A re-served arm's Chat stream that refuses before any content and closes
+// with no usage line is passed through as a refusal: the stream stated its
+// stop, so its host did not fail.
+func TestReservedArmsChatRefusalAtCloseIsNotATimeout(t *testing.T) {
+	upstream := newHostUpstream(t, map[string]string{reserveGLMHost: "chat_refusal"})
+	router := reserveRouter(upstream.server.URL)
+	stream := NewMockStream(nil)
+	ctx, _ := startReserveTurn(t, router)
+
+	require.NoError(t, router.handleProcessRequest(stream, fullDuplexResponseBodyRequest(reserveRoleChunk, false), ctx))
+	require.NoError(t, router.handleProcessRequest(stream, fullDuplexResponseBodyRequest(reserveRefusalChunk, true), ctx))
+	require.True(t, ctx.HostRetry.started(), "the refusal was not re-served")
+	drainSpliced(t, router, ctx, stream)
+
+	sent, ended := clientBytes(stream)
+	assert.True(t, ended)
+	assert.Len(t, upstream.calls(), 1)
+	assert.Equal(t, turnFailureRefusal, ctx.ResponseFailureClass)
+	assert.NotContains(t, sent, "stream_incomplete")
+	assert.Contains(t, sent, "gen-served-refusal")
+}
+
+// The re-served arm is not held: its first bytes go to the client as they
+// arrive, and the client is owed keepalives only until then.
+func TestReservedArmStreamsUnheld(t *testing.T) {
+	upstream := newHostUpstream(t, map[string]string{reserveGLMHost: "content"})
+	router := reserveRouter(upstream.server.URL)
+	stream := NewMockStream(nil)
+	ctx, _ := startReserveTurn(t, router)
+
+	require.NoError(t, router.handleProcessRequest(stream, fullDuplexResponseBodyRequest(reserveRoleChunk, false), ctx))
+	require.NoError(t, router.handleProcessRequest(stream, fullDuplexResponseBodyRequest(reserveRefusalChunk, true), ctx))
+	require.True(t, ctx.HostRetry.started(), "the refusal was not re-served")
+	plan := ctx.RefusalReserve
+	assert.True(t, plan.reserved)
+	assert.False(t, router.holdingForRefusalReserve(ctx), "the re-served arm is held")
+	plan.lastKeepAlive = time.Now().Add(-refusalReserveKeepAlive)
+	assert.True(t, router.refusalReserveKeepAliveDue(ctx), "no keepalive while the re-serve waits for its first bytes")
+	assert.Positive(t, router.refusalReserveKeepAliveWait(ctx))
+
+	for !plan.released && !ctx.StreamingComplete {
+		serveNextSpliced(t, router, ctx, stream)
+	}
+	assert.True(t, plan.released, "the re-served arm's first bytes did not release it")
+	assert.False(t, router.refusalReserveKeepAliveDue(ctx))
+	assert.Zero(t, router.refusalReserveKeepAliveWait(ctx))
+	drainSpliced(t, router, ctx, stream)
+	sent, _ := clientBytes(stream)
+	assert.Contains(t, sent, "served on "+reserveGLMHost)
 }
 
 // A re-served arm's host that closes cleanly with nothing said is that host's

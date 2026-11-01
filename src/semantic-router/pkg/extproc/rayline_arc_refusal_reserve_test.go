@@ -75,7 +75,7 @@ func startReserveTurn(t *testing.T, router *OpenAIRouter) (*RequestContext, *rec
 	ctx.RaylineARCRawBody = []byte(`{"model":"auto","stream":true,"messages":[{"role":"user","content":"route this turn"}]}`)
 	ctx.VSRSelectedModel = reserveClaudeArm
 	ctx.RefusalReserve = &refusalReservePlan{
-		maxReserves: 2, budget: 45 * time.Second, hold: 60 * time.Second, families: []string{"claude"},
+		maxReserves: 1, budget: 45 * time.Second, hold: 60 * time.Second, families: []string{"claude"},
 		family: "claude", attemptStarted: time.Now(),
 		redecide: func(*RequestContext) (*config.ModelRef, string, error) {
 			return &config.ModelRef{Model: reserveGLMArm}, "test", nil

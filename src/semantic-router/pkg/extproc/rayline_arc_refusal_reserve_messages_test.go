@@ -58,7 +58,7 @@ func TestRefusalReserve_StopDetailsCyberAfterThinking(t *testing.T) {
 	ctx.RaylineARCRawBody = []byte(`{"model":"auto","max_tokens":1024,"stream":true,"messages":[{"role":"user","content":"route this turn"}]}`)
 	ctx.VSRSelectedModel = reserveClaudeArm
 	ctx.RefusalReserve = &refusalReservePlan{
-		maxReserves: 2, budget: 45 * time.Second, hold: 60 * time.Second, families: []string{"claude"},
+		maxReserves: 1, budget: 45 * time.Second, hold: 60 * time.Second, families: []string{"claude"},
 		family: "claude", attemptStarted: time.Now(),
 		redecide: func(*RequestContext) (*config.ModelRef, string, error) {
 			return &config.ModelRef{Model: reserveGLMArm}, "test", nil
@@ -126,4 +126,33 @@ func assertGolden(t *testing.T, path, got string) {
 	want, err := os.ReadFile(path)
 	require.NoError(t, err, "missing golden %s: run with VSR_UPDATE_GOLDEN=1", path)
 	assert.Equal(t, string(want), got)
+}
+
+// A Messages refusal holds its stop until the stream is finalized; the
+// re-serve budget still starts when the stop arrives, not when it is
+// published.
+func TestRefusalReserveBudgetStartsAtTheMessagesHeldStop(t *testing.T) {
+	router := reserveRouter("http://127.0.0.1:1")
+	claude := router.Config.ModelConfig[reserveClaudeArm]
+	claude.APIFormat = config.APIFormatAnthropic
+	router.Config.ModelConfig[reserveClaudeArm] = claude
+	request := testNeutralRequest("auto", "route this turn")
+	request.Stream = true
+	limit := int64(1024)
+	request.Sampling.MaxOutputTokens = &limit
+	ctx := routingTestContext(llmprotocol.AnthropicMessagesV1, request)
+	ctx.ExpectStreamingResponse = true
+	ctx.StartTime = time.Now()
+	_, err := router.handleEntrypointModelRouting(request, "auto", flexResendDecision, entropy.ReasoningDecision{}, reserveClaudeArm, ctx)
+	require.NoError(t, err)
+	require.NoError(t, router.processResponseHeaders(NewMockStream(nil), flexUpstreamHeaders(http.StatusOK, "text/event-stream"), ctx))
+	stream := NewMockStream(nil)
+	for _, chunk := range reserveMessagesCyberRefusal {
+		require.NoError(t, router.handleProcessRequest(stream, fullDuplexResponseBodyRequest(chunk, false), ctx))
+	}
+	require.True(t, heldStopIsRefusal(ctx), "the fixture's stop is not held")
+
+	ctx.RefusalReserve = &refusalReservePlan{budget: 45 * time.Second, hold: 60 * time.Second}
+	noteRefusalSignal(ctx)
+	assert.False(t, ctx.RefusalReserve.firstRefusal.IsZero(), "the held stop did not start the budget")
 }

@@ -33,11 +33,13 @@ import (
 // same privacy mask, the same offer, the refused model now excluded), builds
 // the dispatch for the arm it chose, and streams that call into the response
 // the client already has open, through the host retry's splice. The turn
-// then commits once, on the arm that served it. At most max_reserves
-// re-serves run, and none starts after budget_seconds from the first
-// refusal. A refusal after visible content, a turn past hold_max_seconds, or
-// a refusal with no re-serve left is passed through as before (ADR 0120
-// P1a: nothing commits and the model is excluded).
+// then commits once, on the arm that served it. One re-serve runs at most,
+// and none starts after budget_seconds from the first refusal. The
+// re-served arm is not held: its frames go to the client as they arrive
+// (keepalives cover only the wait for its first bytes), and a refusal on it
+// is passed through. So is a refusal after visible content or a turn past
+// hold_max_seconds (ADR 0120 P1a: nothing commits and the model is
+// excluded).
 //
 // The response headers went out before the refusal arrived, so they name the
 // refusing arm. The served model and every attempt are stated in-band, on
@@ -82,9 +84,13 @@ type refusalReservePlan struct {
 	firstRefusal  time.Time
 	lastKeepAlive time.Time
 	// released says the arm in flight's frames went to the client: its
-	// first text or tool call arrived, the hold ran out, or the hold bound
-	// was passed.
+	// first text or tool call arrived, the hold ran out, the hold bound was
+	// passed, or (on the re-served arm) its first bytes arrived.
 	released bool
+	// reserved says the arm in flight is the re-served one. It is never
+	// held and never re-served again; until its first bytes arrive the
+	// client is sent keepalives.
+	reserved bool
 	// attemptStarted is when the arm in flight was dispatched.
 	attemptStarted time.Time
 	// commented says the attempt record was sent.
@@ -195,7 +201,7 @@ func familyHeld(families []string, family string) bool {
 // so a refusal before its first text or tool call can be re-served.
 func (r *OpenAIRouter) holdingForRefusalReserve(ctx *RequestContext) bool {
 	plan := ctx.RefusalReserve
-	if plan == nil || plan.released || ctx.HostRetry == nil || ctx.HostRetry.exposed ||
+	if plan == nil || plan.released || plan.reserved || ctx.HostRetry == nil || ctx.HostRetry.exposed ||
 		!ctx.FullDuplexResponseBody || !ctx.IsStreamingResponse || ctx.StreamingComplete {
 		return false
 	}
@@ -268,8 +274,9 @@ func streamRefusalSignal(state *semanticResponseStreamState) string {
 // while its frames were held, and reports whether a re-serve took over.
 func (r *OpenAIRouter) reserveRefusedTurn(ctx *RequestContext) bool {
 	plan := ctx.RefusalReserve
-	if plan == nil || plan.released || ctx.HostRetry == nil || ctx.HostRetry.exposed || ctx.StreamingComplete ||
-		!ctx.FullDuplexResponseBody {
+	if plan == nil || plan.released || plan.reserved || ctx.HostRetry == nil || ctx.HostRetry.exposed ||
+		ctx.StreamingComplete || !ctx.FullDuplexResponseBody {
+		// The re-served arm's refusal is passed through as it stands.
 		return false
 	}
 	if plan.holdExpired(ctx) {
@@ -448,6 +455,7 @@ func (r *OpenAIRouter) reserveRefusedTurn(ctx *RequestContext) bool {
 	r.spliceReserve(ctx, dispatch, body, staged, call)
 	plan.family = raylinearc.ModelFamily(armModelOf(ctx))
 	plan.attemptStarted = time.Now()
+	plan.reserved = true
 	return true
 }
 
@@ -878,8 +886,8 @@ func (r *OpenAIRouter) refusalReserveKeepAliveWait(ctx *RequestContext) time.Dur
 // upstream chunk.
 func (r *OpenAIRouter) refusalReserveHoldLapsed(ctx *RequestContext) bool {
 	plan := ctx.RefusalReserve
-	return plan != nil && !plan.released && plan.holdExpired(ctx) && ctx.HostRetry != nil &&
-		!ctx.HostRetry.started() && len(ctx.HostRetry.held) > 0 && !r.holdingResponse(ctx)
+	return plan != nil && !plan.released && !plan.reserved && plan.holdExpired(ctx) && ctx.HostRetry != nil &&
+		len(ctx.HostRetry.held) > 0 && !r.holdingResponse(ctx)
 }
 
 // sendLapsedHoldFrames sends the frames a lapsed hold kept.
@@ -948,18 +956,44 @@ func (r *OpenAIRouter) reportRefusedRateLimitUsage(ctx *RequestContext, limit *r
 // its refusal, though the re-serve itself waits for the call's usage.
 func noteRefusalSignal(ctx *RequestContext) {
 	plan := ctx.RefusalReserve
-	if plan == nil || plan.released || !plan.firstRefusal.IsZero() {
+	if plan == nil || plan.released || plan.reserved || !plan.firstRefusal.IsZero() {
 		return
 	}
-	if streamRefusalSignal(ctx.SemanticStreamState) != "" || ctx.InjectedFault == headers.FaultRefusalPrelude {
+	if refusalSeen(ctx) {
 		plan.firstRefusal = time.Now()
 	}
 }
 
-// refusalReservePending reports a turn whose re-serve plan still holds its
-// frames: nothing of it has reached the client.
-func refusalReservePending(ctx *RequestContext) bool {
-	return ctx != nil && ctx.RefusalReserve != nil && !ctx.RefusalReserve.released
+// refusalSeen reports a call that refused, by any of the ways it can say
+// so: a published stop or refusal part, the stop a Messages stream holds
+// until it is finalized, or the dev fault.
+func refusalSeen(ctx *RequestContext) bool {
+	return streamRefusalSignal(ctx.SemanticStreamState) != "" || heldStopIsRefusal(ctx) ||
+		ctx.InjectedFault == headers.FaultRefusalPrelude
+}
+
+// reserveSpliceEndedOnStop reports a spliced call under a re-serve plan that
+// ended cleanly before any content having stated how it stopped: it is read
+// to its end, not failed over as a silent host. On a host re-send of the
+// first arm that is a refusal, which is re-served then; on the re-served
+// arm any stop, which the client gets as it stands.
+func reserveSpliceEndedOnStop(ctx *RequestContext) bool {
+	plan := ctx.RefusalReserve
+	if plan == nil {
+		return false
+	}
+	if plan.reserved {
+		return streamStopSeen(ctx)
+	}
+	return !plan.released && (heldStopIsRefusal(ctx) || streamRefusalSignal(ctx.SemanticStreamState) != "")
+}
+
+// streamStopSeen reports a stream that stated its stop, published or held.
+func streamStopSeen(ctx *RequestContext) bool {
+	if state := ctx.SemanticStreamState; state != nil && state.stop != "" {
+		return true
+	}
+	return ctx.ProtocolResponseStream != nil && ctx.ProtocolResponseStream.PendingStop() != ""
 }
 
 // heldStopIsRefusal reports a response stream holding a refusal as its
@@ -974,7 +1008,7 @@ func heldStopIsRefusal(ctx *RequestContext) bool {
 // the refusal for an upstream error and ask the refusing model again.
 func awaitingRefusalReserve(ctx *RequestContext) bool {
 	plan := ctx.RefusalReserve
-	return plan != nil && !plan.released && streamRefusalSignal(ctx.SemanticStreamState) != ""
+	return plan != nil && !plan.released && !plan.reserved && streamRefusalSignal(ctx.SemanticStreamState) != ""
 }
 
 // refusalReserveStreaming reports a streamed turn under a re-serve plan, on
