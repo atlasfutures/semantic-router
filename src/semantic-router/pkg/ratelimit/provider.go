@@ -41,6 +41,10 @@ type Provider interface {
 	Report(ctx Context, usage TokenUsage) error
 }
 
+// ProviderCheckTimeout bounds a remote provider's Check: a caller that must
+// act within a deadline after the check leaves itself this much time.
+const ProviderCheckTimeout = 2 * time.Second
+
 // Context carries the per-request information needed for rate limit evaluation.
 type Context struct {
 	UserID     string

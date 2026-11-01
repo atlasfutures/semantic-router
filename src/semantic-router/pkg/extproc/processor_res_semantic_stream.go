@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/headers"
 	"sort"
 	"time"
 
@@ -93,7 +94,18 @@ func (r *OpenAIRouter) handleSemanticStreamingResponseBody(
 	buffers := semanticStreamBuffers{}
 	held := r.holdingForHostRetry(ctx)
 	buffers.push(responseBody, ctx)
-	if held && r.retryAfterStreamFailure(ctx) {
+	noteRefusalSignal(ctx)
+	// A refusal while the frames are held is re-served in place on the
+	// policy's next choice (rayline_arc_refusal_reserve.go). It comes first:
+	// another host of the refusing model would refuse again.
+	// A Chat stream states its usage on a chunk after the stop, so the
+	// re-serve waits for it (or for the stream's end, below): the refused
+	// call is settled with what it used.
+	if !endOfStream && (refusedCallUsageIn(ctx) || ctx.InjectedFault == headers.FaultRefusalPrelude) &&
+		r.reserveRefusedTurn(ctx) {
+		return droppedHostChunk(ctx)
+	}
+	if held && !awaitingRefusalReserve(ctx) && r.retryAfterStreamFailure(ctx) {
 		// The call failed in-band before any content; the arm's next host
 		// takes the turn over, and its error never reaches the client.
 		return droppedHostChunk(ctx)
@@ -127,6 +139,11 @@ func (r *OpenAIRouter) handleSemanticStreamingResponseBody(
 			r.attachTruncatedStreamUsage(ctx)
 		}
 		buffers.finalize(ctx)
+		// A codec that states the stop only when its stream is finalized
+		// (Messages) shows the refusal here, still before anything was sent.
+		if !cut && r.reserveRefusedTurn(ctx) {
+			return droppedHostChunk(ctx)
+		}
 		r.finalizeSemanticStreamingResponse(ctx, buffers.streamErr)
 		if cut {
 			releaseCutTurn(ctx)
@@ -681,6 +698,9 @@ func (r *OpenAIRouter) classStreamFailure(
 		class := turnFailureUpstreamError
 		if routerStreamCutCodes[inBand.Code] {
 			class = turnFailureTimeout
+			if plan := ctx.HostRetry; plan != nil && plan.failedClass != "" {
+				class = plan.failedClass
+			}
 		}
 		recordTurnFailureDetail(ctx, class, codecStreamFailureDetail(inBand), sent)
 		logToolArgumentsRefusal(ctx, streamErr)

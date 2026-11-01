@@ -43,7 +43,7 @@ func NewEnvoyRLSProvider(address, domain string) (*EnvoyRLSProvider, error) {
 		client:  client,
 		conn:    conn,
 		domain:  domain,
-		timeout: 2 * time.Second,
+		timeout: ProviderCheckTimeout,
 	}, nil
 }
 

@@ -627,12 +627,19 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	if scorer.fallback && !sideCall && turn != nil {
 		cellOut = scorer.cellExclusions(selector.now(), arcContext.PrivateTurn)
 	}
-	fallback := scorer.fallback && !sideCall && turn != nil && (len(turn.Exclusions) > 0 || len(cellOut) > 0)
+	// The session's family exclusions (pathfinder#6066 D3) hold across the
+	// contexts the session opens, where the context's own exclusions end.
+	families := []string(nil)
+	if scorer.fallback && !sideCall && turn != nil {
+		families = arcContext.FamilyExclusions
+	}
+	fallback := scorer.fallback && !sideCall && turn != nil &&
+		(len(turn.Exclusions) > 0 || len(cellOut) > 0 || len(families) > 0)
 	offer := func(cellOut map[int]string) ([]string, int, bool) {
 		held, forced := held, false
 		out := func(arm int, model string) bool {
 			_, routeOut := cellOut[arm]
-			return fallback && (turn.Excludes(model) || routeOut)
+			return fallback && (turn.Excludes(model) || routeOut || raylinearc.ExcludesFamily(families, model))
 		}
 		if held >= 0 && (out(held, scorer.armModel(held)) || len(hard) == len(workerIDs) && hard[held]) {
 			held, forced = -1, true
@@ -664,6 +671,14 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		// offered again.
 		hold = toolLoopHold{outcome: "lifted_by_exclusion"}
 		excluded = hard
+		available, offeredHeld, forced = offer(cellOut)
+	}
+	if len(available) == 0 && len(families) > 0 {
+		// A family exclusion is advice too: a session whose every
+		// remaining model is of the excluded family (a private turn whose
+		// allowed arms are all one vendor's) is offered that family again
+		// rather than failing every turn of the session.
+		families = nil
 		available, offeredHeld, forced = offer(cellOut)
 	}
 	if len(available) == 0 && len(cellOut) > 0 {
@@ -1238,7 +1253,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		result.RaylineARC.PolicyBoundary = raylinearc.NewPolicyBoundaryDecisionFrom(binding.arm, state.TurnIndex, turn, digests)
 	}
 	if fallback {
-		logRaylineARCFallbackDecision(arcContext.EpisodeIDHash, arcContext.RequestID, state.TurnIndex, turn, scorer.cellOutWorkers(loggedRoutes), forced, available, response)
+		logRaylineARCFallbackDecision(arcContext.EpisodeIDHash, arcContext.RequestID, state.TurnIndex, turn, scorer.cellOutWorkers(loggedRoutes), families, forced, available, response)
 	}
 	return result, nil
 }
@@ -1368,10 +1383,14 @@ func logRaylineARCFallbackDecision(
 	turnIndex uint64,
 	turn *raylinearc.PolicyEpisodeState,
 	routes []map[string]string,
+	families []string,
 	forced bool,
 	offered []string,
 	response *raylinearc.PolicyDecisionResponse,
 ) {
+	if families == nil {
+		families = []string{}
+	}
 	excluded := make([]map[string]string, 0, len(turn.Exclusions))
 	for _, exclusion := range turn.Exclusions {
 		excluded = append(excluded, map[string]string{"model": exclusion.Model, "class": exclusion.Class})
@@ -1394,6 +1413,7 @@ func logRaylineARCFallbackDecision(
 		"reason":             reason,
 		"excluded":           excluded,
 		"excluded_routes":    routes,
+		"excluded_families":  families,
 		"offered_action_ids": offered,
 		"selected_action_id": response.Decision.SelectedActionID,
 		"decision_reason":    response.Decision.Reason,

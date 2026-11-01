@@ -457,6 +457,7 @@ func (r *OpenAIRouter) finalizeProviderDispatchResponse(
 	r.stageEndpointResend(ctx, dispatch, body)
 	r.stageThinkingSignatureRetry(ctx, dispatch, body)
 	r.stageHostRetry(ctx, dispatch, body)
+	r.stageRefusalReserve(ctx, dispatch, body)
 	r.auditRaylineARCUpstream(body, ctx)
 	common := response.GetRequestBody().GetResponse()
 	if common == nil {
@@ -467,6 +468,7 @@ func (r *OpenAIRouter) finalizeProviderDispatchResponse(
 	}
 	appendContentLengthHeader(&common.HeaderMutation.SetHeaders, len(body))
 	declareAutoCacheBeta(&common.HeaderMutation.SetHeaders, ctx)
+	stripServerSideFallbackBeta(common.HeaderMutation, ctx)
 	common.BodyMutation = &ext_proc.BodyMutation{
 		Mutation: &ext_proc.BodyMutation_Body{Body: body},
 	}

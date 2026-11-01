@@ -52,7 +52,8 @@ func (r *OpenAIRouter) streamSilenceLimit(ctx *RequestContext) time.Duration {
 // budget applies.
 func (r *OpenAIRouter) hostRetryBudgetLeft(ctx *RequestContext) (time.Duration, bool) {
 	budget := r.Config.ResponseStreamHostRetryBudgetSec
-	if budget <= 0 || ctx.StreamContentSeen || !ctx.HostRetry.started() || ctx.StartTime.IsZero() {
+	if budget <= 0 || ctx.StreamContentSeen || !ctx.HostRetry.started() || ctx.StartTime.IsZero() ||
+		refusalReserveServing(ctx) {
 		return 0, false
 	}
 	return ctx.StartTime.Add(time.Duration(budget) * time.Second).Sub(ctx.StreamContentSince), true

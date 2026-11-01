@@ -93,6 +93,10 @@ type hostRetryPlan struct {
 	// exhausted says the last call failed before any content and no host is
 	// left: the turn ends as a first-content timeout.
 	exhausted bool
+	// failedClass is how a refusal re-serve's arm failed before any content,
+	// which host retry never fails over: the turn's failure keeps that
+	// class, not the timeout its cut is sent as.
+	failedClass string
 	// exposed says frames of the call in flight reached the client, so a
 	// re-send would repeat them: it is not replaced.
 	exposed bool
@@ -245,7 +249,7 @@ func (plan *hostRetryPlan) currentHost(ctx *RequestContext) (string, string) {
 // which takes a first-content limit to fire.
 func (r *OpenAIRouter) holdingForHostRetry(ctx *RequestContext) bool {
 	plan := ctx.HostRetry
-	return plan != nil && !plan.exposed && streamSilenceTimerArmed(ctx) && !ctx.StreamContentSeen &&
+	return plan != nil && !refusalReserveServing(ctx) && !plan.exposed && streamSilenceTimerArmed(ctx) && !ctx.StreamContentSeen &&
 		!ctx.StreamingComplete && r.streamSilenceLimit(ctx) > 0 && len(plan.remaining()) > 1
 }
 
@@ -258,13 +262,16 @@ func (r *OpenAIRouter) holdHostRetryFrames(ctx *RequestContext, response *ext_pr
 	if plan == nil || streamed == nil {
 		return response
 	}
-	if r.holdingForHostRetry(ctx) && len(plan.held)+len(streamed.Body) > hostRetryMaxHeld {
+	if r.holdingResponse(ctx) && len(plan.held)+len(streamed.Body) > hostRetryMaxHeld {
 		plan.exposed = true
 	}
-	if r.holdingForHostRetry(ctx) {
+	if r.holdingResponse(ctx) {
 		if len(streamed.Body) > 0 {
 			plan.held = append(plan.held, streamed.Body...)
 			streamed.Body = bytes.Clone(hostRetryHoldFrame)
+			if reserve := ctx.RefusalReserve; reserve != nil {
+				reserve.lastKeepAlive = time.Now()
+			}
 		}
 		return response
 	}
@@ -274,8 +281,9 @@ func (r *OpenAIRouter) holdHostRetryFrames(ctx *RequestContext, response *ext_pr
 	}
 	if len(streamed.Body) > 0 {
 		plan.exposed = true
+		r.noteRefusalReserveRelease(ctx)
 	}
-	return response
+	return withRefusalAttemptsComment(ctx, response)
 }
 
 // retryOnNextHost starts the re-send of a turn whose call in flight failed
@@ -284,6 +292,10 @@ func (r *OpenAIRouter) holdHostRetryFrames(ctx *RequestContext, response *ext_pr
 // without it.
 func (r *OpenAIRouter) retryOnNextHost(ctx *RequestContext, class, detail string) bool {
 	plan := ctx.HostRetry
+	if refusalReserveServing(ctx) {
+		// A refusal re-serve's arm is never failed over to another host.
+		return false
+	}
 	if plan == nil || plan.exposed || ctx.StreamContentSeen || ctx.StreamingComplete || !streamSilenceTimerArmed(ctx) {
 		return false
 	}
@@ -368,6 +380,9 @@ func (r *OpenAIRouter) failHost(ctx *RequestContext, class, detail string) bool 
 		return true
 	}
 	plan.exhausted = true
+	if refusalReserveServing(ctx) {
+		plan.failedClass = class
+	}
 	return false
 }
 
@@ -634,6 +649,15 @@ func (r *OpenAIRouter) serveHostRetryChunk(
 		response = r.handleSemanticStreamingResponseBody(nil, false, ctx)
 	case len(chunk.body) > 0:
 		response = r.handleSemanticStreamingResponseBody(chunk.body, false, ctx)
+	case !ctx.StreamContentSeen && (chunk.err == nil || refusalReserveServing(ctx)) && reserveSpliceEndedOnStop(ctx):
+		// A spliced call under a re-serve plan that ended cleanly before any
+		// content, having said how it stopped, is read to its end as the
+		// first call's is: a Messages stop shows only once the stream is
+		// finalized. A refusal on a host re-send of the first arm is
+		// re-served then; the re-served arm's stop reaches the client as it
+		// stands, though its body broke after it. Any other end before
+		// content is the host's failure.
+		response = r.handleSemanticStreamingResponseBody(nil, true, ctx)
 	case !ctx.StreamContentSeen:
 		// It ended, or broke, before any content.
 		detail := "ended_before_content"

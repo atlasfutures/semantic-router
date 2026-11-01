@@ -121,6 +121,15 @@ func (r *RateLimitResolver) Check(ctx Context) (*Decision, error) {
 	return merged, nil
 }
 
+// CheckTimeout is the longest Check may take: each provider is checked in
+// turn, and each within ProviderCheckTimeout.
+func (r *RateLimitResolver) CheckTimeout() time.Duration {
+	if r == nil {
+		return 0
+	}
+	return time.Duration(len(r.providers)) * ProviderCheckTimeout
+}
+
 // Report forwards token usage to all providers for budget tracking.
 // Errors are logged but not propagated (best-effort reporting).
 func (r *RateLimitResolver) Report(ctx Context, usage TokenUsage) {

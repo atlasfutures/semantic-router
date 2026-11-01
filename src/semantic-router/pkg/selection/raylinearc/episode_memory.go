@@ -62,6 +62,11 @@ type MemoryEpisodeStore struct {
 	removals uint64
 	// forks is the fork registry by root episode (EpisodeForkRegistry).
 	forks map[string]*memoryForkRecord
+	// families are the sessions' family exclusions
+	// (SessionFamilyExclusionStore), under their own lock and outside the
+	// episodes' capacity eviction.
+	familyMu sync.Mutex
+	families map[string]memorySessionFamilies
 }
 
 func NewMemoryEpisodeStore(

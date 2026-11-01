@@ -53,6 +53,7 @@ type hostUpstream struct {
 	server    *httptest.Server
 	mu        sync.Mutex
 	providers []map[string]json.RawMessage
+	headers   []http.Header
 	behaviour map[string]string
 }
 
@@ -69,6 +70,7 @@ func newHostUpstream(t *testing.T, behaviour map[string]string) *hostUpstream {
 		_ = json.Unmarshal(body.Provider["order"], &order)
 		upstream.mu.Lock()
 		upstream.providers = append(upstream.providers, body.Provider)
+		upstream.headers = append(upstream.headers, r.Header.Clone())
 		upstream.mu.Unlock()
 		host := ""
 		if len(order) > 0 {
@@ -79,6 +81,51 @@ func newHostUpstream(t *testing.T, behaviour map[string]string) *hostUpstream {
 			w.Header().Set("content-type", "text/event-stream")
 			w.WriteHeader(http.StatusOK)
 			_, _ = io.WriteString(w, hostRetryContentStream("served on "+host))
+		case "keepalive_close":
+			// A stream that says nothing and then closes cleanly.
+			w.Header().Set("content-type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			_, _ = io.WriteString(w, openRouterKeepaliveChunk)
+		case "messages_refusal":
+			// An Anthropic Messages stream that refuses before any content
+			// block: its stop is known only once the stream is finalized.
+			w.Header().Set("content-type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			_, _ = io.WriteString(w, "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_bare\","+
+				"\"type\":\"message\",\"role\":\"assistant\",\"model\":\"glm-5.3\",\"content\":[],\"stop_reason\":null,"+
+				"\"usage\":{\"input_tokens\":50,\"output_tokens\":1}}}\n\n"+
+				"event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"refusal\","+
+				"\"stop_sequence\":null},\"usage\":{\"output_tokens\":3}}\n\n"+
+				"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n")
+		case "messages_content":
+			// An Anthropic Messages stream that answers.
+			w.Header().Set("content-type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			_, _ = io.WriteString(w, "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_served\","+
+				"\"type\":\"message\",\"role\":\"assistant\",\"model\":\"glm-5.3\",\"content\":[],\"stop_reason\":null,"+
+				"\"usage\":{\"input_tokens\":40,\"output_tokens\":1}}}\n\n"+
+				"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n"+
+				"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"served on "+host+"\"}}\n\n"+
+				"event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n"+
+				"event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\","+
+				"\"stop_sequence\":null},\"usage\":{\"output_tokens\":6}}\n\n"+
+				"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n")
+		case "chat_refusal":
+			// A Chat stream that refuses before any content and ends with no
+			// usage line.
+			w.Header().Set("content-type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			_, _ = io.WriteString(w, `data: {"id":"gen-served-refusal","object":"chat.completion.chunk","created":1,`+
+				`"model":"z-ai/glm-5.3","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}`+"\n\n"+
+				`data: {"id":"gen-served-refusal","object":"chat.completion.chunk","created":1,`+
+				`"model":"z-ai/glm-5.3","choices":[{"index":0,"delta":{},"finish_reason":"content_filter"}]}`+"\n\n"+
+				"data: [DONE]\n\n")
+		case "sse_refusal":
+			// An in-band refusal before any content, as a provider's
+			// moderation states it.
+			w.Header().Set("content-type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			_, _ = io.WriteString(w, `data: {"error":{"type":"invalid_request_error","code":"data_inspection_failed","message":"Input data may contain inappropriate content."}}`+"\n\n")
 		case "sse_error":
 			w.Header().Set("content-type", "text/event-stream")
 			w.WriteHeader(http.StatusOK)
@@ -89,6 +136,10 @@ func newHostUpstream(t *testing.T, behaviour map[string]string) *hostUpstream {
 			_, _ = io.WriteString(w, openRouterKeepaliveChunk)
 			w.(http.Flusher).Flush()
 			<-r.Context().Done()
+		case "429":
+			w.Header().Set("content-type", "application/json")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = io.WriteString(w, `{"error":{"message":"rate limited"}}`)
 		default:
 			w.Header().Set("content-type", "application/json")
 			w.WriteHeader(http.StatusServiceUnavailable)
