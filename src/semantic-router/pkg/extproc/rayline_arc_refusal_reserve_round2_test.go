@@ -390,6 +390,10 @@ func TestReservedArmIsNeverFailedOverByHostRetry(t *testing.T) {
 			assert.Len(t, upstream.calls(), 1, "the re-served arm was failed over to its next host")
 			assert.NotContains(t, sent, "served on "+nextHost)
 			assert.Equal(t, tc.class, ctx.ResponseFailureClass, "the re-served arm's failure lost its class")
+			assert.NotContains(t, sent, streamFirstContentTimeoutCode, "the client was told the re-served arm timed out")
+			if tc.class == turnFailureUpstream5xx || tc.class == turnFailureRateLimited {
+				assert.Contains(t, sent, reservedArmFailedCode)
+			}
 			if record := strings.Index(sent, refusalAttemptsCommentPrefix); record >= 0 {
 				if terminal := strings.Index(sent, `data: {"error"`); terminal >= 0 {
 					assert.Less(t, record, terminal, "the attempt record followed the terminal error")

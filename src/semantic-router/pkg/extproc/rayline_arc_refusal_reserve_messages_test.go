@@ -243,3 +243,32 @@ func TestRefusalAttemptsRecordNamesTheServedArmsMessagesRefusal(t *testing.T) {
 	assert.Equal(t, "refused", served["outcome"])
 	assert.Equal(t, turnFailureRefusal, served["failure_class"])
 }
+
+// A re-served arm whose body breaks after it stated its stop is cut there, as
+// any body the Router read is. A Chat client is sent a translated stream whose
+// finish and [DONE] are written only at the end: it is not told the turn
+// completed, and the attempt is not recorded as served.
+func TestReservedArmsBodyBrokenAfterItsStopIsCut(t *testing.T) {
+	upstream := newHostUpstream(t, map[string]string{reserveGLMHost: "messages_length_cut"})
+	router := reserveRouter(upstream.server.URL)
+	glm := router.Config.ModelConfig[reserveGLMArm]
+	glm.APIFormat = config.APIFormatAnthropic
+	router.Config.ModelConfig[reserveGLMArm] = glm
+	stream := NewMockStream(nil)
+	ctx, _ := startReserveTurn(t, router)
+
+	require.NoError(t, router.handleProcessRequest(stream, fullDuplexResponseBodyRequest(reserveRoleChunk, false), ctx))
+	require.NoError(t, router.handleProcessRequest(stream, fullDuplexResponseBodyRequest(reserveRefusalChunk, true), ctx))
+	require.True(t, ctx.HostRetry.started(), "the refusal was not re-served")
+	drainSpliced(t, router, ctx, stream)
+
+	sent, ended := clientBytes(stream)
+	assert.True(t, ended)
+	assert.Len(t, upstream.calls(), 1)
+	assert.NotContains(t, sent, "data: [DONE]", "the broken body reached the client as a completion: %s", sent)
+	assert.Contains(t, sent, `data: {"error"`)
+	assert.NotEmpty(t, ctx.ResponseFailureClass)
+	attempts := attemptsRecord(t, sent)["attempts"].([]interface{})
+	require.Len(t, attempts, 2)
+	assert.Equal(t, "failed", attempts[1].(map[string]interface{})["outcome"])
+}

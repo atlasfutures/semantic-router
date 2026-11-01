@@ -139,6 +139,9 @@ func streamContentEvent(eventType llmprotocol.EventType) bool {
 // silentStreamError is what the client is told, and what classes the turn a
 // timeout.
 func silentStreamError(ctx *RequestContext) *llmprotocol.ProtocolError {
+	if ctx != nil && ctx.HostRetry != nil && ctx.HostRetry.failedClass != "" {
+		return reservedArmFailedError(ctx.HostRetry.failedClass)
+	}
 	if ctx != nil && ctx.StreamContentSeen {
 		return llmprotocol.NewError(llmprotocol.ErrorUpstreamTimeout, streamIdleTimeoutCode,
 			"the model stopped sending content, so the router ended this stream", nil)
@@ -150,7 +153,25 @@ func silentStreamError(ctx *RequestContext) *llmprotocol.ProtocolError {
 const (
 	streamFirstContentTimeoutCode = "stream_first_content_timeout"
 	streamIdleTimeoutCode         = "stream_idle_timeout"
+	// reservedArmFailedCode is the in-band error of a refusal re-serve's arm
+	// that failed before any content: no host retry follows it, and the
+	// client is told how it failed rather than a timeout.
+	reservedArmFailedCode = "reserved_model_failed"
 )
+
+// reservedArmFailedError is the error a refusal re-serve's arm that failed
+// before any content ends the stream with, in the category of its class.
+func reservedArmFailedError(class string) *llmprotocol.ProtocolError {
+	category := llmprotocol.ErrorUpstreamUnavailable
+	switch class {
+	case turnFailureRateLimited:
+		category = llmprotocol.ErrorRateLimited
+	case turnFailureTimeout:
+		category = llmprotocol.ErrorUpstreamTimeout
+	}
+	return llmprotocol.NewError(category, reservedArmFailedCode,
+		"the model the turn was re-served on failed before any content ("+class+")", nil)
+}
 
 // routerStreamCutCodes are the in-band errors of a stream the Router itself
 // ended: each is a timeout.

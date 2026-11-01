@@ -698,9 +698,9 @@ func (r *OpenAIRouter) classStreamFailure(
 		class := turnFailureUpstreamError
 		if routerStreamCutCodes[inBand.Code] {
 			class = turnFailureTimeout
-			if plan := ctx.HostRetry; plan != nil && plan.failedClass != "" {
-				class = plan.failedClass
-			}
+		}
+		if plan := ctx.HostRetry; inBand.Code == reservedArmFailedCode && plan != nil && plan.failedClass != "" {
+			class = plan.failedClass
 		}
 		recordTurnFailureDetail(ctx, class, codecStreamFailureDetail(inBand), sent)
 		logToolArgumentsRefusal(ctx, streamErr)
