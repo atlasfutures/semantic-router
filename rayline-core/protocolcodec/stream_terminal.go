@@ -49,13 +49,34 @@ func (engine *StreamEngine) deferSuccessfulTerminal(events []llmprotocol.Event) 
 	return result
 }
 
-// PendingStop is the stop of the successful terminal the engine holds until
-// the stream is finalized: empty before one arrived, and after finalization.
+// PendingStop is the stop the stream stated and the engine has not yet
+// published: the held successful terminal's, or, before it arrived, the stop
+// a decoder already read (an Anthropic message_delta announces it ahead of
+// message_stop). Empty before either, after a failure, and after
+// finalization.
 func (engine *StreamEngine) PendingStop() llmprotocol.StopReason {
-	if engine == nil || engine.finalized || engine.pendingCompletion == nil {
+	if engine == nil || engine.finalized || engine.failure != nil {
 		return ""
 	}
-	return engine.pendingCompletion.StopReason
+	if engine.pendingCompletion != nil {
+		return engine.pendingCompletion.StopReason
+	}
+	if engine.terminal {
+		return ""
+	}
+	if announcer, ok := engine.decoder.(stopAnnouncer); ok {
+		return announcer.announcedStop()
+	}
+	return ""
+}
+
+// stopAnnouncer is a decoder that reads a stream's stop before its terminal.
+type stopAnnouncer interface {
+	announcedStop() llmprotocol.StopReason
+}
+
+func (decoder *anthropicStreamDecoder) announcedStop() llmprotocol.StopReason {
+	return decoder.stop
 }
 
 func (engine *StreamEngine) poison(err error) {
@@ -185,4 +206,11 @@ func (engine *StreamEngine) finalizeFailure(
 	}
 	frames = append(frames, encoded...)
 	return frames, events, diagnostics, cause
+}
+
+func (wrapped *stateDiagnosticDecoder) announcedStop() llmprotocol.StopReason {
+	if announcer, ok := wrapped.decoder.(stopAnnouncer); ok {
+		return announcer.announcedStop()
+	}
+	return ""
 }

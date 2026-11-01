@@ -245,7 +245,7 @@ func (plan *hostRetryPlan) currentHost(ctx *RequestContext) (string, string) {
 // which takes a first-content limit to fire.
 func (r *OpenAIRouter) holdingForHostRetry(ctx *RequestContext) bool {
 	plan := ctx.HostRetry
-	return plan != nil && !plan.exposed && streamSilenceTimerArmed(ctx) && !ctx.StreamContentSeen &&
+	return plan != nil && !refusalReserveServing(ctx) && !plan.exposed && streamSilenceTimerArmed(ctx) && !ctx.StreamContentSeen &&
 		!ctx.StreamingComplete && r.streamSilenceLimit(ctx) > 0 && len(plan.remaining()) > 1
 }
 
@@ -288,6 +288,10 @@ func (r *OpenAIRouter) holdHostRetryFrames(ctx *RequestContext, response *ext_pr
 // without it.
 func (r *OpenAIRouter) retryOnNextHost(ctx *RequestContext, class, detail string) bool {
 	plan := ctx.HostRetry
+	if refusalReserveServing(ctx) {
+		// A refusal re-serve's arm is never failed over to another host.
+		return false
+	}
 	if plan == nil || plan.exposed || ctx.StreamContentSeen || ctx.StreamingComplete || !streamSilenceTimerArmed(ctx) {
 		return false
 	}
@@ -638,13 +642,14 @@ func (r *OpenAIRouter) serveHostRetryChunk(
 		response = r.handleSemanticStreamingResponseBody(nil, false, ctx)
 	case len(chunk.body) > 0:
 		response = r.handleSemanticStreamingResponseBody(chunk.body, false, ctx)
-	case !ctx.StreamContentSeen && chunk.err == nil && reserveSpliceEndedOnStop(ctx):
+	case !ctx.StreamContentSeen && (chunk.err == nil || refusalReserveServing(ctx)) && reserveSpliceEndedOnStop(ctx):
 		// A spliced call under a re-serve plan that ended cleanly before any
 		// content, having said how it stopped, is read to its end as the
 		// first call's is: a Messages stop shows only once the stream is
 		// finalized. A refusal on a host re-send of the first arm is
 		// re-served then; the re-served arm's stop reaches the client as it
-		// stands. Any other end before content is the host's failure.
+		// stands, though its body broke after it. Any other end before
+		// content is the host's failure.
 		response = r.handleSemanticStreamingResponseBody(nil, true, ctx)
 	case !ctx.StreamContentSeen:
 		// It ended, or broke, before any content.

@@ -800,20 +800,61 @@ func (r *OpenAIRouter) spliceReserve(
 // chunk of a re-served turn.
 func withRefusalAttemptsComment(ctx *RequestContext, response *ext_proc.ProcessingResponse) *ext_proc.ProcessingResponse {
 	plan := ctx.RefusalReserve
-	if plan == nil || len(plan.attempts) == 0 || plan.commented || !ctx.StreamingComplete {
+	if plan == nil || len(plan.attempts) == 0 || plan.commented {
 		return response
 	}
 	streamed := response.GetResponseBody().GetResponse().GetBodyMutation().GetStreamedResponse()
 	if streamed == nil {
 		return response
 	}
+	// Ahead of the client's terminal frame, wherever it goes out: a stream
+	// passed through in its own format sends it before the body ends, and a
+	// client that stops reading there would miss the record.
+	at := clientTerminalFrameAt(ctx.SourceFormat, streamed.Body)
+	if at < 0 && !ctx.StreamingComplete {
+		return response
+	}
+	if at < 0 {
+		at = 0
+	}
 	comment := refusalAttemptsComment(ctx)
 	if comment == nil {
 		return response
 	}
 	plan.commented = true
-	streamed.Body = append(comment, streamed.Body...)
+	body := make([]byte, 0, len(streamed.Body)+len(comment))
+	body = append(body, streamed.Body[:at]...)
+	body = append(body, comment...)
+	streamed.Body = append(body, streamed.Body[at:]...)
 	return response
+}
+
+// clientTerminalFrameAt is where the frame that ends a client's stream
+// starts in body, or -1 when body has none: Messages' message_stop, Chat's
+// [DONE]. A Responses stream's terminal carries its usage, so its record
+// goes out with the body's end, as before.
+func clientTerminalFrameAt(format llmprotocol.WireFormat, body []byte) int {
+	var marker []byte
+	switch format {
+	case llmprotocol.AnthropicMessagesV1:
+		marker = []byte("event: message_stop")
+	case llmprotocol.OpenAIChatV1:
+		marker = []byte("data: [DONE]")
+	default:
+		return -1
+	}
+	for offset := 0; offset < len(body); {
+		index := bytes.Index(body[offset:], marker)
+		if index < 0 {
+			return -1
+		}
+		at := offset + index
+		if at == 0 || body[at-1] == '\n' {
+			return at
+		}
+		offset = at + len(marker)
+	}
+	return -1
 }
 
 // refusalAttemptsComment is the record of a re-served turn's attempts.
@@ -1025,6 +1066,15 @@ func reserveSpliceEndedOnStop(ctx *RequestContext) bool {
 		return streamStopSeen(ctx)
 	}
 	return !plan.released && (heldStopIsRefusal(ctx) || streamRefusalSignal(ctx.SemanticStreamState) != "")
+}
+
+// refusalReserveServing reports a turn whose call in flight is a refusal
+// re-serve's arm. Host retry never touches it: it is not held for a host's
+// failure, not failed over to another host, and not bound by the turn's
+// host-retry budget, whose clock ran on the refused arm. Its own bounds are
+// the stream's silence limits and deadline.
+func refusalReserveServing(ctx *RequestContext) bool {
+	return ctx != nil && ctx.RefusalReserve != nil && ctx.RefusalReserve.reserved
 }
 
 // streamStopSeen reports a stream that stated its stop, published or held.

@@ -97,6 +97,19 @@ func newHostUpstream(t *testing.T, behaviour map[string]string) *hostUpstream {
 				"event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"refusal\","+
 				"\"stop_sequence\":null},\"usage\":{\"output_tokens\":3}}\n\n"+
 				"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n")
+		case "messages_content":
+			// An Anthropic Messages stream that answers.
+			w.Header().Set("content-type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			_, _ = io.WriteString(w, "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_served\","+
+				"\"type\":\"message\",\"role\":\"assistant\",\"model\":\"glm-5.3\",\"content\":[],\"stop_reason\":null,"+
+				"\"usage\":{\"input_tokens\":40,\"output_tokens\":1}}}\n\n"+
+				"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n"+
+				"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"served on "+host+"\"}}\n\n"+
+				"event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n"+
+				"event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\","+
+				"\"stop_sequence\":null},\"usage\":{\"output_tokens\":6}}\n\n"+
+				"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n")
 		case "chat_refusal":
 			// A Chat stream that refuses before any content and ends with no
 			// usage line.

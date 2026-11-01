@@ -128,9 +128,9 @@ func assertGolden(t *testing.T, path, got string) {
 	assert.Equal(t, string(want), got)
 }
 
-// A Messages refusal holds its stop until the stream is finalized; the
-// re-serve budget still starts when the stop arrives, not when it is
-// published.
+// A Messages refusal states its stop in message_delta and publishes it only
+// once the stream is finalized; the re-serve budget starts at the
+// message_delta, before message_stop arrives.
 func TestRefusalReserveBudgetStartsAtTheMessagesHeldStop(t *testing.T) {
 	router := reserveRouter("http://127.0.0.1:1")
 	claude := router.Config.ModelConfig[reserveClaudeArm]
@@ -147,12 +147,74 @@ func TestRefusalReserveBudgetStartsAtTheMessagesHeldStop(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, router.processResponseHeaders(NewMockStream(nil), flexUpstreamHeaders(http.StatusOK, "text/event-stream"), ctx))
 	stream := NewMockStream(nil)
-	for _, chunk := range reserveMessagesCyberRefusal {
+	// The refusal's message_delta arrives; its message_stop has not yet.
+	last := reserveMessagesCyberRefusal[len(reserveMessagesCyberRefusal)-1]
+	delta := last[:strings.Index(last, "event: message_stop")]
+	for _, chunk := range append(append([]string(nil), reserveMessagesCyberRefusal[:len(reserveMessagesCyberRefusal)-1]...), delta) {
 		require.NoError(t, router.handleProcessRequest(stream, fullDuplexResponseBodyRequest(chunk, false), ctx))
 	}
-	require.True(t, heldStopIsRefusal(ctx), "the fixture's stop is not held")
+	require.True(t, heldStopIsRefusal(ctx), "the message_delta's refusal stop is not seen")
 
 	ctx.RefusalReserve = &refusalReservePlan{budget: 45 * time.Second, hold: 60 * time.Second}
 	noteRefusalSignal(ctx)
 	assert.False(t, ctx.RefusalReserve.firstRefusal.IsZero(), "the held stop did not start the budget")
+}
+
+// On a re-serve whose client and served arm both speak Messages, the stream
+// passes through and its message_stop goes out before the body ends: the
+// attempt record goes out ahead of it, so a client that stops reading at
+// message_stop still has it.
+func TestRefusalAttemptsRecordPrecedesTheMessagesTerminal(t *testing.T) {
+	upstream := newHostUpstream(t, map[string]string{reserveGLMHost: "messages_content"})
+	router := reserveRouter(upstream.server.URL)
+	for _, arm := range []string{reserveClaudeArm, reserveGLMArm} {
+		model := router.Config.ModelConfig[arm]
+		model.APIFormat = config.APIFormatAnthropic
+		router.Config.ModelConfig[arm] = model
+	}
+	stream := NewMockStream(nil)
+	request := testNeutralRequest("auto", "route this turn")
+	request.Stream = true
+	limit := int64(1024)
+	request.Sampling.MaxOutputTokens = &limit
+	ctx := routingTestContext(llmprotocol.AnthropicMessagesV1, request)
+	ctx.ExpectStreamingResponse = true
+	ctx.StartTime = time.Now()
+	_, err := router.handleEntrypointModelRouting(request, "auto", flexResendDecision, entropy.ReasoningDecision{}, reserveClaudeArm, ctx)
+	require.NoError(t, err)
+	ctx.ProcessingStartTime = ctx.StartTime
+	ctx.RaylineARCRawBody = []byte(`{"model":"auto","max_tokens":1024,"stream":true,"messages":[{"role":"user","content":"route this turn"}]}`)
+	ctx.VSRSelectedModel = reserveClaudeArm
+	ctx.RefusalReserve = &refusalReservePlan{
+		maxReserves: 1, budget: 45 * time.Second, hold: 60 * time.Second, families: []string{"claude"},
+		family: "claude", attemptStarted: time.Now(),
+		redecide: func(*RequestContext) (*config.ModelRef, string, error) {
+			return &config.ModelRef{Model: reserveGLMArm}, "test", nil
+		},
+	}
+	if ctx.HostRetry == nil {
+		ctx.HostRetry = &hostRetryPlan{attempts: []hostAttempt{{started: ctx.StartTime}}}
+	}
+	require.NoError(t, router.processResponseHeaders(NewMockStream(nil), flexUpstreamHeaders(http.StatusOK, "text/event-stream"), ctx))
+	ctx.SelectionTransaction = newSelectionTransactionOwner(configRaylineARC, &recordingSelectionTransaction{})
+
+	last := len(reserveMessagesCyberRefusal) - 1
+	for index, chunk := range reserveMessagesCyberRefusal {
+		require.NoError(t, router.handleProcessRequest(stream, fullDuplexResponseBodyRequest(chunk, index == last), ctx))
+	}
+	require.True(t, ctx.HostRetry.started(), "the refusal was not re-served")
+	drainSpliced(t, router, ctx, stream)
+
+	sent, ended := clientBytes(stream)
+	assert.True(t, ended)
+	record := strings.Index(sent, refusalAttemptsCommentPrefix)
+	stop := strings.Index(sent, "event: message_stop")
+	require.GreaterOrEqual(t, record, 0, "no attempt record was sent: %s", sent)
+	require.GreaterOrEqual(t, stop, 0)
+	assert.Less(t, record, stop, "the attempt record followed message_stop")
+	attempts := attemptsRecord(t, sent)["attempts"].([]interface{})
+	require.Len(t, attempts, 2)
+	served := attempts[1].(map[string]interface{})
+	assert.Equal(t, "served", served["outcome"])
+	assert.NotNil(t, served["usage"], "the served attempt's usage was not in the record")
 }

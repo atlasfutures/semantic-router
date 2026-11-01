@@ -334,31 +334,66 @@ func TestReservedArmStreamsUnheld(t *testing.T) {
 	assert.Contains(t, sent, "served on "+reserveGLMHost)
 }
 
-// A re-served arm's host that closes cleanly with nothing said is that host's
-// failure: the arm's next host takes the turn, as without a re-serve plan.
-func TestReservedArmsSilentCloseFailsOverToItsNextHost(t *testing.T) {
-	const quietHost = "z-ai-quiet"
-	upstream := newHostUpstream(t, map[string]string{quietHost: "keepalive_close", reserveGLMHost: "content"})
-	router := reserveRouter(upstream.server.URL)
-	router.Config.ResponseStreamHostRetry = true
-	glm := router.Config.ModelConfig[reserveGLMArm]
-	fallbacks := true
-	glm.ProviderPreferences = &config.OpenRouterProviderPreferences{
-		Order: []string{quietHost, reserveGLMHost}, AllowFallbacks: &fallbacks,
+// Host retry never touches a refusal re-serve's arm, whatever ends it before
+// content: it is not held for a host's failure, not failed over to its next
+// host, and not bound by the turn's host-retry budget. Each host-retry entry
+// point is walked: a clean close with nothing said, an in-band error or
+// refusal, a non-2xx status, a bare Messages refusal, and (directly) the
+// silence path and the budget.
+func TestReservedArmIsNeverFailedOverByHostRetry(t *testing.T) {
+	const firstHost, nextHost = "z-ai-first", "z-ai-next"
+	for name, tc := range map[string]struct {
+		behaviour string
+		messages  bool
+		refused   bool
+	}{
+		"clean close":      {behaviour: "keepalive_close"},
+		"in-band error":    {behaviour: "sse_error"},
+		"in-band refusal":  {behaviour: "sse_refusal", refused: true},
+		"non-2xx status":   {behaviour: "unavailable"},
+		"messages refusal": {behaviour: "messages_refusal", messages: true, refused: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			upstream := newHostUpstream(t, map[string]string{firstHost: tc.behaviour, nextHost: "content"})
+			router := reserveRouter(upstream.server.URL)
+			router.Config.ResponseStreamHostRetry = true
+			router.Config.ResponseStreamHostRetryBudgetSec = 1
+			glm := router.Config.ModelConfig[reserveGLMArm]
+			fallbacks := true
+			glm.ProviderPreferences = &config.OpenRouterProviderPreferences{
+				Order: []string{firstHost, nextHost}, AllowFallbacks: &fallbacks,
+			}
+			if tc.messages {
+				glm.APIFormat = config.APIFormatAnthropic
+			}
+			router.Config.ModelConfig[reserveGLMArm] = glm
+			stream := NewMockStream(nil)
+			ctx, _ := startReserveTurn(t, router)
+			// The refused arm ran past the host-retry budget before refusing.
+			ctx.StartTime = ctx.StartTime.Add(-5 * time.Second)
+
+			require.NoError(t, router.handleProcessRequest(stream, fullDuplexResponseBodyRequest(reserveRoleChunk, false), ctx))
+			require.NoError(t, router.handleProcessRequest(stream, fullDuplexResponseBodyRequest(reserveRefusalChunk, true), ctx))
+			require.True(t, ctx.HostRetry.started(), "the refusal was not re-served")
+			assert.True(t, refusalReserveServing(ctx))
+			assert.False(t, router.holdingForHostRetry(ctx), "the re-served arm is held for host retry")
+			_, capped := router.hostRetryBudgetLeft(ctx)
+			assert.False(t, capped, "the re-served arm is bound by the host-retry budget")
+			assert.False(t, router.retryOnNextHost(ctx, turnFailureTimeout, streamFirstContentTimeoutCode),
+				"the silence path fails the re-served arm over")
+			drainSpliced(t, router, ctx, stream)
+
+			sent, ended := clientBytes(stream)
+			assert.True(t, ended)
+			assert.Len(t, upstream.calls(), 1, "the re-served arm was failed over to its next host")
+			assert.NotContains(t, sent, "served on "+nextHost)
+			if tc.refused {
+				assert.Equal(t, turnFailureRefusal, ctx.ResponseFailureClass)
+			} else {
+				assert.NotEmpty(t, ctx.ResponseFailureClass)
+			}
+		})
 	}
-	router.Config.ModelConfig[reserveGLMArm] = glm
-	stream := NewMockStream(nil)
-	ctx, _ := startReserveTurn(t, router)
-
-	require.NoError(t, router.handleProcessRequest(stream, fullDuplexResponseBodyRequest(reserveRoleChunk, false), ctx))
-	require.NoError(t, router.handleProcessRequest(stream, fullDuplexResponseBodyRequest(reserveRefusalChunk, true), ctx))
-	require.True(t, ctx.HostRetry.started(), "the refusal was not re-served")
-	drainSpliced(t, router, ctx, stream)
-
-	sent, ended := clientBytes(stream)
-	assert.True(t, ended)
-	assert.Contains(t, sent, "served on "+reserveGLMHost, "the silent close did not fail over to the next host")
-	assert.NotContains(t, sent, "stream_incomplete")
 }
 
 // The budget runs from the refusal itself, not from its usage: a usage line
