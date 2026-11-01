@@ -180,3 +180,28 @@ func TestSameHostWaitDoesNotSpendTheFirstContentLimit(t *testing.T) {
 	sent, _ := clientBytes(stream)
 	assert.Contains(t, sent, "served on "+singleHost)
 }
+
+// A wait that would carry the re-send past the turn's deadline dials nothing:
+// the rate limit ends the turn as it did before.
+func TestSameHostWaitPastTheDeadlineDialsNothing(t *testing.T) {
+	shortenSameHostWaits(t, 2*time.Second, 10*time.Second)
+	logs := captureLogs(t)
+	upstream := newHostUpstream(t, map[string]string{singleHost: "content"})
+	router := singleHostRouter(upstream.server.URL, true)
+	router.Config.ResponseStreamDeadlineSec = 600
+	stream := NewMockStream(nil)
+
+	ctx, _ := routeFlexTurn(t, router, hostRetryArm, true)
+	ctx.ProcessingStartTime = ctx.StartTime
+	require.NoError(t, router.processResponseHeaders(NewMockStream(nil), flexUpstreamHeaders(http.StatusOK, "text/event-stream"), ctx))
+	require.NoError(t, router.handleProcessRequest(stream, fullDuplexResponseBodyRequest(openRouterKeepaliveChunk, false), ctx))
+	// One second of the turn's 600 s is left, and the wait is two.
+	ctx.StartTime = time.Now().Add(-599 * time.Second)
+	ctx.StreamContentSince = time.Now()
+	require.NoError(t, router.handleProcessRequest(stream, fullDuplexResponseBodyRequest(hostRetryRateLimitChunk, false), ctx))
+
+	assert.False(t, ctx.HostRetry.started(), "a re-send was scheduled past the deadline")
+	assert.Empty(t, upstream.calls())
+	event := findLogEvent(t, logs, "stream_host_retry_unavailable")
+	assertFields(t, "unavailable", event, map[string]interface{}{"reason": "deadline_within_wait", "wait_ms": 2000})
+}
