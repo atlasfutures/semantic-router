@@ -210,3 +210,12 @@ func TestReserveFaultDropsTheNativeStop(t *testing.T) {
 	assert.Contains(t, out, `"finish_reason":"content_filter"`)
 	assert.NotContains(t, out, "native_finish_reason")
 }
+
+// A matched stop sequence is cleared with the stop it belonged to.
+func TestReserveFaultClearsTheStopSequence(t *testing.T) {
+	ctx := reserveFaultContext(llmprotocol.AnthropicMessagesV1)
+	out := string(faultReservedChunk(ctx, []byte("event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"stop_sequence\",\"stop_sequence\":\"END\"},\"usage\":{\"output_tokens\":4}}\n\n")))
+	assert.Contains(t, out, `"stop_reason":"refusal"`)
+	assert.Contains(t, out, `"stop_sequence":null`)
+	assert.NotContains(t, out, "END")
+}

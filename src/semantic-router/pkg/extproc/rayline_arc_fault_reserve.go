@@ -227,6 +227,10 @@ func (fault *reserveFaultStream) rewriteMessages(frame map[string]interface{}) b
 		if delta, ok := frame["delta"].(map[string]interface{}); ok {
 			if reason, ok := delta["stop_reason"].(string); ok && reason != "" {
 				delta["stop_reason"] = "refusal"
+				// A matched stop sequence pairs only with stop_sequence.
+				if _, present := delta["stop_sequence"]; present {
+					delta["stop_sequence"] = nil
+				}
 			}
 		}
 	}
