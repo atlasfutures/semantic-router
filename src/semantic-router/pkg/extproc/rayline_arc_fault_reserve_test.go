@@ -202,3 +202,11 @@ func TestReserveFaultReadsBOMAndBareCR(t *testing.T) {
 	assert.NotContains(t, out, "secret")
 	assert.Equal(t, 1, strings.Count(out, "data:"))
 }
+
+// A provider's native stop does not outrank the injected refusal.
+func TestReserveFaultDropsTheNativeStop(t *testing.T) {
+	ctx := reserveFaultContext(llmprotocol.OpenAIChatV1)
+	out := string(faultReservedChunk(ctx, []byte(`data: {"choices":[{"index":0,"delta":{},"finish_reason":"length","native_finish_reason":"max_output_tokens"}]}`+"\n\n")))
+	assert.Contains(t, out, `"finish_reason":"content_filter"`)
+	assert.NotContains(t, out, "native_finish_reason")
+}

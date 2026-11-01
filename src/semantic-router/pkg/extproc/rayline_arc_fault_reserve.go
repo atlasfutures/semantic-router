@@ -191,6 +191,8 @@ func rewriteChat(frame map[string]interface{}) bool {
 		if reason, ok := choice["finish_reason"].(string); ok && reason != "" {
 			choice["finish_reason"] = string(llmprotocol.StopContentFilter)
 		}
+		// A provider's native stop outranks finish_reason in the codec.
+		delete(choice, "native_finish_reason")
 	}
 	return dropped
 }
