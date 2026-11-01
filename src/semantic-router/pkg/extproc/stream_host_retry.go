@@ -638,10 +638,11 @@ func (r *OpenAIRouter) serveHostRetryChunk(
 		response = r.handleSemanticStreamingResponseBody(nil, false, ctx)
 	case len(chunk.body) > 0:
 		response = r.handleSemanticStreamingResponseBody(chunk.body, false, ctx)
-	case !ctx.StreamContentSeen && chunk.err == nil && refusalReservePending(ctx):
-		// A re-served arm's stream that ended cleanly before any content is
-		// read to its end as the first call's is: a Messages refusal shows
-		// its stop only once the stream is finalized, and is re-served then.
+	case !ctx.StreamContentSeen && chunk.err == nil && refusalReservePending(ctx) && heldStopIsRefusal(ctx):
+		// A re-served arm's stream that ended cleanly before any content on
+		// a refusal is read to its end as the first call's is: a Messages
+		// refusal shows its stop only once the stream is finalized, and is
+		// re-served then. Any other end before content is the host's failure.
 		response = r.handleSemanticStreamingResponseBody(nil, true, ctx)
 	case !ctx.StreamContentSeen:
 		// It ended, or broke, before any content.

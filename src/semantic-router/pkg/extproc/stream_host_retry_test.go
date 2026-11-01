@@ -79,6 +79,11 @@ func newHostUpstream(t *testing.T, behaviour map[string]string) *hostUpstream {
 			w.Header().Set("content-type", "text/event-stream")
 			w.WriteHeader(http.StatusOK)
 			_, _ = io.WriteString(w, hostRetryContentStream("served on "+host))
+		case "keepalive_close":
+			// A stream that says nothing and then closes cleanly.
+			w.Header().Set("content-type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			_, _ = io.WriteString(w, openRouterKeepaliveChunk)
 		case "messages_refusal":
 			// An Anthropic Messages stream that refuses before any content
 			// block: its stop is known only once the stream is finalized.

@@ -49,6 +49,15 @@ func (engine *StreamEngine) deferSuccessfulTerminal(events []llmprotocol.Event) 
 	return result
 }
 
+// PendingStop is the stop of the successful terminal the engine holds until
+// the stream is finalized: empty before one arrived, and after finalization.
+func (engine *StreamEngine) PendingStop() llmprotocol.StopReason {
+	if engine == nil || engine.finalized || engine.pendingCompletion == nil {
+		return ""
+	}
+	return engine.pendingCompletion.StopReason
+}
+
 func (engine *StreamEngine) poison(err error) {
 	if err == nil {
 		return

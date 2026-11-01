@@ -277,3 +277,30 @@ func TestReservedArmsBareMessagesRefusalIsReservedAgain(t *testing.T) {
 	assert.NotEqual(t, turnFailureTimeout, ctx.ResponseFailureClass)
 	assert.Len(t, attemptsRecord(t, sent)["attempts"].([]interface{}), 3)
 }
+
+// A re-served arm's host that closes cleanly with nothing said is that host's
+// failure: the arm's next host takes the turn, as without a re-serve plan.
+func TestReservedArmsSilentCloseFailsOverToItsNextHost(t *testing.T) {
+	const quietHost = "z-ai-quiet"
+	upstream := newHostUpstream(t, map[string]string{quietHost: "keepalive_close", reserveGLMHost: "content"})
+	router := reserveRouter(upstream.server.URL)
+	router.Config.ResponseStreamHostRetry = true
+	glm := router.Config.ModelConfig[reserveGLMArm]
+	fallbacks := true
+	glm.ProviderPreferences = &config.OpenRouterProviderPreferences{
+		Order: []string{quietHost, reserveGLMHost}, AllowFallbacks: &fallbacks,
+	}
+	router.Config.ModelConfig[reserveGLMArm] = glm
+	stream := NewMockStream(nil)
+	ctx, _ := startReserveTurn(t, router)
+
+	require.NoError(t, router.handleProcessRequest(stream, fullDuplexResponseBodyRequest(reserveRoleChunk, false), ctx))
+	require.NoError(t, router.handleProcessRequest(stream, fullDuplexResponseBodyRequest(reserveRefusalChunk, true), ctx))
+	require.True(t, ctx.HostRetry.started(), "the refusal was not re-served")
+	drainSpliced(t, router, ctx, stream)
+
+	sent, ended := clientBytes(stream)
+	assert.True(t, ended)
+	assert.Contains(t, sent, "served on "+reserveGLMHost, "the silent close did not fail over to the next host")
+	assert.NotContains(t, sent, "stream_incomplete")
+}

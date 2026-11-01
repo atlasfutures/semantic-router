@@ -925,6 +925,13 @@ func refusalReservePending(ctx *RequestContext) bool {
 	return ctx != nil && ctx.RefusalReserve != nil && !ctx.RefusalReserve.released
 }
 
+// heldStopIsRefusal reports a response stream holding a refusal as its
+// terminal, which it states only once finalized.
+func heldStopIsRefusal(ctx *RequestContext) bool {
+	return ctx.ProtocolResponseStream != nil &&
+		ctx.ProtocolResponseStream.PendingStop() == llmprotocol.StopContentFilter
+}
+
 // awaitingRefusalReserve reports a held turn whose call refused and whose
 // re-serve waits for the call's usage or its end: a host retry must not take
 // the refusal for an upstream error and ask the refusing model again.
