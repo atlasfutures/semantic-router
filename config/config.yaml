@@ -2295,7 +2295,7 @@ global:
       # Let host retry re-send once on the same host when an arm's pin names
       # only one (a privacy pin such as only: [azure]): the dispatched body is
       # sent again unchanged. After an in-band rate limit the re-send waits
-      # the provider's stated delay, 2 s when it states none, at most 10 s.
+      # 2 s (the error's own delay when one is reported, at most 10 s).
       # Applies only where host retry is on for the arm. Off by default.
       single_host_resend: false
       # How long a discount endpoint's standard re-send (standard_twin) may

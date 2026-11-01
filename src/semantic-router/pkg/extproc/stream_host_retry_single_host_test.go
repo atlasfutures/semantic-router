@@ -157,3 +157,26 @@ func TestSameHostResendWait(t *testing.T) {
 	multi := &hostRetryPlan{hosts: []string{hostRetryHostA, hostRetryHostB}}
 	assert.Zero(t, multi.resendWait(limited(4)))
 }
+
+// A wait is not spent from the re-send's first-content limit: the re-send of
+// an arm whose limit is shorter than the wait still dials and serves.
+func TestSameHostWaitDoesNotSpendTheFirstContentLimit(t *testing.T) {
+	shortenSameHostWaits(t, 300*time.Millisecond, time.Second)
+	upstream := newHostUpstream(t, map[string]string{singleHost: "content"})
+	router := singleHostRouter(upstream.server.URL, true)
+	stream := NewMockStream(nil)
+
+	ctx, _ := routeFlexTurn(t, router, hostRetryArm, true)
+	ctx.ProcessingStartTime = ctx.StartTime
+	require.NoError(t, router.processResponseHeaders(NewMockStream(nil), flexUpstreamHeaders(http.StatusOK, "text/event-stream"), ctx))
+	require.NoError(t, router.handleProcessRequest(stream, fullDuplexResponseBodyRequest(openRouterKeepaliveChunk, false), ctx))
+	require.NoError(t, router.handleProcessRequest(stream, fullDuplexResponseBodyRequest(hostRetryRateLimitChunk, false), ctx))
+	require.True(t, ctx.HostRetry.started())
+	// Mid-wait, with a 90 s limit and a clock that starts at the dial, the
+	// re-send has not been silent at all yet.
+	assert.False(t, router.streamSilenceExceeded(ctx))
+	assert.True(t, ctx.StreamContentSince.After(time.Now()), "the first-content clock started before the dial")
+	drainSpliced(t, router, ctx, stream)
+	sent, _ := clientBytes(stream)
+	assert.Contains(t, sent, "served on "+singleHost)
+}

@@ -130,9 +130,10 @@ type CanonicalResponseStream struct {
 	// SingleHostResend extends host retry to an arm whose pin names a single
 	// host: a turn that fails before any content (a first-content stall or an
 	// in-band error) is re-sent once on that same host, with the dispatched
-	// body unchanged, after an in-band rate limit following the provider's
-	// stated delay (2 s when it states none, at most 10 s). It applies only
-	// where host retry is on for the arm. Off by default.
+	// body unchanged; after an in-band rate limit it waits 2 s first (the
+	// error's own delay when the protocol layer reports one, at most 10 s),
+	// and its first-content limit starts when it dials. It applies only where
+	// host retry is on for the arm. Off by default.
 	SingleHostResend bool `yaml:"single_host_resend,omitempty"`
 }
 

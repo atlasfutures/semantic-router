@@ -72,8 +72,8 @@ const (
 	hostRetryMaxHeld = 1 << 20
 )
 
-// A same-host re-send after an in-band rate limit waits the provider's stated
-// delay, or sameHostRateLimitWait when it states none, and never longer than
+// A same-host re-send after an in-band rate limit waits the delay the error
+// states, or sameHostRateLimitWait when it states none, and never longer than
 // sameHostRateLimitMaxWait. Variables so tests can shorten them.
 var (
 	sameHostRateLimitWait    = 2 * time.Second
@@ -406,15 +406,22 @@ func (r *OpenAIRouter) retryOnNextHost(ctx *RequestContext, class, detail string
 	plan.held, plan.exposed = nil, false
 	plan.dispatched = body
 	resetStreamForHostRetry(ctx, body, plan.dispatch)
+	// The re-send's first-content clock starts once it dials, so a wait never
+	// spends the first-content limit it has; the turn deadline and the retry
+	// budget still bound the whole turn.
+	ctx.StreamContentSince = ctx.StreamContentSince.Add(wait)
 	r.initializeSemanticResponseStream(ctx)
 	plan.splice = startHostRetrySplice(ctx, call, wait)
 	return true
 }
 
 // resendWait is how long a same-host re-send waits before it dials: after an
-// in-band rate limit, the provider's stated delay or sameHostRateLimitWait,
-// bounded by sameHostRateLimitMaxWait; otherwise nothing. Another host is
-// dialled at once.
+// in-band rate limit, the delay the protocol layer reports for it
+// (ProtocolError.RetryAfter) or sameHostRateLimitWait, bounded by
+// sameHostRateLimitMaxWait; otherwise nothing. Another host is dialled at
+// once. The stream decoders do not yet read a delay from an in-band error
+// (OpenRouter's frame for one is not yet captured), so today the wait is
+// sameHostRateLimitWait.
 func (plan *hostRetryPlan) resendWait(ctx *RequestContext) time.Duration {
 	if !plan.sameHost || ctx.SemanticStreamState == nil {
 		return 0
