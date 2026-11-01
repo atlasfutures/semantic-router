@@ -216,3 +216,26 @@ func TestAbandonedRefusalReserveConsumesNoQuota(t *testing.T) {
 	assert.False(t, ctx.HostRetry.started())
 	assert.Empty(t, limiter.checks, "an abandoned re-serve consumed the next arm's quota")
 }
+
+// With a limiter, the bounds must leave the check its whole timeout: a
+// re-serve with less budget left neither checks nor dispatches, so a slow
+// check can never start a paid call past the budget. Without one, the same
+// budget re-serves.
+func TestRefusalReserveLeavesTheRateLimitCheckItsTimeout(t *testing.T) {
+	for _, limited := range []bool{true, false} {
+		upstream := newHostUpstream(t, map[string]string{reserveGLMHost: "content"})
+		router := reserveRouter(upstream.server.URL)
+		limiter := &limitByModel{}
+		if limited {
+			router.RateLimiter = ratelimit.NewRateLimitResolver(limiter)
+		}
+		stream := NewMockStream(nil)
+		ctx, _ := startReserveTurn(t, router)
+		ctx.RefusalReserve.budget = ratelimit.ProviderCheckTimeout / 2
+
+		require.NoError(t, router.handleProcessRequest(stream, fullDuplexResponseBodyRequest(reserveRoleChunk, false), ctx))
+		require.NoError(t, router.handleProcessRequest(stream, fullDuplexResponseBodyRequest(reserveRefusalChunk, true), ctx))
+		assert.Equal(t, !limited, ctx.HostRetry.started(), "limited=%v", limited)
+		assert.Empty(t, limiter.checks, "limited=%v", limited)
+	}
+}

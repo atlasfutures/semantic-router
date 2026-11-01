@@ -415,13 +415,16 @@ func (r *OpenAIRouter) reserveRefusedTurn(ctx *RequestContext) bool {
 		fields["family_excluded"] = excluded
 	}
 	// The re-decision, the rebuild and the store write took time: the
-	// bounds are checked again, so no paid call starts past them.
-	if time.Since(plan.firstRefusal) >= plan.budget || plan.holdExpired(ctx) || r.responseStreamOverran(ctx) {
+	// bounds are checked again, so no paid call starts past them. The rate
+	// limit check below may itself take up to its timeout, which the bounds
+	// must still cover.
+	if r.reserveBoundsSpent(ctx, plan, r.rateLimitCheckAllowance()) {
 		return restore("budget_spent")
 	}
 	// The next arm answers to its own rate limits, as a first dispatch
 	// would; its usage is then reported against it. Checked last, as the
-	// check consumes quota: nothing after it abandons the re-serve.
+	// check consumes quota: nothing after it abandons the re-serve, and
+	// the bounds above leave it its whole timeout.
 	refusedLimit := ctx.RateLimitCtx
 	if r.applyRateLimit(ctx, model) != nil {
 		return restore("rate_limited")
@@ -868,6 +871,32 @@ func refusedCallUsageIn(ctx *RequestContext) bool {
 	}
 	usage := partialStreamUsage(ctx.SemanticStreamState.usage)
 	return usage.completionTokensReported
+}
+
+// rateLimitCheckAllowance is how long the re-serve's rate limit check may
+// take: none without a limiter.
+func (r *OpenAIRouter) rateLimitCheckAllowance() time.Duration {
+	if r.RateLimiter == nil {
+		return 0
+	}
+	return ratelimit.ProviderCheckTimeout
+}
+
+// reserveBoundsSpent reports a re-serve that could not start within its
+// budget, the hold and the stream deadline, with allowance still to pass.
+func (r *OpenAIRouter) reserveBoundsSpent(ctx *RequestContext, plan *refusalReservePlan, allowance time.Duration) bool {
+	if time.Since(plan.firstRefusal)+allowance >= plan.budget {
+		return true
+	}
+	if ctx.StartTime.IsZero() {
+		return false
+	}
+	elapsed := time.Since(ctx.StartTime) + allowance
+	if elapsed >= plan.hold {
+		return true
+	}
+	deadline := r.responseStreamDeadline()
+	return !ctx.StreamingComplete && deadline > 0 && elapsed >= deadline
 }
 
 // requestContentInjected reports a request the request path added content
