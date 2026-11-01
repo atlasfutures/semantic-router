@@ -44,9 +44,18 @@ func (r *OpenAIRouter) handleResponseHeaders(v *ext_proc.ProcessingRequest_Respo
 		r.recordUpstreamErrorTurn(ctx, nil)
 	}
 
+	if ctx != nil {
+		ctx.servedHeadersOutcome = &outcome
+	}
+	return buildResponseHeadersReply(ctx, outcome), nil
+}
+
+// buildResponseHeadersReply is the CONTINUE reply to an upstream response's
+// headers, carrying what ctx says of the turn now.
+func buildResponseHeadersReply(ctx *RequestContext, outcome responseHeaderOutcome) *ext_proc.ProcessingResponse {
 	headerMutation := buildResponseHeaderMutation(ctx, outcome.isSuccessful)
 	headerMutation = mergeHeaderMutations(headerMutation, buildResponseStreamingMutation(ctx, outcome))
-	return buildResponseHeadersContinueResponse(headerMutation, ctx != nil && ctx.IsStreamingResponse), nil
+	return buildResponseHeadersContinueResponse(headerMutation, ctx != nil && ctx.IsStreamingResponse)
 }
 
 // emptySuccessResponse refuses a 2xx that ends at its headers on an inference

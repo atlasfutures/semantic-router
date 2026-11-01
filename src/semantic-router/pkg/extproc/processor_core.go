@@ -119,6 +119,9 @@ func (r *OpenAIRouter) processWithContext(
 		}
 	}()
 
+	// A held turn's headers reply waits for what the client is sent first,
+	// so it can name the arm that served (rayline_arc_reserve_headers.go).
+	stream = r.newServedHeadersStream(stream, ctx)
 	receiver := startStreamReceiver(stream)
 	ctx.streamReceiver = receiver
 	for {
@@ -135,6 +138,10 @@ func (r *OpenAIRouter) processWithContext(
 			// retry staged this can start a re-send, so a failed Send is
 			// settled like any other below.
 			err = r.endSilentStream(stream, ctx)
+		case stalled && r.servedHeadersDue(ctx):
+			// A held turn's deferred headers fell due with nothing to carry
+			// them: the upstream has sent no body yet.
+			err = ctx.servedHeaders.flushPending()
 		case stalled && refusalReserveStreaming(ctx) && len(ctx.ResponseBodyChunks) == 0 &&
 			!(streamSilenceTimerArmed(ctx) && r.streamSilenceExceeded(ctx)):
 			// The wake was a held turn's keepalive clock: its client, or one
@@ -397,6 +404,9 @@ func (r *OpenAIRouter) processResponseHeaders(
 		return err
 	}
 	stateRaylineARCIdentity(response, ctx)
+	if r.deferServedHeaders(stream, response, ctx) {
+		return nil
+	}
 	return sendResponse(stream, response, "response header")
 }
 

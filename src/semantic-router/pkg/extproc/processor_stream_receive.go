@@ -217,6 +217,10 @@ func (r *OpenAIRouter) loopWait(ctx *RequestContext) time.Duration {
 	if keepAlive := r.refusalReserveKeepAliveWait(ctx); keepAlive > 0 && (wait <= 0 || keepAlive < wait) {
 		wait = keepAlive
 	}
+	// Deferred headers fall due at the hold's end.
+	if headers := servedHeadersWait(ctx); headers > 0 && (wait <= 0 || headers < wait) {
+		wait = headers
+	}
 	return wait
 }
 
