@@ -259,8 +259,12 @@ type RouterOptions struct {
 	ResponseStreamHostRetry bool `yaml:"response_stream_host_retry,omitempty"`
 	// ResponseStreamHostRetryBudgetSec caps a turn's host retries; see
 	// CanonicalResponseStream.HostRetryBudgetSec.
-	ResponseStreamHostRetryBudgetSec int                  `yaml:"response_stream_host_retry_budget_sec,omitempty"`
-	SkipProcessing                   SkipProcessingConfig `yaml:"skip_processing,omitempty"`
+	ResponseStreamHostRetryBudgetSec int `yaml:"response_stream_host_retry_budget_sec,omitempty"`
+	// ResponseStreamSingleHostResend lets host retry re-send once on the
+	// same host when the pin names only one; see
+	// CanonicalResponseStream.SingleHostResend.
+	ResponseStreamSingleHostResend bool                 `yaml:"response_stream_single_host_resend,omitempty"`
+	SkipProcessing                 SkipProcessingConfig `yaml:"skip_processing,omitempty"`
 	// ThinkingMarkerMint signs thinking a non-Anthropic upstream wrote with a
 	// Router thinking marker on Messages output (semantic-router #191).
 	ThinkingMarkerMint bool `yaml:"thinking_marker_mint,omitempty"`
