@@ -3,6 +3,7 @@ package extproc
 import (
 	"bytes"
 	"encoding/json"
+	"time"
 
 	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
 
@@ -38,20 +39,30 @@ func reserveFaultActive(ctx *RequestContext) bool {
 type reserveFaultStream struct {
 	// pending is an event not yet terminated by a blank line.
 	pending []byte
-	// dropped are the Messages content blocks dropped, by index.
+	// dropped are the Messages content blocks dropped, by upstream index;
+	// kept maps each block kept to its index in the rewritten stream, which
+	// the decoder reads as contiguous from zero.
 	dropped map[float64]bool
+	kept    map[float64]int
+	// droppedContent says the last rewrite dropped text or a tool call.
+	droppedContent bool
+}
+
+func (plan *refusalReservePlan) faultStream() *reserveFaultStream {
+	if plan.fault == nil {
+		plan.fault = &reserveFaultStream{dropped: map[float64]bool{}, kept: map[float64]int{}}
+	}
+	return plan.fault
 }
 
 // faultReservedChunk is the re-served call's chunk as the fault rewrites it.
-// An event split across chunks is rewritten once it is whole; one the stream
-// never terminates is dropped, as an SSE reader drops it.
+// An event split across chunks is rewritten once it is whole. Content it
+// drops still counts as the call's activity, so the silence clock does not
+// cut a call that is answering.
 func faultReservedChunk(ctx *RequestContext, body []byte) []byte {
-	plan := ctx.RefusalReserve
-	if plan.fault == nil {
-		plan.fault = &reserveFaultStream{dropped: map[float64]bool{}}
-	}
-	fault := plan.fault
-	data := append(fault.pending, body...)
+	fault := ctx.RefusalReserve.faultStream()
+	data := bytes.ReplaceAll(append(fault.pending, body...), []byte("\r\n"), []byte("\n"))
+	fault.droppedContent = false
 	var out bytes.Buffer
 	for {
 		end := bytes.Index(data, []byte("\n\n"))
@@ -63,23 +74,52 @@ func faultReservedChunk(ctx *RequestContext, body []byte) []byte {
 		out.Write(fault.rewrite(event, ctx.TargetFormat))
 	}
 	fault.pending = append([]byte(nil), data...)
+	if fault.droppedContent {
+		ctx.StreamContentSince = time.Now()
+	}
 	return out.Bytes()
 }
 
-// rewrite is one whole SSE event as the fault rewrites it; nil drops it.
+// flushReservedFault is the call's last event when the stream ended without
+// the blank line that terminates it: the codec reads such an event, so the
+// rewrite does too.
+func flushReservedFault(ctx *RequestContext) []byte {
+	fault := ctx.RefusalReserve.faultStream()
+	if len(bytes.TrimSpace(fault.pending)) == 0 {
+		fault.pending = nil
+		return nil
+	}
+	tail := append(bytes.TrimRight(fault.pending, "\r\n"), '\n', '\n')
+	fault.pending = nil
+	return faultReservedChunk(ctx, tail)
+}
+
+// rewrite is one whole SSE event as the fault rewrites it; nil drops it. Its
+// data lines are read joined, as an SSE reader joins them, and written back
+// as one.
 func (fault *reserveFaultStream) rewrite(event []byte, format llmprotocol.WireFormat) []byte {
 	lines := bytes.Split(bytes.TrimRight(event, "\n"), []byte("\n"))
+	var fields [][]byte
+	var others [][]byte
 	dataAt := -1
-	for i, line := range lines {
-		if bytes.HasPrefix(line, []byte("data:")) {
-			dataAt = i
+	for _, line := range lines {
+		if !bytes.HasPrefix(line, []byte("data:")) {
+			others = append(others, line)
+			continue
 		}
+		if dataAt < 0 {
+			dataAt = len(others)
+		}
+		field := line[len("data:"):]
+		if len(field) > 0 && field[0] == ' ' {
+			field = field[1:]
+		}
+		fields = append(fields, field)
 	}
 	if dataAt < 0 {
 		return event
 	}
-	payload := bytes.TrimSpace(lines[dataAt][len("data:"):])
-	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder := json.NewDecoder(bytes.NewReader(bytes.Join(fields, []byte("\n"))))
 	decoder.UseNumber()
 	var frame map[string]interface{}
 	if decoder.Decode(&frame) != nil {
@@ -90,7 +130,7 @@ func (fault *reserveFaultStream) rewrite(event []byte, format llmprotocol.WireFo
 	if format == llmprotocol.AnthropicMessagesV1 {
 		keep = fault.rewriteMessages(frame)
 	} else {
-		rewriteChat(frame)
+		fault.droppedContent = rewriteChat(frame) || fault.droppedContent
 	}
 	if !keep {
 		return nil
@@ -99,13 +139,16 @@ func (fault *reserveFaultStream) rewrite(event []byte, format llmprotocol.WireFo
 	if err != nil {
 		return event
 	}
-	lines[dataAt] = append([]byte("data: "), rewritten...)
-	return append(bytes.Join(lines, []byte("\n")), '\n', '\n')
+	out := append([][]byte{}, others[:dataAt]...)
+	out = append(out, append([]byte("data: "), rewritten...))
+	out = append(out, others[dataAt:]...)
+	return append(bytes.Join(out, []byte("\n")), '\n', '\n')
 }
 
 // rewriteChat drops a Chat chunk's text and tool calls and makes its stop a
-// content_filter refusal.
-func rewriteChat(frame map[string]interface{}) {
+// content_filter refusal. It reports whether it dropped content.
+func rewriteChat(frame map[string]interface{}) bool {
+	dropped := false
 	choices, _ := frame["choices"].([]interface{})
 	for _, raw := range choices {
 		choice, ok := raw.(map[string]interface{})
@@ -113,18 +156,25 @@ func rewriteChat(frame map[string]interface{}) {
 			continue
 		}
 		if delta, ok := choice["delta"].(map[string]interface{}); ok {
-			delete(delta, "content")
-			delete(delta, "tool_calls")
-			delete(delta, "function_call")
+			for _, key := range []string{"content", "tool_calls", "function_call"} {
+				if value, present := delta[key]; present {
+					if text, isText := value.(string); !isText || text != "" {
+						dropped = true
+					}
+					delete(delta, key)
+				}
+			}
 		}
 		if reason, ok := choice["finish_reason"].(string); ok && reason != "" {
 			choice["finish_reason"] = string(llmprotocol.StopContentFilter)
 		}
 	}
+	return dropped
 }
 
 // rewriteMessages drops a Messages stream's text and tool blocks, keeping its
-// thinking, and makes its stop a refusal. It reports whether the event stays.
+// thinking renumbered from zero, and makes its stop a refusal. It reports
+// whether the event stays.
 func (fault *reserveFaultStream) rewriteMessages(frame map[string]interface{}) bool {
 	index, _ := frame["index"].(json.Number)
 	at, _ := index.Float64()
@@ -133,12 +183,21 @@ func (fault *reserveFaultStream) rewriteMessages(frame map[string]interface{}) b
 		block, _ := frame["content_block"].(map[string]interface{})
 		switch block["type"] {
 		case "thinking", "redacted_thinking":
+			fault.kept[at] = len(fault.kept)
+			frame["index"] = fault.kept[at]
 			return true
 		}
 		fault.dropped[at] = true
+		fault.droppedContent = true
 		return false
 	case "content_block_delta", "content_block_stop":
-		return !fault.dropped[at]
+		if fault.dropped[at] {
+			fault.droppedContent = true
+			return false
+		}
+		if renumbered, ok := fault.kept[at]; ok {
+			frame["index"] = renumbered
+		}
 	case "message_delta":
 		if delta, ok := frame["delta"].(map[string]interface{}); ok {
 			if reason, ok := delta["stop_reason"].(string); ok && reason != "" {

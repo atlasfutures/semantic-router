@@ -5,6 +5,7 @@ package extproc
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
 	"github.com/stretchr/testify/assert"
@@ -112,4 +113,60 @@ func TestRefusalPreludeAllNeedsFaultInjection(t *testing.T) {
 		}
 		assert.Equal(t, want, requestedFault(algorithm.RaylineARC, requestContext), "enabled=%v", enabled)
 	}
+}
+
+func reserveFaultContext(format llmprotocol.WireFormat) *RequestContext {
+	return &RequestContext{
+		InjectedFault: headers.FaultRefusalPreludeAll, TargetFormat: format,
+		RefusalReserve: &refusalReservePlan{reserved: true},
+	}
+}
+
+// CRLF framing and data split across lines are read as an SSE reader reads
+// them, so their content is dropped too.
+func TestReserveFaultReadsCRLFAndMultiLineData(t *testing.T) {
+	ctx := reserveFaultContext(llmprotocol.OpenAIChatV1)
+	crlf := "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"secret-one\"},\"finish_reason\":null}]}\r\n\r\n"
+	multi := "data: {\"choices\":[{\"index\":0,\r\ndata: \"delta\":{\"content\":\"secret-two\"},\"finish_reason\":\"stop\"}]}\r\n\r\n"
+	out := string(faultReservedChunk(ctx, []byte(crlf+multi[:30])))
+	out += string(faultReservedChunk(ctx, []byte(multi[30:])))
+	assert.NotContains(t, out, "secret")
+	assert.Equal(t, 2, strings.Count(out, "\n\n"), "an event was lost: %q", out)
+	assert.Contains(t, out, `"finish_reason":"content_filter"`)
+}
+
+// A Messages stream's kept thinking blocks are renumbered from zero once the
+// text blocks before them are dropped.
+func TestReserveFaultRenumbersKeptMessagesBlocks(t *testing.T) {
+	ctx := reserveFaultContext(llmprotocol.AnthropicMessagesV1)
+	stream := "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n" +
+		"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"secret\"}}\n\n" +
+		"event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n" +
+		"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"thinking\",\"thinking\":\"\"}}\n\n" +
+		"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"hmm\"}}\n\n" +
+		"event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":1}\n\n" +
+		"event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":9}}\n\n"
+	out := string(faultReservedChunk(ctx, []byte(stream)))
+	assert.NotContains(t, out, "secret")
+	assert.NotContains(t, out, `"index":1`)
+	assert.Equal(t, 3, strings.Count(out, `"index":0`), "the thinking block was not renumbered: %s", out)
+	assert.Contains(t, out, `"stop_reason":"refusal"`)
+	assert.Contains(t, out, `"output_tokens":9`)
+}
+
+// Dropped content still counts as the call's activity for the silence clock.
+func TestReserveFaultDroppedContentKeepsTheCallAlive(t *testing.T) {
+	ctx := reserveFaultContext(llmprotocol.OpenAIChatV1)
+	ctx.StreamContentSince = time.Now().Add(-time.Minute)
+	faultReservedChunk(ctx, []byte(`data: {"choices":[{"index":0,"delta":{"content":"secret"},"finish_reason":null}]}`+"\n\n"))
+	assert.WithinDuration(t, time.Now(), ctx.StreamContentSince, time.Second)
+	assert.False(t, ctx.StreamContentSeen, "dropped content was counted as content the client saw")
+}
+
+// A last event the stream ended without terminating is still rewritten.
+func TestReserveFaultFlushesAnUnterminatedLastEvent(t *testing.T) {
+	ctx := reserveFaultContext(llmprotocol.OpenAIChatV1)
+	assert.Contains(t, string(faultReservedChunk(ctx, []byte(`data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`+"\n\ndata: [DONE]"))), "content_filter")
+	assert.Equal(t, "data: [DONE]\n\n", string(flushReservedFault(ctx)))
+	assert.Empty(t, flushReservedFault(ctx))
 }

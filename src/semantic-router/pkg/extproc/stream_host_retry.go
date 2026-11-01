@@ -727,6 +727,15 @@ func (r *OpenAIRouter) serveHostRetryChunk(
 	chunk hostRetryChunk,
 ) error {
 	plan := ctx.HostRetry
+	if reserveFaultActive(ctx) && !chunk.headers && len(chunk.body) == 0 {
+		// The dev fault's rewrite reads a last event the stream did not
+		// terminate, as the codec does, before the end is handled.
+		if tail := flushReservedFault(ctx); len(tail) > 0 {
+			if err := r.sendSplicedReply(stream, ctx, r.handleSemanticStreamingResponseBody(tail, false, ctx)); err != nil {
+				return err
+			}
+		}
+	}
 	var response *ext_proc.ProcessingResponse
 	switch {
 	case chunk.headers:
