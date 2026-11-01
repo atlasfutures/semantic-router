@@ -127,6 +127,13 @@ type CanonicalResponseStream struct {
 	// turn ends as a first-content timeout. The first call keeps its full
 	// first-content limit. Zero leaves deadline_sec as the only bound.
 	HostRetryBudgetSec int `yaml:"host_retry_budget_sec,omitempty"`
+	// SingleHostResend extends host retry to an arm whose pin names a single
+	// host: a turn that fails before any content (a first-content stall or an
+	// in-band error) is re-sent once on that same host, with the dispatched
+	// body unchanged, after an in-band rate limit following the provider's
+	// stated delay (2 s when it states none, at most 10 s). It applies only
+	// where host retry is on for the arm. Off by default.
+	SingleHostResend bool `yaml:"single_host_resend,omitempty"`
 }
 
 // CanonicalServiceGlobal groups shared runtime services exposed by the router.
@@ -423,6 +430,7 @@ func applyCanonicalRouterGlobal(cfg *RouterConfig, router CanonicalRouterGlobal)
 	cfg.FlexResendBudgetSec = router.ResponseStream.ResendBudgetSec
 	cfg.ResponseStreamHostRetry = router.ResponseStream.HostRetry
 	cfg.ResponseStreamHostRetryBudgetSec = router.ResponseStream.HostRetryBudgetSec
+	cfg.ResponseStreamSingleHostResend = router.ResponseStream.SingleHostResend
 	cfg.ThinkingMarkerMint = router.ThinkingMarkers.Mint
 	cfg.KeepUnservedClaudeThinking = router.ThinkingSignatures.KeepUnserved
 	cfg.SkipProcessing = router.SkipProcessing

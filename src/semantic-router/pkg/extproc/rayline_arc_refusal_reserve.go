@@ -806,7 +806,7 @@ func (r *OpenAIRouter) spliceReserve(
 	ctx.DeliveredStreamItems = 0
 	resetStreamForHostRetry(ctx, body, dispatch)
 	r.initializeSemanticResponseStream(ctx)
-	plan.splice = startHostRetrySplice(ctx, call)
+	plan.splice = startHostRetrySplice(ctx, call, 0)
 }
 
 // withRefusalAttemptsComment puts the attempt record ahead of the last body

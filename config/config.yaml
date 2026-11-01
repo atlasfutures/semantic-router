@@ -2292,6 +2292,12 @@ global:
       # Stop trying further hosts once a turn is this old (seconds since it
       # started); 0 leaves deadline_sec as the only bound.
       host_retry_budget_sec: 0
+      # Let host retry re-send once on the same host when an arm's pin names
+      # only one (a privacy pin such as only: [azure]): the dispatched body is
+      # sent again unchanged. After an in-band rate limit the re-send waits
+      # the provider's stated delay, 2 s when it states none, at most 10 s.
+      # Applies only where host retry is on for the arm. Off by default.
+      single_host_resend: false
       # How long a discount endpoint's standard re-send (standard_twin) may
       # take. It must stay below the ext_proc message_timeout, which bounds
       # how long Envoy waits for the re-send's answer. 0 selects 55 s (below

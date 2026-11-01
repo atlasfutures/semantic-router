@@ -423,6 +423,14 @@ global:
   `response_body_mode: FULL_DUPLEX_STREAMED`, and until the first content the
   Router holds the stream's opening frames and sends SSE comments in their
   place. Off by default.
+- `single_host_resend: true` extends host retry to a model whose
+  `provider_preferences` name a single host, such as a privacy pin
+  `only: [azure]`. A turn that fails before any content reached the client,
+  on a first-content stall or an in-band error, is re-sent once on that same
+  host with the dispatched body unchanged. After an in-band rate limit the
+  re-send waits the provider's stated delay, 2 s when it states none, and at
+  most 10 s. It applies only where host retry is on for the model. Off by
+  default.
 - A model may set `providers.models[].host_retry` to turn the re-send on or
   off for itself; absent, the global flag applies. Host retry targets a
   provider that stalls before any content. It does not help a model whose

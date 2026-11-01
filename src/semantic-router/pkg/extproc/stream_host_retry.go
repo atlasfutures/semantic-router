@@ -72,6 +72,14 @@ const (
 	hostRetryMaxHeld = 1 << 20
 )
 
+// A same-host re-send after an in-band rate limit waits the provider's stated
+// delay, or sameHostRateLimitWait when it states none, and never longer than
+// sameHostRateLimitMaxWait. Variables so tests can shorten them.
+var (
+	sameHostRateLimitWait    = 2 * time.Second
+	sameHostRateLimitMaxWait = 10 * time.Second
+)
+
 // hostRetryHoldFrame is what the client is sent in place of held frames: an
 // SSE comment, which every streamed wire format ignores.
 var hostRetryHoldFrame = []byte(": ROUTER PROCESSING\n\n")
@@ -103,6 +111,10 @@ type hostRetryPlan struct {
 	// trailersPending says the original call's trailers arrived while a
 	// re-send was serving; their reply goes out when the re-send ends.
 	trailersPending bool
+	// sameHost says the pin names a single host and the turn may be re-sent
+	// once on that same host, with the dispatched body unchanged
+	// (response_stream.single_host_resend).
+	sameHost bool
 }
 
 type hostAttempt struct {
@@ -133,7 +145,9 @@ type hostRetrySplice struct {
 }
 
 // stageHostRetry keeps what a re-send needs when the dispatched body pins
-// more than one OpenRouter host. Any other dispatch is left as it was.
+// more than one OpenRouter host, or a single one when
+// response_stream.single_host_resend allows one re-send on it. Any other
+// dispatch is left as it was.
 func (r *OpenAIRouter) stageHostRetry(ctx *RequestContext, dispatch *providerDispatch, body []byte) {
 	if ctx == nil {
 		return
@@ -144,7 +158,8 @@ func (r *OpenAIRouter) stageHostRetry(ctx *RequestContext, dispatch *providerDis
 		return
 	}
 	hosts := pinnedHosts(body)
-	if len(hosts) < 2 {
+	sameHost := len(hosts) == 1 && r.Config.ResponseStreamSingleHostResend
+	if len(hosts) < 2 && !sameHost {
 		return
 	}
 	ctx.HostRetry = &hostRetryPlan{
@@ -152,6 +167,7 @@ func (r *OpenAIRouter) stageHostRetry(ctx *RequestContext, dispatch *providerDis
 		dispatched: body,
 		hosts:      hosts,
 		attempts:   []hostAttempt{{started: ctx.StartTime}},
+		sameHost:   sameHost,
 	}
 }
 
@@ -210,8 +226,12 @@ func (plan *hostRetryPlan) tried() []string {
 	return tried
 }
 
-// remaining are the hosts not yet tried, in order.
+// remaining are the hosts not yet tried, in order. A same-host plan's one
+// host is never used up: the re-send is attributed to it as well.
 func (plan *hostRetryPlan) remaining() []string {
+	if plan.sameHost {
+		return slices.Clone(plan.hosts)
+	}
 	tried := plan.tried()
 	left := []string{}
 	for _, host := range plan.hosts {
@@ -220,6 +240,15 @@ func (plan *hostRetryPlan) remaining() []string {
 		}
 	}
 	return left
+}
+
+// canReplace reports that the call in flight could still be replaced: by
+// another host, or once by its own when the plan is a same-host one.
+func (plan *hostRetryPlan) canReplace() bool {
+	if plan.sameHost {
+		return len(plan.attempts) == 1
+	}
+	return len(plan.remaining()) > 1
 }
 
 // currentHost is the host the call in flight is attributed to: the one the
@@ -250,7 +279,7 @@ func (plan *hostRetryPlan) currentHost(ctx *RequestContext) (string, string) {
 func (r *OpenAIRouter) holdingForHostRetry(ctx *RequestContext) bool {
 	plan := ctx.HostRetry
 	return plan != nil && !refusalReserveServing(ctx) && !plan.exposed && streamSilenceTimerArmed(ctx) && !ctx.StreamContentSeen &&
-		!ctx.StreamingComplete && r.streamSilenceLimit(ctx) > 0 && len(plan.remaining()) > 1
+		!ctx.StreamingComplete && r.streamSilenceLimit(ctx) > 0 && plan.canReplace()
 }
 
 // holdHostRetryFrames keeps a reply's frames from the client while the call
@@ -305,6 +334,9 @@ func (r *OpenAIRouter) retryOnNextHost(ctx *RequestContext, class, detail string
 	}
 	current := &plan.attempts[len(plan.attempts)-1]
 	current.host, current.source = host, source
+	if !plan.canReplace() {
+		return false
+	}
 	if r.responseStreamOverran(ctx) {
 		// Past the turn's deadline no host is dialled: the deadline cut ends
 		// the turn, as it would without the retry.
@@ -314,8 +346,9 @@ func (r *OpenAIRouter) retryOnNextHost(ctx *RequestContext, class, detail string
 		})
 		return false
 	}
+	wait := plan.resendWait(ctx)
 	if budget := r.Config.ResponseStreamHostRetryBudgetSec; budget > 0 && !ctx.StartTime.IsZero() &&
-		time.Since(ctx.StartTime) >= time.Duration(budget)*time.Second {
+		time.Since(ctx.StartTime)+wait >= time.Duration(budget)*time.Second {
 		logging.ComponentWarnEvent("extproc", "stream_host_retry_unavailable", map[string]interface{}{
 			"request_id": ctx.RequestID, "model": plan.dispatch.logicalModel, "reason": "budget_spent",
 			"attempt": len(plan.attempts), "budget_ms": int64(budget) * 1000,
@@ -329,16 +362,27 @@ func (r *OpenAIRouter) retryOnNextHost(ctx *RequestContext, class, detail string
 			next = append(next, candidate)
 		}
 	}
-	if len(next) == 0 {
-		return false
+	body, ok := plan.dispatched, true
+	if plan.sameHost {
+		// The same host again, asked exactly as before: the pin is left whole,
+		// so the re-send can reach no host the first call could not.
+		next = []string{host}
+	} else {
+		if len(next) == 0 {
+			return false
+		}
+		body, ok = withHostsRemoved(plan.dispatched, tried)
 	}
-	body, ok := withHostsRemoved(plan.dispatched, tried)
 	fields := map[string]interface{}{
 		"request_id": ctx.RequestID, "model": plan.dispatch.logicalModel,
 		"stalled_host": host, "stalled_host_source": source, "next_hosts": next,
 		"attempt": len(plan.attempts), "trigger": detail,
 		"silent_ms": time.Since(ctx.StreamContentSince).Milliseconds(),
 		"limit_ms":  r.streamSilenceLimit(ctx).Milliseconds(),
+	}
+	if plan.sameHost {
+		fields["same_host"] = true
+		fields["wait_ms"] = wait.Milliseconds()
 	}
 	if trace := ctx.VSRRaylineARC; trace != nil {
 		fields["episode_id_hash"] = trace.EpisodeIDHash
@@ -363,8 +407,30 @@ func (r *OpenAIRouter) retryOnNextHost(ctx *RequestContext, class, detail string
 	plan.dispatched = body
 	resetStreamForHostRetry(ctx, body, plan.dispatch)
 	r.initializeSemanticResponseStream(ctx)
-	plan.splice = startHostRetrySplice(ctx, call)
+	plan.splice = startHostRetrySplice(ctx, call, wait)
 	return true
+}
+
+// resendWait is how long a same-host re-send waits before it dials: after an
+// in-band rate limit, the provider's stated delay or sameHostRateLimitWait,
+// bounded by sameHostRateLimitMaxWait; otherwise nothing. Another host is
+// dialled at once.
+func (plan *hostRetryPlan) resendWait(ctx *RequestContext) time.Duration {
+	if !plan.sameHost || ctx.SemanticStreamState == nil {
+		return 0
+	}
+	failed := ctx.SemanticStreamState.upstreamFailed
+	if failed == nil || failed.Category != llmprotocol.ErrorRateLimited {
+		return 0
+	}
+	wait := sameHostRateLimitWait
+	if failed.RetryAfter > 0 {
+		wait = time.Duration(failed.RetryAfter) * time.Second
+	}
+	if wait > sameHostRateLimitMaxWait {
+		wait = sameHostRateLimitMaxWait
+	}
+	return wait
 }
 
 // failHost ends a re-send that failed before any content: the turn moves to
@@ -562,9 +628,9 @@ func hostRetryChunks(ctx *RequestContext) <-chan hostRetryChunk {
 	return ctx.HostRetry.splice.chunks
 }
 
-// startHostRetrySplice makes the call and streams what it says to the loop.
-// The call ends with the exchange, or when the loop abandons it.
-func startHostRetrySplice(ctx *RequestContext, call *flexTwinCall) *hostRetrySplice {
+// startHostRetrySplice makes the call, after wait, and streams what it says
+// to the loop. The call ends with the exchange, or when the loop abandons it.
+func startHostRetrySplice(ctx *RequestContext, call *flexTwinCall, wait time.Duration) *hostRetrySplice {
 	parent := ctx.TraceContext
 	if parent == nil {
 		parent = context.Background()
@@ -581,6 +647,15 @@ func startHostRetrySplice(ctx *RequestContext, call *flexTwinCall) *hostRetrySpl
 		}
 	}
 	goSafely("extproc_stream_host_retry", func() {
+		if wait > 0 {
+			timer := time.NewTimer(wait)
+			select {
+			case <-timer.C:
+			case <-callCtx.Done():
+				timer.Stop()
+				return
+			}
+		}
 		request, err := http.NewRequestWithContext(callCtx, http.MethodPost, call.url, bytes.NewReader(call.body))
 		if err != nil {
 			deliver(hostRetryChunk{err: err})
