@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
+	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -252,7 +253,7 @@ func startStalledTurn(
 }
 
 // serveNextSpliced serves the next thing the re-send in flight says.
-func serveNextSpliced(t *testing.T, router *OpenAIRouter, ctx *RequestContext, stream *MockStream) hostRetryChunk {
+func serveNextSpliced(t *testing.T, router *OpenAIRouter, ctx *RequestContext, stream ext_proc.ExternalProcessor_ProcessServer) hostRetryChunk {
 	t.Helper()
 	chunks := hostRetryChunks(ctx)
 	require.NotNil(t, chunks, "no re-send is in flight")
@@ -266,7 +267,7 @@ func serveNextSpliced(t *testing.T, router *OpenAIRouter, ctx *RequestContext, s
 	return hostRetryChunk{}
 }
 
-func drainSpliced(t *testing.T, router *OpenAIRouter, ctx *RequestContext, stream *MockStream) {
+func drainSpliced(t *testing.T, router *OpenAIRouter, ctx *RequestContext, stream ext_proc.ExternalProcessor_ProcessServer) {
 	t.Helper()
 	for !ctx.StreamingComplete {
 		serveNextSpliced(t, router, ctx, stream)

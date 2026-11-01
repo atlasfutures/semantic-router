@@ -119,6 +119,9 @@ func (r *OpenAIRouter) processWithContext(
 		}
 	}()
 
+	// A held turn's headers reply waits for what the client is sent first,
+	// so it can name the arm that served (rayline_arc_reserve_headers.go).
+	stream = r.newServedHeadersStream(stream, ctx)
 	receiver := startStreamReceiver(stream)
 	ctx.streamReceiver = receiver
 	for {
@@ -397,6 +400,9 @@ func (r *OpenAIRouter) processResponseHeaders(
 		return err
 	}
 	stateRaylineARCIdentity(response, ctx)
+	if r.deferServedHeaders(stream, response, ctx) {
+		return nil
+	}
 	return sendResponse(stream, response, "response header")
 }
 

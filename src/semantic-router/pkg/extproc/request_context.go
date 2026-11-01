@@ -190,6 +190,11 @@ type RequestContext struct {
 	// a held streamed ARC turn (rayline_arc_refusal_reserve.go); nil
 	// otherwise.
 	RefusalReserve *refusalReservePlan
+	// servedHeadersOutcome is the upstream outcome a successful response's
+	// headers reply was built from, kept so a reply deferred over a
+	// refusal-reserve hold can be built again for the arm that served
+	// (rayline_arc_reserve_headers.go).
+	servedHeadersOutcome *responseHeaderOutcome
 	// raylineARCReselect is what the turn's ARC selection was made from,
 	// kept so a refused turn can be decided again in place.
 	raylineARCReselect *raylineARCReselect
