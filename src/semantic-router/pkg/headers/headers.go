@@ -145,6 +145,12 @@ const (
 	// (rayline_arc_refusal_reserve.go). Re-serves themselves are not faulted.
 	FaultRefusalPrelude = "refusal_prelude"
 
+	// FaultRefusalPreludeAll is FaultRefusalPrelude that also refuses the
+	// re-served attempt, before any content, so the exhaustion path (one
+	// re-serve at most, its refusal passed through, both attempts billed) can
+	// be exercised on a cell (rayline_arc_fault_reserve.go).
+	FaultRefusalPreludeAll = "refusal_prelude_all"
+
 	// VSRSchemaVersion stamps the response-header contract revision so clients
 	// know which contract they are parsing. Value: SchemaVersionValue.
 	VSRSchemaVersion = "x-vsr-schema-version"

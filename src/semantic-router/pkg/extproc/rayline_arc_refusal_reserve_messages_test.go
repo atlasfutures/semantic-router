@@ -165,6 +165,12 @@ func TestRefusalReserveBudgetStartsAtTheMessagesHeldStop(t *testing.T) {
 // re-serve from a glm host that answers as behaviour says.
 func messagesReserveTurn(t *testing.T, behaviour string) (*RequestContext, *MockStream, *hostUpstream) {
 	t.Helper()
+	return messagesReserveTurnWithFault(t, behaviour, "")
+}
+
+// messagesReserveTurnWithFault is messagesReserveTurn with a dev fault set.
+func messagesReserveTurnWithFault(t *testing.T, behaviour, fault string) (*RequestContext, *MockStream, *hostUpstream) {
+	t.Helper()
 	upstream := newHostUpstream(t, map[string]string{reserveGLMHost: behaviour})
 	router := reserveRouter(upstream.server.URL)
 	for _, arm := range []string{reserveClaudeArm, reserveGLMArm} {
@@ -197,6 +203,7 @@ func messagesReserveTurn(t *testing.T, behaviour string) (*RequestContext, *Mock
 	}
 	require.NoError(t, router.processResponseHeaders(NewMockStream(nil), flexUpstreamHeaders(http.StatusOK, "text/event-stream"), ctx))
 	ctx.SelectionTransaction = newSelectionTransactionOwner(configRaylineARC, &recordingSelectionTransaction{})
+	ctx.InjectedFault = fault
 
 	last := len(reserveMessagesCyberRefusal) - 1
 	for index, chunk := range reserveMessagesCyberRefusal {

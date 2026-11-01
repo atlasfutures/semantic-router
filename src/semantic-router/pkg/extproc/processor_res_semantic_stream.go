@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/headers"
 	"sort"
 	"time"
 
@@ -101,7 +100,7 @@ func (r *OpenAIRouter) handleSemanticStreamingResponseBody(
 	// A Chat stream states its usage on a chunk after the stop, so the
 	// re-serve waits for it (or for the stream's end, below): the refused
 	// call is settled with what it used.
-	if !endOfStream && (refusedCallUsageIn(ctx) || ctx.InjectedFault == headers.FaultRefusalPrelude) &&
+	if !endOfStream && (refusedCallUsageIn(ctx) || faultsFirstAttempt(ctx)) &&
 		r.reserveRefusedTurn(ctx) {
 		return droppedHostChunk(ctx)
 	}

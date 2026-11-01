@@ -727,6 +727,15 @@ func (r *OpenAIRouter) serveHostRetryChunk(
 	chunk hostRetryChunk,
 ) error {
 	plan := ctx.HostRetry
+	if reserveFaultActive(ctx) && !chunk.headers && len(chunk.body) == 0 {
+		// The dev fault's rewrite reads a last event the stream did not
+		// terminate, as the codec does, before the end is handled.
+		if tail := flushReservedFault(ctx); len(tail) > 0 {
+			if err := r.sendSplicedReply(stream, ctx, r.handleSemanticStreamingResponseBody(tail, false, ctx)); err != nil {
+				return err
+			}
+		}
+	}
 	var response *ext_proc.ProcessingResponse
 	switch {
 	case chunk.headers:
@@ -748,7 +757,14 @@ func (r *OpenAIRouter) serveHostRetryChunk(
 		}
 		response = r.handleSemanticStreamingResponseBody(nil, false, ctx)
 	case len(chunk.body) > 0:
-		response = r.handleSemanticStreamingResponseBody(chunk.body, false, ctx)
+		body := chunk.body
+		if reserveFaultActive(ctx) {
+			// The dev fault refuses the re-served call too.
+			if body = faultReservedChunk(ctx, body); len(body) == 0 {
+				return nil
+			}
+		}
+		response = r.handleSemanticStreamingResponseBody(body, false, ctx)
 	case !ctx.StreamContentSeen && (chunk.err == nil || refusalReserveServing(ctx)) && reserveSpliceEndedOnStop(ctx):
 		// A spliced call under a re-serve plan that ended cleanly before any
 		// content, having said how it stopped, is read to its end as the
