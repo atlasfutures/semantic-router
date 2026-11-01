@@ -239,3 +239,41 @@ func TestRefusalReserveLeavesTheRateLimitCheckItsTimeout(t *testing.T) {
 		assert.Empty(t, limiter.checks, "limited=%v", limited)
 	}
 }
+
+// A re-served arm whose own Messages stream refuses before any content block
+// is a refusal, found when its stream is finalized: the turn is re-served
+// again on the next arm, never cut as a host's failure.
+func TestReservedArmsBareMessagesRefusalIsReservedAgain(t *testing.T) {
+	const kimiArm, kimiHost = "kimi", "moonshotai"
+	upstream := newHostUpstream(t, map[string]string{reserveGLMHost: "messages_refusal", kimiHost: "content"})
+	router := reserveRouter(upstream.server.URL)
+	models := router.Config.ModelConfig
+	kimi := models[reserveGLMArm]
+	fallbacks := true
+	kimi.ProviderPreferences = &config.OpenRouterProviderPreferences{Order: []string{kimiHost}, AllowFallbacks: &fallbacks}
+	kimi.ExternalModelIDs = map[string]string{"vllm": "moonshotai/kimi-k3"}
+	models[kimiArm] = kimi
+	glm := models[reserveGLMArm]
+	glm.APIFormat = config.APIFormatAnthropic
+	models[reserveGLMArm] = glm
+	stream := NewMockStream(nil)
+	ctx, _ := startReserveTurn(t, router)
+	ctx.RefusalReserve.families = []string{"claude", "glm"}
+	next := []string{reserveGLMArm, kimiArm}
+	ctx.RefusalReserve.redecide = func(*RequestContext) (*config.ModelRef, string, error) {
+		arm := next[0]
+		next = next[1:]
+		return &config.ModelRef{Model: arm}, "test", nil
+	}
+
+	require.NoError(t, router.handleProcessRequest(stream, fullDuplexResponseBodyRequest(reserveRoleChunk, false), ctx))
+	require.NoError(t, router.handleProcessRequest(stream, fullDuplexResponseBodyRequest(reserveRefusalChunk, true), ctx))
+	require.True(t, ctx.HostRetry.started(), "the first refusal was not re-served")
+	drainSpliced(t, router, ctx, stream)
+
+	sent, ended := clientBytes(stream)
+	assert.True(t, ended)
+	assert.Contains(t, sent, "served on "+kimiHost, "the bare refusal was not re-served on the next arm")
+	assert.NotEqual(t, turnFailureTimeout, ctx.ResponseFailureClass)
+	assert.Len(t, attemptsRecord(t, sent)["attempts"].([]interface{}), 3)
+}

@@ -919,6 +919,12 @@ func (r *OpenAIRouter) reportRefusedRateLimitUsage(ctx *RequestContext, limit *r
 	}
 }
 
+// refusalReservePending reports a turn whose re-serve plan still holds its
+// frames: nothing of it has reached the client.
+func refusalReservePending(ctx *RequestContext) bool {
+	return ctx != nil && ctx.RefusalReserve != nil && !ctx.RefusalReserve.released
+}
+
 // awaitingRefusalReserve reports a held turn whose call refused and whose
 // re-serve waits for the call's usage or its end: a host retry must not take
 // the refusal for an upstream error and ask the refusing model again.

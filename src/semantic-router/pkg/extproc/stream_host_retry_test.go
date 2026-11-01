@@ -79,6 +79,17 @@ func newHostUpstream(t *testing.T, behaviour map[string]string) *hostUpstream {
 			w.Header().Set("content-type", "text/event-stream")
 			w.WriteHeader(http.StatusOK)
 			_, _ = io.WriteString(w, hostRetryContentStream("served on "+host))
+		case "messages_refusal":
+			// An Anthropic Messages stream that refuses before any content
+			// block: its stop is known only once the stream is finalized.
+			w.Header().Set("content-type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			_, _ = io.WriteString(w, "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_bare\","+
+				"\"type\":\"message\",\"role\":\"assistant\",\"model\":\"glm-5.3\",\"content\":[],\"stop_reason\":null,"+
+				"\"usage\":{\"input_tokens\":50,\"output_tokens\":1}}}\n\n"+
+				"event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"refusal\","+
+				"\"stop_sequence\":null},\"usage\":{\"output_tokens\":3}}\n\n"+
+				"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n")
 		case "sse_error":
 			w.Header().Set("content-type", "text/event-stream")
 			w.WriteHeader(http.StatusOK)
