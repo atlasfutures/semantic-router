@@ -409,3 +409,99 @@ func TestLapsedHoldSendsItsFramesWithoutANewChunk(t *testing.T) {
 	assert.True(t, ctx.RefusalReserve.released)
 	assert.False(t, router.refusalReserveHoldLapsed(ctx))
 }
+
+// A re-served arm with hosts to retry still passes its own refusal through:
+// an in-band refusal before any content is not taken for its host's
+// failure, so the refusing model is not asked again on its next host.
+func TestReservedArmsInBandRefusalIsNotRetriedOnItsNextHost(t *testing.T) {
+	const otherHost = "z-ai-other"
+	upstream := newHostUpstream(t, map[string]string{reserveGLMHost: "sse_refusal", otherHost: "content"})
+	router := reserveRouter(upstream.server.URL)
+	router.Config.ResponseStreamHostRetry = true
+	glm := router.Config.ModelConfig[reserveGLMArm]
+	fallbacks := true
+	glm.ProviderPreferences = &config.OpenRouterProviderPreferences{
+		Order: []string{reserveGLMHost, otherHost}, AllowFallbacks: &fallbacks,
+	}
+	router.Config.ModelConfig[reserveGLMArm] = glm
+	stream := NewMockStream(nil)
+	ctx, _ := startReserveTurn(t, router)
+
+	require.NoError(t, router.handleProcessRequest(stream, fullDuplexResponseBodyRequest(reserveRoleChunk, false), ctx))
+	require.NoError(t, router.handleProcessRequest(stream, fullDuplexResponseBodyRequest(reserveRefusalChunk, true), ctx))
+	require.True(t, ctx.HostRetry.started(), "the refusal was not re-served")
+	drainSpliced(t, router, ctx, stream)
+
+	sent, ended := clientBytes(stream)
+	assert.True(t, ended)
+	assert.Len(t, upstream.calls(), 1, "the re-served arm's refusal was retried on its next host")
+	assert.NotContains(t, sent, "served on "+otherHost)
+	assert.Equal(t, turnFailureRefusal, ctx.ResponseFailureClass)
+}
+
+// The re-decision runs under the hold: one that would outlast it is cut off
+// at its end, and nothing is re-served.
+func TestRefusalReserveRedecisionIsBoundedByTheHold(t *testing.T) {
+	upstream := newHostUpstream(t, map[string]string{reserveGLMHost: "content"})
+	router := reserveRouter(upstream.server.URL)
+	stream := NewMockStream(nil)
+	ctx, _ := startReserveTurn(t, router)
+	ctx.RefusalReserve.hold = time.Since(ctx.StartTime) + 300*time.Millisecond
+	var deadline time.Time
+	ctx.RefusalReserve.redecide = func(ctx *RequestContext) (*config.ModelRef, string, error) {
+		bounded := selectionRequestContext(ctx)
+		deadline, _ = bounded.Deadline()
+		select {
+		case <-bounded.Done():
+			return nil, "test", bounded.Err()
+		case <-time.After(3 * time.Second):
+			return &config.ModelRef{Model: reserveGLMArm}, "test", nil
+		}
+	}
+
+	started := time.Now()
+	require.NoError(t, router.handleProcessRequest(stream, fullDuplexResponseBodyRequest(reserveRoleChunk, false), ctx))
+	require.NoError(t, router.handleProcessRequest(stream, fullDuplexResponseBodyRequest(reserveRefusalChunk, true), ctx))
+	assert.Less(t, time.Since(started), 2*time.Second, "the re-decision outlasted the hold")
+	assert.False(t, deadline.IsZero(), "the re-decision had no deadline")
+	assert.False(t, deadline.After(ctx.StartTime.Add(ctx.RefusalReserve.hold)))
+	assert.False(t, ctx.HostRetry.started())
+	assert.Empty(t, upstream.calls())
+	assert.Equal(t, turnFailureRefusal, ctx.ResponseFailureClass)
+}
+
+// The re-served call carries the decision's header_mutation, as the first
+// dispatch does: added headers are set, deleted client headers are dropped.
+func TestReservedCallCarriesTheDecisionsHeaderMutation(t *testing.T) {
+	upstream := newHostUpstream(t, map[string]string{reserveGLMHost: "content"})
+	router := reserveRouter(upstream.server.URL)
+	stream := NewMockStream(nil)
+	ctx, _ := startReserveTurn(t, router)
+	decision := config.Decision{Name: "reserve-headers"}
+	if ctx.VSRSelectedDecision != nil {
+		decision = *ctx.VSRSelectedDecision
+	}
+	decision.Plugins = append(append([]config.DecisionPlugin(nil), decision.Plugins...), config.DecisionPlugin{
+		Type: "header_mutation",
+		Configuration: config.MustStructuredPayload(config.HeaderMutationPluginConfig{
+			Add:    []config.HeaderPair{{Name: "x-project-id", Value: "proj-7"}},
+			Delete: []string{"anthropic-beta"},
+		}),
+	})
+	ctx.VSRSelectedDecision = &decision
+	if ctx.Headers == nil {
+		ctx.Headers = map[string]string{}
+	}
+	ctx.Headers["anthropic-beta"] = "client-beta"
+
+	require.NoError(t, router.handleProcessRequest(stream, fullDuplexResponseBodyRequest(reserveRoleChunk, false), ctx))
+	require.NoError(t, router.handleProcessRequest(stream, fullDuplexResponseBodyRequest(reserveRefusalChunk, true), ctx))
+	require.True(t, ctx.HostRetry.started(), "the refusal was not re-served")
+	drainSpliced(t, router, ctx, stream)
+
+	upstream.mu.Lock()
+	defer upstream.mu.Unlock()
+	require.Len(t, upstream.headers, 1)
+	assert.Equal(t, "proj-7", upstream.headers[0].Get("x-project-id"))
+	assert.Empty(t, upstream.headers[0].Get("anthropic-beta"))
+}

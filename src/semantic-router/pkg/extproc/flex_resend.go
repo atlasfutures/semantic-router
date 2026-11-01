@@ -219,7 +219,10 @@ func (r *OpenAIRouter) buildResendCall(
 	}
 	setProviderRequestPath(&state.setHeaders, dispatch.profile, dispatch.targetFormat)
 	declareAutoCacheBeta(&state.setHeaders, ctx)
-	target, headers, err := flexResendRequestTarget(dispatch, state.setHeaders, ctx)
+	// The decision's header_mutation, as the first dispatch applies it:
+	// after the credential and the path.
+	r.applyDecisionHeaderMutations(state, ctx)
+	target, headers, err := flexResendRequestTarget(dispatch, state.setHeaders, state.removeHeaders, ctx)
 	if err != nil {
 		return nil, "address_invalid"
 	}
@@ -267,6 +270,7 @@ var flexClientHeaders = []string{"anthropic-version", "anthropic-beta"}
 func flexResendRequestTarget(
 	dispatch *providerDispatch,
 	setHeaders []*core.HeaderValueOption,
+	removeHeaders []string,
 	ctx *RequestContext,
 ) (string, http.Header, error) {
 	scheme := "http"
@@ -282,6 +286,11 @@ func flexResendRequestTarget(
 		if value, ok := lookupHeaderIgnoringCase(ctx.Headers, name); ok && value != "" {
 			headers.Set(name, value)
 		}
+	}
+	// A header the dispatch removes from the client's request is not carried
+	// over from it either; the dispatch's own headers are set after.
+	for _, name := range removeHeaders {
+		headers.Del(name)
 	}
 	path := ""
 	for _, option := range setHeaders {

@@ -53,6 +53,7 @@ type hostUpstream struct {
 	server    *httptest.Server
 	mu        sync.Mutex
 	providers []map[string]json.RawMessage
+	headers   []http.Header
 	behaviour map[string]string
 }
 
@@ -69,6 +70,7 @@ func newHostUpstream(t *testing.T, behaviour map[string]string) *hostUpstream {
 		_ = json.Unmarshal(body.Provider["order"], &order)
 		upstream.mu.Lock()
 		upstream.providers = append(upstream.providers, body.Provider)
+		upstream.headers = append(upstream.headers, r.Header.Clone())
 		upstream.mu.Unlock()
 		host := ""
 		if len(order) > 0 {
@@ -105,6 +107,12 @@ func newHostUpstream(t *testing.T, behaviour map[string]string) *hostUpstream {
 				`data: {"id":"gen-served-refusal","object":"chat.completion.chunk","created":1,`+
 				`"model":"z-ai/glm-5.3","choices":[{"index":0,"delta":{},"finish_reason":"content_filter"}]}`+"\n\n"+
 				"data: [DONE]\n\n")
+		case "sse_refusal":
+			// An in-band refusal before any content, as a provider's
+			// moderation states it.
+			w.Header().Set("content-type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			_, _ = io.WriteString(w, `data: {"error":{"type":"invalid_request_error","code":"data_inspection_failed","message":"Input data may contain inappropriate content."}}`+"\n\n")
 		case "sse_error":
 			w.Header().Set("content-type", "text/event-stream")
 			w.WriteHeader(http.StatusOK)

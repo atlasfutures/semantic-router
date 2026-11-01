@@ -2,7 +2,9 @@ package extproc
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
@@ -343,6 +345,13 @@ func (r *OpenAIRouter) reserveRefusedTurn(ctx *RequestContext) bool {
 	if redecide == nil {
 		return passThrough("not_reselectable")
 	}
+	// The re-decision runs on the loop, which sends no keepalive meanwhile:
+	// it must end within the hold and the budget, with the rate limit
+	// check's allowance still left, or nothing could start after it anyway.
+	allowance := r.rateLimitCheckAllowance()
+	if r.reserveBoundsSpent(ctx, plan, allowance) {
+		return passThrough("budget_spent")
+	}
 	// A lease lost while the frames were held: another request may own the
 	// episode, and a re-serve could never commit.
 	if err := selectionDispatchAllowed(ctx); err != nil {
@@ -374,11 +383,14 @@ func (r *OpenAIRouter) reserveRefusedTurn(ctx *RequestContext) bool {
 	}
 
 	decideStarted := time.Now()
-	selected, method, err := redecide(ctx)
+	selected, method, err := r.redecideWithin(ctx, plan, allowance, redecide)
 	fields["redecide_ms"] = time.Since(decideStarted).Milliseconds()
 	if err != nil || selected == nil {
 		if err != nil {
 			fields["redecide_error"] = err.Error()
+			if errors.Is(err, context.DeadlineExceeded) {
+				return restore("budget_spent")
+			}
 		}
 		return restore("no_eligible_arm")
 	}
@@ -425,7 +437,7 @@ func (r *OpenAIRouter) reserveRefusedTurn(ctx *RequestContext) bool {
 	// bounds are checked again, so no paid call starts past them. The rate
 	// limit check below may itself take up to its timeout, which the bounds
 	// must still cover.
-	if r.reserveBoundsSpent(ctx, plan, r.rateLimitCheckAllowance()) {
+	if r.reserveBoundsSpent(ctx, plan, allowance) {
 		return restore("budget_spent")
 	}
 	// The next arm answers to its own rate limits, as a first dispatch
@@ -915,6 +927,33 @@ func (r *OpenAIRouter) rateLimitCheckAllowance() time.Duration {
 	return ratelimit.ProviderCheckTimeout
 }
 
+// redecideWithin runs the re-decision under a deadline: the earliest of the
+// budget's and the hold's ends, less allowance, and the stream deadline. The
+// request's own context carries it to the policy call.
+func (r *OpenAIRouter) redecideWithin(
+	ctx *RequestContext, plan *refusalReservePlan, allowance time.Duration,
+	redecide func(*RequestContext) (*config.ModelRef, string, error),
+) (*config.ModelRef, string, error) {
+	deadline := plan.firstRefusal.Add(plan.budget - allowance)
+	if !ctx.StartTime.IsZero() {
+		if holdEnd := ctx.StartTime.Add(plan.hold - allowance); holdEnd.Before(deadline) {
+			deadline = holdEnd
+		}
+		if stream := r.responseStreamDeadline(); stream > 0 {
+			if streamEnd := ctx.StartTime.Add(stream - allowance); streamEnd.Before(deadline) {
+				deadline = streamEnd
+			}
+		}
+	}
+	parent := selectionRequestContext(ctx)
+	bounded, cancel := context.WithDeadline(parent, deadline)
+	defer cancel()
+	trace := ctx.TraceContext
+	ctx.TraceContext = bounded
+	defer func() { ctx.TraceContext = trace }()
+	return redecide(ctx)
+}
+
 // reserveBoundsSpent reports a re-serve that could not start within its
 // budget, the hold and the stream deadline, with allowance still to pass.
 func (r *OpenAIRouter) reserveBoundsSpent(ctx *RequestContext, plan *refusalReservePlan, allowance time.Duration) bool {
@@ -1003,12 +1042,14 @@ func heldStopIsRefusal(ctx *RequestContext) bool {
 		ctx.ProtocolResponseStream.PendingStop() == llmprotocol.StopContentFilter
 }
 
-// awaitingRefusalReserve reports a held turn whose call refused and whose
-// re-serve waits for the call's usage or its end: a host retry must not take
-// the refusal for an upstream error and ask the refusing model again.
+// awaitingRefusalReserve reports a call under a re-serve plan that refused
+// where a host retry must not take the refusal for an upstream error and ask
+// the refusing model again: a held first arm, whose re-serve waits for the
+// call's usage or its end, and the re-served arm, whose refusal reaches the
+// client as it stands.
 func awaitingRefusalReserve(ctx *RequestContext) bool {
 	plan := ctx.RefusalReserve
-	return plan != nil && !plan.released && !plan.reserved && streamRefusalSignal(ctx.SemanticStreamState) != ""
+	return plan != nil && (!plan.released || plan.reserved) && streamRefusalSignal(ctx.SemanticStreamState) != ""
 }
 
 // refusalReserveStreaming reports a streamed turn under a re-serve plan, on
