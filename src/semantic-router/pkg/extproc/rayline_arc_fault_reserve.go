@@ -39,6 +39,9 @@ func reserveFaultActive(ctx *RequestContext) bool {
 type reserveFaultStream struct {
 	// pending is an event not yet terminated by a blank line.
 	pending []byte
+	// started says the stream's first bytes were read, so a leading byte
+	// order mark has been stripped.
+	started bool
 	// dropped are the Messages content blocks dropped, by upstream index;
 	// kept maps each block kept to its index in the rewritten stream, which
 	// the decoder reads as contiguous from zero.
@@ -55,13 +58,30 @@ func (plan *refusalReservePlan) faultStream() *reserveFaultStream {
 	return plan.fault
 }
 
+// utf8BOM is the byte order mark an SSE reader strips from a stream's start.
+var utf8BOM = []byte("\xef\xbb\xbf")
+
 // faultReservedChunk is the re-served call's chunk as the fault rewrites it.
 // An event split across chunks is rewritten once it is whole. Content it
 // drops still counts as the call's activity, so the silence clock does not
 // cut a call that is answering.
 func faultReservedChunk(ctx *RequestContext, body []byte) []byte {
 	fault := ctx.RefusalReserve.faultStream()
-	data := bytes.ReplaceAll(append(fault.pending, body...), []byte("\r\n"), []byte("\n"))
+	data := append(fault.pending, body...)
+	if !fault.started {
+		if len(data) < len(utf8BOM) && bytes.HasPrefix(utf8BOM, data) {
+			fault.pending = append([]byte(nil), data...)
+			return nil
+		}
+		fault.started = true
+		data = bytes.TrimPrefix(data, utf8BOM)
+	}
+	// A CR that ends the chunk may be the first half of a CRLF: it waits.
+	var heldCR bool
+	if n := len(data); n > 0 && data[n-1] == '\r' {
+		data, heldCR = data[:n-1], true
+	}
+	data = bytes.ReplaceAll(bytes.ReplaceAll(data, []byte("\r\n"), []byte("\n")), []byte("\r"), []byte("\n"))
 	fault.droppedContent = false
 	var out bytes.Buffer
 	for {
@@ -74,6 +94,9 @@ func faultReservedChunk(ctx *RequestContext, body []byte) []byte {
 		out.Write(fault.rewrite(event, ctx.TargetFormat))
 	}
 	fault.pending = append([]byte(nil), data...)
+	if heldCR {
+		fault.pending = append(fault.pending, '\r')
+	}
 	if fault.droppedContent {
 		ctx.StreamContentSince = time.Now()
 	}

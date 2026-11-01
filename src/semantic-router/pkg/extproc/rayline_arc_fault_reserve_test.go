@@ -170,3 +170,35 @@ func TestReserveFaultFlushesAnUnterminatedLastEvent(t *testing.T) {
 	assert.Equal(t, "data: [DONE]\n\n", string(flushReservedFault(ctx)))
 	assert.Empty(t, flushReservedFault(ctx))
 }
+
+// A leading byte order mark, even split across chunks, and bare CR framing
+// are read as an SSE reader reads them.
+func TestReserveFaultReadsBOMAndBareCR(t *testing.T) {
+	event := func(nl, text, finish string) string {
+		return `data: {"choices":[{"index":0,"delta":{"content":"` + text + `"},"finish_reason":` + finish + `}]}` + nl + nl
+	}
+	ctx := reserveFaultContext(llmprotocol.OpenAIChatV1)
+	assert.Empty(t, faultReservedChunk(ctx, []byte("\xef\xbb")))
+	out := string(faultReservedChunk(ctx, []byte("\xbf"+event("\n", "secret-bom", "null"))))
+	assert.NotContains(t, out, "secret")
+	assert.NotContains(t, out, "\xef\xbb\xbf")
+	assert.Equal(t, 1, strings.Count(out, "data:"))
+
+	ctx = reserveFaultContext(llmprotocol.OpenAIChatV1)
+	stream := event("\r", "secret-cr", "null") + event("\r", "", `"stop"`) + "data: [DONE]\r\r"
+	out = ""
+	for i := 0; i < len(stream); i += 7 {
+		out += string(faultReservedChunk(ctx, []byte(stream[i:min(i+7, len(stream))])))
+	}
+	out += string(flushReservedFault(ctx))
+	assert.NotContains(t, out, "secret")
+	assert.Contains(t, out, `"finish_reason":"content_filter"`)
+	assert.Equal(t, 3, strings.Count(out, "\n\n"), "an event was lost: %q", out)
+
+	// A CRLF split across chunks is one line end, not two.
+	ctx = reserveFaultContext(llmprotocol.OpenAIChatV1)
+	assert.Empty(t, faultReservedChunk(ctx, []byte(`data: {"choices":[{"index":0,"delta":{"content":"secret"},"finish_reason":null}]}`+"\r")))
+	out = string(faultReservedChunk(ctx, []byte("\n\r\n")))
+	assert.NotContains(t, out, "secret")
+	assert.Equal(t, 1, strings.Count(out, "data:"))
+}
