@@ -62,6 +62,10 @@ func TestExpiredHoldReservesNothing(t *testing.T) {
 	ctx, _ := startReserveTurn(t, router)
 	require.NoError(t, router.handleProcessRequest(stream, fullDuplexResponseBodyRequest(reserveRoleChunk, false), ctx))
 	ctx.StartTime = time.Now().Add(-61 * time.Second)
+	// The expired hold owes one wake, to send the frames it kept, and then
+	// nothing.
+	require.True(t, router.refusalReserveHoldLapsed(ctx))
+	require.NoError(t, router.sendLapsedHoldFrames(stream, ctx))
 	assert.Zero(t, router.refusalReserveKeepAliveWait(ctx), "an expired hold still polls for keepalives")
 	require.NoError(t, router.handleProcessRequest(stream, fullDuplexResponseBodyRequest(reserveRefusalChunk, true), ctx))
 	assert.False(t, ctx.HostRetry.started())

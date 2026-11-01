@@ -852,15 +852,40 @@ func (r *OpenAIRouter) refusalReserveKeepAliveWait(ctx *RequestContext) time.Dur
 		return 0
 	}
 	// Past the hold nothing is held, and no keepalive is owed unless a
-	// re-serve is waiting on its first bytes.
+	// re-serve is waiting on its first bytes; frames the hold kept go out
+	// at once.
 	if plan.holdExpired(ctx) && !ctx.HostRetry.started() {
+		if r.refusalReserveHoldLapsed(ctx) {
+			return 10 * time.Millisecond
+		}
 		return 0
 	}
 	wait := refusalReserveKeepAlive - time.Since(plan.lastKeepAliveOr(ctx.StartTime))
+	if !ctx.HostRetry.started() && !ctx.StartTime.IsZero() {
+		// The loop wakes at the hold's end too, to send what it kept.
+		if untilExpiry := plan.hold - time.Since(ctx.StartTime); untilExpiry < wait {
+			wait = untilExpiry
+		}
+	}
 	if wait < 10*time.Millisecond {
 		wait = 10 * time.Millisecond
 	}
 	return wait
+}
+
+// refusalReserveHoldLapsed reports a hold that ran out with frames kept and
+// no re-serve started: they are owed to the client now, not on the next
+// upstream chunk.
+func (r *OpenAIRouter) refusalReserveHoldLapsed(ctx *RequestContext) bool {
+	plan := ctx.RefusalReserve
+	return plan != nil && !plan.released && plan.holdExpired(ctx) && ctx.HostRetry != nil &&
+		!ctx.HostRetry.started() && len(ctx.HostRetry.held) > 0 && !r.holdingResponse(ctx)
+}
+
+// sendLapsedHoldFrames sends the frames a lapsed hold kept.
+func (r *OpenAIRouter) sendLapsedHoldFrames(stream ext_proc.ExternalProcessor_ProcessServer, ctx *RequestContext) error {
+	response := buildResponseBodyContinueResponse(responseStreamBodyMutation(ctx, nil, false), nil)
+	return sendResponse(stream, r.holdHostRetryFrames(ctx, response), "response body")
 }
 
 // refusedCallUsageIn reports that the call in flight stated its usage, so a
@@ -916,6 +941,18 @@ func (r *OpenAIRouter) reportRefusedRateLimitUsage(ctx *RequestContext, limit *r
 		r.RateLimiter.Report(*limit, ratelimit.TokenUsage{
 			InputTokens: usage.promptTokens, OutputTokens: usage.completionTokens, TotalTokens: total,
 		})
+	}
+}
+
+// noteRefusalSignal starts the re-serve budget when a held call first shows
+// its refusal, though the re-serve itself waits for the call's usage.
+func noteRefusalSignal(ctx *RequestContext) {
+	plan := ctx.RefusalReserve
+	if plan == nil || plan.released || !plan.firstRefusal.IsZero() {
+		return
+	}
+	if streamRefusalSignal(ctx.SemanticStreamState) != "" || ctx.InjectedFault == headers.FaultRefusalPrelude {
+		plan.firstRefusal = time.Now()
 	}
 }
 

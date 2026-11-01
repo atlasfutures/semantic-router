@@ -94,6 +94,7 @@ func (r *OpenAIRouter) handleSemanticStreamingResponseBody(
 	buffers := semanticStreamBuffers{}
 	held := r.holdingForHostRetry(ctx)
 	buffers.push(responseBody, ctx)
+	noteRefusalSignal(ctx)
 	// A refusal while the frames are held is re-served in place on the
 	// policy's next choice (rayline_arc_refusal_reserve.go). It comes first:
 	// another host of the refusing model would refuse again.

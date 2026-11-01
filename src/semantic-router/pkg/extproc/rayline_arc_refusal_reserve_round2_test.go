@@ -79,6 +79,7 @@ func TestExpiredHoldWakeIsNotAStall(t *testing.T) {
 	require.NoError(t, router.handleProcessRequest(stream, fullDuplexResponseBodyRequest(reserveRoleChunk, false), ctx))
 
 	ctx.StartTime = time.Now().Add(-2 * ctx.RefusalReserve.hold)
+	require.NoError(t, router.sendLapsedHoldFrames(stream, ctx))
 	assert.Zero(t, router.refusalReserveKeepAliveWait(ctx))
 	assert.True(t, refusalReserveStreaming(ctx))
 	assert.False(t, router.refusalReserveKeepAliveDue(ctx))
@@ -303,4 +304,53 @@ func TestReservedArmsSilentCloseFailsOverToItsNextHost(t *testing.T) {
 	assert.True(t, ended)
 	assert.Contains(t, sent, "served on "+reserveGLMHost, "the silent close did not fail over to the next host")
 	assert.NotContains(t, sent, "stream_incomplete")
+}
+
+// The budget runs from the refusal itself, not from its usage: a usage line
+// that arrives past the budget starts no paid call.
+func TestRefusalReserveBudgetRunsFromTheRefusalSignal(t *testing.T) {
+	upstream := newHostUpstream(t, map[string]string{reserveGLMHost: "content"})
+	router := reserveRouter(upstream.server.URL)
+	stream := NewMockStream(nil)
+	ctx, _ := startReserveTurn(t, router)
+
+	stop := `data: {"id":"gen-refused","object":"chat.completion.chunk","created":1,` +
+		`"model":"anthropic/claude-opus-5.5","choices":[{"index":0,"delta":{},"finish_reason":"content_filter"}]}` + "\n\n"
+	usage := `data: {"id":"gen-refused","object":"chat.completion.chunk","created":1,` +
+		`"model":"anthropic/claude-opus-5.5","choices":[],` +
+		`"usage":{"prompt_tokens":120,"completion_tokens":7,"total_tokens":127,"cost":0.0009}}` + "\n\n"
+	for _, chunk := range []string{reserveRoleChunk, stop} {
+		require.NoError(t, router.handleProcessRequest(stream, fullDuplexResponseBodyRequest(chunk, false), ctx))
+	}
+	require.False(t, ctx.RefusalReserve.firstRefusal.IsZero(), "the refusal did not start the budget")
+	// The usage arrives once the budget, counted from the refusal, is spent.
+	ctx.RefusalReserve.firstRefusal = time.Now().Add(-ctx.RefusalReserve.budget)
+	require.NoError(t, router.handleProcessRequest(stream, fullDuplexResponseBodyRequest(usage, false), ctx))
+	assert.False(t, ctx.HostRetry.started(), "a re-serve started past the budget")
+	assert.Empty(t, upstream.calls())
+}
+
+// A hold that runs out with frames kept and the upstream quiet sends them on
+// the loop's own wake, not on the next upstream chunk.
+func TestLapsedHoldSendsItsFramesWithoutANewChunk(t *testing.T) {
+	upstream := newHostUpstream(t, map[string]string{})
+	router := reserveRouter(upstream.server.URL)
+	stream := NewMockStream(nil)
+	ctx, _ := startReserveTurn(t, router)
+	for _, chunk := range []string{reserveRoleChunk, reserveThinkingChunk} {
+		require.NoError(t, router.handleProcessRequest(stream, fullDuplexResponseBodyRequest(chunk, false), ctx))
+	}
+	require.NotEmpty(t, ctx.HostRetry.held, "the thinking was not held")
+	assert.LessOrEqual(t, router.refusalReserveKeepAliveWait(ctx), ctx.RefusalReserve.hold,
+		"the loop does not wake by the hold's end")
+
+	ctx.StartTime = time.Now().Add(-2 * ctx.RefusalReserve.hold)
+	require.True(t, router.refusalReserveHoldLapsed(ctx))
+	assert.Positive(t, router.refusalReserveKeepAliveWait(ctx), "the lapsed hold schedules no wake")
+	require.NoError(t, router.sendLapsedHoldFrames(stream, ctx))
+	sent, _ := clientBytes(stream)
+	assert.Contains(t, sent, "weighing the request", "the kept frames were not sent")
+	assert.Empty(t, ctx.HostRetry.held)
+	assert.True(t, ctx.RefusalReserve.released)
+	assert.False(t, router.refusalReserveHoldLapsed(ctx))
 }

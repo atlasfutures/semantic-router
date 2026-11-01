@@ -141,7 +141,10 @@ func (r *OpenAIRouter) processWithContext(
 			// waiting on a re-serve's first bytes, may be owed a keepalive.
 			// A wake past the hold, with the clock no longer running, owes
 			// nothing: the stream goes on, it has not stalled.
-			if r.refusalReserveKeepAliveDue(ctx) {
+			switch {
+			case r.refusalReserveHoldLapsed(ctx):
+				err = r.sendLapsedHoldFrames(stream, ctx)
+			case r.refusalReserveKeepAliveDue(ctx):
 				err = sendRefusalReserveKeepAlive(stream, ctx)
 			}
 		case stalled:
