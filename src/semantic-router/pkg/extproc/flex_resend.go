@@ -218,10 +218,11 @@ func (r *OpenAIRouter) buildResendCall(
 		return nil, "credential_unavailable"
 	}
 	setProviderRequestPath(&state.setHeaders, dispatch.profile, dispatch.targetFormat)
-	declareAutoCacheBeta(&state.setHeaders, ctx)
 	// The decision's header_mutation, as the first dispatch applies it:
-	// after the credential and the path.
+	// after the credential and the path, and before the cache beta is merged
+	// into whatever anthropic-beta it set.
 	r.applyDecisionHeaderMutations(state, ctx)
+	declareAutoCacheBeta(&state.setHeaders, ctx)
 	target, headers, err := flexResendRequestTarget(dispatch, state.setHeaders, state.removeHeaders, ctx)
 	if err != nil {
 		return nil, "address_invalid"

@@ -136,6 +136,10 @@ func newHostUpstream(t *testing.T, behaviour map[string]string) *hostUpstream {
 			_, _ = io.WriteString(w, openRouterKeepaliveChunk)
 			w.(http.Flusher).Flush()
 			<-r.Context().Done()
+		case "429":
+			w.Header().Set("content-type", "application/json")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = io.WriteString(w, `{"error":{"message":"rate limited"}}`)
 		default:
 			w.Header().Set("content-type", "application/json")
 			w.WriteHeader(http.StatusServiceUnavailable)

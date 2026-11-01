@@ -532,3 +532,20 @@ func TestLocalLimiterNoRules(t *testing.T) {
 		t.Error("no rules should allow all")
 	}
 }
+
+// The resolver checks its providers in turn, so the longest check is one
+// provider timeout per provider.
+func TestResolverCheckTimeoutCoversEveryProvider(t *testing.T) {
+	var nilResolver *RateLimitResolver
+	if got := nilResolver.CheckTimeout(); got != 0 {
+		t.Fatalf("nil resolver: %v", got)
+	}
+	if got := NewRateLimitResolver().CheckTimeout(); got != 0 {
+		t.Fatalf("no providers: %v", got)
+	}
+	providerA := &mockProvider{name: "a"}
+	providerB := &mockProvider{name: "b"}
+	if got := NewRateLimitResolver(providerA, providerB).CheckTimeout(); got != 2*ProviderCheckTimeout {
+		t.Fatalf("two providers: %v", got)
+	}
+}

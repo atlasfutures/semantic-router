@@ -585,6 +585,18 @@ func (snapshot reserveSnapshot) restore(ctx *RequestContext, reselect *raylineAR
 	}
 }
 
+// streamProviderFailure is the error a stream failed with, the provider's
+// own where it stated one, or nil.
+func streamProviderFailure(state *semanticResponseStreamState) *llmprotocol.ProtocolError {
+	if state == nil {
+		return nil
+	}
+	if state.upstreamFailed != nil {
+		return state.upstreamFailed
+	}
+	return state.failed
+}
+
 // refusedAttemptOf is the refused call as the attempt record states it.
 func (r *OpenAIRouter) refusedAttemptOf(ctx *RequestContext, signal string) refusalAttempt {
 	class := turnFailureRefusal
@@ -829,20 +841,31 @@ func withRefusalAttemptsComment(ctx *RequestContext, response *ext_proc.Processi
 	return response
 }
 
-// clientTerminalFrameAt is where the frame that ends a client's stream
-// starts in body, or -1 when body has none: Messages' message_stop, Chat's
-// [DONE]. A Responses stream's terminal carries its usage, so its record
-// goes out with the body's end, as before.
+// clientTerminalFrameAt is where the first frame that can end a client's
+// stream starts in body, or -1 when body has none: Messages' message_stop or
+// error event, Chat's [DONE] or error frame. A Responses stream's terminal
+// carries its usage, so its record goes out with the body's end, as before.
 func clientTerminalFrameAt(format llmprotocol.WireFormat, body []byte) int {
-	var marker []byte
+	var markers []string
 	switch format {
 	case llmprotocol.AnthropicMessagesV1:
-		marker = []byte("event: message_stop")
+		markers = []string{"event: message_stop", "event: error"}
 	case llmprotocol.OpenAIChatV1:
-		marker = []byte("data: [DONE]")
+		markers = []string{"data: [DONE]", `data: {"error"`}
 	default:
 		return -1
 	}
+	first := -1
+	for _, marker := range markers {
+		if at := frameStartAt(body, []byte(marker)); at >= 0 && (first < 0 || at < first) {
+			first = at
+		}
+	}
+	return first
+}
+
+// frameStartAt is where marker starts a line of body, or -1.
+func frameStartAt(body, marker []byte) int {
 	for offset := 0; offset < len(body); {
 		index := bytes.Index(body[offset:], marker)
 		if index < 0 {
@@ -863,11 +886,21 @@ func refusalAttemptsComment(ctx *RequestContext) []byte {
 	served := refusalAttempt{
 		Model: dispatchedModel(ctx), SelectedModel: ctx.VSRSelectedModel, Outcome: "served",
 	}
-	if signal := streamRefusalSignal(ctx.SemanticStreamState); signal != "" {
+	signal := streamRefusalSignal(ctx.SemanticStreamState)
+	if signal == "" && heldStopIsRefusal(ctx) {
+		// Built ahead of the client's terminal, before the stream is
+		// finalized: a Messages refusal is still the engine's held stop.
+		signal = "content_filter"
+	}
+	if signal != "" {
 		class := turnFailureRefusal
 		served.Outcome, served.FailureClass, served.Signal = "refused", &class, nonEmpty(signal)
 	} else if ctx.ResponseFailureClass != "" {
 		served.Outcome, served.FailureClass = "failed", nonEmpty(ctx.ResponseFailureClass)
+	} else if failed := streamProviderFailure(ctx.SemanticStreamState); failed != nil {
+		// An in-band error the record goes out ahead of: the turn's failure
+		// is classed only once the stream is finalized.
+		served.Outcome, served.FailureClass = "failed", nonEmpty(streamFailureClass(failed))
 	}
 	served.fillFromStream(ctx.SemanticStreamState)
 	record := struct {
@@ -960,12 +993,9 @@ func refusedCallUsageIn(ctx *RequestContext) bool {
 }
 
 // rateLimitCheckAllowance is how long the re-serve's rate limit check may
-// take: none without a limiter.
+// take: every provider of the chain in turn, none without a limiter.
 func (r *OpenAIRouter) rateLimitCheckAllowance() time.Duration {
-	if r.RateLimiter == nil {
-		return 0
-	}
-	return ratelimit.ProviderCheckTimeout
+	return r.RateLimiter.CheckTimeout()
 }
 
 // redecideWithin runs the re-decision under a deadline: the earliest of the

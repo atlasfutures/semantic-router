@@ -93,6 +93,10 @@ type hostRetryPlan struct {
 	// exhausted says the last call failed before any content and no host is
 	// left: the turn ends as a first-content timeout.
 	exhausted bool
+	// failedClass is how a refusal re-serve's arm failed before any content,
+	// which host retry never fails over: the turn's failure keeps that
+	// class, not the timeout its cut is sent as.
+	failedClass string
 	// exposed says frames of the call in flight reached the client, so a
 	// re-send would repeat them: it is not replaced.
 	exposed bool
@@ -376,6 +380,9 @@ func (r *OpenAIRouter) failHost(ctx *RequestContext, class, detail string) bool 
 		return true
 	}
 	plan.exhausted = true
+	if refusalReserveServing(ctx) {
+		plan.failedClass = class
+	}
 	return false
 }
 

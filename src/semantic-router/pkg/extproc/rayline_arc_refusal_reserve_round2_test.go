@@ -4,6 +4,7 @@ package extproc
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -345,13 +346,14 @@ func TestReservedArmIsNeverFailedOverByHostRetry(t *testing.T) {
 	for name, tc := range map[string]struct {
 		behaviour string
 		messages  bool
-		refused   bool
+		class     string
 	}{
-		"clean close":      {behaviour: "keepalive_close"},
-		"in-band error":    {behaviour: "sse_error"},
-		"in-band refusal":  {behaviour: "sse_refusal", refused: true},
-		"non-2xx status":   {behaviour: "unavailable"},
-		"messages refusal": {behaviour: "messages_refusal", messages: true, refused: true},
+		"clean close":      {behaviour: "keepalive_close", class: turnFailureUpstreamError},
+		"in-band error":    {behaviour: "sse_error", class: turnFailureUpstreamError},
+		"in-band refusal":  {behaviour: "sse_refusal", class: turnFailureRefusal},
+		"non-2xx status":   {behaviour: "unavailable", class: turnFailureUpstream5xx},
+		"rate limited":     {behaviour: "429", class: turnFailureRateLimited},
+		"messages refusal": {behaviour: "messages_refusal", messages: true, class: turnFailureRefusal},
 	} {
 		t.Run(name, func(t *testing.T) {
 			upstream := newHostUpstream(t, map[string]string{firstHost: tc.behaviour, nextHost: "content"})
@@ -387,10 +389,14 @@ func TestReservedArmIsNeverFailedOverByHostRetry(t *testing.T) {
 			assert.True(t, ended)
 			assert.Len(t, upstream.calls(), 1, "the re-served arm was failed over to its next host")
 			assert.NotContains(t, sent, "served on "+nextHost)
-			if tc.refused {
-				assert.Equal(t, turnFailureRefusal, ctx.ResponseFailureClass)
-			} else {
-				assert.NotEmpty(t, ctx.ResponseFailureClass)
+			assert.Equal(t, tc.class, ctx.ResponseFailureClass, "the re-served arm's failure lost its class")
+			if record := strings.Index(sent, refusalAttemptsCommentPrefix); record >= 0 {
+				if terminal := strings.Index(sent, `data: {"error"`); terminal >= 0 {
+					assert.Less(t, record, terminal, "the attempt record followed the terminal error")
+				}
+				attempts := attemptsRecord(t, sent)["attempts"].([]interface{})
+				require.Len(t, attempts, 2)
+				assert.Equal(t, tc.class, attempts[1].(map[string]interface{})["failure_class"])
 			}
 		})
 	}
@@ -539,4 +545,31 @@ func TestReservedCallCarriesTheDecisionsHeaderMutation(t *testing.T) {
 	require.Len(t, upstream.headers, 1)
 	assert.Equal(t, "proj-7", upstream.headers[0].Get("x-project-id"))
 	assert.Empty(t, upstream.headers[0].Get("anthropic-beta"))
+}
+
+// A re-send whose decision sets anthropic-beta keeps the cache beta a 1h
+// directive in its body needs, merged into the decision's value as on the
+// first dispatch.
+func TestResendMergesTheCacheBetaIntoTheDecisionsBeta(t *testing.T) {
+	upstream := newHostUpstream(t, map[string]string{reserveGLMHost: "content"})
+	router := reserveRouter(upstream.server.URL)
+	stream := NewMockStream(nil)
+	ctx, _ := startReserveTurn(t, router)
+	require.NoError(t, router.handleProcessRequest(stream, fullDuplexResponseBodyRequest(reserveRoleChunk, false), ctx))
+	require.NoError(t, router.handleProcessRequest(stream, fullDuplexResponseBodyRequest(reserveRefusalChunk, true), ctx))
+	require.True(t, ctx.HostRetry.started(), "the refusal was not re-served")
+	plan := ctx.HostRetry
+
+	ctx.VSRSelectedDecision = &config.Decision{Name: "reserve-beta", Plugins: []config.DecisionPlugin{{
+		Type: "header_mutation",
+		Configuration: config.MustStructuredPayload(config.HeaderMutationPluginConfig{
+			Add: []config.HeaderPair{{Name: "anthropic-beta", Value: "project-beta-1"}},
+		}),
+	}}}
+	ctx.DispatchAutoCache = &dispatchAutoCache{logicalModel: plan.dispatch.logicalModel, ttl: anthropicLongestCacheTTL}
+	call, unavailable := router.buildResendCall(ctx, plan.dispatch.logicalModel, plan.dispatch, plan.dispatched)
+	require.NotNil(t, call, unavailable)
+	beta := call.headers.Get("anthropic-beta")
+	assert.Contains(t, beta, "project-beta-1")
+	assert.Contains(t, beta, extendedCacheTTLBeta, "the decision's beta overwrote the cache beta")
 }

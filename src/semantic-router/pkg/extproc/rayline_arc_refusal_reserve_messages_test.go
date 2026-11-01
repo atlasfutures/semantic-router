@@ -160,12 +160,12 @@ func TestRefusalReserveBudgetStartsAtTheMessagesHeldStop(t *testing.T) {
 	assert.False(t, ctx.RefusalReserve.firstRefusal.IsZero(), "the held stop did not start the budget")
 }
 
-// On a re-serve whose client and served arm both speak Messages, the stream
-// passes through and its message_stop goes out before the body ends: the
-// attempt record goes out ahead of it, so a client that stops reading at
-// message_stop still has it.
-func TestRefusalAttemptsRecordPrecedesTheMessagesTerminal(t *testing.T) {
-	upstream := newHostUpstream(t, map[string]string{reserveGLMHost: "messages_content"})
+// messagesReserveTurn routes a streamed Messages turn to the claude arm,
+// both arms speaking Messages, refuses it as prod did, and streams the
+// re-serve from a glm host that answers as behaviour says.
+func messagesReserveTurn(t *testing.T, behaviour string) (*RequestContext, *MockStream, *hostUpstream) {
+	t.Helper()
+	upstream := newHostUpstream(t, map[string]string{reserveGLMHost: behaviour})
 	router := reserveRouter(upstream.server.URL)
 	for _, arm := range []string{reserveClaudeArm, reserveGLMArm} {
 		model := router.Config.ModelConfig[arm]
@@ -204,6 +204,15 @@ func TestRefusalAttemptsRecordPrecedesTheMessagesTerminal(t *testing.T) {
 	}
 	require.True(t, ctx.HostRetry.started(), "the refusal was not re-served")
 	drainSpliced(t, router, ctx, stream)
+	return ctx, stream, upstream
+}
+
+// On a re-serve whose client and served arm both speak Messages, the stream
+// passes through and its message_stop goes out before the body ends: the
+// attempt record goes out ahead of it, so a client that stops reading at
+// message_stop still has it.
+func TestRefusalAttemptsRecordPrecedesTheMessagesTerminal(t *testing.T) {
+	_, stream, _ := messagesReserveTurn(t, "messages_content")
 
 	sent, ended := clientBytes(stream)
 	assert.True(t, ended)
@@ -217,4 +226,20 @@ func TestRefusalAttemptsRecordPrecedesTheMessagesTerminal(t *testing.T) {
 	served := attempts[1].(map[string]interface{})
 	assert.Equal(t, "served", served["outcome"])
 	assert.NotNil(t, served["usage"], "the served attempt's usage was not in the record")
+}
+
+// The record goes out ahead of the terminal, before the stream is finalized:
+// a re-served Messages arm that refuses is still recorded as refused, from
+// the stop the engine holds.
+func TestRefusalAttemptsRecordNamesTheServedArmsMessagesRefusal(t *testing.T) {
+	ctx, stream, _ := messagesReserveTurn(t, "messages_refusal")
+
+	sent, ended := clientBytes(stream)
+	assert.True(t, ended)
+	assert.Equal(t, turnFailureRefusal, ctx.ResponseFailureClass)
+	attempts := attemptsRecord(t, sent)["attempts"].([]interface{})
+	require.Len(t, attempts, 2)
+	served := attempts[1].(map[string]interface{})
+	assert.Equal(t, "refused", served["outcome"])
+	assert.Equal(t, turnFailureRefusal, served["failure_class"])
 }
