@@ -54,6 +54,7 @@ type hostUpstream struct {
 	server    *httptest.Server
 	mu        sync.Mutex
 	providers []map[string]json.RawMessage
+	bodies    [][]byte
 	headers   []http.Header
 	behaviour map[string]string
 }
@@ -71,6 +72,7 @@ func newHostUpstream(t *testing.T, behaviour map[string]string) *hostUpstream {
 		_ = json.Unmarshal(body.Provider["order"], &order)
 		upstream.mu.Lock()
 		upstream.providers = append(upstream.providers, body.Provider)
+		upstream.bodies = append(upstream.bodies, received)
 		upstream.headers = append(upstream.headers, r.Header.Clone())
 		upstream.mu.Unlock()
 		host := ""
@@ -173,6 +175,12 @@ func (upstream *hostUpstream) calls() []map[string]json.RawMessage {
 	upstream.mu.Lock()
 	defer upstream.mu.Unlock()
 	return append([]map[string]json.RawMessage(nil), upstream.providers...)
+}
+
+func (upstream *hostUpstream) received() [][]byte {
+	upstream.mu.Lock()
+	defer upstream.mu.Unlock()
+	return append([][]byte(nil), upstream.bodies...)
 }
 
 // hostRetryRouter is a cell with one arm pinned to two hosts in order, with
