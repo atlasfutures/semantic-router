@@ -94,8 +94,8 @@ type hostRetryPlan struct {
 	// left: the turn ends as a first-content timeout.
 	exhausted bool
 	// failedClass is how a refusal re-serve's arm failed before any content,
-	// which host retry never fails over: the turn's failure keeps that
-	// class, not the timeout its cut is sent as.
+	// which host retry never fails over: the client is told that class, not
+	// a timeout, and the turn's failure keeps it.
 	failedClass string
 	// exposed says frames of the call in flight reached the client, so a
 	// re-send would repeat them: it is not replaced.
@@ -655,8 +655,12 @@ func (r *OpenAIRouter) serveHostRetryChunk(
 		// first call's is: a Messages stop shows only once the stream is
 		// finalized. A refusal on a host re-send of the first arm is
 		// re-served then; the re-served arm's stop reaches the client as it
-		// stands, though its body broke after it. Any other end before
-		// content is the host's failure.
+		// stands, and a body that broke after it is cut there, as any body
+		// the Router read is. Any other end before content is the host's
+		// failure.
+		if chunk.err != nil {
+			ctx.UpstreamBodyCut = flexTwinCutError(chunk.err)
+		}
 		response = r.handleSemanticStreamingResponseBody(nil, true, ctx)
 	case !ctx.StreamContentSeen:
 		// It ended, or broke, before any content.

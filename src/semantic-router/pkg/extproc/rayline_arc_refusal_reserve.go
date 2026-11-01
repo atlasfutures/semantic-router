@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
+	"github.com/atlasfutures/semantic-router/rayline-core/protocolcodec"
 	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
@@ -822,7 +823,7 @@ func withRefusalAttemptsComment(ctx *RequestContext, response *ext_proc.Processi
 	// Ahead of the client's terminal frame, wherever it goes out: a stream
 	// passed through in its own format sends it before the body ends, and a
 	// client that stops reading there would miss the record.
-	at := clientTerminalFrameAt(ctx.SourceFormat, streamed.Body)
+	at := protocolcodec.ClientTerminalFrameAt(ctx.SourceFormat, streamed.Body)
 	if at < 0 && !ctx.StreamingComplete {
 		return response
 	}
@@ -839,45 +840,6 @@ func withRefusalAttemptsComment(ctx *RequestContext, response *ext_proc.Processi
 	body = append(body, comment...)
 	streamed.Body = append(body, streamed.Body[at:]...)
 	return response
-}
-
-// clientTerminalFrameAt is where the first frame that can end a client's
-// stream starts in body, or -1 when body has none: Messages' message_stop or
-// error event, Chat's [DONE] or error frame. A Responses stream's terminal
-// carries its usage, so its record goes out with the body's end, as before.
-func clientTerminalFrameAt(format llmprotocol.WireFormat, body []byte) int {
-	var markers []string
-	switch format {
-	case llmprotocol.AnthropicMessagesV1:
-		markers = []string{"event: message_stop", "event: error"}
-	case llmprotocol.OpenAIChatV1:
-		markers = []string{"data: [DONE]", `data: {"error"`}
-	default:
-		return -1
-	}
-	first := -1
-	for _, marker := range markers {
-		if at := frameStartAt(body, []byte(marker)); at >= 0 && (first < 0 || at < first) {
-			first = at
-		}
-	}
-	return first
-}
-
-// frameStartAt is where marker starts a line of body, or -1.
-func frameStartAt(body, marker []byte) int {
-	for offset := 0; offset < len(body); {
-		index := bytes.Index(body[offset:], marker)
-		if index < 0 {
-			return -1
-		}
-		at := offset + index
-		if at == 0 || body[at-1] == '\n' {
-			return at
-		}
-		offset = at + len(marker)
-	}
-	return -1
 }
 
 // refusalAttemptsComment is the record of a re-served turn's attempts.

@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -97,6 +98,24 @@ func newHostUpstream(t *testing.T, behaviour map[string]string) *hostUpstream {
 				"event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"refusal\","+
 				"\"stop_sequence\":null},\"usage\":{\"output_tokens\":3}}\n\n"+
 				"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n")
+		case "messages_length_cut":
+			// An Anthropic Messages stream that stops on max_tokens before any
+			// content, then breaks: a chunked 200 with no final chunk.
+			frames := "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_cut\"," +
+				"\"type\":\"message\",\"role\":\"assistant\",\"model\":\"glm-5.3\",\"content\":[],\"stop_reason\":null," +
+				"\"usage\":{\"input_tokens\":50,\"output_tokens\":1}}}\n\n" +
+				"event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"max_tokens\"," +
+				"\"stop_sequence\":null},\"usage\":{\"output_tokens\":1}}\n\n" +
+				"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+			conn, buffered, err := w.(http.Hijacker).Hijack()
+			if err != nil {
+				t.Errorf("hijack: %v", err)
+				return
+			}
+			_, _ = buffered.WriteString("HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ntransfer-encoding: chunked\r\n\r\n")
+			_, _ = buffered.WriteString(strconv.FormatInt(int64(len(frames)), 16) + "\r\n" + frames + "\r\n")
+			_ = buffered.Flush()
+			_ = conn.Close()
 		case "messages_content":
 			// An Anthropic Messages stream that answers.
 			w.Header().Set("content-type", "text/event-stream")
@@ -699,4 +718,3 @@ func TestNoHostIsStartedPastTheTurnDeadline(t *testing.T) {
 	assert.Equal(t, turnFailureTimeout, ctx.ResponseFailureClass)
 	assert.Equal(t, 1, transaction.aborts)
 }
-
