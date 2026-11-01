@@ -12,7 +12,6 @@ import (
 	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/headers"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/metrics"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/ratelimit"
@@ -79,7 +78,9 @@ type refusalReservePlan struct {
 	maxReserves int
 	budget      time.Duration
 	hold        time.Duration
-	families    []string
+	// fault is the dev fault's rewrite of the re-served call (refusal_prelude_all).
+	fault    *reserveFaultStream
+	families []string
 	// family is the vendor family of the arm in flight.
 	family string
 	// attempts are the refused calls so far, in order.
@@ -291,7 +292,7 @@ func (r *OpenAIRouter) reserveRefusedTurn(ctx *RequestContext) bool {
 	signal := ""
 	visible := streamShowsVisibleContent(state)
 	switch {
-	case ctx.InjectedFault == headers.FaultRefusalPrelude && len(plan.attempts) == 0 && visible:
+	case faultsFirstAttempt(ctx) && len(plan.attempts) == 0 && visible:
 		// The dev fault: the first attempt refuses at its first visible
 		// content, which the client has not been sent.
 		signal = "fault_injection"
@@ -1041,7 +1042,7 @@ func noteRefusalSignal(ctx *RequestContext) {
 // until it is finalized, or the dev fault.
 func refusalSeen(ctx *RequestContext) bool {
 	return streamRefusalSignal(ctx.SemanticStreamState) != "" || heldStopIsRefusal(ctx) ||
-		ctx.InjectedFault == headers.FaultRefusalPrelude
+		faultsFirstAttempt(ctx)
 }
 
 // reserveSpliceEndedOnStop reports a spliced call under a re-serve plan that

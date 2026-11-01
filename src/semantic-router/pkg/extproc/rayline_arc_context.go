@@ -82,7 +82,7 @@ func requestedFault(arc *config.RaylineARCAlgorithmConfig, reqCtx *RequestContex
 		return ""
 	}
 	switch fault := strings.TrimSpace(reqCtx.Headers[headers.VSRFault]); fault {
-	case headers.FaultUpstreamDecode, headers.FaultRefusalPrelude:
+	case headers.FaultUpstreamDecode, headers.FaultRefusalPrelude, headers.FaultRefusalPreludeAll:
 		return fault
 	}
 	return ""
