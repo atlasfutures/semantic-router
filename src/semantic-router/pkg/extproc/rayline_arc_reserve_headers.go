@@ -2,6 +2,7 @@ package extproc
 
 import (
 	"bytes"
+	"time"
 
 	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 )
@@ -18,7 +19,8 @@ import (
 // sent: Envoy takes no body reply before the headers reply, and they carry
 // nothing the client needs. Once the hold is decided (a re-serve started, the
 // arm released, or the hold lapsed) the arm that serves is known, so the next
-// reply of any kind, a keepalive included, sends the headers first. The
+// reply of any kind, a keepalive included, sends the headers first; with no
+// reply to carry them, the loop sends them alone at the hold's end. The
 // client's wait for headers is thus at most the hold plus one keepalive
 // interval. An immediate response replaces the deferred headers altogether.
 
@@ -41,7 +43,43 @@ func (r *OpenAIRouter) newServedHeadersStream(
 	if _, ok := stream.(*servedHeadersStream); ok {
 		return stream
 	}
-	return &servedHeadersStream{ExternalProcessor_ProcessServer: stream, router: r, ctx: ctx}
+	served := &servedHeadersStream{ExternalProcessor_ProcessServer: stream, router: r, ctx: ctx}
+	if ctx != nil {
+		ctx.servedHeaders = served
+	}
+	return served
+}
+
+// servedHeadersDue reports deferred headers whose hold is decided: they are
+// sent now, even with no reply to carry them, so a turn whose upstream sends
+// no body still has its headers when the hold ends.
+func (r *OpenAIRouter) servedHeadersDue(ctx *RequestContext) bool {
+	served := ctx.servedHeaders
+	return served != nil && served.pending != nil && !r.holdingForRefusalReserve(ctx)
+}
+
+// servedHeadersWait is how long the loop may wait before deferred headers
+// fall due at the hold's end; zero when none are deferred.
+func servedHeadersWait(ctx *RequestContext) time.Duration {
+	served := ctx.servedHeaders
+	plan := ctx.RefusalReserve
+	if served == nil || served.pending == nil || plan == nil || ctx.StartTime.IsZero() {
+		return 0
+	}
+	if remaining := plan.hold - time.Since(ctx.StartTime); remaining > 0 {
+		return remaining + time.Millisecond
+	}
+	return time.Millisecond
+}
+
+// flushPending sends the deferred headers reply, if one is deferred.
+func (s *servedHeadersStream) flushPending() error {
+	if s.pending == nil {
+		return nil
+	}
+	reply := buildResponseHeadersReply(s.ctx, *s.pending)
+	s.pending = nil
+	return s.ExternalProcessor_ProcessServer.Send(reply)
 }
 
 // deferServedHeaders holds the headers reply of a turn held for a refusal
@@ -81,9 +119,7 @@ func (s *servedHeadersStream) Send(response *ext_proc.ProcessingResponse) error 
 			return nil
 		}
 	}
-	reply := buildResponseHeadersReply(s.ctx, *s.pending)
-	s.pending = nil
-	if err := s.ExternalProcessor_ProcessServer.Send(reply); err != nil {
+	if err := s.flushPending(); err != nil {
 		return err
 	}
 	return s.ExternalProcessor_ProcessServer.Send(response)

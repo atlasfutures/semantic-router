@@ -195,6 +195,9 @@ type RequestContext struct {
 	// refusal-reserve hold can be built again for the arm that served
 	// (rayline_arc_reserve_headers.go).
 	servedHeadersOutcome *responseHeaderOutcome
+	// servedHeaders is the stream that defers that reply, so the loop can
+	// send it when the hold ends with nothing else to send.
+	servedHeaders *servedHeadersStream
 	// raylineARCReselect is what the turn's ARC selection was made from,
 	// kept so a refused turn can be decided again in place.
 	raylineARCReselect *raylineARCReselect

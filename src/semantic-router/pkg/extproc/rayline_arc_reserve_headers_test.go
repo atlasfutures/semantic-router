@@ -140,3 +140,31 @@ func TestUnheldTurnHeadersAreNotDeferred(t *testing.T) {
 	assert.Equal(t, 0, first)
 	assert.Equal(t, reserveClaudeArm, selectedModelOf(replies[0]))
 }
+
+// An upstream that sends its headers and then nothing still has them sent
+// when the hold ends: the loop sends them alone, naming the held arm.
+func TestDeferredHeadersAreSentAtTheHoldEndWithNoBody(t *testing.T) {
+	upstream := newHostUpstream(t, map[string]string{})
+	router := reserveRouter(upstream.server.URL)
+	ctx := armReserveTurn(t, router)
+	ctx.FullDuplexResponseBody = true
+	ctx.RefusalReserve.hold = time.Since(ctx.StartTime) + 300*time.Millisecond
+	stream := newStallingStream(&ext_proc.ProcessingRequest{Request: flexUpstreamHeaders(http.StatusOK, "text/event-stream")})
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = router.processWithContext(stream, ctx)
+	}()
+	t.Cleanup(func() { close(stream.released); <-done })
+
+	require.Never(t, func() bool { return len(stream.sent()) > 0 }, 150*time.Millisecond, 10*time.Millisecond,
+		"the headers reply was not deferred over the hold")
+	require.Eventually(t, func() bool { return len(stream.sent()) > 0 }, 2*time.Second, 10*time.Millisecond,
+		"the deferred headers were never sent")
+	sent := stream.sent()
+	require.Len(t, sent, 1)
+	reply := sent[0].GetResponseHeaders()
+	require.NotNil(t, reply, "the first reply was not the headers reply")
+	assert.Equal(t, reserveClaudeArm, selectedModelOf(reply))
+}

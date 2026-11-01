@@ -138,6 +138,10 @@ func (r *OpenAIRouter) processWithContext(
 			// retry staged this can start a re-send, so a failed Send is
 			// settled like any other below.
 			err = r.endSilentStream(stream, ctx)
+		case stalled && r.servedHeadersDue(ctx):
+			// A held turn's deferred headers fell due with nothing to carry
+			// them: the upstream has sent no body yet.
+			err = ctx.servedHeaders.flushPending()
 		case stalled && refusalReserveStreaming(ctx) && len(ctx.ResponseBodyChunks) == 0 &&
 			!(streamSilenceTimerArmed(ctx) && r.streamSilenceExceeded(ctx)):
 			// The wake was a held turn's keepalive clock: its client, or one

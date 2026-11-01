@@ -80,6 +80,18 @@ func startReserveTurnOn(
 	t *testing.T, router *OpenAIRouter, streamFor func(*RequestContext) ext_proc.ExternalProcessor_ProcessServer,
 ) (*RequestContext, *recordingSelectionTransaction) {
 	t.Helper()
+	ctx := armReserveTurn(t, router)
+	require.NoError(t, router.processResponseHeaders(streamFor(ctx), flexUpstreamHeaders(http.StatusOK, "text/event-stream"), ctx))
+	require.True(t, ctx.IsStreamingResponse)
+	transaction := &recordingSelectionTransaction{}
+	ctx.SelectionTransaction = newSelectionTransactionOwner(configRaylineARC, transaction)
+	return ctx, transaction
+}
+
+// armReserveTurn routes a streamed Chat turn to the claude arm and holds it
+// for a re-serve that asks for the glm arm; its headers are not answered.
+func armReserveTurn(t *testing.T, router *OpenAIRouter) *RequestContext {
+	t.Helper()
 	ctx, _ := routeFlexTurn(t, router, reserveClaudeArm, true)
 	ctx.ProcessingStartTime = ctx.StartTime
 	ctx.RaylineARCRawBody = []byte(`{"model":"auto","stream":true,"messages":[{"role":"user","content":"route this turn"}]}`)
@@ -94,11 +106,7 @@ func startReserveTurnOn(
 	if ctx.HostRetry == nil {
 		ctx.HostRetry = &hostRetryPlan{attempts: []hostAttempt{{started: ctx.StartTime}}}
 	}
-	require.NoError(t, router.processResponseHeaders(streamFor(ctx), flexUpstreamHeaders(http.StatusOK, "text/event-stream"), ctx))
-	require.True(t, ctx.IsStreamingResponse)
-	transaction := &recordingSelectionTransaction{}
-	ctx.SelectionTransaction = newSelectionTransactionOwner(configRaylineARC, transaction)
-	return ctx, transaction
+	return ctx
 }
 
 // withoutAttemptsRecord is what the client was sent, the attempt record
