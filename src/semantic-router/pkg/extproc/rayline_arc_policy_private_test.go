@@ -94,6 +94,34 @@ func TestPrivateTurnsNeverStageOrAppend(t *testing.T) {
 	}
 }
 
+// A private turn shed by admission before any decide left nothing at the
+// service: it sends no release to a service that is shedding it.
+func TestPrivateTurnShedBeforeDecideSendsNoRelease(t *testing.T) {
+	releaseInline(t)
+	fixture := newDeltaFixture(t, config.RaylineARCDecideModeDelta, nil)
+	fixture.fake.servesRelease = true
+	armed := fixture.selector.armedComponents()
+	gate := raylinearc.NewAdmissionGate(1)
+	fixture.selector.arm(&raylineARCArmedComponents{scorer: armed.scorer, admission: gate, policy: armed.policy})
+	held, err := gate.Acquire()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer held()
+	state, _ := raylinearc.NewEpisodeState(2)
+	if _, err := fixture.selectOnWith(t, state, policyTestRequest(t, deltaUser), func(arcContext *selection.RaylineARCSelectionContext) {
+		arcContext.PrivateTurn = true
+	}); err == nil {
+		t.Fatal("a shed private turn was served")
+	}
+	if calls := len(fixture.fake.received()); calls != 0 {
+		t.Fatalf("a shed private turn reached the service %d times", calls)
+	}
+	if releases := fixture.fake.receivedReleases(); len(releases) != 0 {
+		t.Fatalf("a shed private turn sent %d releases", len(releases))
+	}
+}
+
 // A standard turn on the same cell still stages, appends and releases
 // nothing: the release is the private turn's alone.
 func TestStandardTurnsSendNoRelease(t *testing.T) {

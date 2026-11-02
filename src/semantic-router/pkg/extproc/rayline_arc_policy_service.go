@@ -840,7 +840,9 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		decider = sessionBinding
 	}
 	if private {
-		defer releasePrivatePolicyEpisode(ctx, arcContext, request, decider, replicaBinding, sessionBinding)
+		tracked := &privateDecideTracker{policyDecider: decider}
+		decider = tracked
+		defer releasePrivatePolicyEpisode(ctx, arcContext, request, tracked, replicaBinding, sessionBinding)
 	} else if sessionBinding != nil {
 		defer sessionBinding.Release(ctx)
 	}

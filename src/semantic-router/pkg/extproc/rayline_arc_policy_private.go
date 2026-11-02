@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
@@ -52,16 +53,37 @@ const policyPrivateReleaseTimeout = raylinearc.PolicyReleaseTimeout
 // tests can run the release inline and read what it sent.
 var runPolicyPrivateRelease = func(release func()) { go release() }
 
+// privateDecideTracker is a private turn's decider: it records whether any
+// decide reached its decider, so a turn shed before one (admission, busy)
+// sends no release and adds no load to a service that is shedding it.
+type privateDecideTracker struct {
+	policyDecider
+	called atomic.Bool
+}
+
+func (tracker *privateDecideTracker) Decide(
+	ctx context.Context,
+	request raylinearc.PolicyDecisionRequest,
+) (*raylinearc.PolicyDecisionResponse, error) {
+	tracker.called.Store(true)
+	return tracker.policyDecider.Decide(ctx, request)
+}
+
 // releasePrivatePolicyEpisode asks the policy service to drop what it holds
-// for a private turn's episode and ends the sessions the turn started.
+// for a private turn's episode and ends the sessions the turn started. A
+// turn no decide reached left nothing to release, and started no session.
 func releasePrivatePolicyEpisode(
 	ctx context.Context,
 	arcContext *selection.RaylineARCSelectionContext,
 	request raylinearc.PolicyDecisionRequest,
-	decider policyDecider,
+	tracked *privateDecideTracker,
 	replicaBinding *raylinearc.PolicyServiceBinding,
 	sessionBinding *raylinearc.PolicySessionBinding,
 ) {
+	if !tracked.called.Load() {
+		return
+	}
+	decider := tracked.policyDecider
 	release := raylinearc.PolicyReleaseRequest{
 		SchemaVersion: raylinearc.PolicyReleaseRequestSchema,
 		Package:       request.Package,
