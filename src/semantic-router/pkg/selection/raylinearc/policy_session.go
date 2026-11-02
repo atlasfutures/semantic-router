@@ -646,6 +646,25 @@ func (binding *PolicySessionBinding) Append(
 	return binding.backend.client.WithSessionToken(binding.current.Token).Append(ctx, request)
 }
 
+// ReleaseEpisode asks each session an ephemeral turn started to drop what
+// its container holds for the episode, before Release ends them: ending a
+// Modal session frees its slot, not the service's episode state. It reaches
+// only the sessions the turn started, never one the episode state records.
+// It returns the turn's PolicyReleaseOutcome.
+func (binding *PolicySessionBinding) ReleaseEpisode(ctx context.Context, request PolicyReleaseRequest) string {
+	outcome := PolicyReleaseNone
+	if binding == nil || !binding.ephemeral {
+		return outcome
+	}
+	for _, session := range binding.owned {
+		releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), policySessionTerminateTimeout)
+		err := binding.backend.client.WithSessionToken(session.Token).Release(releaseCtx, request)
+		cancel()
+		outcome = worsePolicyReleaseOutcome(outcome, PolicyReleaseOutcomeOf(err))
+	}
+	return outcome
+}
+
 // Release ends the sessions an ephemeral turn started; the episode keeps no
 // record of them. A persisting turn keeps its session for the next turn.
 func (binding *PolicySessionBinding) Release(ctx context.Context) {

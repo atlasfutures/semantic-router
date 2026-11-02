@@ -330,6 +330,29 @@ func staleOwner(request PolicyDecisionRequest, response *PolicyDecisionResponse)
 	return response != nil && response.Package != request.Package
 }
 
+// ReleaseEpisode asks every replica this turn called to drop what it holds
+// for the episode, and returns the turn's PolicyReleaseOutcome. A turn that
+// called none releases nothing.
+func (binding *PolicyServiceBinding) ReleaseEpisode(ctx context.Context, request PolicyReleaseRequest, timeout time.Duration) string {
+	outcome := PolicyReleaseNone
+	if binding == nil {
+		return outcome
+	}
+	released := map[string]bool{}
+	for _, id := range binding.attempted {
+		index, configured := binding.pool.byID[id]
+		if released[id] || !configured {
+			continue
+		}
+		released[id] = true
+		releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), timeout)
+		err := binding.pool.replicas[index].Client.Release(releaseCtx, request)
+		cancel()
+		outcome = worsePolicyReleaseOutcome(outcome, PolicyReleaseOutcomeOf(err))
+	}
+	return outcome
+}
+
 func (binding *PolicyServiceBinding) place(replica *PolicyServiceReplica) {
 	binding.current = replica
 	binding.attempted = append(binding.attempted, replica.ID)

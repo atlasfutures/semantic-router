@@ -49,6 +49,8 @@ type deltaFixture struct {
 	// shared, when set, is the staged-turn record store the cell's
 	// instances share.
 	shared raylinearc.EpisodeStagedTurnStore
+	// private makes every turn a private (privacy or zdr) one.
+	private bool
 }
 
 func newDeltaFixture(t *testing.T, mode string, edit func(*config.RaylineARCPolicyServiceConfig)) *deltaFixture {
@@ -105,6 +107,7 @@ func (fixture *deltaFixture) turn(t *testing.T, body []byte) (*selection.Selecti
 		if fixture.shared != nil {
 			arcContext.PolicyStagedTurns = fixture.shared
 		}
+		arcContext.PrivateTurn = fixture.private
 	})
 	if err != nil {
 		t.Fatal(err)

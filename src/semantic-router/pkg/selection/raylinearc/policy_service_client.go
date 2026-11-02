@@ -290,6 +290,11 @@ const PolicyTurnDeltaUnsupportedClass = "turn_delta_unsupported"
 // answers the operation 404 or 405.
 const PolicyAppendUnsupportedClass = "append_unsupported"
 
+// PolicyReleaseUnsupportedClass is a service that predates the release: it
+// answers the operation 404 or 405, and keeps an episode's state until it
+// evicts it, as before the release.
+const PolicyReleaseUnsupportedClass = "release_unsupported"
+
 // PolicySignalRefusedClass is the service's refusal of a request's
 // caller-facing signals (pathfinder #5943: unsupported_request with a
 // detail.reason such as signal_not_supported, signal_not_admitted or
@@ -473,6 +478,70 @@ func (client *PolicyServiceClient) Append(
 		return nil, &PolicyServiceError{Class: "decode"}
 	}
 	return response, nil
+}
+
+// Release asks the service to drop what it holds for one episode. The reply
+// body is not read. A service that predates the operation fails with
+// PolicyReleaseUnsupportedClass.
+func (client *PolicyServiceClient) Release(ctx context.Context, request PolicyReleaseRequest) error {
+	if request.SchemaVersion == "" {
+		request.SchemaVersion = PolicyReleaseRequestSchema
+	}
+	payload, err := MarshalUnescaped(request)
+	if err != nil {
+		return &PolicyServiceError{Class: "request"}
+	}
+	if _, err := client.do(ctx, http.MethodPost, "/v1/rayline/arc/policy/release", payload); err != nil {
+		var failure *PolicyServiceError
+		if errors.As(err, &failure) && failure.Class == "status" &&
+			(failure.Status == http.StatusNotFound || failure.Status == http.StatusMethodNotAllowed) {
+			return &PolicyServiceError{Class: PolicyReleaseUnsupportedClass, Status: failure.Status}
+		}
+		return err
+	}
+	return nil
+}
+
+// The outcomes of one turn's episode release, worst first: failed (a call
+// that errored or timed out), unsupported (a service that predates the
+// release), released, and none (no call was due).
+const (
+	PolicyReleaseFailed      = "failed"
+	PolicyReleaseUnsupported = "unsupported"
+	PolicyReleaseReleased    = "released"
+	PolicyReleaseNone        = "none"
+)
+
+// PolicyReleaseOutcomeOf classifies one Release call's error.
+func PolicyReleaseOutcomeOf(err error) string {
+	var failure *PolicyServiceError
+	switch {
+	case err == nil:
+		return PolicyReleaseReleased
+	case errors.As(err, &failure) && failure.Class == PolicyReleaseUnsupportedClass:
+		return PolicyReleaseUnsupported
+	default:
+		return PolicyReleaseFailed
+	}
+}
+
+func worsePolicyReleaseOutcome(current, next string) string {
+	rank := func(outcome string) int {
+		switch outcome {
+		case PolicyReleaseFailed:
+			return 3
+		case PolicyReleaseUnsupported:
+			return 2
+		case PolicyReleaseReleased:
+			return 1
+		default:
+			return 0
+		}
+	}
+	if rank(next) > rank(current) {
+		return next
+	}
+	return current
 }
 
 func (client *PolicyServiceClient) do(
