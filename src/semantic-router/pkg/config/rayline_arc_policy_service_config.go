@@ -117,6 +117,13 @@ type RaylineARCPolicyServiceConfig struct {
 	// the member, and so every turn. Off, the request is as before; the
 	// evidence is recorded either way.
 	CacheContext bool `yaml:"cache_context,omitempty"`
+	// ValueUSDMax is the largest caller V (routing.value_usd) this cell
+	// accepts, on /v1/routes and on generation routing. Unset, it is
+	// DefaultRaylineARCValueUSDMax. Readiness requires the package to serve
+	// cost_weight 1/ValueUSDMax, so a cell raises it only with a package whose
+	// stage-one bounds reach that far (pathfinder#6105): raised on a narrower
+	// package, the cell never becomes ready.
+	ValueUSDMax float64 `yaml:"value_usd_max,omitempty"`
 	// TrainedModels declares, per bound worker, the trained model it serves:
 	// the name a v5 action's model states (e.g. claude-opus-5). Trained names
 	// are decoupled from providers, so the pairing is declared, never
@@ -515,9 +522,31 @@ const (
 
 var raylineARCSHA256Pattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
 
+// The public caller-V range (pathfinder arc_public_contract VALUE_USD_MIN and
+// VALUE_USD_MAX). A cell's own maximum defaults to the range a package of
+// cost_weight [0.2, 10] serves, and may be raised to the contract's ceiling.
+const (
+	RaylineARCValueUSDMin        = 0.1
+	DefaultRaylineARCValueUSDMax = 5.0
+	RaylineARCValueUSDCeiling    = 30.0
+)
+
+// EffectiveValueUSDMax is the largest caller V this cell accepts. A nil
+// config (no policy service) has the default.
+func (cfg *RaylineARCPolicyServiceConfig) EffectiveValueUSDMax() float64 {
+	if cfg == nil || cfg.ValueUSDMax == 0 {
+		return DefaultRaylineARCValueUSDMax
+	}
+	return cfg.ValueUSDMax
+}
+
 func validateRaylineARCPolicyServiceConfig(cfg *RaylineARCPolicyServiceConfig) error {
 	if err := validateRaylineARCPolicyServiceEndpoints(cfg); err != nil {
 		return err
+	}
+	// NaN fails both comparisons, so it is refused too; +Inf exceeds the ceiling.
+	if cfg.ValueUSDMax != 0 && !(cfg.ValueUSDMax > RaylineARCValueUSDMin && cfg.ValueUSDMax <= RaylineARCValueUSDCeiling) {
+		return fmt.Errorf("policy_service.value_usd_max must lie in (%g, %g]", RaylineARCValueUSDMin, RaylineARCValueUSDCeiling)
 	}
 	if err := validateRaylineARCPolicySessions(cfg); err != nil {
 		return err

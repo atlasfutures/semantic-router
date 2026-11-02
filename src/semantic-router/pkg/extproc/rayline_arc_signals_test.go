@@ -32,7 +32,7 @@ func signalsFixture(t *testing.T) *policySelectorFixture {
 func signalsControls(t *testing.T, model, routingJSON string) (*raylineRoutesRouting, *selection.RaylineARCRouteControls) {
 	t.Helper()
 	body := `{"model":"` + model + `","messages":[{"role":"user","content":"x"}],"routing":` + routingJSON + `}`
-	routing, _, refusal := readRaylineRoutesRouting([]byte(body), nil)
+	routing, _, refusal := readRaylineRoutesRouting([]byte(body), nil, config.DefaultRaylineARCValueUSDMax)
 	if refusal != nil {
 		t.Fatalf("%s: refused %+v", routingJSON, refusal)
 	}
@@ -61,7 +61,7 @@ func TestRoutingSignalsShape(t *testing.T) {
 		"duplicate": `["topic.domain","topic.domain"]`, "object": `{"topic.domain":true}`,
 	} {
 		body := `{"model":"arc-1.0","messages":[{"role":"user","content":"x"}],"routing":{"signals":` + signals + `}}`
-		if _, _, refusal := readRaylineRoutesRouting([]byte(body), nil); refusal == nil || refusal.code != "signals_invalid" || refusal.status != 400 {
+		if _, _, refusal := readRaylineRoutesRouting([]byte(body), nil, config.DefaultRaylineARCValueUSDMax); refusal == nil || refusal.code != "signals_invalid" || refusal.status != 400 {
 			t.Errorf("routes %s: %+v", name, refusal)
 		}
 		if _, _, refusal := readRaylineGenerationRouting([]byte(body), generationPolicy(true, nil)); refusal == nil || refusal.code != "signals_invalid" {
