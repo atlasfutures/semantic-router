@@ -1001,3 +1001,37 @@ func TestPolicySessionReplacedGraceCoversTwoDecides(t *testing.T) {
 		}
 	}
 }
+
+// A private turn's binding keeps every session it started, a stale one
+// included, until its release has reached them: ending a stale session
+// first would leave the release unroutable, so the container would keep the
+// private content until it evicted it. Release then ends them all.
+func TestPolicySessionPrivateHoldsStaleSessionsForTheRelease(t *testing.T) {
+	fake := newFakeModalServer(t, 2)
+	backend := testSessionBackend(t, fake, time.Second)
+	fake.mu.Lock()
+	fake.staleOn[0], fake.staleOn[1] = true, true
+	fake.mu.Unlock()
+
+	private := backend.BindPrivate()
+	if _, err := sessionDecide(t, private); err != nil {
+		t.Fatal(err)
+	}
+	if session, changed := private.Session(); session != nil || changed {
+		t.Fatal("a private turn recorded a session")
+	}
+	time.Sleep(100 * time.Millisecond) // a stale session would be ended off the turn's path
+	if starts, terminates, _ := fake.counts(); starts != 2 || terminates != 0 {
+		t.Fatalf("starts %d terminates %d before the release", starts, terminates)
+	}
+	outcome := private.ReleaseEpisode(context.Background(), PolicyReleaseRequest{
+		Package: fixturePackage(t), EpisodeIDHash: strings.Repeat("c", 64),
+	})
+	if outcome != PolicyReleaseReleased {
+		t.Fatalf("release outcome %q: a session was gone before its release", outcome)
+	}
+	private.Release(context.Background())
+	if _, terminates, _ := fake.counts(); terminates != 2 {
+		t.Fatalf("terminates = %d, want both private sessions ended", terminates)
+	}
+}

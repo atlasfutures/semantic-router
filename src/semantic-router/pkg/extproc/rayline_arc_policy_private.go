@@ -2,6 +2,10 @@ package extproc
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
 	"time"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
@@ -11,7 +15,8 @@ import (
 
 // A private (privacy or zdr) turn is decided by the policy service like any
 // other, but the service is to hold its content for that decide only. The
-// turn binds ephemeral (policySessionBindingFor), never stages or appends
+// turn names a fresh episode to the service (policyServiceEpisode), binds
+// ephemeral (policySessionBindingFor), never stages or appends
 // (policyDeltaEligible), and once it is decided, whether or not the decide
 // succeeded, the service is asked to drop the episode (POST
 // /v1/rayline/arc/policy/release) on every session or replica the turn
@@ -19,6 +24,25 @@ import (
 // the turn's path, bounded by policyPrivateReleaseTimeout per call; a
 // service that predates it answers 404 and keeps the episode until it
 // evicts it, as before.
+
+// policyServiceEpisode is the episode a turn's decide names to the policy
+// service. A standard turn names its own. A private turn names a fresh
+// random one, so the service can neither join it to the episode's other
+// turns nor touch the episode's standard-mode state, even on a container
+// that holds it, and its release drops exactly what that decide left.
+func policyServiceEpisode(arcContext *selection.RaylineARCSelectionContext) string {
+	if !arcContext.PrivateTurn {
+		return arcContext.EpisodeIDHash
+	}
+	var random [32]byte
+	if _, err := rand.Read(random[:]); err != nil {
+		// crypto/rand does not fail on supported platforms; a fixed id would
+		// join private turns, so fall back to a time-and-request derived one.
+		sum := sha256.Sum256([]byte(fmt.Sprintf("%s:%d", arcContext.RequestID, time.Now().UnixNano())))
+		return hex.EncodeToString(sum[:])
+	}
+	return hex.EncodeToString(random[:])
+}
 
 // policyPrivateReleaseTimeout bounds each release call.
 const policyPrivateReleaseTimeout = 5 * time.Second
@@ -40,7 +64,7 @@ func releasePrivatePolicyEpisode(
 	release := raylinearc.PolicyReleaseRequest{
 		SchemaVersion: raylinearc.PolicyReleaseRequestSchema,
 		Package:       request.Package,
-		EpisodeIDHash: arcContext.EpisodeIDHash,
+		EpisodeIDHash: request.EpisodeIDHash,
 	}
 	requestID := arcContext.RequestID
 	detached := context.WithoutCancel(ctx)

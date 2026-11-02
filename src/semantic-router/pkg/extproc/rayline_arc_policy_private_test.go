@@ -61,6 +61,9 @@ func TestPrivateTurnsNeverStageOrAppend(t *testing.T) {
 	if len(sent) != 2 {
 		t.Fatalf("decides = %d, want 2", len(sent))
 	}
+	if sent[0].EpisodeIDHash == sent[1].EpisodeIDHash {
+		t.Fatal("two private turns named one service episode")
+	}
 	for index, decide := range sent {
 		if decide.Stage != nil || decide.TurnDelta != nil {
 			t.Fatalf("private decide %d staged or sent a delta: %+v", index, decide)
@@ -78,7 +81,10 @@ func TestPrivateTurnsNeverStageOrAppend(t *testing.T) {
 		t.Fatalf("releases = %d, want one per private turn", len(releases))
 	}
 	for index, release := range releases {
-		if release.SchemaVersion != raylinearc.PolicyReleaseRequestSchema || release.EpisodeIDHash != fixture.episode ||
+		if sent[index].EpisodeIDHash == fixture.episode || len(sent[index].EpisodeIDHash) != 64 {
+			t.Fatalf("private decide %d named the episode to the service: %q", index, sent[index].EpisodeIDHash)
+		}
+		if release.SchemaVersion != raylinearc.PolicyReleaseRequestSchema || release.EpisodeIDHash != sent[index].EpisodeIDHash ||
 			release.Package.Alias != policyTestAlias || release.Package.PackageSHA256 != policyTestPackage {
 			t.Fatalf("release %d = %+v", index, release)
 		}
@@ -161,7 +167,11 @@ func TestPrivateTurnDecidesOnASessionOfItsOwn(t *testing.T) {
 	}
 	privateContainer := 2 % len(front.containers) // the fake places the n-th session on container n mod 2
 	releases := decodeReleases(t, front.containers[privateContainer].receivedReleases())
-	if len(releases) != 1 || releases[0].EpisodeIDHash != strings.Repeat("e", 64) {
+	decided := front.containers[privateContainer].received()
+	if len(decided) != 1 || decided[0].EpisodeIDHash == strings.Repeat("e", 64) {
+		t.Fatalf("the private decide named the episode to the service: %+v", decided)
+	}
+	if len(releases) != 1 || releases[0].EpisodeIDHash != decided[0].EpisodeIDHash {
 		t.Fatalf("private container releases %+v", releases)
 	}
 	if other := front.containers[1-privateContainer].receivedReleases(); len(other) != 0 {

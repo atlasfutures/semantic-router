@@ -493,9 +493,15 @@ func (client *PolicyServiceClient) Release(ctx context.Context, request PolicyRe
 	}
 	if _, err := client.do(ctx, http.MethodPost, "/v1/rayline/arc/policy/release", payload); err != nil {
 		var failure *PolicyServiceError
-		if errors.As(err, &failure) && failure.Class == "status" &&
-			(failure.Status == http.StatusNotFound || failure.Status == http.StatusMethodNotAllowed) {
-			return &PolicyServiceError{Class: PolicyReleaseUnsupportedClass, Status: failure.Status}
+		if errors.As(err, &failure) && failure.Class == "status" {
+			switch failure.Status {
+			case http.StatusNoContent:
+				// exchange reads any status but 200 as a refusal; the release
+				// may answer either success.
+				return nil
+			case http.StatusNotFound, http.StatusMethodNotAllowed:
+				return &PolicyServiceError{Class: PolicyReleaseUnsupportedClass, Status: failure.Status}
+			}
 		}
 		return err
 	}

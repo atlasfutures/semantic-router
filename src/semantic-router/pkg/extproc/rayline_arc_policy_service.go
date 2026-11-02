@@ -700,7 +700,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	request := raylinearc.PolicyDecisionRequest{
 		SchemaVersion: raylinearc.PolicyDecisionRequestSchema,
 		Package:       raylinearc.PolicyPackageRef{Alias: scorer.alias, PackageSHA256: scorer.sha256},
-		EpisodeIDHash: arcContext.EpisodeIDHash,
+		EpisodeIDHash: policyServiceEpisode(arcContext),
 		ContextEpoch:  turn.ContextEpoch(),
 		RequestFormat: arcContext.RequestFormat,
 		Request:       clientRequest,
