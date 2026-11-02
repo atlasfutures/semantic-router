@@ -678,7 +678,7 @@ func (binding *PolicySessionBinding) ReleaseEpisode(ctx context.Context, request
 		return outcome
 	}
 	for _, session := range binding.owned {
-		releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), policySessionTerminateTimeout)
+		releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), PolicyReleaseTimeout)
 		err := binding.backend.client.WithSessionToken(session.Token).Release(releaseCtx, request)
 		cancel()
 		outcome = worsePolicyReleaseOutcome(outcome, PolicyReleaseOutcomeOf(err))

@@ -54,6 +54,37 @@ func TestPolicyServiceClientReleaseOutcomes(t *testing.T) {
 	}
 }
 
+// A 503 is a service that kept the episode for a retry: the release is
+// asked once more, and only once.
+func TestPolicyServiceClientReleaseRetriesA503Once(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		statuses []int
+		want     string
+		calls    int
+	}{
+		{"recovers", []int{http.StatusServiceUnavailable, http.StatusOK}, PolicyReleaseReleased, 2},
+		{"still down", []int{http.StatusServiceUnavailable, http.StatusServiceUnavailable, http.StatusOK}, PolicyReleaseFailed, 2},
+		{"other failure", []int{http.StatusInternalServerError, http.StatusOK}, PolicyReleaseFailed, 1},
+	} {
+		calls := 0
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			status := tc.statuses[calls]
+			calls++
+			w.WriteHeader(status)
+			if status == http.StatusServiceUnavailable {
+				_, _ = w.Write([]byte(`{"error":"backend_unavailable"}`))
+			}
+		}))
+		client := NewPolicyServiceClient(PolicyServiceConfig{BaseURL: server.URL, TotalTimeout: time.Second})
+		err := client.Release(context.Background(), PolicyReleaseRequest{EpisodeIDHash: strings.Repeat("a", 64)})
+		server.Close()
+		if outcome := PolicyReleaseOutcomeOf(err); outcome != tc.want || calls != tc.calls {
+			t.Errorf("%s: outcome %q after %d calls, want %q after %d", tc.name, outcome, calls, tc.want, tc.calls)
+		}
+	}
+}
+
 // The worst outcome of a turn's releases is the turn's.
 func TestWorsePolicyReleaseOutcome(t *testing.T) {
 	outcome := PolicyReleaseNone

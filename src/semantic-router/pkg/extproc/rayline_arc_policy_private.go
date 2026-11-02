@@ -44,8 +44,9 @@ func policyServiceEpisode(arcContext *selection.RaylineARCSelectionContext) stri
 	return hex.EncodeToString(random[:])
 }
 
-// policyPrivateReleaseTimeout bounds each release call.
-const policyPrivateReleaseTimeout = 5 * time.Second
+// policyPrivateReleaseTimeout bounds each release call, its one retry
+// included.
+const policyPrivateReleaseTimeout = raylinearc.PolicyReleaseTimeout
 
 // runPolicyPrivateRelease runs a private turn's release. It is a variable so
 // tests can run the release inline and read what it sent.

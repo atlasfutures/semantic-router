@@ -480,9 +480,18 @@ func (client *PolicyServiceClient) Append(
 	return response, nil
 }
 
+// policyReleaseRetryDelay is the wait before a release's one retry.
+const policyReleaseRetryDelay = 500 * time.Millisecond
+
+// PolicyReleaseTimeout bounds one release, its retry included, on one
+// session or replica. It runs off the turn's path.
+const PolicyReleaseTimeout = 10 * time.Second
+
 // Release asks the service to drop what it holds for one episode. The reply
 // body is not read. A service that predates the operation fails with
-// PolicyReleaseUnsupportedClass.
+// PolicyReleaseUnsupportedClass. A 503 means the service could not close the
+// episode's encoder sessions and kept its state for a retry, so it is asked
+// once more, within ctx.
 func (client *PolicyServiceClient) Release(ctx context.Context, request PolicyReleaseRequest) error {
 	if request.SchemaVersion == "" {
 		request.SchemaVersion = PolicyReleaseRequestSchema
@@ -491,6 +500,22 @@ func (client *PolicyServiceClient) Release(ctx context.Context, request PolicyRe
 	if err != nil {
 		return &PolicyServiceError{Class: "request"}
 	}
+	err = client.releaseOnce(ctx, payload)
+	var failure *PolicyServiceError
+	if errors.As(err, &failure) && failure.Status == http.StatusServiceUnavailable {
+		timer := time.NewTimer(policyReleaseRetryDelay)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return err
+		case <-timer.C:
+		}
+		err = client.releaseOnce(ctx, payload)
+	}
+	return err
+}
+
+func (client *PolicyServiceClient) releaseOnce(ctx context.Context, payload []byte) error {
 	if _, err := client.do(ctx, http.MethodPost, "/v1/rayline/arc/policy/release", payload); err != nil {
 		var failure *PolicyServiceError
 		if errors.As(err, &failure) && failure.Class == "status" {
