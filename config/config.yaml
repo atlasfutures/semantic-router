@@ -2088,6 +2088,11 @@ recipes:
                 # and their prompt caches. Only for a policy service built at
                 # or after pathfinder 204d287ec4, which refuses it otherwise.
                 cache_context: false
+                # value_usd_max is the largest caller V (routing.value_usd)
+                # the cell accepts; default 5, at most 30. Readiness needs the
+                # package to serve cost_weight 1/value_usd_max, so raise it
+                # only with a package bounded that far (pathfinder#6105).
+                value_usd_max: 5
                 # trained_models declares, per bound worker, the trained model
                 # it serves (a v5 action's model, e.g. claude-opus-5); a binding
                 # whose worker declares another is refused. v5 and v6 only.

@@ -127,7 +127,7 @@ func TestRoutesExecutionReproducesTheGoldenVectors(t *testing.T) {
 	}
 	for _, vector := range vectors.Vectors {
 		t.Run(vector.Name, func(t *testing.T) {
-			routing, _, refusal := readRaylineRoutesRouting(executionBody(string(vector.Execution)), nil)
+			routing, _, refusal := readRaylineRoutesRouting(executionBody(string(vector.Execution)), nil, config.DefaultRaylineARCValueUSDMax)
 			if refusal != nil {
 				if refusal.code != vector.Expect.Refused {
 					t.Fatalf("parse refused %s, want %q", refusal.code, vector.Expect.Refused)
@@ -224,7 +224,7 @@ func TestRoutesExecutionRefusals(t *testing.T) {
 		"attribution beyond":    {replace(`"message": 3`, `"message": 9`), "execution_attribution_invalid"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			_, _, refusal := readRaylineRoutesRouting(executionBody(tc.execution), nil)
+			_, _, refusal := readRaylineRoutesRouting(executionBody(tc.execution), nil, config.DefaultRaylineARCValueUSDMax)
 			if refusal == nil || refusal.code != tc.code || refusal.status != 400 {
 				t.Fatalf("refusal %+v, want %s", refusal, tc.code)
 			}
@@ -399,7 +399,7 @@ func TestRoutesWithoutNewMembersAreUnchanged(t *testing.T) {
 // unsupported with no rows. Every result names its identity.
 func TestRoutesExecutionEchoAndIdentity(t *testing.T) {
 	vectors := readExecutionVectors(t)
-	routing, _, refusal := readRaylineRoutesRouting(executionBody(string(vectors.Vectors[1].Execution)), nil)
+	routing, _, refusal := readRaylineRoutesRouting(executionBody(string(vectors.Vectors[1].Execution)), nil, config.DefaultRaylineARCValueUSDMax)
 	if refusal != nil {
 		t.Fatal(refusal)
 	}
@@ -527,7 +527,7 @@ func TestRoutesExecutionOfferChecks(t *testing.T) {
 // A candidate the request did not offer (and not held) prices nothing.
 func TestRoutesExecutionEchoUnofferedCandidate(t *testing.T) {
 	vectors := readExecutionVectors(t)
-	routing, _, refusal := readRaylineRoutesRouting(executionBody(string(vectors.Vectors[0].Execution)), nil)
+	routing, _, refusal := readRaylineRoutesRouting(executionBody(string(vectors.Vectors[0].Execution)), nil, config.DefaultRaylineARCValueUSDMax)
 	if refusal != nil {
 		t.Fatal(refusal)
 	}

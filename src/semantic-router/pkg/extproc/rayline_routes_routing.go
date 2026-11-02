@@ -31,8 +31,7 @@ import (
 // custom. All three are alternatives from the lookup's one encode, asked as
 // the policy service's tier points; none advances the episode.
 const (
-	routesValueUSDMin      = 0.1
-	routesValueUSDMax      = 5.0
+	routesValueUSDMin      = config.RaylineARCValueUSDMin
 	routesMaxPricedModels  = 256
 	routesCallerPrices     = "arc-caller-prices.v1"
 	routesCustomResult     = "custom"
@@ -40,6 +39,16 @@ const (
 	routesBasisCatalog     = "catalog"
 	routesUnsupportedCause = "cell_does_not_support_exploration"
 )
+
+// routesCheckValueUSD refuses a caller V outside [routesValueUSDMin,
+// valueUSDMax], the cell's own maximum; it is never clamped.
+func routesCheckValueUSD(value, valueUSDMax float64) *routesContractError {
+	if value < routesValueUSDMin || value > valueUSDMax {
+		return routesInvalid("value_out_of_bounds", fmt.Sprintf(
+			"routing.value_usd must lie in [%g, %g]; it is never clamped.", routesValueUSDMin, valueUSDMax))
+	}
+	return nil
+}
 
 // routesPresets are the fixed tier operating points, in response order.
 // Their V is ours: a caller cannot move it.
@@ -144,6 +153,7 @@ func (routing *raylineRoutesRouting) pricedModels() []string {
 func readRaylineRoutesRouting(
 	body []byte,
 	cellAliases []string,
+	valueUSDMax float64,
 ) (*raylineRoutesRouting, []byte, *routesContractError) {
 	var envelope map[string]json.RawMessage
 	if err := json.Unmarshal(body, &envelope); err != nil {
@@ -161,7 +171,7 @@ func readRaylineRoutesRouting(
 		return nil, nil, routesInvalid("routing_invalid", "routing must be an object.")
 	}
 	routing := &raylineRoutesRouting{}
-	if failure := routesReadMembers(routing, members, envelope["model"]); failure != nil {
+	if failure := routesReadMembers(routing, members, envelope["model"], valueUSDMax); failure != nil {
 		return nil, nil, failure
 	}
 	if raw, ok := members["policy"]; ok {
@@ -226,6 +236,7 @@ func routesReadMembers(
 	routing *raylineRoutesRouting,
 	members map[string]json.RawMessage,
 	rawModel json.RawMessage,
+	valueUSDMax float64,
 ) *routesContractError {
 	var unknown []string
 	for name := range members {
@@ -244,9 +255,8 @@ func routesReadMembers(
 		if !finite {
 			return routesInvalid("value_invalid", "routing.value_usd must be a finite number of USD.")
 		}
-		if value < routesValueUSDMin || value > routesValueUSDMax {
-			return routesInvalid("value_out_of_bounds", fmt.Sprintf(
-				"routing.value_usd must lie in [%g, %g]; it is never clamped.", routesValueUSDMin, routesValueUSDMax))
+		if failure := routesCheckValueUSD(value, valueUSDMax); failure != nil {
+			return failure
 		}
 		var model string
 		_ = json.Unmarshal(rawModel, &model)

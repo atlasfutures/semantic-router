@@ -571,6 +571,9 @@ class RaylineARCPolicyServiceConfig(BaseModel):
     # Mirrors CacheContext in the Go loader: send cache_context on each
     # decide; only for a policy service at or after pathfinder 204d287ec4.
     cache_context: bool = False
+    # Mirrors ValueUSDMax in the Go loader: the largest caller V the cell
+    # accepts; unset is 5, and a set value lies in (0.1, 30].
+    value_usd_max: float | None = Field(default=None, gt=0.1, le=30.0)
     # Per bound worker, the trained model it serves (v5 only).
     trained_models: dict[str, str] = Field(default_factory=dict)
     # Mirrors RaylineARCPolicyServiceConfig.Fallback (ADR 0120): off for
