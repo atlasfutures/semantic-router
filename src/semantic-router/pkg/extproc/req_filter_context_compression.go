@@ -158,18 +158,17 @@ func (r *OpenAIRouter) compressionOutputReserve(
 	request *llmprotocol.Request,
 ) int64 {
 	reserve := int64(0)
+	// clampToArm marks a reserve dispatch will hold to the chosen arm's
+	// ceiling, so the reserve can be held to it too. Only a number dispatch
+	// clamps qualifies: a caller's stated limit and a completion floor are
+	// both clamped (applyARCArmOutputCeiling), a card limit is not -- there
+	// the card *is* the arm's figure and a thinking budget sits on top of it
+	// by design, so clamping the reserve would free less room than the turn
+	// sends.
+	clampToArm := false
 	switch {
 	case request.Sampling.MaxOutputTokens != nil:
-		reserve = *request.Sampling.MaxOutputTokens
-		// Under ARC dispatch will lower this to the chosen arm's ceiling
-		// (applyARCArmOutputCeiling), so reserving the caller's whole number
-		// would free room the turn never sends: on a 128k window, a 100k
-		// caller limit against a 16k arm would discard input down to 28k when
-		// 112k could have stayed. The reserve reads the same ceiling dispatch
-		// will, so the two cannot disagree.
-		if ceiling := raylineARCArmOutputCeiling(r, model, ctx); ceiling > 0 && ceiling < reserve {
-			reserve = ceiling
-		}
+		reserve, clampToArm = *request.Sampling.MaxOutputTokens, true
 	case r == nil || r.Config == nil || model == "":
 	default:
 		if format, err := r.dispatchTargetFormat(model, ctx.SourceFormat); err == nil {
@@ -182,7 +181,20 @@ func (r *OpenAIRouter) compressionOutputReserve(
 			).maxTokens
 		}
 	}
-	return max(reserve, pendingCompletionFloor(model, ctx))
+	if floor := pendingCompletionFloor(model, ctx); floor > reserve {
+		reserve, clampToArm = floor, true
+	}
+	// Reserving above what dispatch sends frees room the turn never uses: on a
+	// 128k window a 100k caller limit against a 16k arm would discard input
+	// down to 28k when 112k could have stayed, and a 64k floor would still
+	// reserve 64k. The ceiling is read after the floor for that reason, and
+	// from the same helper dispatch reads, so the two cannot disagree.
+	if clampToArm {
+		if ceiling := raylineARCArmOutputCeiling(r, model, ctx); ceiling > 0 && ceiling < reserve {
+			reserve = ceiling
+		}
+	}
+	return reserve
 }
 
 // pendingCompletionFloor is the floor the selected decision's request_params

@@ -350,7 +350,33 @@ func (r *OpenAIRouter) applyARCArmOutputCeiling(
 		if plan.thinking != outputBoundThinkingBudgetLowered && plan.thinking != outputBoundThinkingDisabled {
 			return false, nil
 		}
-		bound = *stated
+		// The budget was sized against the ceiling, which is at or above the
+		// caller's number, so keeping their number while sending that budget
+		// would leave a pair RaiseMessagesAllowance settles above the arm --
+		// ceiling 1500 with caller 1000 and a 40000 budget reached 2024. The
+		// plan is made again against the number actually kept, so the budget
+		// and the limit come from one figure.
+		stay := *stated
+		if armCap < stay {
+			stay = armCap
+		}
+		plan = planOutputBound(
+			stay, outputBoundSourceClient, dispatch.targetFormat,
+			stay, thinkingBudget, window, r.dispatchContextTokens(request, ctx),
+		)
+		if plan.limitedBy == outputBoundLimitedByDecision && armCap == ceiling {
+			plan.limitedBy = outputBoundLimitedByArm
+		}
+		if plan.belowMinimum == outputBoundLeftUnbounded || plan.maxTokens <= 0 {
+			if plan.thinking != outputBoundThinkingDisabled {
+				return false, nil
+			}
+			plan.maxTokens = stay
+		}
+		bound = plan.maxTokens
+		if *stated < bound {
+			bound = *stated
+		}
 	}
 	reason := outputBoundLoweredToArm
 	if keepStated {

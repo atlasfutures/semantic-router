@@ -407,3 +407,86 @@ func TestARCArmCeilingBoundsTheCompressionReserve(t *testing.T) {
 		t.Fatalf("plain reserve = %d, want the caller's 100000", got)
 	}
 }
+
+// A v5 budget is reconciled against the limit actually kept, not the ceiling
+// it was first planned against. Keeping the caller's smaller number while
+// sending a budget sized for the ceiling left a pair RaiseMessagesAllowance
+// settled above the arm: ceiling 1500 with caller 1000 and a 40000 budget
+// reached max_tokens=2024. A caller that cannot seat the 1024 minimum beside
+// an output token is refused, naming the arm, rather than sent that pair.
+func TestARCArmCeilingReplansAV5BudgetAgainstTheKeptLimit(t *testing.T) {
+	for name, test := range map[string]struct {
+		ceiling int
+		caller  int64
+		wantErr bool
+		want    int64
+	}{
+		"the kept limit cannot seat the minimum": {1500, 1000, true, 0},
+		"the kept limit can seat it":             {8000, 3000, false, 3000},
+	} {
+		t.Run(name, func(t *testing.T) {
+			router, model := routingTestRouterForFormat(llmprotocol.AnthropicMessagesV1)
+			params := router.Config.ModelConfig[model]
+			params.MaxOutputTokens = test.ceiling
+			router.Config.ModelConfig[model] = params
+			budget := int64(40000)
+			ctx := routingTestContext(llmprotocol.OpenAIResponsesV1, nil)
+			ctx.VSRSelectedDecision = armCeilingDecision(t, 0)
+			ctx.RaylineARCThinkingControl = &plannedThinkingControl{
+				control: thinkingcontrol.Control{Native: "enabled", BudgetTokens: &budget},
+			}
+			request := testNeutralRequest(model, "hi")
+			request.Sampling.MaxOutputTokens = llmprotocol.Int64(test.caller)
+			ctx.SemanticRequest = request
+			dispatch, err := router.prepareProviderDispatch(request, model, "", false, ctx)
+			if err != nil {
+				t.Fatalf("dispatch: %v", err)
+			}
+			_, err = router.boundDispatchRequest(request, dispatch, ctx)
+			if test.wantErr {
+				if !errors.Is(err, errThinkingControlOverArm) {
+					t.Fatalf("bound = %v, want the arm's refusal", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("bound: %v", err)
+			}
+			// The pair the arm is sent must satisfy budget < max_tokens <= ceiling.
+			sent, planned := *request.Sampling.MaxOutputTokens, ctx.RaylineARCThinkingControl.control.BudgetTokens
+			if sent != test.want {
+				t.Fatalf("max_tokens = %d, want %d", sent, test.want)
+			}
+			if planned == nil || *planned >= sent {
+				t.Fatalf("budget %v is not below max_tokens %d; the arm refuses that pair", planned, sent)
+			}
+			if sent > int64(test.ceiling) {
+				t.Fatalf("max_tokens %d exceeds the arm's %d", sent, test.ceiling)
+			}
+		})
+	}
+}
+
+// The compression reserve is held to the arm's ceiling after the completion
+// floor is folded in, not before: the floor is a number dispatch clamps too,
+// so a 64k floor against a 16k arm reserved 64k and discarded up to 48k of
+// prompt the turn never needed to lose. A card limit is left alone, since
+// there the card is the arm's own figure and a thinking budget sits on top.
+func TestARCArmCeilingBoundsTheReserveAfterTheCompletionFloor(t *testing.T) {
+	router, model := routingTestRouterForFormat(llmprotocol.OpenAIChatV1)
+	params := router.Config.ModelConfig[model]
+	params.MaxOutputTokens = 16384
+	params.ContextWindowSize = 128000
+	router.Config.ModelConfig[model] = params
+	decision := completionFloorDecision(map[string]interface{}{model: 64000})
+	decision.Algorithm = &config.AlgorithmConfig{
+		Type: config.RaylineARCAlgorithmType, RaylineARC: &config.RaylineARCAlgorithmConfig{},
+	}
+	request := testNeutralRequest(model, "hi")
+	request.Sampling.MaxOutputTokens = llmprotocol.Int64(100000)
+	ctx := routingTestContext(llmprotocol.OpenAIChatV1, nil)
+	ctx.VSRSelectedDecision, ctx.VSRSelectedModel, ctx.SemanticRequest = decision, model, request
+	if got := router.compressionOutputReserve(model, ctx, request); got != 16384 {
+		t.Fatalf("reserve = %d, want the arm's 16384 after the 64000 floor", got)
+	}
+}
