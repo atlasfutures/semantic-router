@@ -123,3 +123,17 @@ func TestChatStreamFromMessagesArmRestatesTheProviderCost(t *testing.T) {
 		t.Fatalf("usage chunk does not restate the charge %s:\n%s", want, mutation.GetBody())
 	}
 }
+
+// A cache hit was charged by no provider: the stored call's charge is cleared
+// before the cached response is re-encoded on a wire that restates charges.
+func TestCacheHitResponseCarriesNoProviderCharge(t *testing.T) {
+	charged := 0.5
+	response := &llmprotocol.Response{Usage: llmprotocol.Usage{
+		State:        llmprotocol.UsageAvailable,
+		ProviderCost: llmprotocol.ProviderCost{Charged: &charged, UpstreamInference: &charged},
+	}}
+	refreshCachedSemanticResponse(response, &RequestContext{RequestID: "rt_1", SourceFormat: llmprotocol.OpenAIChatV1})
+	if cost := response.Usage.ProviderCost; cost.Charged != nil || cost.UpstreamInference != nil {
+		t.Fatalf("cache hit keeps the stored call's charge: %+v", cost)
+	}
+}
