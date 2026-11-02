@@ -94,7 +94,17 @@ func (r *OpenAIRouter) protocolEngine() (*protocolcodec.Engine, error) {
 	if registry == nil {
 		registry = protocolcodec.NewBuiltinRegistry()
 	}
-	return protocolcodec.NewEngine(registry, llmprotocol.DefaultPolicy())
+	return protocolcodec.NewEngine(registry, cellProtocolPolicy())
+}
+
+// cellProtocolPolicy is the codec policy of every wire the cell writes. The
+// cell's client is routerProxy, which records the provider's stated charge
+// and strips it before any end user, so a response the cell re-encodes from
+// another protocol restates the charge rather than losing it.
+func cellProtocolPolicy() llmprotocol.Policy {
+	policy := llmprotocol.DefaultPolicy()
+	policy.PublishProviderCost = true
+	return policy
 }
 
 // prepareProtocolRequest decodes every public wire format exactly once. The

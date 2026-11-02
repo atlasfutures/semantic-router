@@ -556,6 +556,11 @@ type ProviderCost struct {
 	// UpstreamInference is what the serving provider charged the aggregator
 	// (usage.cost_details.upstream_inference_cost).
 	UpstreamInference *float64
+	// UpstreamInferencePrompt and UpstreamInferenceCompletions split it
+	// (usage.cost_details.upstream_inference_prompt_cost and
+	// upstream_inference_completions_cost).
+	UpstreamInferencePrompt      *float64
+	UpstreamInferenceCompletions *float64
 	// BYOK says the call ran on the caller's own provider key (usage.is_byok),
 	// in which case Charged is the aggregator's fee alone.
 	BYOK *bool

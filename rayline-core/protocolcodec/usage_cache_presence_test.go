@@ -56,7 +56,7 @@ func TestUnreportedCacheLegsStayUnknown(t *testing.T) {
 func TestEncodedCacheLegsKeepTheirBytes(t *testing.T) {
 	read := authoritative(7)
 	wire := encodeChatUsage(llmprotocol.Usage{State: llmprotocol.UsageAvailable, InputTotal: authoritative(10),
-		OutputTotal: authoritative(1), Total: authoritative(11), InputCacheRead: read, InputCacheWrite: authoritative(0)})
+		OutputTotal: authoritative(1), Total: authoritative(11), InputCacheRead: read, InputCacheWrite: authoritative(0)}, false)
 	body, err := json.Marshal(wire.PromptTokensDetails)
 	if err != nil {
 		t.Fatal(err)

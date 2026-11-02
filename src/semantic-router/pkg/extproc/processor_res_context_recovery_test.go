@@ -143,10 +143,10 @@ func TestHandleContextRecoveryFollowupCallsLooper(t *testing.T) {
 	if usage["total_tokens"] != float64(38) {
 		t.Fatalf("merged usage = %#v", usage)
 	}
-	// The client body carries no charge, so the turn's charge for both calls
-	// has to reach the usage report another way.
-	if _, published := usage["cost"]; published {
-		t.Fatalf("client body publishes the provider charge: %#v", usage)
+	// The body routerProxy reads states the charge for both calls, which it
+	// records and strips before the end user.
+	if usage["cost"] != 0.75 {
+		t.Fatalf("recovered body's charge = %#v, want both calls' 0.75", usage["cost"])
 	}
 	ctx.SemanticResponse, err = router.decodeClientResponse(got, ctx)
 	if err != nil {

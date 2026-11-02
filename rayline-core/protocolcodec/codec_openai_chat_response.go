@@ -252,7 +252,7 @@ func (OpenAIChatCodec) EncodeResponse(response llmprotocol.Response, envelope ll
 		return nil, diagnostics, err
 	}
 	wire.Choices = choices
-	wire.Usage = encodeChatUsage(response.Usage)
+	wire.Usage = encodeChatUsage(response.Usage, policy.PublishProviderCost)
 	body, err := marshalWire(wire)
 	return body, diagnostics, err
 }
@@ -314,7 +314,7 @@ func encodeChatOutput(items []llmprotocol.OutputItem, index int, stop llmprotoco
 	return chatChoiceWire{Index: index, Message: message, FinishReason: &reason}, nil
 }
 
-func encodeChatUsage(usage llmprotocol.Usage) *chatUsageWire {
+func encodeChatUsage(usage llmprotocol.Usage, publishProviderCost bool) *chatUsageWire {
 	if usage.State == llmprotocol.UsageUnavailable || usage.InputTotal.Value == nil && usage.OutputTotal.Value == nil && usage.Total.Value == nil {
 		return nil
 	}
@@ -333,6 +333,9 @@ func encodeChatUsage(usage llmprotocol.Usage) *chatUsageWire {
 	}
 	if usage.OutputReasoning.Value != nil {
 		wire.CompletionTokensDetails = &chatCompletionTokensDetailsWire{ReasoningTokens: tokenValue(usage.OutputReasoning)}
+	}
+	if publishProviderCost {
+		wire.providerUsageCostWire = encodeProviderUsageCost(usage.ProviderCost)
 	}
 	return wire
 }

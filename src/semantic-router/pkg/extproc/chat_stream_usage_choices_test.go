@@ -83,3 +83,43 @@ func TestSameFormatChatStreamWithUsageIsPassedThrough(t *testing.T) {
 		t.Fatalf("a same-format stream was rewritten:\n got %q\nwant %q", mutation.GetBody(), upstream)
 	}
 }
+
+// A Chat client served from a Messages arm through OpenRouter gets the
+// charge OpenRouter stated restated on the usage chunk, so routerProxy, the
+// cell's client, records the call's provider cost as it does on Messages.
+func TestChatStreamFromMessagesArmRestatesTheProviderCost(t *testing.T) {
+	includeUsage := true
+	router := &OpenAIRouter{}
+	ctx := &RequestContext{
+		SourceFormat: llmprotocol.OpenAIChatV1,
+		TargetFormat: llmprotocol.AnthropicMessagesV1,
+		RequestModel: "public-model",
+		TraceContext: t.Context(),
+		SemanticRequest: &llmprotocol.Request{
+			Generation:    1,
+			Model:         "public-model",
+			Stream:        true,
+			StreamOptions: llmprotocol.StreamOptions{IncludeUsage: &includeUsage},
+		},
+	}
+	upstream := "event: message_start\n" +
+		`data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"openai/gpt-6-luna","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":0,"output_tokens":0}}}` + "\n\n" +
+		"event: content_block_start\n" +
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}` + "\n\n" +
+		"event: content_block_delta\n" +
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Fixed."}}` + "\n\n" +
+		"event: content_block_stop\n" +
+		`data: {"type":"content_block_stop","index":0}` + "\n\n" +
+		"event: message_delta\n" +
+		`data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"input_tokens":38,"output_tokens":79,"cost":0.0000433,"is_byok":false,"cost_details":{"upstream_inference_cost":0.0000433}}}` + "\n\n" +
+		"event: message_stop\n" +
+		`data: {"type":"message_stop"}` + "\n\n"
+	response := router.handleSemanticStreamingResponseBody([]byte(upstream), true, ctx)
+	mutation := response.GetResponseBody().GetResponse().GetBodyMutation()
+	if mutation == nil {
+		t.Fatal("a translated stream produced no client body")
+	}
+	if want := `"cost":0.0000433,"is_byok":false,"cost_details":{"upstream_inference_cost":0.0000433}`; !strings.Contains(string(mutation.GetBody()), want) {
+		t.Fatalf("usage chunk does not restate the charge %s:\n%s", want, mutation.GetBody())
+	}
+}
