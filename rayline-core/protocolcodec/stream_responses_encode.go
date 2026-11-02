@@ -250,7 +250,7 @@ func (encoder *responsesStreamEncoder) responsesCompletionWire(
 		return responsesEventWire{}, nil, err
 	}
 	response.Output = output
-	response.Usage = encodeResponsesUsage(*event.Usage)
+	response.Usage = encodeResponsesUsage(*event.Usage, encoder.policy.PublishProviderCost)
 	wire := responsesEventWire{
 		Type:     "response.completed",
 		Response: &response,
@@ -296,7 +296,7 @@ func (encoder *responsesStreamEncoder) responsesFailureWire(
 	response.Output = output
 	response.Error = &responsesErrorWire{Code: responsesErrorCode(event.Error), Message: event.Error.Message}
 	if event.Usage != nil && event.Usage.State == llmprotocol.UsageAvailable {
-		response.Usage = encodeResponsesUsage(*event.Usage)
+		response.Usage = encodeResponsesUsage(*event.Usage, encoder.policy.PublishProviderCost)
 	}
 	return responsesEventWire{
 		Type:     "response.failed",

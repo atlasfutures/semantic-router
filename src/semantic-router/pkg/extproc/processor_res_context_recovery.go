@@ -410,8 +410,12 @@ func mergeContextRecoveryProviderCost(left, right llmprotocol.ProviderCost) llmp
 		return &total
 	}
 	merged := llmprotocol.ProviderCost{
-		Charged:           sum(left.Charged, right.Charged),
-		UpstreamInference: sum(left.UpstreamInference, right.UpstreamInference),
+		Charged:                 sum(left.Charged, right.Charged),
+		UpstreamInference:       sum(left.UpstreamInference, right.UpstreamInference),
+		UpstreamInferencePrompt: sum(left.UpstreamInferencePrompt, right.UpstreamInferencePrompt),
+		UpstreamInferenceCompletions: sum(
+			left.UpstreamInferenceCompletions, right.UpstreamInferenceCompletions,
+		),
 	}
 	if left.BYOK != nil && right.BYOK != nil && *left.BYOK == *right.BYOK {
 		byok := *left.BYOK

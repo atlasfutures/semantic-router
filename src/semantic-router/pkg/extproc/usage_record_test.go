@@ -219,6 +219,14 @@ func TestContextRecoveryChargesBothCalls(t *testing.T) {
 	if merged.Charged == nil || *merged.Charged != 0.75 {
 		t.Fatalf("charged = %v, want 0.75", merged.Charged)
 	}
+	split := mergeContextRecoveryProviderCost(
+		llmprotocol.ProviderCost{UpstreamInferencePrompt: &first, UpstreamInferenceCompletions: &second},
+		llmprotocol.ProviderCost{UpstreamInferencePrompt: &second, UpstreamInferenceCompletions: &first},
+	)
+	if split.UpstreamInferencePrompt == nil || *split.UpstreamInferencePrompt != 0.75 ||
+		split.UpstreamInferenceCompletions == nil || *split.UpstreamInferenceCompletions != 0.75 {
+		t.Fatalf("split = %+v, want both legs summed to 0.75", split)
+	}
 	partial := mergeContextRecoveryProviderCost(llmprotocol.ProviderCost{Charged: &first}, llmprotocol.ProviderCost{})
 	if partial.Charged != nil {
 		t.Fatalf("charged = %v, want unknown when one call stated none", *partial.Charged)

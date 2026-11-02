@@ -470,7 +470,7 @@ func (OpenAIResponsesCodec) EncodeResponse(response llmprotocol.Response, envelo
 		return append([]byte(nil), envelope.Response...), nil, nil
 	}
 	if response.Error != nil {
-		body, err := encodeResponsesErrorResource(response, envelope)
+		body, err := encodeResponsesErrorResource(response, envelope, policy.PublishProviderCost)
 		return body, nil, err
 	}
 	var diagnostics llmprotocol.Diagnostics
@@ -485,7 +485,7 @@ func (OpenAIResponsesCodec) EncodeResponse(response llmprotocol.Response, envelo
 		return nil, diagnostics, err
 	}
 	wire.OutputText = encodeResponsesOutputText(response.Output)
-	wire.Usage = encodeResponsesUsage(response.Usage)
+	wire.Usage = encodeResponsesUsage(response.Usage, policy.PublishProviderCost)
 	if err := applyResponsesStopReason(&wire, response.StopReason, envelope.Format, policy, &diagnostics); err != nil {
 		return nil, diagnostics, err
 	}
@@ -493,7 +493,7 @@ func (OpenAIResponsesCodec) EncodeResponse(response llmprotocol.Response, envelo
 	return body, diagnostics, err
 }
 
-func encodeResponsesErrorResource(response llmprotocol.Response, envelope llmprotocol.Envelope) ([]byte, error) {
+func encodeResponsesErrorResource(response llmprotocol.Response, envelope llmprotocol.Envelope, publishProviderCost bool) ([]byte, error) {
 	wire := newResponsesResponseWire(
 		response.ID,
 		response.Model,
@@ -503,7 +503,7 @@ func encodeResponsesErrorResource(response llmprotocol.Response, envelope llmpro
 	)
 	wire.Error = &responsesErrorWire{Code: responsesErrorCode(response.Error), Message: response.Error.Message}
 	if response.Usage.State == llmprotocol.UsageAvailable {
-		wire.Usage = encodeResponsesUsage(response.Usage)
+		wire.Usage = encodeResponsesUsage(response.Usage, publishProviderCost)
 	}
 	return marshalWire(wire)
 }
@@ -620,7 +620,7 @@ func encodeResponsesOutputItem(item llmprotocol.OutputItem) ([]responsesItemWire
 	return encodeResponsesMessage(message, "output")
 }
 
-func encodeResponsesUsage(usage llmprotocol.Usage) *responsesUsageWire {
+func encodeResponsesUsage(usage llmprotocol.Usage, publishProviderCost bool) *responsesUsageWire {
 	if usage.State == llmprotocol.UsageUnavailable || usage.InputTotal.Value == nil && usage.OutputTotal.Value == nil && usage.Total.Value == nil {
 		return nil
 	}
@@ -636,6 +636,9 @@ func encodeResponsesUsage(usage llmprotocol.Usage) *responsesUsageWire {
 	}
 	if wire.TotalTokens == 0 {
 		wire.TotalTokens = wire.InputTokens + wire.OutputTokens
+	}
+	if publishProviderCost {
+		wire.providerUsageCostWire = encodeProviderUsageCost(usage.ProviderCost)
 	}
 	return wire
 }

@@ -401,6 +401,9 @@ func refreshCachedSemanticResponse(response *llmprotocol.Response, ctx *RequestC
 		response.ID = "resp_" + strings.TrimPrefix(response.ID, "item_")
 	}
 	response.CreatedAt = time.Now().UTC()
+	// No provider charged for a cache hit: the stored call's charge is not
+	// this turn's, and the cell's wires restate a charge (PublishProviderCost).
+	response.Usage.ProviderCost = llmprotocol.ProviderCost{}
 	for index := range response.Output {
 		response.Output[index].ID = llmprotocol.StableID(response.ID, fmt.Sprint(index))
 	}

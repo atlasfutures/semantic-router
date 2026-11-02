@@ -19,8 +19,10 @@ import (
 // that does not read as its expected type is left unknown and named once in
 // upstream_usage_unreconciled.
 //
-// Encoding never sets it: the charge is the Router's accounting evidence, not
-// part of any client contract.
+// Encoders restate it, as OpenRouter spells it, for the Router's own client
+// (routerProxy), which records it and strips it before any end user: a stream
+// the cell re-encodes from another protocol would otherwise lose the charge.
+// A member the upstream did not state is left out, never written as 0.
 type providerUsageCostWire struct {
 	Cost        json.RawMessage `json:"cost,omitempty"`
 	IsBYOK      json.RawMessage `json:"is_byok,omitempty"`
@@ -36,8 +38,50 @@ func (wire providerUsageCostWire) decode() llmprotocol.ProviderCost {
 		cost.UpstreamInference = lenientJSONValue[float64](
 			(*details)["upstream_inference_cost"], "usage.cost_details.upstream_inference_cost",
 		)
+		cost.UpstreamInferencePrompt = lenientJSONValue[float64](
+			(*details)["upstream_inference_prompt_cost"], "usage.cost_details.upstream_inference_prompt_cost",
+		)
+		cost.UpstreamInferenceCompletions = lenientJSONValue[float64](
+			(*details)["upstream_inference_completions_cost"], "usage.cost_details.upstream_inference_completions_cost",
+		)
 	}
 	return cost
+}
+
+// encodeProviderUsageCost is the wire of a stated charge: each member the
+// upstream stated, in OpenRouter's spelling, and nothing for one it did not.
+func encodeProviderUsageCost(cost llmprotocol.ProviderCost) providerUsageCostWire {
+	var wire providerUsageCostWire
+	if cost.Charged != nil {
+		wire.Cost = mustRawJSON(*cost.Charged)
+	}
+	if cost.BYOK != nil {
+		wire.IsBYOK = mustRawJSON(*cost.BYOK)
+	}
+	details := map[string]float64{}
+	for key, value := range map[string]*float64{
+		"upstream_inference_cost":             cost.UpstreamInference,
+		"upstream_inference_prompt_cost":      cost.UpstreamInferencePrompt,
+		"upstream_inference_completions_cost": cost.UpstreamInferenceCompletions,
+	} {
+		if value != nil {
+			details[key] = *value
+		}
+	}
+	if len(details) > 0 {
+		wire.CostDetails = mustRawJSON(details)
+	}
+	return wire
+}
+
+// mustRawJSON is a value that always marshals (a finite number, a bool or a
+// map of finite numbers) as raw JSON.
+func mustRawJSON(value any) json.RawMessage {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return nil
+	}
+	return raw
 }
 
 // lenientJSONValue reads raw as a T. Absent and null are unknown; any other
@@ -63,6 +107,12 @@ func mergeProviderCost(current, update llmprotocol.ProviderCost) llmprotocol.Pro
 	}
 	if update.UpstreamInference != nil {
 		current.UpstreamInference = update.UpstreamInference
+	}
+	if update.UpstreamInferencePrompt != nil {
+		current.UpstreamInferencePrompt = update.UpstreamInferencePrompt
+	}
+	if update.UpstreamInferenceCompletions != nil {
+		current.UpstreamInferenceCompletions = update.UpstreamInferenceCompletions
 	}
 	if update.BYOK != nil {
 		current.BYOK = update.BYOK

@@ -51,6 +51,12 @@ type Policy struct {
 	MissingStableIDs   MissingIDPolicy
 	SourcePreservation SourcePreservationPolicy
 	Limits             Limits
+	// PublishProviderCost has the encoders restate the charge an upstream
+	// stated on its usage (ProviderCost) as OpenRouter spells it: usage.cost,
+	// usage.is_byok and usage.cost_details. Only a Router whose client is its
+	// own accounting front (routerProxy, which records the charge and strips
+	// it) sets it; by default no client is ever shown a provider's charge.
+	PublishProviderCost bool
 }
 
 type Limits struct {
