@@ -96,13 +96,21 @@ func recordPolicyReplica(trace *selection.RaylineARCTrace, binding *raylinearc.P
 // session on a sessioned policy Server, nil for any other cell. A side call
 // commits nothing, so its binding is ephemeral: it decides on the episode's
 // session when there is one and never records one; a session it had to start
-// is ended once the call is done.
+// is ended once the call is done. A private (privacy or zdr) turn is
+// ephemeral too, and never decides on the episode's session: it starts one
+// of its own, which its release clears and ends. Its decide names an
+// episode of its own too (privatePolicyEpisode), so even on a container
+// that holds the episode's standard-mode state the two never meet.
 func (armed *raylineARCArmedComponents) policySessionBindingFor(
 	state *raylinearc.EpisodeState,
 	sideCall bool,
+	private bool,
 ) *raylinearc.PolicySessionBinding {
 	if armed == nil || armed.policySessions == nil {
 		return nil
+	}
+	if private {
+		return armed.policySessions.BindPrivate()
 	}
 	var persisted *raylinearc.PolicySession
 	if state != nil {

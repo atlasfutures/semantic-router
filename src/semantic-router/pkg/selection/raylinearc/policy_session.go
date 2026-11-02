@@ -370,6 +370,14 @@ func (backend *PolicySessionBackend) Bind(persisted *PolicySession, ephemeral bo
 	return &PolicySessionBinding{backend: backend, persisted: clonePolicySession(persisted), ephemeral: ephemeral}
 }
 
+// BindPrivate starts a private (privacy or zdr) turn's routing: ephemeral,
+// on sessions of its own only, never the episode's. Every session it starts
+// stays routable until ReleaseEpisode has reached it, a stale one included,
+// and Release then ends them all.
+func (backend *PolicySessionBackend) BindPrivate() *PolicySessionBinding {
+	return &PolicySessionBinding{backend: backend, ephemeral: true, holdUntilRelease: true}
+}
+
 // PolicySessionBinding routes every call of one turn to one session: the
 // persisted one, else one it starts. A call whose session is gone (Modal's
 // 502 or 404 for the token, so it never reached a container holding the
@@ -393,7 +401,10 @@ type PolicySessionBinding struct {
 	backend   *PolicySessionBackend
 	persisted *PolicySession
 	ephemeral bool
-	current   *PolicySession
+	// holdUntilRelease keeps every started session, a stale one included,
+	// for ReleaseEpisode to reach before Release ends it (BindPrivate).
+	holdUntilRelease bool
+	current          *PolicySession
 	// owned are the sessions this turn started; an ephemeral turn ends them.
 	owned    []PolicySession
 	sessions int
@@ -439,7 +450,7 @@ func (binding *PolicySessionBinding) Decide(
 		// caller refuses the stale answer itself (policy_package_mismatch) if
 		// no new session replaces it. Ended off the turn's path: a stalled
 		// terminate must not use up the deadline the new session needs.
-		go binding.terminate(ctx, *binding.current)
+		binding.endStale(ctx)
 	}
 	if binding.moved {
 		return response, err
@@ -461,9 +472,19 @@ func (binding *PolicySessionBinding) Decide(
 	}
 	response, err = binding.decide(moveCtx, request)
 	if err == nil && staleOwner(request, response) {
-		go binding.terminate(ctx, *binding.current)
+		binding.endStale(ctx)
 	}
 	return response, err
+}
+
+// endStale ends, off the turn's path, the current session, which answered
+// for a stale package. A private turn's session is kept for its release,
+// which reaches it before Release ends it with the rest it started.
+func (binding *PolicySessionBinding) endStale(ctx context.Context) {
+	if binding.holdUntilRelease {
+		return
+	}
+	go binding.terminate(ctx, *binding.current)
 }
 
 // decide sends one decide to the current session. A decide that failed
@@ -644,6 +665,25 @@ func (binding *PolicySessionBinding) Append(
 		return nil, &PolicyServiceError{Class: PolicySessionGoneClass}
 	}
 	return binding.backend.client.WithSessionToken(binding.current.Token).Append(ctx, request)
+}
+
+// ReleaseEpisode asks each session an ephemeral turn started to drop what
+// its container holds for the episode, before Release ends them: ending a
+// Modal session frees its slot, not the service's episode state. It reaches
+// only the sessions the turn started, never one the episode state records.
+// It returns the turn's PolicyReleaseOutcome.
+func (binding *PolicySessionBinding) ReleaseEpisode(ctx context.Context, request PolicyReleaseRequest) string {
+	outcome := PolicyReleaseNone
+	if binding == nil || !binding.ephemeral {
+		return outcome
+	}
+	for _, session := range binding.owned {
+		releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), PolicyReleaseTimeout)
+		err := binding.backend.client.WithSessionToken(session.Token).Release(releaseCtx, request)
+		cancel()
+		outcome = worsePolicyReleaseOutcome(outcome, PolicyReleaseOutcomeOf(err))
+	}
+	return outcome
 }
 
 // Release ends the sessions an ephemeral turn started; the episode keeps no

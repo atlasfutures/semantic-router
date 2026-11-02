@@ -715,7 +715,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	request := raylinearc.PolicyDecisionRequest{
 		SchemaVersion: raylinearc.PolicyDecisionRequestSchema,
 		Package:       raylinearc.PolicyPackageRef{Alias: scorer.alias, PackageSHA256: scorer.sha256},
-		EpisodeIDHash: arcContext.EpisodeIDHash,
+		EpisodeIDHash: policyServiceEpisode(arcContext),
 		ContextEpoch:  turn.ContextEpoch(),
 		RequestFormat: arcContext.RequestFormat,
 		Request:       clientRequest,
@@ -846,21 +846,31 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	// Every call of this turn, busy retries and re-asks included, goes to
 	// the one replica the binding settles on.
 	decider, replicaBinding := armed.policyDeciderFor(arcContext.EpisodeIDHash, state)
-	sessionBinding := armed.policySessionBindingFor(state, sideCall)
+	// A private (privacy or zdr) turn is ephemeral: it is never staged or
+	// appended, and once it is decided the service is asked to drop what it
+	// holds for the episode (rayline_arc_policy_private.go).
+	private := arcContext.PrivateTurn
+	sessionBinding := armed.policySessionBindingFor(state, sideCall, private)
 	if sessionBinding != nil {
 		decider = sessionBinding
+	}
+	if private {
+		tracked := &privateDecideTracker{policyDecider: decider}
+		decider = tracked
+		defer releasePrivatePolicyEpisode(ctx, arcContext, request, tracked, replicaBinding, sessionBinding)
+	} else if sessionBinding != nil {
 		defer sessionBinding.Release(ctx)
 	}
 	started := selector.now()
 	// A delta cell stages its strict main turns and sends a turn that
 	// extends the staged prefix as a delta, decided synchronously like any
 	// other turn (rayline_arc_policy_delta.go).
-	staging := scorer.policyDeltaEligible(&request, sideCall)
+	staging := scorer.policyDeltaEligible(&request, sideCall, private)
 	if staging {
 		staged := true
 		request.Stage = &staged
 	}
-	if scorer.delta && !sideCall {
+	if scorer.delta && !sideCall && !private {
 		scorer.hydratePolicyStagedTurn(ctx, arcContext, state.TurnIndex)
 	}
 	var deltaBase policyStagedTurn

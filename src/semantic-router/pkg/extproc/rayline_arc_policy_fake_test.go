@@ -45,6 +45,11 @@ type fakePolicyService struct {
 	listedFallbackActionID, listedFallbackModel string
 	// bodies are the decide request bodies as received, in order.
 	bodies [][]byte
+	// servesRelease answers POST .../release (dropping the episode's staged
+	// turn); without it the release is 404, as a service that predates it.
+	// releaseBodies are the release bodies as received, either way.
+	servesRelease bool
+	releaseBodies [][]byte
 	// echo, when set, answers routing_prices_used.
 	echo     func(raylinearc.PolicyDecisionRequest) *raylinearc.PolicyRoutingPricesUsed
 	failWith string
@@ -207,6 +212,43 @@ func (fake *fakePolicyService) stageDecide(decide raylinearc.PolicyDecisionReque
 	}
 	fake.resolved = append(fake.resolved, resolved)
 	return resolved, true
+}
+
+func (fake *fakePolicyService) receivedReleases() [][]byte {
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	return append([][]byte(nil), fake.releaseBodies...)
+}
+
+func (fake *fakePolicyService) stagedEpisodes() int {
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	return len(fake.staged)
+}
+
+func (fake *fakePolicyService) serveRelease(writer http.ResponseWriter, request *http.Request) {
+	body, err := io.ReadAll(request.Body)
+	if err != nil {
+		http.Error(writer, err.Error(), http.StatusBadRequest)
+		return
+	}
+	var release raylinearc.PolicyReleaseRequest
+	if err := json.Unmarshal(body, &release); err != nil {
+		http.Error(writer, err.Error(), http.StatusBadRequest)
+		return
+	}
+	fake.mu.Lock()
+	fake.releaseBodies = append(fake.releaseBodies, body)
+	serves := fake.servesRelease
+	if serves {
+		delete(fake.staged, release.EpisodeIDHash)
+	}
+	fake.mu.Unlock()
+	if !serves {
+		http.NotFound(writer, request)
+		return
+	}
+	writer.WriteHeader(http.StatusNoContent)
 }
 
 func (fake *fakePolicyService) receivedAppends() []raylinearc.PolicyAppendRequest {
@@ -466,6 +508,8 @@ func (fake *fakePolicyService) serve(writer http.ResponseWriter, request *http.R
 		fake.writeJSON(writer, http.StatusOK, fake.decision(decide, choose(decide)))
 	case "/v1/rayline/arc/policy/append":
 		fake.serveAppend(writer, request)
+	case "/v1/rayline/arc/policy/release":
+		fake.serveRelease(writer, request)
 	default:
 		http.NotFound(writer, request)
 	}

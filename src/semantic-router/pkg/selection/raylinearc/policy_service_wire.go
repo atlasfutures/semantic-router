@@ -43,6 +43,7 @@ const (
 	PolicyPackagesSchema         = "rayline.arc.policy-packages.v1"
 	PolicyAppendRequestSchema    = "rayline.arc.policy-append-request.v1"
 	PolicyAppendResponseSchema   = "rayline.arc.policy-append-response.v1"
+	PolicyReleaseRequestSchema   = "rayline.arc.policy-release-request.v1"
 
 	policyDecisionModeFactored = "factored"
 )
@@ -601,6 +602,17 @@ func EncodePolicyAppendRequest(request PolicyAppendRequest) ([]byte, error) {
 	}
 	buffer.WriteByte('}')
 	return buffer.Bytes(), nil
+}
+
+// PolicyReleaseRequest asks the service to drop everything it holds for one
+// episode (POST /v1/rayline/arc/policy/release): its staged turn, parked
+// tokens, encoder session and tokenizer memo. It carries no conversation
+// content, only the package and the episode hash. A private turn sends it
+// after its decide, so the service holds its content for that call only.
+type PolicyReleaseRequest struct {
+	SchemaVersion string           `json:"schema_version"`
+	Package       PolicyPackageRef `json:"package"`
+	EpisodeIDHash string           `json:"episode_id_hash"`
 }
 
 // PolicyAppendResponse is the append's reply. Hold, the service's fallback
