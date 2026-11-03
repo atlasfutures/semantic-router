@@ -33,14 +33,14 @@ func decodeReleases(t *testing.T, bodies [][]byte) []raylinearc.PolicyReleaseReq
 	return releases
 }
 
-// On a delta cell a private turn is never staged and its reply is never
-// appended: every private turn goes out in full, the service holds no
-// staged turn for the episode, and each turn ends with a release that names
-// the episode and the package and carries no content.
-func TestPrivateTurnsNeverStageOrAppend(t *testing.T) {
+// On a delta cell a zdr turn is never staged and its reply is never
+// appended: every zdr turn goes out in full, the service holds no staged
+// turn for the episode, and each turn ends with a release that names the
+// episode and the package and carries no content.
+func TestZDRTurnsNeverStageOrAppend(t *testing.T) {
 	releaseInline(t)
 	fixture := newDeltaFixture(t, config.RaylineARCDecideModeDelta, nil)
-	fixture.private = true
+	fixture.zdr = true
 	fixture.fake.servesRelease = true
 
 	first, ctx := fixture.turn(t, policyTestRequest(t, deltaUser))
@@ -110,7 +110,7 @@ func TestPrivateTurnShedBeforeDecideSendsNoRelease(t *testing.T) {
 	defer held()
 	state, _ := raylinearc.NewEpisodeState(2)
 	if _, err := fixture.selectOnWith(t, state, policyTestRequest(t, deltaUser), func(arcContext *selection.RaylineARCSelectionContext) {
-		arcContext.PrivateTurn = true
+		arcContext.PrivateTurn, arcContext.EphemeralTurn = true, true
 	}); err == nil {
 		t.Fatal("a shed private turn was served")
 	}
@@ -122,8 +122,35 @@ func TestPrivateTurnShedBeforeDecideSendsNoRelease(t *testing.T) {
 	}
 }
 
+// A privacy-mode turn is not ephemeral: on a delta cell it decides on the
+// conversation's own episode, stages, has its reply appended and sends the
+// next turn as a delta, exactly as a standard turn, and sends no release.
+// Its state lives as long as the cell's idle TTL.
+func TestPrivacyTurnsStageAndAppendOnTheirOwnEpisode(t *testing.T) {
+	releaseInline(t)
+	fixture := newDeltaFixture(t, config.RaylineARCDecideModeDelta, nil)
+	fixture.private = true
+	fixture.fake.servesRelease = true
+	fixture.stagedFirstTurn(t)
+	if len(fixture.fake.receivedAppends()) != 1 {
+		t.Fatal("the privacy turn's reply was not appended")
+	}
+	second, _ := fixture.turn(t, policyTestRequest(t, deltaUser, deltaAssistant, deltaToolResult))
+	if second.RaylineARC.PolicyDecisionMode != policyDecisionModeDelta {
+		t.Fatalf("privacy turn 2 mode = %q, want a delta", second.RaylineARC.PolicyDecisionMode)
+	}
+	for index, decide := range fixture.fake.received() {
+		if decide.EpisodeIDHash != fixture.episode {
+			t.Fatalf("privacy decide %d named %q, not the conversation's episode", index, decide.EpisodeIDHash)
+		}
+	}
+	if releases := fixture.fake.receivedReleases(); len(releases) != 0 {
+		t.Fatalf("a privacy turn sent %d releases", len(releases))
+	}
+}
+
 // A standard turn on the same cell still stages, appends and releases
-// nothing: the release is the private turn's alone.
+// nothing: the release is the zdr turn's alone.
 func TestStandardTurnsSendNoRelease(t *testing.T) {
 	releaseInline(t)
 	fixture := newDeltaFixture(t, config.RaylineARCDecideModeDelta, nil)
@@ -137,12 +164,12 @@ func TestStandardTurnsSendNoRelease(t *testing.T) {
 	}
 }
 
-// A service that predates the release answers it 404: the private turn is
+// A service that predates the release answers it 404: the zdr turn is
 // served all the same.
 func TestPrivateTurnServedByAServiceWithoutRelease(t *testing.T) {
 	releaseInline(t)
 	fixture := newDeltaFixture(t, config.RaylineARCDecideModeDelta, nil)
-	fixture.private = true
+	fixture.zdr = true
 	result, ctx := fixture.turn(t, policyTestRequest(t, deltaUser))
 	if result.RaylineARC.PolicyActionID != fixture.decided {
 		t.Fatalf("served %q", result.RaylineARC.PolicyActionID)
@@ -156,7 +183,7 @@ func TestPrivateTurnServedByAServiceWithoutRelease(t *testing.T) {
 	}
 }
 
-// On a sessioned Server a private turn never decides on the episode's
+// On a sessioned Server a zdr turn never decides on the episode's
 // session: it starts one of its own, releases the episode on it and ends
 // it, and records none. The episode's session is left as it was.
 func TestPrivateTurnDecidesOnASessionOfItsOwn(t *testing.T) {
@@ -179,7 +206,7 @@ func TestPrivateTurnDecidesOnASessionOfItsOwn(t *testing.T) {
 	owner := front.containerOf(persisted.Token)
 
 	private, err := fixture.selectOnWith(t, state, body, func(arcContext *selection.RaylineARCSelectionContext) {
-		arcContext.PrivateTurn = true
+		arcContext.PrivateTurn, arcContext.EphemeralTurn = true, true
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -204,5 +231,16 @@ func TestPrivateTurnDecidesOnASessionOfItsOwn(t *testing.T) {
 	}
 	if other := front.containers[1-privateContainer].receivedReleases(); len(other) != 0 {
 		t.Fatalf("a release reached the episode's own container: %d", len(other))
+	}
+}
+
+// Only a zdr turn is ephemeral; privacy mode and standard turns are not.
+func TestOnlyZDRTurnsAreEphemeral(t *testing.T) {
+	for mode, want := range map[string]bool{
+		"": false, raylineARCPrivacyModePrivacy: false, raylineARCPrivacyModeZDR: true,
+	} {
+		if got := raylineARCEphemeralTurn(mode); got != want {
+			t.Fatalf("mode %q ephemeral = %v, want %v", mode, got, want)
+		}
 	}
 }

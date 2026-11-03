@@ -846,15 +846,15 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	// Every call of this turn, busy retries and re-asks included, goes to
 	// the one replica the binding settles on.
 	decider, replicaBinding := armed.policyDeciderFor(arcContext.EpisodeIDHash, state)
-	// A private (privacy or zdr) turn is ephemeral: it is never staged or
-	// appended, and once it is decided the service is asked to drop what it
-	// holds for the episode (rayline_arc_policy_private.go).
-	private := arcContext.PrivateTurn
-	sessionBinding := armed.policySessionBindingFor(state, sideCall, private)
+	// An ephemeral (zdr) turn is never staged or appended, and once it is
+	// decided the service is asked to drop what it holds for the episode
+	// (rayline_arc_policy_private.go). A privacy-mode turn is not ephemeral.
+	ephemeral := arcContext.EphemeralTurn
+	sessionBinding := armed.policySessionBindingFor(state, sideCall, ephemeral)
 	if sessionBinding != nil {
 		decider = sessionBinding
 	}
-	if private {
+	if ephemeral {
 		tracked := &privateDecideTracker{policyDecider: decider}
 		decider = tracked
 		defer releasePrivatePolicyEpisode(ctx, arcContext, request, tracked, replicaBinding, sessionBinding)
@@ -865,12 +865,12 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	// A delta cell stages its strict main turns and sends a turn that
 	// extends the staged prefix as a delta, decided synchronously like any
 	// other turn (rayline_arc_policy_delta.go).
-	staging := scorer.policyDeltaEligible(&request, sideCall, private)
+	staging := scorer.policyDeltaEligible(&request, sideCall, ephemeral)
 	if staging {
 		staged := true
 		request.Stage = &staged
 	}
-	if scorer.delta && !sideCall && !private {
+	if scorer.delta && !sideCall && !ephemeral {
 		scorer.hydratePolicyStagedTurn(ctx, arcContext, state.TurnIndex)
 	}
 	var deltaBase policyStagedTurn

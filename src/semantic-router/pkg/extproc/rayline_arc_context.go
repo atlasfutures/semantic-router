@@ -320,6 +320,7 @@ func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 	result.DisabledArms = r.disabledArms(modelRefs)
 	result.PrivacyExcludedArms = privacyExcludedArms(reqCtx.RaylineARCPrivacyMode, reqCtx.RaylineARCPrivacyAllowedArms, modelRefs)
 	result.PrivateTurn = reqCtx.RaylineARCPrivacyMode != ""
+	result.EphemeralTurn = raylineARCEphemeralTurn(reqCtx.RaylineARCPrivacyMode)
 	result.PrivacyExcludedArms, result.PrivacyArmEndpoints = r.withPrivacyEndpointConstraints(
 		result.PrivacyExcludedArms, reqCtx.RaylineARCPrivacyAllowedEndpoints, modelRefs,
 	)
@@ -340,6 +341,14 @@ const raylineARCEphemeralEpisodePrefix = "rayline-arc-ephemeral:"
 // requestRoutingCapabilities reads what this turn needs an arm to hold. It
 // reads the neutral request rather than the body, so it sees the same tools
 // and tool results the dispatch encoder will.
+// raylineARCEphemeralTurn reports whether a turn of this privacy mode holds
+// nothing at the policy service past its own decide. Only zdr does: a
+// privacy-mode turn is private (masked arms, private provider pins) but keeps
+// the conversation's episode, bounded by the cell's idle TTL.
+func raylineARCEphemeralTurn(privacyMode string) bool {
+	return privacyMode == raylineARCPrivacyModeZDR
+}
+
 func requestRoutingCapabilities(reqCtx *RequestContext) []string {
 	if reqCtx == nil || reqCtx.SemanticRequest == nil {
 		return nil

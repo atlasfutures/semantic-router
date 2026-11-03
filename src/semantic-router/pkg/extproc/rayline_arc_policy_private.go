@@ -14,8 +14,12 @@ import (
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
 
-// A private (privacy or zdr) turn is decided by the policy service like any
-// other, but the service is to hold its content for that decide only. The
+// An ephemeral (zdr) turn is decided by the policy service like any other,
+// but the service is to hold its content for that decide only. A
+// privacy-mode turn is not ephemeral: it decides on the conversation's own
+// episode and staged turn like a standard one, and that state lives only as
+// long as the cell's idle TTL (episode idle_ttl_seconds, the policy
+// session's idle timeout and the service's own idle bound). The
 // turn names a fresh episode to the service (policyServiceEpisode), binds
 // ephemeral (policySessionBindingFor), never stages or appends
 // (policyDeltaEligible), and once it is decided, whether or not the decide
@@ -27,12 +31,12 @@ import (
 // evicts it, as before.
 
 // policyServiceEpisode is the episode a turn's decide names to the policy
-// service. A standard turn names its own. A private turn names a fresh
-// random one, so the service can neither join it to the episode's other
+// service. A standard or privacy-mode turn names its own. An ephemeral
+// (zdr) turn names a fresh random one, so the service can neither join it to the episode's other
 // turns nor touch the episode's standard-mode state, even on a container
 // that holds it, and its release drops exactly what that decide left.
 func policyServiceEpisode(arcContext *selection.RaylineARCSelectionContext) string {
-	if !arcContext.PrivateTurn {
+	if !arcContext.EphemeralTurn {
 		return arcContext.EpisodeIDHash
 	}
 	var random [32]byte
