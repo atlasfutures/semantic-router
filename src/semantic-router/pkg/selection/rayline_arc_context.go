@@ -146,6 +146,10 @@ type RaylineARCSelectionContext struct {
 	// (pathfinder#5664): its result points, caller prices and exploration.
 	// Nil on every routed turn and on a lookup that names none.
 	RouteControls *RaylineARCRouteControls
+	// RoutesLookup is true on a POST /v1/routes lookup, the one caller that
+	// reads whether the encode included the request's tools; a routed turn
+	// never asks for it.
+	RoutesLookup bool
 	// TurnCostWeight is a generation turn's own cost weight (configurable
 	// ARC's routing.value_usd, 1 / V), sent in place of the cell's; nil
 	// keeps the cell's.
@@ -325,6 +329,11 @@ type RaylineARCTrace struct {
 	// service returned one.
 	PolicyPackageSHA256    string
 	PolicyPredictedCostUSD *float64
+	// PolicyToolDefinitionsStatus is the service's statement of whether the
+	// encode included the request's tool definitions; nil when it stated
+	// none (an older service, an append, or a held turn that encoded
+	// nothing).
+	PolicyToolDefinitionsStatus *string
 	// RouteResults are a Decisions lookup's results, keyed by result name
 	// (swift, sage, custom): the service's tier pick at each requested
 	// point, each checked as the decision's own action is. Nil off a lookup

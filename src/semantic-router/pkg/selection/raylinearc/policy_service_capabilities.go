@@ -35,6 +35,11 @@ const (
 	PolicyCapabilityTierPoints     = "tier_points"
 	PolicyCapabilityResponseFields = "response_fields"
 	PolicyCapabilityExploration    = "exploration"
+	// PolicyCapabilityToolDefinitionsStatus: the service answers
+	// response_fields ["tool_definitions_status"] with
+	// encoding.tool_definitions_status (pathfinder#5751); a service without
+	// it refuses the field.
+	PolicyCapabilityToolDefinitionsStatus = "tool_definitions_status"
 	// PolicyCapabilityExplorationTemperature: selection.exploration in the
 	// temperature shape (pathfinder#5637). Proposed name: a service that
 	// does not advertise it is never sent that shape.

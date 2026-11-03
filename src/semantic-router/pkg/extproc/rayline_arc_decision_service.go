@@ -109,6 +109,7 @@ func (service *raylineARCDecisionService) RouteDecision(
 		episodeMode,
 	)
 	selectionContext.RaylineARC.RouteControls = request.Routing
+	selectionContext.RaylineARC.RoutesLookup = true
 	if failure := selectionContext.RaylineARC.PreparationFailure; failure != "" {
 		// Counted here because this path returns before Select(), whose
 		// failure constructor is where the routed path counts the same
@@ -171,6 +172,12 @@ func (service *raylineARCDecisionService) RouteDecision(
 	decisionFacts.ThinkingLevel = trace.ThinkingLevel
 	decisionFacts.PolicyActionID = trace.PolicyActionID
 	decisionFacts.Checkpoint = trace.ArtifactRevision
+	decisionFacts.ToolsEncoded = routeToolsEncoded(trace.PolicyToolDefinitionsStatus)
+	if raylineARCHoldOfferKind(trace.OfferKind) {
+		// A held turn (capacity or media) encoded nothing.
+		notEncoded := false
+		decisionFacts.ToolsEncoded = &notEncoded
+	}
 	decisionFacts.Alternatives = routeAlternatives(trace, selected.catalog)
 	// Both kinds of reuse count. A resumable encoder reports reuse as
 	// RetainedPrefixTokens and leaves CachedPrefixTokens at zero, so reading
@@ -1023,4 +1030,25 @@ func routeControlOf(algorithm *config.AlgorithmConfig) func(actionID string) str
 		}
 		return action.Control.ID()
 	}
+}
+
+// routeToolsEncoded is whether the decision's encoding included the
+// request's tool definitions, as the service stated it
+// (encoding.tool_definitions_status): present or absent. Nil when it stated
+// nothing or unknown, which keeps the endpoint's configured account. The
+// package's encoding profile is not read in its place: tool rule v1 drops
+// name-less built-ins, so a profile that includes tools does not show that
+// this request's tools were encoded.
+func routeToolsEncoded(status *string) *bool {
+	if status == nil {
+		return nil
+	}
+	encoded := func(value bool) *bool { return &value }
+	switch *status {
+	case "present":
+		return encoded(true)
+	case "absent":
+		return encoded(false)
+	}
+	return nil
 }
