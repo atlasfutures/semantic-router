@@ -139,6 +139,10 @@ type RaylineARCSelectionContext struct {
 	// (pathfinder#5664): its result points, caller prices and exploration.
 	// Nil on every routed turn and on a lookup that names none.
 	RouteControls *RaylineARCRouteControls
+	// RoutesLookup is true on a POST /v1/routes lookup, the one caller that
+	// reads whether the encode included the request's tools; a routed turn
+	// never asks for it.
+	RoutesLookup bool
 	// TurnCostWeight is a generation turn's own cost weight (configurable
 	// ARC's routing.value_usd, 1 / V), sent in place of the cell's; nil
 	// keeps the cell's.

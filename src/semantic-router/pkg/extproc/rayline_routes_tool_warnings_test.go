@@ -116,17 +116,20 @@ func deref(value *bool) any {
 	return *value
 }
 
-// The decide request asks for the tool status only of a service whose
-// readiness listing advertises it (an older one refuses the field), and the
-// answer reaches the trace.
+// The decide request asks for the tool status only on a /v1/routes lookup
+// and only of a service whose readiness listing advertises it (an older one
+// refuses the field), and the answer reaches the trace. A routed turn never
+// asks, so a mixed-version pool's older replica never sees the field on it.
 func TestToolDefinitionsStatusIsAskedOnlyWhenAdvertised(t *testing.T) {
-	for _, advertised := range []bool{false, true} {
+	for _, tc := range []struct{ advertised, lookup bool }{
+		{false, false}, {false, true}, {true, false}, {true, true},
+	} {
 		fixture := newDecisionsV2Fixture(t, nil)
 		capabilities := []string{
 			raylinearc.PolicyCapabilityDecisionsV2, raylinearc.PolicyCapabilityTierPoints,
 			raylinearc.PolicyCapabilityResponseFields, raylinearc.PolicyCapabilityExploration,
 		}
-		if advertised {
+		if tc.advertised {
 			capabilities = append(capabilities, raylinearc.PolicyCapabilityToolDefinitionsStatus)
 		}
 		fixture.fake.advertised = capabilities
@@ -137,15 +140,17 @@ func TestToolDefinitionsStatusIsAskedOnlyWhenAdvertised(t *testing.T) {
 			t.Fatalf("probe: %v", err)
 		}
 		state, _ := raylinearc.NewEpisodeState(2)
-		result, err := fixture.selectOn(t, state, policyTestRequest(t, map[string]any{"role": "user", "content": "go"}))
+		result, err := fixture.selectOnWith(t, state, policyTestRequest(t, map[string]any{"role": "user", "content": "go"}),
+			func(arcContext *selection.RaylineARCSelectionContext) { arcContext.RoutesLookup = tc.lookup })
 		if err != nil {
-			t.Fatalf("advertised=%v: %v", advertised, err)
+			t.Fatalf("%+v: %v", tc, err)
 		}
 		fields, _ := decodeJSONObject(t, fixture.fake.receivedBodies()[0])["response_fields"].([]any)
 		asked := slices.Contains(fields, any(raylinearc.PolicyCapabilityToolDefinitionsStatus))
 		status := result.RaylineARC.PolicyToolDefinitionsStatus
-		if asked != advertised || (status != nil) != advertised {
-			t.Fatalf("advertised=%v: asked %v, status %v", advertised, asked, status)
+		want := tc.advertised && tc.lookup
+		if asked != want || (status != nil) != want {
+			t.Fatalf("%+v: asked %v, status %v, want %v", tc, asked, status, want)
 		}
 	}
 }

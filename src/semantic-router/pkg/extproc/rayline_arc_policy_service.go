@@ -749,9 +749,10 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 			request.ResponseFields = append(append([]string(nil), request.ResponseFields...), raylinearc.PolicyCapabilityPredictions)
 		}
 	}
-	// Whether the encode included the request's tools, asked only of a
-	// service that lists the opt-in (an older one refuses the field).
-	if scorer.advertises(raylinearc.PolicyCapabilityToolDefinitionsStatus) &&
+	// Whether the encode included the request's tools, asked only on a
+	// lookup (its tools warning reads it) and only of a service that lists
+	// the opt-in (an older one refuses the field).
+	if arcContext.RoutesLookup && scorer.advertises(raylinearc.PolicyCapabilityToolDefinitionsStatus) &&
 		!slices.Contains(request.ResponseFields, raylinearc.PolicyCapabilityToolDefinitionsStatus) {
 		request.ResponseFields = append(append([]string(nil), request.ResponseFields...), raylinearc.PolicyCapabilityToolDefinitionsStatus)
 	}

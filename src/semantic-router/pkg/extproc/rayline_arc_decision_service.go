@@ -109,6 +109,7 @@ func (service *raylineARCDecisionService) RouteDecision(
 		episodeMode,
 	)
 	selectionContext.RaylineARC.RouteControls = request.Routing
+	selectionContext.RaylineARC.RoutesLookup = true
 	if failure := selectionContext.RaylineARC.PreparationFailure; failure != "" {
 		// Counted here because this path returns before Select(), whose
 		// failure constructor is where the routed path counts the same
