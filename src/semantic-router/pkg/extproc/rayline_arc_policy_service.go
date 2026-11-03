@@ -749,6 +749,12 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 			request.ResponseFields = append(append([]string(nil), request.ResponseFields...), raylinearc.PolicyCapabilityPredictions)
 		}
 	}
+	// Whether the encode included the request's tools, asked only of a
+	// service that lists the opt-in (an older one refuses the field).
+	if scorer.advertises(raylinearc.PolicyCapabilityToolDefinitionsStatus) &&
+		!slices.Contains(request.ResponseFields, raylinearc.PolicyCapabilityToolDefinitionsStatus) {
+		request.ResponseFields = append(append([]string(nil), request.ResponseFields...), raylinearc.PolicyCapabilityToolDefinitionsStatus)
+	}
 	var execution *selection.RaylineARCRouteExecution
 	if routeControls != nil {
 		execution = routeControls.Execution
@@ -1186,6 +1192,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	result.RaylineARC.OfferKind = policyOfferKind(derivedOffer, forced, retained, held)
 	result.RaylineARC.MaskedArms = policyMaskedArms(scorer, workerIDs, excluded, fallback, turn, offeredRoutes)
 	result.RaylineARC.PolicyPackageSHA256 = scorer.sha256
+	result.RaylineARC.PolicyToolDefinitionsStatus = response.Encoding.ToolDefinitionsStatus
 	result.RaylineARC.TurnCostWeightApplied = turnWeightApplied
 	result.RaylineARC.RoutingPricesStatus = pricesStatus
 	result.RaylineARC.SettlementPrices = armed.prices

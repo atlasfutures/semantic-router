@@ -216,34 +216,11 @@ func (r *OpenAIRouter) raylineRoutesDecision(recipe *config.RoutingRecipe) *conf
 	return raylineRoutesDecisionIn(recipe.Profile.Decisions)
 }
 
-// raylineRoutesToolEncoding is what a lookup's tools become on the way to the
-// selector, which decides what the tools warning can honestly claim.
-type raylineRoutesToolEncoding int
-
-const (
-	// routesToolsDropped: the in-cell selector, tools not shown to it.
-	routesToolsDropped raylineRoutesToolEncoding = iota
-	// routesToolNamesOnly: the in-cell selector, shown the tool names.
-	routesToolNamesOnly
-	// routesToolsForwarded: a policy service decides. The cell sends it the
-	// client's system, tools and messages as received (policyClientRequestOf),
-	// the service projects and encodes them, and encoded_input_tokens is its
-	// count. include_tool_names does not apply on this path.
-	routesToolsForwarded
-)
-
-// raylineRoutesToolEncodingOf reads the decision's selector path.
-func raylineRoutesToolEncodingOf(decision *config.Decision) raylineRoutesToolEncoding {
-	switch {
-	case decision == nil || decision.Algorithm == nil || decision.Algorithm.RaylineARC == nil:
-		return routesToolsDropped
-	case decision.Algorithm.RaylineARC.PolicyService != nil:
-		return routesToolsForwarded
-	case decision.Algorithm.RaylineARC.IncludeToolNames:
-		return routesToolNamesOnly
-	default:
-		return routesToolsDropped
-	}
+// raylineRoutesEncodesToolNames reports whether the decision shows the
+// selector the turn's tool names, which decides what the tools warning can
+// honestly claim.
+func raylineRoutesEncodesToolNames(decision *config.Decision) bool {
+	return decision != nil && decision.Algorithm.RaylineARC.IncludeToolNames
 }
 
 // raylineRoutesConfig returns the endpoint's configuration, or nil where this
@@ -378,7 +355,7 @@ func (r *OpenAIRouter) handleRaylineRoutesAPI(
 		ctx.RaylineARCIdentity = raylineARCIdentityFor(r.Config, recipe, raylineRoutesModelOf(body))
 	}
 	settings := &target.Algorithm.RaylineARC.RoutesAPI
-	wireFormat, warnings, detail := readRaylineRoutesBody(body, raylineRoutesToolEncodingOf(target), raylineRoutesHeader(ctx, raylineRoutesFormatHeader))
+	wireFormat, warnings, detail := readRaylineRoutesBody(body, raylineRoutesEncodesToolNames(target), raylineRoutesHeader(ctx, raylineRoutesFormatHeader))
 	if detail != "" {
 		return r.createRaylineRoutesError(ctx, 400, "invalid_request_error", detail)
 	}
@@ -481,7 +458,7 @@ func (r *OpenAIRouter) handleRaylineRoutesAPI(
 		routeID,
 		raylineRoutesCheckpoint(settings.CheckpointLabel, decision.Checkpoint),
 		decision,
-		warnings,
+		raylineRoutesToolWarnings(warnings, decision.ToolsEncoded),
 		time.Since(started),
 	)
 	if controls != nil {
@@ -755,14 +732,14 @@ func raylineRoutesAlternatives(
 // be one more thing to get wrong, and getting it wrong would be silent.
 func readRaylineRoutesBody(
 	body []byte,
-	tools raylineRoutesToolEncoding,
+	encodesToolNames bool,
 	formatHint string,
 ) (llmprotocol.WireFormat, []string, string) {
 	var envelope map[string]json.RawMessage
 	if err := json.Unmarshal(body, &envelope); err != nil || envelope == nil {
 		return "", nil, "request body must be a JSON object"
 	}
-	warnings := raylineRoutesBodyWarnings(envelope, tools)
+	warnings := raylineRoutesBodyWarnings(envelope, encodesToolNames)
 	_, hasInput := envelope["input"]
 	raw, hasMessages := envelope["messages"]
 	if !hasInput && !hasMessages {
@@ -987,7 +964,7 @@ func messagesToolsDialect(raw json.RawMessage) (llmprotocol.WireFormat, bool) {
 
 func raylineRoutesBodyWarnings(
 	envelope map[string]json.RawMessage,
-	tools raylineRoutesToolEncoding,
+	encodesToolNames bool,
 ) []string {
 	warnings := []string{}
 	if !declaresTools(envelope["tools"]) {
@@ -1003,17 +980,11 @@ func raylineRoutesBodyWarnings(
 	// reached the selector and can change the arm it picks, so telling a
 	// caller their tools did not influence the route would misdescribe the
 	// decision they are being handed.
-	switch tools {
-	case routesToolsForwarded:
-		// Nothing was dropped: the policy service received the tools and
-		// encoded what its projection keeps, which encoded_input_tokens
-		// counts. Saying they were dropped told a caller billed for those
-		// tokens that they had no part in the route.
-	case routesToolNamesOnly:
+	if encodesToolNames {
 		warnings = append(warnings, "tool_schemas_not_encoded: tool names influenced this route; their descriptions and schemas were not encoded")
-	default:
-		warnings = append(warnings, "tools_not_encoded: tools were dropped before encoding and did not influence this route")
+		return warnings
 	}
+	warnings = append(warnings, raylineRoutesToolsNotEncoded)
 	return warnings
 }
 
@@ -1265,4 +1236,32 @@ func raylineRoutesBodyCarriesRouting(body []byte) bool {
 	}
 	_, present := envelope["routing"]
 	return present
+}
+
+const (
+	raylineRoutesToolsNotEncoded       = "tools_not_encoded: tools were dropped before encoding and did not influence this route"
+	raylineRoutesToolsNotEncodedPrefix = "tools_not_encoded:"
+	raylineRoutesToolSchemasPrefix     = "tool_schemas_not_encoded:"
+)
+
+// raylineRoutesToolWarnings settles the tool warning against what the
+// decision's encoding did with the request's tools. The body warnings name
+// a tool only when the request declared one; a decision that encoded them
+// drops the warning, one that did not states tools_not_encoded, and an
+// unknown leaves the configured account as it was.
+func raylineRoutesToolWarnings(warnings []string, encoded *bool) []string {
+	if encoded == nil {
+		return warnings
+	}
+	settled := make([]string, 0, len(warnings))
+	for _, warning := range warnings {
+		tool := strings.HasPrefix(warning, raylineRoutesToolsNotEncodedPrefix) || strings.HasPrefix(warning, raylineRoutesToolSchemasPrefix)
+		switch {
+		case !tool:
+			settled = append(settled, warning)
+		case !*encoded:
+			settled = append(settled, raylineRoutesToolsNotEncoded)
+		}
+	}
+	return settled
 }

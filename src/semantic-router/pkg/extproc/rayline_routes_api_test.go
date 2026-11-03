@@ -118,7 +118,7 @@ func TestRaylineRoutesReadsWireFormatFromTheBody(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			got, _, detail := readRaylineRoutesBody([]byte(testCase.body), routesToolsDropped, "")
+			got, _, detail := readRaylineRoutesBody([]byte(testCase.body), false, "")
 			if detail != "" {
 				t.Fatalf("readRaylineRoutesBody() detail = %q, want none", detail)
 			}
@@ -140,7 +140,7 @@ func TestRaylineRoutesRefusesBodiesItCannotRead(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			if _, _, detail := readRaylineRoutesBody([]byte(body), routesToolsDropped, ""); detail == "" {
+			if _, _, detail := readRaylineRoutesBody([]byte(body), false, ""); detail == "" {
 				t.Fatal("readRaylineRoutesBody() detail = \"\", want a refusal")
 			}
 		})
@@ -157,7 +157,7 @@ func TestRaylineRoutesWarnsWhatItDidWithTools(t *testing.T) {
 	t.Parallel()
 	body := []byte(`{"messages":[{"role":"user","content":"hi"}],"system":"be terse","tools":[{"name":"edit"}]}`)
 
-	_, dropped, detail := readRaylineRoutesBody(body, routesToolsDropped, "")
+	_, dropped, detail := readRaylineRoutesBody(body, false, "")
 	if detail != "" {
 		t.Fatalf("readRaylineRoutesBody() detail = %q, want none", detail)
 	}
@@ -165,53 +165,12 @@ func TestRaylineRoutesWarnsWhatItDidWithTools(t *testing.T) {
 		t.Fatalf("warnings = %v, want one tools_not_encoded warning", dropped)
 	}
 
-	_, encoded, detail := readRaylineRoutesBody(body, routesToolNamesOnly, "")
+	_, encoded, detail := readRaylineRoutesBody(body, true, "")
 	if detail != "" {
 		t.Fatalf("readRaylineRoutesBody() detail = %q, want none", detail)
 	}
 	if len(encoded) != 1 || !strings.HasPrefix(encoded[0], "tool_schemas_not_encoded:") {
 		t.Fatalf("warnings = %v, want the names-encoded warning", encoded)
-	}
-
-	// A policy service receives the tools as sent and counts what it encodes,
-	// so neither drop warning holds there.
-	_, forwarded, detail := readRaylineRoutesBody(body, routesToolsForwarded, "")
-	if detail != "" {
-		t.Fatalf("readRaylineRoutesBody() detail = %q, want none", detail)
-	}
-	if len(forwarded) != 0 {
-		t.Fatalf("warnings = %v, want none on the policy-service path", forwarded)
-	}
-}
-
-// The selector path decides the tools warning: a policy service outranks
-// include_tool_names, which only the in-cell selector reads.
-func TestRaylineRoutesToolEncodingOf(t *testing.T) {
-	t.Parallel()
-	decision := func(policy bool, names bool) *config.Decision {
-		d := &config.Decision{Algorithm: &config.AlgorithmConfig{
-			RaylineARC: &config.RaylineARCAlgorithmConfig{IncludeToolNames: names},
-		}}
-		if policy {
-			d.Algorithm.RaylineARC.PolicyService = &config.RaylineARCPolicyServiceConfig{}
-		}
-		return d
-	}
-	for _, testCase := range []struct {
-		name     string
-		decision *config.Decision
-		want     raylineRoutesToolEncoding
-	}{
-		{"no decision", nil, routesToolsDropped},
-		{"no algorithm", &config.Decision{}, routesToolsDropped},
-		{"in-cell, names off", decision(false, false), routesToolsDropped},
-		{"in-cell, names on", decision(false, true), routesToolNamesOnly},
-		{"policy service", decision(true, false), routesToolsForwarded},
-		{"policy service, names on", decision(true, true), routesToolsForwarded},
-	} {
-		if got := raylineRoutesToolEncodingOf(testCase.decision); got != testCase.want {
-			t.Errorf("%s: raylineRoutesToolEncodingOf() = %d, want %d", testCase.name, got, testCase.want)
-		}
 	}
 }
 
@@ -265,7 +224,7 @@ func TestRaylineRoutesDialectMarkers(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			format, warnings, detail := readRaylineRoutesBody([]byte(testCase.body), routesToolsDropped, "")
+			format, warnings, detail := readRaylineRoutesBody([]byte(testCase.body), false, "")
 			if detail != "" {
 				t.Fatalf("detail = %q, want none", detail)
 			}
@@ -754,7 +713,7 @@ func TestRaylineRoutesFormatHeaderWins(t *testing.T) {
 		"chat":      llmprotocol.OpenAIChatV1,
 		"responses": llmprotocol.OpenAIResponsesV1,
 	} {
-		format, _, detail := readRaylineRoutesBody(body, routesToolsDropped, hint)
+		format, _, detail := readRaylineRoutesBody(body, false, hint)
 		if detail != "" {
 			t.Fatalf("hint %q detail = %q, want none", hint, detail)
 		}
@@ -764,7 +723,7 @@ func TestRaylineRoutesFormatHeaderWins(t *testing.T) {
 	}
 	// An unrecognised hint falls back to inference rather than refusing a
 	// well-formed request over a header typo.
-	format, _, detail := readRaylineRoutesBody(body, routesToolsDropped, "klingon")
+	format, _, detail := readRaylineRoutesBody(body, false, "klingon")
 	if detail != "" || format != llmprotocol.OpenAIChatV1 {
 		t.Fatalf("bad hint gave (%q, %q), want inference", format, detail)
 	}
@@ -863,7 +822,7 @@ func TestRaylineRoutesReadsToolShapesAsDialectMarkers(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			format, warnings, detail := readRaylineRoutesBody([]byte(testCase.body), routesToolsDropped, "")
+			format, warnings, detail := readRaylineRoutesBody([]byte(testCase.body), false, "")
 			if detail != "" {
 				t.Fatalf("detail = %q, want none", detail)
 			}
@@ -894,7 +853,7 @@ func TestRaylineRoutesReadsToolShapesAsDialectMarkers(t *testing.T) {
 func TestRaylineRoutesFormatHeaderOutranksTheResponsesInference(t *testing.T) {
 	t.Parallel()
 	body := []byte(`{"input":[{"role":"user","content":"hi"}]}`)
-	format, _, detail := readRaylineRoutesBody(body, routesToolsDropped, "chat")
+	format, _, detail := readRaylineRoutesBody(body, false, "chat")
 	if detail != "" {
 		t.Fatalf("detail = %q, want none", detail)
 	}
@@ -902,7 +861,7 @@ func TestRaylineRoutesFormatHeaderOutranksTheResponsesInference(t *testing.T) {
 		t.Fatalf("format = %q, want the declared chat", format)
 	}
 	// With no header the body's own shape still decides.
-	if format, _, _ := readRaylineRoutesBody(body, routesToolsDropped, ""); format != llmprotocol.OpenAIResponsesV1 {
+	if format, _, _ := readRaylineRoutesBody(body, false, ""); format != llmprotocol.OpenAIResponsesV1 {
 		t.Fatalf("format = %q, want the inferred responses", format)
 	}
 }
@@ -1236,7 +1195,7 @@ func TestRaylineRoutesSaysNothingAboutAnEmptyToolList(t *testing.T) {
 		"absent":     `{"max_tokens":16,"messages":[{"role":"user","content":"hi"}]}`,
 		"not a list": `{"max_tokens":16,"messages":[{"role":"user","content":"hi"}],"tools":{}}`,
 	} {
-		for _, encodesNames := range []raylineRoutesToolEncoding{routesToolsDropped, routesToolNamesOnly, routesToolsForwarded} {
+		for _, encodesNames := range []bool{false, true} {
 			t.Run(name, func(t *testing.T) {
 				_, warnings, detail := readRaylineRoutesBody([]byte(body), encodesNames, "")
 				if detail != "" {
@@ -1252,7 +1211,7 @@ func TestRaylineRoutesSaysNothingAboutAnEmptyToolList(t *testing.T) {
 	// A body that does declare a tool still explains what happened to it.
 	withTools := `{"max_tokens":16,"messages":[{"role":"user","content":"hi"}],` +
 		`"tools":[{"name":"search","input_schema":{"type":"object"}}]}`
-	_, warnings, _ := readRaylineRoutesBody([]byte(withTools), routesToolsDropped, "")
+	_, warnings, _ := readRaylineRoutesBody([]byte(withTools), false, "")
 	if !routesWarns(warnings, "tools_not_encoded:") {
 		t.Fatalf("warnings = %v, want the dropped-tools warning", warnings)
 	}

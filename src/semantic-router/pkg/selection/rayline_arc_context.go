@@ -318,6 +318,11 @@ type RaylineARCTrace struct {
 	// service returned one.
 	PolicyPackageSHA256    string
 	PolicyPredictedCostUSD *float64
+	// PolicyToolDefinitionsStatus is the service's statement of whether the
+	// encode included the request's tool definitions; nil when it stated
+	// none (an older service, an append, or a held turn that encoded
+	// nothing).
+	PolicyToolDefinitionsStatus *string
 	// RouteResults are a Decisions lookup's results, keyed by result name
 	// (swift, sage, custom): the service's tier pick at each requested
 	// point, each checked as the decision's own action is. Nil off a lookup
