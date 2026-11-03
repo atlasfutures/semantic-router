@@ -103,7 +103,9 @@ func (r *OpenAIRouter) protocolEngine() (*protocolcodec.Engine, error) {
 // another protocol restates the charge rather than losing it.
 func cellProtocolPolicy() llmprotocol.Policy {
 	policy := llmprotocol.DefaultPolicy()
-	policy.PublishProviderCost = true
+	// Eval-only build (GoldLake 8513): the live eval calls the cell directly, with no
+	// routerProxy to strip the charge, so the cell does not restate it.
+	policy.PublishProviderCost = false
 	return policy
 }
 
