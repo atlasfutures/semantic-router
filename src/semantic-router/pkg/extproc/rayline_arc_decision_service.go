@@ -172,6 +172,12 @@ func (service *raylineARCDecisionService) RouteDecision(
 	decisionFacts.PolicyActionID = trace.PolicyActionID
 	decisionFacts.Checkpoint = trace.ArtifactRevision
 	decisionFacts.ToolsEncoded = routeToolsEncoded(trace.PolicyToolDefinitionsStatus, routePolicyService(algorithm))
+	if raylineARCHoldOfferKind(trace.OfferKind) {
+		// A held turn (capacity or media) encoded nothing, so the package's
+		// profile says nothing about this request's tools.
+		notEncoded := false
+		decisionFacts.ToolsEncoded = &notEncoded
+	}
 	decisionFacts.Alternatives = routeAlternatives(trace, selected.catalog)
 	// Both kinds of reuse count. A resumable encoder reports reuse as
 	// RetainedPrefixTokens and leaves CachedPrefixTokens at zero, so reading

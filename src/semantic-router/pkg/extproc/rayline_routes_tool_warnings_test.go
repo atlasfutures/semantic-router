@@ -154,36 +154,42 @@ func TestToolDefinitionsStatusIsAskedOnlyWhenAdvertised(t *testing.T) {
 // tool-definitions status on the trace.
 type toolStatusSelector struct {
 	tierStubSelector
-	status *string
+	status    *string
+	offerKind string
 }
 
 func (s *toolStatusSelector) Select(ctx context.Context, selCtx *selection.SelectionContext) (*selection.SelectionResult, error) {
 	result, err := s.tierStubSelector.Select(ctx, selCtx)
 	if err == nil {
 		result.RaylineARC.PolicyToolDefinitionsStatus = s.status
+		result.RaylineARC.OfferKind = s.offerKind
 	}
 	return result, err
 }
 
 // A lookup's tools warning follows the decision's encoding end to end: the
 // service's present drops it, absent states it, and no statement keeps the
-// configured account.
+// configured account. A held turn encoded nothing, whatever else says.
 func TestRaylineRoutesLookupSettlesTheToolWarning(t *testing.T) {
 	body := []byte(`{"model":"rayline/arc-dev","max_tokens":64,"messages":[{"role":"user","content":"hi"}],` +
 		`"tools":[{"name":"search","input_schema":{"type":"object"}}]}`)
 	present, absent := "present", "absent"
 	for name, tc := range map[string]struct {
-		status *string
-		warns  bool
+		status    *string
+		offerKind string
+		warns     bool
 	}{
-		"present":  {&present, false},
-		"absent":   {&absent, true},
-		"unstated": {nil, true},
+		"present":       {&present, "", false},
+		"absent":        {&absent, "", true},
+		"unstated":      {nil, "", true},
+		"capacity hold": {&present, "capacity_hold", true},
+		"media hold":    {&present, "media_hold", true},
 	} {
 		router, _ := oneCellRouter(t, "main")
 		selector := &toolStatusSelector{
 			tierStubSelector: tierStubSelector{stubARCSelector: stubARCSelector{arm: 0, workers: oneCellWorkers()}},
 			status:           tc.status,
+			offerKind:        tc.offerKind,
 		}
 		registry := selection.NewRegistry()
 		registry.Register(selection.MethodRaylineARC, selector)
