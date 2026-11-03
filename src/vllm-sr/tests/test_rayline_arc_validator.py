@@ -401,6 +401,21 @@ def test_rayline_arc_cli_mirrors_the_cache_context_switch():
         )
 
 
+def test_rayline_arc_cli_mirrors_the_value_usd_max_bounds():
+    # Unset by default; a set value lies in (0.1, 30], as in the Go loader.
+    decision = _policy_service_decision()
+    assert decision.algorithm.rayline_arc.policy_service.value_usd_max is None
+    policy = decision.algorithm.rayline_arc.policy_service.model_dump()
+    for value, valid in ((30, True), (5, True), (0.1, False), (30.01, False)):
+        policy["value_usd_max"] = value
+        payload = {**decision.algorithm.rayline_arc.model_dump(), "policy_service": policy}
+        if valid:
+            assert RaylineARCAlgorithmConfig.model_validate(payload).policy_service.value_usd_max == value
+        else:
+            with pytest.raises(ValidationError):
+                RaylineARCAlgorithmConfig.model_validate(payload)
+
+
 def test_rayline_arc_cli_refuses_a_policy_mode_close_header():
     errors = _validate_rayline_arc_decision(
         _policy_service_decision(close_header="x-rayline-episode-close")

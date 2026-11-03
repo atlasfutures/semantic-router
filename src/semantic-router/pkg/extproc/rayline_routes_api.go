@@ -394,7 +394,8 @@ func (r *OpenAIRouter) handleRaylineRoutesAPI(
 			message: "this ARC cell does not serve routing controls",
 		})
 	}
-	routing, body, refusal := readRaylineRoutesRouting(body, r.raylineRoutesCellModelNames())
+	routing, body, refusal := readRaylineRoutesRouting(body, r.raylineRoutesCellModelNames(),
+		target.Algorithm.RaylineARC.PolicyService.EffectiveValueUSDMax())
 	if refusal != nil {
 		return r.createRaylineRoutesCodedError(ctx, refusal)
 	}

@@ -10,6 +10,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/routerruntime"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
@@ -78,7 +79,7 @@ func predictionsFixtureDecision(t *testing.T) routerruntime.RouteDecision {
 func predictionsRouting(t *testing.T) *raylineRoutesRouting {
 	t.Helper()
 	fixture := readContractFixture(t, "request_valid_decisions_predictions.json")
-	routing, _, refusal := readRaylineRoutesRouting(fixture.Body, nil)
+	routing, _, refusal := readRaylineRoutesRouting(fixture.Body, nil, config.DefaultRaylineARCValueUSDMax)
 	if refusal != nil {
 		t.Fatalf("refused: %+v", refusal)
 	}

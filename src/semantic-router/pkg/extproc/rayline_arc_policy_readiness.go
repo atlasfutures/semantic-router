@@ -151,7 +151,7 @@ func requireRaylineARCPolicyServing(
 		advertised(listing.Capabilities)
 	}
 	required := raylineARCPolicyServiceRequirements(policy)
-	routesRequirements(&required, routing)
+	routesRequirements(&required, routing, policy.EffectiveValueUSDMax())
 	generationRoutingRequirements(&required, policy)
 	err = raylinearc.CheckPolicyServiceRequirements(listing, loaded, required)
 	var failure *raylinearc.PolicyServiceError
@@ -169,7 +169,11 @@ func requireRaylineARCPolicyServing(
 // tier points every lookup asks (swift and sage), cost weights over the
 // whole public V range [0.1, 5] (cost_weight [0.2, 10]) for any custom
 // result, and the temperature shape when the cell seeds lookup draws.
-func routesRequirements(required *raylinearc.PolicyServiceRequirements, routing *config.RaylineARCRoutesRoutingConfig) {
+func routesRequirements(
+	required *raylinearc.PolicyServiceRequirements,
+	routing *config.RaylineARCRoutesRoutingConfig,
+	valueUSDMax float64,
+) {
 	if routing == nil {
 		return
 	}
@@ -183,7 +187,7 @@ func routesRequirements(required *raylinearc.PolicyServiceRequirements, routing 
 	if routing.ExplorationSalt != "" && !slices.Contains(required.Capabilities, raylinearc.PolicyCapabilityExplorationTemperature) {
 		required.Capabilities = append(required.Capabilities, raylinearc.PolicyCapabilityExplorationTemperature)
 	}
-	required.CostWeights = append(required.CostWeights, 1/routesValueUSDMax, 1/routesValueUSDMin)
+	required.CostWeights = append(required.CostWeights, 1/valueUSDMax, 1/routesValueUSDMin)
 	for _, preset := range routesPresets {
 		required.CostWeights = append(required.CostWeights, 1/preset.valueUSD)
 	}
@@ -199,5 +203,5 @@ func generationRoutingRequirements(required *raylinearc.PolicyServiceRequirement
 	if !slices.Contains(required.Capabilities, raylinearc.PolicyCapabilityDecisionsV2) {
 		required.Capabilities = append(required.Capabilities, raylinearc.PolicyCapabilityDecisionsV2)
 	}
-	required.CostWeights = append(required.CostWeights, 1/routesValueUSDMax, 1/routesValueUSDMin)
+	required.CostWeights = append(required.CostWeights, 1/policy.EffectiveValueUSDMax(), 1/routesValueUSDMin)
 }

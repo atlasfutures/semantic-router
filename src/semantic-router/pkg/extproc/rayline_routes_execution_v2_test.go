@@ -105,7 +105,7 @@ func TestRoutesExecutionV2ReproducesTheGoldenVectors(t *testing.T) {
 	}
 	for _, vector := range vectors.Vectors {
 		t.Run(vector.Name, func(t *testing.T) {
-			routing, _, refusal := readRaylineRoutesRouting(executionV2Body(`{"execution":`+string(vector.Execution)+`}`), nil)
+			routing, _, refusal := readRaylineRoutesRouting(executionV2Body(`{"execution":`+string(vector.Execution)+`}`), nil, config.DefaultRaylineARCValueUSDMax)
 			if refusal != nil {
 				if refusal.code != vector.Expect.Refused {
 					t.Fatalf("parse refused %s (%s), want %q", refusal.code, refusal.message, vector.Expect.Refused)
@@ -142,7 +142,7 @@ func TestRoutesExecutionV2ReproducesTheGoldenVectors(t *testing.T) {
 // the contract's invalid policies and a generation request are refused.
 func TestRoutesPolicy(t *testing.T) {
 	routing, _, refusal := readRaylineRoutesRouting(executionV2Body(
-		`{"policy":{"preset":"arc-policy.hybrid-default.v1","overrides":{"schedule":{"model":["cache_boundaries","user_messages"]}}}}`), nil)
+		`{"policy":{"preset":"arc-policy.hybrid-default.v1","overrides":{"schedule":{"model":["cache_boundaries","user_messages"]}}}}`), nil, config.DefaultRaylineARCValueUSDMax)
 	if refusal != nil {
 		t.Fatal(refusal)
 	}
@@ -161,7 +161,7 @@ func TestRoutesPolicy(t *testing.T) {
 		"p_pass above 1":     `{"policy":{"preset":"arc-policy.prefer-local.v1","overrides":{"selection":{"min_p_pass":1.5}}}}`,
 		"zero rest tokens":   `{"policy":{"preset":"arc-policy.prefer-local.v1","overrides":{"selection":{"max_rest_tokens":0}}}}`,
 	} {
-		if _, _, refusal := readRaylineRoutesRouting(executionV2Body(body), nil); refusal == nil || refusal.code != "policy_invalid" {
+		if _, _, refusal := readRaylineRoutesRouting(executionV2Body(body), nil, config.DefaultRaylineARCValueUSDMax); refusal == nil || refusal.code != "policy_invalid" {
 			t.Errorf("%s: refusal %+v", name, refusal)
 		}
 	}
@@ -179,7 +179,7 @@ func TestRoutesExecutionV2AdmitsMarkerInferredRetainedTail(t *testing.T) {
 		if vector.Name != "marker_inferred_retained_tail_compaction" {
 			continue
 		}
-		if _, _, refusal := readRaylineRoutesRouting(executionV2Body(`{"execution":`+string(vector.Execution)+`}`), nil); refusal != nil {
+		if _, _, refusal := readRaylineRoutesRouting(executionV2Body(`{"execution":`+string(vector.Execution)+`}`), nil, config.DefaultRaylineARCValueUSDMax); refusal != nil {
 			t.Fatalf("refused %+v", refusal)
 		}
 		return
@@ -243,7 +243,7 @@ func TestRouteExecutionV2ReachesTheDecideRequest(t *testing.T) {
 func TestRoutesExecutionV2ReceiptsAndEchoes(t *testing.T) {
 	vectors := readExecutionV2Vectors(t)
 	routing, _, refusal := readRaylineRoutesRouting(executionV2Body(`{"policy":{"preset":"arc-policy.hybrid-default.v1"},"execution":`+
-		string(vectors.Vectors[0].Execution)+`}`), nil)
+		string(vectors.Vectors[0].Execution)+`}`), nil, config.DefaultRaylineARCValueUSDMax)
 	if refusal != nil {
 		t.Fatal(refusal)
 	}
@@ -301,7 +301,7 @@ func TestRoutesExecutionV2ReceiptsAndEchoes(t *testing.T) {
 // Absent routing.policy and routing.execution the echo is written exactly
 // as before (no re-keyed members), and no receipt appears.
 func TestRoutesEchoWithoutV2IsUnchanged(t *testing.T) {
-	routing, _, refusal := readRaylineRoutesRouting(executionV2Body(`{"value_usd":2.0,"temperature":0.5}`), nil)
+	routing, _, refusal := readRaylineRoutesRouting(executionV2Body(`{"value_usd":2.0,"temperature":0.5}`), nil, config.DefaultRaylineARCValueUSDMax)
 	if refusal != nil {
 		t.Fatal(refusal)
 	}
@@ -374,7 +374,7 @@ func TestRouteExecutionV2ServiceRefusals(t *testing.T) {
 // sent, and a receipt's selection comparison is copied verbatim.
 func TestRoutesPolicyPreferLocal(t *testing.T) {
 	routing, _, refusal := readRaylineRoutesRouting(executionV2Body(
-		`{"policy":{"preset":"arc-policy.prefer-local.v1","overrides":{"selection":{"min_p_pass":0.7,"max_rest_tokens":40000}}}}`), nil)
+		`{"policy":{"preset":"arc-policy.prefer-local.v1","overrides":{"selection":{"min_p_pass":0.7,"max_rest_tokens":40000}}}}`), nil, config.DefaultRaylineARCValueUSDMax)
 	if refusal != nil {
 		t.Fatal(refusal)
 	}
@@ -423,7 +423,7 @@ func TestRouteExecutionV2ServiceRefusalThroughTheSelector(t *testing.T) {
 // request: it is not the omitted dimension (the preset's schedule).
 func TestRoutesPolicyEmptyScheduleIsKept(t *testing.T) {
 	routing, _, refusal := readRaylineRoutesRouting(executionV2Body(
-		`{"policy":{"preset":"arc-policy.hybrid-default.v1","overrides":{"schedule":{"model":[]}}}}`), nil)
+		`{"policy":{"preset":"arc-policy.hybrid-default.v1","overrides":{"schedule":{"model":[]}}}}`), nil, config.DefaultRaylineARCValueUSDMax)
 	if refusal != nil {
 		t.Fatal(refusal)
 	}

@@ -154,9 +154,8 @@ func readRaylineGenerationRouting(
 		if !finite {
 			return nil, nil, routesInvalid("value_invalid", "routing.value_usd must be a finite number of USD.")
 		}
-		if value < routesValueUSDMin || value > routesValueUSDMax {
-			return nil, nil, routesInvalid("value_out_of_bounds", fmt.Sprintf(
-				"routing.value_usd must lie in [%g, %g]; it is never clamped.", routesValueUSDMin, routesValueUSDMax))
+		if failure := routesCheckValueUSD(value, policy.EffectiveValueUSDMax()); failure != nil {
+			return nil, nil, failure
 		}
 		if !policy.GenerationRouting.CallerValue {
 			// A tier: its V is ours. The caller may restate it, never move it.
