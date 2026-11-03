@@ -172,10 +172,9 @@ func (service *raylineARCDecisionService) RouteDecision(
 	decisionFacts.ThinkingLevel = trace.ThinkingLevel
 	decisionFacts.PolicyActionID = trace.PolicyActionID
 	decisionFacts.Checkpoint = trace.ArtifactRevision
-	decisionFacts.ToolsEncoded = routeToolsEncoded(trace.PolicyToolDefinitionsStatus, routePolicyService(algorithm))
+	decisionFacts.ToolsEncoded = routeToolsEncoded(trace.PolicyToolDefinitionsStatus)
 	if raylineARCHoldOfferKind(trace.OfferKind) {
-		// A held turn (capacity or media) encoded nothing, so the package's
-		// profile says nothing about this request's tools.
+		// A held turn (capacity or media) encoded nothing.
 		notEncoded := false
 		decisionFacts.ToolsEncoded = &notEncoded
 	}
@@ -1034,33 +1033,22 @@ func routeControlOf(algorithm *config.AlgorithmConfig) func(actionID string) str
 }
 
 // routeToolsEncoded is whether the decision's encoding included the
-// request's tool definitions. The service's own statement wins
-// (encoding.tool_definitions_status: present or absent; unknown says
-// nothing); without it, a package (the policy block that decided) whose
-// encoding profile encodes request tools (PackageEncodesRequestTools)
-// encoded them; otherwise nothing says, and nil keeps the endpoint's
-// configured account.
-func routeToolsEncoded(status *string, policy *config.RaylineARCPolicyServiceConfig) *bool {
-	encoded := func(value bool) *bool { return &value }
-	if status != nil {
-		switch *status {
-		case "present":
-			return encoded(true)
-		case "absent":
-			return encoded(false)
-		}
-	}
-	if policy != nil && policy.PackageEncodesRequestTools() {
-		return encoded(true)
-	}
-	return nil
-}
-
-// routePolicyService is the decision's policy_service block; nil outside
-// the policy-service mode.
-func routePolicyService(algorithm *config.AlgorithmConfig) *config.RaylineARCPolicyServiceConfig {
-	if algorithm == nil || algorithm.RaylineARC == nil {
+// request's tool definitions, as the service stated it
+// (encoding.tool_definitions_status): present or absent. Nil when it stated
+// nothing or unknown, which keeps the endpoint's configured account. The
+// package's encoding profile is not read in its place: tool rule v1 drops
+// name-less built-ins, so a profile that includes tools does not show that
+// this request's tools were encoded.
+func routeToolsEncoded(status *string) *bool {
+	if status == nil {
 		return nil
 	}
-	return algorithm.RaylineARC.PolicyService
+	encoded := func(value bool) *bool { return &value }
+	switch *status {
+	case "present":
+		return encoded(true)
+	case "absent":
+		return encoded(false)
+	}
+	return nil
 }
