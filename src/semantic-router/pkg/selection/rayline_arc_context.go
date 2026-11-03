@@ -69,6 +69,13 @@ type RaylineARCSelectionContext struct {
 	// arm's private provider pin when it declares one, so its failures are
 	// recorded against that route, not the standard one.
 	PrivateTurn bool
+	// EphemeralTurn is true on a zdr request only. Such a turn holds nothing
+	// at the policy service past its own decide: it names a fresh episode,
+	// never stages or appends, and asks the service to release what the
+	// decide left. A privacy-mode turn is not ephemeral: it uses the
+	// conversation's own episode like a standard turn, and the service and
+	// the cell drop that state after the cell's idle TTL.
+	EphemeralTurn bool
 	// FamilyExclusions are the vendor families this turn's session excludes
 	// after a refusal (pathfinder#6066 D3), read from the episode store when
 	// the cell's fallback excludes families. A main turn is offered no model

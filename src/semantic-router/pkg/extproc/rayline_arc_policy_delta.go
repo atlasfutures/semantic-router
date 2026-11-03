@@ -206,11 +206,11 @@ type policyStaging struct {
 
 // policyDeltaEligible reports whether this cell's turn may stage at all: a
 // delta cell's strict main turn, without exploration, in a format the
-// append can carry, on a service that advertises staged turns. A private
-// (privacy or zdr) turn never stages: the service would keep its messages
+// append can carry, on a service that advertises staged turns. An
+// ephemeral (zdr) turn never stages: the service would keep its messages
 // for the next turn, and its reply would be appended to them.
-func (scorer *policyServiceScorer) policyDeltaEligible(request *raylinearc.PolicyDecisionRequest, sideCall bool, private bool) bool {
-	return scorer.delta && scorer.stagedTurnsServed.Load() && !sideCall && !private && request.EpisodeMode == "" &&
+func (scorer *policyServiceScorer) policyDeltaEligible(request *raylinearc.PolicyDecisionRequest, sideCall bool, ephemeral bool) bool {
+	return scorer.delta && scorer.stagedTurnsServed.Load() && !sideCall && !ephemeral && request.EpisodeMode == "" &&
 		request.Selection.Exploration == nil && policyAppendFormat(request.RequestFormat)
 }
 
