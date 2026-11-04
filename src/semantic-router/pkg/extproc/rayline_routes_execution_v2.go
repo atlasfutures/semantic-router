@@ -192,12 +192,20 @@ func readRoutesPolicySelection(raw json.RawMessage) (*raylinearc.PolicyMemberSel
 type routesExecutionV2History struct {
 	message  int
 	actionID string
+	// routeID names the decision that produced the message, when the core
+	// kept one. Optional on the wire until every core release sends it; a
+	// gateway or a later report joins on it, the policy service does not
+	// read it.
+	routeID *string
 }
 
 type routesExecutionV2LastServed struct {
 	actionID string
 	worker   string
 	message  *int
+	// routeID names the decision behind the held action's latest message;
+	// optional on the wire like history's.
+	routeID *string
 }
 
 type routesExecutionV2Capacity struct {
@@ -296,11 +304,16 @@ func readRoutesExecutionV2(raw json.RawMessage, envelope map[string]json.RawMess
 	}
 	if !routesExecutionIsNull(members["last_served"]) {
 		var served map[string]json.RawMessage
-		served, failure = routesExecutionObject(members["last_served"], ".last_served", "action_id", "worker", "message")
+		served, failure = routesExecutionObjectWithOptional(members["last_served"], ".last_served", []string{"route_id"}, "action_id", "worker", "message")
 		if failure != nil {
 			return nil, failure
 		}
 		entry := &routesExecutionV2LastServed{}
+		if raw, ok := served["route_id"]; ok {
+			if entry.routeID, failure = routesExecutionNullableString(raw, routesExecutionOpaqueID, ".last_served.route_id"); failure != nil {
+				return nil, failure
+			}
+		}
 		if entry.actionID, failure = routesExecutionString(served["action_id"], routesExecutionSHA256, ".last_served.action_id"); failure != nil {
 			return nil, failure
 		}
@@ -413,11 +426,16 @@ func readRoutesExecutionV2History(raw json.RawMessage) ([]routesExecutionV2Histo
 	seen := map[int]bool{}
 	for index, item := range items {
 		path := fmt.Sprintf(".history[%d]", index)
-		members, failure := routesExecutionObject(item, path, "message", "action_id")
+		members, failure := routesExecutionObjectWithOptional(item, path, []string{"route_id"}, "message", "action_id")
 		if failure != nil {
 			return nil, failure
 		}
 		entry := routesExecutionV2History{}
+		if raw, ok := members["route_id"]; ok {
+			if entry.routeID, failure = routesExecutionNullableString(raw, routesExecutionOpaqueID, path+".route_id"); failure != nil {
+				return nil, failure
+			}
+		}
 		if entry.message, failure = routesExecutionInteger(members["message"], path+".message", 0, math.MaxInt32); failure != nil {
 			return nil, failure
 		}

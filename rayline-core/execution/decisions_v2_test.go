@@ -287,6 +287,14 @@ func TestV2EnvelopeCarriesEventsLastServedHistoryAndTargets(t *testing.T) {
 	if len(last.History) != 2 || last.History[0].Message != 1 || last.History[1].Message != 3 {
 		t.Fatalf("history %+v", last.History)
 	}
+	// Each entry names the decision that produced it, and last_served names
+	// the decision behind the held action's latest message.
+	if last.History[0].RouteID == nil || *last.History[0].RouteID != "route-0" || last.History[1].RouteID == nil || *last.History[1].RouteID != "route-1" {
+		t.Fatalf("history route ids %+v", last.History)
+	}
+	if last.LastServed.RouteID == nil || *last.LastServed.RouteID != "route-1" {
+		t.Fatalf("last_served route id %+v", last.LastServed)
+	}
 	if last.Targets[0].Cache == nil || last.Targets[0].Cache.ContextEpoch == nil || *last.Targets[0].Cache.ContextEpoch != last.Turn.Epoch || last.Targets[1].Cache != nil {
 		t.Fatalf("cache evidence %+v", last.Targets)
 	}

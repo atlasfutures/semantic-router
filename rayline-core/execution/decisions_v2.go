@@ -100,11 +100,18 @@ type lastServedV2 struct {
 	ActionID string `json:"action_id"`
 	Worker   string `json:"worker"`
 	Message  *int   `json:"message"`
+	// RouteID names the decision that chose the last served action, so a
+	// later lookup or report can refer to the gateway's record of it. Null
+	// when the core did not keep one.
+	RouteID *string `json:"route_id"`
 }
 
 type historyV2 struct {
 	Message  int    `json:"message"`
 	ActionID string `json:"action_id"`
+	// RouteID names the decision that produced this message; null when the
+	// core did not keep one.
+	RouteID *string `json:"route_id"`
 }
 
 type expectV2 struct {
@@ -176,7 +183,7 @@ func (provider *HTTPDecisions) projectV2(input DecisionInput) contextV2 {
 	}
 	if !input.Event.is(EventSidecall) {
 		for _, entry := range input.State.Attribution {
-			external.History = append(external.History, historyV2{Message: entry.Message, ActionID: entry.ActionID})
+			external.History = append(external.History, historyV2{Message: entry.Message, ActionID: entry.ActionID, RouteID: entry.RouteID})
 		}
 	}
 	// last_served is the truthful record of what last ran. It survives prefix
@@ -190,6 +197,7 @@ func (provider *HTTPDecisions) projectV2(input DecisionInput) contextV2 {
 			if entry.ActionID == held && (served.Message == nil || entry.Message > *served.Message) {
 				message := entry.Message
 				served.Message = &message
+				served.RouteID = entry.RouteID
 			}
 		}
 		external.LastServed = served

@@ -159,6 +159,38 @@ func routesExecutionObject(raw json.RawMessage, path string, keys ...string) (ma
 	return members, nil
 }
 
+// routesExecutionObjectWithOptional is routesExecutionObject for an object
+// whose contract later gained members: the required keys must be present (an
+// unknown value is null, never omitted), the optional ones may be absent.
+// Used only for members added after the first v2 cores shipped.
+func routesExecutionObjectWithOptional(raw json.RawMessage, path string, optional []string, keys ...string) (map[string]json.RawMessage, *routesContractError) {
+	var members map[string]json.RawMessage
+	if json.Unmarshal(raw, &members) != nil || members == nil || bytes.HasPrefix(bytes.TrimSpace(raw), []byte("null")) {
+		return nil, routesExecutionInvalid(path, "must be an object")
+	}
+	allowed := make(map[string]bool, len(keys)+len(optional))
+	for _, key := range keys {
+		allowed[key] = true
+		if _, ok := members[key]; !ok {
+			return nil, routesExecutionInvalid(path, "is missing "+key+" (an unknown value is null, never omitted)")
+		}
+	}
+	for _, key := range optional {
+		allowed[key] = true
+	}
+	var extra []string
+	for key := range members {
+		if !allowed[key] {
+			extra = append(extra, key)
+		}
+	}
+	if len(extra) > 0 {
+		sort.Strings(extra)
+		return nil, routesExecutionInvalid(path, "has unsupported member(s): "+strings.Join(extra, ", "))
+	}
+	return members, nil
+}
+
 func routesExecutionIsNull(raw json.RawMessage) bool {
 	return bytes.Equal(bytes.TrimSpace(raw), []byte("null"))
 }

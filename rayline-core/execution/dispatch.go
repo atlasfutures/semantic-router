@@ -170,6 +170,11 @@ func (server *Server) upstream(ctx context.Context, selected admittedAction, dec
 	if deployment.Kind == "cloud" {
 		if cloudTransport(deployment) == cloudModelPin {
 			request.Header.Set("X-Workshop-Required-Model", deployment.WireModel)
+			// The decision this pin executes, so the gateway can join the
+			// generation to its lookup row. Not a dispatch receipt: a pin
+			// claims no profile, worker or action, and the gateway strips
+			// the header before any provider sees it.
+			request.Header.Set("X-Rayline-Route-Id", decision.RouteID)
 		} else {
 			request.Header.Set("X-Rayline-Dispatch-Profile", deployment.DispatchProfileSHA256)
 			request.Header.Set("X-Rayline-Worker", decision.Worker)

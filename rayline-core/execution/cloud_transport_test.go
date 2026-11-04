@@ -48,6 +48,9 @@ func TestModelPinTransportsPrivateAppendAcrossIngressFormats(t *testing.T) {
 						t.Errorf("model pin claimed exact receipt header %s", header)
 					}
 				}
+				if r.Header.Get("X-Rayline-Route-Id") == "" {
+					t.Error("model pin dispatch did not name the decision it executes")
+				}
 				body, _ := io.ReadAll(r.Body)
 				var wire map[string]json.RawMessage
 				if err := json.Unmarshal(body, &wire); err != nil {

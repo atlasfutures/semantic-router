@@ -173,6 +173,64 @@ func TestRoutesPolicy(t *testing.T) {
 
 // A marker-inferred retained-tail compaction is admitted (pathfinder
 // #5907): the old explicit_client-only rule is not mirrored.
+// history[] and last_served may name the decision that produced them
+// (route_id, optional until every core sends it): kept when sent, null or
+// absent otherwise, and anything but a string refused.
+func TestRoutesExecutionV2KeepsHistoryRouteIDs(t *testing.T) {
+	vectors := readExecutionV2Vectors(t)
+	var base json.RawMessage
+	for _, vector := range vectors.Vectors {
+		if vector.Expect.Refused == "" {
+			var envelope map[string]any
+			if err := json.Unmarshal(vector.Execution, &envelope); err != nil {
+				t.Fatal(err)
+			}
+			if history, ok := envelope["history"].([]any); ok && len(history) > 0 && envelope["last_served"] != nil {
+				base = vector.Execution
+				break
+			}
+		}
+	}
+	if base == nil {
+		t.Skip("no admitted vector with history and last_served")
+	}
+	withRouteIDs := func(history any, served any) []byte {
+		var envelope map[string]any
+		if err := json.Unmarshal(base, &envelope); err != nil {
+			t.Fatal(err)
+		}
+		for _, entry := range envelope["history"].([]any) {
+			entry.(map[string]any)["route_id"] = history
+		}
+		envelope["last_served"].(map[string]any)["route_id"] = served
+		raw, err := json.Marshal(envelope)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return raw
+	}
+	routing, _, refusal := readRaylineRoutesRouting(executionV2Body(`{"execution":`+string(withRouteIDs("rt_1234abcd", "rt_1234abcd"))+`}`), nil, config.DefaultRaylineARCValueUSDMax)
+	if refusal != nil {
+		t.Fatalf("refused %s: %s", refusal.code, refusal.message)
+	}
+	execution := routing.executionV2
+	if execution == nil || execution.lastServed == nil || execution.lastServed.routeID == nil || *execution.lastServed.routeID != "rt_1234abcd" {
+		t.Fatalf("last_served route id not kept: %+v", execution)
+	}
+	for _, entry := range execution.history {
+		if entry.routeID == nil || *entry.routeID != "rt_1234abcd" {
+			t.Fatalf("history route id not kept: %+v", entry)
+		}
+	}
+	routing, _, refusal = readRaylineRoutesRouting(executionV2Body(`{"execution":`+string(withRouteIDs(nil, nil))+`}`), nil, config.DefaultRaylineARCValueUSDMax)
+	if refusal != nil || routing.executionV2.lastServed.routeID != nil {
+		t.Fatalf("null route id must read as unknown: %v %+v", refusal, routing.executionV2.lastServed)
+	}
+	if _, _, refusal = readRaylineRoutesRouting(executionV2Body(`{"execution":`+string(withRouteIDs(5, "rt_1234abcd"))+`}`), nil, config.DefaultRaylineARCValueUSDMax); refusal == nil || refusal.code != "execution_invalid" {
+		t.Fatalf("a numeric route id must be refused, got %v", refusal)
+	}
+}
+
 func TestRoutesExecutionV2AdmitsMarkerInferredRetainedTail(t *testing.T) {
 	vectors := readExecutionV2Vectors(t)
 	for _, vector := range vectors.Vectors {
