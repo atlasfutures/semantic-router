@@ -3,6 +3,7 @@ package extproc
 import (
 	"encoding/json"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -113,14 +114,14 @@ func TestApplyGenerationRoutingStripsAndRefuses(t *testing.T) {
 	}}}}}
 	ctx := &RequestContext{Headers: map[string]string{}}
 	body, refusal := router.applyRaylineGenerationRouting(
-		[]byte(`{"model":"rayline/arc-dev","messages":[{"role":"user","content":"x"}],"routing":{"value_usd":2,"temperature":0.5}}`), ctx)
+		[]byte(`{"model":"arc-1.0","messages":[{"role":"user","content":"x"}],"routing":{"value_usd":2,"temperature":0.5}}`), ctx)
 	if refusal != nil || strings.Contains(string(body), "routing") || ctx.RaylineGenerationRouting == nil ||
 		*ctx.RaylineGenerationRouting.costWeight != 0.5 || !strings.Contains(ctx.RaylineRoutesControlsKey, "v=2") {
 		t.Fatalf("body %s ctx %+v key %q refusal %v", body, ctx.RaylineGenerationRouting, ctx.RaylineRoutesControlsKey, refusal)
 	}
 	refusedCtx := &RequestContext{Headers: map[string]string{}}
 	_, refusal = router.applyRaylineGenerationRouting(
-		[]byte(`{"model":"rayline/arc-dev","messages":[{"role":"user","content":"x"}],"routing":{"value_usd":9}}`), refusedCtx)
+		[]byte(`{"model":"arc-1.0","messages":[{"role":"user","content":"x"}],"routing":{"value_usd":9}}`), refusedCtx)
 	if refusal == nil || immediateStatusCode(t, refusal) != 400 || refusedCtx.ImmediateProtocolError == nil ||
 		refusedCtx.ImmediateProtocolError.Code != "value_out_of_bounds" {
 		t.Fatalf("refusal %v %+v", refusal, refusedCtx.ImmediateProtocolError)
@@ -130,6 +131,80 @@ func TestApplyGenerationRoutingStripsAndRefuses(t *testing.T) {
 	untouched := []byte(`{"model":"m","messages":[],"routing":{"value_usd":9}}`)
 	if out, refusal := plainRouter.applyRaylineGenerationRouting(untouched, &RequestContext{}); refusal != nil || string(out) != string(untouched) {
 		t.Fatal("a cell without generation_routing read the block")
+	}
+}
+
+// One standing cell, many recipes (ARC Dynamic): the block is read from the
+// recipe the turn's model selects. Configurable ARC (the default recipe,
+// caller_value) takes the caller's V as its cost weight; a tier recipe keeps
+// its own V, so restating it is served and moving it is refused; a turn with
+// no block is untouched; a recipe without the block reads nothing.
+func TestApplyGenerationRoutingReadsTheTurnsOwnRecipe(t *testing.T) {
+	arcDecision := func(name string, policy *config.RaylineARCPolicyServiceConfig) config.Decision {
+		return config.Decision{Name: name, Algorithm: &config.AlgorithmConfig{
+			Type: config.RaylineARCAlgorithmType, OnError: "fail_closed",
+			RaylineARC: &config.RaylineARCAlgorithmConfig{PolicyService: policy},
+		}}
+	}
+	swift := generationPolicy(false, nil)
+	swift.GenerationRouting = nil
+	swiftWeight := 10.0
+	swift.DecisionsV2 = &config.RaylineARCDecisionsV2Config{CostWeight: &swiftWeight}
+	cfg := &config.RouterConfig{
+		Entrypoints: []config.EntrypointMapping{
+			{ModelNames: []string{"arc-1.0"}, Recipe: config.DefaultRecipeName},
+			{ModelNames: []string{"arc-sage-1.0"}, Recipe: "arc-sage"},
+			{ModelNames: []string{"arc-swift-1.0"}, Recipe: "arc-swift"},
+		},
+		Recipes: []config.RoutingRecipe{
+			{Name: config.DefaultRecipeName, Profile: config.RoutingProfile{Decisions: []config.Decision{arcDecision("arc", generationPolicy(true, nil))}}},
+			{Name: "arc-sage", Profile: config.RoutingProfile{Decisions: []config.Decision{arcDecision("sage", generationPolicy(false, sageWeight()))}}},
+			{Name: "arc-swift", Profile: config.RoutingProfile{Decisions: []config.Decision{arcDecision("swift", swift)}}},
+		},
+	}
+	cfg.Recipes[0].Profile.Decisions[0].Algorithm.RaylineARC.PolicyService.ValueUSDMax = 30
+	router := &OpenAIRouter{Config: cfg}
+	turn := func(model, routing string) ([]byte, *RequestContext, string) {
+		ctx := &RequestContext{Headers: map[string]string{}}
+		body := `{"model":"` + model + `","messages":[{"role":"user","content":"x"}]`
+		if routing != "" {
+			body += `,"routing":` + routing
+		}
+		out, refusal := router.applyRaylineGenerationRouting([]byte(body+"}"), ctx)
+		code := ""
+		if refusal != nil {
+			if ctx.ImmediateProtocolError != nil {
+				code = ctx.ImmediateProtocolError.Code
+			} else {
+				code = "refused"
+			}
+		}
+		return out, ctx, code
+	}
+	for _, v := range []struct{ value, weight float64 }{{1, 1}, {3, 1.0 / 3}, {10, 0.1}} {
+		out, ctx, code := turn("arc-1.0", `{"value_usd":`+strconv.FormatFloat(v.value, 'g', -1, 64)+`}`)
+		if code != "" || strings.Contains(string(out), "routing") || ctx.RaylineGenerationRouting == nil ||
+			ctx.RaylineGenerationRouting.costWeight == nil || *ctx.RaylineGenerationRouting.costWeight != v.weight {
+			t.Fatalf("arc-1.0 V=%g: code %q ctx %+v body %s", v.value, code, ctx.RaylineGenerationRouting, out)
+		}
+	}
+	if _, ctx, code := turn("arc-sage-1.0", `{"value_usd":4.5}`); code != "" || ctx.RaylineGenerationRouting == nil || ctx.RaylineGenerationRouting.costWeight != nil {
+		t.Fatalf("sage restating its V: code %q ctx %+v", code, ctx.RaylineGenerationRouting)
+	}
+	if _, _, code := turn("arc-sage-1.0", `{"value_usd":1}`); code != "tier_value_immutable" {
+		t.Fatalf("sage at another V: code %q", code)
+	}
+	plain := []byte(`{"model":"arc-sage-1.0","messages":[{"role":"user","content":"x"}]}`)
+	if out, refusal := router.applyRaylineGenerationRouting(plain, &RequestContext{Headers: map[string]string{}}); refusal != nil || string(out) != string(plain) {
+		t.Fatal("a sage turn without routing changed")
+	}
+	plain10 := []byte(`{"model":"arc-1.0","messages":[{"role":"user","content":"x"}]}`)
+	if out, refusal := router.applyRaylineGenerationRouting(plain10, &RequestContext{Headers: map[string]string{}}); refusal != nil || string(out) != string(plain10) {
+		t.Fatal("an arc-1.0 turn without routing changed")
+	}
+	// A recipe without the block reads nothing, as a cell without it always has.
+	if _, ctx, code := turn("arc-swift-1.0", `{"value_usd":10}`); code != "" || ctx.RaylineGenerationRouting != nil {
+		t.Fatalf("swift without the block: code %q ctx %+v", code, ctx.RaylineGenerationRouting)
 	}
 }
 

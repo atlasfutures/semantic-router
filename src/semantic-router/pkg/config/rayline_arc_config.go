@@ -908,22 +908,39 @@ func validateRaylineARCSpecializedAlgorithmConfig(decisionName string, algorithm
 	return nil
 }
 
-// validateRaylineARCGenerationRoutingScope refuses generation_routing in a
-// config with named recipes. The block is read and stripped at the body
-// phase, before the request's recipe is resolved, from the default recipe's
-// decisions: in a multi-recipe config a named recipe's block would be
-// ignored and another recipe's turns would inherit the default's. A cell
-// serves one recipe, so it serves the block from its default recipe.
+// validateRaylineARCGenerationRoutingScope refuses a recipe with more than
+// one ARC decision carrying generation_routing. The block is read and
+// stripped at the body phase from the recipe the turn's model selects (the
+// default recipe for configurable ARC, a tier's own recipe for a tier), and a
+// recipe serves one ARC decision: with two, which V applies would be a guess.
+// Each recipe reads its own block, so a multi-recipe standing cell may serve
+// configurable ARC (caller_value) beside fixed-V tiers.
 func validateRaylineARCGenerationRoutingScope(cfg *RouterConfig, decision Decision) error {
 	arc := decision.Algorithm.RaylineARC
 	if cfg == nil || arc == nil || arc.PolicyService == nil || arc.PolicyService.GenerationRouting == nil {
 		return nil
 	}
-	for i := range cfg.Recipes {
-		if cfg.Recipes[i].Name != DefaultRecipeName {
+	recipes := make([]RoutingRecipe, 0, len(cfg.Recipes)+1)
+	recipes = append(recipes, cfg.Recipes...)
+	if _, ok := cfg.RecipeByName(DefaultRecipeName); !ok {
+		if recipe := cfg.DefaultRecipe(); recipe != nil {
+			recipes = append(recipes, *recipe)
+		}
+	}
+	for i := range recipes {
+		count := 0
+		for j := range recipes[i].Profile.Decisions {
+			candidate := recipes[i].Profile.Decisions[j].Algorithm
+			if candidate == nil || strings.TrimSpace(candidate.Type) != RaylineARCAlgorithmType || candidate.RaylineARC == nil ||
+				candidate.RaylineARC.PolicyService == nil || candidate.RaylineARC.PolicyService.GenerationRouting == nil {
+				continue
+			}
+			count++
+		}
+		if count > 1 {
 			return fmt.Errorf(
-				"decision '%s': policy_service.generation_routing is served from a single-recipe cell; this config declares recipe %q",
-				decision.Name, cfg.Recipes[i].Name,
+				"decision '%s': recipe %q has %d ARC decisions with policy_service.generation_routing; a recipe serves one",
+				decision.Name, recipes[i].Name, count,
 			)
 		}
 	}
