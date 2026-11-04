@@ -37,17 +37,30 @@ type raylineGenerationRouting struct {
 	signals []string
 }
 
-// raylineGenerationRoutingPolicy is the one policy-service ARC decision
-// whose generation_routing is set, or nil. A cell serves one ARC decision;
-// more than one with the block reads none, since the turn's decision is not
-// yet known here and guessing would apply another cell's V.
-func (r *OpenAIRouter) raylineGenerationRoutingPolicy() *config.RaylineARCPolicyServiceConfig {
+// raylineGenerationRoutingPolicy is the policy-service ARC decision whose
+// generation_routing is set in the recipe the turn's model selects, or nil.
+// The recipe is resolved from the body's model exactly as the turn's own
+// recipe is (raylineARCRecipeForModel), so on a multi-recipe standing cell
+// configurable ARC (the default recipe, caller_value) reads the caller's V
+// while a tier recipe keeps its own: it restates its V or reads none. A
+// recipe with more than one decision carrying the block reads none (config
+// validation refuses that shape), since guessing would apply another
+// decision's V.
+func (r *OpenAIRouter) raylineGenerationRoutingPolicy(model string) *config.RaylineARCPolicyServiceConfig {
 	if r == nil || r.Config == nil {
 		return nil
 	}
+	recipe, ok := raylineARCRecipeForModel(r.Config, model)
+	if !ok || recipe == nil {
+		return nil
+	}
+	return raylineGenerationRoutingPolicyOf(recipe.Profile.Decisions)
+}
+
+func raylineGenerationRoutingPolicyOf(decisions []config.Decision) *config.RaylineARCPolicyServiceConfig {
 	var found *config.RaylineARCPolicyServiceConfig
-	for index := range r.Config.Decisions {
-		algorithm := r.Config.Decisions[index].Algorithm
+	for index := range decisions {
+		algorithm := decisions[index].Algorithm
 		if !raylineARCSelection(algorithm) || algorithm.RaylineARC == nil ||
 			algorithm.RaylineARC.PolicyService == nil || algorithm.RaylineARC.PolicyService.GenerationRouting == nil {
 			continue
@@ -67,7 +80,7 @@ func (r *OpenAIRouter) applyRaylineGenerationRouting(
 	body []byte,
 	ctx *RequestContext,
 ) ([]byte, *ext_proc.ProcessingResponse) {
-	policy := r.raylineGenerationRoutingPolicy()
+	policy := r.raylineGenerationRoutingPolicy(raylineRoutesModelOf(body))
 	if policy == nil {
 		return body, nil
 	}
