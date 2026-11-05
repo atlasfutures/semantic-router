@@ -52,15 +52,27 @@ type ActionBinding struct {
 }
 
 type DecisionsConfig struct {
-	APIMode     string          `json:"api_mode,omitempty"`
-	URL         string          `json:"url"`
-	CellTag     string          `json:"cell_tag,omitempty"`
-	AuthEnv     string          `json:"auth_env"`
-	Model       string          `json:"model"`
-	Result      string          `json:"result"`
-	Routing     json.RawMessage `json:"routing"`
-	PriceSHA256 string          `json:"price_sha256,omitempty"`
-	OfferSHA256 string          `json:"offer_sha256"`
+	APIMode string `json:"api_mode,omitempty"`
+	URL     string `json:"url"`
+	CellTag string `json:"cell_tag,omitempty"`
+	AuthEnv string `json:"auth_env"`
+	Model   string `json:"model"`
+	Result  string `json:"result"`
+	// Routing is the Routes API V1 routing block sent with every decision:
+	// v_value, prices, price_profile {id, version?}, models,
+	// excluded_models, signals and policy (required in v2, forwarded in v1,
+	// refused in current mode). There is no exclusive member.
+	Routing json.RawMessage `json:"routing"`
+	// PriceSHA256 optionally pins the resolved price world: the echoed
+	// routing.prices.price_sha256, sha256 of the RFC 8785 form of
+	// {"schema": "arc-route-prices.v1", "prices": <four legs of every
+	// candidate, without sources>}. Set it for a repeatable run whose
+	// candidates and legs the profile fully determines (prices every
+	// candidate's four legs and confines them with models); otherwise leave
+	// it out and rely on the leg-by-leg acknowledgement. The previous
+	// contract's arc-caller-prices.v1 digest is refused at startup.
+	PriceSHA256 string `json:"price_sha256,omitempty"`
+	OfferSHA256 string `json:"offer_sha256"`
 }
 
 const (

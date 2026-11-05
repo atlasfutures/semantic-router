@@ -29,7 +29,8 @@ opt-in. The core reports facts and never picks or ranks a model.
   `targets[]`. Raydock writes
   `arc-policy.hybrid-default.v1` when its user sets no override; the core never
   sends an absent policy in this mode. Allowed routing keys are `policy`,
-  `v_value`, `prices`, `exclusive`, `signals` and the price-profile keys.
+  `v_value`, `prices`, `price_profile`, `models`, `excluded_models` and
+  `signals`.
 - **Registry.** Without an explicit `registry_path`, v2 executes with the
   embedded registry whatever registry the serving package names: controls are
   content-hashed, every bound action's control must be admitted by the
@@ -210,7 +211,7 @@ Pass `--config /absolute/path/hybrid.json`. Configuration version 1 contains:
 | `package_path`, `package_sha256` | Compatible policy action manifest and SHA-256 of its exact bytes. The manifest is provisioned separately; do not commit private packages. |
 | `registry_path`, `registry_sha256` | Optional compiled thinking registry path and mandatory SHA-256. An omitted path selects the embedded registry. |
 | `allow_experimental_controls` | Explicit admission of registry controls marked experimental. |
-| `decisions` | URL, credential environment name, ARC model, selected result, routing preferences, offer digest and optional caller-price digest. |
+| `decisions` | URL, credential environment name, ARC model, selected result, routing preferences, offer digest and optional resolved-price digest. |
 | `deployments` | Concrete local or cloud endpoints and qualified serving identities. |
 | `bindings` | Exact package `action_id`, Decisions `worker`, and `deployment_id` triples. |
 | `test_alias` | Optional explicit test-only selected-model to execution-action substitution, described below. |
@@ -221,20 +222,65 @@ deployment identities are errors. Each action has one deployment in this proof.
 The server-side offer must match these bindings; a client configuration cannot
 silently narrow a larger hosted offer after selection.
 
-`decisions` requires `url`, `auth_env`, `model`, `result` (`top`, `swift`, `sage`,
-or `custom`), and explicit `routing`. `offer_sha256` is optional in current mode
-and required in advanced mode. `routing.prices` requires
-`price_sha256`; its returned digest and `exclusive` must match the request. The
-current adapter supports `v_value`, `prices`, `exclusive`, `price_profile_id`,
-and `price_profile_version`. A profile ID references an authorized saved profile
-through the gateway; it cannot be combined with inline `prices`. Omit the version
-to resolve the current version on each decision, or pin a positive version for a
-repeatable run. A profile may also pin `price_sha256`. The adapter requires an
-applied profile ID/version/content-hash receipt and matches the resolved price
-digest to the selected result's price receipt and exclusivity to the routing
-price echo. Profile content hashes
-and canonical price digests use different encodings and are not interchangeable.
-The resolved profile identity is recorded with each selection. A configured
+`decisions` requires `url` (the gateway's `/v1/routes`), `auth_env`, `model`,
+`result` (`top`, `swift`, `sage`, or `custom`), and explicit `routing`.
+`offer_sha256` is optional in current mode and required in advanced mode. The
+`routing` block is sent as configured and follows the Routes API V1 contract
+(pathfinder#6159): `v_value`, `prices`, `price_profile`, `models`,
+`excluded_models`, `signals` and `policy` (required in v2, forwarded in v1,
+refused in current mode). There is no `exclusive`
+member: the gateway resolves the candidates from `models` and
+`excluded_models` (every offered model when both are absent) and prices each
+of them leg by leg from inline `prices`, then the profile, then the catalog.
+A profile with `exclusive`, `price_profile_id` or `price_profile_version` is
+refused at startup in every API mode, naming the V1 replacement; so is any
+other member the API does not take (v1 and v2 forward `policy`).
+
+`routing.prices` maps exact model ids to any subset of `input`, `cache_read`,
+`cache_write` and `output`, in USD per million tokens. `routing.price_profile`
+is `{"id": ..., "version"?: ...}`: an authorized saved profile through the
+gateway, combinable with inline `prices` (which win per model and leg). Omit
+the version to resolve the current version on each decision, or pin a positive
+version for a repeatable run.
+
+**Price acknowledgement.** When `prices` or `price_profile` is sent, the
+answer's `routing.prices` must be `applied` and carry the resolved table:
+every candidate's four legs with each leg's source (`caller`, `profile` or
+`catalog`), the `unused` priced models that are not candidates, and
+`price_sha256`. The adapter recomputes that digest, sha256 of the RFC 8785
+form of `{"schema": "arc-route-prices.v1", "prices": <table>}` where the
+table holds only each candidate's four legs (the `source` members are not
+hashed), and requires the echoed digest to equal it. Every caller-priced
+model must either be a candidate whose caller legs are resolved at the
+caller's price with source `caller`, or be listed in `unused`. The reverse
+holds too: a leg may carry source `caller` only where this profile priced
+that model and leg, at that value, and source `profile` only when a
+`price_profile` was sent; sources are outside the digest and set the
+receipt's basis, so an unclaimed source is refused. The selected
+model must be one of the priced candidates (and one of `models.resolved`
+when `models` was sent), never a model listed `unused`. The selected result's `prices` receipt
+must name the table's basis (`catalog`, `caller`, `profile` or `mixed`, over
+every leg of the table) and the same digest. A sent `models` or
+`excluded_models` must be echoed `applied` with the entries sent, and the
+priced candidates must be exactly the resolved ones. With neither `prices` nor
+`price_profile`, the receipt must be `catalog` with a null digest and no
+`routing.prices` echo. A profile additionally requires an applied
+ID/version/content-hash receipt with a known `schema`; profile content hashes
+and price digests use different encodings and are not interchangeable. The
+resolved profile identity is recorded with each selection.
+
+`price_sha256` is optional. When set, it pins the resolved price world: the
+echoed `routing.prices.price_sha256` must equal it. That digest covers every
+candidate's four resolved legs, so a client can precompute it only when it
+prices every candidate's four legs itself (and confines the candidates with
+`models`); a partially priced or catalog-filled table is acknowledged leg by
+leg instead, with the pin omitted. The previous contract's
+`arc-caller-prices.v1` digest over `{schema, exclusive, prices}` is never
+returned to the public caller: a pin equal to that digest of the configured
+prices is refused at startup with the migration named, and any other
+mismatching pin fails the decision.
+
+A configured
 `v_value` requires `result: "custom"`, a returned custom result, and an applied
 value acknowledgement; the selected result must also report that value and its
 reciprocal cost weight. Missing custom results, mismatched identities or prices,
@@ -261,7 +307,11 @@ selection. The setting never changes gateway configuration or standing traffic.
 
 The deployed top-only response may provide `policy_action_id`, model and worker
 without package or price identity. Current mode accepts that response only with
-`result: "top"`, empty `routing`, and no `offer_sha256` expectation. It binds the returned action and exact model
+`result: "top"`, no `offer_sha256` expectation, and a `routing` that is empty
+or names candidates only: `models` and `excluded_models` are acknowledged
+from their echoes (applied, the entries sent, the selected model among the
+resolved candidates), while `prices` or `price_profile` need a price receipt
+this response lacks and are refused. It binds the returned action and exact model
 aliases to the configured manifest and records `identity_source:
 "configured_manifest"`; it does not claim the server attested package, registry,
 offer or prices. Responses containing the full identity must match the configured
@@ -272,8 +322,8 @@ package identity. The adapter binds those to the configured manifest and records
 `identity_source: "configured_manifest"`; a configured `offer_sha256` still
 requires a returned identity. Each selected result's own `prices` must match the
 applied routing receipt, independently of the top-level decision. These result
-prices contain `basis` and `price_sha256`; `exclusive` belongs to the routing
-echo. This does not change the requested result or relax the advanced mode's
+prices contain `basis` and `price_sha256`, the price world described above.
+This does not change the requested result or relax the advanced mode's
 identity requirements.
 
 Each deployment specifies `id`, `kind` (`local` or `cloud`), full inference `url`,

@@ -20,16 +20,19 @@ import (
 // HTTPDecisions supports the current public API and an explicitly selected
 // execution-context contract. An unsupported request never changes API modes.
 type HTTPDecisions struct {
-	config         Config
-	client         *http.Client
-	actions        map[string]Action
-	deployments    map[string]Deployment
-	now            func() time.Time
-	exclusive      bool
-	valueUSD       *float64
-	profileID      string
-	profileVersion int64
-	policyPreset   string
+	config       Config
+	client       *http.Client
+	actions      map[string]Action
+	deployments  map[string]Deployment
+	now          func() time.Time
+	valueUSD     *float64
+	policyPreset string
+	// Routes API V1 selection and price members, as configured; nil when
+	// the profile sent none.
+	prices         callerPrices
+	profile        *priceProfileRef
+	models         []string
+	excludedModels []string
 }
 
 var decisionsCellTag = regexp.MustCompile(`^[a-z][a-z0-9-]{0,45}$`)
@@ -66,8 +69,8 @@ func NewHTTPDecisions(config Config) (*HTTPDecisions, error) {
 	var policyPreset string
 	if mode == DecisionsExecutionContextV2 {
 		// Rayline Local never relies on an absent policy: its default is the
-		// hybrid preset, sent explicitly. v2 therefore requires one. Current
-		// and v1 modes keep their pre-v2 routing-key handling unchanged.
+		// hybrid preset, sent explicitly. v2 therefore requires one; v1
+		// forwards an optional policy unchecked and current mode refuses it.
 		raw, exists := routing["policy"]
 		if !exists {
 			return nil, fmt.Errorf("execution_context_v2 requires an explicit routing.policy")
@@ -77,47 +80,56 @@ func NewHTTPDecisions(config Config) (*HTTPDecisions, error) {
 			return nil, err
 		}
 		policyPreset = policy.Preset
-		for key := range routing {
-			if key != "policy" && key != "v_value" && key != "prices" && key != "exclusive" && key != "price_profile_id" && key != "price_profile_version" && key != "signals" {
-				return nil, fmt.Errorf("execution_context_v2 routing key %q has no supported applied acknowledgement", key)
-			}
-		}
 	}
-	if mode == DecisionsCurrent {
-		for key := range routing {
-			if key != "v_value" && key != "prices" && key != "exclusive" && key != "price_profile_id" && key != "price_profile_version" && key != "signals" {
-				return nil, fmt.Errorf("current Decisions routing key %q has no supported applied acknowledgement", key)
-			}
+	// Every mode sends the routing block as configured, so every mode refuses
+	// a member the Routes API does not take. v1 forwards policy unchecked.
+	for key := range routing {
+		if key == "v_value" || key == "signals" || isRoutePriceKey(key) || (key == "policy" && mode != DecisionsCurrent) {
+			continue
 		}
+		return nil, routingKeyError(mode, key)
 	}
 	if raw, exists := routing["signals"]; exists {
 		if err := validateSignalNames(raw); err != nil {
 			return nil, err
 		}
 	}
-	if _, exists := routing["prices"]; exists && !validSHA256(config.Decisions.PriceSHA256) {
-		return nil, fmt.Errorf("caller prices require a pinned price_sha256")
-	}
 	provider := &HTTPDecisions{config: config, client: &http.Client{Timeout: 90 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, actions: make(map[string]Action), deployments: make(map[string]Deployment), now: time.Now, policyPreset: policyPreset}
-	if raw, exists := routing["price_profile_id"]; exists {
-		if err := json.Unmarshal(raw, &provider.profileID); err != nil || provider.profileID == "" || strings.TrimSpace(provider.profileID) != provider.profileID || len(provider.profileID) > 128 {
-			return nil, fmt.Errorf("routing price_profile_id must be a nonempty profile ID")
-		}
-		if _, inline := routing["prices"]; inline {
-			return nil, fmt.Errorf("routing price_profile_id and prices are mutually exclusive")
+	var err error
+	if raw, exists := routing["prices"]; exists {
+		if provider.prices, err = parseCallerPrices(raw); err != nil {
+			return nil, err
 		}
 	}
-	if raw, exists := routing["price_profile_version"]; exists {
-		if provider.profileID == "" || json.Unmarshal(raw, &provider.profileVersion) != nil || provider.profileVersion <= 0 || provider.profileVersion > 9007199254740991 {
-			return nil, fmt.Errorf("routing price_profile_version requires a profile ID and a positive safe integer")
+	if raw, exists := routing["price_profile"]; exists {
+		if provider.profile, err = parsePriceProfile(raw); err != nil {
+			return nil, err
+		}
+	}
+	for _, member := range []string{"models", "excluded_models"} {
+		raw, exists := routing[member]
+		if !exists {
+			continue
+		}
+		patterns, err := parseModelPatterns(raw, member)
+		if err != nil {
+			return nil, err
+		}
+		if member == "models" {
+			provider.models = patterns
+		} else {
+			provider.excludedModels = patterns
 		}
 	}
 	if config.Decisions.PriceSHA256 != "" {
 		if !validSHA256(config.Decisions.PriceSHA256) {
 			return nil, fmt.Errorf("price_sha256 must be a SHA256 digest")
 		}
-		if _, inline := routing["prices"]; !inline && provider.profileID == "" {
+		if provider.prices == nil && provider.profile == nil {
 			return nil, fmt.Errorf("price_sha256 requires caller prices or a price profile")
+		}
+		if isCallerPricesDigest(config.Decisions.PriceSHA256, provider.prices) {
+			return nil, fmt.Errorf("price_sha256 is the previous contract's arc-caller-prices.v1 digest, which the Routes API never returns: omit it, or pin the arc-route-prices.v1 digest of the resolved table")
 		}
 	}
 	if raw, exists := routing["v_value"]; exists {
@@ -132,11 +144,6 @@ func NewHTTPDecisions(config Config) (*HTTPDecisions, error) {
 	}
 	if config.Decisions.Result == "custom" && provider.valueUSD == nil {
 		return nil, fmt.Errorf("custom Decisions result requires explicit routing v_value")
-	}
-	if raw, exists := routing["exclusive"]; exists {
-		if err := json.Unmarshal(raw, &provider.exclusive); err != nil {
-			return nil, fmt.Errorf("routing exclusive must be boolean")
-		}
 	}
 	for _, action := range config.Actions {
 		provider.actions[action.ID] = action
@@ -248,18 +255,14 @@ func (provider *HTTPDecisions) project(input DecisionInput) externalContext {
 }
 
 type decisionIdentity struct {
-	PackageSHA256  string  `json:"package_sha256"`
-	ActionID       string  `json:"action_id"`
-	PolicyActionID string  `json:"policy_action_id"`
-	ControlID      string  `json:"control_id"`
-	ArmID          *string `json:"arm_id"`
-	RegistrySHA256 string  `json:"thinking_controls_sha256"`
-	OfferSHA256    string  `json:"offer_sha256"`
-	Prices         struct {
-		Basis     string  `json:"basis"`
-		SHA256    *string `json:"price_sha256"`
-		Exclusive *bool   `json:"exclusive"`
-	} `json:"prices"`
+	PackageSHA256  string       `json:"package_sha256"`
+	ActionID       string       `json:"action_id"`
+	PolicyActionID string       `json:"policy_action_id"`
+	ControlID      string       `json:"control_id"`
+	ArmID          *string      `json:"arm_id"`
+	RegistrySHA256 string       `json:"thinking_controls_sha256"`
+	OfferSHA256    string       `json:"offer_sha256"`
+	Prices         resultPrices `json:"prices"`
 }
 
 type publicDecision struct {
@@ -270,11 +273,8 @@ type publicDecision struct {
 	Identity   *decisionIdentity `json:"identity"`
 	ValueUSD   *float64          `json:"v_value"`
 	CostWeight *float64          `json:"cost_weight"`
-	Prices     *struct {
-		Basis  string  `json:"basis"`
-		SHA256 *string `json:"price_sha256"`
-	} `json:"prices"`
-	Receipt *DecisionReceipt `json:"receipt"`
+	Prices     *resultPrices     `json:"prices"`
+	Receipt    *DecisionReceipt  `json:"receipt"`
 }
 
 type notAdmittedEcho struct {
@@ -318,16 +318,11 @@ type decisionsResponse struct {
 			Boundary            string            `json:"boundary"`
 			Workers             []workerEcho      `json:"workers"`
 		} `json:"execution"`
-		Unapplied    []string `json:"unapplied_keys"`
-		PriceProfile *struct {
-			Status string `json:"status"`
-			AppliedPriceProfile
-		} `json:"price_profile"`
-		Prices *struct {
-			Status    string `json:"status"`
-			SHA256    string `json:"price_sha256"`
-			Exclusive *bool  `json:"exclusive"`
-		} `json:"prices"`
+		Unapplied      []string            `json:"unapplied_keys"`
+		Models         *modelsEcho         `json:"models"`
+		ExcludedModels *excludedModelsEcho `json:"excluded_models"`
+		Prices         *pricesEcho         `json:"prices"`
+		PriceProfile   *priceProfileEcho   `json:"price_profile"`
 	} `json:"routing"`
 }
 
@@ -446,7 +441,15 @@ func (provider *HTTPDecisions) Decide(ctx context.Context, input DecisionInput) 
 		if provider.config.Decisions.Result != "top" {
 			decision, err = provider.currentTierDecision(result, selected, preferences != 0)
 		} else {
-			decision, err = provider.currentTopDecision(result, selected, preferences != 0)
+			// Candidates are acknowledged from their own echoes, which the
+			// top result carries; prices and a profile need a receipt it lacks.
+			priced := preferences
+			for _, key := range []string{"models", "excluded_models"} {
+				if _, exists := routing[key]; exists {
+					priced--
+				}
+			}
+			decision, err = provider.currentTopDecision(result, selected, priced != 0)
 		}
 		decision.Signals = result.Signals
 		return decision, err
@@ -493,17 +496,9 @@ func (provider *HTTPDecisions) Decide(ctx context.Context, input DecisionInput) 
 			"held_from", stringOrNil(receipt.HeldFrom), "eligible", receipt.Eligible, "capacity", capacitySummary(externalV2.Targets), "compaction", externalV2.Event.Compaction, "excluded", receipt.Excluded, "receipt_basis", receipt.Basis, "capacity_basis", stringOrNil(receipt.CapacityBasis), "capacity_unknown", len(receipt.CapacityUnknown))
 	}
 
-	appliedProfile, err := provider.appliedPriceProfile(result)
+	appliedProfile, err := provider.acknowledgePrices(result, selected.Model, &identity.Prices)
 	if err != nil {
 		return Decision{}, err
-	}
-	if provider.config.Decisions.PriceSHA256 != "" || appliedProfile != nil {
-		prices := result.Routing.Prices
-		if prices == nil || prices.Status != "applied" || !validSHA256(prices.SHA256) || (provider.config.Decisions.PriceSHA256 != "" && prices.SHA256 != provider.config.Decisions.PriceSHA256) || identity.Prices.Basis != "caller" || identity.Prices.SHA256 == nil || *identity.Prices.SHA256 != prices.SHA256 || identity.Prices.Exclusive == nil || prices.Exclusive == nil || *identity.Prices.Exclusive != *prices.Exclusive || *prices.Exclusive != provider.exclusive {
-			return Decision{}, fmt.Errorf("Decisions did not apply the requested caller price world")
-		}
-	} else if identity.Prices.Basis != "catalog" || identity.Prices.SHA256 != nil || (identity.Prices.Exclusive == nil && (provider.config.Decisions.apiMode() != DecisionsExecutionContextV2 || provider.exclusive)) || (identity.Prices.Exclusive != nil && *identity.Prices.Exclusive != provider.exclusive) {
-		return Decision{}, fmt.Errorf("Decisions did not confirm the requested catalog price world")
 	}
 	decision := Decision{RouteID: result.RouteID, ActionID: identity.ActionID, Worker: selected.Worker, Model: action.Model, ReportedModel: selected.Model, PackageSHA256: identity.PackageSHA256, ControlID: identity.ControlID, ArmID: identity.ArmID, Result: provider.config.Decisions.Result, IdentitySource: "response", AppliedValueUSD: provider.valueUSD}
 	decision.PriceProfile = appliedProfile
@@ -514,14 +509,18 @@ func (provider *HTTPDecisions) Decide(ctx context.Context, input DecisionInput) 
 }
 
 // The deployed top-only API names an action but does not attest package,
-// registry, offer or prices. It can be used explicitly with empty routing;
-// the local manifest supplies control identity, clearly labeled in evidence.
-func (provider *HTTPDecisions) currentTopDecision(result decisionsResponse, selected publicDecision, preferences bool) (Decision, error) {
-	if provider.config.Decisions.Result != "top" || preferences || provider.config.Decisions.OfferSHA256 != "" {
-		return Decision{}, fmt.Errorf("this Decisions response only supports top with empty routing and no returned identity pins")
+// registry, offer or prices. It can be used explicitly with candidate
+// members only (no price world, which it has no receipt for); the local
+// manifest supplies control identity, clearly labeled in evidence.
+func (provider *HTTPDecisions) currentTopDecision(result decisionsResponse, selected publicDecision, priced bool) (Decision, error) {
+	if provider.config.Decisions.Result != "top" || priced || provider.config.Decisions.OfferSHA256 != "" {
+		return Decision{}, fmt.Errorf("this Decisions response only supports top with candidate-only routing and no returned identity pins")
 	}
 	action, err := provider.bindCurrentAction(result.RouteID, selected)
 	if err != nil {
+		return Decision{}, err
+	}
+	if err := provider.acknowledgeCandidates(result, selected.Model); err != nil {
 		return Decision{}, err
 	}
 	decision := Decision{RouteID: result.RouteID, ActionID: action.ID, Worker: action.Worker, Model: action.Model, ReportedModel: selected.Model, PackageSHA256: provider.config.PackageSHA256, ControlID: action.ControlID, Result: "top", IdentitySource: "configured_manifest"}
