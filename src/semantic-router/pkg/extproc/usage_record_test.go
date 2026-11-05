@@ -417,10 +417,49 @@ func TestCacheHitReportsNoProviderCharge(t *testing.T) {
 	for _, key := range []string{
 		"provider_reported_cost", "provider_reported_upstream_inference_cost",
 		"provider_reported_byok", "provider_reported_currency", "upstream_service_tier", "requested_service_tier",
+		"upstream_effort", "upstream_reasoning_max_tokens",
 	} {
 		if fields[key] != nil {
 			t.Errorf("%s = %v on a cache hit, want null", key, fields[key])
 		}
+	}
+}
+
+// The line states the reasoning controls the final provider body carried, so
+// what effort reached the upstream is a lookup, not an inference from the
+// reasoning token count; a body that carried none records null (the
+// provider's default).
+func TestUsageRecordCarriesDispatchedReasoningControls(t *testing.T) {
+	cases := []struct {
+		name      string
+		body      string
+		wantRaw   interface{}
+		wantBound interface{}
+	}{
+		{"messages output_config effort", `{"model":"m","output_config":{"effort":"high"},"thinking":{"type":"adaptive"}}`,
+			"high", nil},
+		{"openrouter reasoning budget", `{"model":"m","reasoning":{"effort":"low","max_tokens":2048}}`,
+			"low", float64(2048)},
+		{"no controls", `{"model":"m","thinking":{"type":"adaptive"}}`, nil, nil},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			logs := captureLogs(t)
+			ctx := &RequestContext{RequestID: "rt_effort-000", RequestModel: "priced-model"}
+			recordDispatchedControls(ctx, []byte(test.body))
+
+			usageRecordRouter().reportNonStreamingUsage(ctx, time.Second, responseUsageMetrics{
+				promptTokens: 10, promptTokensReported: true, completionTokens: 5, completionTokensReported: true,
+			})
+
+			fields := findLogEvent(t, logs, "llm_usage")
+			if value, present := fields["upstream_effort"]; !present || value != test.wantRaw {
+				t.Fatalf("upstream_effort = %v (present %v), want %v", value, present, test.wantRaw)
+			}
+			if value, present := fields["upstream_reasoning_max_tokens"]; !present || value != test.wantBound {
+				t.Fatalf("upstream_reasoning_max_tokens = %v (present %v), want %v", value, present, test.wantBound)
+			}
+		})
 	}
 }
 
