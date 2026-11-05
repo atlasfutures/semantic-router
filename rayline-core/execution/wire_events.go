@@ -73,6 +73,7 @@ type wireMessage struct {
 	role       string
 	texts      []string // text blocks, in order, before any tool result
 	allTexts   []string // every text block, in order
+	blocks     int      // every content block, text or not (1 for string content)
 	toolResult bool
 	toolCalls  []string
 	modelItem  bool // Responses model output (reasoning, function calls)
@@ -96,7 +97,7 @@ func parseWireRequest(format llmprotocol.WireFormat, body []byte) wireRequest {
 		if json.Unmarshal(wire["input"], &input) != nil {
 			var whole string
 			if json.Unmarshal(wire["input"], &whole) == nil {
-				result.messages = []wireMessage{{role: "user", texts: []string{whole}, allTexts: []string{whole}}}
+				result.messages = []wireMessage{{role: "user", texts: []string{whole}, allTexts: []string{whole}, blocks: 1}}
 			}
 			return result
 		}
@@ -119,6 +120,7 @@ func parseWireRequest(format llmprotocol.WireFormat, body []byte) wireRequest {
 			default:
 				message.texts = stringsOf(item.Content)
 				message.allTexts = message.texts
+				message.blocks = blocksOf(item.Content)
 			}
 			result.messages = append(result.messages, message)
 		}
@@ -145,6 +147,7 @@ func parseWireRequest(format llmprotocol.WireFormat, body []byte) wireRequest {
 			}
 			var whole string
 			if json.Unmarshal(raw.Content, &whole) == nil {
+				message.blocks = 1
 				if !message.toolResult {
 					message.texts = []string{whole}
 					message.allTexts = message.texts
@@ -156,6 +159,7 @@ func parseWireRequest(format llmprotocol.WireFormat, body []byte) wireRequest {
 					Name string  `json:"name"`
 				}
 				_ = json.Unmarshal(raw.Content, &blocks)
+				message.blocks = len(blocks)
 				for _, block := range blocks {
 					switch block.Type {
 					case "tool_result":
@@ -205,6 +209,20 @@ func stringsOf(raw json.RawMessage) []string {
 	return result
 }
 
+// blocksOf counts the content blocks of a string (one) or a block list,
+// whatever their type.
+func blocksOf(raw json.RawMessage) int {
+	var whole string
+	if json.Unmarshal(raw, &whole) == nil {
+		return 1
+	}
+	var blocks []json.RawMessage
+	if json.Unmarshal(raw, &blocks) != nil {
+		return 0
+	}
+	return len(blocks)
+}
+
 // typedText is the user's own words: text before any tool result, with
 // reminders and project context removed; empty for a harness-authored turn.
 func (message wireMessage) typedText() string {
@@ -240,10 +258,10 @@ func (message wireMessage) lastText() string {
 }
 
 // onlyText is the message's text when that text is the whole message: one
-// text block and nothing else. A message that also carries a tool result or
-// further text blocks is more than that text, so it returns "".
+// content block, and it is text. A message that also carries an image, a
+// tool result or further blocks is more than that text, so it returns "".
 func (message wireMessage) onlyText() string {
-	if len(message.allTexts) != 1 || message.toolResult {
+	if message.blocks != 1 || len(message.allTexts) != 1 || message.toolResult {
 		return ""
 	}
 	return message.allTexts[0]

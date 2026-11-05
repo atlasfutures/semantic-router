@@ -390,6 +390,12 @@ func TestWireEventsHermesIterationSummaryIsSidecall(t *testing.T) {
 	if !parseWireRequest(llmprotocol.OpenAIResponsesV1, body).isSidecall() {
 		t.Fatal("Hermes iteration-cap summary on Responses was not a side call")
 	}
+	body, _ = json.Marshal(map[string]any{"model": "m", "input": []map[string]any{
+		{"role": "user", "content": []map[string]any{{"type": "input_image", "image_url": "data:image/png;base64,iVBORw0KGgo="}, {"type": "input_text", "text": hermesIterationSummary}}},
+	}})
+	if parseWireRequest(llmprotocol.OpenAIResponsesV1, body).isSidecall() {
+		t.Fatal("an image with the literal as its only text on Responses was a side call")
+	}
 	body, _ = json.Marshal(map[string]any{"model": "m", "messages": []map[string]any{
 		{"role": "user", "content": "List the files, then summarise them."},
 		{"role": "user", "content": hermesIterationSummary},
@@ -404,6 +410,8 @@ func TestWireEventsHermesIterationSummaryIsSidecall(t *testing.T) {
 		[]map[string]any{{"type": "text", "text": "Now read a.txt."}, {"type": "text", "text": hermesIterationSummary}},
 		// So is a tool result that happens to be followed by the literal.
 		[]map[string]any{{"type": "tool_result", "tool_use_id": "toolu_1", "content": "a.txt"}, {"type": "text", "text": hermesIterationSummary}},
+		// And so is an image with the literal as its only text.
+		[]map[string]any{{"type": "image", "source": map[string]any{"type": "base64", "media_type": "image/png", "data": "iVBORw0KGgo="}}, {"type": "text", "text": hermesIterationSummary}},
 	} {
 		turn := append(append([]map[string]any{}, history...), map[string]any{"role": "user", "content": last})
 		body, _ = json.Marshal(map[string]any{"model": "m", "max_tokens": 1024, "messages": turn})
