@@ -239,6 +239,16 @@ func (message wireMessage) lastText() string {
 	return message.allTexts[len(message.allTexts)-1]
 }
 
+// onlyText is the message's text when that text is the whole message: one
+// text block and nothing else. A message that also carries a tool result or
+// further text blocks is more than that text, so it returns "".
+func (message wireMessage) onlyText() string {
+	if len(message.allTexts) != 1 || message.toolResult {
+		return ""
+	}
+	return message.allTexts[0]
+}
+
 func isSystemRole(role string) bool { return role == "system" || role == "developer" }
 
 // lastNonSystem is the index of the last message that is not a trailing
@@ -282,9 +292,13 @@ func (request wireRequest) isSidecall() bool {
 	if last < 0 || request.messages[last].role != "user" {
 		return false
 	}
-	text := request.messages[last].lastText()
+	message := request.messages[last]
+	text := message.lastText()
+	// Hermes' summary nudge is a whole user message of its own, so the literal
+	// must be the entire message: a turn whose last block happens to be the
+	// literal is still a turn.
 	return strings.HasPrefix(text, claudeCodeSummarize) || strings.HasPrefix(text, claudeCodeSuggestion) ||
-		text == hermesIterationSummary || text == codexCompactionPrompt
+		message.onlyText() == hermesIterationSummary || text == codexCompactionPrompt
 }
 
 // claudeCodeSubagent is Claude Code's own cc_is_subagent=true billing claim.

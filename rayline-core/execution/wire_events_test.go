@@ -397,11 +397,24 @@ func TestWireEventsHermesIterationSummaryIsSidecall(t *testing.T) {
 	if !parseWireRequest(llmprotocol.OpenAIChatV1, body).isSidecall() {
 		t.Fatal("Hermes iteration-cap summary on Chat was not a side call")
 	}
-	for _, last := range []string{"Now read a.txt.", hermesIterationSummary + " Also list the directory again."} {
+	for _, last := range []any{
+		"Now read a.txt.",
+		hermesIterationSummary + " Also list the directory again.",
+		// The literal as the last block of a longer message is still a turn.
+		[]map[string]any{{"type": "text", "text": "Now read a.txt."}, {"type": "text", "text": hermesIterationSummary}},
+		// So is a tool result that happens to be followed by the literal.
+		[]map[string]any{{"type": "tool_result", "tool_use_id": "toolu_1", "content": "a.txt"}, {"type": "text", "text": hermesIterationSummary}},
+	} {
 		turn := append(append([]map[string]any{}, history...), map[string]any{"role": "user", "content": last})
 		body, _ = json.Marshal(map[string]any{"model": "m", "max_tokens": 1024, "messages": turn})
 		if parseWireRequest(llmprotocol.AnthropicMessagesV1, body).isSidecall() {
-			t.Fatalf("user turn %q after the same history was a side call", last)
+			t.Fatalf("user turn %v after the same history was a side call", last)
 		}
+	}
+	// The literal as the sole block of a block-array message is the summary.
+	block := append(append([]map[string]any{}, history...), map[string]any{"role": "user", "content": []map[string]any{{"type": "text", "text": hermesIterationSummary}}})
+	body, _ = json.Marshal(map[string]any{"model": "m", "max_tokens": 1024, "messages": block})
+	if !parseWireRequest(llmprotocol.AnthropicMessagesV1, body).isSidecall() {
+		t.Fatal("Hermes iteration-cap summary as a single text block was not a side call")
 	}
 }
