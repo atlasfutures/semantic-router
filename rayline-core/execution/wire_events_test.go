@@ -408,9 +408,7 @@ func TestWireEventsHermesIterationSummaryIsSidecall(t *testing.T) {
 		hermesIterationSummary + " Also list the directory again.",
 		// The literal as the last block of a longer message is still a turn.
 		[]map[string]any{{"type": "text", "text": "Now read a.txt."}, {"type": "text", "text": hermesIterationSummary}},
-		// So is a tool result that happens to be followed by the literal.
-		[]map[string]any{{"type": "tool_result", "tool_use_id": "toolu_1", "content": "a.txt"}, {"type": "text", "text": hermesIterationSummary}},
-		// And so is an image with the literal as its only text.
+		// An image with the literal as its only text is a turn, not the nudge.
 		[]map[string]any{{"type": "image", "source": map[string]any{"type": "base64", "media_type": "image/png", "data": "iVBORw0KGgo="}}, {"type": "text", "text": hermesIterationSummary}},
 	} {
 		turn := append(append([]map[string]any{}, history...), map[string]any{"role": "user", "content": last})
@@ -424,5 +422,42 @@ func TestWireEventsHermesIterationSummaryIsSidecall(t *testing.T) {
 	body, _ = json.Marshal(map[string]any{"model": "m", "max_tokens": 1024, "messages": block})
 	if !parseWireRequest(llmprotocol.AnthropicMessagesV1, body).isSidecall() {
 		t.Fatal("Hermes iteration-cap summary as a single text block was not a side call")
+	}
+	// The shape Hermes really sends when the loop exhausts after a tool call:
+	// its Anthropic converter merges the tool row and the nudge that follows
+	// into one user message, so the marker arrives beside tool results.
+	merged := []map[string]any{
+		{"role": "user", "content": "List the files, then summarise them."},
+		{"role": "assistant", "content": []map[string]any{{"type": "tool_use", "id": "toolu_1", "name": "terminal", "input": map[string]any{"command": "ls"}}}},
+		{"role": "user", "content": []map[string]any{
+			{"type": "tool_result", "tool_use_id": "toolu_1", "content": "a.txt"},
+			{"type": "text", "text": hermesIterationSummary},
+		}},
+	}
+	body, _ = json.Marshal(map[string]any{"model": "m", "max_tokens": 1024, "messages": merged})
+	if !parseWireRequest(llmprotocol.AnthropicMessagesV1, body).isSidecall() {
+		t.Fatal("Hermes summary merged with a tool result was not a side call")
+	}
+	// Two tool results and the marker is the same shape.
+	two := append([]map[string]any{}, merged[:2]...)
+	two = append(two, map[string]any{"role": "user", "content": []map[string]any{
+		{"type": "tool_result", "tool_use_id": "toolu_1", "content": "a.txt"},
+		{"type": "tool_result", "tool_use_id": "toolu_2", "content": "b.txt"},
+		{"type": "text", "text": hermesIterationSummary},
+	}})
+	body, _ = json.Marshal(map[string]any{"model": "m", "max_tokens": 1024, "messages": two})
+	if !parseWireRequest(llmprotocol.AnthropicMessagesV1, body).isSidecall() {
+		t.Fatal("Hermes summary merged with two tool results was not a side call")
+	}
+	// A tool result, an image and the marker is a multimodal turn.
+	withImage := append([]map[string]any{}, merged[:2]...)
+	withImage = append(withImage, map[string]any{"role": "user", "content": []map[string]any{
+		{"type": "tool_result", "tool_use_id": "toolu_1", "content": "a.txt"},
+		{"type": "image", "source": map[string]any{"type": "base64", "media_type": "image/png", "data": "iVBORw0KGgo="}},
+		{"type": "text", "text": hermesIterationSummary},
+	}})
+	body, _ = json.Marshal(map[string]any{"model": "m", "max_tokens": 1024, "messages": withImage})
+	if parseWireRequest(llmprotocol.AnthropicMessagesV1, body).isSidecall() {
+		t.Fatal("a tool result with an image and the literal was a side call")
 	}
 }

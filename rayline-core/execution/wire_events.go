@@ -70,13 +70,14 @@ var (
 // wireMessage is one client wire message (Responses: one input item), indexed
 // exactly as wireMessageRoles and wireMessageFingerprints index them.
 type wireMessage struct {
-	role       string
-	texts      []string // text blocks, in order, before any tool result
-	allTexts   []string // every text block, in order
-	blocks     int      // every content block, text or not (1 for string content)
-	toolResult bool
-	toolCalls  []string
-	modelItem  bool // Responses model output (reasoning, function calls)
+	role        string
+	texts       []string // text blocks, in order, before any tool result
+	allTexts    []string // every text block, in order
+	blocks      int      // every content block, text or not (1 for string content)
+	toolResults int      // tool_result blocks among them
+	toolResult  bool
+	toolCalls   []string
+	modelItem   bool // Responses model output (reasoning, function calls)
 }
 
 type wireRequest struct {
@@ -164,6 +165,7 @@ func parseWireRequest(format llmprotocol.WireFormat, body []byte) wireRequest {
 					switch block.Type {
 					case "tool_result":
 						message.toolResult = true
+						message.toolResults++
 					case "tool_use":
 						message.toolCalls = append(message.toolCalls, block.Name)
 					case "text", "input_text", "output_text":
@@ -257,11 +259,14 @@ func (message wireMessage) lastText() string {
 	return message.allTexts[len(message.allTexts)-1]
 }
 
-// onlyText is the message's text when that text is the whole message: one
-// content block, and it is text. A message that also carries an image, a
-// tool result or further blocks is more than that text, so it returns "".
-func (message wireMessage) onlyText() string {
-	if message.blocks != 1 || len(message.allTexts) != 1 || message.toolResult {
+// soleText is the message's own words when the message says nothing else: its
+// one text block, where every other block (if any) is a tool result. Hermes'
+// Anthropic converter merges a tool row and the user turn that follows it into
+// one message, so the summary nudge really does arrive beside tool results;
+// an image, a document or a second text block means the user said more than
+// the marker, and returns "".
+func (message wireMessage) soleText() string {
+	if len(message.allTexts) != 1 || message.blocks != 1+message.toolResults {
 		return ""
 	}
 	return message.allTexts[0]
@@ -312,11 +317,11 @@ func (request wireRequest) isSidecall() bool {
 	}
 	message := request.messages[last]
 	text := message.lastText()
-	// Hermes' summary nudge is a whole user message of its own, so the literal
-	// must be the entire message: a turn whose last block happens to be the
-	// literal is still a turn.
+	// Hermes' summary nudge is the user's whole turn, so the literal must be
+	// the message's only text: a turn that says anything else, or carries an
+	// image, is still a turn, but tool results merged in beside it are not.
 	return strings.HasPrefix(text, claudeCodeSummarize) || strings.HasPrefix(text, claudeCodeSuggestion) ||
-		message.onlyText() == hermesIterationSummary || text == codexCompactionPrompt
+		message.soleText() == hermesIterationSummary || text == codexCompactionPrompt
 }
 
 // claudeCodeSubagent is Claude Code's own cc_is_subagent=true billing claim.

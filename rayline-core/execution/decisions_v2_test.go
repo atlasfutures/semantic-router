@@ -675,11 +675,16 @@ func TestV2HeaderlessHermesSummaryRunsAsSidecall(t *testing.T) {
 	if status, response := executeHTTP(t, httpServer.URL, "/v1/chat/completions", chatTurn(userTask), "hermes"); status != 200 {
 		t.Fatalf("status %d: %s", status, response)
 	}
+	// The shape Hermes sends when its loop exhausts after a tool call: the
+	// tool row and the summary nudge merged into one user message.
 	messages := func(last string) string {
 		body, _ := json.Marshal(map[string]any{"model": "arc-1.0", "max_tokens": 64, "messages": []map[string]any{
 			{"role": "user", "content": userTask},
-			{"role": "assistant", "content": "Done."},
-			{"role": "user", "content": last},
+			{"role": "assistant", "content": []map[string]any{{"type": "tool_use", "id": "toolu_1", "name": "terminal", "input": map[string]any{"command": "ls"}}}},
+			{"role": "user", "content": []map[string]any{
+				{"type": "tool_result", "tool_use_id": "toolu_1", "content": "a.txt"},
+				{"type": "text", "text": last},
+			}},
 		}})
 		return string(body)
 	}
