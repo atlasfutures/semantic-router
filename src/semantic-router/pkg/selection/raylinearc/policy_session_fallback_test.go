@@ -186,7 +186,8 @@ func TestPolicySessionLostThenStartFailureFallsBack(t *testing.T) {
 	if turn.Replaces() {
 		t.Fatal("a sessionless turn replaced the episode's session")
 	}
-	if session, changed := turn.Session(); changed || session == nil || *session != *persisted {
+	// Nil and unchanged: the commit keeps the session the episode records.
+	if session, changed := turn.Session(); changed || session != nil {
 		t.Fatal("a sessionless turn changed the episode's session")
 	}
 }
@@ -205,5 +206,29 @@ func TestPolicySessionPrivateTurnNeverFallsBack(t *testing.T) {
 	}
 	if calls, _ := sessionless.state(); calls != 0 || turn.Fallback() != "" {
 		t.Fatalf("a private turn fell back (%d calls)", calls)
+	}
+}
+
+// A turn that started a session, lost it (its container gone), and could not
+// start another falls back without recording the lost session.
+func TestPolicySessionFallbackNeverRecordsALostSession(t *testing.T) {
+	fake := newFakeModalServer(t, 1)
+	fake.afterStart = func(container int) {
+		fake.dead[container] = true                    // the session's container goes away
+		fake.startCode = http.StatusServiceUnavailable // and no other start is admitted
+	}
+	sessionless := newFakeSessionlessService(t, fake.body)
+	turn := testFallbackBackend(t, fake, sessionless, time.Second).Bind(nil, false)
+	if _, err := sessionDecide(t, turn); err != nil {
+		t.Fatal(err)
+	}
+	if turn.Fallback() != PolicySessionFallbackStartRefused {
+		t.Fatalf("fallback = %q", turn.Fallback())
+	}
+	if session, changed := turn.Session(); session != nil || changed {
+		t.Fatal("a sessionless turn recorded the session it lost")
+	}
+	if calls, _ := sessionless.state(); calls != 1 {
+		t.Fatalf("fallback calls %d", calls)
 	}
 }

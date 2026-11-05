@@ -919,7 +919,9 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 			// read one: the turn is sent in full, as a sync cell sends it.
 			var refusal *raylinearc.PolicyServiceError
 			_ = errors.As(err, &refusal)
-			if refusal.Class == raylinearc.PolicyTurnDeltaUnsupportedClass {
+			// The sessionless fallback's refusal says nothing of the
+			// sessioned Server's support.
+			if refusal.Class == raylinearc.PolicyTurnDeltaUnsupportedClass && sessionBinding.Fallback() == "" {
 				scorer.deltaUnsupported.Store(true)
 			}
 			logging.ComponentWarnEvent("extproc", "rayline_arc_policy_delta_resent", map[string]interface{}{

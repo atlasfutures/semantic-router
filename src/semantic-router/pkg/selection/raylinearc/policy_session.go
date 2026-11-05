@@ -362,7 +362,9 @@ func (backend *PolicySessionBackend) control(
 	defer func() { _ = response.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(response.Body, maxPolicySessionStartBytes+1))
 	if err != nil || len(body) > maxPolicySessionStartBytes {
-		return response.StatusCode, nil, errors.New("ARC policy session control response is unreadable")
+		// The read error is kept, so a body that outlived the timeout is
+		// still told apart as one.
+		return response.StatusCode, nil, errors.Join(errors.New("ARC policy session control response is unreadable"), err)
 	}
 	return response.StatusCode, body, nil
 }
@@ -712,7 +714,9 @@ func PolicySessionUnanswered(err error) bool {
 // Session is the session the episode should persist after this turn and
 // whether it differs from the one it held. An ephemeral turn persists none.
 func (binding *PolicySessionBinding) Session() (*PolicySession, bool) {
-	if binding == nil || binding.ephemeral || binding.current == nil {
+	// A sessionless turn changes none: a session it started and lost before
+	// falling back is not one the episode should keep.
+	if binding == nil || binding.ephemeral || binding.current == nil || binding.fallback != "" {
 		return nil, false
 	}
 	changed := binding.persisted == nil || *binding.persisted != *binding.current

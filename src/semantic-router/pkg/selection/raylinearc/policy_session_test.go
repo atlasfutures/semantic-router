@@ -51,6 +51,9 @@ type fakeModalServer struct {
 	nextID     int
 	startSleep time.Duration
 	startCode  int
+	// afterStart, when set, runs under the lock after each successful start
+	// with the container the session was placed on.
+	afterStart func(container int)
 	// violations records a decide that carried the proxy key, or a start
 	// or terminate without the headers Modal needs.
 	violations []string
@@ -120,6 +123,9 @@ func (fake *fakeModalServer) serve(w http.ResponseWriter, r *http.Request) {
 		id := fmt.Sprintf("sd-%04d", fake.nextID)
 		issued := fmt.Sprintf("tok.%04d.secret-material", fake.nextID)
 		fake.sessions[issued] = container
+		if fake.afterStart != nil {
+			fake.afterStart(container)
+		}
 		fake.mu.Unlock()
 		_ = json.NewEncoder(w).Encode(map[string]string{"session_id": id, "token": issued})
 	case policySessionTerminatePath:
