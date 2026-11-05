@@ -340,21 +340,8 @@ func absInt(value int) int {
 // and digest. It returns the applied profile when one was sent.
 func (provider *HTTPDecisions) acknowledgePrices(result decisionsResponse, selectedModel string, prices *resultPrices) (*AppliedPriceProfile, error) {
 	routing := result.Routing
-	if provider.models != nil {
-		echo := routing.Models
-		if echo == nil || echo.Status != "applied" || !equalStrings(echo.Models, provider.models) || len(echo.Resolved) == 0 || !distinctStrings(echo.Resolved) {
-			return nil, fmt.Errorf("Decisions did not apply the requested candidate models")
-		}
-		// Applied candidates confine the pick, priced or not.
-		if !containsString(echo.Resolved, selectedModel) {
-			return nil, fmt.Errorf("Decisions selected a model outside the resolved candidates")
-		}
-	}
-	if provider.excludedModels != nil {
-		echo := routing.ExcludedModels
-		if echo == nil || echo.Status != "applied" || !equalStrings(echo.ExcludedModels, provider.excludedModels) {
-			return nil, fmt.Errorf("Decisions did not apply the requested excluded models")
-		}
+	if err := provider.acknowledgeCandidates(result, selectedModel); err != nil {
+		return nil, err
 	}
 	if provider.prices == nil && provider.profile == nil {
 		if routing.Prices != nil || routing.PriceProfile != nil || prices == nil || prices.Basis != "catalog" || prices.SHA256 != nil {
@@ -405,6 +392,24 @@ func (provider *HTTPDecisions) acknowledgePrices(result decisionsResponse, selec
 			}
 		}
 	}
+	// The reverse: a leg may claim a caller or profile source only where
+	// this client supplied one. Sources are outside the digest and set the
+	// receipt's basis, so an unclaimed source would be a price world this
+	// client never asked for, acknowledged as if it had.
+	for model, row := range echo.Models {
+		for leg, source := range row.Source {
+			switch source {
+			case "caller":
+				if price, configured := provider.prices[model][leg]; !configured || row.leg(leg) == nil || *row.leg(leg) != price {
+					return nil, fmt.Errorf("Decisions attributed the %s price of %s to the caller, who did not set it", leg, model)
+				}
+			case "profile":
+				if provider.profile == nil {
+					return nil, fmt.Errorf("Decisions attributed the %s price of %s to a profile that was not sent", leg, model)
+				}
+			}
+		}
+	}
 	if prices == nil || prices.Basis != priceBasis(echo.Models) || prices.SHA256 == nil || *prices.SHA256 != digest {
 		return nil, fmt.Errorf("Decisions selected result was not decided in the applied price world")
 	}
@@ -416,6 +421,31 @@ func (provider *HTTPDecisions) acknowledgePrices(result decisionsResponse, selec
 		return nil, fmt.Errorf("Decisions did not apply the requested price profile")
 	}
 	return &profile.AppliedPriceProfile, nil
+}
+
+// acknowledgeCandidates checks the routing.models and
+// routing.excluded_models echoes against the members this client sent:
+// applied, the entries sent, distinct resolved ids, and the selected model
+// among them. Applied candidates confine the pick, priced or not, so every
+// result path runs this, including a top result without an identity.
+func (provider *HTTPDecisions) acknowledgeCandidates(result decisionsResponse, selectedModel string) error {
+	routing := result.Routing
+	if provider.models != nil {
+		echo := routing.Models
+		if echo == nil || echo.Status != "applied" || !equalStrings(echo.Models, provider.models) || len(echo.Resolved) == 0 || !distinctStrings(echo.Resolved) {
+			return fmt.Errorf("Decisions did not apply the requested candidate models")
+		}
+		if !containsString(echo.Resolved, selectedModel) {
+			return fmt.Errorf("Decisions selected a model outside the resolved candidates")
+		}
+	}
+	if provider.excludedModels != nil {
+		echo := routing.ExcludedModels
+		if echo == nil || echo.Status != "applied" || !equalStrings(echo.ExcludedModels, provider.excludedModels) {
+			return fmt.Errorf("Decisions did not apply the requested excluded models")
+		}
+	}
+	return nil
 }
 
 func equalStrings(a, b []string) bool {

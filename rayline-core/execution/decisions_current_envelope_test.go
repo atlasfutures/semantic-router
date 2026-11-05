@@ -135,7 +135,7 @@ func TestCurrentContractCustomRefusesWrongSelectedReceipt(t *testing.T) {
 // basis, with every caller leg applied at the caller's price.
 func TestCurrentContractCustomProfilePricesBelongToSelectedResult(t *testing.T) {
 	const sonnet, flash = "anthropic/claude-sonnet-5", "deepseek/deepseek-v4.1-flash"
-	for _, scenario := range []string{"valid profile", "latest profile", "inline prices", "profile with inline prices", "wrong result digest", "wrong echo digest", "wrong configured digest", "catalog result", "wrong basis", "missing prices", "unsupported prices", "missing profile", "wrong profile", "wrong version", "bad content hash", "caller leg from catalog", "caller price changed", "caller model unaccounted", "unused candidate", "unresolved candidate", "duplicate resolved", "selected model unused", "unapplied models", "changed models", "unapplied excluded models"} {
+	for _, scenario := range []string{"valid profile", "latest profile", "inline prices", "profile with inline prices", "wrong result digest", "wrong echo digest", "wrong configured digest", "catalog result", "wrong basis", "missing prices", "unsupported prices", "missing profile", "wrong profile", "wrong version", "bad content hash", "caller leg from catalog", "caller price changed", "caller model unaccounted", "unused candidate", "unresolved candidate", "duplicate resolved", "selected model unused", "unapplied models", "changed models", "unapplied excluded models", "unconfigured caller source", "extra caller leg", "profile source without profile"} {
 		t.Run(scenario, func(t *testing.T) {
 			response := currentContractResponse(t)
 			config, selected := currentContractConfig(t, response, "custom")
@@ -155,7 +155,7 @@ func TestCurrentContractCustomProfilePricesBelongToSelectedResult(t *testing.T) 
 			switch scenario {
 			case "latest profile":
 				config.Decisions.Routing = json.RawMessage(`{"value_usd":2,"price_profile":{"id":"profile-fixture"},"models":["anthropic/*","deepseek/*"],"excluded_models":["deepseek/deepseek-v4-pro"]}`)
-			case "inline prices", "caller leg from catalog", "caller price changed", "caller model unaccounted", "unused candidate", "unresolved candidate", "duplicate resolved", "selected model unused", "unapplied models", "changed models", "unapplied excluded models":
+			case "inline prices", "caller leg from catalog", "caller price changed", "caller model unaccounted", "unused candidate", "unresolved candidate", "duplicate resolved", "selected model unused", "unapplied models", "changed models", "unapplied excluded models", "unconfigured caller source", "extra caller leg", "profile source without profile":
 				config.Decisions.Routing = json.RawMessage(`{"value_usd":2,"prices":{"` + sonnet + `":{"input":3,"output":15},"qwen/qwen3.6-35b-a3b":{"input":0.2}},"models":["anthropic/*","deepseek/*"],"excluded_models":["deepseek/deepseek-v4-pro"]}`)
 				delete(routing, "price_profile")
 				rows[sonnet] = map[string]any{"input": 3, "cache_read": 0.3, "cache_write": 3.75, "output": 15, "source": map[string]any{"input": "caller", "cache_read": "catalog", "cache_write": "catalog", "output": "caller"}}
@@ -177,6 +177,14 @@ func TestCurrentContractCustomProfilePricesBelongToSelectedResult(t *testing.T) 
 			case "unresolved candidate":
 				rows["qwen/qwen3.6-35b-a3b"] = map[string]any{"input": 0.2, "cache_read": 0, "cache_write": 0, "output": 0.8, "source": sources("catalog")}
 				unused = []string{}
+			case "unconfigured caller source":
+				// Flash is caller-sourced at a price the caller never sent.
+				rows[flash]["source"] = sources("caller")
+			case "extra caller leg":
+				// The caller priced sonnet's input and output only.
+				rows[sonnet]["source"].(map[string]any)["cache_read"] = "caller"
+			case "profile source without profile":
+				rows[flash]["source"].(map[string]any)["input"] = "profile"
 			case "duplicate resolved":
 				routing["models"].(map[string]any)["resolved"] = []string{sonnet, sonnet}
 			case "selected model unused":

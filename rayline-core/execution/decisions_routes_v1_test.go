@@ -346,3 +346,46 @@ func TestV2CallerPriceForLocalModelAllowsACatalogPricedCloudPick(t *testing.T) {
 		t.Fatalf("status %d local=%d cloud=%d: %s", status, local.count(), cloud.count(), body)
 	}
 }
+
+// The deployed top result carries no price receipt but does echo the
+// candidate members, so a current-mode top profile may confine the pick
+// with models / excluded_models and is acknowledged from those echoes.
+// Prices or a profile still need a receipt the top result lacks.
+func TestCurrentTopAcknowledgesCandidateEchoesWithoutAReceipt(t *testing.T) {
+	for _, scenario := range []string{"applied", "selected outside resolved", "unapplied", "missing echo", "changed exclusions", "prices need a receipt", "profile needs a receipt"} {
+		t.Run(scenario, func(t *testing.T) {
+			config := currentTestConfig(t)
+			action := config.Actions[0]
+			model := config.Deployments[0].RegistryModel
+			config.Decisions.Routing = json.RawMessage(`{"models":["qwen/*"],"excluded_models":["qwen/qwen3.8-9b"]}`)
+			routing := map[string]any{"models": map[string]any{"status": "applied", "models": []string{"qwen/*"}, "resolved": []string{model, "qwen/qwen3.8-72b"}}, "excluded_models": map[string]any{"status": "applied", "excluded_models": []string{"qwen/qwen3.8-9b"}}, "unapplied_keys": []string{}}
+			response := map[string]any{"route_id": "route-top", "model": model, "worker": action.Worker, "policy_action_id": action.ID, "routing": routing}
+			switch scenario {
+			case "selected outside resolved":
+				routing["models"].(map[string]any)["resolved"] = []string{"qwen/qwen3.8-72b"}
+			case "unapplied":
+				routing["models"].(map[string]any)["status"] = "unsupported"
+			case "missing echo":
+				delete(routing, "excluded_models")
+			case "changed exclusions":
+				routing["excluded_models"].(map[string]any)["excluded_models"] = []string{}
+			case "prices need a receipt":
+				config.Decisions.Routing = json.RawMessage(`{"models":["qwen/*"],"prices":{"` + model + `":{"input":0.01}}}`)
+				delete(routing, "excluded_models")
+			case "profile needs a receipt":
+				config.Decisions.Routing = json.RawMessage(`{"models":["qwen/*"],"price_profile":{"id":"local-qwen"}}`)
+				delete(routing, "excluded_models")
+			}
+			decision, err := currentDecisionFixture(t, config, response).Decide(t.Context(), currentTestInput())
+			if scenario != "applied" {
+				if err == nil {
+					t.Fatal("top result accepted without acknowledging its candidates")
+				}
+				return
+			}
+			if err != nil || decision.Result != "top" || decision.IdentitySource != "configured_manifest" || decision.Model != action.Model {
+				t.Fatalf("top with candidates: %+v %v", decision, err)
+			}
+		})
+	}
+}

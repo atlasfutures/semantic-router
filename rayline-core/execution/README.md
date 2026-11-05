@@ -252,7 +252,11 @@ form of `{"schema": "arc-route-prices.v1", "prices": <table>}` where the
 table holds only each candidate's four legs (the `source` members are not
 hashed), and requires the echoed digest to equal it. Every caller-priced
 model must either be a candidate whose caller legs are resolved at the
-caller's price with source `caller`, or be listed in `unused`. The selected
+caller's price with source `caller`, or be listed in `unused`. The reverse
+holds too: a leg may carry source `caller` only where this profile priced
+that model and leg, at that value, and source `profile` only when a
+`price_profile` was sent; sources are outside the digest and set the
+receipt's basis, so an unclaimed source is refused. The selected
 model must be one of the priced candidates (and one of `models.resolved`
 when `models` was sent), never a model listed `unused`. The selected result's `prices` receipt
 must name the table's basis (`catalog`, `caller`, `profile` or `mixed`, over
@@ -302,7 +306,11 @@ selection. The setting never changes gateway configuration or standing traffic.
 
 The deployed top-only response may provide `policy_action_id`, model and worker
 without package or price identity. Current mode accepts that response only with
-`result: "top"`, empty `routing`, and no `offer_sha256` expectation. It binds the returned action and exact model
+`result: "top"`, no `offer_sha256` expectation, and a `routing` that is empty
+or names candidates only: `models` and `excluded_models` are acknowledged
+from their echoes (applied, the entries sent, the selected model among the
+resolved candidates), while `prices` or `price_profile` need a price receipt
+this response lacks and are refused. It binds the returned action and exact model
 aliases to the configured manifest and records `identity_source:
 "configured_manifest"`; it does not claim the server attested package, registry,
 offer or prices. Responses containing the full identity must match the configured

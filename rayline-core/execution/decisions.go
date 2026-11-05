@@ -441,7 +441,15 @@ func (provider *HTTPDecisions) Decide(ctx context.Context, input DecisionInput) 
 		if provider.config.Decisions.Result != "top" {
 			decision, err = provider.currentTierDecision(result, selected, preferences != 0)
 		} else {
-			decision, err = provider.currentTopDecision(result, selected, preferences != 0)
+			// Candidates are acknowledged from their own echoes, which the
+			// top result carries; prices and a profile need a receipt it lacks.
+			priced := preferences
+			for _, key := range []string{"models", "excluded_models"} {
+				if _, exists := routing[key]; exists {
+					priced--
+				}
+			}
+			decision, err = provider.currentTopDecision(result, selected, priced != 0)
 		}
 		decision.Signals = result.Signals
 		return decision, err
@@ -501,14 +509,18 @@ func (provider *HTTPDecisions) Decide(ctx context.Context, input DecisionInput) 
 }
 
 // The deployed top-only API names an action but does not attest package,
-// registry, offer or prices. It can be used explicitly with empty routing;
-// the local manifest supplies control identity, clearly labeled in evidence.
-func (provider *HTTPDecisions) currentTopDecision(result decisionsResponse, selected publicDecision, preferences bool) (Decision, error) {
-	if provider.config.Decisions.Result != "top" || preferences || provider.config.Decisions.OfferSHA256 != "" {
-		return Decision{}, fmt.Errorf("this Decisions response only supports top with empty routing and no returned identity pins")
+// registry, offer or prices. It can be used explicitly with candidate
+// members only (no price world, which it has no receipt for); the local
+// manifest supplies control identity, clearly labeled in evidence.
+func (provider *HTTPDecisions) currentTopDecision(result decisionsResponse, selected publicDecision, priced bool) (Decision, error) {
+	if provider.config.Decisions.Result != "top" || priced || provider.config.Decisions.OfferSHA256 != "" {
+		return Decision{}, fmt.Errorf("this Decisions response only supports top with candidate-only routing and no returned identity pins")
 	}
 	action, err := provider.bindCurrentAction(result.RouteID, selected)
 	if err != nil {
+		return Decision{}, err
+	}
+	if err := provider.acknowledgeCandidates(result, selected.Model); err != nil {
 		return Decision{}, err
 	}
 	decision := Decision{RouteID: result.RouteID, ActionID: action.ID, Worker: action.Worker, Model: action.Model, ReportedModel: selected.Model, PackageSHA256: provider.config.PackageSHA256, ControlID: action.ControlID, Result: "top", IdentitySource: "configured_manifest"}
