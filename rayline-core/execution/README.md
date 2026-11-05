@@ -71,8 +71,9 @@ opt-in. The core reports facts and never picks or ranks a model.
     after an `Agent`/`Task` call is tool output.
   - `sidecall`: a harness's own auxiliary call, recognized by its literal
     (Pi's summarization system prompt, Claude Code's summarize directive,
-    title and suggestion prompts, Codex's compaction prompt). It advances
-    nothing, and one sent without a session header (Pi's summary call) runs
+    title and suggestion prompts, Codex's compaction prompt, Hermes'
+    iteration-cap summary request). It advances nothing, and one sent without
+    a session header (Pi's summary call, Hermes' summary on Messages) runs
     statelessly instead of being refused.
   - `compaction`: a request that rewrites the prefix is compared with the last
     request this branch saw (committed or not). A harness summary literal (Pi,

@@ -29,6 +29,16 @@ const (
 	claudeCodeTitle        = "You are naming a coding session so the user can pick it out of a long list of sessions."
 	claudeCodeBilling      = "x-anthropic-billing-header:"
 
+	// Hermes' iteration-cap summary (agent/context_compressor.py
+	// MAX_ITERATIONS_SUMMARY_REQUEST, unchanged from v0.22.5 through main): the
+	// whole last user message once the tool loop hits max_iterations, so it is
+	// matched exactly. On the Messages wire Hermes builds this request outside
+	// its session-affinity merge, so it arrives with no session header; as a
+	// side call it runs statelessly. (On Chat and Responses the same request
+	// goes through the merged builder and carries the header.)
+	hermesIterationSummary = "You've reached the maximum number of tool-calling iterations allowed. Please provide a final response " +
+		"summarizing what you've found and accomplished so far, without calling any more tools."
+
 	codexSummaryPrefix = "Another language model started to solve this problem and produced a summary " +
 		"of its thinking process. You also have access to the state of the tools that " +
 		"were used by that language model. Use this to build on the work that has " +
@@ -60,12 +70,14 @@ var (
 // wireMessage is one client wire message (Responses: one input item), indexed
 // exactly as wireMessageRoles and wireMessageFingerprints index them.
 type wireMessage struct {
-	role       string
-	texts      []string // text blocks, in order, before any tool result
-	allTexts   []string // every text block, in order
-	toolResult bool
-	toolCalls  []string
-	modelItem  bool // Responses model output (reasoning, function calls)
+	role        string
+	texts       []string // text blocks, in order, before any tool result
+	allTexts    []string // every text block, in order
+	blocks      int      // every content block, text or not (1 for string content)
+	toolResults int      // tool_result blocks among them
+	toolResult  bool
+	toolCalls   []string
+	modelItem   bool // Responses model output (reasoning, function calls)
 }
 
 type wireRequest struct {
@@ -86,7 +98,7 @@ func parseWireRequest(format llmprotocol.WireFormat, body []byte) wireRequest {
 		if json.Unmarshal(wire["input"], &input) != nil {
 			var whole string
 			if json.Unmarshal(wire["input"], &whole) == nil {
-				result.messages = []wireMessage{{role: "user", texts: []string{whole}, allTexts: []string{whole}}}
+				result.messages = []wireMessage{{role: "user", texts: []string{whole}, allTexts: []string{whole}, blocks: 1}}
 			}
 			return result
 		}
@@ -109,6 +121,7 @@ func parseWireRequest(format llmprotocol.WireFormat, body []byte) wireRequest {
 			default:
 				message.texts = stringsOf(item.Content)
 				message.allTexts = message.texts
+				message.blocks = blocksOf(item.Content)
 			}
 			result.messages = append(result.messages, message)
 		}
@@ -135,6 +148,7 @@ func parseWireRequest(format llmprotocol.WireFormat, body []byte) wireRequest {
 			}
 			var whole string
 			if json.Unmarshal(raw.Content, &whole) == nil {
+				message.blocks = 1
 				if !message.toolResult {
 					message.texts = []string{whole}
 					message.allTexts = message.texts
@@ -146,10 +160,12 @@ func parseWireRequest(format llmprotocol.WireFormat, body []byte) wireRequest {
 					Name string  `json:"name"`
 				}
 				_ = json.Unmarshal(raw.Content, &blocks)
+				message.blocks = len(blocks)
 				for _, block := range blocks {
 					switch block.Type {
 					case "tool_result":
 						message.toolResult = true
+						message.toolResults++
 					case "tool_use":
 						message.toolCalls = append(message.toolCalls, block.Name)
 					case "text", "input_text", "output_text":
@@ -195,6 +211,20 @@ func stringsOf(raw json.RawMessage) []string {
 	return result
 }
 
+// blocksOf counts the content blocks of a string (one) or a block list,
+// whatever their type.
+func blocksOf(raw json.RawMessage) int {
+	var whole string
+	if json.Unmarshal(raw, &whole) == nil {
+		return 1
+	}
+	var blocks []json.RawMessage
+	if json.Unmarshal(raw, &blocks) != nil {
+		return 0
+	}
+	return len(blocks)
+}
+
 // typedText is the user's own words: text before any tool result, with
 // reminders and project context removed; empty for a harness-authored turn.
 func (message wireMessage) typedText() string {
@@ -229,6 +259,19 @@ func (message wireMessage) lastText() string {
 	return message.allTexts[len(message.allTexts)-1]
 }
 
+// soleText is the message's own words when the message says nothing else: its
+// one text block, where every other block (if any) is a tool result. Hermes'
+// Anthropic converter merges a tool row and the user turn that follows it into
+// one message, so the summary nudge really does arrive beside tool results;
+// an image, a document or a second text block means the user said more than
+// the marker, and returns "".
+func (message wireMessage) soleText() string {
+	if len(message.allTexts) != 1 || message.blocks != 1+message.toolResults {
+		return ""
+	}
+	return message.allTexts[0]
+}
+
 func isSystemRole(role string) bool { return role == "system" || role == "developer" }
 
 // lastNonSystem is the index of the last message that is not a trailing
@@ -260,7 +303,8 @@ func (request wireRequest) hasAssistant() bool {
 }
 
 // isSidecall recognizes a harness's own auxiliary calls: summarization for a
-// compaction, title and prompt-suggestion calls. They never advance a branch.
+// compaction or an iteration cap, title and prompt-suggestion calls. They never
+// advance a branch.
 func (request wireRequest) isSidecall() bool {
 	for _, text := range request.system {
 		if strings.HasPrefix(text, piSummarizationSystem) || strings.HasPrefix(text, claudeCodeTitle) {
@@ -271,8 +315,13 @@ func (request wireRequest) isSidecall() bool {
 	if last < 0 || request.messages[last].role != "user" {
 		return false
 	}
-	text := request.messages[last].lastText()
-	return strings.HasPrefix(text, claudeCodeSummarize) || strings.HasPrefix(text, claudeCodeSuggestion) || text == codexCompactionPrompt
+	message := request.messages[last]
+	text := message.lastText()
+	// Hermes' summary nudge is the user's whole turn, so the literal must be
+	// the message's only text: a turn that says anything else, or carries an
+	// image, is still a turn, but tool results merged in beside it are not.
+	return strings.HasPrefix(text, claudeCodeSummarize) || strings.HasPrefix(text, claudeCodeSuggestion) ||
+		message.soleText() == hermesIterationSummary || text == codexCompactionPrompt
 }
 
 // claudeCodeSubagent is Claude Code's own cc_is_subagent=true billing claim.
