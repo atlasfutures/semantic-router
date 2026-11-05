@@ -634,7 +634,7 @@ func resetStreamForHostRetry(ctx *RequestContext, body []byte, dispatch *provide
 	// The re-send is the cell's own single call.
 	ctx.UpstreamAttempts = 1
 	ctx.DispatchedOutbound = readDispatchedOutboundParams(body, dispatch)
-	recordDispatchedProviderPin(ctx, body)
+	recordDispatchedControls(ctx, body)
 }
 
 // stop abandons the re-send in flight, if any.

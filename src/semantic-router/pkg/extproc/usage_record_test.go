@@ -439,7 +439,7 @@ func TestUsageRecordCarriesDispatchedReasoningControls(t *testing.T) {
 		{"messages output_config effort", `{"model":"m","output_config":{"effort":"high"},"thinking":{"type":"adaptive"}}`,
 			"high", nil},
 		{"openrouter reasoning budget", `{"model":"m","reasoning":{"effort":"low","max_tokens":2048}}`,
-			"low", float64(2048)},
+			"low", int64(2048)},
 		{"no controls", `{"model":"m","thinking":{"type":"adaptive"}}`, nil, nil},
 	}
 	for _, test := range cases {
