@@ -385,10 +385,17 @@ func createRaylineARCPolicySelector(
 	case policy.Sessions.Enabled:
 		// A sessioned Modal Server: one URL that autoscales, each episode on
 		// its own session.
+		// A turn whose session start fails decides on the sessionless
+		// fallback, when one is configured.
+		var sessionless *raylinearc.PolicyServiceClient
+		if policy.Sessions.FallbackBaseURL != "" {
+			sessionless = clientFor(policy.Sessions.FallbackBaseURL)
+		}
 		var sessionsErr error
 		if sessions, sessionsErr = raylinearc.NewPolicySessionBackend(clientFor(policy.BaseURL), raylinearc.PolicySessionConfig{
 			IdleTimeout:  time.Duration(policy.Sessions.EffectiveIdleTimeoutSeconds()) * time.Second,
 			StartTimeout: time.Duration(policy.Sessions.EffectiveStartTimeoutSeconds()) * time.Second,
+			Sessionless:  sessionless,
 		}); sessionsErr != nil {
 			return unavailable("policy_service_sessions")
 		}
@@ -1175,7 +1182,9 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	result.RaylineARC.PolicyHTTP = response.HTTPTiming
 	result.RaylineARC.EncoderLatencyUnknown = response.TimingMillis.Encode == nil
 	result.RaylineARC.PolicyDecisionMode = decisionMode
-	if staging {
+	// A turn decided on the sessionless fallback is not appended: no
+	// session holds its staged turn, so the next turn decides in full.
+	if staging && sessionBinding.Fallback() == "" {
 		result.RaylineARC.PolicyStaging = scorer.newPolicyStaging(
 			arcContext, request.RequestFormat, turn, messages, roles, decider, sessionBinding,
 		)

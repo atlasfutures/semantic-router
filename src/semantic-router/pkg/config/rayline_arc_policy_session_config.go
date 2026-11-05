@@ -27,6 +27,12 @@ type RaylineARCPolicySessionsConfig struct {
 	// queues a start for capacity for minutes, so a turn whose start lapses
 	// fails closed instead of waiting.
 	StartTimeoutSeconds int `yaml:"start_timeout_seconds,omitempty"`
+	// FallbackBaseURL is a non-sessioned deployment of the same package,
+	// called with the same proxy key. Set, a turn whose session start fails
+	// or lapses is decided there, without a session, instead of failing
+	// closed; llm_usage labels it policy_session_fallback. Empty (the
+	// default) keeps the turn failing closed.
+	FallbackBaseURL string `yaml:"fallback_base_url,omitempty"`
 }
 
 // EffectiveIdleTimeoutSeconds is the session idle timeout in force.
@@ -53,7 +59,7 @@ func (cfg RaylineARCPolicySessionsConfig) EffectiveStartTimeoutSeconds() int {
 func validateRaylineARCPolicySessions(cfg *RaylineARCPolicyServiceConfig) error {
 	sessions := cfg.Sessions
 	if !sessions.Enabled {
-		if sessions.IdleTimeoutSeconds != 0 || sessions.StartTimeoutSeconds != 0 {
+		if sessions.IdleTimeoutSeconds != 0 || sessions.StartTimeoutSeconds != 0 || sessions.FallbackBaseURL != "" {
 			return fmt.Errorf("sessions settings require sessions.enabled")
 		}
 		return nil
@@ -69,6 +75,10 @@ func validateRaylineARCPolicySessions(cfg *RaylineARCPolicyServiceConfig) error 
 	}
 	if sessions.StartTimeoutSeconds < 0 || sessions.StartTimeoutSeconds > maxRaylineARCPolicySessionStartSeconds {
 		return fmt.Errorf("sessions.start_timeout_seconds must be between 1 and %d", maxRaylineARCPolicySessionStartSeconds)
+	}
+	if fallback := sessions.FallbackBaseURL; fallback != "" &&
+		(strings.TrimSpace(fallback) != fallback || strings.TrimRight(fallback, "/") == strings.TrimRight(cfg.BaseURL, "/")) {
+		return fmt.Errorf("sessions.fallback_base_url must be a URL other than base_url")
 	}
 	return nil
 }

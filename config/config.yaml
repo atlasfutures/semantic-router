@@ -2033,6 +2033,9 @@ recipes:
                 # sticky sessions at base_url instead: each episode holds one
                 # Modal session (idle_timeout_seconds 900, start_timeout_seconds
                 # 10 by default). Exclusive with replicas; needs the proxy key.
+                # fallback_base_url (off by default) names a non-sessioned
+                # deployment of the same package that decides a turn whose
+                # session start fails, instead of failing it closed.
                 sessions: {}
                 modal_key_env: RAYLINE_ARC_MODAL_KEY
                 modal_secret_env: RAYLINE_ARC_MODAL_SECRET
