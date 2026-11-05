@@ -153,6 +153,14 @@ type llmUsageRecord struct {
 	// replaces a client's, or the client's own forwarded; null when the body
 	// carried none.
 	RequestedServiceTier *string `json:"requested_service_tier"`
+	// UpstreamEffort and UpstreamReasoningMaxTokens are the reasoning controls
+	// the dispatched body carried, read back off the final provider body
+	// (recordDispatchedReasoningControls): the effort from reasoning_effort,
+	// reasoning.effort, chat_template_kwargs or output_config.effort, and
+	// OpenRouter's reasoning.max_tokens. Null when the body carried none, so
+	// the provider applied its own default.
+	UpstreamEffort             *string `json:"upstream_effort"`
+	UpstreamReasoningMaxTokens *int64  `json:"upstream_reasoning_max_tokens"`
 	// FlexResend marks the two calls of a discount-endpoint turn that was
 	// re-sent on its standard twin: flex_attempt on the refused or timed-out
 	// call, standard_resend on the re-send. Null on every other call.
@@ -367,6 +375,11 @@ func (r *OpenAIRouter) newLLMUsageRecord(ctx *RequestContext, usage responseUsag
 		}
 	}
 	record.RequestedServiceTier = nonEmpty(ctx.DispatchedServiceTier)
+	record.UpstreamEffort = nonEmpty(ctx.DispatchedReasoningEffort)
+	if bound := ctx.DispatchedReasoningBound; bound != nil {
+		value := *bound
+		record.UpstreamReasoningMaxTokens = &value
+	}
 	if ctx.FlexResend.served() {
 		record.FlexResend = nonEmpty(flexResendStandard)
 	}

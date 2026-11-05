@@ -963,6 +963,9 @@ func (r *OpenAIRouter) thinkingSignatureRetryOnResponseHeaders(
 
 	ctx.ThinkingSignatureRetried = true
 	ctx.DispatchedOutbound = readDispatchedOutboundParams(retryBody, plan.dispatch)
+	// The re-send drops the reasoning controls with the refused block: its
+	// line states what the re-sent body carried, not the first call's.
+	recordDispatchedReasoningControls(ctx, retryBody)
 	// The re-send is the body the episode records: its prefix, and a run
 	// that starts again from this turn.
 	r.auditRaylineARCUpstream(retryBody, ctx)

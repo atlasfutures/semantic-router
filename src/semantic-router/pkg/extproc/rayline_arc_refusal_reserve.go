@@ -505,6 +505,8 @@ type reserveSnapshot struct {
 	outbound                                    *dispatchedOutboundParams
 	autoCache                                   *dispatchAutoCache
 	serviceTier                                 string
+	reasoningEffort                             string
+	reasoningBound                              *int64
 	hostedTools                                 []string
 	namesToolResults, toOpenRouter              bool
 	transactionState, selectionState            *raylinearc.EpisodeState
@@ -531,6 +533,7 @@ func snapshotReserveState(ctx *RequestContext, reselect *raylineARCReselect) res
 		request: ctx.SemanticRequest, envelope: ctx.ProtocolEnvelope, targetFormat: ctx.TargetFormat,
 		thinking: ctx.RaylineARCThinkingControl, outbound: ctx.DispatchedOutbound, autoCache: ctx.DispatchAutoCache,
 		serviceTier: ctx.DispatchedServiceTier, hostedTools: ctx.DispatchHostedTools,
+		reasoningEffort: ctx.DispatchedReasoningEffort, reasoningBound: ctx.DispatchedReasoningBound,
 		namesToolResults: ctx.DispatchNamesToolResults, toOpenRouter: ctx.DispatchedToOpenRouter,
 		worker: ctx.RaylineARCDispatch, thinkingTrace: ctx.RaylineARCThinking, workerThinking: ctx.RaylineARCWorkerThinking,
 		endpointFeed: ctx.RaylineARCEndpointFeed, endpointSource: ctx.RaylineARCEndpointSource,
@@ -561,6 +564,7 @@ func (snapshot reserveSnapshot) restore(ctx *RequestContext, reselect *raylineAR
 	ctx.SemanticRequest, ctx.ProtocolEnvelope, ctx.TargetFormat = snapshot.request, snapshot.envelope, snapshot.targetFormat
 	ctx.RaylineARCThinkingControl, ctx.DispatchedOutbound = snapshot.thinking, snapshot.outbound
 	ctx.DispatchAutoCache, ctx.DispatchedServiceTier = snapshot.autoCache, snapshot.serviceTier
+	ctx.DispatchedReasoningEffort, ctx.DispatchedReasoningBound = snapshot.reasoningEffort, snapshot.reasoningBound
 	ctx.DispatchHostedTools, ctx.DispatchNamesToolResults = snapshot.hostedTools, snapshot.namesToolResults
 	ctx.DispatchedToOpenRouter = snapshot.toOpenRouter
 	ctx.RaylineARCDispatch, ctx.RaylineARCThinking, ctx.RaylineARCWorkerThinking =

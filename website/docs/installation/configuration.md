@@ -99,7 +99,10 @@ OpenRouter backend the Router sends it as the top-level `service_tier`,
 replacing any tier the client sent; other backends and arms without the key
 are unchanged. A standard re-send carries its twin's tier, not the discount
 entry's. Each usage line records the tier its body requested as
-`requested_service_tier`, beside the served `upstream_service_tier`.
+`requested_service_tier`, beside the served `upstream_service_tier`. It also
+records the reasoning controls the dispatched body carried: `upstream_effort`
+and OpenRouter's `upstream_reasoning_max_tokens`, both null when the body
+carried none and the provider applied its default.
 
 Use [Protocol Compatibility](protocol-compatibility) to choose the model's
 backend `api_format`. Then see
