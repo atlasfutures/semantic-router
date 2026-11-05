@@ -78,14 +78,14 @@ func NewHTTPDecisions(config Config) (*HTTPDecisions, error) {
 		}
 		policyPreset = policy.Preset
 		for key := range routing {
-			if key != "policy" && key != "value_usd" && key != "prices" && key != "exclusive" && key != "price_profile_id" && key != "price_profile_version" && key != "signals" {
+			if key != "policy" && key != "v_value" && key != "prices" && key != "exclusive" && key != "price_profile_id" && key != "price_profile_version" && key != "signals" {
 				return nil, fmt.Errorf("execution_context_v2 routing key %q has no supported applied acknowledgement", key)
 			}
 		}
 	}
 	if mode == DecisionsCurrent {
 		for key := range routing {
-			if key != "value_usd" && key != "prices" && key != "exclusive" && key != "price_profile_id" && key != "price_profile_version" && key != "signals" {
+			if key != "v_value" && key != "prices" && key != "exclusive" && key != "price_profile_id" && key != "price_profile_version" && key != "signals" {
 				return nil, fmt.Errorf("current Decisions routing key %q has no supported applied acknowledgement", key)
 			}
 		}
@@ -120,18 +120,18 @@ func NewHTTPDecisions(config Config) (*HTTPDecisions, error) {
 			return nil, fmt.Errorf("price_sha256 requires caller prices or a price profile")
 		}
 	}
-	if raw, exists := routing["value_usd"]; exists {
+	if raw, exists := routing["v_value"]; exists {
 		var value float64
 		if err := json.Unmarshal(raw, &value); err != nil || math.IsNaN(value) || math.IsInf(value, 0) || value < 0 || string(raw) == "null" {
-			return nil, fmt.Errorf("routing value_usd must be a nonnegative finite number")
+			return nil, fmt.Errorf("routing v_value must be a nonnegative finite number")
 		}
 		if config.Decisions.Result != "custom" {
-			return nil, fmt.Errorf("routing value_usd requires the custom Decisions result")
+			return nil, fmt.Errorf("routing v_value requires the custom Decisions result")
 		}
 		provider.valueUSD = &value
 	}
 	if config.Decisions.Result == "custom" && provider.valueUSD == nil {
-		return nil, fmt.Errorf("custom Decisions result requires explicit routing value_usd")
+		return nil, fmt.Errorf("custom Decisions result requires explicit routing v_value")
 	}
 	if raw, exists := routing["exclusive"]; exists {
 		if err := json.Unmarshal(raw, &provider.exclusive); err != nil {
@@ -268,7 +268,7 @@ type publicDecision struct {
 	Worker     string            `json:"worker"`
 	ActionID   string            `json:"policy_action_id"`
 	Identity   *decisionIdentity `json:"identity"`
-	ValueUSD   *float64          `json:"value_usd"`
+	ValueUSD   *float64          `json:"v_value"`
 	CostWeight *float64          `json:"cost_weight"`
 	Prices     *struct {
 		Basis  string  `json:"basis"`
@@ -306,7 +306,7 @@ type decisionsResponse struct {
 		ValueUSD *struct {
 			Status    string   `json:"status"`
 			Requested *float64 `json:"requested"`
-		} `json:"value_usd"`
+		} `json:"v_value"`
 		Execution *struct {
 			Status              string            `json:"status"`
 			Turn                executionTurn     `json:"turn"`
@@ -433,7 +433,7 @@ func (provider *HTTPDecisions) Decide(ctx context.Context, input DecisionInput) 
 	if provider.valueUSD != nil {
 		value := result.Routing.ValueUSD
 		if value == nil || value.Status != "applied" || value.Requested == nil || *value.Requested != *provider.valueUSD {
-			return Decision{}, fmt.Errorf("Decisions did not apply the requested value_usd")
+			return Decision{}, fmt.Errorf("Decisions did not apply the requested v_value")
 		}
 	}
 	if selected.Identity == nil && provider.config.Decisions.apiMode() == DecisionsCurrent {
@@ -564,7 +564,7 @@ func (provider *HTTPDecisions) matchesActionModel(model string, action Action) b
 }
 
 func (provider *HTTPDecisions) logDecision(decision Decision, priceBasis string, priceSHA *string) {
-	slog.Info("decision selected", "route_id", decision.RouteID, "selected_model", decision.Model, "reported_model", decision.ReportedModel, "action_id", decision.ActionID, "control_id", decision.ControlID, "package_sha256", decision.PackageSHA256, "identity_source", decision.IdentitySource, "result", decision.Result, "applied_value_usd", decision.AppliedValueUSD, "price_basis", priceBasis, "price_sha256", priceSHA, "price_profile", decision.PriceProfile, "api_mode", provider.config.Decisions.apiMode())
+	slog.Info("decision selected", "route_id", decision.RouteID, "selected_model", decision.Model, "reported_model", decision.ReportedModel, "action_id", decision.ActionID, "control_id", decision.ControlID, "package_sha256", decision.PackageSHA256, "identity_source", decision.IdentitySource, "result", decision.Result, "applied_v_value", decision.AppliedValueUSD, "price_basis", priceBasis, "price_sha256", priceSHA, "price_profile", decision.PriceProfile, "api_mode", provider.config.Decisions.apiMode())
 }
 
 func validateWorkerEcho(workers []externalWorker, echoed []workerEcho, boundary, cachePolicy string) error {

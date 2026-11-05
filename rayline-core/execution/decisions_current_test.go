@@ -115,7 +115,7 @@ func TestCurrentTopRejectsUnboundActionAndUnappliedRequests(t *testing.T) {
 			case "worker":
 				response["worker"] = "another-worker"
 			case "unapplied":
-				response["routing"] = map[string]any{"unapplied_keys": []string{"value_usd"}}
+				response["routing"] = map[string]any{"unapplied_keys": []string{"v_value"}}
 			case "configured offer pin":
 				config.Decisions.OfferSHA256 = strings.Repeat("b", 64)
 			}
@@ -132,12 +132,12 @@ func TestCurrentCustomRequiresAppliedValueAndExactIdentity(t *testing.T) {
 			config := currentTestConfig(t)
 			config.Decisions.Result = "custom"
 			config.Decisions.OfferSHA256 = strings.Repeat("b", 64)
-			config.Decisions.Routing = json.RawMessage(`{"value_usd":0.5}`)
+			config.Decisions.Routing = json.RawMessage(`{"v_value":0.5}`)
 			action := config.Actions[0]
 			prices := map[string]any{"basis": "catalog", "price_sha256": nil, "exclusive": false}
 			identity := map[string]any{"package_sha256": config.PackageSHA256, "thinking_controls_sha256": config.RegistrySHA256, "offer_sha256": config.Decisions.OfferSHA256, "action_id": action.ID, "policy_action_id": action.ID, "control_id": action.ControlID, "prices": prices}
 			value := map[string]any{"status": "applied", "requested": 0.5}
-			response := map[string]any{"route_id": "route-custom", "model": "wrong-top-result", "custom": map[string]any{"model": action.Model, "worker": action.Worker, "policy_action_id": action.ID, "identity": identity}, "routing": map[string]any{"value_usd": value, "unapplied_keys": []string{}}}
+			response := map[string]any{"route_id": "route-custom", "model": "wrong-top-result", "custom": map[string]any{"model": action.Model, "worker": action.Worker, "policy_action_id": action.ID, "identity": identity}, "routing": map[string]any{"v_value": value, "unapplied_keys": []string{}}}
 			switch kind {
 			case "no custom":
 				delete(response, "custom")
@@ -176,7 +176,7 @@ func TestCurrentAPIIsExplicitAndNeverDowngradesValue(t *testing.T) {
 			case "unknown mode":
 				config.Decisions.APIMode = "auto"
 			case "top with value":
-				config.Decisions.Routing = json.RawMessage(`{"value_usd":1}`)
+				config.Decisions.Routing = json.RawMessage(`{"v_value":1}`)
 			case "custom without value":
 				config.Decisions.Result = "custom"
 			case "unknown routing":

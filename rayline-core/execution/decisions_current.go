@@ -30,7 +30,7 @@ func (provider *HTTPDecisions) currentTierDecision(result decisionsResponse, sel
 		return Decision{}, fmt.Errorf("Decisions result has no current tier contract")
 	}
 	if selected.ValueUSD == nil || *selected.ValueUSD != value || selected.CostWeight == nil || *selected.CostWeight <= 0 || math.Abs(*selected.CostWeight*value-1) > 1e-9 {
-		return Decision{}, fmt.Errorf("Decisions selected result does not match its requested value_usd and cost_weight")
+		return Decision{}, fmt.Errorf("Decisions selected result does not match its requested v_value and cost_weight")
 	}
 	if (routingRequested && result.Routing.Unapplied == nil) || selected.Prices == nil {
 		return Decision{}, fmt.Errorf("Decisions omitted the selected result's routing or price receipt")

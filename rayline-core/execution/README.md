@@ -29,7 +29,7 @@ opt-in. The core reports facts and never picks or ranks a model.
   `targets[]`. Raydock writes
   `arc-policy.hybrid-default.v1` when its user sets no override; the core never
   sends an absent policy in this mode. Allowed routing keys are `policy`,
-  `value_usd`, `prices`, `exclusive`, `signals` and the price-profile keys.
+  `v_value`, `prices`, `exclusive`, `signals` and the price-profile keys.
 - **Registry.** Without an explicit `registry_path`, v2 executes with the
   embedded registry whatever registry the serving package names: controls are
   content-hashed, every bound action's control must be admitted by the
@@ -225,7 +225,7 @@ silently narrow a larger hosted offer after selection.
 or `custom`), and explicit `routing`. `offer_sha256` is optional in current mode
 and required in advanced mode. `routing.prices` requires
 `price_sha256`; its returned digest and `exclusive` must match the request. The
-current adapter supports `value_usd`, `prices`, `exclusive`, `price_profile_id`,
+current adapter supports `v_value`, `prices`, `exclusive`, `price_profile_id`,
 and `price_profile_version`. A profile ID references an authorized saved profile
 through the gateway; it cannot be combined with inline `prices`. Omit the version
 to resolve the current version on each decision, or pin a positive version for a
@@ -235,7 +235,7 @@ digest to the selected result's price receipt and exclusivity to the routing
 price echo. Profile content hashes
 and canonical price digests use different encodings and are not interchangeable.
 The resolved profile identity is recorded with each selection. A configured
-`value_usd` requires `result: "custom"`, a returned custom result, and an applied
+`v_value` requires `result: "custom"`, a returned custom result, and an applied
 value acknowledgement; the selected result must also report that value and its
 reciprocal cost weight. Missing custom results, mismatched identities or prices,
 and unapplied routing keys fail visibly. A harness cannot override these settings
