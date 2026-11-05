@@ -99,7 +99,7 @@ func TestRoutesV1RequestCarriesConfiguredMembersAndNoExclusive(t *testing.T) {
 	t.Setenv("TEST_DECISIONS_KEY", "test-key")
 	config := currentTestConfig(t)
 	config.Decisions.Result = "custom"
-	config.Decisions.Routing = json.RawMessage(`{"value_usd":1.5,"prices":{"qwen/qwen3.8-27b":{"input":0.01,"output":0.01}},"price_profile":{"id":"profile-1","version":3},"models":["qwen/*","anthropic/*"],"excluded_models":["anthropic/claude-opus-5"]}`)
+	config.Decisions.Routing = json.RawMessage(`{"v_value":1.5,"prices":{"qwen/qwen3.8-27b":{"input":0.01,"output":0.01}},"price_profile":{"id":"profile-1","version":3},"models":["qwen/*","anthropic/*"],"excluded_models":["anthropic/claude-opus-5"]}`)
 	var requests int
 	endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
@@ -115,7 +115,7 @@ func TestRoutesV1RequestCarriesConfiguredMembersAndNoExclusive(t *testing.T) {
 				t.Errorf("request carried routing.%s", removed)
 			}
 		}
-		want := map[string]string{"value_usd": `1.5`, "prices": `{"qwen/qwen3.8-27b":{"input":0.01,"output":0.01}}`, "price_profile": `{"id":"profile-1","version":3}`, "models": `["qwen/*","anthropic/*"]`, "excluded_models": `["anthropic/claude-opus-5"]`}
+		want := map[string]string{"v_value": `1.5`, "prices": `{"qwen/qwen3.8-27b":{"input":0.01,"output":0.01}}`, "price_profile": `{"id":"profile-1","version":3}`, "models": `["qwen/*","anthropic/*"]`, "excluded_models": `["anthropic/claude-opus-5"]`}
 		if len(body.Routing) != len(want) || body.Model != "arc-1.0" {
 			t.Errorf("request routing %v", body.Routing)
 		}
@@ -139,7 +139,8 @@ func TestRoutesV1RequestCarriesConfiguredMembersAndNoExclusive(t *testing.T) {
 }
 
 // The router's response_full fixture (atlasfutures/semantic-router's hosted
-// gateway, Routes API V1 at pathfinder#6159), verbatim: a custom result
+// gateway, Routes API V1 at pathfinder#6159), with V under its current name
+// `v_value` (#403) and otherwise verbatim: a custom result
 // decided at a caller-priced table with one unused caller price. It carries
 // no identity, so the current adapter binds it to the configured manifest.
 func routesV1FullResponse(t *testing.T) map[string]any {
@@ -157,7 +158,7 @@ func routesV1FullResponse(t *testing.T) map[string]any {
 	return fixture.Body
 }
 
-const routesV1FixtureRouting = `{"value_usd":1.5,"models":["anthropic/*","deepseek/*"],"excluded_models":["deepseek/deepseek-v4-pro"],"prices":{"anthropic/claude-sonnet-5":{"input":3,"cache_read":0.3,"cache_write":3.75,"output":15},"deepseek/deepseek-v4.1-flash":{"input":0.1,"cache_read":0,"cache_write":0,"output":0.4},"qwen/qwen3.6-35b-a3b":{"input":0.2,"output":0.8}}}`
+const routesV1FixtureRouting = `{"v_value":1.5,"models":["anthropic/*","deepseek/*"],"excluded_models":["deepseek/deepseek-v4-pro"],"prices":{"anthropic/claude-sonnet-5":{"input":3,"cache_read":0.3,"cache_write":3.75,"output":15},"deepseek/deepseek-v4.1-flash":{"input":0.1,"cache_read":0,"cache_write":0,"output":0.4},"qwen/qwen3.6-35b-a3b":{"input":0.2,"output":0.8}}}`
 
 func TestRoutesV1FixtureIsAcknowledgedWithoutADigestPin(t *testing.T) {
 	const fixtureDigest = "24f6b46393842bbe5f4a24fc9ecb7f446f5e27999cb81b4bbde091a776741cf5"
@@ -299,7 +300,7 @@ func TestCatalogOnlyCandidatesConfineTheSelectedModel(t *testing.T) {
 		t.Run(scenario, func(t *testing.T) {
 			response := currentContractResponse(t)
 			config, _ := currentContractConfig(t, response, "custom") // selects sonnet at the catalog
-			config.Decisions.Routing = json.RawMessage(`{"value_usd":2,"models":["anthropic/*","deepseek/*"]}`)
+			config.Decisions.Routing = json.RawMessage(`{"v_value":2,"models":["anthropic/*","deepseek/*"]}`)
 			models := map[string]any{"status": "applied", "models": []string{"anthropic/*", "deepseek/*"}, "resolved": []string{sonnet, flash}}
 			response["routing"].(map[string]any)["models"] = models
 			switch scenario {

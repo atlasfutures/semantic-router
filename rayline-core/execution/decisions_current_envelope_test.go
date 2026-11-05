@@ -36,7 +36,7 @@ func currentContractConfig(t *testing.T, response map[string]any, result string)
 	config := currentTestConfig(t)
 	config.Decisions.Result = result
 	selected := response["custom"].(map[string]any)
-	config.Decisions.Routing = json.RawMessage(`{"value_usd":2}`)
+	config.Decisions.Routing = json.RawMessage(`{"v_value":2}`)
 	if result != "custom" {
 		selected = response["presets"].(map[string]any)[result].(map[string]any)
 		config.Decisions.Routing = json.RawMessage(`{}`)
@@ -58,7 +58,7 @@ func TestCurrentContractFixtureSelectsExactResult(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if decision.ActionID != selected["policy_action_id"] || decision.Model != selected["model"] || decision.Result != result || decision.IdentitySource != "configured_manifest" || decision.PackageSHA256 != config.PackageSHA256 || decision.ControlID != config.Actions[0].ControlID || decision.AppliedValueUSD == nil || *decision.AppliedValueUSD != selected["value_usd"] {
+			if decision.ActionID != selected["policy_action_id"] || decision.Model != selected["model"] || decision.Result != result || decision.IdentitySource != "configured_manifest" || decision.PackageSHA256 != config.PackageSHA256 || decision.ControlID != config.Actions[0].ControlID || decision.AppliedValueUSD == nil || *decision.AppliedValueUSD != selected["v_value"] {
 				t.Fatalf("selected result did not retain its manifest and value provenance: %+v", decision)
 			}
 		})
@@ -103,9 +103,9 @@ func TestCurrentContractCustomRefusesWrongSelectedReceipt(t *testing.T) {
 			case "offer pin":
 				config.Decisions.OfferSHA256 = strings.Repeat("b", 64)
 			case "missing value":
-				delete(selected, "value_usd")
+				delete(selected, "v_value")
 			case "value":
-				selected["value_usd"] = 0.1
+				selected["v_value"] = 0.1
 			case "missing weight":
 				delete(selected, "cost_weight")
 			case "weight":
@@ -119,9 +119,9 @@ func TestCurrentContractCustomRefusesWrongSelectedReceipt(t *testing.T) {
 			case "missing routing receipt":
 				delete(routing, "unapplied_keys")
 			case "unapplied value":
-				routing["value_usd"].(map[string]any)["status"] = "unsupported"
+				routing["v_value"].(map[string]any)["status"] = "unsupported"
 			case "echo value":
-				routing["value_usd"].(map[string]any)["requested"] = 0.1
+				routing["v_value"].(map[string]any)["requested"] = 0.1
 			}
 			if _, err := currentDecisionFixture(t, config, response).Decide(t.Context(), currentTestInput()); err == nil {
 				t.Fatal("incorrect selected receipt accepted")
@@ -139,7 +139,7 @@ func TestCurrentContractCustomProfilePricesBelongToSelectedResult(t *testing.T) 
 		t.Run(scenario, func(t *testing.T) {
 			response := currentContractResponse(t)
 			config, selected := currentContractConfig(t, response, "custom")
-			config.Decisions.Routing = json.RawMessage(`{"value_usd":2,"price_profile":{"id":"profile-fixture","version":2},"models":["anthropic/*","deepseek/*"],"excluded_models":["deepseek/deepseek-v4-pro"]}`)
+			config.Decisions.Routing = json.RawMessage(`{"v_value":2,"price_profile":{"id":"profile-fixture","version":2},"models":["anthropic/*","deepseek/*"],"excluded_models":["deepseek/deepseek-v4-pro"]}`)
 			rows := map[string]map[string]any{
 				sonnet: {"input": 2.5, "cache_read": 0.25, "cache_write": 3.125, "output": 12.5, "source": sources("profile")},
 				flash:  {"input": 0.1, "cache_read": 0, "cache_write": 0, "output": 0.4, "source": sources("catalog")},
@@ -154,14 +154,14 @@ func TestCurrentContractCustomProfilePricesBelongToSelectedResult(t *testing.T) 
 			routing["price_profile"] = profile
 			switch scenario {
 			case "latest profile":
-				config.Decisions.Routing = json.RawMessage(`{"value_usd":2,"price_profile":{"id":"profile-fixture"},"models":["anthropic/*","deepseek/*"],"excluded_models":["deepseek/deepseek-v4-pro"]}`)
+				config.Decisions.Routing = json.RawMessage(`{"v_value":2,"price_profile":{"id":"profile-fixture"},"models":["anthropic/*","deepseek/*"],"excluded_models":["deepseek/deepseek-v4-pro"]}`)
 			case "inline prices", "caller leg from catalog", "caller price changed", "caller model unaccounted", "unused candidate", "unresolved candidate", "duplicate resolved", "selected model unused", "unapplied models", "changed models", "unapplied excluded models", "unconfigured caller source", "extra caller leg", "profile source without profile":
-				config.Decisions.Routing = json.RawMessage(`{"value_usd":2,"prices":{"` + sonnet + `":{"input":3,"output":15},"qwen/qwen3.6-35b-a3b":{"input":0.2}},"models":["anthropic/*","deepseek/*"],"excluded_models":["deepseek/deepseek-v4-pro"]}`)
+				config.Decisions.Routing = json.RawMessage(`{"v_value":2,"prices":{"` + sonnet + `":{"input":3,"output":15},"qwen/qwen3.6-35b-a3b":{"input":0.2}},"models":["anthropic/*","deepseek/*"],"excluded_models":["deepseek/deepseek-v4-pro"]}`)
 				delete(routing, "price_profile")
 				rows[sonnet] = map[string]any{"input": 3, "cache_read": 0.3, "cache_write": 3.75, "output": 15, "source": map[string]any{"input": "caller", "cache_read": "catalog", "cache_write": "catalog", "output": "caller"}}
 				basis, unused = "caller", []string{"qwen/qwen3.6-35b-a3b"}
 			case "profile with inline prices":
-				config.Decisions.Routing = json.RawMessage(`{"value_usd":2,"price_profile":{"id":"profile-fixture","version":2},"prices":{"` + sonnet + `":{"output":15}},"models":["anthropic/*","deepseek/*"],"excluded_models":["deepseek/deepseek-v4-pro"]}`)
+				config.Decisions.Routing = json.RawMessage(`{"v_value":2,"price_profile":{"id":"profile-fixture","version":2},"prices":{"` + sonnet + `":{"output":15}},"models":["anthropic/*","deepseek/*"],"excluded_models":["deepseek/deepseek-v4-pro"]}`)
 				rows[sonnet]["output"], rows[sonnet]["source"] = 15, map[string]any{"input": "profile", "cache_read": "profile", "cache_write": "profile", "output": "caller"}
 				basis = "mixed"
 			}
@@ -259,7 +259,7 @@ func TestCurrentCustomHTTPExecutionRequiresValidReceipt(t *testing.T) {
 			defer upstream.Close()
 			config := currentTestConfig(t)
 			config.Deployments[0].URL = upstream.URL
-			config.Decisions.Result, config.Decisions.Routing = "custom", json.RawMessage(`{"value_usd":2}`)
+			config.Decisions.Result, config.Decisions.Routing = "custom", json.RawMessage(`{"v_value":2}`)
 			response := currentContractResponse(t)
 			selected := response["custom"].(map[string]any)
 			action := config.Actions[0]

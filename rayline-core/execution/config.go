@@ -59,7 +59,7 @@ type DecisionsConfig struct {
 	Model   string `json:"model"`
 	Result  string `json:"result"`
 	// Routing is the Routes API V1 routing block sent with every decision:
-	// value_usd, prices, price_profile {id, version?}, models,
+	// v_value, prices, price_profile {id, version?}, models,
 	// excluded_models, signals and policy (required in v2, forwarded in v1,
 	// refused in current mode). There is no exclusive member.
 	Routing json.RawMessage `json:"routing"`

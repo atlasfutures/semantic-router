@@ -29,7 +29,7 @@ opt-in. The core reports facts and never picks or ranks a model.
   `targets[]`. Raydock writes
   `arc-policy.hybrid-default.v1` when its user sets no override; the core never
   sends an absent policy in this mode. Allowed routing keys are `policy`,
-  `value_usd`, `prices`, `price_profile`, `models`, `excluded_models` and
+  `v_value`, `prices`, `price_profile`, `models`, `excluded_models` and
   `signals`.
 - **Registry.** Without an explicit `registry_path`, v2 executes with the
   embedded registry whatever registry the serving package names: controls are
@@ -226,7 +226,7 @@ silently narrow a larger hosted offer after selection.
 `result` (`top`, `swift`, `sage`, or `custom`), and explicit `routing`.
 `offer_sha256` is optional in current mode and required in advanced mode. The
 `routing` block is sent as configured and follows the Routes API V1 contract
-(pathfinder#6159): `value_usd`, `prices`, `price_profile`, `models`,
+(pathfinder#6159): `v_value`, `prices`, `price_profile`, `models`,
 `excluded_models`, `signals` and `policy` (required in v2, forwarded in v1,
 refused in current mode). There is no `exclusive`
 member: the gateway resolves the candidates from `models` and
@@ -280,7 +280,7 @@ returned to the public caller: a pin equal to that digest of the configured
 prices is refused at startup with the migration named, and any other
 mismatching pin fails the decision.
 
-A configured `value_usd` requires `result: "custom"`, a returned custom result,
+A configured `v_value` requires `result: "custom"`, a returned custom result,
 and an applied value acknowledgement; the selected result must also report that
 value and its reciprocal cost weight. Missing custom results, mismatched
 identities or prices, and unapplied routing keys fail visibly. A harness cannot

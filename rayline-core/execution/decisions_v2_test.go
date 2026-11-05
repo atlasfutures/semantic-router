@@ -569,7 +569,7 @@ func TestV2ConfigRequiresAnExplicitPublishedPolicy(t *testing.T) {
 		ok      bool
 	}{
 		"default preset":             {DecisionsExecutionContextV2, `{"policy":{"preset":"arc-policy.hybrid-default.v1"}}`, true},
-		"David's schedule with V":    {DecisionsExecutionContextV2, `{"policy":{"preset":"arc-policy.hybrid-default.v1","overrides":{"schedule":{"model":["cache_boundaries","user_messages"],"thinking":["all_turns"]}}},"value_usd":0.1}`, true},
+		"David's schedule with V":    {DecisionsExecutionContextV2, `{"policy":{"preset":"arc-policy.hybrid-default.v1","overrides":{"schedule":{"model":["cache_boundaries","user_messages"],"thinking":["all_turns"]}}},"v_value":0.1}`, true},
 		"package default":            {DecisionsExecutionContextV2, `{"policy":{"preset":"arc-policy.package-default.v1"}}`, true},
 		"prefer local":               {DecisionsExecutionContextV2, `{"policy":{"preset":"arc-policy.prefer-local.v1"}}`, true},
 		"prefer local threshold":     {DecisionsExecutionContextV2, `{"policy":{"preset":"arc-policy.prefer-local.v1","overrides":{"selection":{"min_p_pass":0.65}}}}`, true},
@@ -582,13 +582,14 @@ func TestV2ConfigRequiresAnExplicitPublishedPolicy(t *testing.T) {
 		"selection override":         {DecisionsExecutionContextV2, `{"policy":{"preset":"arc-policy.hybrid-default.v1","overrides":{"selection":{"min_p_pass":0.5}}}}`, false},
 		"unknown override":           {DecisionsExecutionContextV2, `{"policy":{"preset":"arc-policy.hybrid-default.v1","overrides":{"selector":"utility"}}}`, false},
 		"unacknowledged routing key": {DecisionsExecutionContextV2, `{"policy":{"preset":"arc-policy.hybrid-default.v1"},"lookahead":1}`, false},
+		"V under its old name":       {DecisionsExecutionContextV2, `{"policy":{"preset":"arc-policy.hybrid-default.v1"},"value_usd":0.1}`, false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			config := base
 			config.Decisions.APIMode = test.mode
 			config.Decisions.OfferSHA256 = strings.Repeat("b", 64)
 			config.Decisions.Routing = json.RawMessage(test.routing)
-			if strings.Contains(test.routing, "value_usd") {
+			if strings.Contains(test.routing, "v_value") {
 				config.Decisions.Result = "custom"
 			}
 			_, err := NewHTTPDecisions(config)

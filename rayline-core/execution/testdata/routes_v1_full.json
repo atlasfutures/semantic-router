@@ -10,7 +10,7 @@
       }
     ],
     "routing": {
-      "value_usd": 1.5,
+      "v_value": 1.5,
       "temperature": 0.7,
       "models": [
         "anthropic/*",
@@ -95,7 +95,7 @@
         },
         "thinking_level": "high",
         "policy_action_id": "ce3d1dc3541c631339bb2e4ab4dc67a26588c1192d6a5ce6d3975a9dfb10dd01",
-        "value_usd": 0.1,
+        "v_value": 0.1,
         "cost_weight": 10,
         "prices": {
           "basis": "caller",
@@ -131,7 +131,7 @@
         },
         "thinking_level": "medium",
         "policy_action_id": "d3662381186f551a1728552bde798458f27a0343e36259fcd0853fd94e319e85",
-        "value_usd": 4.5,
+        "v_value": 4.5,
         "cost_weight": 0.2222222222222222,
         "prices": {
           "basis": "caller",
@@ -168,7 +168,7 @@
       },
       "thinking_level": "low",
       "policy_action_id": "58ef08c498cf4acae27d5c47e12d2a1b3c6de84b36bcf3fe67396105ab216a73",
-      "value_usd": 1.5,
+      "v_value": 1.5,
       "cost_weight": 0.6666666666666666,
       "prices": {
         "basis": "caller",
@@ -195,7 +195,7 @@
       }
     },
     "routing": {
-      "value_usd": {
+      "v_value": {
         "requested": 1.5,
         "status": "applied"
       },
@@ -266,7 +266,7 @@
         },
         "thinking_level": "high",
         "policy_action_id": "ce3d1dc3541c631339bb2e4ab4dc67a26588c1192d6a5ce6d3975a9dfb10dd01",
-        "value_usd": 0.1,
+        "v_value": 0.1,
         "cost_weight": 10,
         "prices": {
           "basis": "caller",
@@ -302,7 +302,7 @@
         },
         "thinking_level": "medium",
         "policy_action_id": "d3662381186f551a1728552bde798458f27a0343e36259fcd0853fd94e319e85",
-        "value_usd": 4.5,
+        "v_value": 4.5,
         "cost_weight": 0.2222222222222222,
         "prices": {
           "basis": "caller",
@@ -339,7 +339,7 @@
       },
       "thinking_level": "low",
       "policy_action_id": "58ef08c498cf4acae27d5c47e12d2a1b3c6de84b36bcf3fe67396105ab216a73",
-      "value_usd": 1.5,
+      "v_value": 1.5,
       "cost_weight": 0.6666666666666666,
       "prices": {
         "basis": "caller",
@@ -366,7 +366,7 @@
       }
     },
     "routing": {
-      "value_usd": {
+      "v_value": {
         "requested": 1.5,
         "status": "applied"
       },
