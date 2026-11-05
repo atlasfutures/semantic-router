@@ -127,14 +127,14 @@ func TestCurrentTopRejectsUnboundActionAndUnappliedRequests(t *testing.T) {
 }
 
 func TestCurrentCustomRequiresAppliedValueAndExactIdentity(t *testing.T) {
-	for _, kind := range []string{"valid", "no custom", "unapplied value", "changed value", "changed control", "missing price identity", "missing exclusive"} {
+	for _, kind := range []string{"valid", "no custom", "unapplied value", "changed value", "changed control", "missing price identity", "unrequested price echo"} {
 		t.Run(kind, func(t *testing.T) {
 			config := currentTestConfig(t)
 			config.Decisions.Result = "custom"
 			config.Decisions.OfferSHA256 = strings.Repeat("b", 64)
 			config.Decisions.Routing = json.RawMessage(`{"value_usd":0.5}`)
 			action := config.Actions[0]
-			prices := map[string]any{"basis": "catalog", "price_sha256": nil, "exclusive": false}
+			prices := map[string]any{"basis": "catalog", "price_sha256": nil}
 			identity := map[string]any{"package_sha256": config.PackageSHA256, "thinking_controls_sha256": config.RegistrySHA256, "offer_sha256": config.Decisions.OfferSHA256, "action_id": action.ID, "policy_action_id": action.ID, "control_id": action.ControlID, "prices": prices}
 			value := map[string]any{"status": "applied", "requested": 0.5}
 			response := map[string]any{"route_id": "route-custom", "model": "wrong-top-result", "custom": map[string]any{"model": action.Model, "worker": action.Worker, "policy_action_id": action.ID, "identity": identity}, "routing": map[string]any{"value_usd": value, "unapplied_keys": []string{}}}
@@ -149,8 +149,8 @@ func TestCurrentCustomRequiresAppliedValueAndExactIdentity(t *testing.T) {
 				identity["control_id"] = "different"
 			case "missing price identity":
 				delete(identity, "prices")
-			case "missing exclusive":
-				delete(prices, "exclusive")
+			case "unrequested price echo":
+				response["routing"].(map[string]any)["prices"] = map[string]any{"status": "applied", "models": map[string]any{}, "unused": []string{}, "price_sha256": strings.Repeat("d", 64)}
 			}
 			decision, err := currentDecisionFixture(t, config, response).Decide(t.Context(), currentTestInput())
 			if kind != "valid" {

@@ -114,7 +114,7 @@ func executorWithHTTPDecisions(t *testing.T, config Config, capture *decisionCap
 			workerEchoes = append(workerEchoes, echo)
 		}
 		writeJSON(w, 200, map[string]any{"route_id": fmt.Sprintf("route-%d", index), "model": action.Model, "worker": action.Worker, "policy_action_id": action.ID,
-			"identity": map[string]any{"package_sha256": config.PackageSHA256, "action_id": action.ID, "policy_action_id": action.ID, "control_id": action.ControlID, "arm_id": nil, "thinking_controls_sha256": config.RegistrySHA256, "offer_sha256": config.Decisions.OfferSHA256, "prices": map[string]any{"basis": "catalog", "price_sha256": nil, "exclusive": false}},
+			"identity": map[string]any{"package_sha256": config.PackageSHA256, "action_id": action.ID, "policy_action_id": action.ID, "control_id": action.ControlID, "arm_id": nil, "thinking_controls_sha256": config.RegistrySHA256, "offer_sha256": config.Decisions.OfferSHA256, "prices": map[string]any{"basis": "catalog", "price_sha256": nil}},
 			"routing":  map[string]any{"execution": map[string]any{"status": "applied", "turn": body.Routing.Execution.Turn, "pinned": map[string]string{"package_sha256": "matched", "thinking_controls_sha256": "matched", "offer_sha256": "matched"}, "boundary": "user_message", "user_turn_cache": "repartition_multiwarm", "user_turn_cache_source": "service_config", "episode_identity": "per_lookup_random", "multiwarm": true, "workers": workerEchoes}, "unapplied_keys": []string{}}})
 	}))
 	t.Cleanup(decisions.Close)

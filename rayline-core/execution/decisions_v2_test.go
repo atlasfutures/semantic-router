@@ -139,7 +139,7 @@ func v2Server(t *testing.T, config Config, fixture *v2Decisions, counts ...int) 
 			}
 		}
 		response := map[string]any{"route_id": fmt.Sprintf("route-%d", index), "model": action.Model, "worker": action.Worker, "policy_action_id": id,
-			"identity": map[string]any{"package_sha256": config.PackageSHA256, "action_id": id, "policy_action_id": id, "control_id": action.ControlID, "arm_id": nil, "thinking_controls_sha256": config.RegistrySHA256, "offer_sha256": nil, "prices": map[string]any{"basis": "catalog", "price_sha256": nil, "exclusive": nil}},
+			"identity": map[string]any{"package_sha256": config.PackageSHA256, "action_id": id, "policy_action_id": id, "control_id": action.ControlID, "arm_id": nil, "thinking_controls_sha256": config.RegistrySHA256, "offer_sha256": nil, "prices": map[string]any{"basis": "catalog", "price_sha256": nil}},
 			"receipt":  map[string]any{"action_id": id, "control_id": action.ControlID, "decided_by": map[string]string{"model": decidedBy, "thinking": "schedule"}, "eligible": map[string]any{"model": nil, "thinking": "all_turns"}, "held_from": nil, "excluded": excluded, "basis": sent.Event.Basis},
 			"routing":  map[string]any{"execution": map[string]any{"status": "applied", "version": executionContextV2, "turn": sent.Turn, "pinned": map[string]string{"package_sha256": "matched", "thinking_controls_sha256": "matched", "offer_sha256": "unpinned"}}, "policy": map[string]any{"status": "applied", "preset": body.Routing.Policy.Preset}, "unapplied_keys": []string{}}}
 		if fixture.mutate != nil {

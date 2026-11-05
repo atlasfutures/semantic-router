@@ -130,43 +130,89 @@ func TestCurrentContractCustomRefusesWrongSelectedReceipt(t *testing.T) {
 	}
 }
 
+// The custom result's price receipt must name the price world the Routes
+// API V1 echo says the route was decided in: the resolved table's digest and
+// basis, with every caller leg applied at the caller's price.
 func TestCurrentContractCustomProfilePricesBelongToSelectedResult(t *testing.T) {
-	for _, scenario := range []string{"valid profile", "latest profile", "inline prices", "wrong result digest", "wrong echo digest", "wrong configured digest", "catalog result", "missing prices", "unsupported prices", "missing exclusive", "wrong exclusive", "missing profile", "wrong profile", "wrong version", "bad content hash"} {
+	const sonnet, flash = "anthropic/claude-sonnet-5", "deepseek/deepseek-v4.1-flash"
+	for _, scenario := range []string{"valid profile", "latest profile", "inline prices", "profile with inline prices", "wrong result digest", "wrong echo digest", "wrong configured digest", "catalog result", "wrong basis", "missing prices", "unsupported prices", "missing profile", "wrong profile", "wrong version", "bad content hash", "caller leg from catalog", "caller price changed", "caller model unaccounted", "unused candidate", "unresolved candidate", "duplicate resolved", "selected model unused", "unapplied models", "changed models", "unapplied excluded models"} {
 		t.Run(scenario, func(t *testing.T) {
 			response := currentContractResponse(t)
 			config, selected := currentContractConfig(t, response, "custom")
-			config.Decisions.Routing = json.RawMessage(`{"value_usd":2,"price_profile_id":"profile-fixture","price_profile_version":2,"exclusive":true}`)
-			digest := strings.Repeat("d", 64)
-			config.Decisions.PriceSHA256 = digest
-			prices := map[string]any{"basis": "caller", "price_sha256": digest}
-			selected["prices"] = prices // no per-result exclusive in the real contract
+			config.Decisions.Routing = json.RawMessage(`{"value_usd":2,"price_profile":{"id":"profile-fixture","version":2},"models":["anthropic/*","deepseek/*"],"excluded_models":["deepseek/deepseek-v4-pro"]}`)
+			rows := map[string]map[string]any{
+				sonnet: {"input": 2.5, "cache_read": 0.25, "cache_write": 3.125, "output": 12.5, "source": sources("profile")},
+				flash:  {"input": 0.1, "cache_read": 0, "cache_write": 0, "output": 0.4, "source": sources("catalog")},
+			}
+			basis := "profile"
+			unused := []string{}
+			profile := map[string]any{"status": "applied", "id": "profile-fixture", "version": 2, "content_hash": "sha256:" + strings.Repeat("e", 64), "schema": "price-profile-rules.v1",
+				"prices": map[string]any{sonnet: map[string]any{"input": 2.5, "cache_read": 0.25, "cache_write": 3.125, "output": 12.5}}, "unpriced": []string{}, "ineligible": []string{}, "not_offered": []string{}, "card_version": 7}
 			routing := response["routing"].(map[string]any)
-			echo := map[string]any{"status": "applied", "price_sha256": digest, "exclusive": true}
-			profile := map[string]any{"status": "applied", "id": "profile-fixture", "version": 2, "content_hash": "sha256:" + strings.Repeat("e", 64)}
-			routing["prices"], routing["price_profile"] = echo, profile
+			routing["models"] = map[string]any{"status": "applied", "models": []string{"anthropic/*", "deepseek/*"}, "resolved": []string{sonnet, flash}}
+			routing["excluded_models"] = map[string]any{"status": "applied", "excluded_models": []string{"deepseek/deepseek-v4-pro"}}
+			routing["price_profile"] = profile
 			switch scenario {
 			case "latest profile":
-				config.Decisions.Routing = json.RawMessage(`{"value_usd":2,"price_profile_id":"profile-fixture","exclusive":true}`)
-				config.Decisions.PriceSHA256 = ""
-			case "inline prices":
-				config.Decisions.Routing = json.RawMessage(`{"value_usd":2,"prices":{"fixture":{"input":1,"cache_read":1,"cache_write":1,"output":1}},"exclusive":true}`)
+				config.Decisions.Routing = json.RawMessage(`{"value_usd":2,"price_profile":{"id":"profile-fixture"},"models":["anthropic/*","deepseek/*"],"excluded_models":["deepseek/deepseek-v4-pro"]}`)
+			case "inline prices", "caller leg from catalog", "caller price changed", "caller model unaccounted", "unused candidate", "unresolved candidate", "duplicate resolved", "selected model unused", "unapplied models", "changed models", "unapplied excluded models":
+				config.Decisions.Routing = json.RawMessage(`{"value_usd":2,"prices":{"` + sonnet + `":{"input":3,"output":15},"qwen/qwen3.6-35b-a3b":{"input":0.2}},"models":["anthropic/*","deepseek/*"],"excluded_models":["deepseek/deepseek-v4-pro"]}`)
 				delete(routing, "price_profile")
+				rows[sonnet] = map[string]any{"input": 3, "cache_read": 0.3, "cache_write": 3.75, "output": 15, "source": map[string]any{"input": "caller", "cache_read": "catalog", "cache_write": "catalog", "output": "caller"}}
+				basis, unused = "caller", []string{"qwen/qwen3.6-35b-a3b"}
+			case "profile with inline prices":
+				config.Decisions.Routing = json.RawMessage(`{"value_usd":2,"price_profile":{"id":"profile-fixture","version":2},"prices":{"` + sonnet + `":{"output":15}},"models":["anthropic/*","deepseek/*"],"excluded_models":["deepseek/deepseek-v4-pro"]}`)
+				rows[sonnet]["output"], rows[sonnet]["source"] = 15, map[string]any{"input": "profile", "cache_read": "profile", "cache_write": "profile", "output": "caller"}
+				basis = "mixed"
+			}
+			switch scenario {
+			case "caller leg from catalog":
+				rows[sonnet]["source"].(map[string]any)["output"] = "catalog"
+			case "caller price changed":
+				rows[sonnet]["output"] = 14
+			case "caller model unaccounted":
+				unused = []string{}
+			case "unused candidate":
+				unused = append(unused, flash)
+			case "unresolved candidate":
+				rows["qwen/qwen3.6-35b-a3b"] = map[string]any{"input": 0.2, "cache_read": 0, "cache_write": 0, "output": 0.8, "source": sources("catalog")}
+				unused = []string{}
+			case "duplicate resolved":
+				routing["models"].(map[string]any)["resolved"] = []string{sonnet, sonnet}
+			case "selected model unused":
+				// The route picked the caller-priced sonnet, lists it unused, and
+				// names the catalog-only flash table in sonnet's receipt.
+				delete(rows, sonnet)
+				routing["models"].(map[string]any)["resolved"] = []string{flash}
+				basis, unused = "catalog", []string{sonnet, "qwen/qwen3.6-35b-a3b"}
+			case "unapplied models":
+				routing["models"].(map[string]any)["status"] = "unsupported"
+			case "changed models":
+				routing["models"].(map[string]any)["models"] = []string{"anthropic/*"}
+			case "unapplied excluded models":
+				delete(routing, "excluded_models")
+			}
+			echo := v1PricesEcho(t, rows, unused)
+			digest := echo["price_sha256"].(string)
+			prices := map[string]any{"basis": basis, "price_sha256": digest}
+			selected["prices"] = prices
+			routing["prices"] = echo
+			switch scenario {
 			case "wrong result digest":
 				prices["price_sha256"] = strings.Repeat("a", 64)
 			case "wrong echo digest":
 				echo["price_sha256"] = strings.Repeat("a", 64)
+				prices["price_sha256"] = strings.Repeat("a", 64)
 			case "wrong configured digest":
 				config.Decisions.PriceSHA256 = strings.Repeat("a", 64)
 			case "catalog result":
 				prices["basis"], prices["price_sha256"] = "catalog", nil
+			case "wrong basis":
+				prices["basis"] = "caller"
 			case "missing prices":
 				delete(routing, "prices")
 			case "unsupported prices":
 				echo["status"] = "unsupported"
-			case "missing exclusive":
-				delete(echo, "exclusive")
-			case "wrong exclusive":
-				echo["exclusive"] = false
 			case "missing profile":
 				delete(routing, "price_profile")
 			case "wrong profile":
@@ -177,7 +223,7 @@ func TestCurrentContractCustomProfilePricesBelongToSelectedResult(t *testing.T) 
 				profile["content_hash"] = digest
 			}
 			decision, err := currentDecisionFixture(t, config, response).Decide(t.Context(), currentTestInput())
-			valid := scenario == "valid profile" || scenario == "latest profile" || scenario == "inline prices"
+			valid := scenario == "valid profile" || scenario == "latest profile" || scenario == "inline prices" || scenario == "profile with inline prices"
 			if !valid {
 				if err == nil {
 					t.Fatal("mismatched selected price world accepted")
@@ -187,7 +233,7 @@ func TestCurrentContractCustomProfilePricesBelongToSelectedResult(t *testing.T) 
 			if err != nil {
 				t.Fatal(err)
 			}
-			if decision.IdentitySource != "configured_manifest" || (scenario != "inline prices" && (decision.PriceProfile == nil || decision.PriceProfile.ContentHash != profile["content_hash"])) {
+			if decision.IdentitySource != "configured_manifest" || (scenario != "inline prices" && (decision.PriceProfile == nil || decision.PriceProfile.ContentHash != profile["content_hash"])) || (scenario == "inline prices" && decision.PriceProfile != nil) {
 				t.Fatalf("profile and manifest provenance lost: %+v", decision)
 			}
 		})
