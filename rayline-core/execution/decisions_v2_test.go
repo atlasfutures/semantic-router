@@ -662,6 +662,51 @@ func TestV2OptionalExplicitEventDoesNotStopWireInference(t *testing.T) {
 	}
 }
 
+// Hermes' iteration-cap summary on Messages arrives with no session header
+// (its Messages summary is built outside the harness's affinity merge). It is
+// a side call, so the core answers it statelessly instead of refusing it, and
+// the session's main branch is untouched. A user turn that merely starts with
+// the literal is not a side call and, headerless, is still refused.
+func TestV2HeaderlessHermesSummaryRunsAsSidecall(t *testing.T) {
+	local, cloud := &upstreamFixture{}, &upstreamFixture{}
+	config := hybridV2Config(t, chatUpstream(t, local, false).URL, chatUpstream(t, cloud, true).URL+"/v1/chat/completions")
+	fixture := &v2Decisions{choose: func(contextV2) string { return localActionID }}
+	server, httpServer := v2Server(t, config, fixture)
+	if status, response := executeHTTP(t, httpServer.URL, "/v1/chat/completions", chatTurn(userTask), "hermes"); status != 200 {
+		t.Fatalf("status %d: %s", status, response)
+	}
+	messages := func(last string) string {
+		body, _ := json.Marshal(map[string]any{"model": "arc-1.0", "max_tokens": 64, "messages": []map[string]any{
+			{"role": "user", "content": userTask},
+			{"role": "assistant", "content": "Done."},
+			{"role": "user", "content": last},
+		}})
+		return string(body)
+	}
+	if status, response := executeHTTP(t, httpServer.URL, "/v1/messages", messages(hermesIterationSummary), ""); status != 200 {
+		t.Fatalf("headerless Hermes summary: status %d: %s", status, response)
+	}
+	if status, response := executeHTTP(t, httpServer.URL, "/v1/messages", messages(hermesIterationSummary+" Also list the directory again."), ""); status != 400 || !strings.Contains(string(response), "requires a stable session identity") {
+		t.Fatalf("headerless user turn: status %d: %s", status, response)
+	}
+	lookups := fixture.snapshot()
+	kinds := make([]string, 0, len(lookups))
+	for _, lookup := range lookups {
+		kinds = append(kinds, lookup.Execution.Event.kindName())
+	}
+	if len(lookups) != 2 || kinds[1] != EventSidecall {
+		t.Fatalf("lookup events %v", kinds)
+	}
+	state, err := server.states.acquire(t.Context(), "hermes", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.release()
+	if state.completed != 1 || state.epoch != 0 {
+		t.Fatalf("summary call advanced the main branch: completed=%d epoch=%d", state.completed, state.epoch)
+	}
+}
+
 func TestV2CounterFailureIsRuntimeUnavailableForThatTarget(t *testing.T) {
 	local, cloud := &upstreamFixture{}, &upstreamFixture{}
 	config := hybridV2Config(t, chatUpstream(t, local, false).URL, chatUpstream(t, cloud, true).URL+"/v1/chat/completions")

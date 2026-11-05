@@ -366,3 +366,42 @@ func TestWireEventsResponsesStringInputSidecall(t *testing.T) {
 		t.Fatal("Codex compaction prompt as string input was not a side call")
 	}
 }
+
+// Hermes asks for a final summary when its tool loop hits max_iterations. On
+// Messages that request carries no session header (on Chat and Responses it
+// does), so the literal must be a side call on every wire; an ordinary user
+// turn with the same history is not, and neither is a user message that
+// merely starts with the literal.
+func TestWireEventsHermesIterationSummaryIsSidecall(t *testing.T) {
+	history := []map[string]any{
+		{"role": "user", "content": "List the files, then summarise them."},
+		{"role": "assistant", "content": []map[string]any{{"type": "tool_use", "id": "toolu_1", "name": "terminal", "input": map[string]any{"command": "ls"}}}},
+		{"role": "user", "content": []map[string]any{{"type": "tool_result", "tool_use_id": "toolu_1", "content": "a.txt"}}},
+	}
+	summary := append(append([]map[string]any{}, history...), map[string]any{"role": "user", "content": hermesIterationSummary})
+	body, _ := json.Marshal(map[string]any{"model": "m", "max_tokens": 1024, "messages": summary})
+	if !parseWireRequest(llmprotocol.AnthropicMessagesV1, body).isSidecall() {
+		t.Fatal("Hermes iteration-cap summary on Messages was not a side call")
+	}
+	body, _ = json.Marshal(map[string]any{"model": "m", "input": []map[string]any{
+		{"role": "user", "content": "List the files, then summarise them."},
+		{"role": "user", "content": hermesIterationSummary},
+	}})
+	if !parseWireRequest(llmprotocol.OpenAIResponsesV1, body).isSidecall() {
+		t.Fatal("Hermes iteration-cap summary on Responses was not a side call")
+	}
+	body, _ = json.Marshal(map[string]any{"model": "m", "messages": []map[string]any{
+		{"role": "user", "content": "List the files, then summarise them."},
+		{"role": "user", "content": hermesIterationSummary},
+	}})
+	if !parseWireRequest(llmprotocol.OpenAIChatV1, body).isSidecall() {
+		t.Fatal("Hermes iteration-cap summary on Chat was not a side call")
+	}
+	for _, last := range []string{"Now read a.txt.", hermesIterationSummary + " Also list the directory again."} {
+		turn := append(append([]map[string]any{}, history...), map[string]any{"role": "user", "content": last})
+		body, _ = json.Marshal(map[string]any{"model": "m", "max_tokens": 1024, "messages": turn})
+		if parseWireRequest(llmprotocol.AnthropicMessagesV1, body).isSidecall() {
+			t.Fatalf("user turn %q after the same history was a side call", last)
+		}
+	}
+}

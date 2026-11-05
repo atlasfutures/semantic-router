@@ -29,6 +29,16 @@ const (
 	claudeCodeTitle        = "You are naming a coding session so the user can pick it out of a long list of sessions."
 	claudeCodeBilling      = "x-anthropic-billing-header:"
 
+	// Hermes' iteration-cap summary (agent/context_compressor.py
+	// MAX_ITERATIONS_SUMMARY_REQUEST, unchanged from v0.22.5 through main): the
+	// whole last user message once the tool loop hits max_iterations, so it is
+	// matched exactly. On the Messages wire Hermes builds this request outside
+	// its session-affinity merge, so it arrives with no session header; as a
+	// side call it runs statelessly. (On Chat and Responses the same request
+	// goes through the merged builder and carries the header.)
+	hermesIterationSummary = "You've reached the maximum number of tool-calling iterations allowed. Please provide a final response " +
+		"summarizing what you've found and accomplished so far, without calling any more tools."
+
 	codexSummaryPrefix = "Another language model started to solve this problem and produced a summary " +
 		"of its thinking process. You also have access to the state of the tools that " +
 		"were used by that language model. Use this to build on the work that has " +
@@ -260,7 +270,8 @@ func (request wireRequest) hasAssistant() bool {
 }
 
 // isSidecall recognizes a harness's own auxiliary calls: summarization for a
-// compaction, title and prompt-suggestion calls. They never advance a branch.
+// compaction or an iteration cap, title and prompt-suggestion calls. They never
+// advance a branch.
 func (request wireRequest) isSidecall() bool {
 	for _, text := range request.system {
 		if strings.HasPrefix(text, piSummarizationSystem) || strings.HasPrefix(text, claudeCodeTitle) {
@@ -272,7 +283,8 @@ func (request wireRequest) isSidecall() bool {
 		return false
 	}
 	text := request.messages[last].lastText()
-	return strings.HasPrefix(text, claudeCodeSummarize) || strings.HasPrefix(text, claudeCodeSuggestion) || text == codexCompactionPrompt
+	return strings.HasPrefix(text, claudeCodeSummarize) || strings.HasPrefix(text, claudeCodeSuggestion) ||
+		text == hermesIterationSummary || text == codexCompactionPrompt
 }
 
 // claudeCodeSubagent is Claude Code's own cc_is_subagent=true billing claim.
