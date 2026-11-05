@@ -36,7 +36,7 @@ func currentContractConfig(t *testing.T, response map[string]any, result string)
 	config := currentTestConfig(t)
 	config.Decisions.Result = result
 	selected := response["custom"].(map[string]any)
-	config.Decisions.Routing = json.RawMessage(`{"value_usd":2}`)
+	config.Decisions.Routing = json.RawMessage(`{"v_value":2}`)
 	if result != "custom" {
 		selected = response["presets"].(map[string]any)[result].(map[string]any)
 		config.Decisions.Routing = json.RawMessage(`{}`)
@@ -58,7 +58,7 @@ func TestCurrentContractFixtureSelectsExactResult(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if decision.ActionID != selected["policy_action_id"] || decision.Model != selected["model"] || decision.Result != result || decision.IdentitySource != "configured_manifest" || decision.PackageSHA256 != config.PackageSHA256 || decision.ControlID != config.Actions[0].ControlID || decision.AppliedValueUSD == nil || *decision.AppliedValueUSD != selected["value_usd"] {
+			if decision.ActionID != selected["policy_action_id"] || decision.Model != selected["model"] || decision.Result != result || decision.IdentitySource != "configured_manifest" || decision.PackageSHA256 != config.PackageSHA256 || decision.ControlID != config.Actions[0].ControlID || decision.AppliedValueUSD == nil || *decision.AppliedValueUSD != selected["v_value"] {
 				t.Fatalf("selected result did not retain its manifest and value provenance: %+v", decision)
 			}
 		})
@@ -103,9 +103,9 @@ func TestCurrentContractCustomRefusesWrongSelectedReceipt(t *testing.T) {
 			case "offer pin":
 				config.Decisions.OfferSHA256 = strings.Repeat("b", 64)
 			case "missing value":
-				delete(selected, "value_usd")
+				delete(selected, "v_value")
 			case "value":
-				selected["value_usd"] = 0.1
+				selected["v_value"] = 0.1
 			case "missing weight":
 				delete(selected, "cost_weight")
 			case "weight":
@@ -119,9 +119,9 @@ func TestCurrentContractCustomRefusesWrongSelectedReceipt(t *testing.T) {
 			case "missing routing receipt":
 				delete(routing, "unapplied_keys")
 			case "unapplied value":
-				routing["value_usd"].(map[string]any)["status"] = "unsupported"
+				routing["v_value"].(map[string]any)["status"] = "unsupported"
 			case "echo value":
-				routing["value_usd"].(map[string]any)["requested"] = 0.1
+				routing["v_value"].(map[string]any)["requested"] = 0.1
 			}
 			if _, err := currentDecisionFixture(t, config, response).Decide(t.Context(), currentTestInput()); err == nil {
 				t.Fatal("incorrect selected receipt accepted")
@@ -135,7 +135,7 @@ func TestCurrentContractCustomProfilePricesBelongToSelectedResult(t *testing.T) 
 		t.Run(scenario, func(t *testing.T) {
 			response := currentContractResponse(t)
 			config, selected := currentContractConfig(t, response, "custom")
-			config.Decisions.Routing = json.RawMessage(`{"value_usd":2,"price_profile_id":"profile-fixture","price_profile_version":2,"exclusive":true}`)
+			config.Decisions.Routing = json.RawMessage(`{"v_value":2,"price_profile_id":"profile-fixture","price_profile_version":2,"exclusive":true}`)
 			digest := strings.Repeat("d", 64)
 			config.Decisions.PriceSHA256 = digest
 			prices := map[string]any{"basis": "caller", "price_sha256": digest}
@@ -146,10 +146,10 @@ func TestCurrentContractCustomProfilePricesBelongToSelectedResult(t *testing.T) 
 			routing["prices"], routing["price_profile"] = echo, profile
 			switch scenario {
 			case "latest profile":
-				config.Decisions.Routing = json.RawMessage(`{"value_usd":2,"price_profile_id":"profile-fixture","exclusive":true}`)
+				config.Decisions.Routing = json.RawMessage(`{"v_value":2,"price_profile_id":"profile-fixture","exclusive":true}`)
 				config.Decisions.PriceSHA256 = ""
 			case "inline prices":
-				config.Decisions.Routing = json.RawMessage(`{"value_usd":2,"prices":{"fixture":{"input":1,"cache_read":1,"cache_write":1,"output":1}},"exclusive":true}`)
+				config.Decisions.Routing = json.RawMessage(`{"v_value":2,"prices":{"fixture":{"input":1,"cache_read":1,"cache_write":1,"output":1}},"exclusive":true}`)
 				delete(routing, "price_profile")
 			case "wrong result digest":
 				prices["price_sha256"] = strings.Repeat("a", 64)
@@ -205,7 +205,7 @@ func TestCurrentCustomHTTPExecutionRequiresValidReceipt(t *testing.T) {
 			defer upstream.Close()
 			config := currentTestConfig(t)
 			config.Deployments[0].URL = upstream.URL
-			config.Decisions.Result, config.Decisions.Routing = "custom", json.RawMessage(`{"value_usd":2}`)
+			config.Decisions.Result, config.Decisions.Routing = "custom", json.RawMessage(`{"v_value":2}`)
 			response := currentContractResponse(t)
 			selected := response["custom"].(map[string]any)
 			action := config.Actions[0]

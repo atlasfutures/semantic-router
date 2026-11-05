@@ -111,7 +111,7 @@ func TestRoutingSignalsValidation(t *testing.T) {
 	}
 	// Any other per-request routing preference is still refused as before.
 	fixture, local, url := signalsSetup(t)
-	status, _, _ := executeWithHeaders(t, url, `{"model":"arc-1.0","messages":[{"role":"user","content":"hi"}],"routing":{"signals":[],"value_usd":2}}`, "other")
+	status, _, _ := executeWithHeaders(t, url, `{"model":"arc-1.0","messages":[{"role":"user","content":"hi"}],"routing":{"signals":[],"v_value":2}}`, "other")
 	if status != http.StatusBadGateway || len(fixture.snapshot()) != 0 || local.count() != 0 {
 		t.Fatalf("per-request routing preference accepted: %d", status)
 	}
