@@ -280,11 +280,12 @@ returned to the public caller: a pin equal to that digest of the configured
 prices is refused at startup with the migration named, and any other
 mismatching pin fails the decision.
 
-A configured `v_value` requires `result: "custom"`, a returned custom result,
-and an applied value acknowledgement; the selected result must also report that
-value and its reciprocal cost weight. Missing custom results, mismatched
-identities or prices, and unapplied routing keys fail visibly. A harness cannot
-override these settings through its generation body.
+A configured
+`v_value` requires `result: "custom"`, a returned custom result, and an applied
+value acknowledgement; the selected result must also report that value and its
+reciprocal cost weight. Missing custom results, mismatched identities or prices,
+and unapplied routing keys fail visibly. A harness cannot override these settings
+through its generation body.
 
 **Typed signals** (pathfinder `docs/plans/2026-10-25-decisions-topic-signal-contract.md`)
 are caller metadata and change no route. In every mode a generation request may
