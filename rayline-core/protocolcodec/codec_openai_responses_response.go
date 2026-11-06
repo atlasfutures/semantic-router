@@ -638,7 +638,7 @@ func encodeResponsesUsage(usage llmprotocol.Usage, publishProviderCost bool) *re
 		wire.TotalTokens = wire.InputTokens + wire.OutputTokens
 	}
 	if publishProviderCost {
-		wire.providerUsageCostWire = encodeProviderUsageCost(usage.ProviderCost)
+		wire.providerUsageCostWire = encodeProviderUsageCost(usage.ProviderCost, responsesCostSpelling)
 	}
 	return wire
 }
