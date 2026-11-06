@@ -23,4 +23,5 @@ prefer-local).
 
 `selection_refusals_v2.v1.json` (from `tests/fixtures/arc_policy_service/`)
 is copied unchanged from pathfinder#5906 at `87b156e001`: the policy
-service's v2 refusal strings and their public codes.
+service's v2 refusal strings and their public codes. Refreshed from pathfinder#6209 at `373070aced`, which adds
+`tool_free_override_excludes_every_offered_model`.
