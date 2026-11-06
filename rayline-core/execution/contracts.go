@@ -37,6 +37,13 @@ type Deployment struct {
 	InputModalities []string        `json:"input_modalities"`
 	TokenUnits      string          `json:"token_units"`
 	PromptCounter   *LlamaCPPConfig `json:"prompt_counter,omitempty"`
+	// ClampOutputAllowance lowers an allowance over MaxOutputTokens to it
+	// instead of refusing the request, for a harness that states one output
+	// limit for a session whose deployments do not share one and cannot be
+	// told a smaller number. Off by default: a stated allowance is the
+	// caller's, so refusing is what a deployment does until its operator
+	// opts out.
+	ClampOutputAllowance bool `json:"clamp_output_allowance,omitempty"`
 	// InbandSystem is an explicitly qualified role-changing compatibility
 	// rule, separate from the action's exact thinking-control identity.
 	InbandSystem string `json:"inband_system,omitempty"`

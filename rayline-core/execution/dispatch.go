@@ -27,6 +27,10 @@ type preparedDispatch struct {
 	response     responseMetadata
 	// outputLimit is the prepared request's actual output allowance.
 	outputLimit int64
+	// clamped is set when the deployment lowered the caller's allowance.
+	// prepare also runs for capacity and prefix sizing, so the dispatching
+	// caller reports the reduction rather than every preparation.
+	clamped *thinkingcontrol.ClampAllowance
 }
 
 type responseMetadata struct {
@@ -61,6 +65,16 @@ func (server *Server) prepare(request llmprotocol.Request, envelope llmprotocol.
 	request.ReasoningDisplay = ""
 	if request.Sampling.MaxOutputTokens == nil {
 		request.Sampling.MaxOutputTokens = llmprotocol.Int64(deployment.MaxOutputTokens)
+	}
+	var clamped *thinkingcontrol.ClampAllowance
+	if deployment.ClampOutputAllowance {
+		// Clamping inside prepare is what makes capacity admission reserve
+		// the allowance the turn really carries: it sizes prompt +
+		// outputLimit, so an unclamped figure would judge this deployment
+		// unable to hold a request it can.
+		if lowered, ok := thinkingcontrol.ClampMessagesAllowance(&request, selected.control.BudgetTokens, deployment.MaxOutputTokens); ok {
+			clamped = &lowered
+		}
 	}
 	if *request.Sampling.MaxOutputTokens > deployment.MaxOutputTokens {
 		return nil, fmt.Errorf("output allowance exceeds the admitted deployment limit")
@@ -100,7 +114,8 @@ func (server *Server) prepare(request llmprotocol.Request, envelope llmprotocol.
 		return nil, err
 	}
 	return &preparedDispatch{body: body, placer: placer, key: key, receipt: receipt,
-		nextIssuers: nextIssuers, opaqueIssuer: opaqueIssuer, response: response, outputLimit: *request.Sampling.MaxOutputTokens}, nil
+		nextIssuers: nextIssuers, opaqueIssuer: opaqueIssuer, response: response, outputLimit: *request.Sampling.MaxOutputTokens,
+		clamped: clamped}, nil
 }
 
 // prepareReasoning stages provenance before any codec drops or rewrites history.

@@ -422,6 +422,15 @@ func (server *Server) execute(writer http.ResponseWriter, incoming *http.Request
 			server.writeError(writer, format, http.StatusTooManyRequests, "generation_limit_reached", "execution process reached its configured generation-attempt limit")
 			return
 		}
+		if clamped := prepared.clamped; clamped != nil {
+			// Reported at the upstream attempt, past the capacity gates: a
+			// vetoed selection carries the allowance nowhere. A reselected
+			// turn reports again under its own route id, the arm whose limit
+			// then applied.
+			slog.Info("output allowance clamped to the deployment limit", "route_id", decision.RouteID,
+				"deployment", selected.deployment.ID, "deployment_kind", selected.deployment.Kind,
+				"wire_model", selected.deployment.WireModel, "stated", clamped.From, "sent", clamped.To)
+		}
 		upstream, err = server.upstream(ctx, selected, decision, session, branch, prepared.body)
 		if err != nil {
 			server.writeError(writer, format, http.StatusBadGateway, "upstream_unavailable", "selected endpoint request failed")

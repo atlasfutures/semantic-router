@@ -334,7 +334,15 @@ Each deployment specifies `id`, `kind` (`local` or `cloud`), full inference `url
 Context and output limits must be positive, with output no larger than context;
 input modalities explicitly include `text` and may include `image`. Authenticated
 health reports the minimum limits and modality intersection of possible execution
-targets. No harness gateway clamps the caller's requested output allowance.
+targets, and each limit is enforced against the deployment a turn lands on, not
+against the reported minimum. A caller's requested output allowance is not
+clamped, except on a deployment that sets `clamp_output_allowance` (optional,
+default false), where an allowance over that deployment's `max_output_tokens`
+is lowered to it and logged with the stated and sent figures: a harness states
+one allowance for a session whose deployments do not share a limit and cannot
+be told a smaller one per arm. A turn whose admitted thinking budget leaves no
+strict room below the limit is refused rather than clamped, since Messages
+counts thinking inside `max_tokens`.
 `auth_env` names an optional credential.
 `capacity_estimate` (v2, optional, local deployments) tunes the sizing of a
 local deployment without a registered counter: `{"headroom_ratio": 0.05,
