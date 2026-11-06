@@ -470,7 +470,7 @@ func (client *PolicyServiceClient) Append(
 	body, err := client.do(ctx, http.MethodPost, "/v1/rayline/arc/policy/append", payload)
 	if err != nil {
 		var failure *PolicyServiceError
-		if errors.As(err, &failure) && policyStatusClass(failure) &&
+		if errors.As(err, &failure) && failure.Class == "status" &&
 			(failure.Status == http.StatusNotFound || failure.Status == http.StatusMethodNotAllowed) {
 			return nil, &PolicyServiceError{Class: PolicyAppendUnsupportedClass, Status: failure.Status}
 		}
@@ -518,18 +518,10 @@ func (client *PolicyServiceClient) Release(ctx context.Context, request PolicyRe
 	return err
 }
 
-// policyStatusClass reports an answer the service did not refuse in JSON. On
-// a session token one that is not JSON is PolicySessionUnrecognisedClass; an
-// endpoint's own status reading (404 or 405 from an older service) still
-// reads it as a status.
-func policyStatusClass(failure *PolicyServiceError) bool {
-	return failure.Class == "status" || failure.Class == PolicySessionUnrecognisedClass
-}
-
 func (client *PolicyServiceClient) releaseOnce(ctx context.Context, payload []byte) error {
 	if _, err := client.do(ctx, http.MethodPost, "/v1/rayline/arc/policy/release", payload); err != nil {
 		var failure *PolicyServiceError
-		if errors.As(err, &failure) && policyStatusClass(failure) {
+		if errors.As(err, &failure) && failure.Class == "status" {
 			switch failure.Status {
 			case http.StatusNoContent:
 				// exchange reads any status but 200 as a refusal; the release
@@ -689,7 +681,7 @@ func (client *PolicyServiceClient) exchange(
 			}
 			return nil, refusal
 		}
-		if client.config.SessionToken != "" && response.StatusCode != http.StatusNoContent && !json.Valid(body) {
+		if client.config.SessionToken != "" && policySessionUnrecognisedStatus(response.StatusCode) && !json.Valid(body) {
 			return nil, &PolicyServiceError{Class: PolicySessionUnrecognisedClass, Status: response.StatusCode}
 		}
 		return nil, &PolicyServiceError{Class: "status", Status: response.StatusCode}

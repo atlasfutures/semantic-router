@@ -482,7 +482,9 @@ func (binding *PolicySessionBinding) Decide(
 		return nil, startErr
 	}
 	response, err = binding.decide(moveCtx, request)
-	if err == nil && staleOwner(request, response) {
+	if err == nil && staleOwner(request, response) || policySessionUnrecognised(err) {
+		// The replacement is this turn's: one that answered stale, or
+		// unrecognised (the turn fails, so nothing persists it), is ended.
 		binding.endStale(ctx)
 	}
 	return response, err
@@ -623,6 +625,14 @@ func policySessionLost(err error) bool {
 	default:
 		return false
 	}
+}
+
+// policySessionUnrecognisedStatus reports a status a non-JSON answer for a
+// token may be taken as lost on. A 204 (a release's success) and a 404 or 405
+// (an older service without the endpoint: append, release and turn deltas
+// read it so) keep their own readings as status.
+func policySessionUnrecognisedStatus(status int) bool {
+	return status != http.StatusNoContent && status != http.StatusNotFound && status != http.StatusMethodNotAllowed
 }
 
 // policySessionUnrecognised reports a lost session recognised by no Modal

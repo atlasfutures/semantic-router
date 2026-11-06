@@ -48,6 +48,7 @@ type fakeModalServer struct {
 	// of Modal's 404 "Unknown or expired session", with unknownBody.
 	unknownStatus int
 	unknownBody   string
+	unknownAll    bool // every decide answers as for an unknown token
 	calls         map[int]int
 	containers    int
 	starts        int
@@ -152,7 +153,7 @@ func (fake *fakeModalServer) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		container, live := fake.sessions[token]
-		if !live {
+		if !live || fake.unknownAll {
 			status, body := http.StatusNotFound, "Unknown or expired session"
 			if fake.unknownStatus != 0 {
 				status, body = fake.unknownStatus, fake.unknownBody
@@ -426,8 +427,10 @@ func TestPolicySessionUnrecognisedAnswerMovesOnce(t *testing.T) {
 	if !policySessionLost(&PolicyServiceError{Class: PolicySessionUnrecognisedClass, Status: http.StatusServiceUnavailable}) {
 		t.Fatal("an unrecognised answer does not count as a lost session")
 	}
-	if !policyStatusClass(&PolicyServiceError{Class: PolicySessionUnrecognisedClass, Status: http.StatusNotFound}) {
-		t.Fatal("an append or release 404 on a session token no longer reads as a status")
+	for _, status := range []int{http.StatusNoContent, http.StatusNotFound, http.StatusMethodNotAllowed} {
+		if policySessionUnrecognisedStatus(status) {
+			t.Fatalf("a non-JSON %d is taken as a lost session; append, release and deltas read it as a status", status)
+		}
 	}
 
 	// A session the turn itself started may still be alive behind the
@@ -441,6 +444,19 @@ func TestPolicySessionUnrecognisedAnswerMovesOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitForTerminates(t, fake, 1)
+
+	// When the replacement answers unrecognised too, the turn fails and
+	// persists nothing, so the replacement is ended as well.
+	fake.mu.Lock()
+	fake.unknownAll = true
+	fake.mu.Unlock()
+	both := backend.Bind(nil, false)
+	_, err := sessionDecide(t, both)
+	var failure *PolicyServiceError
+	if !errors.As(err, &failure) || failure.Class != PolicySessionUnrecognisedClass {
+		t.Fatalf("err = %v, want %s", err, PolicySessionUnrecognisedClass)
+	}
+	waitForTerminates(t, fake, 3)
 }
 
 // A session that answers for another package (a container still on the
