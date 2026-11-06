@@ -1069,9 +1069,11 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		// already dropped the URL and redacted the credentials.
 		if failure != nil && failure.Cause != "" {
 			fields["error"] = failure.Cause
-			if failure.Status != 0 {
-				fields["status"] = failure.Status
-			}
+		}
+		// Every answered failure logs its HTTP status, so an unclassified
+		// answer (class status) can be told apart without a probe.
+		if failure != nil && failure.Status != 0 {
+			fields["status"] = failure.Status
 		}
 		// With nothing to hold, a media refusal fails as the
 		// unsupported_request it is on the wire (request_shape); the log keeps

@@ -229,7 +229,10 @@ func TestPolicyWithoutSessionsDropsAStoredSession(t *testing.T) {
 // A session that could not be started never reached the policy, so the
 // attested-hold re-ask does not ask again on its account.
 func TestPolicySessionFailuresAreNotAnswers(t *testing.T) {
-	for _, class := range []string{raylinearc.PolicySessionStartClass, raylinearc.PolicySessionGoneClass, raylinearc.PolicySessionExpiredClass} {
+	for _, class := range []string{
+		raylinearc.PolicySessionStartClass, raylinearc.PolicySessionGoneClass, raylinearc.PolicySessionExpiredClass,
+		raylinearc.PolicySessionUnrecognisedClass,
+	} {
 		if policyServiceAnswered(&raylinearc.PolicyServiceError{Class: class}) {
 			t.Fatalf("%s counts as an answer", class)
 		}

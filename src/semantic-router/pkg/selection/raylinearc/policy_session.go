@@ -68,6 +68,13 @@ const (
 	// turn closed like any other refusal.
 	PolicySessionGoneClass    = "session_gone"
 	PolicySessionExpiredClass = "session_expired"
+	// PolicySessionUnrecognisedClass is any other non-200 answer for a
+	// session token whose body is not JSON: the policy service answers every
+	// refusal in JSON, so this answer came from in front of it (prod
+	// 2026-11-06: episodes resumed after a long idle got one in ~40 ms and
+	// no container logged them). Taken as lost: the turn moves to a new
+	// session, once, instead of failing closed on every turn.
+	PolicySessionUnrecognisedClass = "session_unrecognised"
 
 	maxPolicySessionIDBytes    = 128
 	maxPolicySessionTokenBytes = 8 * 1024
@@ -607,7 +614,7 @@ func policySessionLost(err error) bool {
 		return false
 	}
 	switch failure.Class {
-	case PolicySessionGoneClass, PolicySessionExpiredClass:
+	case PolicySessionGoneClass, PolicySessionExpiredClass, PolicySessionUnrecognisedClass:
 		return true
 	default:
 		return false
