@@ -38,19 +38,39 @@ func (wire providerUsageCostWire) decode() llmprotocol.ProviderCost {
 		cost.UpstreamInference = lenientJSONValue[float64](
 			(*details)["upstream_inference_cost"], "usage.cost_details.upstream_inference_cost",
 		)
-		cost.UpstreamInferencePrompt = lenientJSONValue[float64](
-			(*details)["upstream_inference_prompt_cost"], "usage.cost_details.upstream_inference_prompt_cost",
-		)
-		cost.UpstreamInferenceCompletions = lenientJSONValue[float64](
-			(*details)["upstream_inference_completions_cost"], "usage.cost_details.upstream_inference_completions_cost",
+		// Chat and Messages spell the halves prompt/completions, Responses input/output; read either.
+		cost.UpstreamInferencePrompt = detailMember(*details, chatCostSpelling.prompt, responsesCostSpelling.prompt)
+		cost.UpstreamInferenceCompletions = detailMember(
+			*details, chatCostSpelling.completions, responsesCostSpelling.completions,
 		)
 	}
 	return cost
 }
 
+// costSpelling names the two halves of usage.cost_details. OpenRouter spells them per protocol:
+// Chat Completions (and Messages) upstream_inference_prompt_cost / upstream_inference_completions_cost,
+// Responses upstream_inference_input_cost / upstream_inference_output_cost. A Responses client (the
+// OpenRouter SDK's UsageCostDetails requires the input/output pair) cannot read the chat pair.
+type costSpelling struct{ prompt, completions string }
+
+var (
+	chatCostSpelling      = costSpelling{"upstream_inference_prompt_cost", "upstream_inference_completions_cost"}
+	responsesCostSpelling = costSpelling{"upstream_inference_input_cost", "upstream_inference_output_cost"}
+)
+
+// detailMember is the first of the named members present in details, read best-effort.
+func detailMember(details map[string]json.RawMessage, names ...string) *float64 {
+	for _, name := range names {
+		if raw, ok := details[name]; ok {
+			return lenientJSONValue[float64](raw, "usage.cost_details."+name)
+		}
+	}
+	return nil
+}
+
 // encodeProviderUsageCost is the wire of a stated charge: each member the
 // upstream stated, in OpenRouter's spelling, and nothing for one it did not.
-func encodeProviderUsageCost(cost llmprotocol.ProviderCost) providerUsageCostWire {
+func encodeProviderUsageCost(cost llmprotocol.ProviderCost, spelling costSpelling) providerUsageCostWire {
 	var wire providerUsageCostWire
 	if cost.Charged != nil {
 		wire.Cost = mustRawJSON(*cost.Charged)
@@ -60,15 +80,18 @@ func encodeProviderUsageCost(cost llmprotocol.ProviderCost) providerUsageCostWir
 	}
 	details := map[string]float64{}
 	for key, value := range map[string]*float64{
-		"upstream_inference_cost":             cost.UpstreamInference,
-		"upstream_inference_prompt_cost":      cost.UpstreamInferencePrompt,
-		"upstream_inference_completions_cost": cost.UpstreamInferenceCompletions,
+		"upstream_inference_cost": cost.UpstreamInference,
+		spelling.prompt:           cost.UpstreamInferencePrompt,
+		spelling.completions:      cost.UpstreamInferenceCompletions,
 	} {
 		if value != nil {
 			details[key] = *value
 		}
 	}
-	if len(details) > 0 {
+	// The Responses pair is all-or-nothing (the OpenRouter SDK requires both halves), so a Responses wire with
+	// only one half stated carries no cost_details; usage.cost still states the charge.
+	complete := cost.UpstreamInferencePrompt != nil && cost.UpstreamInferenceCompletions != nil
+	if len(details) > 0 && (spelling != responsesCostSpelling || complete) {
 		wire.CostDetails = mustRawJSON(details)
 	}
 	return wire

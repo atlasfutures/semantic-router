@@ -159,12 +159,23 @@ func translateCostStream(t *testing.T, engine *Engine, target llmprotocol.WireFo
 const restatedProviderCost = `"cost":0.0000433,"is_byok":false,"cost_details":{"upstream_inference_completions_cost":0.0000395,` +
 	`"upstream_inference_cost":0.0000433,"upstream_inference_prompt_cost":0.0000038}`
 
+// Responses spells the halves input/output (OpenRouter's Responses usage; its SDK's UsageCostDetails requires both).
+const restatedResponsesProviderCost = `"cost":0.0000433,"is_byok":false,"cost_details":{"upstream_inference_cost":0.0000433,` +
+	`"upstream_inference_input_cost":0.0000038,"upstream_inference_output_cost":0.0000395}`
+
+func restatedCostFor(target llmprotocol.WireFormat) string {
+	if target == llmprotocol.OpenAIResponsesV1 {
+		return restatedResponsesProviderCost
+	}
+	return restatedProviderCost
+}
+
 // A Router that publishes the charge to its own accounting front restates it,
 // as OpenRouter spells it, on a stream it re-encodes from another protocol.
 func TestPublishedProviderCostIsRestatedOnAnEncodedStream(t *testing.T) {
 	for _, target := range []llmprotocol.WireFormat{llmprotocol.OpenAIChatV1, llmprotocol.OpenAIResponsesV1} {
 		output := translateCostStream(t, providerCostEngine(t), target, openRouterMessagesCostStream)
-		if !bytes.Contains(output, []byte(restatedProviderCost)) {
+		if !bytes.Contains(output, []byte(restatedCostFor(target))) {
 			t.Fatalf("%s stream does not restate the charge: %s", target, output)
 		}
 		if bytes.Contains(translateCostStream(t, NewBuiltinEngine(), target, openRouterMessagesCostStream), []byte(`"cost"`)) {
@@ -200,8 +211,41 @@ func TestPublishedProviderCostIsRestatedOnAnEncodedResponse(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !bytes.Contains(result.Body, []byte(restatedProviderCost)) {
+		if !bytes.Contains(result.Body, []byte(restatedCostFor(target))) {
 			t.Fatalf("%s body does not restate the charge: %s", target, result.Body)
+		}
+	}
+}
+
+// A Responses wire never carries the chat spelling of the halves, and carries no cost_details when only one half
+// was stated (the pair is all-or-nothing for a Responses client); usage.cost still states the charge.
+func TestResponsesRestatesTheCostHalvesInItsOwnSpelling(t *testing.T) {
+	output := translateCostStream(t, providerCostEngine(t), llmprotocol.OpenAIResponsesV1, openRouterMessagesCostStream)
+	for _, chat := range []string{"upstream_inference_prompt_cost", "upstream_inference_completions_cost"} {
+		if bytes.Contains(output, []byte(chat)) {
+			t.Fatalf("Responses stream carries the chat member %s: %s", chat, output)
+		}
+	}
+	half := strings.Replace(openRouterMessagesCostStream, `,"upstream_inference_completions_cost":0.0000395`, "", 1)
+	output = translateCostStream(t, providerCostEngine(t), llmprotocol.OpenAIResponsesV1, half)
+	if bytes.Contains(output, []byte(`"cost_details"`)) {
+		t.Fatalf("Responses stream restates a half pair: %s", output)
+	}
+	if !bytes.Contains(output, []byte(`"cost":0.0000433`)) {
+		t.Fatalf("Responses stream lost the charge: %s", output)
+	}
+}
+
+// The halves read in either spelling: an OpenRouter Responses upstream states input/output.
+func TestProviderCostHalvesReadInEitherSpelling(t *testing.T) {
+	for _, details := range []string{
+		`{"upstream_inference_prompt_cost":0.1,"upstream_inference_completions_cost":0.2}`,
+		`{"upstream_inference_input_cost":0.1,"upstream_inference_output_cost":0.2}`,
+	} {
+		cost := providerUsageCostWire{CostDetails: []byte(details)}.decode()
+		if cost.UpstreamInferencePrompt == nil || *cost.UpstreamInferencePrompt != 0.1 ||
+			cost.UpstreamInferenceCompletions == nil || *cost.UpstreamInferenceCompletions != 0.2 {
+			t.Fatalf("%s read as %+v", details, cost)
 		}
 	}
 }

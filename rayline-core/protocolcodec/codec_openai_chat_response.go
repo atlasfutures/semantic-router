@@ -335,7 +335,7 @@ func encodeChatUsage(usage llmprotocol.Usage, publishProviderCost bool) *chatUsa
 		wire.CompletionTokensDetails = &chatCompletionTokensDetailsWire{ReasoningTokens: tokenValue(usage.OutputReasoning)}
 	}
 	if publishProviderCost {
-		wire.providerUsageCostWire = encodeProviderUsageCost(usage.ProviderCost)
+		wire.providerUsageCostWire = encodeProviderUsageCost(usage.ProviderCost, chatCostSpelling)
 	}
 	return wire
 }
