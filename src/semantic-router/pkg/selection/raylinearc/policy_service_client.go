@@ -168,6 +168,9 @@ var policyRefusalReasons = map[string]bool{
 	"no_feasible_target":            true,
 	"policy_preset_not_admitted":    true,
 	"policy_schedule_not_admitted":  true,
+	// A tool-free override that would exclude every offered action
+	// (pathfinder arc-tool-free-service, stage_one.tool_free_overrides).
+	"tool_free_override_excludes_every_offered_model": true,
 }
 
 // policyCallerPricesRefusalReasons are the unsupported_request reasons a
