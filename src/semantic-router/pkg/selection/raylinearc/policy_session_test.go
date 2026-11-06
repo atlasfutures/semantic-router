@@ -42,15 +42,20 @@ type fakeModalServer struct {
 	// (2026-10-28).
 	reset map[int]bool
 	// refuse containers answer every decide with the service's own 503.
-	refuse     map[int]bool
-	staleOn    map[int]bool
-	calls      map[int]int
-	containers int
-	starts     int
-	terminates int
-	nextID     int
-	startSleep time.Duration
-	startCode  int
+	refuse  map[int]bool
+	staleOn map[int]bool
+	// unknownStatus, when set, is the answer for an unknown token in place
+	// of Modal's 404 "Unknown or expired session", with unknownBody.
+	unknownStatus int
+	unknownBody   string
+	unknownAll    bool // every decide answers as for an unknown token
+	calls         map[int]int
+	containers    int
+	starts        int
+	terminates    int
+	nextID        int
+	startSleep    time.Duration
+	startCode     int
 	// violations records a decide that carried the proxy key, or a start
 	// or terminate without the headers Modal needs.
 	violations []string
@@ -148,10 +153,14 @@ func (fake *fakeModalServer) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		container, live := fake.sessions[token]
-		if !live {
+		if !live || fake.unknownAll {
+			status, body := http.StatusNotFound, "Unknown or expired session"
+			if fake.unknownStatus != 0 {
+				status, body = fake.unknownStatus, fake.unknownBody
+			}
 			fake.mu.Unlock()
-			w.WriteHeader(http.StatusNotFound)
-			_, _ = w.Write([]byte("Unknown or expired session"))
+			w.WriteHeader(status)
+			_, _ = w.Write([]byte(body))
 			return
 		}
 		if fake.hung[container] {
@@ -388,6 +397,66 @@ func TestPolicySessionExpiredStartsANewOne(t *testing.T) {
 	if policySessionLost(&PolicyServiceError{Class: "timeout"}) || policySessionLost(&PolicyServiceError{Class: "transport"}) {
 		t.Fatal("a timeout or transport failure counts as a lost session")
 	}
+}
+
+// Any other non-JSON answer for a token (prod 2026-11-06: episodes resumed
+// after a long idle failed policy_service_status on every turn) moves the
+// turn to a new session once; a JSON refusal still fails it closed.
+func TestPolicySessionUnrecognisedAnswerMovesOnce(t *testing.T) {
+	fake := newFakeModalServer(t, 2)
+	backend := testSessionBackend(t, fake, time.Second)
+	first := backend.Bind(nil, false)
+	if _, err := sessionDecide(t, first); err != nil {
+		t.Fatal(err)
+	}
+	persisted, _ := first.Session()
+	fake.mu.Lock()
+	fake.unknownStatus, fake.unknownBody = http.StatusServiceUnavailable, "no healthy upstream"
+	fake.mu.Unlock()
+	fake.expire(*persisted)
+	turn := backend.Bind(persisted, false)
+	if _, err := sessionDecide(t, turn); err != nil {
+		t.Fatal(err)
+	}
+	if _, moved := turn.Sessions(); !moved {
+		t.Fatal("an unrecognised answer for the session did not move the turn")
+	}
+	if starts, _, _ := fake.counts(); starts != 2 {
+		t.Fatalf("starts = %d, want 2", starts)
+	}
+	if !policySessionLost(&PolicyServiceError{Class: PolicySessionUnrecognisedClass, Status: http.StatusServiceUnavailable}) {
+		t.Fatal("an unrecognised answer does not count as a lost session")
+	}
+	for _, status := range []int{http.StatusNoContent, http.StatusNotFound, http.StatusMethodNotAllowed} {
+		if policySessionUnrecognisedStatus(status) {
+			t.Fatalf("a non-JSON %d is taken as a lost session; append, release and deltas read it as a status", status)
+		}
+	}
+
+	// A session the turn itself started may still be alive behind the
+	// unrecognised answer: the move ends it rather than leave its slot held.
+	fresh := backend.Bind(nil, false)
+	if err := fresh.start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	fake.expire(*fresh.current)
+	if _, err := sessionDecide(t, fresh); err != nil {
+		t.Fatal(err)
+	}
+	waitForTerminates(t, fake, 1)
+
+	// When the replacement answers unrecognised too, the turn fails and
+	// persists nothing, so the replacement is ended as well.
+	fake.mu.Lock()
+	fake.unknownAll = true
+	fake.mu.Unlock()
+	both := backend.Bind(nil, false)
+	_, err := sessionDecide(t, both)
+	var failure *PolicyServiceError
+	if !errors.As(err, &failure) || failure.Class != PolicySessionUnrecognisedClass {
+		t.Fatalf("err = %v, want %s", err, PolicySessionUnrecognisedClass)
+	}
+	waitForTerminates(t, fake, 3)
 }
 
 // A session that answers for another package (a container still on the

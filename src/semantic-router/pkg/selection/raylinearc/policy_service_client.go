@@ -681,6 +681,9 @@ func (client *PolicyServiceClient) exchange(
 			}
 			return nil, refusal
 		}
+		if client.config.SessionToken != "" && policySessionUnrecognisedStatus(response.StatusCode) && !json.Valid(body) {
+			return nil, &PolicyServiceError{Class: PolicySessionUnrecognisedClass, Status: response.StatusCode}
+		}
 		return nil, &PolicyServiceError{Class: "status", Status: response.StatusCode}
 	}
 	return body, nil

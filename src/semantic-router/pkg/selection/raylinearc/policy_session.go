@@ -68,6 +68,13 @@ const (
 	// turn closed like any other refusal.
 	PolicySessionGoneClass    = "session_gone"
 	PolicySessionExpiredClass = "session_expired"
+	// PolicySessionUnrecognisedClass is any other non-200 answer for a
+	// session token whose body is not JSON: the policy service answers every
+	// refusal in JSON, so this answer came from in front of it (prod
+	// 2026-11-06: episodes resumed after a long idle got one in ~40 ms and
+	// no container logged them). Taken as lost: the turn moves to a new
+	// session, once, instead of failing closed on every turn.
+	PolicySessionUnrecognisedClass = "session_unrecognised"
 
 	maxPolicySessionIDBytes    = 128
 	maxPolicySessionTokenBytes = 8 * 1024
@@ -443,7 +450,11 @@ func (binding *PolicySessionBinding) Decide(
 	if !stale && !transport && !policySessionLost(err) {
 		return response, err
 	}
-	if stale && !binding.onPersisted() {
+	// An unrecognised answer may have come from in front of a session that is
+	// still alive: one this turn started is ended as a stale one is, so the
+	// move does not hold its slot until the idle timeout. The episode's own is
+	// the replaced one, ended once the turn commits.
+	if (stale || policySessionUnrecognised(err)) && !binding.onPersisted() {
 		// A rollover can leave the session on a container still serving the
 		// previous build. End one this turn started; the episode's own is
 		// replaced by the move below, and ended once the turn commits. The
@@ -471,7 +482,9 @@ func (binding *PolicySessionBinding) Decide(
 		return nil, startErr
 	}
 	response, err = binding.decide(moveCtx, request)
-	if err == nil && staleOwner(request, response) {
+	if err == nil && staleOwner(request, response) || policySessionUnrecognised(err) {
+		// The replacement is this turn's: one that answered stale, or
+		// unrecognised (the turn fails, so nothing persists it), is ended.
 		binding.endStale(ctx)
 	}
 	return response, err
@@ -607,11 +620,26 @@ func policySessionLost(err error) bool {
 		return false
 	}
 	switch failure.Class {
-	case PolicySessionGoneClass, PolicySessionExpiredClass:
+	case PolicySessionGoneClass, PolicySessionExpiredClass, PolicySessionUnrecognisedClass:
 		return true
 	default:
 		return false
 	}
+}
+
+// policySessionUnrecognisedStatus reports a status a non-JSON answer for a
+// token may be taken as lost on. A 204 (a release's success) and a 404 or 405
+// (an older service without the endpoint: append, release and turn deltas
+// read it so) keep their own readings as status.
+func policySessionUnrecognisedStatus(status int) bool {
+	return status != http.StatusNoContent && status != http.StatusNotFound && status != http.StatusMethodNotAllowed
+}
+
+// policySessionUnrecognised reports a lost session recognised by no Modal
+// signature: its session may still be alive.
+func policySessionUnrecognised(err error) bool {
+	var failure *PolicyServiceError
+	return errors.As(err, &failure) && failure.Class == PolicySessionUnrecognisedClass
 }
 
 // policySessionUncertain reports a decide that failed without an answer: a
