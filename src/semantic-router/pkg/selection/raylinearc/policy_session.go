@@ -450,7 +450,11 @@ func (binding *PolicySessionBinding) Decide(
 	if !stale && !transport && !policySessionLost(err) {
 		return response, err
 	}
-	if stale && !binding.onPersisted() {
+	// An unrecognised answer may have come from in front of a session that is
+	// still alive: one this turn started is ended as a stale one is, so the
+	// move does not hold its slot until the idle timeout. The episode's own is
+	// the replaced one, ended once the turn commits.
+	if (stale || policySessionUnrecognised(err)) && !binding.onPersisted() {
 		// A rollover can leave the session on a container still serving the
 		// previous build. End one this turn started; the episode's own is
 		// replaced by the move below, and ended once the turn commits. The
@@ -619,6 +623,13 @@ func policySessionLost(err error) bool {
 	default:
 		return false
 	}
+}
+
+// policySessionUnrecognised reports a lost session recognised by no Modal
+// signature: its session may still be alive.
+func policySessionUnrecognised(err error) bool {
+	var failure *PolicyServiceError
+	return errors.As(err, &failure) && failure.Class == PolicySessionUnrecognisedClass
 }
 
 // policySessionUncertain reports a decide that failed without an answer: a

@@ -429,6 +429,18 @@ func TestPolicySessionUnrecognisedAnswerMovesOnce(t *testing.T) {
 	if !policyStatusClass(&PolicyServiceError{Class: PolicySessionUnrecognisedClass, Status: http.StatusNotFound}) {
 		t.Fatal("an append or release 404 on a session token no longer reads as a status")
 	}
+
+	// A session the turn itself started may still be alive behind the
+	// unrecognised answer: the move ends it rather than leave its slot held.
+	fresh := backend.Bind(nil, false)
+	if err := fresh.start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	fake.expire(*fresh.current)
+	if _, err := sessionDecide(t, fresh); err != nil {
+		t.Fatal(err)
+	}
+	waitForTerminates(t, fake, 1)
 }
 
 // A session that answers for another package (a container still on the
