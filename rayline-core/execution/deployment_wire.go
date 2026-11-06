@@ -50,7 +50,7 @@ func validateProviderPin(deployment Deployment) error {
 // settings. Exact dispatch validates these bytes against its profile;
 // model_pin leaves provider routing to the existing gateway's catalog.
 // Private transcript identity stays in headers.
-func applyDeploymentWireBody(body []byte, deployment Deployment) ([]byte, error) {
+func applyDeploymentWireBody(body []byte, clientRoles []string, deployment Deployment) ([]byte, error) {
 	if deployment.Kind != "cloud" {
 		return body, nil
 	}
@@ -80,7 +80,7 @@ func applyDeploymentWireBody(body []byte, deployment Deployment) ([]byte, error)
 		if err != nil {
 			return nil, err
 		}
-		if err := validateModelPinBody(body, deployment); err != nil {
+		if err := validateModelPinBody(clientRoles, deployment); err != nil {
 			return nil, err
 		}
 	}

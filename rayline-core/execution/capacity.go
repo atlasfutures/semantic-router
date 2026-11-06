@@ -109,7 +109,11 @@ func (server *Server) measureCapacity(ctx context.Context, body []byte, format l
 		if err != nil {
 			return nil, nil, err
 		}
-		prepared, err := server.prepare(request, envelope, selected, state)
+		clientRoles, err := wireMessageRoles(format, body)
+		if err != nil {
+			return nil, nil, err
+		}
+		prepared, err := server.prepare(request, envelope, selected, clientRoles, state)
 		if err != nil {
 			// This action cannot carry the request at all (for example an
 			// output allowance above its limit); that is not a context fact.

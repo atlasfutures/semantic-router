@@ -167,20 +167,45 @@ func TestModelPinMessagesControlAndTranscriptBoundaries(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	// A literal xhigh is forwarded wherever it appears. The control fields are
+	// owned by placer.Render upstream of this and never carry a client value at
+	// dispatch; elsewhere the string is the client's own data.
 	for name, body := range map[string]string{
-		"system": `{"messages":[{"role":"system","content":"later reminder"}]}`,
-		"schema": `{"tools":[{"name":"Read","input_schema":{"enum":["xhigh"]}}]}`,
-		"effort": `{"output_config":{"effort":"xhigh"}}`,
-		"text":   `{"messages":[{"role":"user","content":"xhigh"}]}`,
+		"effort":   `{"output_config":{"effort":"xhigh"}}`,
+		"thinking": `{"thinking":{"type":"enabled","effort":"xhigh"}}`,
+		"schema":   `{"tools":[{"name":"ReportFindings","input_schema":{"properties":{"level":{"enum":["low","high","xhigh","max"]}}}}]}`,
+		"prose":    `{"messages":[{"role":"user","content":"the literal xhigh inside prose survives"}]}`,
 	} {
-		t.Run(name, func(t *testing.T) {
-			if _, err := applyDeploymentWireBody([]byte(body), deployment); err == nil {
-				t.Fatal("gateway transcript mutation was silently admitted")
+		t.Run(name+"Forwarded", func(t *testing.T) {
+			kept, err := applyDeploymentWireBody([]byte(body), nil, deployment)
+			if err != nil {
+				t.Fatalf("client data refused: %v", err)
+			}
+			if !bytes.Contains(kept, []byte("xhigh")) {
+				t.Fatalf("xhigh was not forwarded verbatim: %s", kept)
 			}
 		})
 	}
-	if _, err := applyDeploymentWireBody([]byte(`{"messages":[{"role":"user","content":"the literal xhigh inside prose survives"}],"output_config":{"effort":"high"}}`), deployment); err != nil {
+	// An in-band system row reaches the gateway as the client sent it: no fold
+	// can run on this transport (inband_system is local Chat only), so there is
+	// no transcript mutation to refuse.
+	forwarded := []byte(`{"messages":[{"role":"user","content":"Read the file."},{"role":"system","content":"later reminder"}]}`)
+	body, err := applyDeploymentWireBody(forwarded, nil, deployment)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if !bytes.Contains(body, []byte(`"role":"system"`)) || !bytes.Contains(body, []byte("later reminder")) {
+		t.Fatalf("in-band system row was not forwarded verbatim: %s", body)
+	}
+	// A developer row is refused from the client's own roles. The encoded body
+	// cannot carry that role: the decoder canonicalizes it to system, so a
+	// body-only check would never fire on a real request.
+	canonicalized := []byte(`{"messages":[{"role":"user","content":"hi"},{"role":"system","content":"was developer"}]}`)
+	if _, err := applyDeploymentWireBody(canonicalized, []string{"user", "developer"}, deployment); err == nil {
+		t.Fatal("developer authority was admitted after canonicalization")
+	}
+	if _, err := applyDeploymentWireBody(canonicalized, []string{"user", "system"}, deployment); err != nil {
+		t.Fatalf("a system row the client actually sent was refused: %v", err)
 	}
 }
 
@@ -263,5 +288,53 @@ func TestModelPinSolMessagesPreservesEveryPackageControl(t *testing.T) {
 				t.Fatalf("Sol action failed: %d %s calls=%d", status, answer, calls)
 			}
 		})
+	}
+}
+
+// A developer row must be refused on the real dispatch path, where the decoder
+// has already canonicalized it to system. A body-level check cannot see it.
+func TestModelPinMessagesRefusesDeveloperRowThroughDispatch(t *testing.T) {
+	var reached int
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reached++
+		modelPinHeaders(w.Header())
+		w.Header().Set("X-Rayline-Selected-Model", "anthropic/claude-haiku-5.5")
+		_, _ = io.WriteString(w, `{"id":"msg_fixture","type":"message","role":"assistant","model":"anthropic/claude-haiku-5.5","content":[{"type":"text","text":"ready"}],"stop_reason":"end_turn","stop_sequence":null,"usage":{"input_tokens":12,"output_tokens":1}}`)
+	}))
+	defer upstream.Close()
+	config := modelPinConfig(t, upstream.URL)
+	deployment := &config.Deployments[0]
+	deployment.URL = upstream.URL + "/v1/messages"
+	deployment.Protocol = llmprotocol.AnthropicMessagesV1
+	deployment.WireModel, deployment.RegistryModel = "anthropic/claude-haiku-5.5", "anthropic/claude-haiku-5.5"
+	config.Actions[0].Model = "claude-haiku-5.5"
+	_, server := executorWithHTTPDecisions(t, config, &decisionCapture{})
+
+	// Every spelling the codec canonicalizes to developer must be refused:
+	// canonicalRole lowercases and trims, so an exact-match check is bypassable.
+	for index, role := range []string{"developer", "Developer", "DEVELOPER", " developer "} {
+		reached = 0
+		developer := `{"model":"arc-1.0","max_tokens":32,"messages":[{"role":"user","content":"hi"},{"role":"` + role + `","content":"elevated authority"}]}`
+		status, result := executeHTTP(t, server.URL, "/v1/messages", developer, fmt.Sprintf("dev-row-%d", index))
+		if status == 200 {
+			t.Fatalf("role %q dispatched with changed authority: %s", role, result)
+		}
+		if !bytes.Contains(result, []byte("developer")) {
+			t.Fatalf("role %q: refusal did not name the developer role: %s", role, result)
+		}
+		if reached != 0 {
+			t.Fatalf("role %q: upstream was reached %d times despite the refusal", role, reached)
+		}
+	}
+	reached = 0
+
+	// The same shape with a system row the client actually sent is dispatched.
+	system := `{"model":"arc-1.0","max_tokens":32,"messages":[{"role":"user","content":"hi"},{"role":"system","content":"environment"}]}`
+	status, result := executeHTTP(t, server.URL, "/v1/messages", system, "sys-row")
+	if status != 200 {
+		t.Fatalf("in-band system row was refused on the dispatch path: %d %s", status, result)
+	}
+	if reached != 1 {
+		t.Fatalf("expected one upstream call, got %d", reached)
 	}
 }

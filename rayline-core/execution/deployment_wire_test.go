@@ -17,7 +17,7 @@ func TestApprovedCloudWireSettings(t *testing.T) {
 	if err := validateProviderPin(deployment); err != nil {
 		t.Fatal(err)
 	}
-	body, err := applyDeploymentWireBody([]byte(`{"model":"approved","input":"hi","store":true,"session_id":"private","prompt_cache_key":"private","reasoning":{"effort":"high"}}`), deployment)
+	body, err := applyDeploymentWireBody([]byte(`{"model":"approved","input":"hi","store":true,"session_id":"private","prompt_cache_key":"private","reasoning":{"effort":"high"}}`), nil, deployment)
 	if err != nil {
 		t.Fatal(err)
 	}

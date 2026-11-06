@@ -82,46 +82,42 @@ func validateModelPinControl(deployment Deployment, control thinkingcontrol.Cont
 	return nil
 }
 
-// The legacy Messages adapter folds in-array system messages and recursively
-// coerces the exact string xhigh. Refuse those requests before generation:
-// neither changing a control nor rewriting a cached transcript is acceptable.
-func validateModelPinBody(body []byte, deployment Deployment) error {
+// No literal-xhigh scan lives here. placer.Render owns the root control fields
+// and strips thinking, reasoning, reasoning_effort and output_config.effort
+// before this runs, so a client value there never reaches dispatch; a value
+// nested in message content is forwarded, as it already is on every path that
+// does not use this transport. A scan of the rest of the body refused ordinary
+// client data, such as a tool schema that enumerates effort levels. On this
+// transport the caller supplies the credential and pays per token, so the
+// thinking level they ask for is their own cost to carry and is not a mutation
+// to refuse. Any normalization the serving gateway performs applies equally to
+// the paths that reach it without this check.
+//
+// An in-band system row is not refused. Folding one is opt-in per deployment
+// (`inband_system`), applies only to a local Chat deployment
+// (validateInbandSystem) and is the single caller of FoldInbandSystem, so no
+// fold can reach a model_pin Messages dispatch: the row is forwarded as the
+// client sent it.
+//
+// A developer row is still refused, because Messages has no developer
+// authority to carry it (codec_anthropic_content.go). That role is read from
+// clientRoles, the roles of the *client's* body: the decoder canonicalizes an
+// Anthropic developer row to system before dispatch
+// (codec_anthropic_messages.go), so the encoded body alone cannot distinguish
+// it from a system row the client actually sent, and allowing system rows
+// would otherwise dispatch developer content with changed authority. An empty
+// clientRoles (a caller that cannot supply them) refuses nothing extra.
+func validateModelPinBody(clientRoles []string, deployment Deployment) error {
 	if cloudTransport(deployment) != cloudModelPin || deployment.Protocol != llmprotocol.AnthropicMessagesV1 {
 		return nil
 	}
-	var wire map[string]any
-	if err := json.Unmarshal(body, &wire); err != nil {
-		return err
-	}
-	if messages, ok := wire["messages"].([]any); ok {
-		for _, item := range messages {
-			if message, ok := item.(map[string]any); ok && (message["role"] == "system" || message["role"] == "developer") {
-				return fmt.Errorf("model_pin Messages cannot preserve in-array system or developer messages")
-			}
+	for _, role := range clientRoles {
+		// The codec canonicalizes a role by lowercasing and trimming it
+		// (canonicalRole), so " Developer " decodes to developer just as
+		// "developer" does. Match the same way or the check is bypassable.
+		if strings.ToLower(strings.TrimSpace(role)) == "developer" {
+			return fmt.Errorf("model_pin Messages cannot preserve in-array developer messages")
 		}
-	}
-	var hasXhigh func(any) bool
-	hasXhigh = func(value any) bool {
-		switch value := value.(type) {
-		case string:
-			return value == "xhigh"
-		case []any:
-			for _, item := range value {
-				if hasXhigh(item) {
-					return true
-				}
-			}
-		case map[string]any:
-			for _, item := range value {
-				if hasXhigh(item) {
-					return true
-				}
-			}
-		}
-		return false
-	}
-	if hasXhigh(wire) {
-		return fmt.Errorf("model_pin Messages cannot preserve a literal xhigh value through the current gateway")
 	}
 	return nil
 }
