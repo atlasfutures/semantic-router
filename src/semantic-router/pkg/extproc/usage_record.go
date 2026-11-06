@@ -161,6 +161,14 @@ type llmUsageRecord struct {
 	// the provider applied its own default.
 	UpstreamEffort             *string `json:"upstream_effort"`
 	UpstreamReasoningMaxTokens *int64  `json:"upstream_reasoning_max_tokens"`
+	// PolicySessionFallback is "sessionless" on an ARC turn whose policy
+	// session start failed and that was decided on the sessioned cell's
+	// sessionless fallback (sessions.fallback_base_url), and
+	// PolicySessionFallbackReason why the start failed:
+	// session_start_timeout, session_start_refused or session_start_failed.
+	// Null on every other turn.
+	PolicySessionFallback       *string `json:"policy_session_fallback"`
+	PolicySessionFallbackReason *string `json:"policy_session_fallback_reason"`
 	// FlexResend marks the two calls of a discount-endpoint turn that was
 	// re-sent on its standard twin: flex_attempt on the refused or timed-out
 	// call, standard_resend on the re-send. Null on every other call.
@@ -368,6 +376,8 @@ func (r *OpenAIRouter) newLLMUsageRecord(ctx *RequestContext, usage responseUsag
 	record.ProviderAllowFallbacks = ctx.DispatchedProviderPrivacy.allowFallbacks
 	if ctx.VSRRaylineARC != nil {
 		record.PrivacyMode = nonEmpty(privacyModeLabel(ctx.RaylineARCPrivacyMode))
+		record.PolicySessionFallback = nonEmpty(ctx.VSRRaylineARC.PolicySessionFallback)
+		record.PolicySessionFallbackReason = nonEmpty(ctx.VSRRaylineARC.PolicySessionFallbackReason)
 		if ctx.RaylineARCPrivacyMode != "" {
 			count := len(ctx.RaylineARCPrivacyAllowedArms)
 			record.PrivacyAllowedArmsCount = &count

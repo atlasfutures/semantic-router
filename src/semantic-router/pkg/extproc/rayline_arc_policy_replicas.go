@@ -139,6 +139,15 @@ func recordPolicySession(
 		return
 	}
 	trace.PolicySessions, trace.PolicySessionMoved = binding.Sessions()
+	if reason := binding.Fallback(); reason != "" {
+		trace.PolicySessionFallback = raylinearc.PolicySessionFallbackSessionless
+		trace.PolicySessionFallbackReason = reason
+		logging.ComponentWarnEvent("extproc", "rayline_arc_policy_session_fallback", map[string]interface{}{
+			"episode_id_hash":                episodeIDHash,
+			"policy_session_fallback":        trace.PolicySessionFallback,
+			"policy_session_fallback_reason": reason,
+		})
+	}
 	if session, changed := binding.Session(); changed {
 		trace.PolicySession = session
 		if binding.Replaces() {

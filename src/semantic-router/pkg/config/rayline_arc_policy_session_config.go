@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"strings"
 )
 
@@ -27,6 +28,12 @@ type RaylineARCPolicySessionsConfig struct {
 	// queues a start for capacity for minutes, so a turn whose start lapses
 	// fails closed instead of waiting.
 	StartTimeoutSeconds int `yaml:"start_timeout_seconds,omitempty"`
+	// FallbackBaseURL is a non-sessioned deployment of the same package,
+	// called with the same proxy key. Set, a turn whose session start fails
+	// or lapses is decided there, without a session, instead of failing
+	// closed; llm_usage labels it policy_session_fallback. Empty (the
+	// default) keeps the turn failing closed.
+	FallbackBaseURL string `yaml:"fallback_base_url,omitempty"`
 }
 
 // EffectiveIdleTimeoutSeconds is the session idle timeout in force.
@@ -53,7 +60,7 @@ func (cfg RaylineARCPolicySessionsConfig) EffectiveStartTimeoutSeconds() int {
 func validateRaylineARCPolicySessions(cfg *RaylineARCPolicyServiceConfig) error {
 	sessions := cfg.Sessions
 	if !sessions.Enabled {
-		if sessions.IdleTimeoutSeconds != 0 || sessions.StartTimeoutSeconds != 0 {
+		if sessions.IdleTimeoutSeconds != 0 || sessions.StartTimeoutSeconds != 0 || sessions.FallbackBaseURL != "" {
 			return fmt.Errorf("sessions settings require sessions.enabled")
 		}
 		return nil
@@ -69,6 +76,28 @@ func validateRaylineARCPolicySessions(cfg *RaylineARCPolicyServiceConfig) error 
 	}
 	if sessions.StartTimeoutSeconds < 0 || sessions.StartTimeoutSeconds > maxRaylineARCPolicySessionStartSeconds {
 		return fmt.Errorf("sessions.start_timeout_seconds must be between 1 and %d", maxRaylineARCPolicySessionStartSeconds)
+	}
+	if sessions.FallbackBaseURL != "" {
+		return validateRaylineARCPolicySessionFallback(sessions.FallbackBaseURL, cfg.BaseURL)
+	}
+	return nil
+}
+
+// validateRaylineARCPolicySessionFallback accepts an absolute https URL (the
+// fallback is called with the proxy key) other than base_url. It names a
+// deployment of the cell's own package: nothing here can read which package
+// it serves, so every answer is checked against the cell's package alias and
+// SHA-256 per turn, and one for another package fails the turn closed
+// (policy_package_mismatch).
+func validateRaylineARCPolicySessionFallback(fallback string, baseURL string) error {
+	parsed, err := url.Parse(fallback)
+	if err != nil || strings.TrimSpace(fallback) != fallback || len(fallback) > maxRaylineARCConfigStringLength ||
+		parsed.Scheme != "https" || parsed.Host == "" ||
+		parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return fmt.Errorf("sessions.fallback_base_url must be an absolute https URL without credentials, a query, or a fragment")
+	}
+	if strings.TrimRight(fallback, "/") == strings.TrimRight(strings.TrimSpace(baseURL), "/") {
+		return fmt.Errorf("sessions.fallback_base_url must be a URL other than base_url")
 	}
 	return nil
 }

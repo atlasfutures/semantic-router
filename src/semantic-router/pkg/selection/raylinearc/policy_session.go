@@ -26,6 +26,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -57,7 +58,8 @@ const (
 
 	// PolicySessionStartClass is the failure class of a session that could
 	// not be started: a timeout, a refusal or a malformed answer. The turn
-	// fails closed (policy_service_session_start) and commits nothing.
+	// fails closed (policy_service_session_start) and commits nothing, unless
+	// the cell has a sessionless fallback (PolicySessionConfig.Sessionless).
 	PolicySessionStartClass = "session_start"
 	// PolicySessionGoneClass and PolicySessionExpiredClass are Modal's own
 	// answers for a token, recognised by their verified signatures only: a
@@ -152,7 +154,24 @@ type PolicySessionConfig struct {
 	IdleTimeout   time.Duration
 	StartTimeout  time.Duration
 	ReplacedGrace time.Duration
+	// Sessionless is the client of a non-sessioned deployment of the same
+	// package (sessions.fallback_base_url), nil for none. A turn whose
+	// session start fails decides there instead of failing closed.
+	Sessionless *PolicyServiceClient
 }
+
+// PolicySessionFallbackSessionless labels a turn decided on the sessionless
+// fallback; the PolicySessionFallbackStart* constants say why.
+const (
+	PolicySessionFallbackSessionless = "sessionless"
+	// PolicySessionFallbackStartTimeout: the start lapsed (start_timeout_seconds).
+	PolicySessionFallbackStartTimeout = "session_start_timeout"
+	// PolicySessionFallbackStartRefused: Modal answered the start with a
+	// status other than 200, or with a malformed session.
+	PolicySessionFallbackStartRefused = "session_start_refused"
+	// PolicySessionFallbackStartFailed: the start failed in transport.
+	PolicySessionFallbackStartFailed = "session_start_failed"
+)
 
 // PolicySessionBackend starts and ends the Modal sessions of a sessioned
 // policy Server, over the cell's one client (its URL and proxy key).
@@ -270,7 +289,12 @@ func (backend *PolicySessionBackend) Start(ctx context.Context) (PolicySession, 
 	header.Set("x-modal-timestamp", strconv.FormatFloat(float64(backend.now().UnixNano())/1e9, 'f', 6, 64))
 	status, body, err := backend.control(ctx, policySessionStartPath, header, backend.config.StartTimeout)
 	if err != nil {
-		return PolicySession{}, &PolicyServiceError{Class: PolicySessionStartClass}
+		failure := &PolicyServiceError{Class: PolicySessionStartClass}
+		var netErr net.Error
+		if errors.Is(err, context.DeadlineExceeded) || errors.As(err, &netErr) && netErr.Timeout() {
+			failure.Cause = "timeout"
+		}
+		return PolicySession{}, failure
 	}
 	if status != http.StatusOK {
 		return PolicySession{}, &PolicyServiceError{Class: PolicySessionStartClass, Status: status}
@@ -338,7 +362,9 @@ func (backend *PolicySessionBackend) control(
 	defer func() { _ = response.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(response.Body, maxPolicySessionStartBytes+1))
 	if err != nil || len(body) > maxPolicySessionStartBytes {
-		return response.StatusCode, nil, errors.New("ARC policy session control response is unreadable")
+		// The read error is kept, so a body that outlived the timeout is
+		// still told apart as one.
+		return response.StatusCode, nil, errors.Join(errors.New("ARC policy session control response is unreadable"), err)
 	}
 	return response.StatusCode, body, nil
 }
@@ -413,6 +439,9 @@ type PolicySessionBinding struct {
 	// the commit that records its replacement. An ephemeral turn records no
 	// replacement, so it never sets one.
 	replaced *PolicySession
+	// fallback is why the turn decides on the sessionless fallback, "" while
+	// it does not. Once set, every later call of the turn goes there too.
+	fallback string
 }
 
 // Decide asks the bound session for one decision.
@@ -420,6 +449,9 @@ func (binding *PolicySessionBinding) Decide(
 	ctx context.Context,
 	request PolicyDecisionRequest,
 ) (*PolicyDecisionResponse, error) {
+	if binding.fallback != "" {
+		return binding.backend.config.Sessionless.Decide(ctx, request)
+	}
 	if binding.current == nil {
 		switch {
 		case binding.persisted != nil && binding.backend.suspect.has(*binding.persisted):
@@ -427,13 +459,13 @@ func (binding *PolicySessionBinding) Decide(
 			// one move is to a new session, before any call reaches the old one.
 			binding.moved = true
 			if err := binding.moveOff(ctx); err != nil {
-				return nil, err
+				return binding.sessionless(ctx, request, err)
 			}
 		case binding.persisted != nil:
 			binding.use(*binding.persisted, false)
 		default:
 			if err := binding.start(ctx); err != nil {
-				return nil, err
+				return binding.sessionless(ctx, request, err)
 			}
 		}
 	}
@@ -468,13 +500,56 @@ func (binding *PolicySessionBinding) Decide(
 			// have without the move.
 			return response, err
 		}
-		return nil, startErr
+		return binding.sessionless(ctx, request, startErr)
 	}
 	response, err = binding.decide(moveCtx, request)
 	if err == nil && staleOwner(request, response) {
 		binding.endStale(ctx)
 	}
 	return response, err
+}
+
+// sessionless decides the turn on the sessionless fallback after a session
+// start failed (startErr), when the cell configures one. No session answered
+// the turn, so nothing on the sessioned Server advanced: the episode keeps
+// the session it records (none on a first turn), and its next turn starts
+// or uses one as usual. A private turn never falls back: its release could
+// not reach the fallback container that holds its episode, so it fails
+// closed as before. Without a fallback, the start's failure is the turn's.
+func (binding *PolicySessionBinding) sessionless(
+	ctx context.Context,
+	request PolicyDecisionRequest,
+	startErr error,
+) (*PolicyDecisionResponse, error) {
+	if binding.backend.config.Sessionless == nil || binding.holdUntilRelease {
+		return nil, startErr
+	}
+	binding.fallback = policySessionFallbackReason(startErr)
+	return binding.backend.config.Sessionless.Decide(ctx, request)
+}
+
+// policySessionFallbackReason names why a session start failed.
+func policySessionFallbackReason(err error) string {
+	var failure *PolicyServiceError
+	switch {
+	case !errors.As(err, &failure):
+		return PolicySessionFallbackStartFailed
+	case failure.Status != 0:
+		return PolicySessionFallbackStartRefused
+	case failure.Cause == "timeout":
+		return PolicySessionFallbackStartTimeout
+	default:
+		return PolicySessionFallbackStartFailed
+	}
+}
+
+// Fallback is why the turn decided on the sessionless fallback, "" when it
+// did not.
+func (binding *PolicySessionBinding) Fallback() string {
+	if binding == nil {
+		return ""
+	}
+	return binding.fallback
 }
 
 // endStale ends, off the turn's path, the current session, which answered
@@ -639,7 +714,9 @@ func PolicySessionUnanswered(err error) bool {
 // Session is the session the episode should persist after this turn and
 // whether it differs from the one it held. An ephemeral turn persists none.
 func (binding *PolicySessionBinding) Session() (*PolicySession, bool) {
-	if binding == nil || binding.ephemeral || binding.current == nil {
+	// A sessionless turn changes none: a session it started and lost before
+	// falling back is not one the episode should keep.
+	if binding == nil || binding.ephemeral || binding.current == nil || binding.fallback != "" {
 		return nil, false
 	}
 	changed := binding.persisted == nil || *binding.persisted != *binding.current

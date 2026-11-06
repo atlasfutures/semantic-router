@@ -102,7 +102,10 @@ entry's. Each usage line records the tier its body requested as
 `requested_service_tier`, beside the served `upstream_service_tier`. It also
 records the reasoning controls the dispatched body carried: `upstream_effort`
 and OpenRouter's `upstream_reasoning_max_tokens`, both null when the body
-carried none and the provider applied its default.
+carried none and the provider applied its default. An ARC turn decided on a
+sessioned cell's sessionless fallback (`sessions.fallback_base_url`) carries
+`policy_session_fallback: sessionless` and `policy_session_fallback_reason`;
+both are null on every other line.
 
 Use [Protocol Compatibility](protocol-compatibility) to choose the model's
 backend `api_format`. Then see

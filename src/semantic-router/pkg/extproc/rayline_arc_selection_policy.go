@@ -237,6 +237,10 @@ func observeRaylineARCSelection(
 	}
 	addPrivacyFields(fields, ctx)
 	addOutputMaskFields(fields, ctx)
+	if trace.PolicySessionFallback != "" {
+		fields["policy_session_fallback"] = trace.PolicySessionFallback
+		fields["policy_session_fallback_reason"] = trace.PolicySessionFallbackReason
+	}
 	// The policy-service facts exist only when a policy service decided; an
 	// artifact-mode selection carries none rather than zeros.
 	if trace.OfferKind != "" {

@@ -604,6 +604,25 @@ session. It is exclusive with `replicas` and needs `modal_key_env` and
   default; Modal queues a start for capacity for minutes). A start that lapses
   or is refused fails the turn as `policy_service_session_start` (public
   class `unavailable`) and commits nothing.
+- **Sessionless fallback (opt-in).** `fallback_base_url` names a
+  non-sessioned deployment of the same package (a web or function-shape app,
+  such as the `-web` endpoints dev cells already use), an https URL other
+  than `base_url`, called with the same proxy key. Its answers are checked
+  against the cell's package alias and SHA-256 like any other: one for
+  another package fails the turn as `policy_package_mismatch`. With it set, a turn whose session start lapses or is refused (a new
+  episode's, or the start a turn moves to) is decided there without a
+  session instead of failing, and dispatched as usual. Every later call of
+  that turn goes there too. If the fallback fails, the turn fails with the
+  fallback's failure. The turn records no session, so the episode keeps the
+  session it had (none on a first turn) and its next turn starts or uses one
+  as usual, rebuilding on that container. It is not staged or appended, so
+  the next turn decides in full. A private (zdr) turn never falls back: its
+  release could not reach the fallback container that holds its episode.
+  The turn's `llm_usage` line and selection event carry
+  `policy_session_fallback: sessionless` and
+  `policy_session_fallback_reason` (`session_start_timeout`,
+  `session_start_refused` or `session_start_failed`). Unset (the default),
+  the turn fails closed as above.
 - **Lost session.** Modal's 502 with an empty body (the token's container is
   gone) and its 404 `Unknown or expired session` never reached a container
   holding the episode, so the turn starts a new session and is retried there

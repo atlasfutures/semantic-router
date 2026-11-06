@@ -489,6 +489,11 @@ type RaylineARCTrace struct {
 	// PolicySessionMoved whether the turn left a session that was gone.
 	PolicySessions     int
 	PolicySessionMoved bool
+	// PolicySessionFallback is "sessionless" when the turn's session start
+	// failed and it was decided on the sessionless fallback, and
+	// PolicySessionFallbackReason why the start failed; both "" otherwise.
+	PolicySessionFallback       string
+	PolicySessionFallbackReason string
 	// PolicySessionCleared drops a session the episode state holds from a
 	// cell that no longer decides through sessions, so a router that predates
 	// them can read the record again.

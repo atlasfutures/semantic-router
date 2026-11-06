@@ -30,6 +30,13 @@ func TestRaylineARCPolicySessionsValidation(t *testing.T) {
 		}, "base_url and no replicas"},
 		{"start timeout too long", keyed(RaylineARCPolicySessionsConfig{Enabled: true, StartTimeoutSeconds: 300}), "start_timeout_seconds"},
 		{"negative idle", keyed(RaylineARCPolicySessionsConfig{Enabled: true, IdleTimeoutSeconds: -1}), "idle_timeout_seconds"},
+		{"with a sessionless fallback", keyed(RaylineARCPolicySessionsConfig{Enabled: true, FallbackBaseURL: "https://policy-stateless.example.modal.run"}), ""},
+		{"fallback without enabled", keyed(RaylineARCPolicySessionsConfig{FallbackBaseURL: "https://policy-stateless.example.modal.run"}), "require sessions.enabled"},
+		{"fallback is base_url", keyed(RaylineARCPolicySessionsConfig{Enabled: true, FallbackBaseURL: "https://policy.example.modal.direct/"}), "fallback_base_url"},
+		{"fallback padded", keyed(RaylineARCPolicySessionsConfig{Enabled: true, FallbackBaseURL: " https://policy-stateless.example.modal.run"}), "fallback_base_url"},
+		{"fallback over http", keyed(RaylineARCPolicySessionsConfig{Enabled: true, FallbackBaseURL: "http://policy-stateless.example.modal.run"}), "https"},
+		{"fallback relative", keyed(RaylineARCPolicySessionsConfig{Enabled: true, FallbackBaseURL: "policy-stateless.example.modal.run"}), "https"},
+		{"fallback with a query", keyed(RaylineARCPolicySessionsConfig{Enabled: true, FallbackBaseURL: "https://policy-stateless.example.modal.run/?k=v"}), "https"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := tc.cfg
