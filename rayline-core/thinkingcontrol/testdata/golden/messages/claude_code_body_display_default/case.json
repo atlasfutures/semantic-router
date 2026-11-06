@@ -6,7 +6,7 @@
  "wire_model": "anthropic/claude-haiku-5.5",
  "admission": "enforced",
  "allow_experimental": true,
- "registry_pin": "9450ce173270ec8ed55d8d1bf29d706f3fc409daf06654a03724544eb9abf609",
+ "registry_pin": "b12513238b66aeb585b4385434a069ee2bfe646cfc8d830f82cbd0b7b6117db7",
  "calls": [
   {
    "client_body": "client-00.json",
