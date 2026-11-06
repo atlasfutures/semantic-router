@@ -101,8 +101,16 @@ type responsesStreamEncoder struct {
 	// reasoningSignatures holds each neutral item's Anthropic thinking
 	// signature until the item's reasoning output is done.
 	reasoningSignatures map[int]string
-	responseStarted     bool
-	wireSequence        uint64
+	// openToolCalls holds each started function call as it has streamed so
+	// far. A turn the Router cuts mid-call has to close the item it opened,
+	// and only the call's own name, id and arguments can close it
+	// (closeOpenResponsesItems); the deltas themselves pass straight through.
+	openToolCalls map[responsesOutputKey]*llmprotocol.ToolCall
+	// closingAtCut is set while the items a cut landed in are being closed,
+	// so each closes as incomplete: the turn ended in the middle of it.
+	closingAtCut    bool
+	responseStarted bool
+	wireSequence    uint64
 }
 
 func (OpenAIResponsesCodec) NewDecoder(context llmprotocol.StreamContext, policy llmprotocol.Policy) llmprotocol.StreamDecoder {
@@ -139,6 +147,7 @@ func (OpenAIResponsesCodec) NewEncoder(context llmprotocol.StreamContext, policy
 		completedOutput:        make(map[int]json.RawMessage),
 		imageProgressCompleted: make(map[responsesOutputKey]bool),
 		reasoningSignatures:    make(map[int]string),
+		openToolCalls:          make(map[responsesOutputKey]*llmprotocol.ToolCall),
 	}
 }
 

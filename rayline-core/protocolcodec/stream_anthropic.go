@@ -430,7 +430,12 @@ func (decoder *anthropicStreamDecoder) decodeAnthropicMessageDelta(
 		return nil, diagnostics, nil
 	}
 	usage := decodeAnthropicMessageDeltaUsage(*wire.Usage)
-	events, eventDiagnostics, err := decoder.emitAnthropicEvent(llmprotocol.Event{Type: llmprotocol.EventUsageUpdated, Usage: &usage})
+	// The delta states the stop the model reached beside its count. The stop
+	// travels on the event, so a turn cut between this delta and message_stop
+	// is still known to have finished (StreamEngine.recordTerminalEvent).
+	events, eventDiagnostics, err := decoder.emitAnthropicEvent(llmprotocol.Event{
+		Type: llmprotocol.EventUsageUpdated, Usage: &usage, StopReason: decoder.stop,
+	})
 	return events, appendDiagnostics(diagnostics, eventDiagnostics, decoder.policy.Limits.Diagnostics), err
 }
 
@@ -908,7 +913,15 @@ func (encoder *anthropicStreamEncoder) encodeAnthropicLifecycleEvent(
 	case llmprotocol.EventResponseFailed:
 		// A cut turn's count is the one exception: the caller asked for it to
 		// travel, because nothing downstream can bill the turn without it.
+		// The count that travels is the terminal's, which the engine has
+		// reconciled with what the stream said (a settlement the upstream
+		// stated, even one flushed at the cut, over the caller's estimate);
+		// the caller's own number only stands in when the terminal has none.
 		// Any other usage on a failure has nowhere to go in Messages.
+		if event.Failure == llmprotocol.FailureTruncated && encoder.truncationSource != "" &&
+			event.Usage != nil && event.Usage.State == llmprotocol.UsageAvailable {
+			encoder.truncationUsage = event.Usage
+		}
 		if event.Usage != nil && event.Usage.State == llmprotocol.UsageAvailable && encoder.truncationSource == "" {
 			appendAccountingOmission(&diagnostics, encoder.policy, encoder.context.Source, encoder.context.Target, "usage", "Messages error events cannot carry token usage")
 		}

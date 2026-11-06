@@ -390,6 +390,7 @@ func (engine *Engine) NewStreamWithMutation(
 		targetFormat:       target,
 		targetCapabilities: targetPair.buffered.Capabilities(),
 		maxDiagnostics:     engine.policy.Limits.Diagnostics,
+		streamContext:      context,
 	}, nil
 }
 
@@ -580,11 +581,46 @@ type StreamEngine struct {
 	finalized          bool
 	failure            error
 	pendingCompletion  *llmprotocol.Event
+	// truncationUsage is what a turn the Router ended cost, and
+	// truncationSource is where that count came from. Held on the engine so the
+	// terminal it synthesizes for the cut carries them whatever the target
+	// format is; the Anthropic encoder also takes them through the carrier
+	// below, because its terminal states them in a shape of its own.
+	truncationUsage  *llmprotocol.Usage
+	truncationSource string
+	// truncationCause is why the caller ended the turn, in the vocabulary
+	// llmprotocol.Truncation* defines, carried onto the terminal it writes.
+	truncationCause string
+	// servedStop is the stop an output item the upstream finished already
+	// stated. A turn cut after that was cut in its transport, not in its
+	// generation, so its terminal keeps the stop the model reached.
+	servedStop llmprotocol.StopReason
+	// statedUsage is the last count the stream itself stated, kept so a
+	// terminal the engine synthesizes can reconcile against it.
+	// outputSinceUsage says the turn generated more after that statement, so
+	// its output leg is a snapshot rather than a settlement.
+	statedUsage      *llmprotocol.Usage
+	outputSinceUsage bool
+	// streamContext is the client's own request for this stream, read to tell
+	// whether the target's terminal can state a count at all.
+	streamContext llmprotocol.StreamContext
+	// cutByCaller says the caller ended the turn (SetTruncationCause), which
+	// it states even for a turn that delivered nothing.
+	cutByCaller bool
+	// outputPublished says the target encoder has written output the client
+	// can see: a delta with something in it, an image's progress, a call's
+	// start -- and only where the target wrote a frame for it. A Chat target
+	// writes nothing for a call's start, so a start alone leaves a Chat
+	// client with no output, while a Responses client holds an opened item.
+	outputPublished bool
 }
 
-// truncationUsageCarrier is an encoder that can put a count on the failure it
-// writes for a turn the Router ended. Not every wire format has a place for
-// one, so it is an option rather than part of the encoder contract.
+// truncationUsageCarrier is an encoder whose terminal states a cut turn's count
+// in a shape of its own rather than on the event. Messages does: the count
+// rides beside the error object it was already going to write (decision 31),
+// which is a published cross-repo contract. Every other format says it the way
+// it says any stopped-early turn, from the event itself, so this stays an
+// option rather than part of the encoder contract.
 type truncationUsageCarrier interface {
 	SetTruncationUsage(usage *llmprotocol.Usage, source string)
 }
@@ -594,15 +630,46 @@ type truncationUsageCarrier interface {
 // A stream the Router cuts never reaches its usage frame, so the terminal the
 // codec writes would otherwise carry no numbers and the turn would bill as
 // nothing. The caller owns the count and the word for where it came from; the
-// codec only writes them onto the failure it was already going to write.
+// codec writes them onto the terminal it ends the turn with.
 // Called before Finalize, and only for a turn the Router itself ended.
 func (engine *StreamEngine) SetTruncationUsage(usage *llmprotocol.Usage, source string) {
 	if engine == nil {
 		return
 	}
+	engine.truncationUsage = usage
+	engine.truncationSource = source
 	if carrier, ok := engine.encoder.(truncationUsageCarrier); ok {
 		carrier.SetTruncationUsage(usage, source)
 	}
+}
+
+// SetTruncationCause says why the caller is about to end the turn, in the
+// vocabulary llmprotocol.Truncation* defines. The caller owns that knowledge --
+// its own deadline, its own silence limit, its own read of the body -- and the
+// codec only carries the word onto the terminal, where a format has a place
+// for it. Called before Finalize, beside SetTruncationUsage.
+func (engine *StreamEngine) SetTruncationCause(cause string) {
+	if engine == nil {
+		return
+	}
+	engine.truncationCause = cause
+	engine.cutByCaller = true
+}
+
+// OutputPublished reports whether the target encoder has written output the
+// client can see. The caller reads it to decide whether a turn it is ending
+// closes in the format's own shape or ends on the error terminal a turn that
+// delivered nothing gets.
+func (engine *StreamEngine) OutputPublished() bool {
+	return engine != nil && engine.outputPublished
+}
+
+// cutByCaller reports that the caller ended this turn, whether or not it had
+// a count to hand over. A trailing fragment is then what the cut left behind
+// even when no output preceded it, and the terminal names the caller's cut
+// rather than the fragment.
+func (engine *StreamEngine) cutByCallerOrCounted() bool {
+	return engine.cutByCaller || engine.truncationUsage != nil
 }
 
 func (engine *StreamEngine) Push(frame []byte) ([][]byte, []llmprotocol.Event, llmprotocol.Diagnostics, error) {
@@ -664,6 +731,9 @@ func (engine *StreamEngine) encodeEvents(
 		diagnostics = appendDiagnostics(diagnostics, eventDiagnostics, engine.maxDiagnostics)
 		if err != nil {
 			return frames, accepted, diagnostics, err
+		}
+		if len(encoded) > 0 && clientVisibleOutput(events[index]) {
+			engine.outputPublished = true
 		}
 		frames = append(frames, encoded...)
 		accepted = append(accepted, events[index])
