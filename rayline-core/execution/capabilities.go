@@ -3,8 +3,12 @@ package execution
 import "fmt"
 
 // Capabilities is the common, explicitly qualified envelope of every possible
-// execution target. It advertises limits; the harness gateway never clamps a
-// caller request to make it fit.
+// execution target. It advertises limits, which are the smallest across the
+// usable deployments; each limit is enforced against the deployment the turn
+// lands on, not against the advertised figure.
+//
+// The gateway does not clamp a caller request to make it fit, except on a
+// deployment whose operator set clamp_output_allowance.
 type Capabilities struct {
 	ContextWindow   int64    `json:"context_window"`
 	MaxOutputTokens int64    `json:"max_output_tokens"`

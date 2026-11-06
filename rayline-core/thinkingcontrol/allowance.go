@@ -22,3 +22,44 @@ func RaiseMessagesAllowance(request *llmprotocol.Request, budget *int64, default
 	request.Sampling.MaxOutputTokens = &raised
 	return true
 }
+
+// ClampAllowance is the outcome of lowering an allowance to a deployment's
+// limit.
+type ClampAllowance struct {
+	// From is the allowance the caller stated, before the clamp.
+	From int64
+	// To is the allowance the request is sent with.
+	To int64
+}
+
+// ClampMessagesAllowance lowers an allowance above limit to limit, for a
+// caller that cannot state a smaller one. It reports whether it clamped.
+//
+// The admitted control's thinking budget is read, never lowered: it is part of
+// PlacementKey, so a lowered one would start a new placer mid-episode and
+// serve a control the policy did not choose.
+func ClampMessagesAllowance(request *llmprotocol.Request, budget *int64, limit int64) (ClampAllowance, bool) {
+	if request == nil || request.Sampling.MaxOutputTokens == nil || limit <= 0 {
+		return ClampAllowance{}, false
+	}
+	stated := *request.Sampling.MaxOutputTokens
+	if stated <= limit {
+		return ClampAllowance{}, false
+	}
+	// Messages counts thinking inside max_tokens and Anthropic requires the
+	// budget strictly below it, so a limit the budget reaches cannot be
+	// clamped into: that turn keeps the deployment-limit refusal rather than
+	// becoming a request the codec would reject.
+	if budget != nil && *budget >= limit {
+		return ClampAllowance{}, false
+	}
+	// Kept so a downstream bound is not derived from the limit as though the
+	// caller had asked for it.
+	if request.ClientMaxOutputTokens == nil {
+		request.ClientMaxOutputTokens = &stated
+	}
+	clamped := ClampAllowance{From: stated, To: limit}
+	request.Sampling.MaxOutputTokens = &clamped.To
+	request.RouterSetMaxOutputTokens = true
+	return clamped, true
+}
