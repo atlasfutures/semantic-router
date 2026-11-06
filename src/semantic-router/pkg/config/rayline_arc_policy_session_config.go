@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"strings"
 )
 
@@ -76,8 +77,26 @@ func validateRaylineARCPolicySessions(cfg *RaylineARCPolicyServiceConfig) error 
 	if sessions.StartTimeoutSeconds < 0 || sessions.StartTimeoutSeconds > maxRaylineARCPolicySessionStartSeconds {
 		return fmt.Errorf("sessions.start_timeout_seconds must be between 1 and %d", maxRaylineARCPolicySessionStartSeconds)
 	}
-	if fallback := sessions.FallbackBaseURL; fallback != "" &&
-		(strings.TrimSpace(fallback) != fallback || strings.TrimRight(fallback, "/") == strings.TrimRight(cfg.BaseURL, "/")) {
+	if sessions.FallbackBaseURL != "" {
+		return validateRaylineARCPolicySessionFallback(sessions.FallbackBaseURL, cfg.BaseURL)
+	}
+	return nil
+}
+
+// validateRaylineARCPolicySessionFallback accepts an absolute https URL (the
+// fallback is called with the proxy key) other than base_url. It names a
+// deployment of the cell's own package: nothing here can read which package
+// it serves, so every answer is checked against the cell's package alias and
+// SHA-256 per turn, and one for another package fails the turn closed
+// (policy_package_mismatch).
+func validateRaylineARCPolicySessionFallback(fallback string, baseURL string) error {
+	parsed, err := url.Parse(fallback)
+	if err != nil || strings.TrimSpace(fallback) != fallback || len(fallback) > maxRaylineARCConfigStringLength ||
+		parsed.Scheme != "https" || parsed.Host == "" ||
+		parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return fmt.Errorf("sessions.fallback_base_url must be an absolute https URL without credentials, a query, or a fragment")
+	}
+	if strings.TrimRight(fallback, "/") == strings.TrimRight(strings.TrimSpace(baseURL), "/") {
 		return fmt.Errorf("sessions.fallback_base_url must be a URL other than base_url")
 	}
 	return nil

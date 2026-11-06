@@ -605,8 +605,11 @@ session. It is exclusive with `replicas` and needs `modal_key_env` and
   or is refused fails the turn as `policy_service_session_start` (public
   class `unavailable`) and commits nothing.
 - **Sessionless fallback (opt-in).** `fallback_base_url` names a
-  non-sessioned deployment of the same package, called with the same proxy
-  key. With it set, a turn whose session start lapses or is refused (a new
+  non-sessioned deployment of the same package (a web or function-shape app,
+  such as the `-web` endpoints dev cells already use), an https URL other
+  than `base_url`, called with the same proxy key. Its answers are checked
+  against the cell's package alias and SHA-256 like any other: one for
+  another package fails the turn as `policy_package_mismatch`. With it set, a turn whose session start lapses or is refused (a new
   episode's, or the start a turn moves to) is decided there without a
   session instead of failing, and dispatched as usual. Every later call of
   that turn goes there too. If the fallback fails, the turn fails with the

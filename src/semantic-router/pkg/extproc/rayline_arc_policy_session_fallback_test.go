@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -116,6 +117,26 @@ func TestUsageRecordLabelsSessionlessFallback(t *testing.T) {
 			}
 			if value, present := fields["policy_session_fallback_reason"]; !present || value != test.wantReason {
 				t.Fatalf("policy_session_fallback_reason = %v (present %v), want %v", value, present, test.wantReason)
+			}
+		})
+	}
+}
+
+// The fallback must serve the cell's own package: an answer under another
+// alias or SHA-256 is not served, and the turn fails closed.
+func TestPolicySessionFallbackForAnotherPackageFailsClosed(t *testing.T) {
+	for name, answer := range map[string]raylinearc.PolicyPackageRef{
+		"other sha256": {Alias: policyTestAlias, PackageSHA256: strings.Repeat("b", 64)},
+		"other alias":  {Alias: "rayline/other-fold0", PackageSHA256: policyTestPackage},
+	} {
+		t.Run(name, func(t *testing.T) {
+			fixture, sessionless := newSaturatedSessionFixture(t, true)
+			sessionless.answerAs = &answer
+			state, _ := raylinearc.NewEpisodeState(2)
+			_, err := fixture.selectOn(t, state, policyTestRequest(t, map[string]any{"role": "user", "content": "go"}))
+			var failure *raylineARCSelectionFailure
+			if !errors.As(err, &failure) || failure.class != "policy_package_mismatch" {
+				t.Fatalf("error = %v, want class policy_package_mismatch", err)
 			}
 		})
 	}
