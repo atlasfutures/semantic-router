@@ -60,6 +60,12 @@ const (
 	// stage and turn_delta members (ADR 0155, pathfinder#5919). A delta
 	// cell whose service does not advertise it sends every turn in full.
 	PolicyCapabilityStagedTurns = "staged_turns"
+	// PolicyCapabilityToolFreeOverride: the service applies a package's
+	// stage_one.tool_free_overrides (pathfinder#6164) and answers
+	// response_fields ["tool_free_override"] with
+	// decision.stage_one.tool_free_override. Proposed name: a cell asks only
+	// a service that lists it.
+	PolicyCapabilityToolFreeOverride = "tool_free_override"
 )
 
 // Readiness classes for a service that cannot serve what the cell sends.

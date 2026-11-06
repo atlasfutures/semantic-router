@@ -41,6 +41,7 @@
     "tool_definitions_status",
     "cache_trace",
     "execution_context_v2",
-    "staged_turns"
+    "staged_turns",
+    "tool_free_override"
   ]
 }

@@ -113,6 +113,9 @@ type fakePolicyService struct {
 	predictionsRow *int
 	// cacheTrace, when set, answers response_fields cache_trace with it.
 	cacheTrace *raylinearc.PolicyCacheTrace
+	// toolFreeVerdict, when set, answers response_fields tool_free_override
+	// with it as decision.stage_one.tool_free_override.
+	toolFreeVerdict *raylinearc.PolicyToolFreeOverrideVerdict
 	// receipt, when set, answers a request carrying a v2 member with it.
 	receipt        *raylinearc.PolicyDecisionReceipt
 	tierPickAction string
@@ -694,6 +697,13 @@ func (fake *fakePolicyService) decision(request raylinearc.PolicyDecisionRequest
 	if fake.cacheTrace != nil && slices.Contains(request.ResponseFields, "cache_trace") {
 		trace := *fake.cacheTrace
 		response.Decision.CacheTrace = &trace
+	}
+	if fake.toolFreeVerdict != nil && slices.Contains(request.ResponseFields, raylinearc.PolicyCapabilityToolFreeOverride) {
+		verdict := *fake.toolFreeVerdict
+		if response.Decision.StageOne == nil {
+			response.Decision.StageOne = &raylinearc.PolicyDecisionStageOne{}
+		}
+		response.Decision.StageOne.ToolFreeOverride = &verdict
 	}
 	if len(request.Signals) > 0 && !fake.omitSignals {
 		response.Signals = fakeSignalBlock(request.Signals)

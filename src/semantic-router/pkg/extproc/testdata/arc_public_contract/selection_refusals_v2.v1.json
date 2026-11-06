@@ -19,6 +19,7 @@
       "reference_unavailable",
       "stage_one_held_unknown",
       "stage_one_model_unavailable",
+      "tool_free_override_excludes_every_offered_model",
       "unknown_price_model"
     ],
     "v2_public": {

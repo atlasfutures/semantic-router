@@ -127,6 +127,12 @@ func (members *policyDecisionsV2) record(
 // addPolicyDecisionsV2Fields writes a decisions_v2 cell's operating point and
 // tier picks into its selection log; a cell without the block logs neither.
 func addPolicyDecisionsV2Fields(fields map[string]interface{}, trace *selection.RaylineARCTrace) {
+	if trace.ToolFreeOverride != "" {
+		fields["tool_free_override"] = trace.ToolFreeOverride
+	}
+	if trace.RequestToolFree != nil {
+		fields["request_tool_free"] = *trace.RequestToolFree
+	}
 	if trace.PolicyOperatingPoint == nil {
 		return
 	}

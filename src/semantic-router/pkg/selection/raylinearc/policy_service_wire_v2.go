@@ -80,6 +80,29 @@ type PolicyTierPick struct {
 // PolicyDecisionStageOne is decision.stage_one.
 type PolicyDecisionStageOne struct {
 	Exploration *PolicyExplorationRecord `json:"exploration"`
+	// ToolFreeOverride is the service's verdict on the package's tool-free
+	// override for this decision, answered to response_fields
+	// ["tool_free_override"]; nil when the service stated none, which is
+	// never read as applied.
+	ToolFreeOverride *PolicyToolFreeOverrideVerdict `json:"tool_free_override,omitempty"`
+}
+
+// PolicyToolFreeOverrideVerdict is decision.stage_one.tool_free_override
+// (pathfinder#6164): whether the decision's stage one decided under the
+// override of the request's tier, and, when it did, the terms it decided
+// at; when it did not, why (carries_tools, tools_unknown, no_override,
+// not_tier_weight, single_stage, no_start_boundary: an override in force
+// on a turn stage one held, decided warm, or left to one offered model).
+type PolicyToolFreeOverrideVerdict struct {
+	Applied        bool     `json:"applied"`
+	Reason         *string  `json:"reason,omitempty"`
+	Tier           *string  `json:"tier,omitempty"`
+	CostWeight     *float64 `json:"cost_weight,omitempty"`
+	ExcludedModels []string `json:"excluded_models,omitempty"`
+	LatencyWeight  *float64 `json:"latency_weight,omitempty"`
+	// Boundary is the stage-one boundary the decision was taken at; null
+	// when stage one held the model and decided nothing.
+	Boundary *string `json:"boundary,omitempty"`
 }
 
 // PolicyExplorationBasis records how a tau was calibrated.
