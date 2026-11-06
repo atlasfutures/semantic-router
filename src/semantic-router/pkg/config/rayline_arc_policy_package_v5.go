@@ -57,6 +57,9 @@ type raylineARCPolicyPackageV5 struct {
 	// artifact than the one VSR serves from. It is informational:
 	// controls are content-addressed, and every control was resolved.
 	registryDiffers bool
+	// toolFree is stage_one.tool_free_overrides by tier, nil when the
+	// package declares none (parseStageOneToolFreeOverrides).
+	toolFree map[string]RaylineARCToolFreeOverride
 }
 
 // RaylineARCPolicyActionV5 is one v5 action as VSR dispatches it.
@@ -202,11 +205,16 @@ func (cfg *RaylineARCPolicyServiceConfig) loadPackageV5() (*raylineARCPolicyPack
 	if err != nil {
 		return nil, fmt.Errorf("package_manifest: %w", err)
 	}
+	toolFree, err := parseStageOneToolFreeOverrides(manifest.StageOne)
+	if err != nil {
+		return nil, fmt.Errorf("package_manifest: %w", err)
+	}
 	registry, err := thinkingcontrol.Embedded()
 	if err != nil {
 		return nil, fmt.Errorf("the thinking-control registry: %w", err)
 	}
 	pkg := &raylineARCPolicyPackageV5{
+		toolFree:        toolFree,
 		path:            cfg.PackageManifest,
 		manifest:        manifest,
 		actions:         make(map[string]RaylineARCPolicyActionV5, len(manifest.Actions)),

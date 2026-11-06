@@ -109,6 +109,9 @@ type policyServiceScorer struct {
 	// decisionsV2 is the cell's Decisions API v2 request members; nil sends
 	// none.
 	decisionsV2 *policyDecisionsV2
+	// toolFreeTier is a cell whose package declares a tool-free override
+	// for its tier (pathfinder#6164): it asks the service for its verdict.
+	toolFreeTier bool
 	// advertised is the service's capability list as its readiness listing
 	// stated it; a request uses an optional capability (predictions) only
 	// when it is here.
@@ -211,6 +214,7 @@ func newPolicyServiceScorer(
 		// Off, the decide request carries no cache_context, as before it.
 		cacheContext: policy.CacheContext,
 		decisionsV2:  newPolicyDecisionsV2(policy.DecisionsV2),
+		toolFreeTier: policyCellHasToolFreeOverride(policy),
 		exploration:  newPolicyExploration(policy),
 	}
 	if decision.Algorithm.RaylineARC.Episode.RelaxedConsistency() {
@@ -752,6 +756,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	// Whether the encode included the request's tools, asked only on a
 	// lookup (its tools warning reads it) and only of a service that lists
 	// the opt-in (an older one refuses the field).
+	scorer.askToolFreeOverride(&request)
 	if arcContext.RoutesLookup && scorer.advertises(raylinearc.PolicyCapabilityToolDefinitionsStatus) &&
 		!slices.Contains(request.ResponseFields, raylinearc.PolicyCapabilityToolDefinitionsStatus) {
 		request.ResponseFields = append(append([]string(nil), request.ResponseFields...), raylinearc.PolicyCapabilityToolDefinitionsStatus)
@@ -1195,6 +1200,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	result.RaylineARC.PolicyPackageSHA256 = scorer.sha256
 	result.RaylineARC.PolicyToolDefinitionsStatus = response.Encoding.ToolDefinitionsStatus
 	result.RaylineARC.TurnCostWeightApplied = turnWeightApplied
+	recordToolFreeOverride(result.RaylineARC, &request, response, clientRequest)
 	result.RaylineARC.RoutingPricesStatus = pricesStatus
 	result.RaylineARC.SettlementPrices = armed.prices
 	result.RaylineARC.EndpointFeed = arcContext.EndpointFeed

@@ -293,6 +293,14 @@ type llmUsageRecord struct {
 	// service echoed for the decision.
 	ServedModel      *string  `json:"served_model"`
 	PolicyCostWeight *float64 `json:"policy_cost_weight"`
+	// ToolFreeOverride is the policy service's verdict on the package's
+	// tool-free override for the cell's tier (pathfinder#6164) on the
+	// decision that chose this call's action: "applied", or the service's
+	// reason it did not apply (carries_tools, tools_unknown, no_override,
+	// not_tier_weight, single_stage, no_start_boundary). Null when the service stated none (a
+	// cell whose tier has no override, or a service that predates the
+	// field); null is never read as applied.
+	ToolFreeOverride *string `json:"tool_free_override"`
 }
 
 // newLLMUsageRecord fills what the request context and the counts say. The
@@ -435,6 +443,7 @@ func addUsageRecordARCAttribution(record *llmUsageRecord, ctx *RequestContext) {
 		record.ArtifactRevisionHash = nonEmpty(trace.ArtifactRevision)
 		record.PolicyActionID = nonEmpty(trace.PolicyActionID)
 		record.PolicyArmID = nonEmpty(trace.PolicyArmID)
+		record.ToolFreeOverride = nonEmpty(trace.ToolFreeOverride)
 		if identity, ok := raylineARCServedIdentityOf(ctx); ok {
 			record.ServedModel = nonEmpty(identity.model)
 			record.PolicyCostWeight = identity.costWeight

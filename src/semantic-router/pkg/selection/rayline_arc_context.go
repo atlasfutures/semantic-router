@@ -348,6 +348,16 @@ type RaylineARCTrace struct {
 	// turn's own cost weight (configurable ARC's routing.value_usd). False
 	// on a held turn, which decides nothing.
 	TurnCostWeightApplied bool
+	// ToolFreeOverride is the policy service's verdict on the package's
+	// tool-free override for the cell's tier (pathfinder#6164,
+	// decision.stage_one.tool_free_override): applied, or the service's
+	// reason it did not apply. Empty when the cell did not ask or the
+	// service stated none, which is never read as applied.
+	ToolFreeOverride string
+	// RequestToolFree is VSR's own reading of whether the request carried
+	// no tool definitions, kept when the cell asked for the verdict: a
+	// log-only cross-check of it.
+	RequestToolFree *bool
 	// RoutePredictionsApplied: route controls asked for predictions and the
 	// service answered them (RoutePredictions, checked against every tier
 	// pick's row). False when the service does not advertise them.
