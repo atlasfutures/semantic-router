@@ -270,6 +270,9 @@ type RaylineARCRouteIdentity struct {
 type RaylineARCArmAction struct {
 	ActionID      string
 	ThinkingLevel string
+	// DispatchArm is the arm ActionID is sent on under
+	// dispatch_model_overrides; nil when it is sent on its own arm.
+	DispatchArm *int
 }
 
 type RaylineARCTrace struct {

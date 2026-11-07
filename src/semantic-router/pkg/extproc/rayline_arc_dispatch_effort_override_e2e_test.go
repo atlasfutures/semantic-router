@@ -12,6 +12,8 @@ import (
 	"github.com/atlasfutures/semantic-router/rayline-core/thinkingcontrol"
 	modelcatalog "github.com/vllm-project/semantic-router/src/semantic-router/pkg/catalog"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
 
 // overrideRouter serves the v5 fixture with dispatch_effort_overrides on one
@@ -181,5 +183,35 @@ func TestPolicyScorerDispatchIdentity(t *testing.T) {
 	}
 	if got := scorer.actionModel("glm-up"); got != "glm-5" {
 		t.Fatalf("actionModel(glm-up) = %q, the policy attribution must stay", got)
+	}
+}
+
+// routing.exclusive and a lookup's results follow the worker a remapped
+// action is sent on.
+func TestPolicyScorerRouteControlsFollowDispatch(t *testing.T) {
+	scorer := &policyServiceScorer{
+		workerIDs:   []string{"glm", "opus"},
+		workers:     []raylinearc.WorkerManifest{{ID: "glm", Model: "z-ai/glm-5"}, {ID: "opus", Model: "anthropic/claude-opus-5"}},
+		actionOrder: []string{"glm-up", "opus-max"},
+		bindings: map[string]policyBinding{
+			"glm-up":   {arm: 0, dispatchArm: 1},
+			"opus-max": {arm: 1, dispatchArm: 1},
+		},
+	}
+	if got := routeExclusiveOffer(scorer, scorer.actionOrder, []string{"z-ai/glm-5"}); len(got) != 0 {
+		t.Fatalf("GLM-only prices kept %v, but every action is sent on Opus", got)
+	}
+	if got := routeExclusiveOffer(scorer, scorer.actionOrder, []string{"anthropic/claude-opus-5"}); len(got) != 2 {
+		t.Fatalf("Opus prices kept %v, want both actions", got)
+	}
+	controls := &selection.RaylineARCRouteControls{Points: []raylinearc.PolicyTierPoint{{Name: "cheap"}}}
+	response := &raylinearc.PolicyDecisionResponse{}
+	response.Decision.TierPicks = map[string]raylinearc.PolicyTierPick{"cheap": {SelectedActionID: "glm-up"}}
+	trace := &selection.RaylineARCTrace{}
+	if failure := recordRouteControls(trace, scorer, controls, response, scorer.actionOrder, false); failure != "" {
+		t.Fatalf("recordRouteControls = %q", failure)
+	}
+	if got := trace.RouteResults["cheap"].Arm; got != 1 {
+		t.Fatalf("result arm = %d, want the to-worker opus", got)
 	}
 }

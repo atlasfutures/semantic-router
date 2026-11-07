@@ -55,14 +55,15 @@ const arcFailureRoutesExecutionTraceMissing = "routes_execution_trace_missing"
 
 // routeExclusiveOffer keeps the offered actions whose arm serves a priced
 // model: with routing.exclusive, the priced models are the only candidates.
+// A remapped action is served by its dispatch_model_overrides to-worker.
 func routeExclusiveOffer(scorer *policyServiceScorer, available []string, priced []string) []string {
 	kept := make([]string, 0, len(available))
 	for _, actionID := range available {
 		binding, ok := scorer.bindings[actionID]
-		if !ok || binding.arm < 0 || binding.arm >= len(scorer.workers) {
+		if !ok || binding.dispatchArm < 0 || binding.dispatchArm >= len(scorer.workers) {
 			continue
 		}
-		if slices.Contains(priced, scorer.workers[binding.arm].Model) {
+		if slices.Contains(priced, scorer.workers[binding.dispatchArm].Model) {
 			kept = append(kept, actionID)
 		}
 	}
@@ -146,8 +147,10 @@ func recordRouteControls(
 			pick.Exploration.Result != nil && *pick.Exploration.Result != point.Name) {
 			return arcFailureRoutesExplorationInconsistent
 		}
+		// A result names the worker its action is sent on, as the primary
+		// route does under dispatch_model_overrides.
 		binding := scorer.bindings[pick.SelectedActionID]
-		results[point.Name] = selection.RaylineARCRouteResult{Pick: pick, Arm: binding.arm, ThinkingLevel: binding.level}
+		results[point.Name] = selection.RaylineARCRouteResult{Pick: pick, Arm: binding.dispatchArm, ThinkingLevel: binding.level}
 	}
 	trace.RouteResults = results
 	return ""

@@ -24,7 +24,9 @@ import (
 // toolLoopForeignArms marks the arms outside the previous arm's family when
 // this turn answers that arm's tool call. It returns nil, and selection is
 // unchanged, when the hold is off, the episode has no previous arm, the turn
-// is not mid-loop, or every arm is of the one family.
+// is not mid-loop, or every arm is of the one family. Under
+// dispatch_model_overrides an arm's family is its to-worker's, the model the
+// loop actually ran on and the one each candidate would run on.
 func (r *OpenAIRouter) toolLoopForeignArms(
 	arc *config.RaylineARCAlgorithmConfig,
 	reqCtx *RequestContext,
@@ -39,11 +41,15 @@ func (r *OpenAIRouter) toolLoopForeignArms(
 	if previous < 0 || previous >= len(modelRefs) || !answersToolCall(reqCtx.SemanticRequest.Messages) {
 		return nil, -1, ""
 	}
-	family := r.armFamily(modelRefs[previous].Model)
+	served := func(model string) string {
+		worker, _ := arc.PolicyService.DispatchWorker(model)
+		return worker
+	}
+	family := r.armFamily(served(modelRefs[previous].Model))
 	foreign := make([]bool, len(modelRefs))
 	marked := false
 	for index, ref := range modelRefs {
-		if r.armFamily(ref.Model) != family {
+		if r.armFamily(served(ref.Model)) != family {
 			foreign[index] = true
 			marked = true
 		}

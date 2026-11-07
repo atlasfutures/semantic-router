@@ -1747,6 +1747,10 @@ func policyArmActions(scorer *policyServiceScorer, response *raylinearc.PolicyDe
 		}
 		if actions[binding.arm].ActionID == "" || action.Score > best[binding.arm] {
 			actions[binding.arm] = selection.RaylineARCArmAction{ActionID: action.ActionID, ThinkingLevel: binding.level}
+			if binding.dispatchArm != binding.arm {
+				sent := binding.dispatchArm
+				actions[binding.arm].DispatchArm = &sent
+			}
 			best[binding.arm] = action.Score
 		}
 	}
