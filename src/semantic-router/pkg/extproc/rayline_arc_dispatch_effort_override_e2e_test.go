@@ -104,6 +104,10 @@ func TestDispatchModelOverrideRemapsWithNativeDefault(t *testing.T) {
 	if ctx.VSRRaylineARC.DispatchArm == nil || refs[*ctx.VSRRaylineARC.DispatchArm].Model != "opus" {
 		t.Fatalf("DispatchArm = %v, want opus", ctx.VSRRaylineARC.DispatchArm)
 	}
+	// A refusal on the remapped turn is Opus's, not GLM's.
+	if got := refusedModel(ctx); got == "" || got != ctx.VSRRaylineARC.DispatchModel || got == ctx.VSRRaylineARC.PolicyActionModel {
+		t.Fatalf("refusedModel = %q, DispatchModel %q, PolicyActionModel %q", got, ctx.VSRRaylineARC.DispatchModel, ctx.VSRRaylineARC.PolicyActionModel)
+	}
 	fields := map[string]interface{}{}
 	addPolicyDispatchEffortFields(fields, ctx)
 	if fields["policy_dispatch_model"] != config.RaylineARCPolicyDispatchModelRemap || fields["policy_dispatched_worker"] != "opus" ||
@@ -149,5 +153,33 @@ func TestDispatchEffortOverridePath(t *testing.T) {
 	}
 	if _, err := dispatchEffortOverridePath(thinkingcontrol.FormatChat, modelcatalog.ReasoningTransportTopLevelBoolean); err == nil {
 		t.Fatal("a Chat transport with no effort field was accepted")
+	}
+}
+
+// A remapped action's route, model and hold resolve through its to-worker;
+// an unmapped action's through its own.
+func TestPolicyScorerDispatchIdentity(t *testing.T) {
+	scorer := &policyServiceScorer{
+		workerIDs:   []string{"glm", "opus"},
+		actionOrder: []string{"glm-up", "opus-max"},
+		bindings: map[string]policyBinding{
+			"glm-up":   {arm: 0, dispatchArm: 1, model: "glm-5"},
+			"opus-max": {arm: 1, dispatchArm: 1, model: "claude-opus-5"},
+		},
+	}
+	if got := scorer.armDispatch(0); got != 1 {
+		t.Fatalf("armDispatch(glm) = %d, want opus", got)
+	}
+	if got := scorer.armDispatch(1); got != 1 {
+		t.Fatalf("armDispatch(opus) = %d", got)
+	}
+	if got := scorer.dispatchedModel("glm-up"); got != "claude-opus-5" {
+		t.Fatalf("dispatchedModel(glm-up) = %q", got)
+	}
+	if got := scorer.dispatchedModel("opus-max"); got != "claude-opus-5" {
+		t.Fatalf("dispatchedModel(opus-max) = %q", got)
+	}
+	if got := scorer.actionModel("glm-up"); got != "glm-5" {
+		t.Fatalf("actionModel(glm-up) = %q, the policy attribution must stay", got)
 	}
 }

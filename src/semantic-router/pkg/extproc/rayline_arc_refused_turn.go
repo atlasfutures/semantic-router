@@ -52,6 +52,10 @@ func declineRefusedTurn(ctx *RequestContext) {
 // refusedModel is the model that refused: the action's trained model, or
 // its worker's.
 func refusedModel(ctx *RequestContext) string {
+	// A remapped turn was refused by the worker it was sent on.
+	if model := ctx.VSRRaylineARC.DispatchModel; model != "" {
+		return model
+	}
 	if model := ctx.VSRRaylineARC.PolicyActionModel; model != "" {
 		return model
 	}

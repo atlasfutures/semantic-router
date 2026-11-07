@@ -655,20 +655,29 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 			_, routeOut := cellOut[arm]
 			return fallback && (turn.Excludes(model) || routeOut || raylinearc.ExcludesFamily(families, model))
 		}
-		if held >= 0 && (out(held, scorer.armModel(held)) || len(hard) == len(workerIDs) && hard[held]) {
-			held, forced = -1, true
+		// A held arm under dispatch_model_overrides is sent on its to-worker,
+		// so that worker's route, model and hard mask release it too.
+		if held >= 0 {
+			sent := scorer.armDispatch(held)
+			if out(sent, scorer.armModel(sent)) || len(hard) == len(workerIDs) && (hard[held] || hard[sent]) {
+				held, forced = -1, true
+			}
 		}
 		available := make([]string, 0, len(scorer.actionOrder))
 		for _, actionID := range scorer.actionOrder {
-			arm := scorer.bindings[actionID].arm
-			if len(excluded) == len(workerIDs) && excluded[arm] {
+			arm, sent := scorer.bindings[actionID].arm, scorer.bindings[actionID].dispatchArm
+			// The hard mask applies to the worker the action is sent on as
+			// well as the policy's own: a remap never reaches a worker this
+			// turn cannot use (privacy, capability, context).
+			if len(excluded) == len(workerIDs) && (excluded[arm] || excluded[sent]) {
 				continue
 			}
 			if held >= 0 && arm != held {
 				continue
 			}
-			// A route exclusion follows the route the action is sent on.
-			if out(scorer.bindings[actionID].dispatchArm, scorer.actionModel(actionID)) {
+			// Route, model and family exclusions follow the worker the action
+			// is sent on.
+			if out(sent, scorer.dispatchedModel(actionID)) {
 				continue
 			}
 			available = append(available, actionID)
@@ -1367,6 +1376,28 @@ func (scorer *policyServiceScorer) applyDispatchArm(
 	result.SelectedModel, result.LoRAName = dispatched.Model, dispatched.LoRAName
 	arm := binding.dispatchArm
 	result.RaylineARC.DispatchArm = &arm
+	result.RaylineARC.DispatchModel = scorer.armModel(arm)
+}
+
+// armDispatch is the arm a policy arm's actions are sent on: the to-worker
+// of its dispatch_model_overrides entry, or the arm itself.
+func (scorer *policyServiceScorer) armDispatch(arm int) int {
+	for _, actionID := range scorer.actionOrder {
+		if binding := scorer.bindings[actionID]; binding.arm == arm {
+			return binding.dispatchArm
+		}
+	}
+	return arm
+}
+
+// dispatchedModel is the trained model actionID is served by: its own, or
+// under dispatch_model_overrides the to-worker's.
+func (scorer *policyServiceScorer) dispatchedModel(actionID string) string {
+	binding, ok := scorer.bindings[actionID]
+	if !ok || binding.dispatchArm == binding.arm {
+		return scorer.actionModel(actionID)
+	}
+	return scorer.armModel(binding.dispatchArm)
 }
 
 // routeFor is the route an arm's turn takes: its private route on a private

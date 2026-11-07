@@ -446,7 +446,10 @@ type RaylineARCTrace struct {
 	// DispatchArm is the arm the turn is sent on when it differs from
 	// SelectedArm (policy_service dispatch_model_overrides); nil otherwise.
 	// Episode state and held offers keep SelectedArm, the policy's own arm.
-	DispatchArm         *int
+	DispatchArm *int
+	// DispatchModel is the trained model DispatchArm serves, which a refusal
+	// on the remapped turn excludes; empty when DispatchArm is nil.
+	DispatchModel       string
 	PreviousArm         *int
 	RawScores           []float32
 	AdjustedScores      []float32
