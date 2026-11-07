@@ -4,6 +4,7 @@ package extproc
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 
@@ -213,5 +214,30 @@ func TestPolicyScorerRouteControlsFollowDispatch(t *testing.T) {
 	}
 	if got := trace.RouteResults["cheap"].Arm; got != 1 {
 		t.Fatalf("result arm = %d, want the to-worker opus", got)
+	}
+}
+
+// Each arm carries its to-worker's per-turn masks, so a private turn allowing
+// only a remapped arm's from-worker leaves no arm and refuses as privacy
+// (no_private_arm), not as an empty policy offer.
+func TestDispatchMasksFoldTheToWorker(t *testing.T) {
+	scorer := &policyServiceScorer{
+		actionOrder: []string{"glm-up", "opus-max"},
+		bindings: map[string]policyBinding{
+			"glm-up":   {arm: 0, dispatchArm: 1},
+			"opus-max": {arm: 1, dispatchArm: 1},
+		},
+	}
+	arcContext := &selection.RaylineARCSelectionContext{PrivacyExcludedArms: []bool{false, true}}
+	withDispatchMasks(arcContext, scorer.armDispatches(2))
+	if want := []bool{true, true}; !slices.Equal(arcContext.PrivacyExcludedArms, want) {
+		t.Fatalf("PrivacyExcludedArms = %v, want %v", arcContext.PrivacyExcludedArms, want)
+	}
+	if _, err := hardExcludedArms(arcContext, 2); err == nil || !strings.Contains(err.Error(), arcFailureNoPrivateArm) {
+		t.Fatalf("hardExcludedArms err = %v, want %s", err, arcFailureNoPrivateArm)
+	}
+	unmapped := &policyServiceScorer{actionOrder: []string{"a"}, bindings: map[string]policyBinding{"a": {arm: 0, dispatchArm: 0}}}
+	if got := unmapped.armDispatches(2); got != nil {
+		t.Fatalf("armDispatches with no remap = %v, want nil", got)
 	}
 }
