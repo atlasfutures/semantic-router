@@ -69,3 +69,52 @@ func TestDispatchEffortOverrideLeavesOtherWorkers(t *testing.T) {
 		t.Fatalf("fields = %v", fields)
 	}
 }
+
+// dispatch_model_overrides sends a steered GLM action on Opus with the native
+// default control (no steer) and Opus's effort override; the selection names
+// the remap.
+func TestDispatchModelOverrideRemapsWithNativeDefault(t *testing.T) {
+	router, fake := v5RouterWith(t, "openai", func(rendered string) string {
+		return strings.Replace(rendered, "            allow_experimental_controls: true\n",
+			"            allow_experimental_controls: true\n            dispatch_model_overrides:\n              glm: opus\n"+
+				"            dispatch_effort_overrides:\n              opus: max\n", 1)
+	})
+	client := `{"model":"auto","max_tokens":1024,"messages":[{"role":"user","content":"fix the failing test"}]}`
+	body, ctx := v5Turn(t, router, fake, v5GLMUp, "remap-glm-up", client)
+	if got := gjson.GetBytes(body, "model").String(); got != "anthropic/claude-opus-5" {
+		t.Fatalf("model = %q:\n%s", got, body)
+	}
+	if strings.Contains(string(body), "steering instruction") {
+		t.Fatalf("a steer travelled on the remapped worker:\n%s", body)
+	}
+	if got := gjson.GetBytes(body, "output_config.effort").String(); got != "max" {
+		t.Fatalf("output_config.effort = %q:\n%s", got, body)
+	}
+	if ctx.VSRRaylineARC == nil || ctx.VSRRaylineARC.PolicyActionID != v5GLMUp {
+		t.Fatalf("the recorded action changed: %+v", ctx.VSRRaylineARC)
+	}
+	fields := map[string]interface{}{}
+	addPolicyDispatchEffortFields(fields, ctx)
+	if fields["policy_dispatch_model"] != config.RaylineARCPolicyDispatchModelRemap || fields["policy_dispatched_worker"] != "opus" ||
+		fields["policy_dispatched_effort"] != "max" {
+		t.Fatalf("fields = %v", fields)
+	}
+}
+
+// An action on a worker with no remap is unchanged under a remap of another.
+func TestDispatchModelOverrideLeavesOtherWorkers(t *testing.T) {
+	router, fake := v5RouterWith(t, "openai", func(rendered string) string {
+		return strings.Replace(rendered, "            allow_experimental_controls: true\n",
+			"            allow_experimental_controls: true\n            dispatch_model_overrides:\n              glm: opus\n", 1)
+	})
+	client := `{"model":"auto","max_tokens":1024,"messages":[{"role":"user","content":"hello"}]}`
+	body, ctx := v5Turn(t, router, fake, v5OpusAction, "remap-other", client)
+	if got := gjson.GetBytes(body, "model").String(); got != "anthropic/claude-opus-5" {
+		t.Fatalf("model = %q", got)
+	}
+	fields := map[string]interface{}{}
+	addPolicyDispatchEffortFields(fields, ctx)
+	if _, set := fields["policy_dispatch_model"]; set {
+		t.Fatalf("fields = %v", fields)
+	}
+}

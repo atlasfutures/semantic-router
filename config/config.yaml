@@ -2062,6 +2062,11 @@ recipes:
                 # the native default base: e.g. {deepseek-v4.1-flash-1017: max}.
                 # Dispatch only: the decision, action and steer are unchanged.
                 dispatch_effort_overrides: {}
+                # dispatch_model_overrides (v5/v6, lab arms) sends every action
+                # bound to a from-worker on a to-worker, with the native default
+                # control and the to-worker's dispatch_effort_overrides effort:
+                # e.g. {deepseek-v4.1-flash: deepseek-v4.1-flash-1017}.
+                dispatch_model_overrides: {}
                 # package_manifest is the path of a v5 or v6 package's
                 # package.json (sha256 must be package_sha256). A v5 action
                 # names a thinking control, which VSR resolves in its registry
