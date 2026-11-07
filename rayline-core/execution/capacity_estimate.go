@@ -26,7 +26,9 @@ import (
 //     tool call's arguments string reloaded and re-encoded the same way
 //     beside it. It is raised by headroom_ratio and
 //     estimateTemplateMarginTokens for a preamble the body does not carry;
-//     provenance caller_estimated.
+//     provenance caller_bounded, which the policy contract admits as a fit
+//     (pathfinder arc_execution_v2: a bound that fits holds for the exact
+//     count too).
 //
 // An inline base64 image is charged media_tokens instead of its bytes in both
 // cases, and a fact with images is caller_estimated: the runtime's image
@@ -85,7 +87,11 @@ func localPromptSize(deployment Deployment, body []byte) (int64, string, string)
 		}
 		slog.Warn("qwen capacity count failed; using the byte bound", "deployment", deployment.ID, "error", err.Error())
 	}
-	return byteBoundTokens(body, deployment.CapacityEstimate), capacityProvenanceEstimated, units
+	tokens, images := byteBoundTokens(body, deployment.CapacityEstimate)
+	if images > 0 {
+		return tokens, capacityProvenanceEstimated, units
+	}
+	return tokens, capacityProvenanceBounded, units
 }
 
 func sizedCapacityFact(deployment Deployment, prompt int64, provenance, units string, outputLimit int64) *CapacityFact {
@@ -105,14 +111,16 @@ func sizedCapacityFact(deployment Deployment, prompt int64, provenance, units st
 
 // byteBoundTokens is ceil(worst-case bytes * (1 + headroom_ratio)) + images *
 // media_tokens + estimateTemplateMarginTokens over the prepared body.
-func byteBoundTokens(body []byte, estimate *CapacityEstimate) int64 {
+// byteBoundTokens returns the bound and the number of inline images charged
+// media_tokens; with none, the bound is an upper bound on the exact count.
+func byteBoundTokens(body []byte, estimate *CapacityEstimate) (int64, int) {
 	headroom, mediaTokens := estimate.settings()
 	text := worstCaseBytes(body)
 	blobs := inlineImages(body)
 	for _, blob := range blobs {
 		text -= int64(blob[1] - blob[0])
 	}
-	return int64(math.Ceil(float64(max(text, 0))*(1+headroom))) + int64(len(blobs))*mediaTokens + estimateTemplateMarginTokens
+	return int64(math.Ceil(float64(max(text, 0))*(1+headroom))) + int64(len(blobs))*mediaTokens + estimateTemplateMarginTokens, len(blobs)
 }
 
 // worstCaseBytes is the longest spelling a template can give the request's

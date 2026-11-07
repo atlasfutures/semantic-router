@@ -268,7 +268,7 @@ func TestByteBoundCoversTemplateReserialization(t *testing.T) {
 	conversations, _ := loadQwenConversations(t)
 	for _, name := range []string{"enum_50k_indent4", "vllm_floats", "vllm_bare_tool", "tool_loop"} {
 		conversation := conversations[name]
-		bound := byteBoundTokens(conversation.Body, nil)
+		bound, _ := byteBoundTokens(conversation.Body, nil)
 		t.Logf("%-18s reference=%7d byte bound=%7d", name, conversation.Tokens, bound)
 		if bound < conversation.Tokens {
 			t.Errorf("%s: byte bound %d below the reference %d", name, bound, conversation.Tokens)
@@ -331,6 +331,12 @@ func TestEstimatedShortfallRelaxesOnlyOnARefusingRuntime(t *testing.T) {
 		relaxed := facts[localActionID] == nil
 		if relaxed != (overflow == ContextOverflowRefuses) || server.exceedsAllDeployments(facts) == relaxed {
 			t.Fatalf("%q: relaxed=%v facts %s", overflow, relaxed, mustJSON(facts))
+		}
+		// A bounded local shortfall is as uncertain as an estimated one.
+		facts = map[string]*CapacityFact{localActionID: short(capacityProvenanceBounded), cloudActionID: short(capacityProvenanceMeasured), secondCloudActionID: short(capacityProvenanceMeasured)}
+		server.relaxEstimatedShortfalls(facts)
+		if relaxed := facts[localActionID] == nil; relaxed != (overflow == ContextOverflowRefuses) {
+			t.Fatalf("%q: bounded relaxed=%v facts %s", overflow, relaxed, mustJSON(facts))
 		}
 		// Every target short and measured: the 400 stands.
 		facts = map[string]*CapacityFact{localActionID: short(capacityProvenanceMeasured), cloudActionID: short(capacityProvenanceMeasured), secondCloudActionID: short("provider_reported")}
@@ -511,7 +517,7 @@ func TestCapacityFactsAtTheWindowBoundary(t *testing.T) {
 		other.ContextWindow = fixture.tokens + output - 1
 		fact := localFact(other, body, output)
 		t.Logf("%-34s qwen tokens=%6d byte bound=%7d (%.2fx)", name, fixture.tokens, fact.prompt, float64(fact.prompt)/float64(fixture.tokens))
-		if fact.Fits || fact.Provenance != capacityProvenanceEstimated || fact.prompt < int64(len(fixture.text)) {
+		if fact.Fits || fact.Provenance != capacityProvenanceBounded || fact.prompt < int64(len(fixture.text)) {
 			t.Errorf("byte bound %s: %s", name, mustJSON(fact))
 		}
 	}
@@ -784,7 +790,8 @@ func TestByteBoundChargesInlineImagesNotTheirBytes(t *testing.T) {
 	messages := `{"type":"image","source":{"type":"base64","media_type":"image/png","data":"` + blob + `"}}`
 	chat := `{"type":"image_url","image_url":{"url":"data:image/png;base64,` + blob + `"}}`
 	for name, body := range map[string]string{"messages": messages, "chat": chat} {
-		got := byteBoundTokens([]byte(body), bare) - estimateTemplateMarginTokens
+		bound, _ := byteBoundTokens([]byte(body), bare)
+		got := bound - estimateTemplateMarginTokens
 		if got < 8192 || got > 8192+128 {
 			t.Fatalf("%s: estimate %d, want the 8192-token image charge plus structure", name, got)
 		}
@@ -794,12 +801,13 @@ func TestByteBoundChargesInlineImagesNotTheirBytes(t *testing.T) {
 	pdf := `{"type":"document","source":{"type":"base64","media_type":"application/pdf","data":"` + blob + `"}}`
 	escaped := `{"content":"{\"data\":\"` + blob + `\"} and \"data:image/png;base64,` + blob + `\""}`
 	for name, body := range map[string]string{"pdf": pdf, "escaped": escaped} {
-		if got := byteBoundTokens([]byte(body), bare); got < int64(len(blob)) {
+		if got, _ := byteBoundTokens([]byte(body), bare); got < int64(len(blob)) {
 			t.Fatalf("%s was discounted: %d", name, got)
 		}
 	}
 	media := int64(100) // structure of the Messages image block is about 80 bytes
-	if got := byteBoundTokens([]byte(messages), &CapacityEstimate{HeadroomRatio: &zero, MediaTokens: &media}) - estimateTemplateMarginTokens; got > 228 {
+	if bound, images := byteBoundTokens([]byte(messages), &CapacityEstimate{HeadroomRatio: &zero, MediaTokens: &media}); images != 1 || bound-estimateTemplateMarginTokens > 228 {
+		got := bound - estimateTemplateMarginTokens
 		t.Fatalf("media_tokens override ignored: %d", got)
 	}
 }
@@ -876,5 +884,21 @@ func TestContextExceededMessageNeverUnderstatesTheRequest(t *testing.T) {
 	message := server.contextExceededMessage(facts)
 	if strings.Contains(message, "114000") || !strings.HasPrefix(message, "prompt is too long: ") || !strings.Contains(message, "the largest maximum context length is 1000000 tokens (kimi-k3)") {
 		t.Fatalf("message %q", message)
+	}
+}
+
+// TestByteBoundIsBoundedUnlessAnImageIsCharged: a non-Qwen local target's
+// byte bound is caller_bounded (an upper bound, admitted as a fit), and a
+// body with an inline image charged media_tokens is caller_estimated.
+func TestByteBoundIsBoundedUnlessAnImageIsCharged(t *testing.T) {
+	other := Deployment{ID: "local", Kind: "local", RegistryModel: "z-ai/glm-5.3-flash", ContextWindow: 1_000_000}
+	text := []byte(`{"model":"m","messages":[{"role":"user","content":"hello"}]}`)
+	if _, provenance, _ := localPromptSize(other, text); provenance != capacityProvenanceBounded {
+		t.Fatalf("text-only byte bound: %s", provenance)
+	}
+	blob := strings.Repeat("A", 2*mediaBlobMinBytes)
+	image := []byte(`{"model":"m","messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"data:image/png;base64,` + blob + `"}}]}]}`)
+	if _, provenance, _ := localPromptSize(other, image); provenance != capacityProvenanceEstimated {
+		t.Fatalf("image byte bound: %s", provenance)
 	}
 }
