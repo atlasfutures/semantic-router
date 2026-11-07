@@ -3,6 +3,8 @@ package config
 import (
 	"strings"
 	"testing"
+
+	"github.com/atlasfutures/semantic-router/rayline-core/thinkingcontrol"
 )
 
 // dispatch_effort_overrides loads on a reasoning worker whose bound actions
@@ -95,5 +97,19 @@ func TestRaylineARCDispatchModelOverride(t *testing.T) {
 				t.Fatalf("error = %v, want %q", err, test.want)
 			}
 		})
+	}
+}
+
+// The prod remap target, flash-1017 over OpenRouter Messages, takes the native
+// default base on the embedded table even though it admits no steering
+// instruction: the remap sends no steering text, so that is all it needs.
+func TestRaylineARCDispatchModelOverrideEmbeddedFlash1017NativeDefault(t *testing.T) {
+	registry, err := thinkingcontrol.Embedded()
+	if err != nil {
+		t.Fatal(err)
+	}
+	native := thinkingcontrol.Control{Native: raylineARCRegistryBaseDefault}
+	if _, err := registry.Admit("deepseek/deepseek-v4.1-flash-1017", "openrouter", thinkingcontrol.FormatMessages, native, false); err != nil {
+		t.Fatalf("the embedded table refuses flash-1017's native default: %v", err)
 	}
 }
