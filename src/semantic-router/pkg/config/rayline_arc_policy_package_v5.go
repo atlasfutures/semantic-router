@@ -318,6 +318,17 @@ func validateRaylineARCPolicyPackageV5Bindings(cfg *RaylineARCPolicyServiceConfi
 			return fmt.Errorf("trained_models names worker %q, which no binding uses", worker)
 		}
 	}
+	for from, to := range cfg.DispatchModelOverrides {
+		if !bound[from] {
+			return fmt.Errorf("dispatch_model_overrides names worker %q, which no binding uses", from)
+		}
+		if to == "" || to == from {
+			return fmt.Errorf("dispatch_model_overrides: worker %q needs another worker to dispatch on", from)
+		}
+		if _, chained := cfg.DispatchModelOverrides[to]; chained {
+			return fmt.Errorf("dispatch_model_overrides: %q -> %q, which is itself remapped", from, to)
+		}
+	}
 	for worker, effort := range cfg.DispatchEffortOverrides {
 		if !bound[worker] {
 			return fmt.Errorf("dispatch_effort_overrides names worker %q, which no binding uses", worker)
@@ -414,6 +425,32 @@ func validateRaylineARCPolicyPackageV5Dispatch(cfg *RouterConfig, decision Decis
 	for _, action := range pkg.manifest.Actions {
 		if !bound[action.ActionID] {
 			return fmt.Errorf("package action %s is not bound to a worker", action.ActionID)
+		}
+	}
+	nativeDefault := thinkingcontrol.Control{Native: raylineARCRegistryBaseDefault}
+	for from, to := range policy.DispatchModelOverrides {
+		if !reasons[from] || !reasons[to] {
+			return fmt.Errorf("dispatch_model_overrides %q -> %q: both workers must be reasoning modelRefs of the decision", from, to)
+		}
+		provider, err := RaylineARCRegistryProvider(cfg, to)
+		if err != nil {
+			return fmt.Errorf("dispatch_model_overrides %q -> %q: %w", from, to, err)
+		}
+		served, err := RaylineARCRegistryModel(cfg, to)
+		if err != nil {
+			return fmt.Errorf("dispatch_model_overrides %q -> %q: %w", from, to, err)
+		}
+		for _, apiFormat := range cfg.GetModelAcceptedFormats(to) {
+			format, err := RaylineARCRegistryFormat(apiFormat)
+			if err != nil {
+				return fmt.Errorf("dispatch_model_overrides %q -> %q: %w", from, to, err)
+			}
+			if _, err := registry.Admit(served, provider, format, nativeDefault, policy.AllowExperimentalControls); err != nil {
+				return fmt.Errorf("dispatch_model_overrides %q -> %q: the native default base: %w", from, to, err)
+			}
+		}
+		if _, overridden := policy.DispatchEffortOverride(to); overridden {
+			overridable[to] = true
 		}
 	}
 	for worker := range policy.DispatchEffortOverrides {

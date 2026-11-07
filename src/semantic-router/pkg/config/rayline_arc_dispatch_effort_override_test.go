@@ -70,3 +70,30 @@ func TestRaylineARCDispatchEffortOverrideNeedsV5(t *testing.T) {
 		t.Fatalf("error = %v, want the v5 refusal", err)
 	}
 }
+
+func TestRaylineARCDispatchModelOverride(t *testing.T) {
+	fixture := readPolicyV5Fixture(t)
+	cfg, decision := policyV5Decision(t, fixture)
+	decision.Algorithm.RaylineARC.PolicyService.DispatchModelOverrides = map[string]string{"arm-glm": "arm-opus"}
+	if err := validatePolicyDispatch(cfg, decision); err != nil {
+		t.Fatalf("the remap refused: %v", err)
+	}
+	for name, test := range map[string]struct {
+		overrides map[string]string
+		want      string
+	}{
+		"an unbound from-worker": {map[string]string{"arm-nobody": "arm-opus"}, "which no binding uses"},
+		"onto itself":            {map[string]string{"arm-glm": "arm-glm"}, "needs another worker"},
+		"a chain":                {map[string]string{"arm-glm": "arm-opus", "arm-opus": "arm-glm"}, "itself remapped"},
+		"onto a non-modelRef":    {map[string]string{"arm-glm": "arm-missing"}, "reasoning modelRefs"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg, decision := policyV5Decision(t, fixture)
+			decision.Algorithm.RaylineARC.PolicyService.DispatchModelOverrides = test.overrides
+			err := validatePolicyDispatch(cfg, decision)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}

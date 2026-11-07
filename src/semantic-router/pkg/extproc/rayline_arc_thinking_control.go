@@ -53,19 +53,49 @@ type plannedThinkingControl struct {
 	format         string
 }
 
+// raylineARCDispatchedControl is the control and worker this turn's v5 action
+// is dispatched with: under a dispatch_model_overrides entry for its bound
+// worker, the to-worker and the native default control (no steering);
+// otherwise the bound worker and the action's own control.
+func raylineARCDispatchedControl(
+	policy *config.RaylineARCPolicyServiceConfig, actionID string, control thinkingcontrol.Control,
+) (thinkingcontrol.Control, string, bool) {
+	binding, ok := policy.PolicyBinding(actionID)
+	if !ok {
+		return control, "", false
+	}
+	worker, remapped := policy.DispatchWorker(binding.Worker)
+	if remapped {
+		return thinkingcontrol.Control{Native: "default"}, worker, true
+	}
+	return control, worker, false
+}
+
 // raylineARCDispatchEffortOverride is the effort dispatch_effort_overrides
-// sends for this turn's v5 action: the action's worker has an entry and its
-// control is the native default base with no budget.
+// sends for this turn's v5 action: the worker it is dispatched on has an
+// entry and the control it is dispatched with is the native default base
+// with no budget.
 func raylineARCDispatchEffortOverride(ctx *RequestContext) (string, bool) {
 	policy, action, v5, err := raylineARCPolicyControlAction(ctx)
-	if !v5 || err != nil || len(policy.DispatchEffortOverrides) == 0 || !config.RaylineARCOverridableBase(action.Control) {
+	if !v5 || err != nil || len(policy.DispatchEffortOverrides) == 0 {
 		return "", false
 	}
-	binding, ok := policy.PolicyBinding(ctx.VSRRaylineARC.PolicyActionID)
-	if !ok {
+	control, worker, _ := raylineARCDispatchedControl(policy, ctx.VSRRaylineARC.PolicyActionID, action.Control)
+	if worker == "" || !config.RaylineARCOverridableBase(control) {
 		return "", false
 	}
-	return policy.DispatchEffortOverride(binding.Worker)
+	return policy.DispatchEffortOverride(worker)
+}
+
+// raylineARCDispatchModelRemap is the worker a dispatch_model_overrides entry
+// sends this turn's v5 action to, if any.
+func raylineARCDispatchModelRemap(ctx *RequestContext) (string, bool) {
+	policy, action, v5, err := raylineARCPolicyControlAction(ctx)
+	if !v5 || err != nil || len(policy.DispatchModelOverrides) == 0 {
+		return "", false
+	}
+	_, worker, remapped := raylineARCDispatchedControl(policy, ctx.VSRRaylineARC.PolicyActionID, action.Control)
+	return worker, remapped
 }
 
 // applyDispatchEffortOverride writes the override effort on the rendered
@@ -140,6 +170,11 @@ func planRaylineARCThinkingControl(
 		return nil, false, errThinkingControlUnbound
 	}
 	worker := ctx.RaylineARCDispatch.ID
+	control, dispatched, _ := raylineARCDispatchedControl(policy, ctx.VSRRaylineARC.PolicyActionID, action.Control)
+	if dispatched != "" && dispatched != worker {
+		return nil, false, fmt.Errorf("the action dispatches on worker %q, and the turn is on %q", dispatched, worker)
+	}
+	action.Control = control
 	provider, err := config.RaylineARCRegistryProvider(cfg, worker)
 	if err != nil {
 		return nil, false, err

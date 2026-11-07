@@ -256,7 +256,9 @@ func newPolicyServiceScorer(
 			}
 			scorer.actionArms[binding.ActionID] = action.TrainedArmIDs
 		}
-		scorer.bindings[binding.ActionID] = policyBinding{arm: index[binding.Worker], level: level, model: model}
+		// dispatch_model_overrides sends the action on its to-worker's arm.
+		worker, _ := policy.DispatchWorker(binding.Worker)
+		scorer.bindings[binding.ActionID] = policyBinding{arm: index[worker], level: level, model: model}
 		scorer.actionOrder = append(scorer.actionOrder, binding.ActionID)
 	}
 	scorer.armOffered = policyArmOffered(policy.PackageStageOneOfferedModels(), scorer.bindings, len(scorer.workers))
