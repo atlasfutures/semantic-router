@@ -139,7 +139,7 @@ func TestToolLoopForeignArms(t *testing.T) {
 	remapped := &config.RaylineARCAlgorithmConfig{HoldFamilyInToolLoop: true, PolicyService: &config.RaylineARCPolicyServiceConfig{
 		DispatchModelOverrides: map[string]string{refs[2].Model: refs[1].Model},
 	}}
-	foreign, _, family = router.toolLoopForeignArms(remapped, midLoop, state, refs)
+	foreign, _, family = router.toolLoopForeignArms(remapped, midLoop, state, servedModelRefs(remapped.PolicyService, refs))
 	if !reflect.DeepEqual(foreign, []bool{true, false, false}) || family != "xiaomi" {
 		t.Fatalf("remapped = %v family %q, want the to-worker's family held", foreign, family)
 	}

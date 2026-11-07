@@ -656,8 +656,8 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 			return fallback && (turn.Excludes(model) || routeOut || raylinearc.ExcludesFamily(families, model))
 		}
 		// A held arm under dispatch_model_overrides is sent on its to-worker,
-		// so that worker's route and model release it too (its hard mask is folded
-		// into the arm's, withDispatchMasks).
+		// so that worker's route and model release it too (its hard mask is
+		// already the to-worker's, servedModelRefs).
 		if held >= 0 {
 			sent := scorer.armDispatch(held)
 			if out(sent, scorer.armModel(sent)) || len(hard) == len(workerIDs) && hard[held] {
@@ -668,7 +668,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		for _, actionID := range scorer.actionOrder {
 			arm, sent := scorer.bindings[actionID].arm, scorer.bindings[actionID].dispatchArm
 			// The hard mask already carries each arm's to-worker
-			// (withDispatchMasks).
+			// (servedModelRefs).
 			if len(excluded) == len(workerIDs) && excluded[arm] {
 				continue
 			}
@@ -1388,27 +1388,6 @@ func (scorer *policyServiceScorer) armDispatch(arm int) int {
 		}
 	}
 	return arm
-}
-
-// armDispatches is, per arm, the arm its actions are sent on; nil when no
-// action is remapped.
-func (scorer *policyServiceScorer) armDispatches(arms int) []int {
-	var dispatch []int
-	for _, actionID := range scorer.actionOrder {
-		binding := scorer.bindings[actionID]
-		if binding.dispatchArm == binding.arm || binding.arm < 0 || binding.arm >= arms ||
-			binding.dispatchArm < 0 || binding.dispatchArm >= arms {
-			continue
-		}
-		if dispatch == nil {
-			dispatch = make([]int, arms)
-			for arm := range dispatch {
-				dispatch[arm] = arm
-			}
-		}
-		dispatch[binding.arm] = binding.dispatchArm
-	}
-	return dispatch
 }
 
 // dispatchedModel is the trained model actionID is served by: its own, or

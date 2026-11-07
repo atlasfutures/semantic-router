@@ -22,7 +22,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -340,9 +339,6 @@ func (selector *raylineARCSelector) Select(
 		return nil, err
 	}
 	withPrivacyEndpointExclusions(arcContext, armed.routingPriceSettlement())
-	if scorer, ok := armed.scorer.(*policyServiceScorer); ok {
-		withDispatchMasks(arcContext, scorer.armDispatches(len(workerIDs)))
-	}
 	hard, err := hardExcludedArms(arcContext, len(workerIDs))
 	if err != nil {
 		return nil, err
@@ -382,34 +378,6 @@ func (selector *raylineARCSelector) Select(
 		decision,
 		latency,
 	), nil
-}
-
-// withDispatchMasks folds each remapped arm's to-worker into its per-turn
-// masks: under dispatch_model_overrides an arm's turn runs on its to-worker,
-// so an arm is out wherever that worker is (privacy, vision, capability,
-// context, output, disabled). Folded before the hard mask, each constraint
-// still fails with its own class when it leaves no arm, and every reader of
-// the mask sees the remap. dispatch is nil when nothing is remapped.
-func withDispatchMasks(arcContext *selection.RaylineARCSelectionContext, dispatch []int) {
-	if dispatch == nil {
-		return
-	}
-	fold := func(mask []bool) []bool {
-		if len(mask) != len(dispatch) {
-			return mask
-		}
-		folded := slices.Clone(mask)
-		for arm, sent := range dispatch {
-			folded[arm] = mask[arm] || mask[sent]
-		}
-		return folded
-	}
-	arcContext.NonVisionArms = fold(arcContext.NonVisionArms)
-	arcContext.IncapableArms = fold(arcContext.IncapableArms)
-	arcContext.OverContextArms = fold(arcContext.OverContextArms)
-	arcContext.OverOutputArms = fold(arcContext.OverOutputArms)
-	arcContext.DisabledArms = fold(arcContext.DisabledArms)
-	arcContext.PrivacyExcludedArms = fold(arcContext.PrivacyExcludedArms)
 }
 
 // hardExcludedArms is every hard constraint the artifact must honour, as one

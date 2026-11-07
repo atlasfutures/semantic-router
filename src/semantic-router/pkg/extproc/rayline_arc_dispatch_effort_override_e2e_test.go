@@ -217,27 +217,26 @@ func TestPolicyScorerRouteControlsFollowDispatch(t *testing.T) {
 	}
 }
 
-// Each arm carries its to-worker's per-turn masks, so a private turn allowing
+// Each arm's per-turn facts are its to-worker's: a private turn allowing
 // only a remapped arm's from-worker leaves no arm and refuses as privacy
-// (no_private_arm), not as an empty policy offer.
-func TestDispatchMasksFoldTheToWorker(t *testing.T) {
-	scorer := &policyServiceScorer{
-		actionOrder: []string{"glm-up", "opus-max"},
-		bindings: map[string]policyBinding{
-			"glm-up":   {arm: 0, dispatchArm: 1},
-			"opus-max": {arm: 1, dispatchArm: 1},
-		},
+// (no_private_arm), not as an empty policy offer; the output-limit hint is
+// the to-worker's.
+func TestServedModelRefsAreTheToWorkers(t *testing.T) {
+	refs := []config.ModelRef{{Model: "glm"}, {Model: "opus"}}
+	policy := &config.RaylineARCPolicyServiceConfig{DispatchModelOverrides: map[string]string{"glm": "opus"}}
+	served := servedModelRefs(policy, refs)
+	if served[0].Model != "opus" || served[1].Model != "opus" || refs[0].Model != "glm" {
+		t.Fatalf("served = %v (refs %v), want both arms on opus and refs untouched", served, refs)
 	}
-	arcContext := &selection.RaylineARCSelectionContext{PrivacyExcludedArms: []bool{false, true}}
-	withDispatchMasks(arcContext, scorer.armDispatches(2))
-	if want := []bool{true, true}; !slices.Equal(arcContext.PrivacyExcludedArms, want) {
-		t.Fatalf("PrivacyExcludedArms = %v, want %v", arcContext.PrivacyExcludedArms, want)
+	privacy := privacyExcludedArms("private", []string{"glm"}, served)
+	if !slices.Equal(privacy, []bool{true, true}) {
+		t.Fatalf("PrivacyExcludedArms = %v, want both out", privacy)
 	}
+	arcContext := &selection.RaylineARCSelectionContext{PrivacyExcludedArms: privacy}
 	if _, err := hardExcludedArms(arcContext, 2); err == nil || !strings.Contains(err.Error(), arcFailureNoPrivateArm) {
 		t.Fatalf("hardExcludedArms err = %v, want %s", err, arcFailureNoPrivateArm)
 	}
-	unmapped := &policyServiceScorer{actionOrder: []string{"a"}, bindings: map[string]policyBinding{"a": {arm: 0, dispatchArm: 0}}}
-	if got := unmapped.armDispatches(2); got != nil {
-		t.Fatalf("armDispatches with no remap = %v, want nil", got)
+	if got := servedModelRefs(&config.RaylineARCPolicyServiceConfig{}, refs); &got[0] != &refs[0] {
+		t.Fatalf("no remap must return modelRefs itself")
 	}
 }
