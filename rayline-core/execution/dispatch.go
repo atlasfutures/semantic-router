@@ -48,7 +48,7 @@ func responseMetadataFor(request llmprotocol.Request, deployment Deployment) res
 	return metadata
 }
 
-func (server *Server) prepare(request llmprotocol.Request, envelope llmprotocol.Envelope, selected admittedAction, state *branchState) (*preparedDispatch, error) {
+func (server *Server) prepare(request llmprotocol.Request, envelope llmprotocol.Envelope, selected admittedAction, clientRoles []string, state *branchState) (*preparedDispatch, error) {
 	if request.PreviousResponseID != "" || request.ConversationID != "" {
 		return nil, fmt.Errorf("hybrid execution requires complete request history; stored Responses references are not supported")
 	}
@@ -109,7 +109,7 @@ func (server *Server) prepare(request llmprotocol.Request, envelope llmprotocol.
 	if err != nil {
 		return nil, err
 	}
-	body, err = applyDeploymentWireBody(body, deployment)
+	body, err = applyDeploymentWireBody(body, clientRoles, deployment)
 	if err != nil {
 		return nil, err
 	}

@@ -200,7 +200,7 @@ func TestConfiguredCounterReusesPreparedMeasurementWithoutAdvancingState(t *test
 		if err != nil {
 			t.Fatal(err)
 		}
-		prepared, err := server.prepare(request, envelope, selected, state)
+		prepared, err := server.prepare(request, envelope, selected, nil, state)
 		if err != nil {
 			t.Fatal(err)
 		}

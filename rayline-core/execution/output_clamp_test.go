@@ -115,7 +115,7 @@ func TestAClampedTurnReportsItOnceAndSizesCapacityWithTheClampedAllowance(t *tes
 		t.Fatal(err)
 	}
 	selected := server.actions[config.Actions[0].ID]
-	prepared, err := server.prepare(request, envelope, selected, newBranchState())
+	prepared, err := server.prepare(request, envelope, selected, nil, newBranchState())
 	if err != nil {
 		t.Fatalf("prepare: %v", err)
 	}

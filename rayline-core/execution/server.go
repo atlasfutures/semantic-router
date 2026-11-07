@@ -388,7 +388,7 @@ func (server *Server) execute(writer http.ResponseWriter, incoming *http.Request
 			server.writeError(writer, format, http.StatusBadGateway, "decision_identity_mismatch", err.Error())
 			return
 		}
-		prepared, err = server.prepare(request, envelope, selected, state)
+		prepared, err = server.prepare(request, envelope, selected, roles, state)
 		if err != nil {
 			server.writeError(writer, format, http.StatusBadRequest, "execution_plan_failed", err.Error())
 			return

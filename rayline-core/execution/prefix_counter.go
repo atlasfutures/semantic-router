@@ -66,7 +66,11 @@ func (server *Server) measureExecutionContext(ctx context.Context, body []byte, 
 		if err != nil {
 			return ExecutionContext{}, nil, err
 		}
-		prepared, err := server.prepare(request, envelope, selected, state)
+		clientRoles, err := wireMessageRoles(format, body)
+		if err != nil {
+			return ExecutionContext{}, nil, err
+		}
+		prepared, err := server.prepare(request, envelope, selected, clientRoles, state)
 		if err != nil {
 			return ExecutionContext{}, nil, fmt.Errorf("prepare worker prefix: %w", err)
 		}
