@@ -21,6 +21,8 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/tidwall/sjson"
+
 	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
 	"github.com/atlasfutures/semantic-router/rayline-core/thinkingcontrol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
@@ -45,6 +47,40 @@ type plannedThinkingControl struct {
 	control thinkingcontrol.Control
 	cell    *thinkingcontrol.Cell
 	placer  *thinkingcontrol.Placer
+	// effortOverride is the effort dispatch_effort_overrides sends on top of
+	// the control's native default base; empty sends the base's own wire.
+	effortOverride string
+	format         string
+}
+
+// raylineARCDispatchEffortOverride is the effort dispatch_effort_overrides
+// sends for this turn's v5 action: the action's worker has an entry and its
+// control is the native default base with no budget.
+func raylineARCDispatchEffortOverride(ctx *RequestContext) (string, bool) {
+	policy, action, v5, err := raylineARCPolicyControlAction(ctx)
+	if !v5 || err != nil || len(policy.DispatchEffortOverrides) == 0 || !config.RaylineARCOverridableBase(action.Control) {
+		return "", false
+	}
+	binding, ok := policy.PolicyBinding(ctx.VSRRaylineARC.PolicyActionID)
+	if !ok {
+		return "", false
+	}
+	return policy.DispatchEffortOverride(binding.Worker)
+}
+
+// applyDispatchEffortOverride writes the override effort on the rendered
+// body: Messages as output_config.effort (other output_config keys stay),
+// Chat and Responses as reasoning.effort.
+func applyDispatchEffortOverride(body []byte, format, effort string) ([]byte, error) {
+	path := "reasoning.effort"
+	if format == thinkingcontrol.FormatMessages {
+		path = "output_config.effort"
+	}
+	out, err := sjson.SetBytes(body, path, effort)
+	if err != nil {
+		return nil, fmt.Errorf("failed to write the dispatch effort override: %w", err)
+	}
+	return out, nil
 }
 
 // raylineARCPolicyControlAction is the v5 action this turn's policy decision
@@ -133,7 +169,13 @@ func planRaylineARCThinkingControl(
 	if err != nil {
 		return nil, false, err
 	}
-	return &plannedThinkingControl{key: key, control: action.Control, cell: cell, placer: placer}, false, nil
+	planned := &plannedThinkingControl{key: key, control: action.Control, cell: cell, placer: placer, format: format}
+	if config.RaylineARCOverridableBase(action.Control) {
+		if effort, ok := policy.DispatchEffortOverride(worker); ok {
+			planned.effortOverride = effort
+		}
+	}
+	return planned, false, nil
 }
 
 // render places the planned control on the provider-bound body and stages
@@ -149,6 +191,11 @@ func (planned *plannedThinkingControl) render(body []byte, ctx *RequestContext) 
 	rendered, receipt, err := planned.placer.Render(body, &planned.control, planned.cell, head.Model)
 	if err != nil {
 		return nil, err
+	}
+	if planned.effortOverride != "" {
+		if rendered, err = applyDispatchEffortOverride(rendered, planned.format, planned.effortOverride); err != nil {
+			return nil, err
+		}
 	}
 	ctx.RaylineARCTransaction.stageControlPlacement(raylinearc.ControlPlacement{Key: planned.key, State: planned.placer.State()})
 	ctx.RaylineARCThinking = thinkingControlTrace(planned.cell, planned.control, receipt)

@@ -2057,6 +2057,11 @@ recipes:
                 # declared effort; budgets, the steer and thinking-off still
                 # apply (v4 packages). declared (the default) sends the effort.
                 dispatch_effort: declared
+                # dispatch_effort_overrides (v5/v6 packages, lab arms) sends a
+                # fixed effort, keyed by worker, on actions whose control is
+                # the native default base: e.g. {deepseek-v4.1-flash-1017: max}.
+                # Dispatch only: the decision, action and steer are unchanged.
+                dispatch_effort_overrides: {}
                 # package_manifest is the path of a v5 or v6 package's
                 # package.json (sha256 must be package_sha256). A v5 action
                 # names a thinking control, which VSR resolves in its registry

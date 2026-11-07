@@ -57,6 +57,11 @@ func raylineARCPolicyDispatchAction(ctx *RequestContext) (config.RaylineARCPolic
 // budget beside the dispatch mode, so a provider_default turn still names what
 // the package chose.
 func addPolicyDispatchEffortFields(fields map[string]interface{}, ctx *RequestContext) {
+	if effort, ok := raylineARCDispatchEffortOverride(ctx); ok {
+		fields["policy_dispatch_effort"] = config.RaylineARCPolicyDispatchEffortOverride
+		fields["policy_dispatched_effort"] = effort
+		return
+	}
 	action, declared := raylineARCPolicyAction(ctx)
 	if !declared {
 		return

@@ -318,6 +318,14 @@ func validateRaylineARCPolicyPackageV5Bindings(cfg *RaylineARCPolicyServiceConfi
 			return fmt.Errorf("trained_models names worker %q, which no binding uses", worker)
 		}
 	}
+	for worker, effort := range cfg.DispatchEffortOverrides {
+		if !bound[worker] {
+			return fmt.Errorf("dispatch_effort_overrides names worker %q, which no binding uses", worker)
+		}
+		if !raylineARCDispatchEffortOverrideLevels[effort] {
+			return fmt.Errorf("dispatch_effort_overrides: worker %q effort %q is not one of minimal, low, medium, high, xhigh, max", worker, effort)
+		}
+	}
 	return nil
 }
 
@@ -348,6 +356,7 @@ func validateRaylineARCPolicyPackageV5Dispatch(cfg *RouterConfig, decision Decis
 		reasons[modelRef.Model] = modelRef.UseReasoning != nil && *modelRef.UseReasoning
 	}
 	bound := make(map[string]bool, len(policy.Bindings))
+	overridable := make(map[string]bool, len(policy.DispatchEffortOverrides))
 	// An episode keeps one placer per worker, wire format and control shape,
 	// up to a bound; more than that would evict a placer whose instructions
 	// still need replaying.
@@ -393,6 +402,9 @@ func validateRaylineARCPolicyPackageV5Dispatch(cfg *RouterConfig, decision Decis
 				return fmt.Errorf("policy_service binding for action %s on worker %q: %w", binding.ActionID, binding.Worker, err)
 			}
 		}
+		if _, overridden := policy.DispatchEffortOverride(binding.Worker); overridden && raylineARCOverridableBase(action.Control) {
+			overridable[binding.Worker] = true
+		}
 		off := action.Control.Native == raylineARCRegistryBaseOff
 		if off == reasons[binding.Worker] {
 			return fmt.Errorf("policy_service binding for action %s: worker %q has use_reasoning %v, and the control's base is %q",
@@ -402,6 +414,14 @@ func validateRaylineARCPolicyPackageV5Dispatch(cfg *RouterConfig, decision Decis
 	for _, action := range pkg.manifest.Actions {
 		if !bound[action.ActionID] {
 			return fmt.Errorf("package action %s is not bound to a worker", action.ActionID)
+		}
+	}
+	for worker := range policy.DispatchEffortOverrides {
+		if !reasons[worker] {
+			return fmt.Errorf("dispatch_effort_overrides names worker %q, which does not reason (use_reasoning is false)", worker)
+		}
+		if !overridable[worker] {
+			return fmt.Errorf("dispatch_effort_overrides names worker %q, and none of its actions has the native default base with no budget", worker)
 		}
 	}
 	if pkg.manifest.SchemaVersion == raylinearc.PolicyPackageSchemaV6 {
@@ -440,6 +460,21 @@ func validateRaylineARCPolicyPackageV6Vision(cfg *RouterConfig, policy *RaylineA
 
 // raylineARCRegistryBaseOff is the registry's thinking-off base.
 const raylineARCRegistryBaseOff = "off"
+
+// raylineARCRegistryBaseDefault is the native default base: the provider's
+// own reasoning, with no effort on the wire.
+const raylineARCRegistryBaseDefault = "default"
+
+// raylineARCOverridableBase reports whether dispatch_effort_overrides applies
+// to a control: the native default base with no reasoning budget.
+func raylineARCOverridableBase(control thinkingcontrol.Control) bool {
+	return control.Native == raylineARCRegistryBaseDefault && control.BudgetTokens == nil
+}
+
+// RaylineARCOverridableBase is raylineARCOverridableBase for the dispatch path.
+func RaylineARCOverridableBase(control thinkingcontrol.Control) bool {
+	return raylineARCOverridableBase(control)
+}
 
 // RaylineARCRegistryFormat is the registry's name for an api_format.
 func RaylineARCRegistryFormat(apiFormat string) (string, error) {
