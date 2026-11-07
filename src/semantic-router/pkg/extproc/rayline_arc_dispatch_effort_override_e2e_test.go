@@ -185,6 +185,11 @@ func TestPolicyScorerDispatchIdentity(t *testing.T) {
 	if got := scorer.actionModel("glm-up"); got != "glm-5" {
 		t.Fatalf("actionModel(glm-up) = %q, the policy attribution must stay", got)
 	}
+	// The fallback telemetry masks a remapped arm where its to-worker's
+	// route is out, as the offer does.
+	if got := policyMaskedArms(scorer, scorer.workerIDs, nil, true, nil, map[int]string{1: "cell"}); !slices.Equal(got, []bool{true, true}) {
+		t.Fatalf("masked_arms = %v, want glm masked by opus's route", got)
+	}
 }
 
 // routing.exclusive and a lookup's results follow the worker a remapped

@@ -1340,7 +1340,9 @@ func policyMaskedArms(
 		if !fallback {
 			continue
 		}
-		if _, out := routes[arm]; out || turn.Excludes(scorer.armModel(arm)) {
+		// A remapped arm is out where its to-worker is, as in the offer.
+		sent := scorer.armDispatch(arm)
+		if _, out := routes[sent]; out || turn.Excludes(scorer.armModel(sent)) {
 			masked[arm] = true
 		}
 	}
