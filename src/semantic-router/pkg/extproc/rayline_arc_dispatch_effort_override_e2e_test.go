@@ -9,6 +9,8 @@ import (
 
 	"github.com/tidwall/gjson"
 
+	"github.com/atlasfutures/semantic-router/rayline-core/thinkingcontrol"
+	modelcatalog "github.com/vllm-project/semantic-router/src/semantic-router/pkg/catalog"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 )
 
@@ -93,6 +95,15 @@ func TestDispatchModelOverrideRemapsWithNativeDefault(t *testing.T) {
 	if ctx.VSRRaylineARC == nil || ctx.VSRRaylineARC.PolicyActionID != v5GLMUp {
 		t.Fatalf("the recorded action changed: %+v", ctx.VSRRaylineARC)
 	}
+	// The policy's arm, which the episode holds and offers from, stays GLM's;
+	// only the dispatch moves to Opus.
+	refs := ctx.VSRSelectedDecision.ModelRefs
+	if got := refs[ctx.VSRRaylineARC.SelectedArm].Model; got != "glm" {
+		t.Fatalf("SelectedArm names %q, want the bound worker glm", got)
+	}
+	if ctx.VSRRaylineARC.DispatchArm == nil || refs[*ctx.VSRRaylineARC.DispatchArm].Model != "opus" {
+		t.Fatalf("DispatchArm = %v, want opus", ctx.VSRRaylineARC.DispatchArm)
+	}
 	fields := map[string]interface{}{}
 	addPolicyDispatchEffortFields(fields, ctx)
 	if fields["policy_dispatch_model"] != config.RaylineARCPolicyDispatchModelRemap || fields["policy_dispatched_worker"] != "opus" ||
@@ -116,5 +127,27 @@ func TestDispatchModelOverrideLeavesOtherWorkers(t *testing.T) {
 	addPolicyDispatchEffortFields(fields, ctx)
 	if _, set := fields["policy_dispatch_model"]; set {
 		t.Fatalf("fields = %v", fields)
+	}
+}
+
+// The override's field follows the worker's reasoning transport.
+func TestDispatchEffortOverridePath(t *testing.T) {
+	for _, test := range []struct {
+		format    string
+		transport modelcatalog.ReasoningTransport
+		want      string
+	}{
+		{thinkingcontrol.FormatMessages, "", "output_config.effort"},
+		{thinkingcontrol.FormatResponses, "", "reasoning.effort"},
+		{thinkingcontrol.FormatChat, modelcatalog.ReasoningTransportReasoningObject, "reasoning.effort"},
+		{thinkingcontrol.FormatChat, modelcatalog.ReasoningTransportTopLevelEffort, "reasoning_effort"},
+	} {
+		got, err := dispatchEffortOverridePath(test.format, test.transport)
+		if err != nil || got != test.want {
+			t.Fatalf("%s/%s: %q, %v; want %q", test.format, test.transport, got, err, test.want)
+		}
+	}
+	if _, err := dispatchEffortOverridePath(thinkingcontrol.FormatChat, modelcatalog.ReasoningTransportTopLevelBoolean); err == nil {
+		t.Fatal("a Chat transport with no effort field was accepted")
 	}
 }

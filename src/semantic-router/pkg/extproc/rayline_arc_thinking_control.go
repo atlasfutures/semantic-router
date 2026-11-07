@@ -25,6 +25,7 @@ import (
 
 	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
 	"github.com/atlasfutures/semantic-router/rayline-core/thinkingcontrol"
+	modelcatalog "github.com/vllm-project/semantic-router/src/semantic-router/pkg/catalog"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
@@ -48,9 +49,10 @@ type plannedThinkingControl struct {
 	cell    *thinkingcontrol.Cell
 	placer  *thinkingcontrol.Placer
 	// effortOverride is the effort dispatch_effort_overrides sends on top of
-	// the control's native default base; empty sends the base's own wire.
+	// the control's native default base, at effortPath; empty sends the
+	// base's own wire.
 	effortOverride string
-	format         string
+	effortPath     string
 }
 
 // raylineARCDispatchedControl is the control and worker this turn's v5 action
@@ -98,14 +100,30 @@ func raylineARCDispatchModelRemap(ctx *RequestContext) (string, bool) {
 	return worker, remapped
 }
 
-// applyDispatchEffortOverride writes the override effort on the rendered
-// body: Messages as output_config.effort (other output_config keys stay),
-// Chat and Responses as reasoning.effort.
-func applyDispatchEffortOverride(body []byte, format, effort string) ([]byte, error) {
-	path := "reasoning.effort"
-	if format == thinkingcontrol.FormatMessages {
-		path = "output_config.effort"
+// dispatchEffortOverridePath is where the override effort goes on a body of
+// format bound for the provider's reasoning transport: Messages as
+// output_config.effort (other output_config keys stay), Responses as
+// reasoning.effort, and Chat as OpenRouter's reasoning.effort or a top-level
+// reasoning_effort. Any other Chat transport has no effort field, and the turn
+// fails rather than report an effort it did not send.
+func dispatchEffortOverridePath(format string, transport modelcatalog.ReasoningTransport) (string, error) {
+	switch {
+	case format == thinkingcontrol.FormatMessages:
+		return "output_config.effort", nil
+	case format == thinkingcontrol.FormatResponses:
+		return "reasoning.effort", nil
+	case usesReasoningObjectTransport(transport):
+		return "reasoning.effort", nil
+	case usesTopLevelReasoningEffort(transport):
+		return "reasoning_effort", nil
+	default:
+		return "", fmt.Errorf("dispatch_effort_overrides: the worker's Chat transport %q carries no effort", transport)
 	}
+}
+
+// applyDispatchEffortOverride writes the override effort at path on the
+// rendered body.
+func applyDispatchEffortOverride(body []byte, path, effort string) ([]byte, error) {
 	out, err := sjson.SetBytes(body, path, effort)
 	if err != nil {
 		return nil, fmt.Errorf("failed to write the dispatch effort override: %w", err)
@@ -204,10 +222,14 @@ func planRaylineARCThinkingControl(
 	if err != nil {
 		return nil, false, err
 	}
-	planned := &plannedThinkingControl{key: key, control: action.Control, cell: cell, placer: placer, format: format}
+	planned := &plannedThinkingControl{key: key, control: action.Control, cell: cell, placer: placer}
 	if config.RaylineARCOverridableBase(action.Control) {
 		if effort, ok := policy.DispatchEffortOverride(worker); ok {
-			planned.effortOverride = effort
+			path, err := dispatchEffortOverridePath(format, resolveProviderReasoningTransport(dispatch.profile))
+			if err != nil {
+				return nil, false, err
+			}
+			planned.effortOverride, planned.effortPath = effort, path
 		}
 	}
 	return planned, false, nil
@@ -228,7 +250,7 @@ func (planned *plannedThinkingControl) render(body []byte, ctx *RequestContext) 
 		return nil, err
 	}
 	if planned.effortOverride != "" {
-		if rendered, err = applyDispatchEffortOverride(rendered, planned.format, planned.effortOverride); err != nil {
+		if rendered, err = applyDispatchEffortOverride(rendered, planned.effortPath, planned.effortOverride); err != nil {
 			return nil, err
 		}
 	}

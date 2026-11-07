@@ -556,6 +556,12 @@ class RaylineARCPolicyServiceConfig(BaseModel):
     # Mirrors RaylineARCPolicyServiceConfig.DispatchEffort in the Go loader:
     # provider_default serves actions without their declared effort (v4).
     dispatch_effort: Literal["", "declared", "provider_default"] = ""
+    # Mirror DispatchEffortOverrides and DispatchModelOverrides in the Go
+    # loader (v5 only): a dispatch-only effort for native-default actions per
+    # worker, and a dispatch-only worker remap. The Go loader checks the
+    # workers, the efforts and the registry admission.
+    dispatch_effort_overrides: dict[str, str] = Field(default_factory=dict)
+    dispatch_model_overrides: dict[str, str] = Field(default_factory=dict)
     # A v5 package's manifest path (its sha256 is package_sha256); its
     # bindings are only action_id and worker. Empty serves a v4 package.
     package_manifest: str = ""

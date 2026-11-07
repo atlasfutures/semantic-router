@@ -445,7 +445,7 @@ func (service *raylineARCDecisionService) resolveWorker(
 			"rayline ARC selector exposes no worker manifest",
 		)
 	}
-	worker, found := provider.Worker(result.RaylineARC.SelectedArm)
+	worker, found := provider.Worker(result.RaylineARC.DispatchedArm())
 	if !found || worker.ID != result.SelectedModel {
 		return selectedRoute{}, "worker_mismatch", errors.New(
 			"rayline ARC selected arm does not match its worker manifest",

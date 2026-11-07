@@ -53,8 +53,13 @@ const (
 var policySessionActions = map[string]bool{"created": true, "rebuilt": true, "appended": true, "reused": true}
 
 type policyBinding struct {
-	arm   int
-	level string
+	// arm is the worker the package binds the action to: the policy's arm,
+	// which held offers, scores and episode state use.
+	arm int
+	// dispatchArm is the worker the action is sent on: arm, or the
+	// to-worker of a dispatch_model_overrides entry for it.
+	dispatchArm int
+	level       string
 	// model is the action's trained model, when the binding declares it.
 	model string
 }
@@ -256,9 +261,12 @@ func newPolicyServiceScorer(
 			}
 			scorer.actionArms[binding.ActionID] = action.TrainedArmIDs
 		}
-		// dispatch_model_overrides sends the action on its to-worker's arm.
+		// dispatch_model_overrides sends the action on its to-worker; the
+		// policy still holds and offers it on its own worker.
 		worker, _ := policy.DispatchWorker(binding.Worker)
-		scorer.bindings[binding.ActionID] = policyBinding{arm: index[worker], level: level, model: model}
+		scorer.bindings[binding.ActionID] = policyBinding{
+			arm: index[binding.Worker], dispatchArm: index[worker], level: level, model: model,
+		}
 		scorer.actionOrder = append(scorer.actionOrder, binding.ActionID)
 	}
 	scorer.armOffered = policyArmOffered(policy.PackageStageOneOfferedModels(), scorer.bindings, len(scorer.workers))
@@ -659,7 +667,8 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 			if held >= 0 && arm != held {
 				continue
 			}
-			if out(arm, scorer.actionModel(actionID)) {
+			// A route exclusion follows the route the action is sent on.
+			if out(scorer.bindings[actionID].dispatchArm, scorer.actionModel(actionID)) {
 				continue
 			}
 			available = append(available, actionID)
@@ -1196,8 +1205,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	result.RaylineARC.PolicyArmID = response.Decision.SelectedArmID
 	result.RaylineARC.ThinkingLevel = binding.level
 	result.RaylineARC.PolicyActionModel = binding.model
-	result.RaylineARC.WorkerProviderModel = scorer.workers[binding.arm].Model
-	result.RaylineARC.WorkerRoute = scorer.routeFor(binding.arm, arcContext.PrivateTurn)
+	scorer.applyDispatchArm(result, selCtx, binding, arcContext.PrivateTurn)
 	result.RaylineARC.PolicySideCall = sideCall
 	result.RaylineARC.OfferKind = policyOfferKind(derivedOffer, forced, retained, held)
 	result.RaylineARC.MaskedArms = policyMaskedArms(scorer, workerIDs, excluded, fallback, turn, offeredRoutes)
@@ -1341,6 +1349,24 @@ func (scorer *policyServiceScorer) actionModel(actionID string) string {
 		return binding.model
 	}
 	return scorer.armModel(binding.arm)
+}
+
+// applyDispatchArm names the worker the turn is sent on. Under a
+// dispatch_model_overrides entry that is the to-worker: the result's model
+// and DispatchArm move to it, while SelectedArm, and so the episode's held
+// arm, stays the policy's own.
+func (scorer *policyServiceScorer) applyDispatchArm(
+	result *selection.SelectionResult, selCtx *selection.SelectionContext, binding policyBinding, private bool,
+) {
+	result.RaylineARC.WorkerProviderModel = scorer.workers[binding.dispatchArm].Model
+	result.RaylineARC.WorkerRoute = scorer.routeFor(binding.dispatchArm, private)
+	if binding.dispatchArm == binding.arm || binding.dispatchArm >= len(selCtx.CandidateModels) {
+		return
+	}
+	dispatched := selCtx.CandidateModels[binding.dispatchArm]
+	result.SelectedModel, result.LoRAName = dispatched.Model, dispatched.LoRAName
+	arm := binding.dispatchArm
+	result.RaylineARC.DispatchArm = &arm
 }
 
 // routeFor is the route an arm's turn takes: its private route on a private
