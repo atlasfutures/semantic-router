@@ -19,7 +19,7 @@ func bindRaylineARCDispatchContract(
 	if !ok || result.RaylineARC == nil {
 		return selectionFailureForAlgorithm(algorithm, "dispatch_contract")
 	}
-	worker, found := dispatchProvider.Worker(result.RaylineARC.SelectedArm)
+	worker, found := dispatchProvider.Worker(result.RaylineARC.DispatchedArm())
 	if !found || worker.ID != selectedModelRef.Model {
 		return selectionFailureForAlgorithm(algorithm, "dispatch_contract")
 	}

@@ -151,3 +151,22 @@ func TestRouteBaselineIsEmptyWithoutAReferenceWorker(t *testing.T) {
 		})
 	}
 }
+
+// Under dispatch_model_overrides an alternative names the worker its action
+// would be sent on, as the selected route does.
+func TestRouteAlternativesNameTheDispatchedWorker(t *testing.T) {
+	t.Parallel()
+	sent := 2
+	trace := &selection.RaylineARCTrace{
+		SelectedArm:    0,
+		AdjustedScores: []float32{0.9, 0.62},
+		ExcludedArms:   []bool{false, false},
+		PolicyArmActions: []selection.RaylineARCArmAction{
+			{ActionID: "deepseek-up"}, {ActionID: "glm-up", DispatchArm: &sent},
+		},
+	}
+	got := routeAlternatives(trace, routeFactsCatalog())
+	if len(got) != 1 || got[0].Worker != "arm-2" || got[0].ActionID != "glm-up" {
+		t.Fatalf("routeAlternatives() = %v, want glm-up named on its to-worker arm-2", got)
+	}
+}

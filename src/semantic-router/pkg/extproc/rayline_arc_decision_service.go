@@ -331,7 +331,13 @@ func routeAlternatives(
 		if trace.PolicyArmOffered != nil && (arm >= len(trace.PolicyArmOffered) || !trace.PolicyArmOffered[arm]) {
 			continue
 		}
-		worker, found := catalog.Worker(arm)
+		// An alternative names the worker its action would be sent on, as
+		// the selected route does under dispatch_model_overrides.
+		sent := arm
+		if arm < len(trace.PolicyArmActions) && trace.PolicyArmActions[arm].DispatchArm != nil {
+			sent = *trace.PolicyArmActions[arm].DispatchArm
+		}
+		worker, found := catalog.Worker(sent)
 		if !found {
 			continue
 		}
@@ -445,7 +451,7 @@ func (service *raylineARCDecisionService) resolveWorker(
 			"rayline ARC selector exposes no worker manifest",
 		)
 	}
-	worker, found := provider.Worker(result.RaylineARC.SelectedArm)
+	worker, found := provider.Worker(result.RaylineARC.DispatchedArm())
 	if !found || worker.ID != result.SelectedModel {
 		return selectedRoute{}, "worker_mismatch", errors.New(
 			"rayline ARC selected arm does not match its worker manifest",

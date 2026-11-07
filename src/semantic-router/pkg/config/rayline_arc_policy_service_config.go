@@ -86,6 +86,23 @@ type RaylineARCPolicyServiceConfig struct {
 	// still renders from the level, and a thinking-off action (effort none)
 	// stays off.
 	DispatchEffort string `yaml:"dispatch_effort,omitempty"`
+	// DispatchEffortOverrides sends a fixed reasoning effort on a v5
+	// action whose control's base is the native default (no effort on the
+	// wire), keyed by worker. It is a dispatch-only lab knob, for an A/B arm
+	// that serves the same package and decisions at another provider effort:
+	// the decision, the action_id, the control and its steering suffix are
+	// unchanged, and the turn records policy_dispatch_effort "override" with
+	// the effort sent. Messages carries it as output_config.effort, Chat and
+	// Responses as reasoning.effort.
+	DispatchEffortOverrides map[string]string `yaml:"dispatch_effort_overrides,omitempty"`
+	// DispatchModelOverrides sends every v5 action bound to a from-worker on
+	// a to-worker instead, keyed from -> to: a dispatch-only lab remap for an
+	// arm that serves one checkpoint in place of another. A remapped action
+	// is sent with the native default control (no steering instruction) and
+	// any dispatch_effort_overrides effort of the to-worker. The decision and
+	// its action_id are unchanged; the turn records policy_dispatch_model
+	// "remap" with policy_dispatched_worker.
+	DispatchModelOverrides map[string]string `yaml:"dispatch_model_overrides,omitempty"`
 	// PackageManifest is the path of the package's manifest (package.json).
 	// A v5 package (rayline.arc-policy-package.v5) needs it: its actions name
 	// thinking controls, not wire fields, so VSR reads the model and control
@@ -400,6 +417,41 @@ const (
 	RaylineARCPolicyDispatchEffortProviderDefault = "provider_default"
 )
 
+// RaylineARCPolicyDispatchEffortOverride is policy_dispatch_effort on a turn
+// whose effort a dispatch_effort_overrides entry set.
+const RaylineARCPolicyDispatchEffortOverride = "override"
+
+// raylineARCDispatchEffortOverrideLevels are the efforts an override may send.
+var raylineARCDispatchEffortOverrideLevels = map[string]bool{
+	"minimal": true, "low": true, "medium": true, "high": true, "xhigh": true, "max": true,
+}
+
+// DispatchEffortOverride is the effort dispatch_effort_overrides sends for a
+// worker, if any.
+func (cfg *RaylineARCPolicyServiceConfig) DispatchEffortOverride(worker string) (string, bool) {
+	if cfg == nil {
+		return "", false
+	}
+	effort, ok := cfg.DispatchEffortOverrides[worker]
+	return effort, ok
+}
+
+// RaylineARCPolicyDispatchModelRemap is policy_dispatch_model on a turn a
+// dispatch_model_overrides entry sent to another worker.
+const RaylineARCPolicyDispatchModelRemap = "remap"
+
+// DispatchWorker is the worker an action bound to worker is dispatched on:
+// its dispatch_model_overrides target, or worker itself.
+func (cfg *RaylineARCPolicyServiceConfig) DispatchWorker(worker string) (string, bool) {
+	if cfg == nil {
+		return worker, false
+	}
+	if to, ok := cfg.DispatchModelOverrides[worker]; ok {
+		return to, true
+	}
+	return worker, false
+}
+
 // DispatchesProviderDefaultEffort reports whether actions are sent without
 // their declared effort or budget.
 func (cfg *RaylineARCPolicyServiceConfig) DispatchesProviderDefaultEffort() bool {
@@ -585,6 +637,12 @@ func validateRaylineARCPolicyServiceConfig(cfg *RaylineARCPolicyServiceConfig) e
 	default:
 		return fmt.Errorf("dispatch_effort must be %s or %s",
 			RaylineARCPolicyDispatchEffortDeclared, RaylineARCPolicyDispatchEffortProviderDefault)
+	}
+	if len(cfg.DispatchModelOverrides) > 0 && cfg.PackageManifest == "" {
+		return fmt.Errorf("dispatch_model_overrides needs a v5 package (package_manifest)")
+	}
+	if len(cfg.DispatchEffortOverrides) > 0 && cfg.PackageManifest == "" {
+		return fmt.Errorf("dispatch_effort_overrides needs a v5 package (package_manifest): it applies to a control's native default base")
 	}
 	if err := validateRaylineARCRoutingPricesConfig(cfg.RoutingPrices); err != nil {
 		return err

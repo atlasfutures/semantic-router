@@ -133,6 +133,16 @@ func TestToolLoopForeignArms(t *testing.T) {
 	if !reflect.DeepEqual(foreign, []bool{false, true, false}) || arm != 2 || family != "deepseek" {
 		t.Fatalf("mid-loop = %v arm %d family %q, want only the other family excluded", foreign, arm, family)
 	}
+	// Under dispatch_model_overrides the families are the to-workers': a
+	// loop opened on a deepseek arm sent on MiMo holds MiMo and the arm
+	// remapped onto it.
+	remapped := &config.RaylineARCAlgorithmConfig{HoldFamilyInToolLoop: true, PolicyService: &config.RaylineARCPolicyServiceConfig{
+		DispatchModelOverrides: map[string]string{refs[2].Model: refs[1].Model},
+	}}
+	foreign, _, family = router.toolLoopForeignArms(remapped, midLoop, state, servedModelRefs(remapped.PolicyService, refs))
+	if !reflect.DeepEqual(foreign, []bool{true, false, false}) || family != "xiaomi" {
+		t.Fatalf("remapped = %v family %q, want the to-worker's family held", foreign, family)
+	}
 	for name, test := range map[string]struct {
 		arc   *config.RaylineARCAlgorithmConfig
 		ctx   *RequestContext

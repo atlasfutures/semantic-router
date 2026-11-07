@@ -53,8 +53,13 @@ const (
 var policySessionActions = map[string]bool{"created": true, "rebuilt": true, "appended": true, "reused": true}
 
 type policyBinding struct {
-	arm   int
-	level string
+	// arm is the worker the package binds the action to: the policy's arm,
+	// which held offers, scores and episode state use.
+	arm int
+	// dispatchArm is the worker the action is sent on: arm, or the
+	// to-worker of a dispatch_model_overrides entry for it.
+	dispatchArm int
+	level       string
 	// model is the action's trained model, when the binding declares it.
 	model string
 }
@@ -256,7 +261,12 @@ func newPolicyServiceScorer(
 			}
 			scorer.actionArms[binding.ActionID] = action.TrainedArmIDs
 		}
-		scorer.bindings[binding.ActionID] = policyBinding{arm: index[binding.Worker], level: level, model: model}
+		// dispatch_model_overrides sends the action on its to-worker; the
+		// policy still holds and offers it on its own worker.
+		worker, _ := policy.DispatchWorker(binding.Worker)
+		scorer.bindings[binding.ActionID] = policyBinding{
+			arm: index[binding.Worker], dispatchArm: index[worker], level: level, model: model,
+		}
 		scorer.actionOrder = append(scorer.actionOrder, binding.ActionID)
 	}
 	scorer.armOffered = policyArmOffered(policy.PackageStageOneOfferedModels(), scorer.bindings, len(scorer.workers))
@@ -645,19 +655,29 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 			_, routeOut := cellOut[arm]
 			return fallback && (turn.Excludes(model) || routeOut || raylinearc.ExcludesFamily(families, model))
 		}
-		if held >= 0 && (out(held, scorer.armModel(held)) || len(hard) == len(workerIDs) && hard[held]) {
-			held, forced = -1, true
+		// A held arm under dispatch_model_overrides is sent on its to-worker,
+		// so that worker's route and model release it too (its hard mask is
+		// already the to-worker's, servedModelRefs).
+		if held >= 0 {
+			sent := scorer.armDispatch(held)
+			if out(sent, scorer.armModel(sent)) || len(hard) == len(workerIDs) && hard[held] {
+				held, forced = -1, true
+			}
 		}
 		available := make([]string, 0, len(scorer.actionOrder))
 		for _, actionID := range scorer.actionOrder {
-			arm := scorer.bindings[actionID].arm
+			arm, sent := scorer.bindings[actionID].arm, scorer.bindings[actionID].dispatchArm
+			// The hard mask already carries each arm's to-worker
+			// (servedModelRefs).
 			if len(excluded) == len(workerIDs) && excluded[arm] {
 				continue
 			}
 			if held >= 0 && arm != held {
 				continue
 			}
-			if out(arm, scorer.actionModel(actionID)) {
+			// Route, model and family exclusions follow the worker the action
+			// is sent on.
+			if out(sent, scorer.dispatchedModel(actionID)) {
 				continue
 			}
 			available = append(available, actionID)
@@ -1194,8 +1214,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	result.RaylineARC.PolicyArmID = response.Decision.SelectedArmID
 	result.RaylineARC.ThinkingLevel = binding.level
 	result.RaylineARC.PolicyActionModel = binding.model
-	result.RaylineARC.WorkerProviderModel = scorer.workers[binding.arm].Model
-	result.RaylineARC.WorkerRoute = scorer.routeFor(binding.arm, arcContext.PrivateTurn)
+	scorer.applyDispatchArm(result, selCtx, binding, arcContext.PrivateTurn)
 	result.RaylineARC.PolicySideCall = sideCall
 	result.RaylineARC.OfferKind = policyOfferKind(derivedOffer, forced, retained, held)
 	result.RaylineARC.MaskedArms = policyMaskedArms(scorer, workerIDs, excluded, fallback, turn, offeredRoutes)
@@ -1321,7 +1340,9 @@ func policyMaskedArms(
 		if !fallback {
 			continue
 		}
-		if _, out := routes[arm]; out || turn.Excludes(scorer.armModel(arm)) {
+		// A remapped arm is out where its to-worker is, as in the offer.
+		sent := scorer.armDispatch(arm)
+		if _, out := routes[sent]; out || turn.Excludes(scorer.armModel(sent)) {
 			masked[arm] = true
 		}
 	}
@@ -1339,6 +1360,46 @@ func (scorer *policyServiceScorer) actionModel(actionID string) string {
 		return binding.model
 	}
 	return scorer.armModel(binding.arm)
+}
+
+// applyDispatchArm names the worker the turn is sent on. Under a
+// dispatch_model_overrides entry that is the to-worker: the result's model
+// and DispatchArm move to it, while SelectedArm, and so the episode's held
+// arm, stays the policy's own.
+func (scorer *policyServiceScorer) applyDispatchArm(
+	result *selection.SelectionResult, selCtx *selection.SelectionContext, binding policyBinding, private bool,
+) {
+	result.RaylineARC.WorkerProviderModel = scorer.workers[binding.dispatchArm].Model
+	result.RaylineARC.WorkerRoute = scorer.routeFor(binding.dispatchArm, private)
+	if binding.dispatchArm == binding.arm || binding.dispatchArm >= len(selCtx.CandidateModels) {
+		return
+	}
+	dispatched := selCtx.CandidateModels[binding.dispatchArm]
+	result.SelectedModel, result.LoRAName = dispatched.Model, dispatched.LoRAName
+	arm := binding.dispatchArm
+	result.RaylineARC.DispatchArm = &arm
+	result.RaylineARC.DispatchModel = scorer.armModel(arm)
+}
+
+// armDispatch is the arm a policy arm's actions are sent on: the to-worker
+// of its dispatch_model_overrides entry, or the arm itself.
+func (scorer *policyServiceScorer) armDispatch(arm int) int {
+	for _, actionID := range scorer.actionOrder {
+		if binding := scorer.bindings[actionID]; binding.arm == arm {
+			return binding.dispatchArm
+		}
+	}
+	return arm
+}
+
+// dispatchedModel is the trained model actionID is served by: its own, or
+// under dispatch_model_overrides the to-worker's.
+func (scorer *policyServiceScorer) dispatchedModel(actionID string) string {
+	binding, ok := scorer.bindings[actionID]
+	if !ok || binding.dispatchArm == binding.arm {
+		return scorer.actionModel(actionID)
+	}
+	return scorer.armModel(binding.dispatchArm)
 }
 
 // routeFor is the route an arm's turn takes: its private route on a private
@@ -1688,6 +1749,10 @@ func policyArmActions(scorer *policyServiceScorer, response *raylinearc.PolicyDe
 		}
 		if actions[binding.arm].ActionID == "" || action.Score > best[binding.arm] {
 			actions[binding.arm] = selection.RaylineARCArmAction{ActionID: action.ActionID, ThinkingLevel: binding.level}
+			if binding.dispatchArm != binding.arm {
+				sent := binding.dispatchArm
+				actions[binding.arm].DispatchArm = &sent
+			}
 			best[binding.arm] = action.Score
 		}
 	}

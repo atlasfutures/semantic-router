@@ -270,6 +270,9 @@ type RaylineARCRouteIdentity struct {
 type RaylineARCArmAction struct {
 	ActionID      string
 	ThinkingLevel string
+	// DispatchArm is the arm ActionID is sent on under
+	// dispatch_model_overrides; nil when it is sent on its own arm.
+	DispatchArm *int
 }
 
 type RaylineARCTrace struct {
@@ -438,11 +441,18 @@ type RaylineARCTrace struct {
 	EndpointFeed *raylinearc.RoutingPriceSettlement
 	// ArtifactID and ArtifactRevision hold SHA256-derived hashes of the
 	// deployment-private artifact identity, never the raw pins.
-	ArtifactID          string
-	ArtifactRevision    string
-	EncoderRevision     string
-	EpisodeIDHash       string
-	SelectedArm         int
+	ArtifactID       string
+	ArtifactRevision string
+	EncoderRevision  string
+	EpisodeIDHash    string
+	SelectedArm      int
+	// DispatchArm is the arm the turn is sent on when it differs from
+	// SelectedArm (policy_service dispatch_model_overrides); nil otherwise.
+	// Episode state and held offers keep SelectedArm, the policy's own arm.
+	DispatchArm *int
+	// DispatchModel is the trained model DispatchArm serves, which a refusal
+	// on the remapped turn excludes; empty when DispatchArm is nil.
+	DispatchModel       string
 	PreviousArm         *int
 	RawScores           []float32
 	AdjustedScores      []float32
@@ -526,4 +536,13 @@ type RaylineARCForkPlacement struct {
 	SiblingCount int
 	// New reports the request created its sibling.
 	New bool
+}
+
+// DispatchedArm is the arm the turn is sent on: DispatchArm when a
+// dispatch_model_overrides entry moved it, otherwise SelectedArm.
+func (trace *RaylineARCTrace) DispatchedArm() int {
+	if trace.DispatchArm != nil {
+		return *trace.DispatchArm
+	}
+	return trace.SelectedArm
 }

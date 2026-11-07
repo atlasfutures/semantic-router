@@ -916,3 +916,23 @@ def test_rayline_arc_cli_mirrors_decide_mode():
     for changed in ({"decide_mode": "race"}, {"decide_mode": "async"}, {"race_ms": 100}):
         with pytest.raises(ValidationError):
             RaylineARCPolicyServiceConfig.model_validate({**raw, **changed})
+
+
+def test_rayline_arc_cli_mirrors_dispatch_overrides():
+    """policy_service.dispatch_effort_overrides / dispatch_model_overrides (Go loader)."""
+    policy = _policy_service_decision().algorithm.rayline_arc.policy_service
+    assert policy.dispatch_effort_overrides == {}
+    assert policy.dispatch_model_overrides == {}
+    parsed = RaylineARCPolicyServiceConfig.model_validate(
+        {
+            **policy.model_dump(),
+            "dispatch_effort_overrides": {"deepseek-v4.1-flash-1017": "max"},
+            "dispatch_model_overrides": {
+                "deepseek-v4.1-flash": "deepseek-v4.1-flash-1017"
+            },
+        }
+    )
+    assert parsed.dispatch_effort_overrides == {"deepseek-v4.1-flash-1017": "max"}
+    assert parsed.dispatch_model_overrides == {
+        "deepseek-v4.1-flash": "deepseek-v4.1-flash-1017"
+    }

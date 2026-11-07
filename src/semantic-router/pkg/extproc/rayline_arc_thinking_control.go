@@ -21,8 +21,11 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/tidwall/sjson"
+
 	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
 	"github.com/atlasfutures/semantic-router/rayline-core/thinkingcontrol"
+	modelcatalog "github.com/vllm-project/semantic-router/src/semantic-router/pkg/catalog"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
@@ -45,6 +48,87 @@ type plannedThinkingControl struct {
 	control thinkingcontrol.Control
 	cell    *thinkingcontrol.Cell
 	placer  *thinkingcontrol.Placer
+	// effortOverride is the effort dispatch_effort_overrides sends on top of
+	// the control's native default base, at effortPath; empty sends the
+	// base's own wire.
+	effortOverride string
+	effortPath     string
+}
+
+// raylineARCDispatchedControl is the control and worker this turn's v5 action
+// is dispatched with: under a dispatch_model_overrides entry for its bound
+// worker, the to-worker and the native default control (no steering);
+// otherwise the bound worker and the action's own control.
+func raylineARCDispatchedControl(
+	policy *config.RaylineARCPolicyServiceConfig, actionID string, control thinkingcontrol.Control,
+) (thinkingcontrol.Control, string, bool) {
+	binding, ok := policy.PolicyBinding(actionID)
+	if !ok {
+		return control, "", false
+	}
+	worker, remapped := policy.DispatchWorker(binding.Worker)
+	if remapped {
+		return thinkingcontrol.Control{Native: "default"}, worker, true
+	}
+	return control, worker, false
+}
+
+// raylineARCDispatchEffortOverride is the effort dispatch_effort_overrides
+// sends for this turn's v5 action: the worker it is dispatched on has an
+// entry and the control it is dispatched with is the native default base
+// with no budget.
+func raylineARCDispatchEffortOverride(ctx *RequestContext) (string, bool) {
+	policy, action, v5, err := raylineARCPolicyControlAction(ctx)
+	if !v5 || err != nil || len(policy.DispatchEffortOverrides) == 0 {
+		return "", false
+	}
+	control, worker, _ := raylineARCDispatchedControl(policy, ctx.VSRRaylineARC.PolicyActionID, action.Control)
+	if worker == "" || !config.RaylineARCOverridableBase(control) {
+		return "", false
+	}
+	return policy.DispatchEffortOverride(worker)
+}
+
+// raylineARCDispatchModelRemap is the worker a dispatch_model_overrides entry
+// sends this turn's v5 action to, if any.
+func raylineARCDispatchModelRemap(ctx *RequestContext) (string, bool) {
+	policy, action, v5, err := raylineARCPolicyControlAction(ctx)
+	if !v5 || err != nil || len(policy.DispatchModelOverrides) == 0 {
+		return "", false
+	}
+	_, worker, remapped := raylineARCDispatchedControl(policy, ctx.VSRRaylineARC.PolicyActionID, action.Control)
+	return worker, remapped
+}
+
+// dispatchEffortOverridePath is where the override effort goes on a body of
+// format bound for the provider's reasoning transport: Messages as
+// output_config.effort (other output_config keys stay), Responses as
+// reasoning.effort, and Chat as OpenRouter's reasoning.effort or a top-level
+// reasoning_effort. Any other Chat transport has no effort field, and the turn
+// fails rather than report an effort it did not send.
+func dispatchEffortOverridePath(format string, transport modelcatalog.ReasoningTransport) (string, error) {
+	switch {
+	case format == thinkingcontrol.FormatMessages:
+		return "output_config.effort", nil
+	case format == thinkingcontrol.FormatResponses:
+		return "reasoning.effort", nil
+	case usesReasoningObjectTransport(transport):
+		return "reasoning.effort", nil
+	case usesTopLevelReasoningEffort(transport):
+		return "reasoning_effort", nil
+	default:
+		return "", fmt.Errorf("dispatch_effort_overrides: the worker's Chat transport %q carries no effort", transport)
+	}
+}
+
+// applyDispatchEffortOverride writes the override effort at path on the
+// rendered body.
+func applyDispatchEffortOverride(body []byte, path, effort string) ([]byte, error) {
+	out, err := sjson.SetBytes(body, path, effort)
+	if err != nil {
+		return nil, fmt.Errorf("failed to write the dispatch effort override: %w", err)
+	}
+	return out, nil
 }
 
 // raylineARCPolicyControlAction is the v5 action this turn's policy decision
@@ -104,6 +188,11 @@ func planRaylineARCThinkingControl(
 		return nil, false, errThinkingControlUnbound
 	}
 	worker := ctx.RaylineARCDispatch.ID
+	control, dispatched, _ := raylineARCDispatchedControl(policy, ctx.VSRRaylineARC.PolicyActionID, action.Control)
+	if dispatched != "" && dispatched != worker {
+		return nil, false, fmt.Errorf("the action dispatches on worker %q, and the turn is on %q", dispatched, worker)
+	}
+	action.Control = control
 	provider, err := config.RaylineARCRegistryProvider(cfg, worker)
 	if err != nil {
 		return nil, false, err
@@ -133,7 +222,17 @@ func planRaylineARCThinkingControl(
 	if err != nil {
 		return nil, false, err
 	}
-	return &plannedThinkingControl{key: key, control: action.Control, cell: cell, placer: placer}, false, nil
+	planned := &plannedThinkingControl{key: key, control: action.Control, cell: cell, placer: placer}
+	if config.RaylineARCOverridableBase(action.Control) {
+		if effort, ok := policy.DispatchEffortOverride(worker); ok {
+			path, err := dispatchEffortOverridePath(format, resolveProviderReasoningTransport(dispatch.profile))
+			if err != nil {
+				return nil, false, err
+			}
+			planned.effortOverride, planned.effortPath = effort, path
+		}
+	}
+	return planned, false, nil
 }
 
 // render places the planned control on the provider-bound body and stages
@@ -149,6 +248,11 @@ func (planned *plannedThinkingControl) render(body []byte, ctx *RequestContext) 
 	rendered, receipt, err := planned.placer.Render(body, &planned.control, planned.cell, head.Model)
 	if err != nil {
 		return nil, err
+	}
+	if planned.effortOverride != "" {
+		if rendered, err = applyDispatchEffortOverride(rendered, planned.effortPath, planned.effortOverride); err != nil {
+			return nil, err
+		}
 	}
 	ctx.RaylineARCTransaction.stageControlPlacement(raylinearc.ControlPlacement{Key: planned.key, State: planned.placer.State()})
 	ctx.RaylineARCThinking = thinkingControlTrace(planned.cell, planned.control, receipt)

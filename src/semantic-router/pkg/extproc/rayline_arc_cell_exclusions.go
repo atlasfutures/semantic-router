@@ -100,6 +100,9 @@ func noteCellExclusion(ctx *RequestContext, class string) {
 		return
 	}
 	worker := decision.ModelRefs[arm].Model
+	if dispatched := ctx.VSRRaylineARC.DispatchedArm(); dispatched >= 0 && dispatched < len(decision.ModelRefs) {
+		worker = decision.ModelRefs[dispatched].Model
+	}
 	providerModel := ctx.VSRRaylineARC.WorkerProviderModel
 	route := ctx.VSRRaylineARC.WorkerRoute
 	if route == "" {

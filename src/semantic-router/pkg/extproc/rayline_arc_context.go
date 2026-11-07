@@ -21,6 +21,7 @@ import (
 	"errors"
 	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
 	"github.com/google/uuid"
+	"slices"
 	"strings"
 	"time"
 
@@ -311,6 +312,11 @@ func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 		}
 	}
 	result.ImageBearing = imageBearing
+	// Every per-arm fact below is the served worker's: under
+	// dispatch_model_overrides an arm's turn runs on its to-worker, so that
+	// worker's card decides vision, context, output, privacy, capability and
+	// family, and each constraint keeps its own refusal class and hint.
+	modelRefs = servedModelRefs(algorithm.RaylineARC.PolicyService, modelRefs)
 	result.NonVisionArms = r.nonVisionArms(modelRefs)
 	result.OverContextArms = r.overContextArms(modelRefs, result.ContextTokens)
 	result.RequestedOutputTokens = requestedOutputTokens(reqCtx.SemanticRequest)
@@ -331,6 +337,28 @@ func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 		algorithm.RaylineARC, reqCtx, result.State, modelRefs,
 	)
 	return result
+}
+
+// servedModelRefs is, per arm, the ref of the worker the arm's turn runs on:
+// its dispatch_model_overrides to-worker, or its own. It returns modelRefs
+// itself when nothing is remapped.
+func servedModelRefs(policy *config.RaylineARCPolicyServiceConfig, modelRefs []config.ModelRef) []config.ModelRef {
+	if policy == nil || len(policy.DispatchModelOverrides) == 0 {
+		return modelRefs
+	}
+	index := make(map[string]int, len(modelRefs))
+	for arm, ref := range modelRefs {
+		index[ref.Model] = arm
+	}
+	served := slices.Clone(modelRefs)
+	for arm, ref := range modelRefs {
+		if to, remapped := policy.DispatchWorker(ref.Model); remapped {
+			if target, found := index[to]; found {
+				served[arm] = modelRefs[target]
+			}
+		}
+	}
+	return served
 }
 
 // raylineARCEphemeralEpisodePrefix keeps a minted identity out of the space a

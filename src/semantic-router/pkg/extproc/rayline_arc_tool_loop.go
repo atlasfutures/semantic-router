@@ -24,7 +24,9 @@ import (
 // toolLoopForeignArms marks the arms outside the previous arm's family when
 // this turn answers that arm's tool call. It returns nil, and selection is
 // unchanged, when the hold is off, the episode has no previous arm, the turn
-// is not mid-loop, or every arm is of the one family.
+// is not mid-loop, or every arm is of the one family. modelRefs are the served
+// workers (servedModelRefs), so under dispatch_model_overrides an arm's family
+// is its to-worker's.
 func (r *OpenAIRouter) toolLoopForeignArms(
 	arc *config.RaylineARCAlgorithmConfig,
 	reqCtx *RequestContext,
