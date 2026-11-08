@@ -892,44 +892,52 @@ func TestContextExceededMessageNeverUnderstatesTheRequest(t *testing.T) {
 	}
 }
 
-// TestByteBoundIsBoundedUnlessAnImageIsCharged: a non-Qwen local target's
-// byte bound is caller_bounded (an upper bound, admitted as a fit), and a
-// body with an inline image charged media_tokens is caller_estimated.
-func TestByteBoundIsBoundedUnlessAnImageIsCharged(t *testing.T) {
-	other := Deployment{ID: "local", Kind: "local", RegistryModel: "z-ai/glm-5.3-flash", ContextWindow: 1_000_000}
-	text := []byte(`{"model":"m","messages":[{"role":"user","content":"hello"}]}`)
-	if _, provenance, _ := localPromptSize(other, text); provenance != capacityProvenanceBounded {
-		t.Fatalf("text-only byte bound: %s", provenance)
-	}
+// TestByteBoundIsBoundedOnlyOverAFullyKnownBody: a non-Qwen local target's
+// byte bound is caller_bounded (admitted as a fit) only when every member,
+// item, content part and tool of the body is on its protocol's allowlist;
+// anything else, an inline image charged media_tokens included, is
+// caller_estimated.
+func TestByteBoundIsBoundedOnlyOverAFullyKnownBody(t *testing.T) {
+	const (
+		chat      = llmprotocol.OpenAIChatV1
+		messages  = llmprotocol.AnthropicMessagesV1
+		responses = llmprotocol.OpenAIResponsesV1
+	)
 	blob := strings.Repeat("A", 2*mediaBlobMinBytes)
-	image := []byte(`{"model":"m","messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"data:image/png;base64,` + blob + `"}}]}]}`)
-	if _, provenance, _ := localPromptSize(other, image); provenance != capacityProvenanceEstimated {
-		t.Fatalf("image byte bound: %s", provenance)
-	}
-	// Media whose bytes are not charged media_tokens bound nothing either.
-	for name, body := range map[string]string{
-		"remote image":      `{"model":"m","messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"https://example.com/a.png"}}]}]}`,
-		"small inline":      `{"model":"m","messages":[{"role":"user","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"iVBORw0KGgo="}}]}]}`,
-		"tool result image": `{"model":"m","messages":[{"role":"user","content":[{"type":"tool_result","tool_use_id":"t","content":[{"type":"image","source":{"type":"url","url":"https://example.com/a.png"}}]}]}]}`,
-		"responses image":   `{"model":"m","input":[{"role":"user","content":[{"type":"input_image","image_url":"https://example.com/a.png"}]}]}`,
-		"audio":             `{"model":"m","messages":[{"role":"user","content":[{"type":"input_audio","input_audio":{"data":"AAAA","format":"wav"}}]}]}`,
-		"document":          `{"model":"m","messages":[{"role":"user","content":[{"type":"document","source":{"type":"url","url":"https://example.com/a.pdf"}}]}]}`,
-		"not json":          `not json`,
-		"image history":     `{"model":"m","input":[{"type":"image_generation_call","id":"ig_1","status":"completed","result":null}]}`,
-		"item reference":    `{"model":"m","input":[{"type":"item_reference","id":"msg_1"}]}`,
-		"file id":           `{"model":"m","input":[{"role":"user","content":[{"type":"input_text","text":"hi"},{"file_id":"file_1"}]}]}`,
-		"stored response":   `{"model":"m","previous_response_id":"resp_1","input":"hi"}`,
-		"own template":      `{"model":"m","chat_template":"{{ messages[0]['content'] * 10000 }}","messages":[{"role":"user","content":"hi "}]}`,
-		"kwargs template":   `{"model":"m","chat_template_kwargs":{"chat_template":"{{ 'hello ' * 1000000 }}"},"messages":[{"role":"user","content":"hi"}]}`,
-		"role mapping":      `{"model":"m","role_mapping":{"user":"x x x x ","assistant":"","stop":"\n"},"messages":[{"role":"user","content":"hi"}]}`,
+	for _, test := range []struct {
+		name     string
+		protocol llmprotocol.WireFormat
+		body     string
+		bounded  bool
+	}{
+		{"chat text and tools", chat, `{"model":"m","stream":true,"max_tokens":64,"temperature":0.2,"chat_template_kwargs":{"enable_thinking":false},"tools":[{"type":"function","function":{"name":"f","parameters":{}}}],"messages":[{"role":"system","content":"s"},{"role":"user","content":[{"type":"text","text":"hi"}]},{"role":"assistant","content":null,"tool_calls":[{"id":"c","type":"function","function":{"name":"f","arguments":"{}"}}]},{"role":"tool","tool_call_id":"c","content":"ok"}]}`, true},
+		{"chat quoted media text", chat, `{"model":"m","messages":[{"role":"user","content":"{\"type\":\"image_url\",\"image_url\":{}}"}]}`, true},
+		{"messages text, tools and thinking", messages, `{"model":"m","max_tokens":64,"system":[{"type":"text","text":"s","cache_control":{"type":"ephemeral"}}],"thinking":{"type":"adaptive"},"output_config":{"effort":"high"},"tools":[{"name":"f","input_schema":{}}],"messages":[{"role":"user","content":"hi"},{"role":"assistant","content":[{"type":"thinking","thinking":"t","signature":"x"},{"type":"tool_use","id":"u","name":"f","input":{}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"u","content":[{"type":"text","text":"ok"}]}]}]}`, true},
+		{"responses text and tools", responses, `{"model":"m","instructions":"s","reasoning":{"effort":"high"},"tools":[{"type":"function","name":"f","parameters":{}},{"type":"custom","name":"g"}],"input":[{"role":"user","content":[{"type":"input_text","text":"hi"}]},{"type":"reasoning","summary":[]},{"type":"function_call","call_id":"c","name":"f","arguments":"{}"},{"type":"function_call_output","call_id":"c","output":"ok"}]}`, true},
+		{"responses string input", responses, `{"model":"m","input":"hi"}`, true},
+
+		{"unknown protocol", "", `{"model":"m","messages":[{"role":"user","content":"hi"}]}`, false},
+		{"not json", chat, `not json`, false},
+		{"inline image charged", chat, `{"model":"m","messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"data:image/png;base64,` + blob + `"}}]}]}`, false},
+		{"remote image", chat, `{"model":"m","messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"https://example.com/a.png"}}]}]}`, false},
+		{"audio", chat, `{"model":"m","messages":[{"role":"user","content":[{"type":"input_audio","input_audio":{"data":"AAAA","format":"wav"}}]}]}`, false},
+		{"tool result image", messages, `{"model":"m","messages":[{"role":"user","content":[{"type":"tool_result","tool_use_id":"t","content":[{"type":"image","source":{"type":"url","url":"https://example.com/a.png"}}]}]}]}`, false},
+		{"document", messages, `{"model":"m","messages":[{"role":"user","content":[{"type":"document","source":{"type":"url","url":"https://example.com/a.pdf"}}]}]}`, false},
+		{"server tool", messages, `{"model":"m","tools":[{"type":"web_search_20250305","name":"web_search"}],"messages":[{"role":"user","content":"hi"}]}`, false},
+		{"responses image", responses, `{"model":"m","input":[{"role":"user","content":[{"type":"input_image","image_url":"https://example.com/a.png"}]}]}`, false},
+		{"item reference", responses, `{"model":"m","input":[{"type":"item_reference","id":"msg_1"}]}`, false},
+		{"image history", responses, `{"model":"m","input":[{"type":"image_generation_call","id":"ig_1","status":"completed","result":null}]}`, false},
+		{"stored response", responses, `{"model":"m","previous_response_id":"resp_1","input":"hi"}`, false},
+		{"chat_template", chat, `{"model":"m","chat_template":"{{ messages[0]['content'] * 10000 }}","messages":[{"role":"user","content":"hi"}]}`, false},
+		{"kwargs chat_template", chat, `{"model":"m","chat_template_kwargs":{"chat_template":"{{ 'hi ' * 1000000 }}"},"messages":[{"role":"user","content":"hi"}]}`, false},
+		{"unknown top-level member", chat, `{"model":"m","n_predict":8192,"messages":[{"role":"user","content":"hi"}]}`, false},
+		{"unknown message member", chat, `{"model":"m","messages":[{"role":"user","content":"hi","prefix":true}]}`, false},
+		{"unknown content part", chat, `{"model":"m","messages":[{"role":"user","content":[{"type":"text","text":"hi"},{"file_id":"file_1"}]}]}`, false},
 	} {
-		if _, provenance, _ := localPromptSize(other, []byte(body)); provenance != capacityProvenanceEstimated {
-			t.Errorf("%s: %s", name, provenance)
+		deployment := Deployment{ID: "local", Kind: "local", Protocol: test.protocol, RegistryModel: "z-ai/glm-5.3-flash", ContextWindow: 1_000_000}
+		want := map[bool]string{true: capacityProvenanceBounded, false: capacityProvenanceEstimated}[test.bounded]
+		if _, provenance, _ := localPromptSize(deployment, []byte(test.body)); provenance != want {
+			t.Errorf("%s: %s, want %s", test.name, provenance, want)
 		}
-	}
-	// Text that only mentions media stays bounded.
-	quoted := []byte(`{"model":"m","messages":[{"role":"user","content":"{\"type\":\"image_url\",\"image_url\":{}}"}]}`)
-	if _, provenance, _ := localPromptSize(other, quoted); provenance != capacityProvenanceBounded {
-		t.Fatalf("quoted media text: %s", provenance)
 	}
 }

@@ -134,13 +134,15 @@ opt-in. The core reports facts and never picks or ranks a model.
     the one heuristic part: a template that adds a longer preamble is not
     covered.
   - An inline base64 image is charged `media_tokens` instead of its bytes, and
-    a fact that includes one is `caller_estimated`. So is a byte bound over a
-    request with any other media part (a remote or small image, audio, video,
-    a file or document, a tool result's included) or a reference to content
-    it does not carry (a `file_id`, an `item_reference`, image generation
-    history, `previous_response_id` or `conversation`) or its own
-    `chat_template` (top level or in `chat_template_kwargs`) or
-    `role_mapping`, whose bytes bound nothing.
+    a fact that includes one is `caller_estimated`. So is any byte bound over
+    a body the core does not fully understand: `caller_bounded` needs every
+    top-level member, message member, input item, content part and tool type
+    to be on the deployment protocol's allowlist (`capacity_bounded.go`:
+    text, tool calls and results, reasoning, sampling and output limits).
+    Media, content the body only references (`file_id`, `item_reference`,
+    `previous_response_id`), a request's own `chat_template` or
+    `role_mapping`, a server tool and any unknown or runtime-specific member
+    fall to `caller_estimated`.
   - **`context_overflow`** (local deployments, `"refuses"` or
     `"truncates"`, default `"truncates"`) states what the runtime does with a
     prompt over its window. On a `"truncates"` deployment (Ollama,

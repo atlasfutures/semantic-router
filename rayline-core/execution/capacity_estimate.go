@@ -2,7 +2,6 @@ package execution
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"math"
@@ -33,9 +32,8 @@ import (
 //
 // An inline base64 image is charged media_tokens instead of its bytes in both
 // cases, and a fact with images is caller_estimated: the runtime's image
-// token count depends on the resolution. So is a byte bound over a body with
-// any media part (carriesMedia: a remote or small image, audio, video, a
-// file or document), whose bytes do not bound what the runtime makes of it.
+// token count depends on the resolution. So is any byte bound over a body
+// the core does not fully understand (boundedBody, capacity_bounded.go).
 const (
 	defaultEstimateHeadroomRatio = 0.05
 	// A Retina screenshot is about 6.6k Qwen-VL tokens; Claude caps an image
@@ -91,7 +89,7 @@ func localPromptSize(deployment Deployment, body []byte) (int64, string, string)
 		slog.Warn("qwen capacity count failed; using the byte bound", "deployment", deployment.ID, "error", err.Error())
 	}
 	tokens, images := byteBoundTokens(body, deployment.CapacityEstimate)
-	if images > 0 || carriesMedia(body) {
+	if images > 0 || !boundedBody(deployment.Protocol, body) {
 		return tokens, capacityProvenanceEstimated, units
 	}
 	return tokens, capacityProvenanceBounded, units
@@ -130,73 +128,6 @@ func byteBoundTokens(body []byte, estimate *CapacityEstimate) (int64, int) {
 // JSON (thinkingcontrol.PythonWorstCaseBytes, one parse), with each tool
 // call's arguments string reloaded and re-encoded beside it. A body that does
 // not parse is charged three times its bytes.
-// mediaPartTypes are the content part and item types, across the Chat,
-// Messages and Responses wires, whose tokens a runtime derives from media or
-// from content the body only references, not from the part's bytes.
-var mediaPartTypes = map[string]bool{
-	"image": true, "image_url": true, "input_image": true,
-	"audio": true, "input_audio": true,
-	"video": true, "video_url": true, "input_video": true,
-	"document": true, "file": true, "input_file": true,
-	"image_generation_call": true, "item_reference": true,
-}
-
-// mediaKeys mark a media part or a reference to content outside the body.
-var mediaKeys = []string{"image_url", "input_audio", "video_url", "file_id"}
-
-// carriesMedia reports whether the body has a media part, or a reference to
-// content it does not carry (a file id, an item reference, a stored response
-// or conversation), anywhere in its structure (a tool result's content
-// included), or a template of its own (which may repeat the content), or
-// cannot be read as JSON. Such a body's bytes are no bound on its tokens, so
-// its byte bound is caller_estimated.
-func carriesMedia(body []byte) bool {
-	var value any
-	if json.Unmarshal(body, &value) != nil {
-		return true
-	}
-	if top, ok := value.(map[string]any); ok {
-		// role_mapping: mlx_lm.server's per-message prefixes for a model
-		// without a template.
-		for _, key := range []string{"previous_response_id", "conversation", "chat_template", "role_mapping"} {
-			if top[key] != nil {
-				return true
-			}
-		}
-		// vLLM also takes a template override from chat_template_kwargs.
-		if kwargs, ok := top["chat_template_kwargs"].(map[string]any); ok && kwargs["chat_template"] != nil {
-			return true
-		}
-	}
-	var walk func(any) bool
-	walk = func(node any) bool {
-		switch node := node.(type) {
-		case map[string]any:
-			if kind, ok := node["type"].(string); ok && mediaPartTypes[kind] {
-				return true
-			}
-			for _, key := range mediaKeys {
-				if _, ok := node[key]; ok {
-					return true
-				}
-			}
-			for _, child := range node {
-				if walk(child) {
-					return true
-				}
-			}
-		case []any:
-			for _, child := range node {
-				if walk(child) {
-					return true
-				}
-			}
-		}
-		return false
-	}
-	return walk(value)
-}
-
 func worstCaseBytes(body []byte) int64 {
 	size, err := thinkingcontrol.PythonWorstCaseBytes(body, "arguments")
 	if err != nil {
