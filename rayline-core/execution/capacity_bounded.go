@@ -59,6 +59,21 @@ var (
 	boundedResponsesParts = setOf("input_text", "output_text", "refusal")
 
 	boundedTextParts = setOf("text")
+
+	// The members each content part type may carry: vLLM, for one, reads an
+	// image_url on a part whatever its type says.
+	boundedPartFields = map[string]nameSet{
+		"text":              setOf("type", "text", "cache_control", "citations"),
+		"tool_use":          setOf("type", "id", "name", "input", "cache_control", "caller"),
+		"tool_result":       setOf("type", "tool_use_id", "content", "is_error", "cache_control"),
+		"thinking":          setOf("type", "thinking", "signature"),
+		"redacted_thinking": setOf("type", "data"),
+		"input_text":        setOf("type", "text"),
+		"output_text":       setOf("type", "text", "annotations", "logprobs"),
+		"refusal":           setOf("type", "refusal"),
+		"summary_text":      setOf("type", "text"),
+		"reasoning_text":    setOf("type", "text"),
+	}
 )
 
 // boundedBody reports whether the byte bound over a prepared body for
@@ -155,7 +170,7 @@ func partsIn(content any, allowed nameSet) bool {
 	}
 	return eachObject(content, func(part map[string]any) bool {
 		kind, _ := part["type"].(string)
-		return allowed[kind]
+		return allowed[kind] && membersIn(part, boundedPartFields[kind])
 	})
 }
 
