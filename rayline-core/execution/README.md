@@ -139,7 +139,8 @@ opt-in. The core reports facts and never picks or ranks a model.
     a file or document, a tool result's included) or a reference to content
     it does not carry (a `file_id`, an `item_reference`, image generation
     history, `previous_response_id` or `conversation`) or its own
-    `chat_template`, whose bytes bound nothing.
+    `chat_template` (top level or in `chat_template_kwargs`), whose bytes bound
+    nothing.
   - **`context_overflow`** (local deployments, `"refuses"` or
     `"truncates"`, default `"truncates"`) states what the runtime does with a
     prompt over its window. On a `"truncates"` deployment (Ollama,

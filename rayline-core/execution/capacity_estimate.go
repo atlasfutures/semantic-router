@@ -161,6 +161,10 @@ func carriesMedia(body []byte) bool {
 				return true
 			}
 		}
+		// vLLM also takes a template override from chat_template_kwargs.
+		if kwargs, ok := top["chat_template_kwargs"].(map[string]any); ok && kwargs["chat_template"] != nil {
+			return true
+		}
 	}
 	var walk func(any) bool
 	walk = func(node any) bool {
