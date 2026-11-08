@@ -118,6 +118,14 @@ func TestStreamPeekDecidesOnACompleteEventWithTheStreamStillOpen(t *testing.T) {
 	}
 }
 
+func TestEventStreamMediaTypeIsCaseInsensitive(t *testing.T) {
+	for value, want := range map[string]bool{"text/event-stream": true, "Text/Event-Stream; charset=utf-8": true, "application/json": false, "": false} {
+		if got := isEventStream(http.Header{"Content-Type": {value}}); got != want {
+			t.Errorf("%q: %v", value, got)
+		}
+	}
+}
+
 func TestStreamPeekKeepsTheBodysReadError(t *testing.T) {
 	stream := "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ready\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"
 	_, body := peekStreamContextRejection(failingBody{io.MultiReader(strings.NewReader(stream), iotest.ErrReader(io.ErrUnexpectedEOF))})

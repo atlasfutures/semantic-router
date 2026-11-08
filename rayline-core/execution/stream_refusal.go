@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"mime"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -48,6 +50,12 @@ func peekStreamContextRejection(body io.ReadCloser) (bool, io.ReadCloser) {
 		}
 	}
 	return false, stream.replay(read)
+}
+
+// isEventStream reports a text/event-stream response, whatever its spelling.
+func isEventStream(header http.Header) bool {
+	mediaType, _, err := mime.ParseMediaType(header.Get("Content-Type"))
+	return err == nil && mediaType == "text/event-stream"
 }
 
 // chunkedStream reads its body on one goroutine, so a peek can stop waiting

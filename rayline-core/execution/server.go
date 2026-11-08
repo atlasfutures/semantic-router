@@ -444,7 +444,7 @@ func (server *Server) execute(writer http.ResponseWriter, incoming *http.Request
 		if upstream.StatusCode >= 200 && upstream.StatusCode < 300 {
 			// A local stream may open with 200 and refuse the prompt as
 			// its first event, before any output.
-			if !v2 || selected.deployment.Kind != "local" || !strings.HasPrefix(upstream.Header.Get("Content-Type"), "text/event-stream") {
+			if !v2 || selected.deployment.Kind != "local" || !isEventStream(upstream.Header) {
 				break
 			}
 			if rejected, upstream.Body = peekStreamContextRejection(upstream.Body); !rejected {
