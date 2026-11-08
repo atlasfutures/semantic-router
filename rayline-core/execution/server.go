@@ -436,14 +436,29 @@ func (server *Server) execute(writer http.ResponseWriter, incoming *http.Request
 			server.writeError(writer, format, http.StatusBadGateway, "upstream_unavailable", "selected endpoint request failed")
 			return
 		}
+		var (
+			errorBody []byte
+			readErr   error
+			rejected  bool
+		)
 		if upstream.StatusCode >= 200 && upstream.StatusCode < 300 {
-			break
+			// A local stream may open with 200 and refuse the prompt as
+			// its first event, before any output.
+			if !v2 || selected.deployment.Kind != "local" || !strings.HasPrefix(upstream.Header.Get("Content-Type"), "text/event-stream") {
+				break
+			}
+			if rejected, upstream.Body = peekStreamContextRejection(upstream.Body); !rejected {
+				break
+			}
+			upstream.Body.Close()
+		} else {
+			errorBody, readErr = readBounded(upstream.Body, 1<<20)
+			upstream.Body.Close()
+			rejected = v2 && readErr == nil && isRuntimeContextRejection(selected.deployment, upstream.StatusCode, errorBody)
 		}
-		errorBody, readErr := readBounded(upstream.Body, 1<<20)
-		upstream.Body.Close()
 		// A runtime's own context refusal arrives before any output. It is a
 		// fact for the service, never a local reselection or truncation.
-		if v2 && readErr == nil && isRuntimeContextRejection(selected.deployment, upstream.StatusCode, errorBody) {
+		if rejected {
 			previous := capacityFact(selected.deployment, prompt, prepared.outputLimit)
 			if previous == nil {
 				previous = pending.input.Capacity[selected.action.ID]
