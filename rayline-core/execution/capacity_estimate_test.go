@@ -836,6 +836,11 @@ func TestCapacityEstimateConfigIsPerDeploymentAndValidated(t *testing.T) {
 	if _, err := NewServer(config, registry, provider, testCoreToken); err == nil || !strings.Contains(err.Error(), "capacity_estimate") {
 		t.Fatalf("invalid estimate admitted: %v", err)
 	}
+	config.Deployments[0].CapacityEstimate = nil
+	config.Deployments[0].CapacityMarginTokens = -2048
+	if _, err := NewServer(config, registry, provider, testCoreToken); err == nil || !strings.Contains(err.Error(), "capacity_margin_tokens") {
+		t.Fatalf("negative capacity margin admitted: %v", err)
+	}
 }
 
 func TestLocalOpenAIStyleContextRefusalReconsultsToCloud(t *testing.T) {

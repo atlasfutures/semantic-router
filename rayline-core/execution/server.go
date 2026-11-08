@@ -87,6 +87,11 @@ func NewServer(config Config, registry *thinkingcontrol.Registry, provider Decis
 		if err := deployment.CapacityEstimate.validate(); err != nil {
 			return nil, fmt.Errorf("deployment %s: %w", deployment.ID, err)
 		}
+		// A negative margin would shrink a measured or bounded size below
+		// the count it bounds, and the policy admits such a fit.
+		if deployment.CapacityMarginTokens < 0 {
+			return nil, fmt.Errorf("deployment %s: capacity_margin_tokens must be nonnegative", deployment.ID)
+		}
 		if overflow := deployment.ContextOverflow; overflow != "" && overflow != ContextOverflowRefuses && overflow != ContextOverflowTruncates {
 			return nil, fmt.Errorf("deployment %s: context_overflow must be %q or %q", deployment.ID, ContextOverflowRefuses, ContextOverflowTruncates)
 		}

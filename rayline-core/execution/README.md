@@ -98,10 +98,10 @@ opt-in. The core reports facts and never picks or ranks a model.
 - **Capacity.** For each local action whose deployment has a qualified prompt
   counter, the core prepares the request exactly as dispatch would (tools,
   history, private append) and counts it with the runtime's own tokenizer:
-  `required` = that count + the prepared output limit + the deployment's optional
-  `capacity_margin_tokens`; `available` = its configured `context_window`, with
-  `available_source: "configured"` (llama.cpp's per-slot allocation is not yet
-  observed); `units` = its `token_units`; `provenance: "local_measured"`. A
+  `required` = that count + the prepared output limit + the deployment's
+  optional, nonnegative `capacity_margin_tokens`; `available` = its configured
+  `context_window`, with `available_source: "configured"` (llama.cpp's
+  per-slot allocation is not yet observed); `units` = its `token_units`; `provenance: "local_measured"`. A
   counter that fails reports that target `fits: false` with
   `reason: "runtime_unavailable"` instead of refusing the turn. A **local**
   target without a registered counter is sized from the same prepared request:
