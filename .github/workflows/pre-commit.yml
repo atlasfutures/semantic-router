@@ -56,11 +56,18 @@ jobs:
             ${{ runner.os }}-node-docs-ci-
 
       - name: Run changed-file checks
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             export BASE_REF="origin/${{ github.base_ref }}"
           else
-            export BASE_REF="HEAD^"
+            # A dispatched run has no base ref. HEAD^ would check only the last
+            # commit, so resolve the open pull request's base and check the
+            # whole branch against it, as the pull request path does.
+            pr_base="$(gh pr view "$GITHUB_REF_NAME" --json baseRefName -q .baseRefName 2>/dev/null || true)"
+            export BASE_REF="origin/${pr_base:-${DEFAULT_BRANCH:-main}}"
           fi
           make check
 
@@ -163,11 +170,18 @@ jobs:
         run: pip install -e src/vllm-sr
 
       - name: Run changed-file checks
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             export BASE_REF="origin/${{ github.base_ref }}"
           else
-            export BASE_REF="HEAD^"
+            # A dispatched run has no base ref. HEAD^ would check only the last
+            # commit, so resolve the open pull request's base and check the
+            # whole branch against it, as the pull request path does.
+            pr_base="$(gh pr view "$GITHUB_REF_NAME" --json baseRefName -q .baseRefName 2>/dev/null || true)"
+            export BASE_REF="origin/${pr_base:-${DEFAULT_BRANCH:-main}}"
           fi
           make check
 
