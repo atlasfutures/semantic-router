@@ -151,6 +151,30 @@ jobs:
           CGO_ENABLED: 1
           LD_LIBRARY_PATH: ${{ github.workspace }}/candle-binding/target/release
 
+      # TEMPORARY, CI PROBE ONLY — remove before this branch is considered.
+      # api-docs-check regenerates into a temp dir and discards the result, so
+      # a stale committed artifact can only be fixed by running the generator
+      # locally, which needs the Rust bindings this job has already built.
+      # This exports the regenerated artifacts so the fix can be committed
+      # without reproducing that build elsewhere.
+      - name: Export regenerated API docs (probe)
+        if: always()
+        run: make api-docs-openapi
+        env:
+          CI: true
+          CGO_ENABLED: 1
+          LD_LIBRARY_PATH: ${{ github.workspace }}/candle-binding/target/release
+
+      - name: Upload regenerated API docs (probe)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: regenerated-api-docs
+          path: |
+            website/static/openapi/apiserver/apiserver.openapi.json
+            website/docs/api/apiserver.md
+          if-no-files-found: error
+
       - name: Install HuggingFace CLI
         run: |
           pip install -U "huggingface_hub[cli]" hf_transfer
