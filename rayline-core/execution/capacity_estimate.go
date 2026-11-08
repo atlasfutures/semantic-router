@@ -147,15 +147,16 @@ var mediaKeys = []string{"image_url", "input_audio", "video_url", "file_id"}
 // carriesMedia reports whether the body has a media part, or a reference to
 // content it does not carry (a file id, an item reference, a stored response
 // or conversation), anywhere in its structure (a tool result's content
-// included), or cannot be read as JSON. Such a part's bytes are no bound on
-// its tokens, so the body's byte bound is caller_estimated.
+// included), or a template of its own (which may repeat the content), or
+// cannot be read as JSON. Such a body's bytes are no bound on its tokens, so
+// its byte bound is caller_estimated.
 func carriesMedia(body []byte) bool {
 	var value any
 	if json.Unmarshal(body, &value) != nil {
 		return true
 	}
 	if top, ok := value.(map[string]any); ok {
-		for _, key := range []string{"previous_response_id", "conversation"} {
+		for _, key := range []string{"previous_response_id", "conversation", "chat_template"} {
 			if top[key] != nil {
 				return true
 			}
