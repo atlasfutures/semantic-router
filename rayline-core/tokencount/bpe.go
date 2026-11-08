@@ -2,9 +2,6 @@
 // tokenizer reconstructed from a Hugging Face merges list. It reproduces the
 // token count of the reference tokenizer (normalizer, added tokens,
 // pre-tokenizer and merges); token ids are not needed and not kept.
-//
-// CI probe: this comment is a throwaway edit to exercise the pr.yml matrix on a
-// vsr-next branch. It carries no behavior change.
 package tokencount
 
 import (

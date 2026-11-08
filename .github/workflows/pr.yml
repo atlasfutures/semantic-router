@@ -3,7 +3,7 @@ name: Pull Request
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
-    branches: [main, vsr-next]
+    branches: [main]
 
 permissions:
   contents: read
