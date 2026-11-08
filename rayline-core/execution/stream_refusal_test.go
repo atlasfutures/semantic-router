@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The runtimes' context-window refusals, as their servers write them.
@@ -48,10 +49,18 @@ func TestStreamPeekFindsARefusalBeforeOutputAndReplaysEverythingElse(t *testing.
 		{"messages", "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"m\",\"role\":\"assistant\",\"content\":[]}}\n\nevent: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"This server's maximum context length is 1048576 tokens, but the rendered prompt has 1048577 tokens.\"}}\n\n", true},
 		{"responses", "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"r\"}}\n\nevent: response.in_progress\ndata: {\"type\":\"response.in_progress\",\"response\":{\"id\":\"r\"}}\n\nevent: response.failed\ndata: {\"type\":\"response.failed\",\"response\":{\"id\":\"r\",\"status\":\"failed\",\"error\":{\"code\":\"invalid_prompt\",\"message\":\"This server's maximum context length is 1048576 tokens, but the rendered prompt has 1048577 tokens.\"}}}\n\n", true},
 		{"output first", "data: {\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"Hi\"},\"finish_reason\":null}]}\n\ndata: {\"error\":" + tensorFoldContextError + "}\n\n", false},
-		{"keepalive first", ": keepalive\n\ndata: {\"error\":" + tensorFoldContextError + "}\n\n", false},
+		{"keepalive before the refusal", ": keepalive\n\ndata: {\"error\":" + tensorFoldContextError + "}\n\n", true},
 		{"another error", "data: {\"error\":{\"message\":\"engine fault\",\"type\":\"server_error\"}}\n\n", false},
 		{"ordinary stream", "data: {\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\"},\"finish_reason\":null}]}\n\ndata: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ready\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n", false},
 		{"cut short", "data: {\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\"}", false},
+		{"output naming the marker, error null", "data: {\"error\":null,\"choices\":[{\"index\":0,\"delta\":{\"content\":\"exceed_context_size_error\"},\"finish_reason\":null}]}\n\n", false},
+		{"flat responses error", "event: error\ndata: {\"type\":\"error\",\"sequence_number\":0,\"code\":\"context_length_exceeded\",\"message\":\"too long\"}\n\n", true},
+		{"comment inside the refusal", "event: error\n: trace\ndata: {\"error\":" + tensorFoldContextError + "}\n\n", true},
+		{"CR separators", "data: {\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\"},\"finish_reason\":null}]}\r\rdata: {\"error\":" + tensorFoldContextError + "}\r\r", true},
+		{"BOM first", "\ufeffdata: {\"error\":" + tensorFoldContextError + "}\n\n", true},
+		{"no blank line at EOF", "data: {\"error\":" + tensorFoldContextError + "}", true},
+		{"repeated event field", "event: x\nevent: response.failed\ndata: {\"response\":{\"error\":{\"code\":\"invalid_prompt\",\"message\":\"This server's maximum context length is 8 tokens\"}}}\n\n", true},
+		{"first event over the limit", "data: {\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"" + strings.Repeat("x", 2*streamPeekLimit) + "\"},\"finish_reason\":null}]}\n\n", false},
 	} {
 		refused, body := peekStreamContextRejection(io.NopCloser(strings.NewReader(tc.stream)))
 		if refused != tc.want {
@@ -60,6 +69,32 @@ func TestStreamPeekFindsARefusalBeforeOutputAndReplaysEverythingElse(t *testing.
 		if replayed, err := io.ReadAll(body); err != nil || string(replayed) != tc.stream {
 			t.Errorf("%s: replayed %q, %v", tc.name, replayed, err)
 		}
+	}
+}
+
+func TestStreamPeekStopsWaitingOnASilentStream(t *testing.T) {
+	// A role chunk, then a long silent prefill: the peek gives the stream on
+	// after streamPeekWait, and the read it left pending is relayed.
+	reader, writer := io.Pipe()
+	opening := "data: {\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\"},\"finish_reason\":null}]}\n\n"
+	rest := "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ready\"},\"finish_reason\":\"stop\"}]}\n\n"
+	go func() {
+		_, _ = io.WriteString(writer, opening)
+		time.Sleep(streamPeekWait + 500*time.Millisecond)
+		_, _ = io.WriteString(writer, rest)
+		_ = writer.Close()
+	}()
+	started := time.Now()
+	refused, body := peekStreamContextRejection(reader)
+	if refused || time.Since(started) > streamPeekWait+250*time.Millisecond {
+		t.Fatalf("refused=%v after %s", refused, time.Since(started))
+	}
+	replayed, err := io.ReadAll(body)
+	if err != nil || string(replayed) != opening+rest {
+		t.Fatalf("replayed %q, %v", replayed, err)
+	}
+	if err := body.Close(); err != nil {
+		t.Fatal(err)
 	}
 }
 

@@ -167,8 +167,9 @@ opt-in. The core reports facts and never picks or ranks a model.
   local runtime sends as the first event of a stream it opened with 200
   (TensorFold): the core holds back the stream's opening events (a role-only
   Chat chunk, `message_start`, `ping`, `response.created`,
-  `response.in_progress`) until the first other event, and relays them
-  unchanged when that event is not such a refusal.
+  `response.in_progress`, comments) until the first other event, for at
+  most 2 seconds and 64 KiB, and relays them unchanged when that event is
+  not such a refusal.
 - **No deployment fits.** When every executable target has a
   `context_capacity` shortfall that stands (see `context_overflow`) and none
   is unknown, the
