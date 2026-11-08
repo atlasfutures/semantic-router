@@ -901,4 +901,23 @@ func TestByteBoundIsBoundedUnlessAnImageIsCharged(t *testing.T) {
 	if _, provenance, _ := localPromptSize(other, image); provenance != capacityProvenanceEstimated {
 		t.Fatalf("image byte bound: %s", provenance)
 	}
+	// Media whose bytes are not charged media_tokens bound nothing either.
+	for name, body := range map[string]string{
+		"remote image":      `{"model":"m","messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"https://example.com/a.png"}}]}]}`,
+		"small inline":      `{"model":"m","messages":[{"role":"user","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"iVBORw0KGgo="}}]}]}`,
+		"tool result image": `{"model":"m","messages":[{"role":"user","content":[{"type":"tool_result","tool_use_id":"t","content":[{"type":"image","source":{"type":"url","url":"https://example.com/a.png"}}]}]}]}`,
+		"responses image":   `{"model":"m","input":[{"role":"user","content":[{"type":"input_image","image_url":"https://example.com/a.png"}]}]}`,
+		"audio":             `{"model":"m","messages":[{"role":"user","content":[{"type":"input_audio","input_audio":{"data":"AAAA","format":"wav"}}]}]}`,
+		"document":          `{"model":"m","messages":[{"role":"user","content":[{"type":"document","source":{"type":"url","url":"https://example.com/a.pdf"}}]}]}`,
+		"not json":          `not json`,
+	} {
+		if _, provenance, _ := localPromptSize(other, []byte(body)); provenance != capacityProvenanceEstimated {
+			t.Errorf("%s: %s", name, provenance)
+		}
+	}
+	// Text that only mentions media stays bounded.
+	quoted := []byte(`{"model":"m","messages":[{"role":"user","content":"{\"type\":\"image_url\",\"image_url\":{}}"}]}`)
+	if _, provenance, _ := localPromptSize(other, quoted); provenance != capacityProvenanceBounded {
+		t.Fatalf("quoted media text: %s", provenance)
+	}
 }

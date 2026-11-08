@@ -129,23 +129,28 @@ opt-in. The core reports facts and never picks or ranks a model.
     `&` escaped, each tool call's arguments reloaded and re-encoded beside
     it), a proven upper bound for byte-level BPE whatever a template does to
     the request's JSON, raised by `headroom_ratio` and 512 tokens for a
-    template preamble, `provenance: "caller_estimated"`.
+    template preamble, `provenance: "caller_bounded"`. The policy contract
+    admits a bounded `fits: true` as a fit. The 512-token preamble margin is
+    the one heuristic part: a template that adds a longer preamble is not
+    covered.
   - An inline base64 image is charged `media_tokens` instead of its bytes, and
-    a fact that includes one is `caller_estimated`.
+    a fact that includes one is `caller_estimated`. So is a byte bound over a
+    request with any other media part (a remote or small image, audio, video,
+    a file or document, a tool result's included), whose bytes bound nothing.
   - **`context_overflow`** (local deployments, `"refuses"` or
     `"truncates"`, default `"truncates"`) states what the runtime does with a
     prompt over its window. On a `"truncates"` deployment (Ollama,
-    `mlx_lm.server`) an estimated shortfall always stands, so such a prompt is
-    never sent to be silently cut; if that leaves every target short, the turn
-    gets the compaction 400. On a `"refuses"` deployment (llama.cpp, vLLM),
-    when every executable target falls short, its estimated facts are sent as
-    unknown for all its actions: the turn dispatches there and the runtime's
-    own context refusal decides.
+    `mlx_lm.server`) an estimated or bounded shortfall always stands, so such
+    a prompt is never sent to be silently cut; if that leaves every target
+    short, the turn gets the compaction 400. On a `"refuses"` deployment
+    (llama.cpp, vLLM), when every executable target falls short, its
+    estimated and bounded facts are sent as unknown for all its actions: the
+    turn dispatches there and the runtime's own context refusal decides.
     A missing `context_overflow` means `"truncates"`; Raydock's CLI
     sets `"refuses"` when it detects llama.cpp. The rule is part of the
-    all-short decision itself: an estimated shortfall on a `"refuses"`
-    deployment counts as unknown there, so the turn start, a re-consult, the
-    re-consult limit and a service refusal all agree.
+    all-short decision itself: an estimated or bounded shortfall on a
+    `"refuses"` deployment counts as unknown there, so the turn start, a
+    re-consult, the re-consult limit and a service refusal all agree.
   - **A runtime context refusal covers its whole deployment.** It is recorded
     as `provider_reported` for every action bound to that deployment, so no
     sibling control is dispatched to be refused again, and when that leaves no
