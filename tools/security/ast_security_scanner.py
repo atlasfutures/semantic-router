@@ -29,10 +29,11 @@ import os
 import re
 import subprocess
 import sys
-import tomllib
 from dataclasses import dataclass, field
 from enum import IntEnum
 from pathlib import Path
+
+import tomllib
 
 # ---------------------------------------------------------------------------
 # Tree-sitter language setup
