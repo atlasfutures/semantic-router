@@ -22,12 +22,14 @@ References:
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import math
 import os
 import re
 import subprocess
 import sys
+import tomllib
 from dataclasses import dataclass, field
 from enum import IntEnum
 from pathlib import Path
@@ -640,6 +642,102 @@ def _load_url_allowlist(root: Path):
             pass
 
 
+# Reviewed cloud-metadata references, keyed (repo-relative path, pattern).
+# Populated from `tools/security/ast-scan-exemptions.toml`; see that file for
+# the format and the review expectations. Empty unless a scan loaded it.
+_credential_exemptions: dict[tuple[str, str], str] = {}
+_used_credential_exemptions: set[tuple[str, str]] = set()
+_exemptions_root: Path | None = None
+
+
+def _load_credential_exemptions(root: Path):
+    """Load reviewed cloud-metadata exemptions for this scan root."""
+    global _credential_exemptions, _used_credential_exemptions, _exemptions_root
+    _credential_exemptions = {}
+    _used_credential_exemptions = set()
+    _exemptions_root = root
+    exemptions_file = root / "tools" / "security" / "ast-scan-exemptions.toml"
+    if not exemptions_file.is_file():
+        return
+    try:
+        data = tomllib.loads(exemptions_file.read_text(encoding="utf-8"))
+    except (OSError, PermissionError, ValueError) as exc:
+        # Fail closed: an unreadable or malformed policy file exempts nothing.
+        print(f"Warning: cannot load {exemptions_file}: {exc}", file=sys.stderr)
+        return
+    for entry in data.get("exemption", []):
+        path = str(entry.get("path", "")).strip().replace("\\", "/").lstrip("./")
+        reason = " ".join(str(entry.get("reason", "")).split())
+        # Patterns are base64-encoded, as in scan_sensitive_paths.toml, so this
+        # policy file does not itself trip the credential-reference rules.
+        try:
+            pattern = (
+                base64.b64decode(str(entry.get("pattern_b64", "")), validate=True)
+                .decode("utf-8")
+                .strip()
+            )
+        except (ValueError, UnicodeDecodeError):
+            print(
+                f"Warning: ignoring exemption with undecodable pattern_b64 in "
+                f"{exemptions_file}: {entry.get('path')!r}",
+                file=sys.stderr,
+            )
+            continue
+        # Every field is load-bearing: an entry without a path, a pattern, or
+        # a justification is dropped rather than applied broadly.
+        if not path or not pattern or not reason:
+            print(
+                f"Warning: ignoring exemption missing path/pattern_b64/reason in "
+                f"{exemptions_file}: {entry.get('path')!r}",
+                file=sys.stderr,
+            )
+            continue
+        if pattern not in CREDENTIAL_STRINGS:
+            print(
+                f"Warning: exemption pattern is not a scanner pattern, ignoring: "
+                f"{pattern!r} in {exemptions_file}",
+                file=sys.stderr,
+            )
+            continue
+        _credential_exemptions[(path, pattern)] = reason
+
+
+def _repo_relative(filepath: str) -> str:
+    """Path relative to the scan root, for matching exemption entries."""
+    if _exemptions_root is None:
+        return str(filepath).replace("\\", "/")
+    try:
+        rel = Path(filepath).resolve().relative_to(_exemptions_root.resolve())
+    except (OSError, ValueError):
+        return str(filepath).replace("\\", "/")
+    return rel.as_posix()
+
+
+def _credential_exemption(filepath: str, pattern: str) -> str | None:
+    """Reason this (file, pattern) pair was reviewed and accepted, if any."""
+    key = (_repo_relative(filepath), pattern)
+    reason = _credential_exemptions.get(key)
+    if reason is not None:
+        _used_credential_exemptions.add(key)
+    return reason
+
+
+def _report_stale_exemptions(result: ScanResult):
+    """Flag exemptions no scanned file used — a drifted or dead entry."""
+    for (path, pattern), reason in sorted(_credential_exemptions.items()):
+        if (path, pattern) in _used_credential_exemptions:
+            continue
+        result.add(
+            Severity.MEDIUM,
+            "AST_EXEMPTION_STALE",
+            "tools/security/ast-scan-exemptions.toml",
+            0,
+            f"Unused exemption: {path} no longer references {pattern} "
+            f"(remove the entry or restore the reference) — reason was: "
+            f"{reason[:120]}",
+        )
+
+
 _TEMPLATE_URL_RE = re.compile(r"[{$%]")
 
 
@@ -851,6 +949,8 @@ def _check_credential_strings(node, filepath: str, is_test: bool, result: ScanRe
     text = node.text.decode(errors="replace")
     for cred in CREDENTIAL_STRINGS:
         if cred in text:
+            if _credential_exemption(filepath, cred) is not None:
+                return
             sev = (
                 Severity.HIGH
                 if cred in HIGH_RISK_CREDENTIAL_STRINGS
@@ -1873,6 +1973,7 @@ def scan_file_anomalies(filepath: str, source: bytes, result: ScanResult):
 def scan_directory(root: Path, result: ScanResult):
     _init_languages()
     _load_url_allowlist(root)
+    _load_credential_exemptions(root)
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = [d for d in dirnames if not should_skip_dir(d)]
         for fname in filenames:
@@ -1898,11 +1999,15 @@ def scan_directory(root: Path, result: ScanResult):
                 _scan_rust_build_rs(str(fpath), source, result)
             if fname == "conftest.py":
                 _scan_conftest_py(str(fpath), source, result)
+    # Only the full-tree scan sees every file, so it is the one pass that can
+    # tell "unused" from "that file simply was not in this diff".
+    _report_stale_exemptions(result)
 
 
 def scan_diff(base_ref: str, repo_root: str, result: ScanResult):
     _init_languages()
     _load_url_allowlist(Path(repo_root))
+    _load_credential_exemptions(Path(repo_root))
     try:
         proc = subprocess.run(
             ["git", "diff", f"{base_ref}...HEAD", "--unified=0", "--diff-filter=ACMR"],

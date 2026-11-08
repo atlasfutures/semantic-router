@@ -1,0 +1,39 @@
+# Reviewed cloud-metadata references.
+#
+# Each entry suppresses the HIGH `AST_CREDENTIAL_REF` finding for ONE
+# cloud-metadata pattern in ONE file. Exemptions never widen past that pair:
+# there is no wildcard, no directory scope, and no way to disable a pattern
+# repo-wide. A reference in any other file still fails the scan. Only
+# `AST_CREDENTIAL_REF` is suppressed — the rules for *reading* a credential
+# path (AST_GO_CRED_READ, AST_RS_CRED_READ, AST_GO_INIT_SUSPICIOUS) are not
+# exemptable here, since those detect different behaviour.
+#
+# Like `ast-scan-allowlist.txt`, this file is scanner policy: CI copies the
+# base branch's copy over the pull request's before scanning, so a fork
+# cannot exempt its own code by editing this file. Entries land only by
+# review on the base branch.
+#
+#   [[exemption]]
+#   path = "repo/relative/path.go"  # exact, repo-relative, forward slashes
+#   pattern_b64 = "..."             # base64 of the pattern, as in
+#                                   # scan_sensitive_paths.toml, so this
+#                                   # policy file is not itself flagged
+#   reason = "why this reference is safe — required, non-empty"
+#
+# `make security-scan` reports an entry whose file no longer contains the
+# pattern as a MEDIUM `AST_EXEMPTION_STALE` finding, so a reference that
+# moves or disappears surfaces instead of leaving a silent hole.
+
+# Decodes to the Google Compute metadata server hostname. Decode to confirm:
+#   base64 -d <<<"bWV0YWRhdGEuZ29vZ2xlLmludGVybmFs"
+[[exemption]]
+path = "src/semantic-router/pkg/selection/raylinearc/routing_prices_idtoken.go"
+pattern_b64 = "bWV0YWRhdGEuZ29vZ2xlLmludGVybmFs"
+reason = """
+GCP link-local metadata endpoint used to mint a workload identity token for \
+the routing price feed (Cloud Run/GKE/GCE). The constant is the documented \
+instance-identity URL; the file stores no credential and reads no key \
+material from disk — minting a short-lived token at runtime is what lets \
+this code avoid holding a long-lived secret at all. The audience is checked \
+by the feed, which also enforces an invoker allowlist.
+"""
