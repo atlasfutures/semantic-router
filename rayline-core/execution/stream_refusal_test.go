@@ -103,6 +103,21 @@ type failingBody struct{ io.Reader }
 
 func (failingBody) Close() error { return nil }
 
+func TestStreamPeekDecidesOnACompleteEventWithTheStreamStillOpen(t *testing.T) {
+	for _, separator := range []string{"\r\r", "\n\n", "\r\n\r\n"} {
+		reader, writer := io.Pipe()
+		event := "data: {\"error\":" + tensorFoldContextError + "}" + separator
+		go func() { _, _ = io.WriteString(writer, event) }()
+		started := time.Now()
+		refused, body := peekStreamContextRejection(reader)
+		if !refused || time.Since(started) > streamPeekWait/2 {
+			t.Errorf("%q: refused=%v after %s", separator, refused, time.Since(started))
+		}
+		_ = writer.Close()
+		_ = body.Close()
+	}
+}
+
 func TestStreamPeekKeepsTheBodysReadError(t *testing.T) {
 	stream := "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ready\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"
 	_, body := peekStreamContextRejection(failingBody{io.MultiReader(strings.NewReader(stream), iotest.ErrReader(io.ErrUnexpectedEOF))})

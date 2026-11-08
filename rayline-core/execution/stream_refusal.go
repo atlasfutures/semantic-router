@@ -124,15 +124,14 @@ func classifyStreamPrefix(prefix []byte, eof bool) (refused, decided bool) {
 	var event, data strings.Builder
 	hasData := false
 	for len(text) > 0 {
+		// Each read re-parses the whole prefix, so a CR whose LF arrives in
+		// the next read ends the same line either way.
 		end := strings.IndexAny(text, "\r\n")
-		if end < 0 || !eof && end == len(text)-1 && text[end] == '\r' {
-			// An unterminated line, or a CR whose LF may be in the next read.
+		if end < 0 {
 			if !eof {
 				break
 			}
-			if end < 0 {
-				end = len(text)
-			}
+			end = len(text)
 		}
 		line := text[:end]
 		text = text[end:]
