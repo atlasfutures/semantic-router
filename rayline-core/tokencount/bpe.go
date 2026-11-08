@@ -131,7 +131,13 @@ func (bpe *BPE) Count(text string) int {
 // already NFC under Go's tables is left unchanged by the reference too:
 // Unicode only ever adds compositions and combining classes. Every code
 // point in ten contexts, and every canonical decomposition, was compared
-// with the reference tokenizer: no exact count differs and none is lower.
+// with the reference tokenizer: no single-code-point exact count differs and
+// none is lower. Across longer strings exact holds only on a toolchain whose
+// Unicode tables match the reference's, on Unicode 17: under a different
+// edition a code point the two classify differently can move a pre-tokenizer
+// cut and count a few tokens high while still reporting exact (see
+// qwenExactnessIsSound in qwen_test.go). No count is ever lower on any
+// edition, so a capacity decision never under-reserves.
 func (bpe *BPE) CountExact(text string) (count int, exact bool) {
 	exact = true
 	cache := make(map[string]int)
