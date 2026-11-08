@@ -915,6 +915,10 @@ func TestByteBoundIsBoundedOnlyOverAFullyKnownBody(t *testing.T) {
 		{"messages text, tools and thinking", messages, `{"model":"m","max_tokens":64,"system":[{"type":"text","text":"s","cache_control":{"type":"ephemeral"}}],"thinking":{"type":"adaptive"},"output_config":{"effort":"high"},"tools":[{"name":"f","input_schema":{}}],"messages":[{"role":"user","content":"hi"},{"role":"assistant","content":[{"type":"thinking","thinking":"t","signature":"x"},{"type":"tool_use","id":"u","name":"f","input":{}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"u","content":[{"type":"text","text":"ok"}]}]}]}`, true},
 		{"responses text and tools", responses, `{"model":"m","instructions":"s","reasoning":{"effort":"high"},"tools":[{"type":"function","name":"f","parameters":{}},{"type":"custom","name":"g"}],"input":[{"role":"user","content":[{"type":"input_text","text":"hi"}]},{"type":"reasoning","summary":[]},{"type":"function_call","call_id":"c","name":"f","arguments":"{}"},{"type":"function_call_output","call_id":"c","output":"ok"}]}`, true},
 		{"responses string input", responses, `{"model":"m","input":"hi"}`, true},
+		{"chat translated from responses", chat, `{"model":"m","store":false,"n":1,"messages":[{"role":"user","id":"msg_1","content":"hi"}]}`, true},
+		{"messages caching and context management", messages, `{"model":"m","max_tokens":64,"cache_control":{"type":"ephemeral"},"context_management":{"edits":[]},"messages":[{"role":"user","content":"hi"}]}`, true},
+		{"responses codex members", responses, `{"model":"m","input":"hi","stream":true,"stream_options":{"include_obfuscation":false},"client_metadata":{"session_id":"s"},"tools":[{"type":"namespace","name":"ns","tools":[{"type":"function","name":"f","parameters":{}}]}]}`, true},
+		{"namespace with a server tool", responses, `{"model":"m","input":"hi","tools":[{"type":"namespace","name":"ns","tools":[{"type":"web_search"}]}]}`, false},
 
 		{"unknown protocol", "", `{"model":"m","messages":[{"role":"user","content":"hi"}]}`, false},
 		{"not json", chat, `not json`, false},

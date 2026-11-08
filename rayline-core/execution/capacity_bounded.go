@@ -29,20 +29,21 @@ var (
 		"stream", "stream_options", "max_tokens", "max_completion_tokens", "temperature", "top_p",
 		"top_k", "min_p", "stop", "seed", "presence_penalty", "frequency_penalty",
 		"repetition_penalty", "logprobs", "top_logprobs", "user", "metadata", "response_format",
-		"reasoning_effort", "reasoning", "chat_template_kwargs", "prompt_cache_key")
-	boundedChatMessageFields = setOf("role", "content", "name", "tool_calls", "tool_call_id",
+		"reasoning_effort", "reasoning", "chat_template_kwargs", "prompt_cache_key", "store", "n")
+	boundedChatMessageFields = setOf("role", "content", "name", "tool_calls", "tool_call_id", "id",
 		"reasoning_content", "reasoning", "reasoning_details", "refusal")
 	// Template switches only: a template that renders them is the served one.
 	boundedChatTemplateKwargs = setOf("enable_thinking", "thinking")
 
 	boundedMessagesFields = setOf("model", "messages", "system", "tools", "tool_choice",
 		"max_tokens", "temperature", "top_p", "top_k", "stop_sequences", "stream", "metadata",
-		"thinking", "output_config")
+		"thinking", "output_config", "cache_control", "context_management")
 	boundedMessagesParts = setOf("text", "tool_use", "tool_result", "thinking", "redacted_thinking")
 
 	boundedResponsesFields = setOf("model", "input", "instructions", "tools", "tool_choice",
 		"parallel_tool_calls", "max_output_tokens", "temperature", "top_p", "stream", "reasoning",
-		"text", "store", "metadata", "user", "include", "prompt_cache_key")
+		"text", "store", "metadata", "user", "include", "prompt_cache_key", "client_metadata",
+		"stream_options")
 	boundedResponsesItems = setOf("message", "function_call", "function_call_output", "reasoning",
 		"custom_tool_call", "custom_tool_call_output")
 	boundedResponsesMessageFields = setOf("type", "role", "content", "id", "status")
@@ -80,7 +81,7 @@ func boundedBody(protocol llmprotocol.WireFormat, body []byte) bool {
 	case llmprotocol.OpenAIResponsesV1:
 		return membersIn(top, boundedResponsesFields) &&
 			(top["instructions"] == nil || isString(top["instructions"])) &&
-			toolsOf(top["tools"], "function", "custom") &&
+			toolsOf(top["tools"], "function", "custom", "namespace") &&
 			(isString(top["input"]) || eachObject(top["input"], boundedResponsesItem))
 	}
 	return false
@@ -162,6 +163,10 @@ func toolsOf(tools any, kinds ...string) bool {
 		kind, present := tool["type"].(string)
 		if !present && tool["type"] != nil {
 			return false
+		}
+		// A Responses namespace groups tools; each must be allowed too.
+		if kind == "namespace" {
+			return allowed[kind] && toolsOf(tool["tools"], "function", "custom")
 		}
 		return allowed[kind]
 	})
