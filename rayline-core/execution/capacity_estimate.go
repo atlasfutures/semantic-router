@@ -130,24 +130,36 @@ func byteBoundTokens(body []byte, estimate *CapacityEstimate) (int64, int) {
 // JSON (thinkingcontrol.PythonWorstCaseBytes, one parse), with each tool
 // call's arguments string reloaded and re-encoded beside it. A body that does
 // not parse is charged three times its bytes.
-// mediaPartTypes are the content part types, across the Chat, Messages and
-// Responses wires, whose tokens a runtime derives from the media rather than
-// from the part's bytes.
+// mediaPartTypes are the content part and item types, across the Chat,
+// Messages and Responses wires, whose tokens a runtime derives from media or
+// from content the body only references, not from the part's bytes.
 var mediaPartTypes = map[string]bool{
 	"image": true, "image_url": true, "input_image": true,
 	"audio": true, "input_audio": true,
 	"video": true, "video_url": true, "input_video": true,
 	"document": true, "file": true, "input_file": true,
+	"image_generation_call": true, "item_reference": true,
 }
 
-// carriesMedia reports whether the body has a media part anywhere in its
-// structure (a tool result's content included), or cannot be read as JSON.
-// A media part's bytes are no bound on its tokens, so such a body's byte
-// bound is caller_estimated.
+// mediaKeys mark a media part or a reference to content outside the body.
+var mediaKeys = []string{"image_url", "input_audio", "video_url", "file_id"}
+
+// carriesMedia reports whether the body has a media part, or a reference to
+// content it does not carry (a file id, an item reference, a stored response
+// or conversation), anywhere in its structure (a tool result's content
+// included), or cannot be read as JSON. Such a part's bytes are no bound on
+// its tokens, so the body's byte bound is caller_estimated.
 func carriesMedia(body []byte) bool {
 	var value any
 	if json.Unmarshal(body, &value) != nil {
 		return true
+	}
+	if top, ok := value.(map[string]any); ok {
+		for _, key := range []string{"previous_response_id", "conversation"} {
+			if top[key] != nil {
+				return true
+			}
+		}
 	}
 	var walk func(any) bool
 	walk = func(node any) bool {
@@ -156,7 +168,7 @@ func carriesMedia(body []byte) bool {
 			if kind, ok := node["type"].(string); ok && mediaPartTypes[kind] {
 				return true
 			}
-			for _, key := range []string{"image_url", "input_audio", "video_url"} {
+			for _, key := range mediaKeys {
 				if _, ok := node[key]; ok {
 					return true
 				}

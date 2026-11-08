@@ -136,7 +136,10 @@ opt-in. The core reports facts and never picks or ranks a model.
   - An inline base64 image is charged `media_tokens` instead of its bytes, and
     a fact that includes one is `caller_estimated`. So is a byte bound over a
     request with any other media part (a remote or small image, audio, video,
-    a file or document, a tool result's included), whose bytes bound nothing.
+    a file or document, a tool result's included) or a reference to content
+    it does not carry (a `file_id`, an `item_reference`, image generation
+    history, `previous_response_id` or `conversation`), whose bytes bound
+    nothing.
   - **`context_overflow`** (local deployments, `"refuses"` or
     `"truncates"`, default `"truncates"`) states what the runtime does with a
     prompt over its window. On a `"truncates"` deployment (Ollama,
