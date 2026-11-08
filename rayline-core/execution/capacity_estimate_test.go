@@ -921,6 +921,7 @@ func TestByteBoundIsBoundedUnlessAnImageIsCharged(t *testing.T) {
 		"stored response":   `{"model":"m","previous_response_id":"resp_1","input":"hi"}`,
 		"own template":      `{"model":"m","chat_template":"{{ messages[0]['content'] * 10000 }}","messages":[{"role":"user","content":"hi "}]}`,
 		"kwargs template":   `{"model":"m","chat_template_kwargs":{"chat_template":"{{ 'hello ' * 1000000 }}"},"messages":[{"role":"user","content":"hi"}]}`,
+		"role mapping":      `{"model":"m","role_mapping":{"user":"x x x x ","assistant":"","stop":"\n"},"messages":[{"role":"user","content":"hi"}]}`,
 	} {
 		if _, provenance, _ := localPromptSize(other, []byte(body)); provenance != capacityProvenanceEstimated {
 			t.Errorf("%s: %s", name, provenance)

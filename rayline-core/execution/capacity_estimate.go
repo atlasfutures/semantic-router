@@ -156,7 +156,9 @@ func carriesMedia(body []byte) bool {
 		return true
 	}
 	if top, ok := value.(map[string]any); ok {
-		for _, key := range []string{"previous_response_id", "conversation", "chat_template"} {
+		// role_mapping: mlx_lm.server's per-message prefixes for a model
+		// without a template.
+		for _, key := range []string{"previous_response_id", "conversation", "chat_template", "role_mapping"} {
 			if top[key] != nil {
 				return true
 			}
