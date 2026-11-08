@@ -23,7 +23,7 @@ const (
 	// A fact counted by the target's own tokenizer, one bounded from above by
 	// the prepared request's bytes, or one estimated (an image charged a
 	// fixed number of tokens) (capacity_estimate.go). The policy contract
-	// (pathfinder arc_execution_v2.decide_inputs_v2) admits a measured or
+	// (the ARC execution-context contract) admits a measured or
 	// bounded fits:true, reads an estimated fits:true as unknown, and admits
 	// any fits:false as exclusion.
 	capacityProvenanceMeasured  = "local_measured"

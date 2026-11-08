@@ -27,7 +27,7 @@ import (
 //     beside it. It is raised by headroom_ratio and
 //     estimateTemplateMarginTokens for a preamble the body does not carry;
 //     provenance caller_bounded, which the policy contract admits as a fit
-//     (pathfinder arc_execution_v2: a bound that fits holds for the exact
+//     (a bound that fits holds for the exact
 //     count too).
 //
 // An inline base64 image is charged media_tokens instead of its bytes in both
