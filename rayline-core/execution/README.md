@@ -127,12 +127,16 @@ opt-in. The core reports facts and never picks or ranks a model.
     re-serialization of the prepared request (values re-encoded with
     `indent=4`, Python separators and float `repr`, non-ASCII and `<`, `>`,
     `&` escaped, each tool call's arguments reloaded and re-encoded beside
-    it), a proven upper bound for byte-level BPE whatever a template does to
-    the request's JSON, raised by `headroom_ratio` and 512 tokens for a
-    template preamble, `provenance: "caller_bounded"`. The policy contract
-    admits a bounded `fits: true` as a fit. The 512-token preamble margin is
-    the one heuristic part: a template that adds a longer preamble is not
-    covered.
+    it), an upper bound for byte-level BPE (every token covers at least one
+    byte), raised by `headroom_ratio` and 512 tokens for a template preamble,
+    `provenance: "caller_bounded"`. The policy contract admits a bounded
+    `fits: true` as a fit. Two template assumptions are not checked: the
+    preamble is at most 512 tokens, and the template renders each part of
+    the request at most once. A template that repeats request content (a
+    schema key written as an opening and a closing tag, the first tool name
+    reused for every tool result) can exceed the bound. The backstop is the
+    runtime: on a `"refuses"` deployment an over-window prompt is refused and
+    the core consults again; on a `"truncates"` one it is cut.
   - An inline base64 image is charged `media_tokens` instead of its bytes, and
     a fact that includes one is `caller_estimated`. So is any byte bound over
     a body the core does not fully understand: `caller_bounded` needs every

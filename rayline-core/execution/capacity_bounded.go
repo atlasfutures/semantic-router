@@ -13,6 +13,8 @@ import (
 // references, a template or role prefixes of the request's own, a
 // runtime-specific member) may make the runtime's prompt larger than the
 // bound, so the fact stays caller_estimated. Unknown fails toward estimated.
+// The allowlist does not guard against a template that renders an allowed
+// member more than once; that assumption is stated in README.md.
 
 type nameSet map[string]bool
 

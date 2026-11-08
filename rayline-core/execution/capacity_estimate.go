@@ -19,16 +19,16 @@ import (
 //     A segment the counter can only bound by bytes (text x/text cannot
 //     normalize as the reference does) makes the fact caller_estimated.
 //   - Any other model: the UTF-8 byte count of a worst-case re-serialization
-//     of the prepared request, a proven upper bound for a byte-level BPE
-//     tokenizer (every token covers at least one byte) whatever a template
-//     does to the request's JSON: values re-encoded with indent=4, Python
+//     of the prepared request, an upper bound for a byte-level BPE
+//     tokenizer (every token covers at least one byte) provided the template
+//     renders each part of the request at most once and adds at most the
+//     margin below (README): values re-encoded with indent=4, Python
 //     separators, floats by repr, non-ASCII and <, >, & escaped, and each
 //     tool call's arguments string reloaded and re-encoded the same way
 //     beside it. It is raised by headroom_ratio and
 //     estimateTemplateMarginTokens for a preamble the body does not carry;
 //     provenance caller_bounded, which the policy contract admits as a fit
-//     (a bound that fits holds for the exact
-//     count too).
+//     (a bound that fits holds for the exact count too).
 //
 // An inline base64 image is charged media_tokens instead of its bytes in both
 // cases, and a fact with images is caller_estimated: the runtime's image
