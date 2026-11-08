@@ -29,7 +29,8 @@ var (
 		"stream", "stream_options", "max_tokens", "max_completion_tokens", "temperature", "top_p",
 		"top_k", "min_p", "stop", "seed", "presence_penalty", "frequency_penalty",
 		"repetition_penalty", "logprobs", "top_logprobs", "user", "metadata", "response_format",
-		"reasoning_effort", "reasoning", "chat_template_kwargs", "prompt_cache_key", "store", "n")
+		"reasoning_effort", "reasoning", "chat_template_kwargs", "prompt_cache_key", "store", "n",
+		"prompt_cache_retention")
 	boundedChatMessageFields = setOf("role", "content", "name", "tool_calls", "tool_call_id", "id",
 		"reasoning_content", "reasoning", "reasoning_details", "refusal")
 	// Template switches only: a template that renders them is the served one.
@@ -37,17 +38,25 @@ var (
 
 	boundedMessagesFields = setOf("model", "messages", "system", "tools", "tool_choice",
 		"max_tokens", "temperature", "top_p", "top_k", "stop_sequences", "stream", "metadata",
-		"thinking", "output_config", "cache_control", "context_management")
-	boundedMessagesParts = setOf("text", "tool_use", "tool_result", "thinking", "redacted_thinking")
+		"thinking", "output_config", "cache_control", "context_management", "diagnostics")
+	boundedMessagesDiagnostics = setOf("previous_message_id")
+	boundedMessagesParts       = setOf("text", "tool_use", "tool_result", "thinking", "redacted_thinking")
 
 	boundedResponsesFields = setOf("model", "input", "instructions", "tools", "tool_choice",
 		"parallel_tool_calls", "max_output_tokens", "temperature", "top_p", "stream", "reasoning",
 		"text", "store", "metadata", "user", "include", "prompt_cache_key", "client_metadata",
-		"stream_options")
-	boundedResponsesItems = setOf("message", "function_call", "function_call_output", "reasoning",
-		"custom_tool_call", "custom_tool_call_output")
-	boundedResponsesMessageFields = setOf("type", "role", "content", "id", "status")
-	boundedResponsesParts         = setOf("input_text", "output_text", "refusal")
+		"stream_options", "prompt_cache_retention")
+	// The members each input item type may carry; a role or content on a
+	// call item, for one, is something a runtime may still read.
+	boundedResponsesItems = map[string]nameSet{
+		"message":                 setOf("type", "role", "content", "id", "status"),
+		"function_call":           setOf("type", "id", "call_id", "name", "arguments", "status"),
+		"function_call_output":    setOf("type", "id", "call_id", "output", "status"),
+		"custom_tool_call":        setOf("type", "id", "call_id", "name", "input", "status"),
+		"custom_tool_call_output": setOf("type", "id", "call_id", "output", "status"),
+		"reasoning":               setOf("type", "id", "summary", "content", "encrypted_content", "status"),
+	}
+	boundedResponsesParts = setOf("input_text", "output_text", "refusal")
 
 	boundedTextParts = setOf("text")
 )
@@ -69,7 +78,9 @@ func boundedBody(protocol llmprotocol.WireFormat, body []byte) bool {
 				return membersIn(message, boundedChatMessageFields) && partsIn(message["content"], boundedTextParts)
 			})
 	case llmprotocol.AnthropicMessagesV1:
+		diagnostics, _ := top["diagnostics"].(map[string]any)
 		return membersIn(top, boundedMessagesFields) &&
+			(top["diagnostics"] == nil || diagnostics != nil && membersIn(diagnostics, boundedMessagesDiagnostics)) &&
 			toolsOf(top["tools"], "", "custom") &&
 			partsIn(top["system"], boundedTextParts) &&
 			eachObject(top["messages"], func(message map[string]any) bool {
@@ -92,13 +103,17 @@ func boundedResponsesItem(item map[string]any) bool {
 	if kind == "" && item["role"] != nil {
 		kind = "message"
 	}
-	switch {
-	case !boundedResponsesItems[kind]:
+	fields, known := boundedResponsesItems[kind]
+	if !known || !membersIn(item, fields) {
 		return false
-	case kind == "message":
-		return membersIn(item, boundedResponsesMessageFields) && partsIn(item["content"], boundedResponsesParts)
-	case kind == "function_call_output" || kind == "custom_tool_call_output":
+	}
+	switch kind {
+	case "message":
+		return partsIn(item["content"], boundedResponsesParts)
+	case "function_call_output", "custom_tool_call_output":
 		return partsIn(item["output"], boundedResponsesParts)
+	case "reasoning":
+		return partsIn(item["summary"], setOf("summary_text")) && partsIn(item["content"], setOf("reasoning_text"))
 	}
 	return true
 }
