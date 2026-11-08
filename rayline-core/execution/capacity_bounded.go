@@ -92,7 +92,7 @@ func boundedBody(protocol llmprotocol.WireFormat, body []byte) bool {
 	case llmprotocol.OpenAIResponsesV1:
 		return membersIn(top, boundedResponsesFields) &&
 			(top["instructions"] == nil || isString(top["instructions"])) &&
-			toolsOf(top["tools"], "function", "custom", "namespace") &&
+			toolsOf(top["tools"], "function", "custom") &&
 			(isString(top["input"]) || eachObject(top["input"], boundedResponsesItem))
 	}
 	return false
@@ -178,10 +178,6 @@ func toolsOf(tools any, kinds ...string) bool {
 		kind, present := tool["type"].(string)
 		if !present && tool["type"] != nil {
 			return false
-		}
-		// A Responses namespace groups tools; each must be allowed too.
-		if kind == "namespace" {
-			return allowed[kind] && toolsOf(tool["tools"], "function", "custom")
 		}
 		return allowed[kind]
 	})

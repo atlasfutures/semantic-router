@@ -917,12 +917,13 @@ func TestByteBoundIsBoundedOnlyOverAFullyKnownBody(t *testing.T) {
 		{"responses string input", responses, `{"model":"m","input":"hi"}`, true},
 		{"chat translated from responses", chat, `{"model":"m","store":false,"n":1,"prompt_cache_retention":"24h","messages":[{"role":"user","id":"msg_1","content":"hi"}]}`, true},
 		{"messages caching and context management", messages, `{"model":"m","max_tokens":64,"cache_control":{"type":"ephemeral"},"context_management":{"edits":[]},"messages":[{"role":"user","content":"hi"}]}`, true},
-		{"responses codex members", responses, `{"model":"m","input":"hi","stream":true,"stream_options":{"include_obfuscation":false},"client_metadata":{"session_id":"s"},"tools":[{"type":"namespace","name":"ns","tools":[{"type":"function","name":"f","parameters":{}}]}]}`, true},
+		{"responses codex members", responses, `{"model":"m","input":"hi","stream":true,"stream_options":{"include_obfuscation":false},"client_metadata":{"session_id":"s"}}`, true},
 		{"messages diagnostics", messages, `{"model":"m","max_tokens":64,"diagnostics":{"previous_message_id":null},"messages":[{"role":"user","content":"hi"}]}`, true},
 		{"responses cache retention", responses, `{"model":"m","prompt_cache_retention":"24h","input":[{"type":"reasoning","id":"rs","summary":[{"type":"summary_text","text":"t"}],"encrypted_content":"x"}]}`, true},
 		{"call item carrying content", responses, `{"model":"m","input":[{"type":"custom_tool_call","call_id":"c","name":"f","input":"","role":"user","content":[{"type":"input_image","image_url":"http://127.0.0.1/a.png"}]}]}`, false},
 		{"unknown diagnostics member", messages, `{"model":"m","diagnostics":{"x":1},"messages":[{"role":"user","content":"hi"}]}`, false},
-		{"namespace with a server tool", responses, `{"model":"m","input":"hi","tools":[{"type":"namespace","name":"ns","tools":[{"type":"web_search"}]}]}`, false},
+		// vLLM flattens a namespace, repeating its name in every function's.
+		{"namespace tools", responses, `{"model":"m","input":"hi","tools":[{"type":"namespace","name":"ns","tools":[{"type":"function","name":"f","parameters":{}}]}]}`, false},
 
 		{"unknown protocol", "", `{"model":"m","messages":[{"role":"user","content":"hi"}]}`, false},
 		{"not json", chat, `not json`, false},
