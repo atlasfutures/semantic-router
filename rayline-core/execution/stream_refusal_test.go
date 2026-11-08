@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"testing/iotest"
 	"time"
 )
 
@@ -95,6 +96,19 @@ func TestStreamPeekStopsWaitingOnASilentStream(t *testing.T) {
 	}
 	if err := body.Close(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+type failingBody struct{ io.Reader }
+
+func (failingBody) Close() error { return nil }
+
+func TestStreamPeekKeepsTheBodysReadError(t *testing.T) {
+	stream := "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ready\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"
+	_, body := peekStreamContextRejection(failingBody{io.MultiReader(strings.NewReader(stream), iotest.ErrReader(io.ErrUnexpectedEOF))})
+	replayed, err := io.ReadAll(body)
+	if string(replayed) != stream || err != io.ErrUnexpectedEOF {
+		t.Fatalf("replayed %q, %v", replayed, err)
 	}
 }
 

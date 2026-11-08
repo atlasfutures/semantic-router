@@ -58,6 +58,8 @@ type chunkedStream struct {
 	done    chan struct{}
 	pending []byte
 	once    sync.Once
+	// err is the body's last read error, set before chunks closes.
+	err error
 }
 
 func newChunkedStream(body io.ReadCloser) *chunkedStream {
@@ -75,6 +77,7 @@ func newChunkedStream(body io.ReadCloser) *chunkedStream {
 				}
 			}
 			if err != nil {
+				stream.err = err
 				return
 			}
 		}
@@ -92,6 +95,9 @@ func (stream *chunkedStream) Read(p []byte) (int, error) {
 	for len(stream.pending) == 0 {
 		chunk, open := <-stream.chunks
 		if !open {
+			if stream.err != nil {
+				return 0, stream.err
+			}
 			return 0, io.EOF
 		}
 		stream.pending = chunk
