@@ -464,7 +464,7 @@ func TestRoutesExecutionV2ExcludesUnknownTargets(t *testing.T) {
 	}
 	fits := `{"fits":true,"reason":null,"required":117,"available":32768,"available_source":"configured","units":"hf:Qwen/Qwen3.8-27B@r1","provenance":"local_measured"}`
 	doesNotFit := `{"fits":false,"reason":"context_capacity","required":70210,"available":65536,"available_source":"configured","units":"hf:Qwen/Qwen3.8-27B@r1","provenance":"local_measured"}`
-	apply := func(t *testing.T, body string) ([]string, string, *raylinearc.PolicyDecisionRequest, *selection.RaylineARCRouteControls) {
+	apply := func(t *testing.T, body string) ([]raylinearc.PolicyReceiptExcluded, string, *raylinearc.PolicyDecisionRequest, *selection.RaylineARCRouteControls) {
 		t.Helper()
 		routing, _, refusal := readRaylineRoutesRouting(executionV2Body(`{"execution":`+body+`}`), nil, config.DefaultRaylineARCValueUSDMax)
 		if refusal != nil {
@@ -476,15 +476,21 @@ func TestRoutesExecutionV2ExcludesUnknownTargets(t *testing.T) {
 		return excluded, class, request, controls
 	}
 
+	// Two unknown targets: one the caller marked not to fit keeps its
+	// capacity reason, which the executor checks against what it sent; the
+	// other is excluded as unknown.
+	tooBig := strings.Repeat("8", 64)
 	excluded, class, request, controls := apply(t, envelope(
 		target(known, "local-qwen", "local", "null", fits),
-		target(unknown, "cloud-haiku", "cloud", cache, doesNotFit),
+		target(tooBig, "local-other", "local", cache, doesNotFit),
+		target(unknown, "cloud-haiku", "cloud", "null", "null"),
 	))
-	if class != "" || !reflect.DeepEqual(excluded, []string{unknown}) {
+	want := []raylinearc.PolicyReceiptExcluded{{ActionID: tooBig, Reason: "context_capacity"}, {ActionID: unknown, Reason: "unknown_action"}}
+	if class != "" || !reflect.DeepEqual(excluded, want) {
 		t.Fatalf("class %q, excluded %v", class, excluded)
 	}
 	v2 := controls.ExecutionV2
-	if !reflect.DeepEqual(v2.TargetActionIDs, []string{known, unknown}) || len(v2.ActionIDs) != 0 {
+	if !reflect.DeepEqual(v2.TargetActionIDs, []string{known, tooBig, unknown}) || len(v2.ActionIDs) != 0 {
 		t.Fatalf("targets %v, attributed %v", v2.TargetActionIDs, v2.ActionIDs)
 	}
 	if len(request.Capacity) != 1 || request.Capacity[0].ActionID != known || len(v2.Infeasible) != 0 {
@@ -513,12 +519,12 @@ func TestRoutesExecutionV2ExcludesUnknownTargets(t *testing.T) {
 	// The receipt names them after the service's own exclusions, on a copy.
 	preset := "arc-policy.hybrid-default.v1"
 	service := &raylinearc.PolicyDecisionReceipt{Policy: &preset, Excluded: []raylinearc.PolicyReceiptExcluded{{ActionID: known, Reason: "context_capacity"}}}
-	appended := routeReceiptWithUnknownTargets(service, []string{unknown})
-	if want := []raylinearc.PolicyReceiptExcluded{{ActionID: known, Reason: "context_capacity"}, {ActionID: unknown, Reason: "unknown_action"}}; !reflect.DeepEqual(appended.Excluded, want) ||
+	appended := routeReceiptWithUnknownTargets(service, excluded)
+	if wantAppended := append([]raylinearc.PolicyReceiptExcluded{{ActionID: known, Reason: "context_capacity"}}, want...); !reflect.DeepEqual(appended.Excluded, wantAppended) ||
 		len(service.Excluded) != 1 || appended.Policy != service.Policy {
 		t.Fatalf("receipt %+v (service %+v)", appended, service)
 	}
-	if routeReceiptWithUnknownTargets(service, nil) != service || routeReceiptWithUnknownTargets(nil, []string{unknown}) != nil {
+	if routeReceiptWithUnknownTargets(service, nil) != service || routeReceiptWithUnknownTargets(nil, excluded) != nil {
 		t.Fatal("a receipt with nothing to append, or no receipt, must pass through")
 	}
 }

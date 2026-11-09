@@ -769,3 +769,38 @@ func TestV2AppliedEchoWithoutPinsIsRefused(t *testing.T) {
 		t.Fatalf("status %d local %d", status, local.count())
 	}
 }
+
+// A service whose package lacks one of the core's targets leaves it out of
+// the offer and names it in the receipt as excluded for unknown_action
+// (semantic-router adapter, memex-desktop #8163). The core sent that target
+// as a capability, not a claim, so the receipt is accepted and the chosen
+// action executes.
+func TestV2ReceiptMayExcludeATargetTheServiceDoesNotKnow(t *testing.T) {
+	local, cloud := &upstreamFixture{}, &upstreamFixture{}
+	config := hybridV2Config(t, chatUpstream(t, local, false).URL, chatUpstream(t, cloud, true).URL+"/v1/chat/completions")
+	fixture := &v2Decisions{
+		choose: func(contextV2) string { return localActionID },
+		mutate: func(response map[string]any) {
+			receipt := response["receipt"].(map[string]any)
+			receipt["excluded"] = append(receipt["excluded"].([]map[string]any), map[string]any{"action_id": cloudActionID, "reason": "unknown_action"})
+		},
+	}
+	_, httpServer := v2Server(t, config, fixture, 300)
+	request, _ := http.NewRequest(http.MethodPost, httpServer.URL+"/v1/chat/completions", strings.NewReader(chatTurn(userTask)))
+	request.Header.Set("Authorization", "Bearer "+testCoreToken)
+	request.Header.Set("X-Rayline-Session-Id", "unknown-target")
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != 200 || response.Header.Get("X-Rayline-Executed-Action-Id") != localActionID {
+		t.Fatalf("status %d headers %v", response.StatusCode, response.Header)
+	}
+	if lookups := fixture.snapshot(); len(lookups) != 1 || len(lookups[0].Execution.Targets) != 2 {
+		t.Fatalf("lookups %+v", lookups)
+	}
+	if local.count() != 1 || cloud.count() != 0 {
+		t.Fatalf("dispatch local=%d cloud=%d", local.count(), cloud.count())
+	}
+}

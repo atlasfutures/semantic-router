@@ -48,7 +48,8 @@ opt-in. The core reports facts and never picks or ranks a model.
   used. Such a profile pins no package: `expect` pins only the registry (and
   any offer), and the response names the package. Every derived action is a
   target. A target the serving package lacks is left out of the offer and
-  named in the receipt's `excluded` with reason `unknown_action`; the service
+  named in the receipt's `excluded` with reason `unknown_action` (or its own
+  capacity reason, when the core marked it not to fit); the service
   still refuses (`execution_unknown_action`) a request whose every target it
   lacks, or whose `history`, `last_served` or `hold` names an action it lacks.
   `bases` narrows the targets when fewer are wanted. Raydock builds one by

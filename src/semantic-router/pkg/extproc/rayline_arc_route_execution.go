@@ -250,6 +250,9 @@ func (refusal *routeExecutionRefusal) contract() *routesContractError {
 
 // routeExecutionUnknownTargetReason is the receipt's reason for a target
 // the serving package's catalog lacks: left out of the offer, not refused.
+// A target the caller itself marked not to fit keeps its capacity reason
+// instead: the executor checks each infeasible target's exclusion against
+// the reason it sent (rayline-core validateV2).
 const routeExecutionUnknownTargetReason = "unknown_action"
 
 // applyRoutePolicyAndExecutionV2 writes routing.policy and a v2
@@ -258,8 +261,9 @@ const routeExecutionUnknownTargetReason = "unknown_action"
 // every attributed, last-served or held action in the catalog, and at least
 // one target; the package and controls pins; last_served consistent with
 // history; the hold feasible, then offered. The offer pin is checked after
-// the decide. It answers the targets the catalog lacks, left out of the
-// decide members, and a failure class, or "" once applied.
+// the decide. It answers the targets the catalog lacks as the receipt's
+// exclusions, left out of the decide members, and a failure class, or ""
+// once applied.
 //
 // A target is what the caller can execute, not a claim about what ran: an
 // executor whose registry derives more actions than this cell's package
@@ -270,7 +274,7 @@ func applyRoutePolicyAndExecutionV2(
 	request *raylinearc.PolicyDecisionRequest,
 	scorer *policyServiceScorer,
 	controls *selection.RaylineARCRouteControls,
-) (unknownTargets []string, class string) {
+) (unknownTargets []raylinearc.PolicyReceiptExcluded, class string) {
 	if controls == nil {
 		return nil, ""
 	}
@@ -341,18 +345,29 @@ func applyRoutePolicyAndExecutionV2(
 // excludeUnknownTargets takes the targets the catalog lacks out of the
 // envelope's decide members (their capacity, infeasibility and cache
 // evidence), so the service never sees an action it cannot score, and
-// answers them in envelope order; nil when every target is bound.
-func excludeUnknownTargets(v2 *selection.RaylineARCRouteExecutionV2, scorer *policyServiceScorer) []string {
-	var unknown []string
+// answers them as receipt exclusions in envelope order; nil when every
+// target is bound. One the caller marked not to fit is excluded for its own
+// capacity reason, as the service would have excluded it.
+func excludeUnknownTargets(v2 *selection.RaylineARCRouteExecutionV2, scorer *policyServiceScorer) []raylinearc.PolicyReceiptExcluded {
+	var unknown []raylinearc.PolicyReceiptExcluded
 	for _, actionID := range v2.TargetActionIDs {
-		if _, bound := scorer.bindings[actionID]; !bound {
-			unknown = append(unknown, actionID)
+		if _, bound := scorer.bindings[actionID]; bound {
+			continue
 		}
+		reason := routeExecutionUnknownTargetReason
+		for _, entry := range v2.Capacity {
+			if entry.ActionID == actionID && entry.Fits != nil && !*entry.Fits && entry.Reason != nil {
+				reason = *entry.Reason
+			}
+		}
+		unknown = append(unknown, raylinearc.PolicyReceiptExcluded{ActionID: actionID, Reason: reason})
 	}
 	if len(unknown) == 0 {
 		return nil
 	}
-	drop := func(actionID string) bool { return slices.Contains(unknown, actionID) }
+	drop := func(actionID string) bool {
+		return slices.ContainsFunc(unknown, func(entry raylinearc.PolicyReceiptExcluded) bool { return entry.ActionID == actionID })
+	}
 	v2.Capacity = slices.DeleteFunc(v2.Capacity, func(entry raylinearc.PolicyActionCapacity) bool { return drop(entry.ActionID) })
 	v2.Infeasible = slices.DeleteFunc(v2.Infeasible, drop)
 	if v2.CacheContext != nil {
@@ -368,15 +383,12 @@ func excludeUnknownTargets(v2 *selection.RaylineARCRouteExecutionV2, scorer *pol
 // own exclusions after the service's: the caller's targets the catalog
 // lacks, which the service never saw. The service's receipt is copied, not
 // changed; a nil receipt stays nil.
-func routeReceiptWithUnknownTargets(receipt *raylinearc.PolicyDecisionReceipt, unknown []string) *raylinearc.PolicyDecisionReceipt {
+func routeReceiptWithUnknownTargets(receipt *raylinearc.PolicyDecisionReceipt, unknown []raylinearc.PolicyReceiptExcluded) *raylinearc.PolicyDecisionReceipt {
 	if receipt == nil || len(unknown) == 0 {
 		return receipt
 	}
 	appended := *receipt
-	appended.Excluded = append([]raylinearc.PolicyReceiptExcluded{}, receipt.Excluded...)
-	for _, actionID := range unknown {
-		appended.Excluded = append(appended.Excluded, raylinearc.PolicyReceiptExcluded{ActionID: actionID, Reason: routeExecutionUnknownTargetReason})
-	}
+	appended.Excluded = append(append([]raylinearc.PolicyReceiptExcluded{}, receipt.Excluded...), unknown...)
 	return &appended
 }
 

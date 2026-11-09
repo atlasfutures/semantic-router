@@ -818,8 +818,12 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		return nil, arcSelectionFailure(class)
 	}
 	if len(unknownTargets) > 0 {
+		ids := make([]string, 0, len(unknownTargets))
+		for _, entry := range unknownTargets {
+			ids = append(ids, entry.ActionID)
+		}
 		logging.ComponentWarnEvent("extproc", "rayline_arc_route_targets_unknown", map[string]interface{}{
-			"count": len(unknownTargets), "action_ids": unknownTargets, "episode_id_hash": arcContext.EpisodeIDHash,
+			"count": len(ids), "action_ids": ids, "episode_id_hash": arcContext.EpisodeIDHash,
 		})
 	}
 	if class := applyRouteExecution(&request, scorer, execution); class != "" {
