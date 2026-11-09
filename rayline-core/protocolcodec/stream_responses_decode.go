@@ -310,6 +310,7 @@ func applyResponseFailure(event *llmprotocol.Event, wire responsesEventWire) {
 	event.Type = llmprotocol.EventResponseFailed
 	event.StopReason = llmprotocol.StopError
 	event.Failure = llmprotocol.FailureResponse
+	event.UpstreamStated = true
 	event.Error = llmprotocol.NewError(llmprotocol.ErrorUpstreamUnavailable, "upstream_stream_error", "upstream stream failed", nil)
 	var upstreamError *responsesErrorWire
 	if wire.Response != nil {
@@ -330,6 +331,7 @@ func applyResponsesTransportFailure(event *llmprotocol.Event, wire responsesEven
 	event.Type = llmprotocol.EventResponseFailed
 	event.StopReason = llmprotocol.StopError
 	event.Failure = llmprotocol.FailureTransport
+	event.UpstreamStated = true
 	event.Error = llmprotocol.NewError(
 		llmprotocol.ErrorUpstreamUnavailable, "upstream_stream_error", "upstream stream failed", nil,
 	)

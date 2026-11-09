@@ -96,3 +96,26 @@ func TestChatUsageStreamFilterRejectsDataAndTrailingFragmentsAfterTerminal(t *te
 		t.Fatalf("malformed trailing frame did not suppress success: output=%q err=%v", output, err)
 	}
 }
+
+// An upstream's rayline member is stripped on the same-format route. The
+// member says this Router ended the turn, and only this Router's encoder
+// mints it; one arriving from a provider or a router in front would let an
+// ordinary answer look locally cut.
+func TestChatStreamFiltersStripAnUpstreamRaylineMember(t *testing.T) {
+	for name, filter := range map[string]*ChatUsageStreamFilter{
+		"usage filter": NewChatUsageStreamFilter(1 << 20),
+		"passthrough":  NewChatPassthroughStreamFilter(1 << 20),
+	} {
+		out, err := filter.Push([]byte(`data: {"id":"c1","object":"chat.completion.chunk","choices":[{"index":0,` +
+			`"delta":{},"finish_reason":"length"}],"rayline":{"truncated":"deadline"},"provider":"Upstream"}` + "\n\n"))
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if bytes.Contains(out, []byte("rayline")) {
+			t.Fatalf("%s relayed an upstream rayline member:\n%s", name, out)
+		}
+		if !bytes.Contains(out, []byte(`"provider":"Upstream"`)) || !bytes.Contains(out, []byte(`"finish_reason":"length"`)) {
+			t.Fatalf("%s dropped more than the member:\n%s", name, out)
+		}
+	}
+}

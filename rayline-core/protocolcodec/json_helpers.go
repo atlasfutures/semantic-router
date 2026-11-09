@@ -370,9 +370,43 @@ func advanceJSONUnicodeEscape(body []byte, index int) (int, error) {
 		return index + 5, nil
 	}
 	if !hasLowSurrogateEscape(body, index) {
+		if surrogateEscapeCutAtEnd(body, index+6) {
+			// The low surrogate's escape never arrived: the bytes stopped at
+			// or inside it, which is what a cut leaves behind and what more
+			// bytes would have completed. Anything else after a high
+			// surrogate is simply wrong.
+			return index, fmt.Errorf("%w: high surrogate cut off from its low surrogate: %w", errInvalidJSONUnicode, io.ErrUnexpectedEOF)
+		}
 		return index, fmt.Errorf("%w: high surrogate is not followed by a low surrogate", errInvalidJSONUnicode)
 	}
 	return index + 11, nil
+}
+
+// surrogateEscapeCutAtEnd reports whether the bytes from position on are a
+// proper prefix of a \uXXXX escape: nothing, a backslash, a backslash and u, or
+// fewer than four hex digits, with the buffer ending there.
+func surrogateEscapeCutAtEnd(body []byte, position int) bool {
+	rest := body[position:]
+	if len(rest) >= 6 {
+		return false
+	}
+	prefix := []byte(`\u`)
+	for i, b := range rest {
+		if i < 2 {
+			if b != prefix[i] {
+				return false
+			}
+			continue
+		}
+		if !isHexDigit(b) {
+			return false
+		}
+	}
+	return true
+}
+
+func isHexDigit(b byte) bool {
+	return (b >= '0' && b <= '9') || (b >= 'a' && b <= 'f') || (b >= 'A' && b <= 'F')
 }
 
 func hasLowSurrogateEscape(body []byte, index int) bool {
@@ -538,9 +572,21 @@ func consumeJSONObject(decoder *json.Decoder, depth, maximumDepth int) error {
 	}
 	closing, err := decoder.Token()
 	if err != nil || closing != json.Delim('}') {
-		return fmt.Errorf("unterminated object")
+		return unterminatedJSON("object", err)
 	}
 	return nil
+}
+
+// unterminatedJSON names a container the bytes did not close. When the bytes
+// simply stopped, the error says so by wrapping io.ErrUnexpectedEOF: that is
+// what a transport cut leaves behind, and a reader deciding whether a
+// fragment is a cut must be able to tell it from a closing token that was
+// wrong, which more bytes could never repair.
+func unterminatedJSON(container string, cause error) error {
+	if cause != nil && (errors.Is(cause, io.EOF) || errors.Is(cause, io.ErrUnexpectedEOF)) {
+		return fmt.Errorf("unterminated %s: %w", container, io.ErrUnexpectedEOF)
+	}
+	return fmt.Errorf("unterminated %s", container)
 }
 
 func consumeJSONArray(decoder *json.Decoder, depth, maximumDepth int) error {
@@ -551,7 +597,7 @@ func consumeJSONArray(decoder *json.Decoder, depth, maximumDepth int) error {
 	}
 	closing, err := decoder.Token()
 	if err != nil || closing != json.Delim(']') {
-		return fmt.Errorf("unterminated array")
+		return unterminatedJSON("array", err)
 	}
 	return nil
 }

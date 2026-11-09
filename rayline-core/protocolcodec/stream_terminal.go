@@ -2,6 +2,7 @@ package protocolcodec
 
 import (
 	"fmt"
+	"math"
 
 	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
 )
@@ -20,6 +21,111 @@ func (engine *StreamEngine) recordTerminalEvent(event llmprotocol.Event) {
 	if event.Type == llmprotocol.EventResponseCompleted || event.Type == llmprotocol.EventResponseFailed {
 		engine.terminal = true
 	}
+	// An output the upstream itself finished states the turn's real stop. Only
+	// the transport is left to go wrong after that, and a cut there must not
+	// restate a finished answer as one stopped at a limit
+	// (markTruncatedTerminal).
+	if event.Type != llmprotocol.EventResponseFailed && engine.servableStop(event.StopReason) {
+		engine.servedStop = event.StopReason
+	}
+	// Every count the stream states passes through here. The terminal the
+	// engine synthesizes for a cut is not built by the decoder, so it does not
+	// inherit what the decoder accumulated; keeping the last statement is how
+	// that terminal still knows what the upstream had said (reconciledTruncationUsage).
+	if event.Usage != nil && event.Usage.State == llmprotocol.UsageAvailable {
+		stated := *event.Usage
+		engine.statedUsage = &stated
+		engine.outputSinceUsage = false
+	}
+	// Output that arrives after a count was stated makes that count's output
+	// leg a snapshot rather than a settlement (reconciledTruncationUsage).
+	if outputDelta(event) {
+		engine.outputSinceUsage = true
+	}
+}
+
+// clientVisibleOutput reports an event a client receives as output once a
+// target writes it: a delta that carries anything, an image's progress, or
+// an item that opens a call. Whether the target wrote it is the encoder's
+// answer (StreamEngine.outputPublished).
+func clientVisibleOutput(event llmprotocol.Event) bool {
+	if outputDelta(event) || event.Type == llmprotocol.EventImageGenerationProgress {
+		return true
+	}
+	// A call delta that names the call -- its id and name, before any
+	// argument -- is a chunk a Chat client sees; the target decides.
+	if event.Type == llmprotocol.EventToolCallDelta && event.ToolCall != nil {
+		return true
+	}
+	// An item that only materializes when it completes -- a redacted
+	// thinking block carried as an encrypted reasoning item, a provider's
+	// whole web-search result -- is output the moment the target writes it;
+	// again the target decides, by writing a frame or not.
+	if event.Type == llmprotocol.EventOutputItemCompleted && event.Content != nil {
+		return true
+	}
+	if event.Type == llmprotocol.EventOutputTextDelta && event.Content != nil && len(event.Content.Citations) > 0 {
+		return true
+	}
+	return event.Type == llmprotocol.EventOutputItemStarted && event.ToolCall != nil
+}
+
+// outputDelta reports an event that adds to what the turn has generated.
+func outputDelta(event llmprotocol.Event) bool {
+	switch event.Type {
+	case llmprotocol.EventOutputTextDelta, llmprotocol.EventReasoningDelta:
+		return event.Delta != ""
+	case llmprotocol.EventToolCallDelta:
+		return event.ToolCall != nil && event.ToolCall.Arguments != ""
+	}
+	return false
+}
+
+// sameUsageTotals reports whether two counts state the same totals, so a
+// repeat of a statement can be told from a new one.
+func sameUsageTotals(left, right llmprotocol.Usage) bool {
+	same := func(a, b llmprotocol.TokenCount) bool {
+		if a.Value == nil || b.Value == nil {
+			return a.Value == nil && b.Value == nil
+		}
+		return *a.Value == *b.Value
+	}
+	return same(left.InputTotal, right.InputTotal) && same(left.OutputTotal, right.OutputTotal) &&
+		same(left.Total, right.Total)
+}
+
+// naturalStop reports a stop the model reached on its own, as opposed to one
+// naming a failure or a stop nothing has stated yet.
+func naturalStop(stop llmprotocol.StopReason) bool {
+	switch stop {
+	case "", llmprotocol.StopError, llmprotocol.StopUnknown:
+		return false
+	}
+	return true
+}
+
+// servableStop reports a stop the turn reached that the target can also state.
+//
+// A cut turn's terminal exists to close the stream and carry the count, so a
+// stop the target cannot represent must not be put on it: Chat and Responses
+// refuse StopPaused as a lossy translation, and they refuse it after marking
+// themselves terminal, so the turn reached the client with nothing at all --
+// no frames, no count, and no warning either (codex review). Where the stop
+// the model reached cannot travel, the length stop does, which is what every
+// other cut turn on these formats states; the stop itself is still on the
+// Router's own usage row. Messages carries all of them.
+func (engine *StreamEngine) servableStop(stop llmprotocol.StopReason) bool {
+	if !naturalStop(stop) {
+		return false
+	}
+	if engine.targetFormat == llmprotocol.AnthropicMessagesV1 {
+		return true
+	}
+	switch stop {
+	case llmprotocol.StopPaused, llmprotocol.StopCanceled:
+		return false
+	}
+	return true
 }
 
 func suppressSuccessfulTerminal(events []llmprotocol.Event) []llmprotocol.Event {
@@ -76,6 +182,9 @@ type stopAnnouncer interface {
 }
 
 func (decoder *anthropicStreamDecoder) announcedStop() llmprotocol.StopReason {
+	if decoder.announced != "" {
+		return decoder.announced
+	}
 	return decoder.stop
 }
 
@@ -131,13 +240,49 @@ func (engine *StreamEngine) prepareFinalization(reason error) streamFinalization
 	if firstFailure != nil {
 		reason = firstFailure
 	}
+	// The decoder's own finalize writes the failure's stop over the stop it
+	// had announced, so a stop the stream stated before the cut is read here,
+	// while it is still the model's (markTruncatedTerminal).
 	events, diagnostics, decodeErr := engine.decoder.Finalize(reason)
+	// Read after the decoder's own finalize: the frames it flushes there may
+	// carry the stop, and the decoder keeps what the stream announced rather
+	// than the failure's stop written over it (announcedStop).
+	if !naturalStop(engine.servedStop) {
+		if announcer, ok := engine.decoder.(stopAnnouncer); ok && engine.servableStop(announcer.announcedStop()) {
+			engine.servedStop = announcer.announcedStop()
+		}
+	}
+	if engine.cutByCallerOrCounted() {
+		events, diagnostics = engine.withholdOutputFlushedAtCut(events, diagnostics)
+	}
 	result := streamFinalization{
 		events: events, diagnostics: diagnostics, terminalReason: reason,
 		decodeErr: decodeErr, firstFailure: firstFailure,
 	}
 	switch {
+	case decodeErr != nil && engine.cutByCallerOrCounted() && firstFailure == nil &&
+		truncatedTrailingFragment(decodeErr):
+		// The Router cut this turn, and the bytes it cut it in the middle of
+		// were half a frame. A transport read does not end on a frame boundary,
+		// so that is the ordinary shape of a cut rather than a provider sending
+		// something malformed, and the trailing fragment is a consequence of
+		// the cut and not its cause. The turn ends on the Router's reason,
+		// carrying the count, as a cut on a frame boundary does; a partial
+		// frame cannot be the difference between a turn that bills and one
+		// that does not. The fragment itself is still never published.
+		result.events = engine.transportFailureEvents(events, reason)
+		result.decodeErr = nil
 	case decodeErr != nil:
+		// The stream broke in a way more bytes could not have repaired, so it
+		// ends on that and not on the caller's cut. A count the caller had
+		// handed over has nowhere to go, and saying nothing about it is the
+		// silence this whole change exists to remove.
+		if engine.truncationUsage != nil {
+			engine.reportUnwritableTruncationUsage(
+				string(engine.targetFormat),
+				"the stream failed to decode at finalization, so its terminal is the failure",
+			)
+		}
 		result.events = suppressSuccessfulTerminal(events)
 		engine.pendingCompletion = nil
 		result.terminalReason = decodeErr
@@ -158,22 +303,288 @@ func (engine *StreamEngine) transportFailureEvents(
 	reason error,
 ) []llmprotocol.Event {
 	events = suppressSuccessfulTerminal(events)
-	// The held completion is dropped, but the tier it stated was served.
+	// The held completion is dropped, because a turn that did not reach a clean
+	// end of stream must not publish a success terminal. What it had already
+	// established about the turn is not dropped with it: the tier it was served
+	// at, the stop the model reached, and the count the upstream stated. A
+	// successful terminal never passes through recordTerminalEvent, so this is
+	// the only place that evidence is seen.
 	var servedTier string
 	if engine.pendingCompletion != nil {
 		servedTier = engine.pendingCompletion.UpstreamServiceTier
+		if engine.servableStop(engine.pendingCompletion.StopReason) {
+			engine.servedStop = engine.pendingCompletion.StopReason
+		}
+		if engine.pendingCompletion.Usage != nil &&
+			engine.pendingCompletion.Usage.State == llmprotocol.UsageAvailable {
+			// Whether the completion's count is a fresh statement depends on
+			// the format. A Chat [DONE] completion carries the usage the stream
+			// had accumulated, whatever its age; a Responses response.completed
+			// carries the provider's final count on the resource itself. The
+			// difference is visible in the numbers: a count that repeats the
+			// last statement is a carry-forward, and whether output ran past
+			// that statement is left exactly as it was; a count that says
+			// something new is a settlement, after everything the turn
+			// generated.
+			stated := *engine.pendingCompletion.Usage
+			if engine.statedUsage == nil || !sameUsageTotals(*engine.statedUsage, stated) {
+				engine.outputSinceUsage = false
+			}
+			engine.statedUsage = &stated
+		}
 	}
 	engine.pendingCompletion = nil
 	if containsFailedTerminal(events) {
-		return events
+		// The decoder reached the failure first -- for a Router cut it always
+		// does, because the cut is handed to it as the reason it finalizes on.
+		// That event is the one about to be published, so it is the one the
+		// count has to ride.
+		return engine.markTruncatedTerminal(events)
 	}
-	return append(events, llmprotocol.Event{
+	return engine.markTruncatedTerminal(append(events, llmprotocol.Event{
 		Type:                llmprotocol.EventResponseFailed,
 		StopReason:          llmprotocol.StopError,
 		Error:               streamFinalizationError(reason, "stream ended before completion"),
 		Failure:             llmprotocol.FailureTransport,
 		UpstreamServiceTier: servedTier,
-	})
+	}))
+}
+
+// withholdOutputFlushedAtCut keeps output the decoder only produced at
+// finalization from reaching a client whose turn the Router has already cut.
+//
+// A transport read can end after a complete event and before the blank line
+// that terminates it. The framer holds that event, and Finalize flushes it --
+// after the Router has counted the turn and handed the count over. Publishing
+// it would deliver output the terminal's count does not cover, and the count
+// cannot be retaken here: the Router estimates from what it forwarded, and
+// this is forwarded by nobody yet. So the output is withheld, and the
+// diagnostics say so. What else the flush carried -- a count the upstream
+// stated, a stop an item reached -- is kept and recorded ahead of the terminal
+// it informs, since the terminal is reconciled before these events are
+// otherwise seen.
+func (engine *StreamEngine) withholdOutputFlushedAtCut(
+	events []llmprotocol.Event,
+	diagnostics llmprotocol.Diagnostics,
+) ([]llmprotocol.Event, llmprotocol.Diagnostics) {
+	kept := events[:0]
+	withheld := 0
+	for _, event := range events {
+		// Output and evidence can ride the same event: an item completed here
+		// may carry a call's whole arguments and the stop the model reached.
+		// The output is withheld -- nobody has seen it and the count was
+		// taken before it -- while the stop and any count it states are
+		// recorded, because those are facts about the turn rather than output.
+		// Recording first and withholding after is the order that keeps both:
+		// a `continue` above the recorder loses the stop and reports a
+		// finished turn as one cut at a limit.
+		if clientVisibleOutput(event) || event.Type == llmprotocol.EventOutputItemCompleted {
+			engine.recordTerminalEvent(event)
+			withheld++
+			continue
+		}
+		// A completion flushed here is one the transport cut off from its
+		// blank line: the provider finished and said so. It is held exactly
+		// as deferSuccessfulTerminal holds one, so transportFailureEvents
+		// harvests what it established -- its count, its stop, its tier --
+		// before the cut's terminal is built. A failed terminal the decoder
+		// built carries the usage it accumulated, not a fresh statement;
+		// recording it here would make a snapshot look settled, so it is
+		// reconciled on its own, after this.
+		if event.Type == llmprotocol.EventResponseCompleted {
+			completion := event
+			engine.pendingCompletion = &completion
+			continue
+		}
+		if event.Type != llmprotocol.EventResponseFailed {
+			engine.recordTerminalEvent(event)
+		}
+		kept = append(kept, event)
+	}
+	if withheld > 0 {
+		diagnostics = appendDiagnostics(diagnostics, llmprotocol.Diagnostics{{
+			Source: engine.sourceFormat, Field: "stream.output", Action: llmprotocol.DiagnosticDropped,
+			Reason: "output decoded at the cut is not published: the turn was counted before it arrived",
+		}}, engine.maxDiagnostics)
+	}
+	return kept, diagnostics
+}
+
+// markTruncatedTerminal re-scopes the terminal of a turn the Router ended.
+//
+// Such a turn is not a transport failure: the generation happened, the upstream
+// billed us for it, and the count the Router handed over says how much. So the
+// terminal carries that count, a length stop, and the truncated scope, and each
+// encoder ends the turn in the shape its own format gives a response that
+// stopped early rather than as an error with no numbers on it. Without a count
+// there is nothing to say and nothing to re-scope: the turn produced no output,
+// so it ends as the failure it is.
+func (engine *StreamEngine) markTruncatedTerminal(events []llmprotocol.Event) []llmprotocol.Event {
+	if engine.truncationUsage == nil {
+		return events
+	}
+	// Something was already wrong with this stream before the Router ended it:
+	// the upstream broke the protocol and the engine is poisoned. The turn ends
+	// on that, because a deadline reached afterwards does not make a malformed
+	// stream well-formed, and a clean length stop here would present a
+	// provider's violation as an ordinary truncation.
+	if engine.failure != nil {
+		engine.reportUnwritableTruncationUsage(
+			string(engine.targetFormat), "the stream had already failed before the router ended it",
+		)
+		return events
+	}
+	// Which stop the terminal states is the stop the turn actually reached. A
+	// deadline stopped the model where it stood, so a length stop is true of
+	// it. An upstream that had already stated its own stop finished its answer
+	// and was cut only while the connection closed behind it; telling that
+	// client the answer ran out of room would be false, so its own stop is what
+	// travels.
+	// A decoder may read the stop without ever emitting an event that carries
+	// it -- an Anthropic message_delta whose usage is the schema's
+	// placeholder announces the stop and emits nothing -- so prepareFinalization
+	// takes the announcement before the decoder's own finalize writes the
+	// failure's stop over it.
+	// A turn that finished and was then cut in its transport once kept the
+	// error frame when its count could not travel -- a Chat client that did
+	// not ask for the usage chunk -- on the reasoning that rewriting bought
+	// only a count and cost the client the failure that named what broke.
+	// That was wrong about what such a client holds: no format publishes a
+	// stop on any frame before its terminal, so there was no failure to keep
+	// and no stop either, and the client was left with content it could not
+	// close on. Every cut turn now reaches its own terminal; the cause still
+	// travels on it, and the count travels where the format has somewhere to
+	// put one.
+	stop := llmprotocol.StopMaxTokens
+	if engine.servableStop(engine.servedStop) {
+		stop = engine.servedStop
+	}
+	for index := range events {
+		if events[index].Type != llmprotocol.EventResponseFailed {
+			continue
+		}
+		// The provider said why it failed, and that is not the Router's cut to
+		// re-scope. An Anthropic overloaded_error whose frame lost its blank
+		// line to the read boundary is flushed and decoded here, so the turn
+		// arrives carrying both the provider's failure and the Router's count.
+		// Rewriting it told the client the model ran out of room, erasing an
+		// overload it needs in order to decide whether to retry -- and made one
+		// newline the difference between learning the provider failed and being
+		// told something that did not happen.
+		if providerStatedFailure(events[index]) {
+			engine.reportUnwritableTruncationUsage(
+				string(engine.targetFormat),
+				"the provider stated its own failure, which the cut's terminal does not overwrite",
+			)
+			continue
+		}
+		events[index].Failure = llmprotocol.FailureTruncated
+		events[index].StopReason = stop
+		events[index].Truncation = engine.truncationCause
+		events[index].Usage = reconciledTruncationUsage(
+			engine.truncationUsage, engine.statedTerminalUsage(events[index].Usage), engine.outputSinceUsage,
+		)
+	}
+	return events
+}
+
+// statedTerminalUsage is what the stream had said about the turn by the time it
+// was cut. A terminal the decoder built carries that already; one the engine
+// synthesized does not, because it never passed through the decoder's own
+// terminal handling, so the running statement stands in.
+func (engine *StreamEngine) statedTerminalUsage(terminal *llmprotocol.Usage) *llmprotocol.Usage {
+	if terminal != nil && terminal.State == llmprotocol.UsageAvailable {
+		return terminal
+	}
+	return engine.statedUsage
+}
+
+// reconciledTruncationUsage states a cut turn's count without contradicting
+// what the stream already said.
+//
+// The two can disagree per count rather than wholesale. A Messages stream opens
+// with the provider's authoritative input tokens and no output count at all,
+// and a stream cut after its own usage frame has authoritative counts for
+// everything; the Router's row is an estimate of the same turn throughout. So
+// each count keeps the better evidence -- the stream's where it has any, the
+// estimate only where the stream said nothing -- which is both the honest
+// answer and what the stream's own merge requires: restating an authoritative
+// count as an estimate is a quality decrease mergeTokenCount refuses, and
+// refusing it replaces the deadline the client should be told about with a
+// usage-accounting error.
+func reconciledTruncationUsage(truncation, stated *llmprotocol.Usage, outputSinceStated bool) *llmprotocol.Usage {
+	if truncation == nil {
+		return stated
+	}
+	if stated == nil || stated.State != llmprotocol.UsageAvailable {
+		return truncation
+	}
+	// A stated output count the turn then ran past is a snapshot. Anthropic's
+	// message_start states output_tokens 1 before the first delta, and a turn
+	// cut after hundreds of deltas was reaching the client as one token,
+	// authoritative (measured live 2026-10-26). The output leg then takes the
+	// larger of the snapshot and the estimate, and its splits go with it so
+	// the total still adds up. Whichever wins, the leg is an estimate now:
+	// the snapshot is known to be short, and the estimate is bytes over four,
+	// which is low on average rather than a bound. The input leg is left as
+	// stated: a prompt does not grow.
+	if outputSinceStated && truncation.OutputTotal.Value != nil {
+		restated := *stated
+		if stated.OutputTotal.Value == nil || *truncation.OutputTotal.Value > *stated.OutputTotal.Value {
+			restated.OutputTotal = truncation.OutputTotal
+			restated.OutputReasoning = truncation.OutputReasoning
+			restated.OutputOther = truncation.OutputOther
+		} else {
+			restated.OutputTotal.Provenance = llmprotocol.UsageEstimated
+			restated.OutputReasoning = llmprotocol.TokenCount{Provenance: llmprotocol.UsageUnknown}
+			restated.OutputOther = llmprotocol.TokenCount{Provenance: llmprotocol.UsageUnknown}
+		}
+		stated = &restated
+	}
+	// Only the input and output totals are reconciled, and only where the
+	// stream stated none. A total has to equal the sum of its own splits
+	// (validateUsageTotals), so mixing an estimated split into a stated total
+	// -- or the reverse -- states a usage that contradicts itself. The splits
+	// are therefore left exactly as the stream gave them, and an estimate only
+	// fills a total the stream never reached.
+	merged := *stated
+	merged.State = llmprotocol.UsageAvailable
+	if merged.InputTotal.Value == nil {
+		merged.InputTotal = truncation.InputTotal
+		merged.InputUncached = truncation.InputUncached
+		merged.InputCacheRead = truncation.InputCacheRead
+		merged.InputCacheWrite = truncation.InputCacheWrite
+	}
+	if merged.OutputTotal.Value == nil {
+		merged.OutputTotal = truncation.OutputTotal
+		merged.OutputReasoning = truncation.OutputReasoning
+		merged.OutputOther = truncation.OutputOther
+	}
+	merged.Total = summedTruncationTotal(merged)
+	return &merged
+}
+
+// summedTruncationTotal restates the overall total as the sum of the two totals
+// beside it, so a usage assembled from a statement and an estimate still adds
+// up. A turn missing either leg has no overall total to state.
+func summedTruncationTotal(usage llmprotocol.Usage) llmprotocol.TokenCount {
+	if usage.InputTotal.Value == nil || usage.OutputTotal.Value == nil {
+		return llmprotocol.TokenCount{Provenance: llmprotocol.UsageUnknown}
+	}
+	input, output := *usage.InputTotal.Value, *usage.OutputTotal.Value
+	if input > math.MaxInt64-output {
+		// Two counts that cannot be added are two counts this cannot state a
+		// total for. A wrapped total is a negative one, which the usage
+		// contract refuses and would fail the whole terminal.
+		return llmprotocol.TokenCount{Provenance: llmprotocol.UsageUnknown}
+	}
+	total := input + output
+	provenance := usage.InputTotal.Provenance
+	// The weaker of the two legs is what the sum is worth.
+	if usageEvidenceRank(usage.OutputTotal.Provenance) < usageEvidenceRank(provenance) {
+		provenance = usage.OutputTotal.Provenance
+	}
+	return llmprotocol.TokenCount{Value: llmprotocol.Int64(total), Provenance: provenance}
 }
 
 func (finalization streamFinalization) resultError() error {

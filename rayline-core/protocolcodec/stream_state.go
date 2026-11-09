@@ -148,6 +148,11 @@ func (state *streamState) observeProviderIdentity(responseID, model string) erro
 }
 
 func (state *streamState) next(event llmprotocol.Event) (llmprotocol.Event, error) {
+	// Every event passes through here, so this is where a cause on the wrong
+	// event, or outside the vocabulary, is refused (validateTruncationCause).
+	if err := validateTruncationCause(event); err != nil {
+		return llmprotocol.Event{}, err
+	}
 	event, err := state.prepareEvent(event)
 	if err != nil {
 		return llmprotocol.Event{}, err

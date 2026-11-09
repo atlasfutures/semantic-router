@@ -247,7 +247,11 @@ func (state *streamState) applyUsageEvidence(event llmprotocol.Event) (llmprotoc
 	if event.Usage == nil {
 		return event, nil
 	}
-	merged, restated, err := mergeMonotonicUsage(state.usage, *event.Usage)
+	current := state.usage
+	if event.Type == llmprotocol.EventResponseFailed && event.Failure == llmprotocol.FailureTruncated {
+		current = concedeOutputToTruncation(current, *event.Usage)
+	}
+	merged, restated, err := mergeMonotonicUsage(current, *event.Usage)
 	if err != nil {
 		return llmprotocol.Event{}, err
 	}
@@ -466,11 +470,34 @@ func validateFailedEvent(event llmprotocol.Event) (llmprotocol.Event, error) {
 	switch event.Failure {
 	case "":
 		event.Failure = llmprotocol.FailureTransport
-	case llmprotocol.FailureTransport, llmprotocol.FailureResponse:
+	// FailureTruncated is the Router's own: a turn it ended after the upstream
+	// had produced output. No decoder mints it; the engine re-scopes the
+	// terminal once the caller has stated what the turn cost.
+	case llmprotocol.FailureTransport, llmprotocol.FailureResponse, llmprotocol.FailureTruncated:
 	default:
 		return llmprotocol.Event{}, llmprotocol.NewError(llmprotocol.ErrorUpstreamUnavailable, "stream_failure_scope", "failed stream has an invalid failure scope", nil)
 	}
 	return event, nil
+}
+
+// validateTruncationCause holds the cause to its contract: stated only on a
+// terminal the host truncated, and only in the vocabulary the codecs render.
+// A cause on any other event, or a word outside the vocabulary, is a host
+// bug rather than a stream to translate.
+func validateTruncationCause(event llmprotocol.Event) error {
+	if event.Truncation == "" {
+		return nil
+	}
+	if event.Type != llmprotocol.EventResponseFailed || event.Failure != llmprotocol.FailureTruncated {
+		return llmprotocol.NewError(llmprotocol.ErrorInternal, "stream_truncation_cause_scope",
+			"a truncation cause belongs on a truncated terminal only", nil)
+	}
+	switch event.Truncation {
+	case llmprotocol.TruncationDeadline, llmprotocol.TruncationSilence, llmprotocol.TruncationTransport:
+		return nil
+	}
+	return llmprotocol.NewError(llmprotocol.ErrorInternal, "stream_truncation_cause_unknown",
+		"a truncation cause must be one the codecs render", nil)
 }
 
 // usageCountNames names usageCounts' entries for diagnostics.

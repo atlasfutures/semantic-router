@@ -2,6 +2,7 @@ package extproc
 
 import (
 	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
+
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/classification"
 )
 
@@ -29,20 +30,79 @@ import (
 // the direction to be wrong in here.
 func estimatedTruncatedStreamUsage(ctx *RequestContext) (responseUsageMetrics, bool) {
 	generated := generatedTextBytes(ctx.SemanticStreamState)
-	if generated == 0 {
+	if generated == 0 && (ctx.SemanticStreamState == nil || !ctx.SemanticStreamState.outputForwarded) {
 		return responseUsageMetrics{}, false
 	}
+	// Output with no bytes to count -- a call that only started, an image
+	// still generating -- carries as a count of what was seen, which is
+	// nothing yet on the output leg; the input legs are the stream's.
 	completion := estimatedTokensForBytes(generated)
-	prompt := estimatedTokensForBytes(ctx.VSRContextTextBytes)
-	return responseUsageMetrics{
-		promptTokens:             prompt,
-		promptTokensReported:     prompt > 0,
+	estimate := responseUsageMetrics{
 		completionTokens:         completion,
 		completionTokensReported: true,
-		totalTokens:              prompt + completion,
-		totalTokensReported:      true,
 		estimated:                true,
-	}, true
+	}
+	// The prompt the stream itself stated is a number the Router saw, and a
+	// better one than its own byte count: Anthropic's message_start says the
+	// input and cache legs before the first delta, and a prompt does not grow
+	// after it is counted. Only a stream that said nothing is measured.
+	if !statedInputLegs(ctx.SemanticStreamState, &estimate) {
+		prompt := estimatedTokensForBytes(ctx.VSRContextTextBytes)
+		estimate.promptTokens, estimate.promptTokensReported = prompt, prompt > 0
+	}
+	estimate.totalTokens = estimate.promptTokens + estimate.completionTokens
+	estimate.totalTokensReported = true
+	return estimate, true
+}
+
+// statedInputLegs copies the input legs the stream stated onto an estimate,
+// and reports whether it stated any. Provenance is not required to be
+// authoritative here: the turn is already an estimate, and a derived input
+// total is still the stream's own statement rather than the Router's guess.
+func statedInputLegs(state *semanticResponseStreamState, estimate *responseUsageMetrics) bool {
+	if state == nil || state.usage.State != llmprotocol.UsageAvailable || state.usage.InputTotal.Value == nil {
+		return false
+	}
+	estimate.promptTokens = int(*state.usage.InputTotal.Value)
+	estimate.promptTokensReported = true
+	if state.usage.InputCacheRead.Value != nil {
+		estimate.cachedPromptTokens = int(*state.usage.InputCacheRead.Value)
+		estimate.cachedPromptTokensReported = true
+	}
+	if state.usage.InputCacheWrite.Value != nil {
+		estimate.cacheWriteTokens = int(*state.usage.InputCacheWrite.Value)
+		estimate.cacheWriteTokensReported = true
+	}
+	return true
+}
+
+// outputRestatedPastSnapshot takes a count the upstream stated and asks
+// whether the turn kept generating after it was stated.
+//
+// If it did not, the count is a settlement and stands. If it did, the output
+// leg is a snapshot: Anthropic's message_start states output_tokens 1 before
+// the first delta, and a turn the Router cut after 780 deltas was being billed
+// as one token, marked authoritative. Measured live 2026-10-26. The output
+// then takes the larger of the snapshot and the Router's own estimate of what
+// it forwarded, and whichever wins the row says it is an estimate: the
+// snapshot is known to be short, and the estimate is bytes over four, which is
+// low on average rather than a bound. The input leg is left as stated: a
+// prompt does not grow after it is counted.
+func outputRestatedPastSnapshot(ctx *RequestContext, usage responseUsageMetrics) responseUsageMetrics {
+	state := ctx.SemanticStreamState
+	if state == nil || generatedTextBytes(state) <= state.generatedAtUsage {
+		return usage
+	}
+	usage.estimated = true
+	estimated, carried := estimatedTruncatedStreamUsage(ctx)
+	if !carried || estimated.completionTokens <= usage.completionTokens {
+		return usage
+	}
+	usage.completionTokens = estimated.completionTokens
+	usage.completionTokensReported = true
+	usage.totalTokens = usage.promptTokens + usage.completionTokens
+	usage.totalTokensReported = true
+	return usage
 }
 
 // generatedTextBytes is everything the turn produced that reached the client.
@@ -99,14 +159,31 @@ const usageSourceUnknown = "unknown"
 // It is only ever called for a turn the Router itself ended. A provider
 // failure is the provider's to describe, and an estimate on it would be the
 // Router inventing a number about someone else's turn.
-func (r *OpenAIRouter) attachTruncatedStreamUsage(ctx *RequestContext) {
+//
+// cut is the error this branch is ending the turn with. It is passed rather
+// than read back from the context, because ctx.SemanticStreamErr keeps the
+// first error of the stream and a filter or codec error recorded before the
+// cut would leave the terminal with no cause, or the wrong one.
+func (r *OpenAIRouter) attachTruncatedStreamUsage(ctx *RequestContext, cut *llmprotocol.ProtocolError) {
 	if ctx == nil || ctx.ProtocolResponseStream == nil {
+		return
+	}
+	// Why the turn was cut is this Router's to say (routerStreamCutCauses),
+	// and it is said whether or not there is a count: a fragment the cut left
+	// behind is then named as the cut rather than as malformed upstream JSON.
+	ctx.ProtocolResponseStream.SetTruncationCause(routerStreamCutCause(cut))
+	if ctx.SemanticStreamState == nil || !ctx.SemanticStreamState.outputForwarded {
+		// No output reached the client, so there is no turn to close as one
+		// stopped at a limit: the client is told the error, as documented. A
+		// count the upstream stated before the cut (Anthropic's message_start
+		// prices the prompt before the first delta) is not lost -- the usage
+		// row still bills it -- but it does not rewrite the terminal.
 		return
 	}
 	usage := truncatedStreamUsage(ctx, invalidResponseTerminalUsage("stream_cut"))
 	if usage.invalid {
-		// Nothing was seen, so there is nothing to say. The turn is named as
-		// uncounted on the telemetry side instead.
+		// Nothing was counted, so there is nothing to say. The turn is named
+		// as uncounted on the telemetry side instead.
 		return
 	}
 	ctx.ProtocolResponseStream.SetTruncationUsage(

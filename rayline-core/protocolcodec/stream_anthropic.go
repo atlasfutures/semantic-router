@@ -12,6 +12,10 @@ type anthropicStreamDecoder struct {
 	streamState
 	framer       sseFramer
 	stopSequence string
+	// announced is the stop the stream stated before its terminal, kept so
+	// finalize writing the failure's stop over decoder.stop does not lose it
+	// (announcedStop).
+	announced llmprotocol.StopReason
 	// stopDetails is the terminal message_delta's stop_details, carried on
 	// the completed event as telemetry (llmprotocol.StopDetails).
 	stopDetails *llmprotocol.StopDetails
@@ -421,7 +425,9 @@ func (decoder *anthropicStreamDecoder) decodeAnthropicMessageDelta(
 			return nil, diagnostics, invalidProviderResponse("usage_source_invalid", "usage_source must be "+UsageSourceUnknown)
 		}
 		// The delta's usage is a placeholder, and so was a held zero-count
-		// message_start usage: the turn's usage is unknown.
+		// message_start usage: the turn's usage is unknown. The stop it
+		// stated is still the decoder's, and announcedStop carries it to a
+		// terminal the engine has to build without it.
 		decoder.usageUnknown = true
 		decoder.pendingStartUsage = nil
 		return nil, diagnostics, nil
@@ -430,7 +436,12 @@ func (decoder *anthropicStreamDecoder) decodeAnthropicMessageDelta(
 		return nil, diagnostics, nil
 	}
 	usage := decodeAnthropicMessageDeltaUsage(*wire.Usage)
-	events, eventDiagnostics, err := decoder.emitAnthropicEvent(llmprotocol.Event{Type: llmprotocol.EventUsageUpdated, Usage: &usage})
+	// The delta states the stop the model reached beside its count. The stop
+	// travels on the event, so a turn cut between this delta and message_stop
+	// is still known to have finished (StreamEngine.recordTerminalEvent).
+	events, eventDiagnostics, err := decoder.emitAnthropicEvent(llmprotocol.Event{
+		Type: llmprotocol.EventUsageUpdated, Usage: &usage, StopReason: decoder.stop,
+	})
 	return events, appendDiagnostics(diagnostics, eventDiagnostics, decoder.policy.Limits.Diagnostics), err
 }
 
@@ -485,6 +496,7 @@ func decodeAnthropicStreamError(wire anthropicEventWire) llmprotocol.Event {
 	return llmprotocol.Event{
 		Type: llmprotocol.EventResponseFailed, Error: protocolError,
 		StopReason: llmprotocol.StopError, Failure: llmprotocol.FailureTransport,
+		UpstreamStated: true,
 	}
 }
 
@@ -643,6 +655,14 @@ func (decoder *anthropicStreamDecoder) finalizeDecoder(reason error) ([]llmproto
 			return events, diagnostics, err
 		}
 		events = append(events, flushed...)
+	}
+	// The frames flushed above may have carried the stop: a message_delta
+	// buffered without its terminating blank line states one and emits no
+	// event. finalize writes the failure's stop over decoder.stop, so what
+	// the stream announced is kept first and announcedStop keeps reporting
+	// it (StreamEngine.prepareFinalization reads it for the cut's terminal).
+	if decoder.stop != "" {
+		decoder.announced = decoder.stop
 	}
 	terminalEvents, err := decoder.finalize(reason)
 	events = append(events, terminalEvents...)
@@ -908,7 +928,15 @@ func (encoder *anthropicStreamEncoder) encodeAnthropicLifecycleEvent(
 	case llmprotocol.EventResponseFailed:
 		// A cut turn's count is the one exception: the caller asked for it to
 		// travel, because nothing downstream can bill the turn without it.
+		// The count that travels is the terminal's, which the engine has
+		// reconciled with what the stream said (a settlement the upstream
+		// stated, even one flushed at the cut, over the caller's estimate);
+		// the caller's own number only stands in when the terminal has none.
 		// Any other usage on a failure has nowhere to go in Messages.
+		if event.Failure == llmprotocol.FailureTruncated && encoder.truncationSource != "" &&
+			event.Usage != nil && event.Usage.State == llmprotocol.UsageAvailable {
+			encoder.truncationUsage = event.Usage
+		}
 		if event.Usage != nil && event.Usage.State == llmprotocol.UsageAvailable && encoder.truncationSource == "" {
 			appendAccountingOmission(&diagnostics, encoder.policy, encoder.context.Source, encoder.context.Target, "usage", "Messages error events cannot carry token usage")
 		}
@@ -1084,14 +1112,24 @@ func (encoder *anthropicStreamEncoder) terminateAnthropicStream(
 
 // afterTerminal handles a frame that arrives after message_stop. The message
 // is complete by then, so a frame that can add nothing to it -- an
-// OpenAI-style [DONE] sentinel, a ping, a repeated message_stop, a late
-// message_delta (usage or a restated stop) -- is dropped with a diagnostic
-// rather than cutting a stream whose answer the client already has. Anything
-// else (a new content block, an error) still fails the stream, and the
-// failure names the event type, so the frame a provider sent is on record.
+// OpenAI-style [DONE] sentinel whole or cut short, a ping, a repeated
+// message_stop, a late message_delta (usage or a restated stop) -- is dropped
+// with a diagnostic rather than cutting a stream whose answer the client
+// already has. Anything else (a new content block, an error) still fails the
+// stream, and the failure names the event type, so the frame a provider sent
+// is on record.
 func (decoder *anthropicStreamDecoder) afterTerminal(parsed sseFrame) ([]llmprotocol.Event, llmprotocol.Diagnostics, error) {
 	if bytes.Equal(bytes.TrimSpace(parsed.Data), []byte("[DONE]")) {
 		return nil, afterTerminalDiagnostic("[DONE]"), nil
+	}
+	if sentinelCutShort(parsed.Data) {
+		// A connection dropping partway through that sentinel used to be read
+		// as the upstream breaking the protocol, which cost a finished answer
+		// its terminal: the client got a bare error where its finish_reason
+		// and [DONE] belonged, with no way to close the stream. The sentinel
+		// whole adds nothing to a complete message, so neither could the bytes
+		// that never came have (codex round 13).
+		return nil, afterTerminalDiagnostic("a cut [DONE]"), nil
 	}
 	eventType, err := decodeProviderEventType(parsed.Data, parsed.Event, decoder.policy)
 	if err != nil {

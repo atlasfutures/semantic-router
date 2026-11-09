@@ -34,9 +34,13 @@ func TestCutStreamIsCountedWithItsUsage(t *testing.T) {
 			},
 		},
 	}
-	// The stream carried a partial answer and then stopped.
+	// The stream carried a partial answer and then stopped. The count above
+	// was stated after that answer, so the fixture says so: a count stated
+	// before output that then ran past it is a snapshot, not a settlement
+	// (outputRestatedPastSnapshot), and the zero value means exactly that.
 	item := ctx.SemanticStreamState.item(0)
 	item.text = "a partial answer"
+	ctx.SemanticStreamState.generatedAtUsage = len(item.text)
 
 	if err := router.handleProcessReceiveError(ctx, context.DeadlineExceeded); err != nil {
 		t.Fatalf("handleProcessReceiveError returned %v", err)
