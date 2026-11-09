@@ -19,18 +19,21 @@ import (
 //     A segment the counter can only bound by bytes (text x/text cannot
 //     normalize as the reference does) makes the fact caller_estimated.
 //   - Any other model: the UTF-8 byte count of a worst-case re-serialization
-//     of the prepared request, a proven upper bound for a byte-level BPE
-//     tokenizer (every token covers at least one byte) whatever a template
-//     does to the request's JSON: values re-encoded with indent=4, Python
+//     of the prepared request, an upper bound for a byte-level BPE
+//     tokenizer (every token covers at least one byte) provided the template
+//     renders each part of the request at most once and adds at most the
+//     margin below (README): values re-encoded with indent=4, Python
 //     separators, floats by repr, non-ASCII and <, >, & escaped, and each
 //     tool call's arguments string reloaded and re-encoded the same way
 //     beside it. It is raised by headroom_ratio and
 //     estimateTemplateMarginTokens for a preamble the body does not carry;
-//     provenance caller_estimated.
+//     provenance caller_bounded, which the policy contract admits as a fit
+//     (a bound that fits holds for the exact count too).
 //
 // An inline base64 image is charged media_tokens instead of its bytes in both
 // cases, and a fact with images is caller_estimated: the runtime's image
-// token count depends on the resolution.
+// token count depends on the resolution. So is any byte bound over a body
+// the core does not fully understand (boundedBody, capacity_bounded.go).
 const (
 	defaultEstimateHeadroomRatio = 0.05
 	// A Retina screenshot is about 6.6k Qwen-VL tokens; Claude caps an image
@@ -85,7 +88,11 @@ func localPromptSize(deployment Deployment, body []byte) (int64, string, string)
 		}
 		slog.Warn("qwen capacity count failed; using the byte bound", "deployment", deployment.ID, "error", err.Error())
 	}
-	return byteBoundTokens(body, deployment.CapacityEstimate), capacityProvenanceEstimated, units
+	tokens, images := byteBoundTokens(body, deployment.CapacityEstimate)
+	if images > 0 || !boundedBody(deployment.Protocol, body) {
+		return tokens, capacityProvenanceEstimated, units
+	}
+	return tokens, capacityProvenanceBounded, units
 }
 
 func sizedCapacityFact(deployment Deployment, prompt int64, provenance, units string, outputLimit int64) *CapacityFact {
@@ -105,20 +112,23 @@ func sizedCapacityFact(deployment Deployment, prompt int64, provenance, units st
 
 // byteBoundTokens is ceil(worst-case bytes * (1 + headroom_ratio)) + images *
 // media_tokens + estimateTemplateMarginTokens over the prepared body.
-func byteBoundTokens(body []byte, estimate *CapacityEstimate) int64 {
+// byteBoundTokens returns the bound and the number of inline images charged
+// media_tokens; with none, the bound is an upper bound on the exact count.
+func byteBoundTokens(body []byte, estimate *CapacityEstimate) (int64, int) {
 	headroom, mediaTokens := estimate.settings()
 	text := worstCaseBytes(body)
 	blobs := inlineImages(body)
 	for _, blob := range blobs {
 		text -= int64(blob[1] - blob[0])
 	}
-	return int64(math.Ceil(float64(max(text, 0))*(1+headroom))) + int64(len(blobs))*mediaTokens + estimateTemplateMarginTokens
+	return int64(math.Ceil(float64(max(text, 0))*(1+headroom))) + int64(len(blobs))*mediaTokens + estimateTemplateMarginTokens, len(blobs)
 }
 
 // worstCaseBytes is the longest spelling a template can give the request's
 // JSON (thinkingcontrol.PythonWorstCaseBytes, one parse), with each tool
-// call's arguments string reloaded and re-encoded beside it. A body that does
-// not parse is charged three times its bytes.
+// call's arguments string reloaded and re-encoded beside it, plus what a
+// tokenizer's Unicode normalizer can add. A body that does not parse is
+// charged three times its bytes.
 func worstCaseBytes(body []byte) int64 {
 	size, err := thinkingcontrol.PythonWorstCaseBytes(body, "arguments")
 	if err != nil {

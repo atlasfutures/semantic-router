@@ -268,7 +268,7 @@ func TestByteBoundCoversTemplateReserialization(t *testing.T) {
 	conversations, _ := loadQwenConversations(t)
 	for _, name := range []string{"enum_50k_indent4", "vllm_floats", "vllm_bare_tool", "tool_loop"} {
 		conversation := conversations[name]
-		bound := byteBoundTokens(conversation.Body, nil)
+		bound, _ := byteBoundTokens(conversation.Body, nil)
 		t.Logf("%-18s reference=%7d byte bound=%7d", name, conversation.Tokens, bound)
 		if bound < conversation.Tokens {
 			t.Errorf("%s: byte bound %d below the reference %d", name, bound, conversation.Tokens)
@@ -331,6 +331,12 @@ func TestEstimatedShortfallRelaxesOnlyOnARefusingRuntime(t *testing.T) {
 		relaxed := facts[localActionID] == nil
 		if relaxed != (overflow == ContextOverflowRefuses) || server.exceedsAllDeployments(facts) == relaxed {
 			t.Fatalf("%q: relaxed=%v facts %s", overflow, relaxed, mustJSON(facts))
+		}
+		// A bounded local shortfall is as uncertain as an estimated one.
+		facts = map[string]*CapacityFact{localActionID: short(capacityProvenanceBounded), cloudActionID: short(capacityProvenanceMeasured), secondCloudActionID: short(capacityProvenanceMeasured)}
+		server.relaxEstimatedShortfalls(facts)
+		if relaxed := facts[localActionID] == nil; relaxed != (overflow == ContextOverflowRefuses) {
+			t.Fatalf("%q: bounded relaxed=%v facts %s", overflow, relaxed, mustJSON(facts))
 		}
 		// Every target short and measured: the 400 stands.
 		facts = map[string]*CapacityFact{localActionID: short(capacityProvenanceMeasured), cloudActionID: short(capacityProvenanceMeasured), secondCloudActionID: short("provider_reported")}
@@ -511,7 +517,7 @@ func TestCapacityFactsAtTheWindowBoundary(t *testing.T) {
 		other.ContextWindow = fixture.tokens + output - 1
 		fact := localFact(other, body, output)
 		t.Logf("%-34s qwen tokens=%6d byte bound=%7d (%.2fx)", name, fixture.tokens, fact.prompt, float64(fact.prompt)/float64(fixture.tokens))
-		if fact.Fits || fact.Provenance != capacityProvenanceEstimated || fact.prompt < int64(len(fixture.text)) {
+		if fact.Fits || fact.Provenance != capacityProvenanceBounded || fact.prompt < int64(len(fixture.text)) {
 			t.Errorf("byte bound %s: %s", name, mustJSON(fact))
 		}
 	}
@@ -784,7 +790,8 @@ func TestByteBoundChargesInlineImagesNotTheirBytes(t *testing.T) {
 	messages := `{"type":"image","source":{"type":"base64","media_type":"image/png","data":"` + blob + `"}}`
 	chat := `{"type":"image_url","image_url":{"url":"data:image/png;base64,` + blob + `"}}`
 	for name, body := range map[string]string{"messages": messages, "chat": chat} {
-		got := byteBoundTokens([]byte(body), bare) - estimateTemplateMarginTokens
+		bound, _ := byteBoundTokens([]byte(body), bare)
+		got := bound - estimateTemplateMarginTokens
 		if got < 8192 || got > 8192+128 {
 			t.Fatalf("%s: estimate %d, want the 8192-token image charge plus structure", name, got)
 		}
@@ -794,12 +801,13 @@ func TestByteBoundChargesInlineImagesNotTheirBytes(t *testing.T) {
 	pdf := `{"type":"document","source":{"type":"base64","media_type":"application/pdf","data":"` + blob + `"}}`
 	escaped := `{"content":"{\"data\":\"` + blob + `\"} and \"data:image/png;base64,` + blob + `\""}`
 	for name, body := range map[string]string{"pdf": pdf, "escaped": escaped} {
-		if got := byteBoundTokens([]byte(body), bare); got < int64(len(blob)) {
+		if got, _ := byteBoundTokens([]byte(body), bare); got < int64(len(blob)) {
 			t.Fatalf("%s was discounted: %d", name, got)
 		}
 	}
 	media := int64(100) // structure of the Messages image block is about 80 bytes
-	if got := byteBoundTokens([]byte(messages), &CapacityEstimate{HeadroomRatio: &zero, MediaTokens: &media}) - estimateTemplateMarginTokens; got > 228 {
+	if bound, images := byteBoundTokens([]byte(messages), &CapacityEstimate{HeadroomRatio: &zero, MediaTokens: &media}); images != 1 || bound-estimateTemplateMarginTokens > 228 {
+		got := bound - estimateTemplateMarginTokens
 		t.Fatalf("media_tokens override ignored: %d", got)
 	}
 }
@@ -827,6 +835,11 @@ func TestCapacityEstimateConfigIsPerDeploymentAndValidated(t *testing.T) {
 	}
 	if _, err := NewServer(config, registry, provider, testCoreToken); err == nil || !strings.Contains(err.Error(), "capacity_estimate") {
 		t.Fatalf("invalid estimate admitted: %v", err)
+	}
+	config.Deployments[0].CapacityEstimate = nil
+	config.Deployments[0].CapacityMarginTokens = -2048
+	if _, err := NewServer(config, registry, provider, testCoreToken); err == nil || !strings.Contains(err.Error(), "capacity_margin_tokens") {
+		t.Fatalf("negative capacity margin admitted: %v", err)
 	}
 }
 
@@ -876,5 +889,95 @@ func TestContextExceededMessageNeverUnderstatesTheRequest(t *testing.T) {
 	message := server.contextExceededMessage(facts)
 	if strings.Contains(message, "114000") || !strings.HasPrefix(message, "prompt is too long: ") || !strings.Contains(message, "the largest maximum context length is 1000000 tokens (kimi-k3)") {
 		t.Fatalf("message %q", message)
+	}
+}
+
+// TestByteBoundIsBoundedOnlyOverAFullyKnownBody: a non-Qwen local target's
+// byte bound is caller_bounded (admitted as a fit) only when every member,
+// item, content part and tool of the body is on its protocol's allowlist;
+// anything else, an inline image charged media_tokens included, is
+// caller_estimated.
+func TestByteBoundIsBoundedOnlyOverAFullyKnownBody(t *testing.T) {
+	const (
+		chat      = llmprotocol.OpenAIChatV1
+		messages  = llmprotocol.AnthropicMessagesV1
+		responses = llmprotocol.OpenAIResponsesV1
+	)
+	blob := strings.Repeat("A", 2*mediaBlobMinBytes)
+	for _, test := range []struct {
+		name     string
+		protocol llmprotocol.WireFormat
+		body     string
+		bounded  bool
+	}{
+		{"chat text and tools", chat, `{"model":"m","stream":true,"max_tokens":64,"temperature":0.2,"chat_template_kwargs":{"enable_thinking":false},"tools":[{"type":"function","function":{"name":"f","parameters":{}}}],"messages":[{"role":"system","content":"s"},{"role":"user","content":[{"type":"text","text":"hi"}]},{"role":"assistant","content":null,"tool_calls":[{"id":"c","type":"function","function":{"name":"f","arguments":"{}"}}]},{"role":"tool","tool_call_id":"c","content":"ok"}]}`, true},
+		{"chat quoted media text", chat, `{"model":"m","messages":[{"role":"user","content":"{\"type\":\"image_url\",\"image_url\":{}}"}]}`, true},
+		{"messages text, tools and thinking", messages, `{"model":"m","max_tokens":64,"system":[{"type":"text","text":"s","cache_control":{"type":"ephemeral"}}],"thinking":{"type":"adaptive"},"output_config":{"effort":"high"},"tools":[{"name":"f","input_schema":{}}],"messages":[{"role":"user","content":"hi"},{"role":"assistant","content":[{"type":"thinking","thinking":"t","signature":"x"},{"type":"tool_use","id":"u","name":"f","input":{},"caller":{"type":"direct"}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"u","content":[{"type":"text","text":"ok"}]}]}]}`, true},
+		{"responses text and tools", responses, `{"model":"m","instructions":"s","reasoning":{"effort":"high"},"tools":[{"type":"function","name":"f","parameters":{}},{"type":"custom","name":"g"}],"input":[{"role":"user","content":[{"type":"input_text","text":"hi"}]},{"type":"reasoning","summary":[]},{"type":"function_call","call_id":"c","name":"f","arguments":"{}"},{"type":"function_call_output","call_id":"c","output":"ok"}]}`, true},
+		{"responses string input", responses, `{"model":"m","input":"hi"}`, true},
+		{"chat translated from responses", chat, `{"model":"m","store":false,"n":1,"prompt_cache_retention":"24h","messages":[{"role":"user","id":"msg_1","content":"hi"}]}`, true},
+		{"messages caching and context management", messages, `{"model":"m","max_tokens":64,"cache_control":{"type":"ephemeral"},"context_management":{"edits":[]},"messages":[{"role":"user","content":"hi"}]}`, true},
+		{"responses codex members", responses, `{"model":"m","input":"hi","stream":true,"stream_options":{"include_obfuscation":false},"client_metadata":{"session_id":"s"}}`, true},
+		{"messages diagnostics", messages, `{"model":"m","max_tokens":64,"diagnostics":{"previous_message_id":null},"messages":[{"role":"user","content":"hi"}]}`, true},
+		{"responses cache retention", responses, `{"model":"m","prompt_cache_retention":"24h","input":[{"type":"reasoning","id":"rs","summary":[{"type":"summary_text","text":"t"}],"encrypted_content":"x"}]}`, true},
+		{"call item carrying content", responses, `{"model":"m","input":[{"type":"custom_tool_call","call_id":"c","name":"f","input":"","role":"user","content":[{"type":"input_image","image_url":"http://127.0.0.1/a.png"}]}]}`, false},
+		{"text part carrying an image", responses, `{"model":"m","input":[{"type":"function_call_output","call_id":"c","output":[{"type":"input_text","text":"hi","uuid":"a","image_url":"https://example.com/a.png"}]}]}`, false},
+		{"chat text part carrying an image", chat, `{"model":"m","messages":[{"role":"user","content":[{"type":"text","text":"hi","image_url":{"url":"https://example.com/a.png"}}]}]}`, false},
+		{"unknown diagnostics member", messages, `{"model":"m","diagnostics":{"x":1},"messages":[{"role":"user","content":"hi"}]}`, false},
+		// vLLM flattens a namespace, repeating its name in every function's.
+		{"namespace tools", responses, `{"model":"m","input":"hi","tools":[{"type":"namespace","name":"ns","tools":[{"type":"function","name":"f","parameters":{}}]}]}`, false},
+
+		{"unknown protocol", "", `{"model":"m","messages":[{"role":"user","content":"hi"}]}`, false},
+		{"not json", chat, `not json`, false},
+		{"inline image charged", chat, `{"model":"m","messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"data:image/png;base64,` + blob + `"}}]}]}`, false},
+		{"remote image", chat, `{"model":"m","messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"https://example.com/a.png"}}]}]}`, false},
+		{"audio", chat, `{"model":"m","messages":[{"role":"user","content":[{"type":"input_audio","input_audio":{"data":"AAAA","format":"wav"}}]}]}`, false},
+		{"tool result image", messages, `{"model":"m","messages":[{"role":"user","content":[{"type":"tool_result","tool_use_id":"t","content":[{"type":"image","source":{"type":"url","url":"https://example.com/a.png"}}]}]}]}`, false},
+		{"document", messages, `{"model":"m","messages":[{"role":"user","content":[{"type":"document","source":{"type":"url","url":"https://example.com/a.pdf"}}]}]}`, false},
+		{"server tool", messages, `{"model":"m","tools":[{"type":"web_search_20250305","name":"web_search"}],"messages":[{"role":"user","content":"hi"}]}`, false},
+		{"responses image", responses, `{"model":"m","input":[{"role":"user","content":[{"type":"input_image","image_url":"https://example.com/a.png"}]}]}`, false},
+		{"item reference", responses, `{"model":"m","input":[{"type":"item_reference","id":"msg_1"}]}`, false},
+		{"image history", responses, `{"model":"m","input":[{"type":"image_generation_call","id":"ig_1","status":"completed","result":null}]}`, false},
+		{"stored response", responses, `{"model":"m","previous_response_id":"resp_1","input":"hi"}`, false},
+		{"chat_template", chat, `{"model":"m","chat_template":"{{ messages[0]['content'] * 10000 }}","messages":[{"role":"user","content":"hi"}]}`, false},
+		{"kwargs chat_template", chat, `{"model":"m","chat_template_kwargs":{"chat_template":"{{ 'hi ' * 1000000 }}"},"messages":[{"role":"user","content":"hi"}]}`, false},
+		{"unknown top-level member", chat, `{"model":"m","n_predict":8192,"messages":[{"role":"user","content":"hi"}]}`, false},
+		{"unknown message member", chat, `{"model":"m","messages":[{"role":"user","content":"hi","prefix":true}]}`, false},
+		{"unknown content part", chat, `{"model":"m","messages":[{"role":"user","content":[{"type":"text","text":"hi"},{"file_id":"file_1"}]}]}`, false},
+	} {
+		deployment := Deployment{ID: "local", Kind: "local", Protocol: test.protocol, RegistryModel: "z-ai/glm-5.3-flash", ContextWindow: 1_000_000}
+		want := map[bool]string{true: capacityProvenanceBounded, false: capacityProvenanceEstimated}[test.bounded]
+		if _, provenance, _ := localPromptSize(deployment, []byte(test.body)); provenance != want {
+			t.Errorf("%s: %s, want %s", test.name, provenance, want)
+		}
+	}
+}
+
+// TestByteBoundCoversUnicodeNormalization: a tokenizer may normalize before
+// byte-level BPE, and NFKC turns U+FDFA (one 6-byte escape) into 33 UTF-8
+// bytes, NFD a Hangul syllable into 9, so the bound charges the expansion.
+func TestByteBoundCoversUnicodeNormalization(t *testing.T) {
+	for name, test := range map[string]struct {
+		text  string
+		bytes int
+	}{
+		"nfkc ligature": {strings.Repeat(string(rune(0xFDFA)), 1024), 33 * 1024},
+		"nfd hangul":    {strings.Repeat(string(rune(0xD55C)), 1024), 9 * 1024},
+		// Escaped inside a tool call's arguments, the string itself is ASCII.
+		"escaped arguments": {`{"s":"` + strings.Repeat(`\ufdfa`, 1024) + `"}`, 33 * 1024},
+	} {
+		message := map[string]any{"role": "user", "content": test.text}
+		if strings.HasPrefix(test.text, "{") {
+			message = map[string]any{"role": "assistant", "tool_calls": []any{map[string]any{"id": "c", "type": "function", "function": map[string]any{"name": "f", "arguments": test.text}}}}
+		}
+		body, err := json.Marshal(map[string]any{"model": "m", "messages": []any{message}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		deployment := Deployment{ID: "local", Kind: "local", Protocol: llmprotocol.OpenAIChatV1, RegistryModel: "example/other", ContextWindow: 8192}
+		prompt, provenance, _ := localPromptSize(deployment, body)
+		if provenance == capacityProvenanceBounded && prompt < int64(test.bytes) {
+			t.Errorf("%s: bound %d below the normalized %d bytes", name, prompt, test.bytes)
+		}
 	}
 }
