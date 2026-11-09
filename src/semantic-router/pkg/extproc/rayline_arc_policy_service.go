@@ -1202,7 +1202,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	// nothing. A side call's request is no prefix a turn commits, so it is
 	// forgotten rather than recorded (a nil shape).
 	if !ephemeral && !servedRelaxed {
-		policyRetainedSessions.remember(scorer.retainedScope, arcContext.EpisodeIDHash, prefixShape)
+		policyRetainedSessions.remember(scorer.retainedScope, arcContext.EpisodeIDHash, state.TurnIndex, prefixShape)
 	}
 	encoded := &raylinearc.EncoderResult{
 		SerializedTokens:  response.Encoding.TokenCount,

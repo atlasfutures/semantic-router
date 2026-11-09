@@ -653,8 +653,9 @@ the episode's last committed request, which takes 0.2 to 0.8 s. With
   (estimated at four bytes a token over their JSON, which runs high).
   Anything else is predicted full and gated: a first turn, a prefix a `zdr`
   turn committed (it was decided on a throwaway service episode), a session
-  a side call or another recipe changed since, and a turn another router
-  instance decided, which this one cannot see. The record is in memory and
+  a side call, an appended reply (`decide_mode: delta`) or another recipe
+  changed since, and an episode another router instance decided or
+  committed since, which this one cannot see. The record is in memory and
   bounded, so on a cell with several router instances only lookups that
   land on the instance that decided the previous turn are exempt.
 - **The default bound is 8192 tokens.** At the measured full-encode rate

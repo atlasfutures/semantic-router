@@ -398,7 +398,8 @@ func seedAppendAdmissionEpisode(t *testing.T, router *OpenAIRouter, session stri
 	}
 	scope := policyRetainedScope(router.Config.Decisions[0].Algorithm.RaylineARC)
 	episode := raylinearc.HashEpisodeID(session)
-	policyRetainedSessions.remember(scope, episode, raylinearc.NewPolicyPrefixShape(messages, nil, nil))
+	// The first turn was decided at index 0; its commit left the next one.
+	policyRetainedSessions.remember(scope, episode, state.TurnIndex-1, raylinearc.NewPolicyPrefixShape(messages, nil, nil))
 	t.Cleanup(func() { policyRetainedSessions.forget(scope, episode) })
 }
 
@@ -511,12 +512,14 @@ func TestPredictRaylineRoutesEncode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	committed := &raylinearc.EpisodeState{Policy: &raylinearc.PolicyEpisodeState{
+	committed := &raylinearc.EpisodeState{TurnIndex: 1, Policy: &raylinearc.PolicyEpisodeState{
 		PrefixLen: 1, PrefixDigest: raylinearc.NewPrefixDigests(first).Digest(1),
 	}}
 	episode := raylinearc.HashEpisodeID("predict-" + t.Name())
 	scope := policyRetainedScope(policy.RaylineARC)
-	retain := func(shape *raylinearc.PolicyPrefixShape) { policyRetainedSessions.remember(scope, episode, shape) }
+	retain := func(shape *raylinearc.PolicyPrefixShape) {
+		policyRetainedSessions.remember(scope, episode, committed.TurnIndex-1, shape)
+	}
 	t.Cleanup(func() { policyRetainedSessions.forget(scope, episode) })
 	arcContext := func(body string, state *raylinearc.EpisodeState) *selection.RaylineARCSelectionContext {
 		return &selection.RaylineARCSelectionContext{
@@ -548,7 +551,14 @@ func TestPredictRaylineRoutesEncode(t *testing.T) {
 		stale.Reason != raylineRoutesPredictNotRetained {
 		t.Fatalf("stale retained request = %+v, want a full encode (%s)", stale, raylineRoutesPredictNotRetained)
 	}
+	// The prefix the session holds, but an intervening commit (another
+	// instance's retry under another shell) moved the episode on.
 	retain(raylinearc.NewPolicyPrefixShape(first, nil, nil))
+	movedOn := &raylinearc.EpisodeState{TurnIndex: committed.TurnIndex + 1, Policy: committed.Policy}
+	if moved := predictRaylineRoutesEncode(policy, arcContext(appendAdmissionNext, movedOn), false); moved.Append ||
+		moved.Reason != raylineRoutesPredictNotRetained {
+		t.Fatalf("episode committed since the record = %+v, want a full encode (%s)", moved, raylineRoutesPredictNotRetained)
+	}
 	appended := predictRaylineRoutesEncode(policy, arcContext(appendAdmissionNext, committed), false)
 	if !appended.Append || appended.Reason != raylineRoutesPredictAppends || appended.SuffixTokens <= 0 {
 		t.Fatalf("extending request = %+v, want an append with its suffix counted", appended)
@@ -628,5 +638,19 @@ func TestPredictRaylineRoutesEncodeAfterAZDRTurn(t *testing.T) {
 	fixture.fake.servesRelease = true
 	if prediction := predictAfterFirstTurn(t, fixture); prediction.Append || prediction.Reason != raylineRoutesPredictNotRetained {
 		t.Fatalf("after a zdr turn = %+v, want a full encode (%s)", prediction, raylineRoutesPredictNotRetained)
+	}
+}
+
+// On a delta cell the reply is appended to the session after the decide
+// recorded the request, so the session holds more than the record says: the
+// next request is gated rather than predicted from a stale record.
+func TestPredictRaylineRoutesEncodeAfterAnAppendedReply(t *testing.T) {
+	fixture := newDeltaFixture(t, config.RaylineARCDecideModeDelta, nil)
+	prediction := predictAfterFirstTurn(t, fixture)
+	if appends := fixture.fake.receivedAppends(); len(appends) != 1 {
+		t.Fatalf("appends = %d, want the reply appended", len(appends))
+	}
+	if prediction.Append || prediction.Reason != raylineRoutesPredictNotRetained {
+		t.Fatalf("after an appended reply = %+v, want a full encode (%s)", prediction, raylineRoutesPredictNotRetained)
 	}
 }

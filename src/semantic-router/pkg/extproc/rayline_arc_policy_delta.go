@@ -197,6 +197,9 @@ type policyStaging struct {
 	roles    []string
 	// clientBody is the reply the client received, once it is complete.
 	clientBody []byte
+	// retainedScope keys the episode's policyRetainedSessions record, which
+	// an append makes stale.
+	retainedScope string
 	// appendTimeout bounds the append.
 	appendTimeout time.Duration
 	// shared is where the record is kept for the episode's other cell
@@ -442,6 +445,7 @@ func (scorer *policyServiceScorer) newPolicyStaging(
 		roles:         roles,
 		appendTimeout: scorer.appendTimeout,
 		shared:        policySharedStagedTurns(arcContext),
+		retainedScope: scorer.retainedScope,
 	}
 }
 
@@ -657,6 +661,11 @@ func (transaction *raylineARCEpisodeTransaction) appendPolicyStagedTurn(parent c
 	if err != nil {
 		return fail("shed")
 	}
+	// The append adds the reply as VSR read it to the retained session, so
+	// the session no longer holds just the request the decide recorded; a
+	// next request that echoes the reply otherwise is sent in full and
+	// rebuilt. Route lookup admission predicts no append from it.
+	policyRetainedSessions.forget(staging.retainedScope, staging.episodeIDHash)
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), staging.appendTimeout)
 	started := time.Now()
 	response, err := staging.appender.Append(ctx, request)

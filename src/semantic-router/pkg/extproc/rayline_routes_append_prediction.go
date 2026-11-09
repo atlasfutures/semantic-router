@@ -119,7 +119,7 @@ func predictRaylineRoutesEncode(
 	}
 	current := raylinearc.NewPolicyPrefixShapeFrom(digests, system, clientRequest.Tools)
 	held, shellChanged := policyRetainedSessions.holds(
-		policyRetainedScope(algorithm.RaylineARC), arcContext.EpisodeIDHash, state.Policy, current,
+		policyRetainedScope(algorithm.RaylineARC), arcContext.EpisodeIDHash, state, current,
 	)
 	switch {
 	case shellChanged:

@@ -32,6 +32,11 @@ type policyRetainedRequest struct {
 	digest string
 	system uint64
 	tools  uint64
+	// turn is the episode turn index the decide's commit leaves. A lookup
+	// whose episode is at another index read a state some other decide
+	// committed (another router instance, a retry), which may have left
+	// another shell in the session.
+	turn uint64
 }
 
 // policyRetainedSessionCache remembers, per policy backend and episode, the
@@ -68,8 +73,9 @@ func policyRetainedScope(arcConfig *config.RaylineARCAlgorithmConfig) string {
 
 func policyRetainedKey(scope, episode string) string { return scope + "\x00" + episode }
 
-// remember records shape as the request the episode's session now holds.
-func (cache *policyRetainedSessionCache) remember(scope, episode string, shape *raylinearc.PolicyPrefixShape) {
+// remember records shape as the request the episode's session now holds,
+// decided on the episode at turnIndex.
+func (cache *policyRetainedSessionCache) remember(scope, episode string, turnIndex uint64, shape *raylinearc.PolicyPrefixShape) {
 	if shape == nil {
 		cache.forget(scope, episode)
 		return
@@ -84,7 +90,9 @@ func (cache *policyRetainedSessionCache) remember(scope, episode string, shape *
 		}
 		cache.order = append(cache.order, key)
 	}
-	cache.requests[key] = policyRetainedRequest{len: shape.Len, digest: shape.Digest, system: shape.System, tools: shape.Tools}
+	cache.requests[key] = policyRetainedRequest{
+		len: shape.Len, digest: shape.Digest, system: shape.System, tools: shape.Tools, turn: turnIndex + 1,
+	}
 }
 
 // forget drops what is known of the episode's session: a decide is about to
@@ -105,22 +113,24 @@ func (cache *policyRetainedSessionCache) forget(scope, episode string) {
 	}
 }
 
-// holds reports whether the episode's session is known to hold the committed
-// prefix state records, under the same system prompt and tools as current.
-// shellChanged is true when it holds the prefix under a different shell,
-// which the service rebuilds.
+// holds reports whether the episode's session is known to hold the prefix
+// state committed, under the same system prompt and tools as current: the
+// decide this process recorded is the one whose commit state is. shellChanged
+// is true when it holds the prefix under a different shell, which the
+// service rebuilds.
 func (cache *policyRetainedSessionCache) holds(
 	scope, episode string,
-	state *raylinearc.PolicyEpisodeState,
+	state *raylinearc.EpisodeState,
 	current *raylinearc.PolicyPrefixShape,
 ) (held, shellChanged bool) {
-	if state == nil || current == nil {
+	if state == nil || state.Policy == nil || current == nil {
 		return false, false
 	}
 	cache.mu.Lock()
 	retained, known := cache.requests[policyRetainedKey(scope, episode)]
 	cache.mu.Unlock()
-	if !known || retained.len != state.PrefixLen || retained.digest != state.PrefixDigest {
+	if !known || retained.turn != state.TurnIndex ||
+		retained.len != state.Policy.PrefixLen || retained.digest != state.Policy.PrefixDigest {
 		return false, false
 	}
 	if retained.system != current.System || retained.tools != current.Tools {
