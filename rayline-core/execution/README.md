@@ -176,9 +176,16 @@ opt-in. The core reports facts and never picks or ranks a model.
   without a counter sends `capacity: null`; its provider refuses an oversized
   prompt itself, and that refusal reaches the caller translated, text intact.
 - **Runtime context refusals.** A local runtime's refusal before any output,
-  llama.cpp's or an OpenAI-compatible one (`context_length_exceeded` or
-  "maximum context length" in the error's code, type or message: vLLM, MLX, a
-  custom endpoint), re-consults with `reconsult: "capacity"`.
+  llama.cpp's or an OpenAI-compatible one (`context_length_exceeded`,
+  "maximum context length" or vLLM's "longer than the maximum model length"
+  in the error's code, type or message: vLLM, TensorFold, MLX, a custom
+  endpoint), re-consults with `reconsult: "capacity"`. So does a refusal a
+  local runtime sends as the first event of a stream it opened with 200
+  (TensorFold): the core holds back the stream's opening events (a role-only
+  Chat chunk, `message_start`, `ping`, `response.created`,
+  `response.in_progress`, comments) until the first other event, for at
+  most 2 seconds and 64 KiB, and relays them unchanged when that event is
+  not such a refusal.
 - **No deployment fits.** When every executable target has a
   `context_capacity` shortfall that stands (see `context_overflow`) and none
   is unknown, the

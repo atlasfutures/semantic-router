@@ -202,14 +202,17 @@ func (server *Server) everyTarget(facts map[string]*CapacityFact, holds func(*Ca
 }
 
 // isRuntimeContextRejection recognizes a local runtime's refusal of a prompt
-// over its context before any output: llama.cpp's documented error, or an
-// OpenAI-compatible context-length refusal (vLLM, MLX, a custom endpoint:
-// context_length_exceeded or "maximum context length" in the error's code,
-// type or message).
+// over its context before any output (runtimeContextRefusal).
 func isRuntimeContextRejection(deployment Deployment, status int, body []byte) bool {
-	if deployment.Kind != "local" {
-		return false
-	}
+	return deployment.Kind == "local" && runtimeContextRefusal(status, body)
+}
+
+// runtimeContextRefusal recognizes a runtime's context-window refusal:
+// llama.cpp's documented error, or an OpenAI-compatible context-length
+// refusal in the error's code, type or message: context_length_exceeded,
+// "maximum context length" (vLLM's renderer, TensorFold, MLX, a custom
+// endpoint) or vLLM's engine check, "longer than the maximum model length".
+func runtimeContextRefusal(status int, body []byte) bool {
 	if status == 400 {
 		for _, marker := range [][]byte{[]byte("exceed_context_size_error"), []byte("exceeds the available context size")} {
 			if bytes.Contains(body, marker) {
@@ -217,7 +220,7 @@ func isRuntimeContextRejection(deployment Deployment, status int, body []byte) b
 			}
 		}
 	}
-	return contextRefusalNames(status, body, "context_length_exceeded", "maximum context length")
+	return contextRefusalNames(status, body, "context_length_exceeded", "maximum context length", "longer than the maximum model length")
 }
 
 func int64OrNil(value *int64) any {
