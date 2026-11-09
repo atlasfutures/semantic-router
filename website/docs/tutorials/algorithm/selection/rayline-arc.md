@@ -588,8 +588,6 @@ routes_api:
   admission:
     max_inflight: 1      # 0 or absent: no admission (every lookup goes straight in)
     queue_wait_ms: 2000  # 0: 2000 ms, or half deadline_ms when that is shorter
-    append_exempt: false # true: a predicted append skips the gate (see below)
-    append_max_suffix_tokens: 0  # 0: 8192; needs append_exempt
 ```
 
 - **Scope.** With the `redis` episode backend the cap is cell-wide: each slot
@@ -626,91 +624,19 @@ routes_api:
   side. Recipes on one backend with different `max_inflight` are logged at
   startup (`rayline_routes_admission_limit_conflict`).
 - **A lookup that times out keeps its slot until the encode finishes.** The
-  backend does not stop encoding when the caller stops waiting, so a lookup
-  that holds a slot runs its decision detached from the caller, bounded at
-  120 s. The caller still gets its 504 at `deadline_ms`; the slot is
-  released when the backend answers, so the next lookup is not admitted onto
-  a backend still busy with this one. This holds for ephemeral lookups
-  (every lookup when `episode_writes` is false) and for lookups that join an
-  episode alike. A lookup that joins an episode commits its turn only while
-  its caller is still waiting: one whose caller has gone by the time the
-  backend answers releases the episode lease without committing, so the
-  conversation's next turn is attributed to the turn that was actually
-  answered. It holds the episode lease until then too, so a retry of the
-  same conversation right after the 504 waits on (or is refused by) the
-  lease while the backend finishes. Until it holds a slot (while it waits for one, or when it is
-  exempt, below) a lookup is cancelled with its caller.
-
-#### Exempting appends
-
-The gate protects the policy container from full encodes, which in prod
-run at about 35k tokens a second per container plus about 0.2 s fixed: some
-26 s for a 900k-token transcript. A tracked lookup whose episode's retained
-encoder session already holds the transcript encodes only what is new since
-the episode's last committed request: 55 to 115 ms in the encoder, and 0.7
-to 0.9 s policy-side at 140 to 157k tokens. With
-`append_exempt: true`, such a lookup skips the gate:
-
-- **The prediction.** Once the episode is read, and before the policy
-  service is called, the router checks what it holds: the episode's committed
-  policy prefix (`prefix_len` messages and their digest). A lookup is
-  predicted to append when the episode has a committed turn, the request's
-  messages extend that prefix (no prefix break, compaction or side call),
-  this router process's own last strict decide for the episode left exactly
-  that prefix in the service's session under the same system prompt and
-  tools, and the new messages come to at most `append_max_suffix_tokens`
-  (estimated at four bytes a token over their JSON, which runs high).
-  Anything else is predicted full and gated: a first turn, a prefix a `zdr`
-  turn committed (it was decided on a throwaway service episode), a session
-  a side call, an appended reply (`decide_mode: delta`) or another recipe
-  changed since, and an episode another router instance decided or
-  committed since, which this one cannot see. The record is in memory and
-  bounded, so on a cell with several router instances only lookups that
-  land on the instance that decided the previous turn are exempt.
-- **The default bound is 8192 tokens.** At the prod full-encode rate that
-  is at most about 0.45 s of encoder time: under what an append already
-  costs policy-side, no more than an ordinary small lookup, and well inside
-  the 2 s queue wait a gated lookup would have spent anyway. A turn carrying a pasted file or a
-  large tool result goes over it and is gated.
-- **Where admission runs.** A tracked lookup on such a cell takes its slot
-  after the episode lease, from inside the decision, within the same
-  `deadline_ms`. A shed still answers `429 lookup_capacity` and releases the
-  lease, so the conversation's next lookup is not contended. Ephemeral
-  lookups, and lookups that join no episode (exploration, caller prices,
-  `exclusive`, `routing.execution`), are gated before any episode work,
-  exactly as with the knob off.
-- **Requirements.** `append_exempt` needs `max_inflight`, `episode_writes`
-  and a policy-service cell with strict episodes; the loader refuses it on an
-  artifact-mode cell or with `episode.consistency: relaxed`, where the
-  service retains no session to append to. Off, which is the default, every
-  lookup is gated.
-- **Checking the prediction.** It can be wrong: the service may have evicted
-  the session (idle, restart, replica change) and rebuild it.
-  `rayline_routes_admission_prediction` logs each predicted lookup with
-  `admission` (`gated` or `exempt`), `prediction` (`extends`, or why it was
-  predicted full), `predicted_suffix_tokens` and the `session_action` the
-  service reported (`created`, `rebuilt`, `appended`, `reused`, or `none`).
-  `llm_rayline_arc_routes_admission_prediction_total{admission, prediction,
-  session_action}` counts the same; exempt lookups with `session_action`
-  `created` or `rebuilt` are full encodes the prediction let through.
+  backend does not stop encoding when the caller stops waiting, so an
+  ephemeral lookup (every lookup when `episode_writes` is false) runs its
+  decision detached from the caller, bounded at 120 s. The caller still gets
+  its 504 at `deadline_ms`; the slot is released when the backend answers,
+  so the next lookup is not admitted onto a backend still busy with this one.
+  A lookup that joins an episode is not detached (an abandoned one would
+  still commit its turn) and frees its slot at its 504.
 
 `llm_rayline_arc_routes_admission_total{outcome, backend}` counts outcomes
-(`admitted`, `queued`, `shed`, `cancelled`, `fail_open`, and `exempt` with
-backend `none`) and
+(`admitted`, `queued`, `shed`, `cancelled`, `fail_open`) and
 `llm_rayline_arc_routes_admission_wait_seconds{outcome}` the time spent
 waiting; serialized lookups show as `queued` with waits near the holder's
 encode time.
-
-Tracked lookups also leave retained encoder sessions behind, one per
-conversation, each occupying the encoder container's session budget until
-the encoder evicts it. `llm_rayline_arc_routes_lookup_sessions` is, per
-router process, the conversations whose last tracked lookup left a session
-(`session_action` `created`, `rebuilt`, `appended` or `reused`) within the
-episode `idle_ttl_seconds`; `rayline_routes_lookup_session` logs each such
-lookup with `session_action` and the count (`lookup_sessions`). It is an
-estimate to sum across router processes against the budget: it overcounts
-sessions the encoder evicted sooner and does not see the sessions routed
-turns hold.
 
 A scripted client -- a latency test, a batch job -- should send lookups one
 at a time per cell where it can, honour `Retry-After` on any 429 (with jitter
@@ -775,7 +701,6 @@ routing:
             # Optional: cap concurrent lookups (see "Lookup admission").
             admission:
               max_inflight: 0
-              append_exempt: false
 ```
 
 Off by default, and deliberately not implied by configuring the algorithm. A

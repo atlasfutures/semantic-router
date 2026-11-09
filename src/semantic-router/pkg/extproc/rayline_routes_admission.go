@@ -22,15 +22,12 @@ import (
 	"math"
 	"sort"
 	"strings"
-	"sync"
 
 	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/metrics"
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/routerruntime"
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
 
@@ -177,19 +174,6 @@ func (r *OpenAIRouter) admitRaylineRoutesLookup(
 	if gate == nil {
 		return raylinearc.RouteLookupTicket{}, nil
 	}
-	ticket, err := acquireRaylineRoutesLookup(lookupContext, gate, routeID)
-	if err != nil {
-		return raylinearc.RouteLookupTicket{}, r.raylineRoutesAdmissionRefusal(ctx, lookupContext, routeID, gate, err)
-	}
-	return ticket, nil
-}
-
-// acquireRaylineRoutesLookup takes a slot on gate and records the outcome.
-func acquireRaylineRoutesLookup(
-	lookupContext context.Context,
-	gate *raylinearc.RouteLookupGate,
-	routeID string,
-) (raylinearc.RouteLookupTicket, error) {
 	ticket, err := gate.Acquire(lookupContext)
 	if err == nil {
 		metrics.RecordRaylineARCRoutesAdmission(ticket.Outcome, ticket.Backend, ticket.Wait.Seconds())
@@ -204,32 +188,20 @@ func acquireRaylineRoutesLookup(
 		return ticket, nil
 	}
 	var refusal *raylinearc.RouteLookupRefusal
-	if errors.As(err, &refusal) {
-		metrics.RecordRaylineARCRoutesAdmission(refusal.Outcome, refusal.Backend, refusal.Wait.Seconds())
-		logging.ComponentEvent("extproc", "rayline_routes_admission_wait", map[string]interface{}{
-			"routing_decision_id": routeID,
-			"outcome":             refusal.Outcome,
-			"backend":             refusal.Backend,
-			"wait_ms":             refusal.Wait.Milliseconds(),
-		})
+	if !errors.As(err, &refusal) {
+		return raylinearc.RouteLookupTicket{}, r.raylineRoutesFailure(ctx, lookupContext, routeID, err)
 	}
-	return raylinearc.RouteLookupTicket{}, err
-}
-
-// raylineRoutesAdmissionRefusal answers a lookup the gate did not admit: 429
-// lookup_capacity for a shed, raylineRoutesFailure for anything else (a wait
-// the lookup's deadline ended answers 504).
-func (r *OpenAIRouter) raylineRoutesAdmissionRefusal(
-	ctx *RequestContext,
-	lookupContext context.Context,
-	routeID string,
-	gate *raylinearc.RouteLookupGate,
-	err error,
-) *ext_proc.ProcessingResponse {
+	metrics.RecordRaylineARCRoutesAdmission(refusal.Outcome, refusal.Backend, refusal.Wait.Seconds())
+	logging.ComponentEvent("extproc", "rayline_routes_admission_wait", map[string]interface{}{
+		"routing_decision_id": routeID,
+		"outcome":             refusal.Outcome,
+		"backend":             refusal.Backend,
+		"wait_ms":             refusal.Wait.Milliseconds(),
+	})
 	if !errors.Is(err, raylinearc.ErrRouteLookupShed) {
-		return r.raylineRoutesFailure(ctx, lookupContext, routeID, err)
+		return raylinearc.RouteLookupTicket{}, r.raylineRoutesFailure(ctx, lookupContext, routeID, err)
 	}
-	return raylineRoutesRetryAfter(
+	return raylinearc.RouteLookupTicket{}, raylineRoutesRetryAfter(
 		r.createRaylineRoutesCodedError(ctx, &routesContractError{
 			status:  429,
 			errType: "rate_limit_error",
@@ -238,181 +210,6 @@ func (r *OpenAIRouter) raylineRoutesAdmissionRefusal(
 		}),
 		raylineRoutesAdmissionRetrySeconds(gate),
 	)
-}
-
-// raylineRoutesSlot is a gated lookup's admission slot and the hold its
-// decision keeps on it.
-//
-// The slot is the backend's, and the backend does not stop encoding when the
-// caller stops waiting. So once a decision may encode on the slot it is
-// pinned: from then on the decision runs on its own context, bounded by
-// RouteLookupDetachBound, and the slot is released when the backend answers,
-// not at the caller's 504 (raylineRoutesDecide). An ephemeral lookup is
-// pinned from the start, as it took its slot up front. A tracked lookup is
-// pinned in admit, once its episode is read and before any encoder call; up
-// to then its decision is cancelled with the caller, so an abandoned lookup
-// starts no encode, and its commit stays on the caller's own context
-// (RouteDecisionRequest.Caller), so an abandoned one never advances its
-// episode.
-//
-// With appendExempt (routes_api.admission.append_exempt) a tracked lookup
-// takes no slot up front: admit takes one, inside the caller's deadline,
-// unless the decision is predicted to append at most maxSuffixTokens to the
-// episode's retained session, in which case it holds none and is not pinned.
-type raylineRoutesSlot struct {
-	gate            *raylinearc.RouteLookupGate
-	routeID         string
-	lookup          context.Context
-	appendExempt    bool
-	maxSuffixTokens int
-
-	mu     sync.Mutex
-	ticket raylinearc.RouteLookupTicket
-	// refused is the gate's error when admit did not admit the lookup, so
-	// the handler can tell the decision's admission failure from every other.
-	refused   error
-	pinned    bool
-	abandoned bool
-	cancel    context.CancelFunc
-}
-
-// admit is the lookup's RouteDecisionRequest.Admit.
-func (slot *raylineRoutesSlot) admit(
-	_ context.Context,
-	predict func() routerruntime.RouteEncodePrediction,
-) (bool, error) {
-	slot.mu.Lock()
-	held := slot.ticket.Held()
-	slot.mu.Unlock()
-	if !held {
-		if prediction := predict(); slot.appendExempt && prediction.Append && prediction.SuffixTokens <= slot.maxSuffixTokens {
-			metrics.RecordRaylineARCRoutesAdmission(raylinearc.RouteLookupExempt, raylinearc.RouteLookupBackendNone, 0)
-			return true, nil
-		}
-		// The wait is the caller's: it is spent inside its deadline.
-		ticket, err := acquireRaylineRoutesLookup(slot.lookup, slot.gate, slot.routeID)
-		slot.mu.Lock()
-		defer slot.mu.Unlock()
-		if err != nil {
-			slot.refused = err
-			return false, err
-		}
-		slot.ticket = ticket
-		return false, slot.pinLocked()
-	}
-	slot.mu.Lock()
-	defer slot.mu.Unlock()
-	return false, slot.pinLocked()
-}
-
-// pinLocked pins the decision to the slot, unless the caller has already
-// left, in which case the decision is cancelled and starts no encode. The
-// caller's context is read as well as abandoned: abandon runs on its own
-// goroutine after the context is done, so it may not have run yet. The
-// caller holds mu.
-func (slot *raylineRoutesSlot) pinLocked() error {
-	if err := slot.lookup.Err(); slot.abandoned || err != nil {
-		slot.abandoned = true
-		if slot.cancel != nil {
-			slot.cancel()
-		}
-		return err
-	}
-	slot.pinned = true
-	return nil
-}
-
-// start arms the hold for a decision about to run on its own context:
-// cancel ends that context; pinned is whether it is pinned from the start.
-func (slot *raylineRoutesSlot) start(cancel context.CancelFunc, pinned bool) {
-	slot.mu.Lock()
-	defer slot.mu.Unlock()
-	slot.cancel, slot.pinned = cancel, pinned
-}
-
-// abandon is the caller leaving: an unpinned decision is cancelled with it.
-func (slot *raylineRoutesSlot) abandon() {
-	slot.mu.Lock()
-	defer slot.mu.Unlock()
-	if slot.pinned {
-		return
-	}
-	slot.abandoned = true
-	if slot.cancel != nil {
-		slot.cancel()
-	}
-}
-
-// release frees the slot, if one is held. Safe to call more than once.
-func (slot *raylineRoutesSlot) release() {
-	if slot == nil {
-		return
-	}
-	slot.mu.Lock()
-	ticket := slot.ticket
-	slot.ticket = raylinearc.RouteLookupTicket{}
-	slot.mu.Unlock()
-	ticket.Release()
-}
-
-// refusedBy reports whether err is the gate's refusal of this lookup.
-func (slot *raylineRoutesSlot) refusedBy(err error) bool {
-	if slot == nil || err == nil {
-		return false
-	}
-	slot.mu.Lock()
-	refused := slot.refused
-	slot.mu.Unlock()
-	return refused != nil && errors.Is(err, refused)
-}
-
-// raylineRoutesAdmissionFailureClass is the episode abort class of a tracked
-// lookup the gate refused after the episode lease was taken.
-const raylineRoutesAdmissionFailureClass = "routes_admission"
-
-// raylineRoutesAbandonedFailureClass is the episode abort class of a tracked
-// lookup whose decision ran on after its caller left (it held a slot), and
-// which is therefore released rather than committed.
-const raylineRoutesAbandonedFailureClass = "routes_abandoned"
-
-// raylineRoutesAdmissionRecord is a predicted lookup's admission, logged with
-// the session action its decision reported once it decided.
-type raylineRoutesAdmissionRecord struct {
-	decisionID string
-	prediction routerruntime.RouteEncodePrediction
-	exempt     bool
-}
-
-// log records whether the lookup was gated or exempt, what was predicted and
-// what the service actually did, so an exempt lookup that turned out to be a
-// full encode (session_action created or rebuilt) is counted.
-func (record *raylineRoutesAdmissionRecord) log(result *selection.SelectionResult, err error) {
-	if record == nil {
-		return
-	}
-	sessionAction := ""
-	// A decision released uncommitted (its caller left) still reports what
-	// the service did; decided says whether it was answered.
-	if result != nil && result.RaylineARC != nil {
-		sessionAction = boundedPolicySessionAction(result.RaylineARC.SessionAction)
-	}
-	if sessionAction == "" {
-		sessionAction = "none"
-	}
-	admission := "gated"
-	if record.exempt {
-		admission = raylinearc.RouteLookupExempt
-	}
-	metrics.RecordRaylineARCRoutesAdmissionPrediction(admission, record.prediction.Reason, sessionAction)
-	logging.ComponentEvent("extproc", "rayline_routes_admission_prediction", map[string]interface{}{
-		"routing_decision_id":     record.decisionID,
-		"admission":               admission,
-		"prediction":              record.prediction.Reason,
-		"predicted_append":        record.prediction.Append,
-		"predicted_suffix_tokens": record.prediction.SuffixTokens,
-		"session_action":          sessionAction,
-		"decided":                 err == nil,
-	})
 }
 
 // raylineRoutesAdmissionRetrySeconds is the Retry-After on a shed lookup:

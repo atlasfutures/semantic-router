@@ -182,8 +182,6 @@ class RaylineARCRoutesRoutingConfig(BaseModel):
 # maxRaylineARCRoutesAdmissionInflight in pkg/config/rayline_arc_config.go;
 # a test asserts the pair.
 _MAX_ROUTES_ADMISSION_INFLIGHT = 64
-# maxRaylineARCRoutesAppendMaxSuffixTokens; a test asserts the pair.
-_MAX_ROUTES_APPEND_SUFFIX_TOKENS = 131_072
 
 
 class RaylineARCRoutesAdmissionConfig(BaseModel):
@@ -191,30 +189,17 @@ class RaylineARCRoutesAdmissionConfig(BaseModel):
     RaylineARCRoutesAdmissionConfig). max_inflight 0 disables it; a lookup
     that finds no slot within queue_wait_ms (0: 2000 ms or half the
     deadline) is answered 429 lookup_capacity with Retry-After. Dispatched
-    turns never pass through it. append_exempt lets a tracked lookup
-    predicted to append at most append_max_suffix_tokens (0: 8192) to its
-    episode's retained session skip the gate; it needs episode_writes and a
-    strict policy-service cell (the Go loader checks the cell)."""
+    turns never pass through it."""
 
     model_config = ConfigDict(extra="forbid")
 
     max_inflight: int = Field(default=0, ge=0, le=_MAX_ROUTES_ADMISSION_INFLIGHT)
     queue_wait_ms: int = Field(default=0, ge=0, le=30_000)
-    append_exempt: bool = False
-    append_max_suffix_tokens: int = Field(
-        default=0, ge=0, le=_MAX_ROUTES_APPEND_SUFFIX_TOKENS
-    )
 
     @model_validator(mode="after")
     def _wait_needs_slots(self):
         if self.queue_wait_ms and not self.max_inflight:
             raise ValueError("routes_api.admission.queue_wait_ms needs max_inflight")
-        if self.append_exempt and not self.max_inflight:
-            raise ValueError("routes_api.admission.append_exempt needs max_inflight")
-        if self.append_max_suffix_tokens and not self.append_exempt:
-            raise ValueError(
-                "routes_api.admission.append_max_suffix_tokens needs append_exempt"
-            )
         return self
 
 
@@ -259,8 +244,6 @@ class RaylineARCRoutesAPIConfig(BaseModel):
             return self
         if not self.enabled:
             raise ValueError("routes_api.admission needs the endpoint enabled")
-        if admission.append_exempt and not self.episode_writes:
-            raise ValueError("routes_api.admission.append_exempt needs episode_writes")
         deadline = self.deadline_ms or 1500
         if admission.queue_wait_ms and admission.queue_wait_ms >= deadline:
             raise ValueError(

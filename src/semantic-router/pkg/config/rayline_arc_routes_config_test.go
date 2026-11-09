@@ -151,32 +151,6 @@ func TestRoutesAPIAdmissionIsBounded(t *testing.T) {
 		"endpoint disabled": {cfg: RaylineARCRoutesAPIConfig{
 			Admission: RaylineARCRoutesAdmissionConfig{MaxInflight: 1},
 		}},
-		"append exempt on a tracked cell": {cfg: RaylineARCRoutesAPIConfig{
-			Enabled: true, EpisodeWrites: true,
-			Admission: RaylineARCRoutesAdmissionConfig{MaxInflight: 1, AppendExempt: true},
-		}, valid: true},
-		"append exempt with a suffix bound": {cfg: RaylineARCRoutesAPIConfig{
-			Enabled: true, EpisodeWrites: true,
-			Admission: RaylineARCRoutesAdmissionConfig{MaxInflight: 1, AppendExempt: true, AppendMaxSuffixTokens: maxRaylineARCRoutesAppendMaxSuffixTokens},
-		}, valid: true},
-		"append exempt without slots": {cfg: RaylineARCRoutesAPIConfig{
-			Enabled: true, EpisodeWrites: true, Admission: RaylineARCRoutesAdmissionConfig{AppendExempt: true},
-		}},
-		"append exempt without episode writes": {cfg: RaylineARCRoutesAPIConfig{
-			Enabled: true, Admission: RaylineARCRoutesAdmissionConfig{MaxInflight: 1, AppendExempt: true},
-		}},
-		"suffix bound without append exempt": {cfg: RaylineARCRoutesAPIConfig{
-			Enabled: true, EpisodeWrites: true,
-			Admission: RaylineARCRoutesAdmissionConfig{MaxInflight: 1, AppendMaxSuffixTokens: 4096},
-		}},
-		"suffix bound above the ceiling": {cfg: RaylineARCRoutesAPIConfig{
-			Enabled: true, EpisodeWrites: true,
-			Admission: RaylineARCRoutesAdmissionConfig{MaxInflight: 1, AppendExempt: true, AppendMaxSuffixTokens: maxRaylineARCRoutesAppendMaxSuffixTokens + 1},
-		}},
-		"negative suffix bound": {cfg: RaylineARCRoutesAPIConfig{
-			Enabled: true, EpisodeWrites: true,
-			Admission: RaylineARCRoutesAdmissionConfig{MaxInflight: 1, AppendExempt: true, AppendMaxSuffixTokens: -1},
-		}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()

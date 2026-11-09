@@ -54,21 +54,6 @@ const (
 	// More concurrent lookups than this is no longer a cap on the encoders a
 	// lookup can occupy; it is a misconfiguration.
 	maxRaylineARCRoutesAdmissionInflight = 64
-	// DefaultRaylineARCRoutesAppendMaxSuffixTokens is the suffix an exempt
-	// append may carry when append_max_suffix_tokens is unset. In prod a full
-	// encode runs at about 35k tokens a second per container plus about
-	// 0.2 s fixed, so 8k new tokens is at most about 0.45 s of encoder time:
-	// under the 0.7 to 0.9 s an append already costs policy-side at 140 to
-	// 157k tokens, no longer than an ordinary small lookup the gate admits in
-	// a burst, and well inside the default 2 s queue wait a gated lookup
-	// would have spent anyway. An ordinary turn's suffix (an assistant reply and a user message or a
-	// few tool results) is well under it; a large pasted file or tool
-	// output is not, and is gated as the encode it is. The byte estimate
-	// overcounts tokens for most text, which errs toward gating.
-	DefaultRaylineARCRoutesAppendMaxSuffixTokens = 8192
-	// More than this is not an append; it is a full encode exempted by
-	// configuration.
-	maxRaylineARCRoutesAppendMaxSuffixTokens = 131072
 )
 
 var (
@@ -342,26 +327,6 @@ type RaylineARCRoutesAdmissionConfig struct {
 	// of small lookups that each clear in well under a second -- and turns
 	// the rest into a prompt 429 the caller can schedule around.
 	QueueWaitMS int `yaml:"queue_wait_ms,omitempty"`
-	// AppendExempt lets a tracked lookup that is predicted to append to its
-	// episode's retained encoder session skip the gate. The gate exists
-	// because a full encode of a large transcript holds a policy container
-	// for its whole duration (in prod about 35k tokens a second plus about
-	// 0.2 s fixed: some 26 s for 900k tokens); an append encodes only the
-	// turns since the episode's last committed request (55 to 115 ms in the
-	// encoder, 0.7 to 0.9 s policy-side at 140 to 157k tokens), so queueing
-	// it behind a full encode, or shedding it, costs more than it protects. A lookup is predicted to append when its
-	// episode committed a prefix this request extends, this router process
-	// last left that prefix in the service's session under the same system
-	// prompt and tools, and the new suffix is at most
-	// append_max_suffix_tokens. Ephemeral and untracked lookups are always
-	// gated. Off (the default), every lookup is gated, as before.
-	// Policy-service cells with strict episodes only: an artifact-mode cell
-	// and a relaxed cell keep no session the router can predict.
-	AppendExempt bool `yaml:"append_exempt,omitempty"`
-	// AppendMaxSuffixTokens bounds the suffix an exempt append may carry,
-	// estimated at four bytes a token over the new messages. Zero selects
-	// DefaultRaylineARCRoutesAppendMaxSuffixTokens.
-	AppendMaxSuffixTokens int `yaml:"append_max_suffix_tokens,omitempty"`
 }
 
 // Enabled reports whether lookups are admitted through a gate.
@@ -393,15 +358,6 @@ func (cfg RaylineARCRoutesAPIConfig) EffectiveDeadline() time.Duration {
 		return DefaultRaylineARCRoutesDeadlineMS * time.Millisecond
 	}
 	return time.Duration(cfg.DeadlineMS) * time.Millisecond
-}
-
-// EffectiveAppendMaxSuffixTokens is the largest predicted suffix an exempt
-// append may carry, with the default substituted for an unset value.
-func (cfg RaylineARCRoutesAPIConfig) EffectiveAppendMaxSuffixTokens() int {
-	if cfg.Admission.AppendMaxSuffixTokens > 0 {
-		return cfg.Admission.AppendMaxSuffixTokens
-	}
-	return DefaultRaylineARCRoutesAppendMaxSuffixTokens
 }
 
 // EffectiveAdmissionQueueWait is how long a lookup waits for an admission
@@ -558,9 +514,6 @@ func validateRaylineARCAlgorithmConfig(cfg *RaylineARCAlgorithmConfig) error {
 	if cfg.RoutesAPI.Routing != nil {
 		return fmt.Errorf("routes_api: routing is served by a policy-service cell, whose service decides at each result point")
 	}
-	if cfg.RoutesAPI.Admission.AppendExempt {
-		return fmt.Errorf("routes_api: admission.append_exempt is served by a policy-service cell, whose episode records the prefix an append extends")
-	}
 	if err := validateRaylineARCThinkingLeverConfig(cfg.ThinkingLever, false); err != nil {
 		return fmt.Errorf("thinking_lever: %w", err)
 	}
@@ -587,9 +540,6 @@ func validateRaylineARCPolicyServiceMode(cfg *RaylineARCAlgorithmConfig) error {
 	}
 	if err := validateRaylineARCRoutesAPIConfig(cfg.RoutesAPI); err != nil {
 		return fmt.Errorf("routes_api: %w", err)
-	}
-	if cfg.RoutesAPI.Admission.AppendExempt && cfg.Episode.RelaxedConsistency() {
-		return fmt.Errorf("routes_api: admission.append_exempt needs strict episodes; a relaxed cell's service retains no session to append to")
 	}
 	if err := validateRaylineARCThinkingLeverConfig(cfg.ThinkingLever, true); err != nil {
 		return fmt.Errorf("thinking_lever: %w", err)
@@ -654,27 +604,14 @@ func validateRaylineARCRoutesAdmissionConfig(cfg RaylineARCRoutesAPIConfig) erro
 	if admission.QueueWaitMS < 0 || admission.QueueWaitMS > maxRaylineARCRoutesDeadlineMS {
 		return fmt.Errorf("queue_wait_ms must be between 0 and %d", maxRaylineARCRoutesDeadlineMS)
 	}
-	if admission.AppendMaxSuffixTokens < 0 || admission.AppendMaxSuffixTokens > maxRaylineARCRoutesAppendMaxSuffixTokens {
-		return fmt.Errorf("append_max_suffix_tokens must be between 0 and %d", maxRaylineARCRoutesAppendMaxSuffixTokens)
-	}
-	if admission.AppendMaxSuffixTokens != 0 && !admission.AppendExempt {
-		return fmt.Errorf("append_max_suffix_tokens needs append_exempt")
-	}
 	if !admission.Enabled() {
 		if admission.QueueWaitMS != 0 {
 			return fmt.Errorf("queue_wait_ms needs max_inflight")
-		}
-		if admission.AppendExempt {
-			return fmt.Errorf("append_exempt needs max_inflight")
 		}
 		return nil
 	}
 	if !cfg.Enabled {
 		return fmt.Errorf("admission needs the endpoint enabled")
-	}
-	// Only a tracked lookup has a retained session to append to.
-	if admission.AppendExempt && !cfg.EpisodeWrites {
-		return fmt.Errorf("append_exempt needs episode_writes")
 	}
 	if deadline := cfg.EffectiveDeadline(); admission.QueueWaitMS > 0 &&
 		time.Duration(admission.QueueWaitMS)*time.Millisecond >= deadline {

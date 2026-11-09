@@ -142,14 +142,6 @@ type policyServiceScorer struct {
 	// optional work and never takes a slot a turn's decide could need.
 	appendAdmission  *raylinearc.AdmissionGate
 	deltaUnsupported atomic.Bool
-	// retainedScope keys what this cell's decides leave in the service's
-	// retained sessions (policyRetainedSessions).
-	retainedScope policyRetainedScope
-	// relaxedServed is set once the service has served a call sent relaxed
-	// relaxed, so a relaxed call is known to leave the strict session alone.
-	// Until then a relaxed call invalidates the episode's record as a strict
-	// one does: a service that ignores episode_mode serves it strict.
-	relaxedServed atomic.Bool
 }
 
 // policySideCallStrictFor is how long a strict cell keeps its side calls
@@ -229,11 +221,6 @@ func newPolicyServiceScorer(
 		decisionsV2:  newPolicyDecisionsV2(policy.DecisionsV2),
 		toolFreeTier: policyCellHasToolFreeOverride(policy),
 		exploration:  newPolicyExploration(policy),
-		// Read by route lookup admission to predict an append; this
-		// scorer's own, so no other recipe or generation shares it.
-		retainedScope: policyRetainedScope{
-			backend: policyRetainedBackend(decision.Algorithm.RaylineARC), owner: "policy-retained:" + generation,
-		},
 	}
 	if decision.Algorithm.RaylineARC.Episode.RelaxedConsistency() {
 		scorer.episodeMode = raylinearc.PolicyEpisodeModeRelaxed
@@ -906,24 +893,6 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	} else if sessionBinding != nil {
 		defer sessionBinding.Release(ctx)
 	}
-	// A strict decide changes the episode's retained session, whatever it
-	// answers. The write is fenced from here to every exit; the request it
-	// left is recorded only once the decide is accepted (retainedShape).
-	var (
-		retainedFence uint64
-		retainedShape *raylinearc.PolicyPrefixShape
-	)
-	beginRetained := func() {
-		if retainedFence == 0 {
-			retainedFence = policyRetainedSessions.begin(scorer.retainedScope, arcContext.EpisodeIDHash)
-		}
-	}
-	if !ephemeral && (request.EpisodeMode != raylinearc.PolicyEpisodeModeRelaxed || !scorer.relaxedServed.Load()) {
-		beginRetained()
-	}
-	defer func() {
-		policyRetainedSessions.finish(scorer.retainedScope, arcContext.EpisodeIDHash, retainedFence, state.TurnIndex, retainedShape)
-	}()
 	started := selector.now()
 	// A delta cell stages its strict main turns and sends a turn that
 	// extends the staged prefix as a delta, decided synchronously like any
@@ -989,9 +958,6 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		refused.Class == raylinearc.PolicyRelaxedUnsupportedClass {
 		scorer.sideCallsRelaxedUnsupported(selector.now(), "refused")
 		request.EpisodeMode = scorer.episodeMode
-		if !ephemeral {
-			beginRetained()
-		}
 		decisionMode = policyStagedFullMode(staging)
 		response, err = decidePolicyThroughBusy(ctx, decider, request, scorer.busyWait, admit, withCacheContext)
 	}
@@ -1190,9 +1156,6 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	if (response.Encoding.SessionRevision == nil) != servedRelaxed {
 		return nil, arcSelectionFailure("policy_session_revision")
 	}
-	if servedRelaxed {
-		scorer.relaxedServed.Store(true)
-	}
 	// The echo is recorded as the decision's price audit, so it must be the
 	// prices this request sent.
 	if class := routingPriceEchoMismatch(request.RoutingPrices, response.RoutingPricesUsed); class != "" {
@@ -1221,19 +1184,6 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	// The service encoded this request; a later turn's prefix break is
 	// explained against it.
 	rememberPolicyPrefix(arcContext.EpisodeIDHash, prefixShape)
-	// A strict decide left this request in the episode's retained session;
-	// a zdr turn named a throwaway episode and a relaxed one retained
-	// nothing. A side call's request is no prefix a turn commits, so it
-	// records nothing (a nil shape). A call sent relaxed and served strict
-	// (a service that predates episode_mode) after relaxed was once served
-	// took no fence: it only drops the record.
-	if !ephemeral && !servedRelaxed {
-		if retainedFence == 0 {
-			policyRetainedSessions.drop(scorer.retainedScope, arcContext.EpisodeIDHash)
-		} else {
-			retainedShape = prefixShape
-		}
-	}
 	encoded := &raylinearc.EncoderResult{
 		SerializedTokens:  response.Encoding.TokenCount,
 		FullHistoryTokens: response.Encoding.TokenCount,

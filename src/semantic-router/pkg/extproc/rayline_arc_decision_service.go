@@ -77,7 +77,7 @@ func (service *raylineARCDecisionService) RouteDecision(
 	// become the previous arm that later paid turns hold to, so the caller's
 	// prices would steer what the cell executes.
 	// raylineARCRoutingJoinsNoEpisode is the same rule; the lookup handler
-	// reads it to decide whether a lookup is gated before any episode work.
+	// reads it to decide whether a timed-out lookup may run on detached.
 	untracked, unpriced := false, false
 	if request.Routing != nil && !request.Ephemeral {
 		if request.Routing.Exploration != nil {
@@ -121,37 +121,6 @@ func (service *raylineARCDecisionService) RouteDecision(
 		service.router.finalizeRaylineARCAbort(requestContext, failure)
 		return routerruntime.RouteDecision{}, prepareFailureError(failure)
 	}
-	// The caller's admission gate, when it left admission to this point:
-	// the episode is read, so the encode can be predicted, and nothing has
-	// called the encoder yet. A refusal releases the lease like any other
-	// exit before selection.
-	var admission *raylineRoutesAdmissionRecord
-	if request.Admit != nil {
-		var prediction *routerruntime.RouteEncodePrediction
-		predict := func() routerruntime.RouteEncodePrediction {
-			if prediction == nil {
-				var retainedScope policyRetainedScope
-				if scoper, ok := service.router.selectorForDecisionMethod(
-					selection.MethodRaylineARC, algorithm, requestContext,
-				).(raylineARCRetainedScoper); ok {
-					retainedScope = scoper.policyRetainedScope()
-				}
-				predicted := predictRaylineRoutesEncode(algorithm, selectionContext.RaylineARC, retainedScope, request.Ephemeral)
-				prediction = &predicted
-			}
-			return *prediction
-		}
-		exempt, err := request.Admit(ctx, predict)
-		if err != nil {
-			service.router.finalizeRaylineARCAbort(requestContext, raylineRoutesAdmissionFailureClass)
-			return routerruntime.RouteDecision{}, err
-		}
-		// Only a lookup whose admission read the prediction is logged as
-		// predicted; a slot taken up front predicted nothing.
-		if prediction != nil {
-			admission = &raylineRoutesAdmissionRecord{decisionID: request.DecisionID, prediction: *prediction, exempt: exempt}
-		}
-	}
 
 	// An ephemeral lookup minted its own encoder session and owns closing it,
 	// whatever happens next. Nothing else will: the ephemeral path prepares
@@ -182,26 +151,7 @@ func (service *raylineARCDecisionService) RouteDecision(
 		}()
 	}
 
-	commitContext := ctx
-	if request.Caller != nil {
-		commitContext = request.Caller
-	}
-	selected, err := service.selectWorker(ctx, commitContext, algorithm, selectionContext, requestContext)
-	admission.log(selected.result, err)
-	// A tracked lookup that left a retained encoder session holds a slot of
-	// the container's session budget until the encoder evicts it, committed
-	// or not: an abandoned decision releases its episode but not the
-	// session. An ephemeral lookup closes its own; a zdr turn retains nothing.
-	if selected.result != nil && selected.result.RaylineARC != nil &&
-		!request.Ephemeral && !selectionContext.RaylineARC.EphemeralTurn && algorithm.RaylineARC != nil {
-		recordRaylineRoutesLookupSession(
-			request.DecisionID,
-			policyRetainedBackend(algorithm.RaylineARC),
-			selectionContext.RaylineARC.EpisodeIDHash,
-			boundedPolicySessionAction(selected.result.RaylineARC.SessionAction),
-			time.Duration(algorithm.RaylineARC.Episode.IdleTTLSeconds)*time.Second,
-		)
-	}
+	selected, err := service.selectWorker(ctx, algorithm, selectionContext, requestContext)
 	if err != nil {
 		return routerruntime.RouteDecision{}, err
 	}
@@ -448,7 +398,6 @@ func routeBaseline(
 
 func (service *raylineARCDecisionService) selectWorker(
 	ctx context.Context,
-	commitContext context.Context,
 	algorithm *config.AlgorithmConfig,
 	selectionContext *selection.SelectionContext,
 	requestContext *RequestContext,
@@ -463,20 +412,8 @@ func (service *raylineARCDecisionService) selectWorker(
 		service.router.finalizeRaylineARCAbort(requestContext, failure)
 		return selectedRoute{}, err
 	}
-	// The commit waits on the caller's context, which a detached decision
-	// (RouteDecisionRequest.Caller) does not share: a decision whose caller
-	// left is released, not committed, so the episode never records an arm
-	// nobody was given. A decision on the caller's own context is released
-	// by the commit itself, under its own failure class. The selection is
-	// returned with the error: its session outlives the episode's release.
-	if commitContext != ctx {
-		if err := commitContext.Err(); err != nil {
-			service.router.finalizeRaylineARCAbort(requestContext, raylineRoutesAbandonedFailureClass)
-			return route, fmt.Errorf("decision-only routing lost its caller before the episode committed: %w", err)
-		}
-	}
-	if err := commitDecisionOnlyEpisode(commitContext, requestContext); err != nil {
-		return route, err
+	if err := commitDecisionOnlyEpisode(ctx, requestContext); err != nil {
+		return selectedRoute{}, err
 	}
 	return route, nil
 }
