@@ -67,9 +67,13 @@ const (
 // idle TTL, a restart, a replica change) and rebuild it anyway; the
 // decision's session_action says what actually happened, and is logged
 // beside the admission outcome so an exempt lookup that rebuilt is counted.
+//
+// retainedScope is the deciding selector's (raylineARCRetainedScoper), ""
+// when it records no retained sessions.
 func predictRaylineRoutesEncode(
 	algorithm *config.AlgorithmConfig,
 	arcContext *selection.RaylineARCSelectionContext,
+	retainedScope string,
 	ephemeral bool,
 ) routerruntime.RouteEncodePrediction {
 	full := func(reason string) routerruntime.RouteEncodePrediction {
@@ -119,7 +123,7 @@ func predictRaylineRoutesEncode(
 	}
 	current := raylinearc.NewPolicyPrefixShapeFrom(digests, system, clientRequest.Tools)
 	held, shellChanged := policyRetainedSessions.holds(
-		policyRetainedScope(algorithm.RaylineARC), arcContext.EpisodeIDHash, state, current,
+		retainedScope, arcContext.EpisodeIDHash, state, current,
 	)
 	switch {
 	case shellChanged:

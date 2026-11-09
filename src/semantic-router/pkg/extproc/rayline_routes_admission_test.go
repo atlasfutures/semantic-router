@@ -349,13 +349,27 @@ const (
 		`{"role":"assistant","content":"hello"},{"role":"user","content":"next"}]}`
 )
 
+// retainingStubSelector is a stub selector that names a retained-session
+// scope, as the policy-service selector does.
+type retainingStubSelector struct {
+	stubARCSelector
+	scope string
+}
+
+func (s *retainingStubSelector) policyRetainedScope() string { return s.scope }
+
 // appendAdmissionRouter is a tracked policy-service cell whose lookups are
 // gated by one slot, which the test can hold, and decided by a stub selector.
 // appendExempt sets routes_api.admission.append_exempt.
-func appendAdmissionRouter(t *testing.T, appendExempt bool, maxSuffixTokens int) (*OpenAIRouter, *raylinearc.RouteLookupGate, *stubARCSelector) {
+func appendAdmissionRouter(t *testing.T, appendExempt bool, maxSuffixTokens int) (*OpenAIRouter, *raylinearc.RouteLookupGate, *retainingStubSelector) {
 	t.Helper()
-	selector := &stubARCSelector{arm: 0, workers: decisionServiceWorkers()}
-	router := decisionServiceRouter(t, selector)
+	selector := &retainingStubSelector{
+		stubARCSelector: stubARCSelector{arm: 0, workers: decisionServiceWorkers()}, scope: "test:" + t.Name(),
+	}
+	router := decisionServiceRouter(t, &selector.stubARCSelector)
+	registry := selection.NewRegistry()
+	registry.Register(selection.MethodRaylineARC, selector)
+	router.ModelSelector = registry
 	arc := router.Config.Decisions[0].Algorithm.RaylineARC
 	arc.PolicyService = &config.RaylineARCPolicyServiceConfig{BaseURL: "https://policy.example"}
 	arc.RoutesAPI = config.RaylineARCRoutesAPIConfig{
@@ -396,11 +410,12 @@ func seedAppendAdmissionEpisode(t *testing.T, router *OpenAIRouter, session stri
 	if err := store.Commit(context.Background(), lease, lease.Version(), state); err != nil {
 		t.Fatal(err)
 	}
-	scope := policyRetainedScope(router.Config.Decisions[0].Algorithm.RaylineARC)
+	scope := "test:" + t.Name()
 	episode := raylinearc.HashEpisodeID(session)
 	// The first turn was decided at index 0; its commit left the next one.
-	policyRetainedSessions.remember(scope, episode, state.TurnIndex-1, raylinearc.NewPolicyPrefixShape(messages, nil, nil))
-	t.Cleanup(func() { policyRetainedSessions.forget(scope, episode) })
+	fence := policyRetainedSessions.invalidate(scope, episode)
+	policyRetainedSessions.record(scope, episode, fence, state.TurnIndex-1, raylinearc.NewPolicyPrefixShape(messages, nil, nil))
+	t.Cleanup(func() { policyRetainedSessions.invalidate(scope, episode) })
 }
 
 // holdAppendAdmissionGate takes the gate's one slot, as a full encode would.
@@ -516,11 +531,12 @@ func TestPredictRaylineRoutesEncode(t *testing.T) {
 		PrefixLen: 1, PrefixDigest: raylinearc.NewPrefixDigests(first).Digest(1),
 	}}
 	episode := raylinearc.HashEpisodeID("predict-" + t.Name())
-	scope := policyRetainedScope(policy.RaylineARC)
+	scope := "test:" + t.Name()
 	retain := func(shape *raylinearc.PolicyPrefixShape) {
-		policyRetainedSessions.remember(scope, episode, committed.TurnIndex-1, shape)
+		fence := policyRetainedSessions.invalidate(scope, episode)
+		policyRetainedSessions.record(scope, episode, fence, committed.TurnIndex-1, shape)
 	}
-	t.Cleanup(func() { policyRetainedSessions.forget(scope, episode) })
+	t.Cleanup(func() { policyRetainedSessions.invalidate(scope, episode) })
 	arcContext := func(body string, state *raylinearc.EpisodeState) *selection.RaylineARCSelectionContext {
 		return &selection.RaylineARCSelectionContext{
 			EpisodeIDHash: episode,
@@ -530,13 +546,13 @@ func TestPredictRaylineRoutesEncode(t *testing.T) {
 		}
 	}
 	// Nothing this process decided is in the session: a full encode.
-	if unknown := predictRaylineRoutesEncode(policy, arcContext(appendAdmissionNext, committed), false); unknown.Append ||
+	if unknown := predictRaylineRoutesEncode(policy, arcContext(appendAdmissionNext, committed), scope, false); unknown.Append ||
 		unknown.Reason != raylineRoutesPredictNotRetained {
 		t.Fatalf("unrecorded session = %+v, want a full encode (%s)", unknown, raylineRoutesPredictNotRetained)
 	}
 	// The session holds the prefix under another system prompt: a rebuild.
 	retain(raylinearc.NewPolicyPrefixShape(first, json.RawMessage(`"be brief"`), nil))
-	if rebuilt := predictRaylineRoutesEncode(policy, arcContext(appendAdmissionNext, committed), false); rebuilt.Append ||
+	if rebuilt := predictRaylineRoutesEncode(policy, arcContext(appendAdmissionNext, committed), scope, false); rebuilt.Append ||
 		rebuilt.Reason != raylineRoutesPredictShellChanged {
 		t.Fatalf("changed system prompt = %+v, want a full encode (%s)", rebuilt, raylineRoutesPredictShellChanged)
 	}
@@ -547,7 +563,7 @@ func TestPredictRaylineRoutesEncode(t *testing.T) {
 		t.Fatal(err)
 	}
 	retain(raylinearc.NewPolicyPrefixShape(older, nil, nil))
-	if stale := predictRaylineRoutesEncode(policy, arcContext(appendAdmissionNext, committed), false); stale.Append ||
+	if stale := predictRaylineRoutesEncode(policy, arcContext(appendAdmissionNext, committed), scope, false); stale.Append ||
 		stale.Reason != raylineRoutesPredictNotRetained {
 		t.Fatalf("stale retained request = %+v, want a full encode (%s)", stale, raylineRoutesPredictNotRetained)
 	}
@@ -555,11 +571,11 @@ func TestPredictRaylineRoutesEncode(t *testing.T) {
 	// instance's retry under another shell) moved the episode on.
 	retain(raylinearc.NewPolicyPrefixShape(first, nil, nil))
 	movedOn := &raylinearc.EpisodeState{TurnIndex: committed.TurnIndex + 1, Policy: committed.Policy}
-	if moved := predictRaylineRoutesEncode(policy, arcContext(appendAdmissionNext, movedOn), false); moved.Append ||
+	if moved := predictRaylineRoutesEncode(policy, arcContext(appendAdmissionNext, movedOn), scope, false); moved.Append ||
 		moved.Reason != raylineRoutesPredictNotRetained {
 		t.Fatalf("episode committed since the record = %+v, want a full encode (%s)", moved, raylineRoutesPredictNotRetained)
 	}
-	appended := predictRaylineRoutesEncode(policy, arcContext(appendAdmissionNext, committed), false)
+	appended := predictRaylineRoutesEncode(policy, arcContext(appendAdmissionNext, committed), scope, false)
 	if !appended.Append || appended.Reason != raylineRoutesPredictAppends || appended.SuffixTokens <= 0 {
 		t.Fatalf("extending request = %+v, want an append with its suffix counted", appended)
 	}
@@ -591,7 +607,7 @@ func TestPredictRaylineRoutesEncode(t *testing.T) {
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			got := predictRaylineRoutesEncode(testCase.algorithm, testCase.context, testCase.ephemeral)
+			got := predictRaylineRoutesEncode(testCase.algorithm, testCase.context, scope, testCase.ephemeral)
 			if got.Append || got.Reason != testCase.reason {
 				t.Fatalf("prediction = %+v, want a full encode for %s", got, testCase.reason)
 			}
@@ -603,8 +619,8 @@ func TestPredictRaylineRoutesEncode(t *testing.T) {
 // the lookup that follows it with a reply and a tool result.
 func predictAfterFirstTurn(t *testing.T, fixture *deltaFixture) routerruntime.RouteEncodePrediction {
 	t.Helper()
-	scope := policyRetainedScope(fixture.decision.Algorithm.RaylineARC)
-	t.Cleanup(func() { policyRetainedSessions.forget(scope, fixture.episode) })
+	scope := fixture.scorer().retainedScope
+	t.Cleanup(func() { policyRetainedSessions.invalidate(scope, fixture.episode) })
 	_, ctx := fixture.turn(t, policyTestRequest(t, deltaUser))
 	complete(t, ctx, deltaReply(t))
 	lease, state, err := fixture.store.Prepare(context.Background(), fixture.episode, 2)
@@ -617,7 +633,7 @@ func predictAfterFirstTurn(t *testing.T, fixture *deltaFixture) routerruntime.Ro
 		RawRequest:    policyTestRequest(t, deltaUser, deltaAssistant, deltaToolResult),
 		RequestFormat: policyFormatAnthropic,
 		State:         state,
-	}, false)
+	}, scope, false)
 }
 
 // A strict turn this process decided leaves its request in the service's
@@ -652,5 +668,34 @@ func TestPredictRaylineRoutesEncodeAfterAnAppendedReply(t *testing.T) {
 	}
 	if prediction.Append || prediction.Reason != raylineRoutesPredictNotRetained {
 		t.Fatalf("after an appended reply = %+v, want a full encode (%s)", prediction, raylineRoutesPredictNotRetained)
+	}
+}
+
+// A call that overlapped another and invalidated after it (a strict side
+// call, which holds no lease) is not overwritten when the earlier call
+// records its outcome.
+func TestPolicyRetainedSessionRecordIsFenced(t *testing.T) {
+	scope, episode := "test:"+t.Name(), raylinearc.HashEpisodeID(t.Name())
+	t.Cleanup(func() { policyRetainedSessions.invalidate(scope, episode) })
+	first, _, err := policyMessages(json.RawMessage(appendAdmissionFirstMessages))
+	if err != nil {
+		t.Fatal(err)
+	}
+	shape := raylinearc.NewPolicyPrefixShape(first, nil, nil)
+	state := &raylinearc.EpisodeState{TurnIndex: 1, Policy: &raylinearc.PolicyEpisodeState{PrefixLen: shape.Len, PrefixDigest: shape.Digest}}
+
+	mainFence := policyRetainedSessions.invalidate(scope, episode)
+	policyRetainedSessions.invalidate(scope, episode) // the side call starts
+	policyRetainedSessions.record(scope, episode, mainFence, 0, shape)
+	if held, _ := policyRetainedSessions.holds(scope, episode, state, shape); held {
+		t.Fatal("an earlier call restored a record a later call invalidated")
+	}
+	fence := policyRetainedSessions.invalidate(scope, episode)
+	policyRetainedSessions.record(scope, episode, fence, 0, shape)
+	if held, _ := policyRetainedSessions.holds(scope, episode, state, shape); !held {
+		t.Fatal("a call's own record was refused")
+	}
+	if held, _ := policyRetainedSessions.holds("other:"+t.Name(), episode, state, shape); held {
+		t.Fatal("another scope read this scope's record")
 	}
 }

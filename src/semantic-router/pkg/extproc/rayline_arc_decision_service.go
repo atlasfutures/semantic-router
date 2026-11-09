@@ -127,7 +127,13 @@ func (service *raylineARCDecisionService) RouteDecision(
 	// exit before selection.
 	var admission *raylineRoutesAdmissionRecord
 	if request.Admit != nil {
-		prediction := predictRaylineRoutesEncode(algorithm, selectionContext.RaylineARC, request.Ephemeral)
+		retainedScope := ""
+		if scoper, ok := service.router.selectorForDecisionMethod(
+			selection.MethodRaylineARC, algorithm, requestContext,
+		).(raylineARCRetainedScoper); ok {
+			retainedScope = scoper.policyRetainedScope()
+		}
+		prediction := predictRaylineRoutesEncode(algorithm, selectionContext.RaylineARC, retainedScope, request.Ephemeral)
 		exempt, err := request.Admit(ctx, prediction)
 		if err != nil {
 			service.router.finalizeRaylineARCAbort(requestContext, raylineRoutesAdmissionFailureClass)

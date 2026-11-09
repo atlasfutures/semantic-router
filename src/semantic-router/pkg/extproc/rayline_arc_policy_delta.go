@@ -665,7 +665,7 @@ func (transaction *raylineARCEpisodeTransaction) appendPolicyStagedTurn(parent c
 	// the session no longer holds just the request the decide recorded; a
 	// next request that echoes the reply otherwise is sent in full and
 	// rebuilt. Route lookup admission predicts no append from it.
-	policyRetainedSessions.forget(staging.retainedScope, staging.episodeIDHash)
+	policyRetainedSessions.invalidate(staging.retainedScope, staging.episodeIDHash)
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), staging.appendTimeout)
 	started := time.Now()
 	response, err := staging.appender.Append(ctx, request)

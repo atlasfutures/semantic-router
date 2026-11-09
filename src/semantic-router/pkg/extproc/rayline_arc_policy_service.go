@@ -224,8 +224,9 @@ func newPolicyServiceScorer(
 		decisionsV2:  newPolicyDecisionsV2(policy.DecisionsV2),
 		toolFreeTier: policyCellHasToolFreeOverride(policy),
 		exploration:  newPolicyExploration(policy),
-		// Read by route lookup admission to predict an append.
-		retainedScope: policyRetainedScope(decision.Algorithm.RaylineARC),
+		// Read by route lookup admission to predict an append; this
+		// scorer's own, so no other recipe or generation shares it.
+		retainedScope: "policy-retained:" + generation,
 	}
 	if decision.Algorithm.RaylineARC.Episode.RelaxedConsistency() {
 		scorer.episodeMode = raylinearc.PolicyEpisodeModeRelaxed
@@ -899,9 +900,11 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		defer sessionBinding.Release(ctx)
 	}
 	// A strict decide changes the episode's retained session, whatever it
-	// answers; what it holds is recorded again once the decide is accepted.
+	// answers; what it holds is recorded again, under this fence, once the
+	// decide is accepted.
+	var retainedFence uint64
 	if !ephemeral && request.EpisodeMode != raylinearc.PolicyEpisodeModeRelaxed {
-		policyRetainedSessions.forget(scorer.retainedScope, arcContext.EpisodeIDHash)
+		retainedFence = policyRetainedSessions.invalidate(scorer.retainedScope, arcContext.EpisodeIDHash)
 	}
 	started := selector.now()
 	// A delta cell stages its strict main turns and sends a turn that
@@ -969,7 +972,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		scorer.sideCallsRelaxedUnsupported(selector.now(), "refused")
 		request.EpisodeMode = scorer.episodeMode
 		if !ephemeral {
-			policyRetainedSessions.forget(scorer.retainedScope, arcContext.EpisodeIDHash)
+			retainedFence = policyRetainedSessions.invalidate(scorer.retainedScope, arcContext.EpisodeIDHash)
 		}
 		decisionMode = policyStagedFullMode(staging)
 		response, err = decidePolicyThroughBusy(ctx, decider, request, scorer.busyWait, admit, withCacheContext)
@@ -1199,10 +1202,16 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	rememberPolicyPrefix(arcContext.EpisodeIDHash, prefixShape)
 	// A strict decide left this request in the episode's retained session;
 	// a zdr turn named a throwaway episode and a relaxed one retained
-	// nothing. A side call's request is no prefix a turn commits, so it is
-	// forgotten rather than recorded (a nil shape).
+	// nothing. A side call's request is no prefix a turn commits, so it
+	// records nothing (a nil shape). A call sent relaxed and served strict
+	// (a service that predates episode_mode) took no fence: it only
+	// invalidates.
 	if !ephemeral && !servedRelaxed {
-		policyRetainedSessions.remember(scorer.retainedScope, arcContext.EpisodeIDHash, state.TurnIndex, prefixShape)
+		if retainedFence == 0 {
+			policyRetainedSessions.invalidate(scorer.retainedScope, arcContext.EpisodeIDHash)
+		} else {
+			policyRetainedSessions.record(scorer.retainedScope, arcContext.EpisodeIDHash, retainedFence, state.TurnIndex, prefixShape)
+		}
 	}
 	encoded := &raylinearc.EncoderResult{
 		SerializedTokens:  response.Encoding.TokenCount,

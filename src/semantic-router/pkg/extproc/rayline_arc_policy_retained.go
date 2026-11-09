@@ -19,7 +19,6 @@ package extproc
 import (
 	"sync"
 
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
 
@@ -39,11 +38,25 @@ type policyRetainedRequest struct {
 	turn uint64
 }
 
-// policyRetainedSessionCache remembers, per policy backend and episode, the
-// request this process last had a policy service retain. A route lookup's
-// admission reads it to predict an append (predictRaylineRoutesEncode): the
-// episode's committed prefix is in the service's session only if it is the
-// request last retained there.
+// policyRetainedEntry is one episode's record and the generation of the last
+// call that invalidated it. A call records only under the generation its own
+// invalidation returned, so a call that overlapped it (a side call, which
+// holds no lease) and invalidated later cannot be overwritten by it.
+type policyRetainedEntry struct {
+	generation uint64
+	request    *policyRetainedRequest
+}
+
+// policyRetainedSessionCache remembers, per scorer and episode, the request
+// this process last had a policy service retain. A route lookup's admission
+// reads it to predict an append (predictRaylineRoutesEncode): the episode's
+// committed prefix is in the service's session only if it is the request
+// last retained there.
+//
+// It is keyed by the scorer's retainedScope, which is unique to one recipe's
+// scorer in one router generation, so two recipes (whose episodes, and
+// sessions on a sessioned service, are their own) never read each other's
+// records, and a reload starts empty.
 //
 // It is in memory, bounded and never persisted, so it knows only the decides
 // this process made; a lookup whose previous turn another router instance
@@ -51,65 +64,65 @@ type policyRetainedRequest struct {
 // direction: the cost of a missed exemption is a queued lookup, the cost of
 // a wrong one is a full encode past the gate.
 type policyRetainedSessionCache struct {
-	mu       sync.Mutex
-	requests map[string]policyRetainedRequest
-	order    []string
+	mu         sync.Mutex
+	entries    map[string]*policyRetainedEntry
+	order      []string
+	generation uint64
 }
 
 // policyRetainedSessionEntries bounds the episodes remembered; the oldest
 // inserted is forgotten first.
 const policyRetainedSessionEntries = 4096
 
-var policyRetainedSessions = &policyRetainedSessionCache{requests: map[string]policyRetainedRequest{}}
-
-// policyRetainedScope names the session store a decide writes: the policy
-// backend (as admission pools name it) and the package it decides with.
-func policyRetainedScope(arcConfig *config.RaylineARCAlgorithmConfig) string {
-	if arcConfig == nil || arcConfig.PolicyService == nil {
-		return ""
-	}
-	return raylineRoutesAdmissionPool(arcConfig) + "\x00" + arcConfig.PolicyService.PackageSHA256
-}
+var policyRetainedSessions = &policyRetainedSessionCache{entries: map[string]*policyRetainedEntry{}}
 
 func policyRetainedKey(scope, episode string) string { return scope + "\x00" + episode }
 
-// remember records shape as the request the episode's session now holds,
-// decided on the episode at turnIndex.
-func (cache *policyRetainedSessionCache) remember(scope, episode string, turnIndex uint64, shape *raylinearc.PolicyPrefixShape) {
-	if shape == nil {
-		cache.forget(scope, episode)
-		return
+// invalidate drops the episode's record: a call is about to change its
+// session, or has changed it to something no record describes. It returns
+// the fence a record of that call's own outcome must present.
+func (cache *policyRetainedSessionCache) invalidate(scope, episode string) uint64 {
+	if scope == "" {
+		return 0
 	}
 	key := policyRetainedKey(scope, episode)
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
-	if _, known := cache.requests[key]; !known {
+	entry, known := cache.entries[key]
+	if !known {
 		if len(cache.order) >= policyRetainedSessionEntries {
-			delete(cache.requests, cache.order[0])
+			delete(cache.entries, cache.order[0])
 			cache.order = cache.order[1:]
 		}
 		cache.order = append(cache.order, key)
+		entry = &policyRetainedEntry{}
+		cache.entries[key] = entry
 	}
-	cache.requests[key] = policyRetainedRequest{
-		len: shape.Len, digest: shape.Digest, system: shape.System, tools: shape.Tools, turn: turnIndex + 1,
-	}
+	cache.generation++
+	entry.generation, entry.request = cache.generation, nil
+	return entry.generation
 }
 
-// forget drops what is known of the episode's session: a decide is about to
-// change it, or changed it to something no shape describes.
-func (cache *policyRetainedSessionCache) forget(scope, episode string) {
-	key := policyRetainedKey(scope, episode)
-	cache.mu.Lock()
-	defer cache.mu.Unlock()
-	if _, known := cache.requests[key]; !known {
+// record keeps shape as the request the episode's session now holds, decided
+// on the episode at turnIndex, unless another call invalidated the record
+// since fence (or the entry was evicted). A nil shape keeps nothing.
+func (cache *policyRetainedSessionCache) record(
+	scope, episode string,
+	fence uint64,
+	turnIndex uint64,
+	shape *raylinearc.PolicyPrefixShape,
+) {
+	if scope == "" || fence == 0 {
 		return
 	}
-	delete(cache.requests, key)
-	for index, entry := range cache.order {
-		if entry == key {
-			cache.order = append(cache.order[:index], cache.order[index+1:]...)
-			break
-		}
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	entry, known := cache.entries[policyRetainedKey(scope, episode)]
+	if !known || entry.generation != fence || shape == nil {
+		return
+	}
+	entry.request = &policyRetainedRequest{
+		len: shape.Len, digest: shape.Digest, system: shape.System, tools: shape.Tools, turn: turnIndex + 1,
 	}
 }
 
@@ -123,13 +136,17 @@ func (cache *policyRetainedSessionCache) holds(
 	state *raylinearc.EpisodeState,
 	current *raylinearc.PolicyPrefixShape,
 ) (held, shellChanged bool) {
-	if state == nil || state.Policy == nil || current == nil {
+	if scope == "" || state == nil || state.Policy == nil || current == nil {
 		return false, false
 	}
 	cache.mu.Lock()
-	retained, known := cache.requests[policyRetainedKey(scope, episode)]
+	var retained *policyRetainedRequest
+	if entry, known := cache.entries[policyRetainedKey(scope, episode)]; known && entry.request != nil {
+		copied := *entry.request
+		retained = &copied
+	}
 	cache.mu.Unlock()
-	if !known || retained.turn != state.TurnIndex ||
+	if retained == nil || retained.turn != state.TurnIndex ||
 		retained.len != state.Policy.PrefixLen || retained.digest != state.Policy.PrefixDigest {
 		return false, false
 	}
@@ -137,4 +154,22 @@ func (cache *policyRetainedSessionCache) holds(
 		return false, true
 	}
 	return true, false
+}
+
+// raylineARCRetainedScoper is a selector that can name the scope its policy
+// decides record retained sessions under; "" when it records none (an
+// artifact-mode selector, or one not yet armed).
+type raylineARCRetainedScoper interface {
+	policyRetainedScope() string
+}
+
+func (selector *raylineARCSelector) policyRetainedScope() string {
+	armed := selector.armedComponents()
+	if armed == nil {
+		return ""
+	}
+	if scorer, ok := armed.scorer.(*policyServiceScorer); ok {
+		return scorer.retainedScope
+	}
+	return ""
 }
