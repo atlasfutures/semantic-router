@@ -53,14 +53,20 @@ const (
 // held, the package's fallback action. Nothing is encoded and the policy
 // scores nothing.
 //
-// The estimate is the one every limit on this path reads
-// (RaylineARCSelectionContext.ContextTokens, the router's conservative byte
-// heuristic of the request). A lookup carrying routing controls, or one with
-// neither a held nor a fallback action to serve, is encoded as before: nil.
+// The bound is on what the encode would cost (policyLookupEncodeTokens): a
+// tracked lookup that extends its context is encoded as a suffix on the
+// service's retained session, so only the messages since the service's last
+// encode count; any other lookup is encoded whole. A lookup carrying routing
+// controls, or one with neither a held nor a fallback action to serve, is
+// encoded as before: nil.
 //
 // A held answer commits like a capacity hold: the ledger records the held
 // action for this turn's reply, as it would for any held turn, and the
-// service's session is untouched. A fallback answer records no ledger entry
+// service's session is untouched: the state keeps where the service's encode
+// ended, so the next lookup's suffix spans this one's messages too, and the
+// next decide sends the whole request, never a delta on the ledger's prefix
+// (policyDeltaFor needs a staged turn of the committed turn index, which a
+// bypass advances past). A fallback answer records no ledger entry
 // (the router does not know the arm the service would attribute it to), so
 // the episode's policy state stays as it was.
 func (selector *raylineARCSelector) policyEncodeSizeBypass(
@@ -70,6 +76,7 @@ func (selector *raylineARCSelector) policyEncodeSizeBypass(
 	state *raylinearc.EpisodeState,
 	scorer *policyServiceScorer,
 	turn *raylinearc.PolicyEpisodeState,
+	transition string,
 	messages []json.RawMessage,
 	sideCall bool,
 	atBoundary bool,
@@ -78,14 +85,18 @@ func (selector *raylineARCSelector) policyEncodeSizeBypass(
 	workerIDs []string,
 ) *selection.SelectionResult {
 	limit := arcContext.RoutesEncodeLimit
-	if !arcContext.RoutesLookup || limit <= 0 || arcContext.ContextTokens <= limit {
+	if !arcContext.RoutesLookup || limit <= 0 {
+		return nil
+	}
+	encodeTokens, span := policyLookupEncodeTokens(arcContext, turn, transition, messages)
+	if encodeTokens <= limit {
 		return nil
 	}
 	record := func(outcome, actionID string) {
 		metrics.RecordRaylineARCRoutesEncodeBypass(outcome)
 		logging.ComponentEvent("extproc", "rayline_routes_encode_bypass", map[string]interface{}{
 			"request_id": arcContext.RequestID, "episode_id_hash": arcContext.EpisodeIDHash,
-			"outcome": outcome, "action_id": actionID,
+			"outcome": outcome, "action_id": actionID, "span": span, "encode_tokens": encodeTokens,
 			"context_tokens": arcContext.ContextTokens, "max_encode_tokens": limit,
 		})
 	}
@@ -118,4 +129,49 @@ func (selector *raylineARCSelector) policyEncodeSizeBypass(
 	result.Reasoning = "policy-service ARC decision (" + raylineRoutesEncodeBypassOfferKind + ", " + outcome + ")"
 	record(outcome, actionID)
 	return result
+}
+
+// Spans a lookup's encode estimate covers.
+const (
+	raylineRoutesEncodeSpanContext = "context"
+	raylineRoutesEncodeSpanSuffix  = "suffix"
+)
+
+// policyLookupEncodeTokens estimates what this lookup's encode would cost,
+// and the span that estimate covers. A tracked lookup that extends its
+// context (not ephemeral, transition extends) appends to the service's
+// retained session, so it costs the messages since the service's last encode
+// (EncodedThrough, which a bypass or hold leaves behind): the request's own
+// estimate, ContextTokens, scaled by those messages' share of the request's
+// message bytes, rounded up. Every other lookup -- a stateless or ephemeral
+// one, a session's first, a compaction or prefix break that rebases it, a
+// side call -- is encoded whole and costs ContextTokens.
+//
+// The suffix is an estimate on the assumption that the service still holds
+// the session: one it evicted is rebuilt in full.
+func policyLookupEncodeTokens(
+	arcContext *selection.RaylineARCSelectionContext,
+	turn *raylinearc.PolicyEpisodeState,
+	transition string,
+	messages []json.RawMessage,
+) (int, string) {
+	whole := arcContext.ContextTokens
+	if arcContext.EphemeralTurn || transition != raylinearc.PolicyTransitionExtends || turn == nil {
+		return whole, raylineRoutesEncodeSpanContext
+	}
+	from := turn.EncodedThrough()
+	if from <= 0 || from > len(messages) {
+		return whole, raylineRoutesEncodeSpanContext
+	}
+	total, suffix := 0, 0
+	for index, message := range messages {
+		total += len(message)
+		if index >= from {
+			suffix += len(message)
+		}
+	}
+	if total == 0 {
+		return whole, raylineRoutesEncodeSpanContext
+	}
+	return int((int64(whole)*int64(suffix) + int64(total) - 1) / int64(total)), raylineRoutesEncodeSpanSuffix
 }

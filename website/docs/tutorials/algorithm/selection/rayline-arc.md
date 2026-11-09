@@ -679,8 +679,8 @@ slow lookup as a slow encode.
 
 A full encode holds a policy container for the whole transcript, at about
 35k tokens a second, and live turns on that container wait behind it. On a
-policy-service cell, `routes_api.max_encode_tokens` bounds the context a
-lookup may send to the encoder:
+policy-service cell, `routes_api.max_encode_tokens` bounds what a lookup's
+encode may cost:
 
 ```yaml
 routes_api:
@@ -690,12 +690,26 @@ routes_api:
 
 The bound is on the router's own estimate, the conservative byte count that
 `max_context_tokens` and the per-arm masks read, not on the encoder's
-tokenizer. A lookup over it is not encoded. It is answered with the
+tokenizer, and on the span the encode would cover:
+
+- A tracked lookup that extends its conversation is appended to the
+  service's retained session, so only the messages since the service last
+  encoded it count: the request's estimate scaled by those messages' share
+  of its message bytes. A long conversation that grows a little per lookup
+  stays under the bound and keeps getting fresh routes.
+- Any other lookup is encoded whole and counts its whole context: a
+  stateless or zdr lookup, a conversation's first, and one after a
+  compaction or prefix break.
+
+A lookup over the bound is not encoded. It is answered with the
 conversation's held action, as a context the encoder refuses is: the latest
 action on the episode's held arm, when that action is still offered. A
 tracked lookup commits that answer like any held turn, so the next lookup on
 the conversation extends the same prefix and attributes the reply to the
-held action. With nothing held (a stateless lookup, a conversation's first
+held action. The service never saw the bypassed messages: the next lookup
+sends its whole request (a delta cell's staged turn belongs to the turn the
+bypass committed past, so no delta goes out), and its suffix is counted from
+where the service's encode ended, the bypassed messages included. With nothing held (a stateless lookup, a conversation's first
 lookup, or the first after a compaction) it is answered with the policy
 package's fallback action (`decision.fallback_action_id`) when the cell binds
 it; that answer leaves the episode's policy state as it was. The answer
@@ -710,13 +724,15 @@ bounds its context with `max_context_tokens`.
 
 `llm_rayline_arc_routes_encode_bypass_total{outcome}` counts lookups over the
 bound by outcome (`held`, `fallback`, `encoded`), and
-`rayline_routes_encode_bypass` logs each with `context_tokens` and
-`max_encode_tokens`.
+`rayline_routes_encode_bypass` logs each with `span` (`suffix` or
+`context`), `encode_tokens`, `context_tokens` and `max_encode_tokens`.
 
-The estimate covers the whole context, so a conversation over the bound is
-answered this way on every lookup until it compacts below it: the policy does
-not score it again until then. Choose the bound from the encode time a lookup
-may hold a container for, not from the encoder's capacity.
+The suffix assumes the service still holds the session; one it evicted is
+rebuilt in full, at the whole context's cost. Bypassed messages accumulate in
+the suffix, so a conversation whose lookups keep being bypassed stays held
+until it compacts or a lookup's new messages fall under the bound again.
+Choose the bound from the encode time a lookup may hold a container for, not
+from the encoder's capacity.
 
 ### Episodes
 

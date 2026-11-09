@@ -151,8 +151,9 @@ type RaylineARCSelectionContext struct {
 	// never asks for it.
 	RoutesLookup bool
 	// RoutesEncodeLimit is a POST /v1/routes lookup's
-	// routes_api.max_encode_tokens: over it (ContextTokens), the lookup is
-	// answered without an encode. Zero bounds nothing.
+	// routes_api.max_encode_tokens: over it (the estimated encode, the suffix
+	// or ContextTokens), the lookup is answered without an encode. Zero
+	// bounds nothing.
 	RoutesEncodeLimit int
 	// TurnCostWeight is a generation turn's own cost weight (configurable
 	// ARC's routing.value_usd, 1 / V), sent in place of the cell's; nil

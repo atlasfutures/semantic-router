@@ -293,11 +293,13 @@ type RaylineARCRoutesAPIConfig struct {
 	// 0 disables it: every lookup goes straight to the selector, as before.
 	// Dispatched turns never pass through it.
 	Admission RaylineARCRoutesAdmissionConfig `yaml:"admission,omitempty"`
-	// MaxEncodeTokens bounds the context a lookup may send to the encoder,
-	// in the router's own token estimate (the conservative byte heuristic
-	// max_context_tokens reads). A full encode holds a policy container for
-	// the whole transcript, and live turns on that container wait behind
-	// it, so a lookup over the bound is not encoded: it is answered with the
+	// MaxEncodeTokens bounds what a lookup's encode may cost, in the
+	// router's own token estimate (the conservative byte heuristic
+	// max_context_tokens reads): a tracked lookup that extends its context
+	// counts the messages since the service's last encode, any other its
+	// whole context. A full encode holds a policy container for the whole
+	// transcript, and live turns on that container wait behind it, so a
+	// lookup over the bound is not encoded: it is answered with the
 	// conversation's held model, as a context the encoder refuses is, or,
 	// with nothing held, the policy package's fallback action, and carries
 	// the encode_size_bypass warning. A lookup with routing controls, or
