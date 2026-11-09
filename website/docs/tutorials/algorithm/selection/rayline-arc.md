@@ -615,6 +615,13 @@ routes_api:
   `rayline_routes_admission_fail_open` once per trip.
 - **A crashed holder** frees its slot when its lease expires, at
   `deadline_ms` plus a few seconds.
+- **Changing `max_inflight` on a config reload.** The cell-wide Redis cap
+  never exceeds the larger of the old and new limits (slots are numbered).
+  The per-process cap, which binds only on the `memory` backend or while
+  failed open, is shared per backend and limit, so while the old router
+  generation drains it may briefly admit the old and the new limit side by
+  side. Recipes on one backend with different `max_inflight` are logged at
+  startup (`rayline_routes_admission_limit_conflict`).
 - **Limit.** The slot is released when the lookup answers. A lookup that hit
   its deadline answers 504 and frees the slot while the policy service may
   still be finishing that encode, so the cap bounds admitted lookups, not

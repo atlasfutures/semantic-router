@@ -47,6 +47,7 @@ func buildRaylineRoutesAdmission(router *OpenAIRouter) map[config.RecipeName]*ra
 		return nil
 	}
 	var gates map[config.RecipeName]*raylinearc.RouteLookupGate
+	poolLimits := map[string]int{}
 	add := func(name config.RecipeName, recipe *config.RoutingRecipe, store raylinearc.EpisodeStore) {
 		decision := router.raylineRoutesDecision(recipe)
 		if decision == nil || !decision.Algorithm.RaylineARC.RoutesAPI.Admission.Enabled() {
@@ -54,14 +55,23 @@ func buildRaylineRoutesAdmission(router *OpenAIRouter) map[config.RecipeName]*ra
 		}
 		arcConfig := decision.Algorithm.RaylineARC
 		settings := arcConfig.RoutesAPI
+		pool := raylineRoutesAdmissionPool(arcConfig)
 		gate := raylinearc.NewRouteLookupGate(raylinearc.RouteLookupGateConfig{
 			MaxInflight:    settings.Admission.MaxInflight,
 			QueueWait:      settings.EffectiveAdmissionQueueWait(),
 			LookupDeadline: settings.EffectiveDeadline(),
-			Pool:           raylineRoutesAdmissionPool(arcConfig),
+			Pool:           pool,
 			Store:          store,
 		})
 		recipeLabel := raylineARCRecipeLabel(name)
+		// Recipes on one backend share its slots only at one limit; at two
+		// they each count against their own local cap.
+		if previous, seen := poolLimits[pool]; seen && previous != gate.Limit() {
+			logging.ComponentWarnEvent("extproc", "rayline_routes_admission_limit_conflict", map[string]interface{}{
+				"recipe": recipeLabel, "max_inflight": gate.Limit(), "other_max_inflight": previous,
+			})
+		}
+		poolLimits[pool] = gate.Limit()
 		gate.SetFailOpenObserver(func(err error) {
 			logging.ComponentWarnEvent("extproc", "rayline_routes_admission_fail_open", map[string]interface{}{
 				"recipe": recipeLabel,
