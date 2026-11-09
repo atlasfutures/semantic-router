@@ -81,11 +81,22 @@ const (
 	// after a Redis error. Lookups admitted meanwhile hold the per-process
 	// cap only.
 	routeLookupRedisBackoff = 5 * time.Second
-	// routeLookupLeaseMargin is added to the lookup deadline to make the
-	// lease TTL. A holder releases on return; the TTL only matters for one
-	// that crashed, and must outlast any live holder.
+	// routeLookupLeaseMargin is added to the longest a holder can live to
+	// make the lease TTL. A holder releases on return; the TTL only matters
+	// for one that crashed, and must outlast any live holder.
 	routeLookupLeaseMargin = 5 * time.Second
 )
+
+// RouteLookupDetachBound is the longest an admitted lookup's decision may run
+// after its caller stopped waiting.
+//
+// The backend keeps encoding after the lookup's deadline answers 504: the
+// policy service has no cancel, and a large transcript encodes for longer than
+// any deadline a caller waits through. A slot freed at the 504 would admit the
+// next lookup onto a backend that is still busy, so the handler runs an
+// admitted ephemeral decision on its own context, bounded here, and releases
+// the slot when the backend answers. The lease TTL outlasts this bound.
+const RouteLookupDetachBound = 120 * time.Second
 
 var (
 	// Takes the first free slot, in order, in one round trip. Returns the
@@ -123,8 +134,8 @@ type RouteLookupGateConfig struct {
 	MaxInflight int
 	// QueueWait is how long a lookup waits for a slot before it is shed.
 	QueueWait time.Duration
-	// LookupDeadline is the lookup's own end-to-end bound; the lease TTL is
-	// derived from it.
+	// LookupDeadline is the lookup's own end-to-end bound. The lease TTL
+	// covers the longer of it and RouteLookupDetachBound.
 	LookupDeadline time.Duration
 	// Pool names the backend the slots protect. Every gate built with the
 	// same pool on the same Redis shares the same slots.
@@ -187,6 +198,9 @@ type RouteLookupTicket struct {
 	release func()
 }
 
+// Held reports whether the ticket holds a slot, so Release frees something.
+func (ticket RouteLookupTicket) Held() bool { return ticket.release != nil }
+
 // Release frees the lookup's slot. It is safe to call more than once and on
 // a zero ticket.
 func (ticket RouteLookupTicket) Release() {
@@ -216,7 +230,7 @@ func NewRouteLookupGate(config RouteLookupGateConfig) *RouteLookupGate {
 	gate := &RouteLookupGate{
 		limit:     config.MaxInflight,
 		queueWait: config.QueueWait,
-		leaseTTL:  config.LookupDeadline + routeLookupLeaseMargin,
+		leaseTTL:  max(config.LookupDeadline, RouteLookupDetachBound) + routeLookupLeaseMargin,
 		local:     routeLookupLocalSlots(config.Pool, config.MaxInflight),
 		pollMin:   routeLookupPollMin,
 		pollMax:   routeLookupPollMax,

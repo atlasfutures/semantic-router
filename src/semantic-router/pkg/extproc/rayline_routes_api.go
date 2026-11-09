@@ -36,6 +36,7 @@ import (
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/routerruntime"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
 
 // raylineRoutesAPIPath answers one question -- where should this request go --
@@ -422,12 +423,13 @@ func (r *OpenAIRouter) handleRaylineRoutesAPI(
 	routeID := raylineRoutesRouteID(ctx)
 	// Admission comes before any encoder or episode work, and its wait is
 	// spent inside the lookup deadline: a lookup that waited still answers
-	// within deadline_ms. The slot is held until this handler answers.
+	// within deadline_ms. The slot is held until the backend answers, which
+	// for an ephemeral lookup can be after this handler has (see
+	// raylineRoutesDecide).
 	ticket, refused := r.admitRaylineRoutesLookup(ctx, lookupContext, recipe, routeID)
 	if refused != nil {
 		return refused
 	}
-	defer ticket.Release()
 	episode := raylineRoutesEpisodeIdentity(ctx)
 	// Ephemeral unless this cell keeps episodes and the caller named a
 	// conversation. Both halves are required: without the identity there is
@@ -442,9 +444,12 @@ func (r *OpenAIRouter) handleRaylineRoutesAPI(
 		ephemeral = true
 	}
 	started := time.Now()
-	decision, err := runtime.RouteDecision(
+	decision, err := raylineRoutesDecide(
 		lookupContext,
+		runtime.RouteDecision,
 		raylineRoutesConsultWithControls(body, routeID, episode, ephemeral, wireFormat, controls, ctx.Headers, recipe.Name),
+		ticket,
+		ephemeral,
 	)
 	if err != nil {
 		return r.raylineRoutesFailure(ctx, lookupContext, routeID, err)
@@ -487,6 +492,60 @@ func (r *OpenAIRouter) raylineRoutesContext(ctx *RequestContext) context.Context
 		return ctx.TraceContext
 	}
 	return context.Background()
+}
+
+// raylineRoutesDecide runs the lookup's decision and frees its admission slot
+// when the backend answers.
+//
+// A tracked lookup decides on the lookup's own context and frees the slot on
+// return, as before: detached, an abandoned lookup would still commit its
+// episode turn. An ephemeral lookup that holds a slot decides on a context
+// detached from the caller and bounded by RouteLookupDetachBound, because the
+// backend does not stop encoding when the caller stops waiting: freeing the
+// slot at the 504 would admit the next lookup onto a backend still busy with
+// this one. The caller still waits only inside its own deadline; the late
+// answer is discarded, and the slot is freed when it arrives.
+func raylineRoutesDecide(
+	lookupContext context.Context,
+	decide func(context.Context, routerruntime.RouteDecisionRequest) (routerruntime.RouteDecision, error),
+	request routerruntime.RouteDecisionRequest,
+	ticket raylinearc.RouteLookupTicket,
+	ephemeral bool,
+) (routerruntime.RouteDecision, error) {
+	if !ephemeral || !ticket.Held() {
+		defer ticket.Release()
+		return decide(lookupContext, request)
+	}
+	// A caller that left while queued starts no encode nobody waits for.
+	if err := lookupContext.Err(); err != nil {
+		ticket.Release()
+		return routerruntime.RouteDecision{}, err
+	}
+	detached, cancel := context.WithTimeout(context.WithoutCancel(lookupContext), raylinearc.RouteLookupDetachBound)
+	type outcome struct {
+		decision routerruntime.RouteDecision
+		err      error
+	}
+	answered := make(chan outcome, 1)
+	go func() {
+		// Released from in here, not by the handler returning: the slot is
+		// the backend's, and the backend is busy until this call returns.
+		defer ticket.Release()
+		defer cancel()
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				answered <- outcome{err: fmt.Errorf("route decision panicked: %v", recovered)}
+			}
+		}()
+		decision, err := decide(detached, request)
+		answered <- outcome{decision: decision, err: err}
+	}()
+	select {
+	case result := <-answered:
+		return result.decision, result.err
+	case <-lookupContext.Done():
+		return routerruntime.RouteDecision{}, lookupContext.Err()
+	}
 }
 
 // raylineRoutesFailure classifies a failed lookup.

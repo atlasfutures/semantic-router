@@ -212,3 +212,103 @@ func TestRaylineRoutesAdmissionScopeFollowsTheEpisodeBackend(t *testing.T) {
 		t.Fatal("two policy services share a pool")
 	}
 }
+
+// An ephemeral lookup whose deadline fires mid-encode answers at its
+// deadline, but its slot stays held until the backend answers: the backend
+// is still encoding, and the next lookup must not be admitted onto it.
+func TestRaylineRoutesDecideHoldsTheSlotUntilTheBackendAnswers(t *testing.T) {
+	gate := raylinearc.NewRouteLookupGate(raylinearc.RouteLookupGateConfig{
+		MaxInflight: 1, QueueWait: 20 * time.Millisecond, LookupDeadline: time.Second,
+	})
+	ticket, err := gate.Acquire(context.Background())
+	if err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+	unblock := make(chan struct{})
+	backendSawCancel := make(chan bool, 1)
+	decide := func(ctx context.Context, _ routerruntime.RouteDecisionRequest) (routerruntime.RouteDecision, error) {
+		<-unblock
+		backendSawCancel <- ctx.Err() != nil
+		return routerruntime.RouteDecision{}, nil
+	}
+	lookup, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	if _, err := raylineRoutesDecide(lookup, decide, routerruntime.RouteDecisionRequest{}, ticket, true); err != context.DeadlineExceeded {
+		t.Fatalf("decide error = %v, want the lookup's deadline", err)
+	}
+	if _, err := gate.Acquire(context.Background()); err == nil {
+		t.Fatal("the next lookup was admitted while the backend was still encoding")
+	}
+	close(unblock)
+	if <-backendSawCancel {
+		t.Fatal("the detached decision saw the caller's deadline")
+	}
+	deadline := time.Now().Add(time.Second)
+	for {
+		next, err := gate.Acquire(context.Background())
+		if err == nil {
+			next.Release()
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("slot never freed after the backend answered: %v", err)
+		}
+	}
+}
+
+// A tracked lookup is never detached: it decides on the lookup's own
+// context, so an abandoned one cannot go on to commit its episode turn.
+func TestRaylineRoutesDecideDoesNotDetachATrackedLookup(t *testing.T) {
+	gate := raylinearc.NewRouteLookupGate(raylinearc.RouteLookupGateConfig{
+		MaxInflight: 1, QueueWait: 20 * time.Millisecond, LookupDeadline: time.Second,
+	})
+	ticket, err := gate.Acquire(context.Background())
+	if err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+	lookup, cancel := context.WithCancel(context.Background())
+	decide := func(ctx context.Context, _ routerruntime.RouteDecisionRequest) (routerruntime.RouteDecision, error) {
+		if ctx != lookup {
+			t.Error("a tracked lookup decided on a context other than its own")
+		}
+		return routerruntime.RouteDecision{}, nil
+	}
+	if _, err := raylineRoutesDecide(lookup, decide, routerruntime.RouteDecisionRequest{}, ticket, false); err != nil {
+		t.Fatalf("decide: %v", err)
+	}
+	cancel()
+	next, err := gate.Acquire(context.Background())
+	if err != nil {
+		t.Fatalf("slot not freed when a tracked lookup answered: %v", err)
+	}
+	next.Release()
+}
+
+// A caller that left while queued starts no encode.
+func TestRaylineRoutesDecideSkipsACancelledLookup(t *testing.T) {
+	gate := raylinearc.NewRouteLookupGate(raylinearc.RouteLookupGateConfig{
+		MaxInflight: 1, QueueWait: 20 * time.Millisecond, LookupDeadline: time.Second,
+	})
+	ticket, err := gate.Acquire(context.Background())
+	if err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+	lookup, cancel := context.WithCancel(context.Background())
+	cancel()
+	called := false
+	decide := func(context.Context, routerruntime.RouteDecisionRequest) (routerruntime.RouteDecision, error) {
+		called = true
+		return routerruntime.RouteDecision{}, nil
+	}
+	if _, err := raylineRoutesDecide(lookup, decide, routerruntime.RouteDecisionRequest{}, ticket, true); err != context.Canceled {
+		t.Fatalf("decide error = %v, want cancelled", err)
+	}
+	if called {
+		t.Fatal("a cancelled lookup started an encode")
+	}
+	next, err := gate.Acquire(context.Background())
+	if err != nil {
+		t.Fatalf("slot not freed for a cancelled lookup: %v", err)
+	}
+	next.Release()
+}

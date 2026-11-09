@@ -598,11 +598,12 @@ routes_api:
   startup (`rayline_routes_admission`, `scope: cell|process`).
 - **Waiting.** A lookup that finds every slot taken waits up to
   `queue_wait_ms` for one, inside its own `deadline_ms` (the wait must be
-  shorter than the deadline). It holds the slot until it answers. If no slot
+  shorter than the deadline). It holds the slot until the backend answers
+  (see below). If no slot
   frees in time it is answered `429 lookup_capacity` with `Retry-After` set to
   the queue wait rounded up to whole seconds.
-- **Why the wait is short.** A slot can be held for the whole lookup deadline,
-  so a long wait mostly parks the caller for a slot it will not get. The
+- **Why the wait is short.** A slot can be held for the whole lookup deadline
+  or longer, so a long wait mostly parks the caller for a slot it will not get. The
   default absorbs the common case, a burst of small lookups that each clear
   in well under a second, and turns the rest into a prompt 429.
 - **Dispatched turns are unaffected.** The gate is only on `/v1/routes`;
@@ -613,8 +614,8 @@ routes_api:
   when the queue wait is nearly spent) counts as a failure; the gate then
   stops consulting Redis for a few seconds and logs
   `rayline_routes_admission_fail_open` once per trip.
-- **A crashed holder** frees its slot when its lease expires, at
-  `deadline_ms` plus a few seconds.
+- **A crashed holder** frees its slot when its lease expires, at the longer
+  of `deadline_ms` and 120 s, plus a few seconds.
 - **Changing `max_inflight` on a config reload.** The cell-wide Redis cap
   never exceeds the larger of the old and new limits (slots are numbered).
   The per-process cap, which binds only on the `memory` backend or while
@@ -622,10 +623,14 @@ routes_api:
   generation drains it may briefly admit the old and the new limit side by
   side. Recipes on one backend with different `max_inflight` are logged at
   startup (`rayline_routes_admission_limit_conflict`).
-- **Limit.** The slot is released when the lookup answers. A lookup that hit
-  its deadline answers 504 and frees the slot while the policy service may
-  still be finishing that encode, so the cap bounds admitted lookups, not
-  encoder time spent after a deadline.
+- **A lookup that times out keeps its slot until the encode finishes.** The
+  backend does not stop encoding when the caller stops waiting, so an
+  ephemeral lookup (every lookup when `episode_writes` is false) runs its
+  decision detached from the caller, bounded at 120 s. The caller still gets
+  its 504 at `deadline_ms`; the slot is released when the backend answers,
+  so the next lookup is not admitted onto a backend still busy with this one.
+  A lookup that joins an episode is not detached (an abandoned one would
+  still commit its turn) and frees its slot at its 504.
 
 `llm_rayline_arc_routes_admission_total{outcome, backend}` counts outcomes
 (`admitted`, `queued`, `shed`, `cancelled`, `fail_open`) and

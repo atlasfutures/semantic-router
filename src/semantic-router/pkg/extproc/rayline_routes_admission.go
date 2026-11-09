@@ -214,8 +214,9 @@ func (r *OpenAIRouter) admitRaylineRoutesLookup(
 
 // raylineRoutesAdmissionRetrySeconds is the Retry-After on a shed lookup:
 // the queue wait it already spent, rounded up, and at least a second. The
-// slot it missed is held by a lookup that may run up to its whole deadline,
-// so coming back sooner than the wait that just failed mostly fails again.
+// slot it missed is held until the backend answers a lookup that may encode
+// for its whole deadline or longer, so coming back sooner than the wait that
+// just failed mostly fails again.
 func raylineRoutesAdmissionRetrySeconds(gate *raylinearc.RouteLookupGate) int {
 	seconds := int(math.Ceil(gate.QueueWait().Seconds()))
 	return max(seconds, raylineRoutesContendedRetrySeconds)
