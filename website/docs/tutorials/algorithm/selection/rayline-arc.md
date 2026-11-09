@@ -638,7 +638,11 @@ routes_api:
   started, estimated as its tokens (those the decision reported, or the
   request body at four bytes a token) at `abandoned_hold_tokens_per_second`
   (default 35000, about one container's full-encode rate) plus a second,
-  capped at 120 s, and logs `rayline_routes_abandoned_hold` with `hold_ms`.
+  capped at 120 s, all counted from when the decision began. The hold ends
+  at least a second before the slot's cell-wide lease runs out, so no other
+  router instance is admitted on an expired lease while this one still
+  holds the slot. It logs `rayline_routes_abandoned_hold` with `hold_ms`,
+  and a reload waits for pending releases.
   One that answers, or is refused while its caller still waits, frees the
   slot at once. A lookup whose caller left while it was queued starts no
   encode and frees its slot.

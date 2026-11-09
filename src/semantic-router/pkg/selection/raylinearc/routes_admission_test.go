@@ -509,3 +509,28 @@ func TestRouteLookupGateSharesTheLocalCapAcrossGatesOfOnePool(t *testing.T) {
 	}
 	next.Release()
 }
+
+// A cell-wide slot reports the lease it holds, so an abandoned lookup's hold
+// can end before it; a per-process slot has none.
+func TestRouteLookupTicketReportsItsLease(t *testing.T) {
+	t.Parallel()
+	shared := testRouteLookupGate(1, 30*time.Millisecond, newFakeRouteLookupLeases(1))
+	leased, err := shared.Acquire(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer leased.Release()
+	left, ok := leased.LeaseRemaining(time.Now())
+	if !ok || left > shared.leaseTTL || left < shared.leaseTTL-time.Second {
+		t.Fatalf("lease remaining = %v, %v; want about %v", left, ok, shared.leaseTTL)
+	}
+	local := testRouteLookupGate(1, 30*time.Millisecond, nil)
+	ticket, err := local.Acquire(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ticket.Release()
+	if _, ok := ticket.LeaseRemaining(time.Now()); ok {
+		t.Fatal("a per-process slot reported a lease")
+	}
+}

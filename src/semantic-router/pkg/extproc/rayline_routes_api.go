@@ -535,17 +535,40 @@ func raylineRoutesDecide(
 		return routerruntime.RouteDecision{}, err
 	}
 	if !ephemeral {
+		started := time.Now()
+		held := false
+		// Every exit that schedules no delayed release frees the slot now,
+		// a panic included: the panic goes on up, the slot does not leak.
+		defer func() {
+			if !held {
+				ticket.Release()
+			}
+		}()
 		decision, err := decide(lookupContext, request)
 		if lookupContext.Err() == nil {
-			ticket.Release()
 			return decision, err
 		}
-		hold := raylineRoutesAbandonedHold(raylineRoutesEncodeTokens(decision, request.Body), holdTokensPerSecond)
+		now := time.Now()
+		leaseLeft, leased := ticket.LeaseRemaining(now)
+		hold := raylineRoutesAbandonedHold(
+			raylineRoutesEncodeTokens(decision, request.Body), holdTokensPerSecond,
+			now.Sub(started), leaseLeft, leased,
+		)
 		logging.ComponentEvent("extproc", "rayline_routes_abandoned_hold", map[string]interface{}{
 			"routing_decision_id": request.DecisionID,
 			"hold_ms":             hold.Milliseconds(),
 		})
-		time.AfterFunc(hold, ticket.Release)
+		if hold <= 0 {
+			return decision, err
+		}
+		// Counted in background, so a reload's Close waits for the release
+		// rather than closing the gate's Redis client under it.
+		held = true
+		background.Add(1)
+		time.AfterFunc(hold, func() {
+			defer background.Done()
+			ticket.Release()
+		})
 		return decision, err
 	}
 	detached, cancel := context.WithTimeout(context.WithoutCancel(lookupContext), raylinearc.RouteLookupDetachBound)
@@ -1362,16 +1385,28 @@ func raylineRoutesToolWarnings(warnings []string, encoded *bool) []string {
 // lookup's hold: a full encode's fixed cost (about 0.2 s) with margin.
 var raylineRoutesAbandonedHoldFixed = time.Second
 
-// raylineRoutesAbandonedHold is how long an abandoned tracked lookup keeps
-// its slot: the encode it started, at tokensPerSecond, plus the fixed part,
-// capped at RouteLookupDetachBound (which the slot's lease TTL covers).
-func raylineRoutesAbandonedHold(tokens, tokensPerSecond int) time.Duration {
+// raylineRoutesAbandonedLeaseMargin is how long before its cell-wide lease
+// runs out an abandoned lookup's slot is released at the latest.
+const raylineRoutesAbandonedLeaseMargin = time.Second
+
+// raylineRoutesAbandonedHold is how much longer an abandoned tracked lookup
+// keeps its slot, elapsed after its decision began: the encode it started,
+// at tokensPerSecond, plus the fixed part, capped at RouteLookupDetachBound
+// from the start, less what has already elapsed. A slot with a cell-wide
+// lease (leased) is released at least raylineRoutesAbandonedLeaseMargin
+// before leaseLeft runs out, so no other replica is admitted on an expired
+// lease while this one still holds the slot. Zero or less: release now.
+func raylineRoutesAbandonedHold(tokens, tokensPerSecond int, elapsed, leaseLeft time.Duration, leased bool) time.Duration {
 	if tokensPerSecond <= 0 {
 		tokensPerSecond = config.DefaultRaylineARCRoutesAbandonedHoldTokensPerSecond
 	}
-	hold := time.Duration(float64(tokens)/float64(tokensPerSecond)*float64(time.Second)) + raylineRoutesAbandonedHoldFixed
-	if hold > raylinearc.RouteLookupDetachBound {
-		return raylinearc.RouteLookupDetachBound
+	total := time.Duration(float64(tokens)/float64(tokensPerSecond)*float64(time.Second)) + raylineRoutesAbandonedHoldFixed
+	if total > raylinearc.RouteLookupDetachBound {
+		total = raylinearc.RouteLookupDetachBound
+	}
+	hold := total - elapsed
+	if leased && hold > leaseLeft-raylineRoutesAbandonedLeaseMargin {
+		hold = leaseLeft - raylineRoutesAbandonedLeaseMargin
 	}
 	return hold
 }

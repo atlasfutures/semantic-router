@@ -362,14 +362,24 @@ func TestRaylineRoutesDecideFreesATrackedLookupsSlotOnAnswer(t *testing.T) {
 // part, from the reported tokens when there are any and the body otherwise,
 // and never longer than RouteLookupDetachBound.
 func TestRaylineRoutesAbandonedHoldIsEstimatedAndCapped(t *testing.T) {
-	if got := raylineRoutesAbandonedHold(70000, 35000); got != 3*time.Second {
+	if got := raylineRoutesAbandonedHold(70000, 35000, 0, 0, false); got != 3*time.Second {
 		t.Fatalf("hold = %v, want 3s", got)
 	}
-	if got := raylineRoutesAbandonedHold(70000, 0); got != 3*time.Second {
+	if got := raylineRoutesAbandonedHold(70000, 0, 0, 0, false); got != 3*time.Second {
 		t.Fatalf("hold at the default rate = %v, want 3s", got)
 	}
-	if got := raylineRoutesAbandonedHold(100_000_000, 35000); got != raylinearc.RouteLookupDetachBound {
+	if got := raylineRoutesAbandonedHold(100_000_000, 35000, 0, 0, false); got != raylinearc.RouteLookupDetachBound {
 		t.Fatalf("hold = %v, want the %v cap", got, raylinearc.RouteLookupDetachBound)
+	}
+	// Counted from when the decision began: 3 s of encode, 2 s already spent.
+	if got := raylineRoutesAbandonedHold(70000, 35000, 2*time.Second, 0, false); got != time.Second {
+		t.Fatalf("hold after 2s = %v, want 1s", got)
+	}
+	if got := raylineRoutesAbandonedHold(100_000_000, 35000, 30*time.Second, 0, false); got != raylinearc.RouteLookupDetachBound-30*time.Second {
+		t.Fatalf("capped hold after 30s = %v, want the cap less 30s", got)
+	}
+	if got := raylineRoutesAbandonedHold(70000, 35000, 5*time.Second, 0, false); got > 0 {
+		t.Fatalf("hold after the estimate = %v, want none", got)
 	}
 	if got := raylineRoutesEncodeTokens(routerruntime.RouteDecision{}, make([]byte, 4000)); got != 1000 {
 		t.Fatalf("tokens from the body = %d, want 1000", got)
@@ -483,4 +493,85 @@ func TestRouteDecisionCountsTheSessionsTrackedLookupsHold(t *testing.T) {
 	if got := raylineRoutesLookupSessions.count(time.Now()) - before; got != 2 {
 		t.Fatalf("lookup sessions grew by %d, want 2", got)
 	}
+}
+
+// The hold never outlives the slot's cell-wide lease: it ends a margin before
+// the lease runs out, at once when that is already past.
+func TestRaylineRoutesAbandonedHoldEndsBeforeTheLease(t *testing.T) {
+	if got := raylineRoutesAbandonedHold(100_000_000, 35000, 30*time.Second, 60*time.Second, true); got != 59*time.Second {
+		t.Fatalf("hold = %v, want 59s: the lease's 60s less the margin", got)
+	}
+	if got := raylineRoutesAbandonedHold(70000, 35000, 0, 10*time.Second, true); got != 3*time.Second {
+		t.Fatalf("hold = %v, want the 3s estimate inside the lease", got)
+	}
+	if got := raylineRoutesAbandonedHold(70000, 35000, 0, 500*time.Millisecond, true); got > 0 {
+		t.Fatalf("hold = %v, want none with the lease nearly out", got)
+	}
+}
+
+// A delayed release is router background work: a reload's Close waits for
+// it rather than closing the gate under it.
+func TestRaylineRoutesAbandonedHoldIsBackgroundWork(t *testing.T) {
+	defer func(fixed time.Duration) { raylineRoutesAbandonedHoldFixed = fixed }(raylineRoutesAbandonedHoldFixed)
+	raylineRoutesAbandonedHoldFixed = 150 * time.Millisecond
+	gate := raylinearc.NewRouteLookupGate(raylinearc.RouteLookupGateConfig{
+		MaxInflight: 1, QueueWait: 20 * time.Millisecond, LookupDeadline: time.Second,
+	})
+	ticket, err := gate.Acquire(context.Background())
+	if err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+	lookup, cancel := context.WithCancel(context.Background())
+	decide := func(context.Context, routerruntime.RouteDecisionRequest) (routerruntime.RouteDecision, error) {
+		cancel()
+		return routerruntime.RouteDecision{}, context.Canceled
+	}
+	var background sync.WaitGroup
+	if _, err := raylineRoutesDecide(lookup, &background, decide, routerruntime.RouteDecisionRequest{}, ticket, 0, false); err == nil {
+		t.Fatal("an abandoned lookup answered")
+	}
+	drained := make(chan struct{})
+	go func() { background.Wait(); close(drained) }()
+	select {
+	case <-drained:
+		t.Fatal("background drained before the delayed release ran")
+	case <-time.After(50 * time.Millisecond):
+	}
+	select {
+	case <-drained:
+	case <-time.After(time.Second):
+		t.Fatal("background never drained")
+	}
+	next, err := gate.Acquire(context.Background())
+	if err != nil {
+		t.Fatalf("slot not freed once background drained: %v", err)
+	}
+	next.Release()
+}
+
+// A tracked decision that panics frees its slot, and the panic goes on up.
+func TestRaylineRoutesDecideReleasesATrackedLookupsSlotOnPanic(t *testing.T) {
+	gate := raylinearc.NewRouteLookupGate(raylinearc.RouteLookupGateConfig{
+		MaxInflight: 1, QueueWait: 20 * time.Millisecond, LookupDeadline: time.Second,
+	})
+	ticket, err := gate.Acquire(context.Background())
+	if err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+	decide := func(context.Context, routerruntime.RouteDecisionRequest) (routerruntime.RouteDecision, error) {
+		panic("decision failed")
+	}
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Fatal("the panic was swallowed")
+			}
+		}()
+		_, _ = raylineRoutesDecide(context.Background(), &sync.WaitGroup{}, decide, routerruntime.RouteDecisionRequest{}, ticket, 0, false)
+	}()
+	next, err := gate.Acquire(context.Background())
+	if err != nil {
+		t.Fatalf("slot leaked by a panicking decision: %v", err)
+	}
+	next.Release()
 }
