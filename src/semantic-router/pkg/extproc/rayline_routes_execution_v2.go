@@ -645,7 +645,9 @@ func routesExecutionV2Controls(execution *routesExecutionV2) (*selection.Rayline
 
 // raylineRoutesReceipt is one public result's receipt
 // (arc_execution_v2.result_receipt): the decide's decision.receipt with the
-// result's own action and control, copied, never recomputed.
+// result's own action and control, copied, never recomputed. Its excluded
+// list ends with the targets this cell's catalog lacked, if any
+// (routeReceiptWithUnknownTargets); the service's entries come first.
 type raylineRoutesReceipt struct {
 	ActionID        string                             `json:"action_id"`
 	ControlID       *string                            `json:"control_id"`

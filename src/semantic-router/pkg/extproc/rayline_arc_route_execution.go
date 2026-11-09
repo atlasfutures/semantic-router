@@ -248,20 +248,31 @@ func (refusal *routeExecutionRefusal) contract() *routesContractError {
 	return &routesContractError{status: entry.status, errType: "invalid_request_error", code: entry.code, message: message}
 }
 
+// routeExecutionUnknownTargetReason is the receipt's reason for a target
+// the serving package's catalog lacks: left out of the offer, not refused.
+const routeExecutionUnknownTargetReason = "unknown_action"
+
 // applyRoutePolicyAndExecutionV2 writes routing.policy and a v2
 // routing.execution into the decide request after checking the envelope
 // against the serving package and the request's offer, in bind_v2's order:
-// every named action in the catalog; the package and controls pins;
-// last_served consistent with history; the hold feasible, then offered. The
-// offer pin is checked after the decide. It answers a failure class, or ""
-// once applied.
+// every attributed, last-served or held action in the catalog, and at least
+// one target; the package and controls pins; last_served consistent with
+// history; the hold feasible, then offered. The offer pin is checked after
+// the decide. It answers the targets the catalog lacks, left out of the
+// decide members, and a failure class, or "" once applied.
+//
+// A target is what the caller can execute, not a claim about what ran: an
+// executor whose registry derives more actions than this cell's package
+// trained is not wrong, so an unknown target is excluded, not refused
+// (memex-desktop #8163). History, last_served and hold stay strict: they
+// attribute messages and warmth to an action, which needs the action known.
 func applyRoutePolicyAndExecutionV2(
 	request *raylinearc.PolicyDecisionRequest,
 	scorer *policyServiceScorer,
 	controls *selection.RaylineARCRouteControls,
-) string {
+) (unknownTargets []string, class string) {
 	if controls == nil {
-		return ""
+		return nil, ""
 	}
 	if policy := controls.Policy; policy != nil {
 		member := *policy
@@ -269,20 +280,23 @@ func applyRoutePolicyAndExecutionV2(
 	}
 	v2 := controls.ExecutionV2
 	if v2 == nil {
-		return ""
+		return nil, ""
 	}
-	for _, actionIDs := range [][]string{v2.ActionIDs, v2.TargetActionIDs} {
-		for _, actionID := range actionIDs {
-			if _, bound := scorer.bindings[actionID]; !bound {
-				return arcFailureExecutionUnknownAction
-			}
+	for _, actionID := range v2.ActionIDs {
+		if _, bound := scorer.bindings[actionID]; !bound {
+			return nil, arcFailureExecutionUnknownAction
 		}
 	}
+	unknownTargets = excludeUnknownTargets(v2, scorer)
+	if len(unknownTargets) > 0 && len(unknownTargets) == len(v2.TargetActionIDs) {
+		// Nothing this cell routes is executable by the caller.
+		return nil, arcFailureExecutionUnknownAction
+	}
 	if pin := v2.ExpectPackage; pin != nil && *pin != scorer.sha256 {
-		return arcFailureExecutionIdentityPackage
+		return nil, arcFailureExecutionIdentityPackage
 	}
 	if pin := v2.ExpectThinkingControls; pin != nil && *pin != scorer.thinkingControls {
-		return arcFailureExecutionIdentityControls
+		return nil, arcFailureExecutionIdentityControls
 	}
 	if served := v2.LastServedActionID; served != nil && len(v2.Attribution) > 0 {
 		last := v2.Attribution[len(v2.Attribution)-1]
@@ -296,15 +310,15 @@ func applyRoutePolicyAndExecutionV2(
 		}
 		if same != nil && same.ActionID != *served ||
 			same == nil && scorer.actionModel(last.ActionID) != scorer.actionModel(*served) {
-			return arcFailureExecutionLastServedConflict
+			return nil, arcFailureExecutionLastServedConflict
 		}
 	}
 	if hold := v2.HoldActionID; hold != nil {
 		if slices.Contains(v2.Infeasible, *hold) {
-			return arcFailureExecutionHoldInfeasible
+			return nil, arcFailureExecutionHoldInfeasible
 		}
 		if !slices.Contains(request.Selection.AvailableActionIDs, *hold) {
-			return arcFailureExecutionHoldUnavailable
+			return nil, arcFailureExecutionHoldUnavailable
 		}
 		held := *hold
 		request.Selection.HeldActionID = &held
@@ -321,7 +335,49 @@ func applyRoutePolicyAndExecutionV2(
 	request.Capacity = append([]raylinearc.PolicyActionCapacity(nil), v2.Capacity...)
 	request.TurnKey = v2.TurnKey
 	request.Reconsult = v2.Reconsult
-	return ""
+	return unknownTargets, ""
+}
+
+// excludeUnknownTargets takes the targets the catalog lacks out of the
+// envelope's decide members (their capacity, infeasibility and cache
+// evidence), so the service never sees an action it cannot score, and
+// answers them in envelope order; nil when every target is bound.
+func excludeUnknownTargets(v2 *selection.RaylineARCRouteExecutionV2, scorer *policyServiceScorer) []string {
+	var unknown []string
+	for _, actionID := range v2.TargetActionIDs {
+		if _, bound := scorer.bindings[actionID]; !bound {
+			unknown = append(unknown, actionID)
+		}
+	}
+	if len(unknown) == 0 {
+		return nil
+	}
+	drop := func(actionID string) bool { return slices.Contains(unknown, actionID) }
+	v2.Capacity = slices.DeleteFunc(v2.Capacity, func(entry raylinearc.PolicyActionCapacity) bool { return drop(entry.ActionID) })
+	v2.Infeasible = slices.DeleteFunc(v2.Infeasible, drop)
+	if v2.CacheContext != nil {
+		v2.CacheContext.Actions = slices.DeleteFunc(v2.CacheContext.Actions, func(entry cachecontext.PolicyActionCache) bool { return drop(entry.ActionID) })
+		if len(v2.CacheContext.Actions) == 0 {
+			v2.CacheContext = nil
+		}
+	}
+	return unknown
+}
+
+// routeReceiptWithUnknownTargets is the decide's receipt with the adapter's
+// own exclusions after the service's: the caller's targets the catalog
+// lacks, which the service never saw. The service's receipt is copied, not
+// changed; a nil receipt stays nil.
+func routeReceiptWithUnknownTargets(receipt *raylinearc.PolicyDecisionReceipt, unknown []string) *raylinearc.PolicyDecisionReceipt {
+	if receipt == nil || len(unknown) == 0 {
+		return receipt
+	}
+	appended := *receipt
+	appended.Excluded = append([]raylinearc.PolicyReceiptExcluded{}, receipt.Excluded...)
+	for _, actionID := range unknown {
+		appended.Excluded = append(appended.Excluded, raylinearc.PolicyReceiptExcluded{ActionID: actionID, Reason: routeExecutionUnknownTargetReason})
+	}
+	return &appended
 }
 
 // routeExecutionV2CacheContext is a v2 lookup's cache_context: the admitted

@@ -116,7 +116,10 @@ func TestRoutesExecutionV2ReproducesTheGoldenVectors(t *testing.T) {
 			request := &raylinearc.PolicyDecisionRequest{
 				ContextEpoch: "0", Selection: raylinearc.PolicySelection{AvailableActionIDs: vectors.Package.OfferedActionIDs},
 			}
-			class := applyRoutePolicyAndExecutionV2(request, scorer, controls)
+			unknown, class := applyRoutePolicyAndExecutionV2(request, scorer, controls)
+			if len(unknown) > 0 {
+				t.Fatalf("unknown targets %v in a vector whose targets are bound", unknown)
+			}
 			if vector.Expect.Refused != "" {
 				if class == "" || routeExecutionClasses[class].code != vector.Expect.Refused {
 					t.Fatalf("class %q, want %s", class, vector.Expect.Refused)
@@ -430,5 +433,129 @@ func TestRoutesPolicyEmptyScheduleIsKept(t *testing.T) {
 	controls := raylineRoutesControls(routing, &config.RaylineARCRoutesRoutingConfig{}, time.Now())
 	if got := string(executionJSON(t, controls.Policy)); got != `{"preset":"arc-policy.hybrid-default.v1","overrides":{"schedule":{"model":[]}}}` {
 		t.Fatalf("policy member %s", got)
+	}
+}
+
+// A target the serving package lacks is the caller's capability, not a
+// claim about what ran (memex-desktop #8163): it is left out of the decide
+// members (its capacity, infeasibility and cache evidence) and answered as
+// unknown; the request goes on. A request whose every target is unknown,
+// or whose history names an unknown action, is refused as before.
+func TestRoutesExecutionV2ExcludesUnknownTargets(t *testing.T) {
+	vectors := readExecutionV2Vectors(t)
+	scorer := &policyServiceScorer{
+		sha256: vectors.Package.PackageSHA256, thinkingControls: vectors.Package.ThinkingControlsSHA256,
+		bindings: map[string]policyBinding{},
+	}
+	for actionID, model := range vectors.Package.ActionModels {
+		scorer.bindings[actionID] = policyBinding{model: model}
+	}
+	known, unknown := strings.Repeat("1", 64), strings.Repeat("7", 64)
+	cache := `{"context_epoch":"e1","gap_s":12.0,"ttl":null,"residency":{"state":"resident","provenance":"local_measured"},` +
+		`"usage":{"prompt_tokens":61000,"cache_read_tokens":null,"cache_write_tokens":null,"units":"hf:Qwen/Qwen3.8-27B@r1","provenance":"provider_reported"},` +
+		`"current_prefix":{"tokens":69800,"overlap_tokens":61000,"units":"hf:Qwen/Qwen3.8-27B@r1","provenance":"local_measured"}}`
+	target := func(actionID, worker, placement, cache, capacity string) string {
+		return `{"action_id":"` + actionID + `","worker":"` + worker + `","placement":"` + placement + `","cache":` + cache + `,"capacity":` + capacity + `}`
+	}
+	envelope := func(targets ...string) string {
+		return `{"version":"arc-execution-context.v2","turn":{"id":"sha256:` + strings.Repeat("a", 64) + `","attempt":1,"epoch":"e1","retry_of":null,"reconsult":null},` +
+			`"event":{"kind":"task_start","basis":"marker_inferred","compaction":null},"last_served":null,"history":[],"hold":null,"expect":null,` +
+			`"targets":[` + strings.Join(targets, ",") + `]}`
+	}
+	fits := `{"fits":true,"reason":null,"required":117,"available":32768,"available_source":"configured","units":"hf:Qwen/Qwen3.8-27B@r1","provenance":"local_measured"}`
+	doesNotFit := `{"fits":false,"reason":"context_capacity","required":70210,"available":65536,"available_source":"configured","units":"hf:Qwen/Qwen3.8-27B@r1","provenance":"local_measured"}`
+	apply := func(t *testing.T, body string) ([]string, string, *raylinearc.PolicyDecisionRequest, *selection.RaylineARCRouteControls) {
+		t.Helper()
+		routing, _, refusal := readRaylineRoutesRouting(executionV2Body(`{"execution":`+body+`}`), nil, config.DefaultRaylineARCValueUSDMax)
+		if refusal != nil {
+			t.Fatalf("parse refused %s (%s)", refusal.code, refusal.message)
+		}
+		controls := raylineRoutesControls(routing, &config.RaylineARCRoutesRoutingConfig{}, time.Now())
+		request := &raylinearc.PolicyDecisionRequest{Selection: raylinearc.PolicySelection{AvailableActionIDs: vectors.Package.OfferedActionIDs}}
+		excluded, class := applyRoutePolicyAndExecutionV2(request, scorer, controls)
+		return excluded, class, request, controls
+	}
+
+	excluded, class, request, controls := apply(t, envelope(
+		target(known, "local-qwen", "local", "null", fits),
+		target(unknown, "cloud-haiku", "cloud", cache, doesNotFit),
+	))
+	if class != "" || !reflect.DeepEqual(excluded, []string{unknown}) {
+		t.Fatalf("class %q, excluded %v", class, excluded)
+	}
+	v2 := controls.ExecutionV2
+	if !reflect.DeepEqual(v2.TargetActionIDs, []string{known, unknown}) || len(v2.ActionIDs) != 0 {
+		t.Fatalf("targets %v, attributed %v", v2.TargetActionIDs, v2.ActionIDs)
+	}
+	if len(request.Capacity) != 1 || request.Capacity[0].ActionID != known || len(v2.Infeasible) != 0 {
+		t.Fatalf("decide capacity %+v, infeasible %v", request.Capacity, v2.Infeasible)
+	}
+	if routeExecutionV2CacheContext(v2) != nil {
+		t.Fatalf("the unknown target's cache evidence reached the decide members: %+v", v2.CacheContext)
+	}
+	if request.Event == nil || request.TurnKey == "" {
+		t.Fatalf("the envelope was not applied: %+v", request)
+	}
+
+	// Every target unknown: nothing this cell routes is executable.
+	if _, class, _, _ := apply(t, envelope(target(unknown, "cloud-haiku", "cloud", "null", "null"))); class != arcFailureExecutionUnknownAction {
+		t.Fatalf("all unknown: class %q", class)
+	}
+	// Attribution to an unknown action is still a refusal, targets aside.
+	request = &raylinearc.PolicyDecisionRequest{Selection: raylinearc.PolicySelection{AvailableActionIDs: vectors.Package.OfferedActionIDs}}
+	strict := &selection.RaylineARCRouteControls{ExecutionV2: &selection.RaylineARCRouteExecutionV2{
+		ActionIDs: []string{unknown}, TargetActionIDs: []string{known}, Event: raylinearc.PolicyExecutorEvent{Basis: "unknown"},
+	}}
+	if _, class := applyRoutePolicyAndExecutionV2(request, scorer, strict); class != arcFailureExecutionUnknownAction {
+		t.Fatalf("unknown history: class %q", class)
+	}
+
+	// The receipt names them after the service's own exclusions, on a copy.
+	preset := "arc-policy.hybrid-default.v1"
+	service := &raylinearc.PolicyDecisionReceipt{Policy: &preset, Excluded: []raylinearc.PolicyReceiptExcluded{{ActionID: known, Reason: "context_capacity"}}}
+	appended := routeReceiptWithUnknownTargets(service, []string{unknown})
+	if want := []raylinearc.PolicyReceiptExcluded{{ActionID: known, Reason: "context_capacity"}, {ActionID: unknown, Reason: "unknown_action"}}; !reflect.DeepEqual(appended.Excluded, want) ||
+		len(service.Excluded) != 1 || appended.Policy != service.Policy {
+		t.Fatalf("receipt %+v (service %+v)", appended, service)
+	}
+	if routeReceiptWithUnknownTargets(service, nil) != service || routeReceiptWithUnknownTargets(nil, []string{unknown}) != nil {
+		t.Fatal("a receipt with nothing to append, or no receipt, must pass through")
+	}
+}
+
+// Through the selector: an unknown target never reaches the decide
+// request, and the result's receipt names it as excluded for
+// unknown_action after what the service excluded.
+func TestRouteExecutionV2UnknownTargetReachesTheReceiptNotTheDecide(t *testing.T) {
+	fixture := executionFixture(t, true)
+	bindings := fixture.decision.Algorithm.RaylineARC.PolicyService.Bindings
+	think, off, unknown := bindings[0].ActionID, bindings[2].ActionID, strings.Repeat("7", 64)
+	model := "schedule"
+	fixture.fake.receipt = &raylinearc.PolicyDecisionReceipt{
+		DecidedBy: raylinearc.PolicyReceiptDecidedBy{Model: &model, Thinking: "schedule"},
+		Excluded:  []raylinearc.PolicyReceiptExcluded{{ActionID: off, Reason: "context_capacity"}},
+	}
+	_, controls := routesControlsFor(t, fixture, `{}`)
+	kind := "tool_result"
+	controls.ExecutionV2 = &selection.RaylineARCRouteExecutionV2{
+		ContextEpoch: "e1", Attribution: []raylinearc.PolicyAttribution{},
+		Event:    raylinearc.PolicyExecutorEvent{Kind: &kind, Basis: "explicit_client"},
+		Capacity: []raylinearc.PolicyActionCapacity{{ActionID: think, Placement: "local"}, {ActionID: unknown, Placement: "cloud"}},
+		TurnKey:  routesTurnKey("t3"), TargetActionIDs: []string{think, unknown},
+	}
+	result, err := selectWithControls(t, fixture, controls)
+	if err != nil {
+		t.Fatalf("select: %v", err)
+	}
+	sent := fixture.fake.received()[0]
+	if len(sent.Capacity) != 1 || sent.Capacity[0].ActionID != think {
+		t.Fatalf("decide capacity %+v", sent.Capacity)
+	}
+	want := []raylinearc.PolicyReceiptExcluded{{ActionID: off, Reason: "context_capacity"}, {ActionID: unknown, Reason: "unknown_action"}}
+	if receipt := result.RaylineARC.RouteReceipt; receipt == nil || !reflect.DeepEqual(receipt.Excluded, want) {
+		t.Fatalf("receipt %+v", result.RaylineARC.RouteReceipt)
+	}
+	if len(fixture.fake.receipt.Excluded) != 1 {
+		t.Fatal("the service's receipt was changed in place")
 	}
 }

@@ -47,9 +47,12 @@ opt-in. The core reports facts and never picks or ranks a model.
   `registry_path`, `registry_sha256` may be omitted and the embedded registry is
   used. Such a profile pins no package: `expect` pins only the registry (and
   any offer), and the response names the package. Every derived action is a
-  target, and the service refuses a target its serving package lacks
-  (`execution_unknown_action`), so choose `bases` to match the served actions. Raydock builds one by default, so a user needs no profile
-  file.
+  target. A target the serving package lacks is left out of the offer and
+  named in the receipt's `excluded` with reason `unknown_action`; the service
+  still refuses (`execution_unknown_action`) a request whose every target it
+  lacks, or whose `history`, `last_served` or `hold` names an action it lacks.
+  `bases` narrows the targets when fewer are wanted. Raydock builds one by
+  default, so a user needs no profile file.
 - **Envelope.** Each decision sends `routing.execution` version
   `arc-execution-context.v2`: `turn` (`id`, `attempt`, `epoch`, `retry_of`,
   `reconsult`), `event`, `last_served`, `history`, `hold` (null: the core has no

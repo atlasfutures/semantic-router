@@ -810,11 +810,17 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	if routeControls != nil {
 		executionV2 = routeControls.ExecutionV2
 	}
-	if class := applyRoutePolicyAndExecutionV2(&request, scorer, routeControls); class != "" {
+	unknownTargets, class := applyRoutePolicyAndExecutionV2(&request, scorer, routeControls)
+	if class != "" {
 		logging.ComponentErrorEvent("extproc", "rayline_arc_policy_service_failed", map[string]interface{}{
 			"class": class, "episode_id_hash": arcContext.EpisodeIDHash,
 		})
 		return nil, arcSelectionFailure(class)
+	}
+	if len(unknownTargets) > 0 {
+		logging.ComponentWarnEvent("extproc", "rayline_arc_route_targets_unknown", map[string]interface{}{
+			"count": len(unknownTargets), "action_ids": unknownTargets, "episode_id_hash": arcContext.EpisodeIDHash,
+		})
 	}
 	if class := applyRouteExecution(&request, scorer, execution); class != "" {
 		logging.ComponentErrorEvent("extproc", "rayline_arc_policy_service_failed", map[string]interface{}{
@@ -1288,7 +1294,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 			}
 		}
 		if executionV2 != nil || routeControls.Policy != nil {
-			result.RaylineARC.RouteReceipt = response.Decision.Receipt
+			result.RaylineARC.RouteReceipt = routeReceiptWithUnknownTargets(response.Decision.Receipt, unknownTargets)
 		}
 		result.RaylineARC.RouteIdentity = &identity
 		result.RaylineARC.RouteExecutionApplied = execution != nil
