@@ -692,16 +692,15 @@ The bound is on the router's own estimate, the conservative byte count that
 `max_context_tokens` and the per-arm masks read, not on the encoder's
 tokenizer, and on the span the encode would cover:
 
-- A tracked lookup on a strict cell that extends its conversation, with the
-  system prompt and tools the service last encoded, is appended to the
-  service's retained session, so only the messages since the service last
+- A tracked lookup on a strict cell that extends its conversation is
+  appended to the service's retained session, so only the messages since the service last
   encoded it count: the request's estimate scaled by those messages' share
   of its message bytes. A long conversation that grows a little per lookup
   stays under the bound and keeps getting fresh routes.
 - Any other lookup is encoded whole and counts its whole context: a
   stateless or zdr lookup, one on a relaxed cell (whose service keeps no
-  session), a conversation's first, and one after a compaction, a prefix
-  break or a change of system prompt or tools.
+  session), a conversation's first, and one after a compaction or a prefix
+  break.
 
 A lookup over the bound is not encoded. It is answered with the
 conversation's held action, as a context the encoder refuses is: the latest
@@ -729,8 +728,10 @@ bound by outcome (`held`, `fallback`, `encoded`), and
 `rayline_routes_encode_bypass` logs each with `span` (`suffix` or
 `context`), `encode_tokens`, `context_tokens` and `max_encode_tokens`.
 
-The suffix assumes the service still holds the session; one it evicted is
-rebuilt in full, at the whole context's cost. Bypassed messages accumulate in
+The suffix assumes the service extends the session it holds. A session it
+evicted, or one it rebuilds because the system prompt or tools changed in a
+way its own projection reads, is encoded in full, at the whole context's
+cost; the router does not predict either. Bypassed messages accumulate in
 the suffix, so a conversation whose lookups keep being bypassed stays held
 until it compacts or a lookup's new messages fall under the bound again.
 Choose the bound from the encode time a lookup may hold a container for, not

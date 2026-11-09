@@ -434,38 +434,6 @@ func TestALookupAfterABypassSendsTheBypassedMessages(t *testing.T) {
 	}
 }
 
-// A decided turn records the shell it encoded; a lookup whose system prompt
-// or tools changed rebuilds the service's session, so it counts its whole
-// context although its messages extend the prefix.
-func TestALookupWithAChangedShellIsBoundedOnItsWholeContext(t *testing.T) {
-	fixture := newPolicySelectorFixture(t, "")
-	bindings := fixture.decision.Algorithm.RaylineARC.PolicyService.Bindings
-	state, _ := raylinearc.NewEpisodeState(2)
-	servedTurn(t, fixture, state, bindings[1].ActionID)
-	if state.Policy.EncodedShell == "" {
-		t.Fatal("a decided turn recorded no shell")
-	}
-	changed, err := json.Marshal(map[string]any{"model": "auto", "max_tokens": 1024, "system": "be thorough",
-		"messages": []any{map[string]any{"role": "user", "content": "go"},
-			map[string]any{"role": "assistant", "content": "ok"}, map[string]any{"role": "user", "content": "more"}}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	calls := len(fixture.fake.received())
-	logs := captureLogs(t)
-	// The same 260k whose suffix is under the limit with the shell unchanged.
-	result, err := fixture.lookupOn(t, state, changed, 260_000, 200_000, nil)
-	if err != nil || result.RaylineARC.OfferKind != raylineRoutesEncodeBypassOfferKind || len(fixture.fake.received()) != calls {
-		t.Fatalf("a lookup with a changed shell was bounded on its suffix: %v", err)
-	}
-	if line := findLogEvent(t, logs, "rayline_routes_encode_bypass"); line["span"] != raylineRoutesEncodeSpanContext {
-		t.Fatalf("bypass line = %v", line)
-	}
-	if result.RaylineARC.PolicyNextState.EncodedShell != state.Policy.EncodedShell {
-		t.Fatal("a bypass replaced the shell the service last encoded")
-	}
-}
-
 // Which lookups are bounded on their suffix.
 func TestLookupEncodeTokensSpan(t *testing.T) {
 	messages := []json.RawMessage{
@@ -475,30 +443,26 @@ func TestLookupEncodeTokensSpan(t *testing.T) {
 		json.RawMessage(`{"role":"assistant","content":"dddd"}`),
 	}
 	one := 1
-	turn := &raylinearc.PolicyEpisodeState{PrefixLen: 2, EncodedShell: "s"}
-	held := &raylinearc.PolicyEpisodeState{PrefixLen: 3, EncodedPrefixLen: &one, EncodedShell: "s"}
-	legacy := &raylinearc.PolicyEpisodeState{PrefixLen: 2}
+	turn := &raylinearc.PolicyEpisodeState{PrefixLen: 2}
+	held := &raylinearc.PolicyEpisodeState{PrefixLen: 3, EncodedPrefixLen: &one}
 	for name, tc := range map[string]struct {
 		turn       *raylinearc.PolicyEpisodeState
 		transition string
 		relaxed    bool
 		ephemeral  bool
-		shell      string
 		span       string
 		min, max   int
 	}{
-		"extends":          {turn, raylinearc.PolicyTransitionExtends, false, false, "s", raylineRoutesEncodeSpanSuffix, 450, 550},
-		"after a hold":     {held, raylinearc.PolicyTransitionExtends, false, false, "s", raylineRoutesEncodeSpanSuffix, 700, 800},
-		"unrecorded shell": {legacy, raylinearc.PolicyTransitionExtends, false, false, "s", raylineRoutesEncodeSpanSuffix, 450, 550},
-		"changed shell":    {turn, raylinearc.PolicyTransitionExtends, false, false, "t", raylineRoutesEncodeSpanContext, 1000, 1000},
-		"relaxed":          {turn, raylinearc.PolicyTransitionExtends, true, false, "s", raylineRoutesEncodeSpanContext, 1000, 1000},
-		"ephemeral":        {turn, raylinearc.PolicyTransitionExtends, false, true, "s", raylineRoutesEncodeSpanContext, 1000, 1000},
-		"start":            {&raylinearc.PolicyEpisodeState{}, raylinearc.PolicyTransitionStart, false, false, "s", raylineRoutesEncodeSpanContext, 1000, 1000},
-		"compaction":       {turn, raylinearc.PolicyTransitionCompaction, false, false, "s", raylineRoutesEncodeSpanContext, 1000, 1000},
-		"side call":        {turn, raylinearc.PolicyTransitionSideCall, false, false, "s", raylineRoutesEncodeSpanContext, 1000, 1000},
+		"extends":      {turn, raylinearc.PolicyTransitionExtends, false, false, raylineRoutesEncodeSpanSuffix, 450, 550},
+		"after a hold": {held, raylinearc.PolicyTransitionExtends, false, false, raylineRoutesEncodeSpanSuffix, 700, 800},
+		"relaxed":      {turn, raylinearc.PolicyTransitionExtends, true, false, raylineRoutesEncodeSpanContext, 1000, 1000},
+		"ephemeral":    {turn, raylinearc.PolicyTransitionExtends, false, true, raylineRoutesEncodeSpanContext, 1000, 1000},
+		"start":        {&raylinearc.PolicyEpisodeState{}, raylinearc.PolicyTransitionStart, false, false, raylineRoutesEncodeSpanContext, 1000, 1000},
+		"compaction":   {turn, raylinearc.PolicyTransitionCompaction, false, false, raylineRoutesEncodeSpanContext, 1000, 1000},
+		"side call":    {turn, raylinearc.PolicyTransitionSideCall, false, false, raylineRoutesEncodeSpanContext, 1000, 1000},
 	} {
 		arcContext := &selection.RaylineARCSelectionContext{ContextTokens: 1000, EphemeralTurn: tc.ephemeral}
-		tokens, span := policyLookupEncodeTokens(arcContext, tc.turn, tc.transition, tc.relaxed, tc.shell, messages)
+		tokens, span := policyLookupEncodeTokens(arcContext, tc.turn, tc.transition, tc.relaxed, messages)
 		if span != tc.span || tokens < tc.min || tokens > tc.max {
 			t.Errorf("%s: %d tokens over the %s, want %d..%d over the %s", name, tokens, span, tc.min, tc.max, tc.span)
 		}

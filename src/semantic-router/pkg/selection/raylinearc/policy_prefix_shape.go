@@ -22,7 +22,6 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"sort"
 	"strings"
 )
@@ -475,14 +474,4 @@ func (layout PolicyMessageLayout) Fields() map[string]interface{} {
 		"role": layout.Role, "keys": layout.Keys, "content_form": layout.ContentForm,
 		"block_count": layout.BlockCount, "blocks": blocks,
 	}
-}
-
-// PolicyShellDigest digests the shape's system prompt and tools: a request
-// whose digest differs from the one the service last encoded rebuilds the
-// service's session whatever its messages. Empty for a nil shape.
-func PolicyShellDigest(shape *PolicyPrefixShape) string {
-	if shape == nil {
-		return ""
-	}
-	return fmt.Sprintf("%016x%016x", shape.System, shape.Tools)
 }

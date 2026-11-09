@@ -748,8 +748,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	// A lookup over routes_api.max_encode_tokens is answered without the
 	// service, before anything is staged or a session is bound.
 	if bypass := selector.policyEncodeSizeBypass(
-		armed, selCtx, arcContext, state, scorer, turn, transition, raylinearc.PolicyShellDigest(prefixShape),
-		messages, sideCall, atBoundary, retained, available, workerIDs,
+		armed, selCtx, arcContext, state, scorer, turn, transition, messages, sideCall, atBoundary, retained, available, workerIDs,
 	); bypass != nil {
 		bypass.RaylineARC.SettlementPrices = armed.prices
 		bypass.RaylineARC.EndpointFeed = arcContext.EndpointFeed
@@ -1308,7 +1307,6 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		result.RaylineARC.PolicyNextState = turn.NextWithPricesFrom(
 			digests, response.Decision.SelectedActionID, response.Decision.SelectedArmID, audit,
 		)
-		result.RaylineARC.PolicyNextState.EncodedShell = raylinearc.PolicyShellDigest(prefixShape)
 		var retainedBoundary *raylinearc.PolicyBoundaryDecision
 		if retained {
 			retainedBoundary = state.PolicyBoundary
