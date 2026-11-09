@@ -449,7 +449,10 @@ func (r *OpenAIRouter) handleRaylineRoutesAPI(
 		runtime.RouteDecision,
 		raylineRoutesConsultWithControls(body, routeID, episode, ephemeral, wireFormat, controls, ctx.Headers, recipe.Name),
 		ticket,
-		ephemeral,
+		// The service also decides these ephemerally (see RouteDecision);
+		// the consult keeps the caller's flag so its own accounting of why
+		// still runs.
+		ephemeral || raylineARCRoutingJoinsNoEpisode(controls),
 	)
 	if err != nil {
 		return r.raylineRoutesFailure(ctx, lookupContext, routeID, err)

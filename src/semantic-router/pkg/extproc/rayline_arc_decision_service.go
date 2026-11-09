@@ -76,6 +76,8 @@ func (service *raylineARCDecisionService) RouteDecision(
 	// (or exclusive) joins no episode either: committed, its pick would
 	// become the previous arm that later paid turns hold to, so the caller's
 	// prices would steer what the cell executes.
+	// raylineARCRoutingJoinsNoEpisode is the same rule; the lookup handler
+	// reads it to decide whether a timed-out lookup may run on detached.
 	untracked, unpriced := false, false
 	if request.Routing != nil && !request.Ephemeral {
 		if request.Routing.Exploration != nil {
@@ -1057,4 +1059,11 @@ func routeToolsEncoded(status *string) *bool {
 		return encoded(false)
 	}
 	return nil
+}
+
+// raylineARCRoutingJoinsNoEpisode reports whether a lookup's routing controls
+// make the decision ephemeral whatever the caller asked: exploration, caller
+// prices and exclusive never join an episode (see RouteDecision).
+func raylineARCRoutingJoinsNoEpisode(routing *selection.RaylineARCRouteControls) bool {
+	return routing != nil && (routing.Exploration != nil || routing.Prices != nil || routing.Exclusive)
 }
