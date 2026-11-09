@@ -209,11 +209,25 @@ func (buffers *semanticStreamBuffers) push(responseBody []byte, ctx *RequestCont
 		frames, events, diagnostics, err := ctx.ProtocolResponseStream.Push(responseBody)
 		buffers.translated = appendProtocolFrames(buffers.translated, frames)
 		observeProtocolStream(ctx, events, diagnostics)
-		if ctx.SemanticStreamState != nil && ctx.ProtocolResponseStream.OutputPublished() {
+		// Who wrote the bytes decides which answer is the honest one. With a
+		// public filter the upstream's own frames are what reaches the client
+		// and the encoder emits none, so the encoder's answer would call a
+		// turn that already delivered a tool call pre-output -- and a cut
+		// would then drop its count and close nothing.
+		if ctx.SemanticStreamState != nil && streamForwardedOutput(ctx) {
 			ctx.SemanticStreamState.outputForwarded = true
 		}
 		buffers.recordError(ctx, err, true)
 	}
+}
+
+// streamForwardedOutput reports whether the client is holding output of this
+// turn, asking whichever component is putting this route's bytes on the wire.
+func streamForwardedOutput(ctx *RequestContext) bool {
+	if ctx.PublicStreamFilter != nil {
+		return ctx.ProtocolResponseStream.OutputDecoded()
+	}
+	return ctx.ProtocolResponseStream.OutputPublished()
 }
 
 func (buffers *semanticStreamBuffers) finalize(ctx *RequestContext) {

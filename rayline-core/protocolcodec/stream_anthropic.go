@@ -933,9 +933,21 @@ func (encoder *anthropicStreamEncoder) encodeAnthropicLifecycleEvent(
 		// stated, even one flushed at the cut, over the caller's estimate);
 		// the caller's own number only stands in when the terminal has none.
 		// Any other usage on a failure has nowhere to go in Messages.
-		if event.Failure == llmprotocol.FailureTruncated && encoder.truncationSource != "" &&
-			event.Usage != nil && event.Usage.State == llmprotocol.UsageAvailable {
-			encoder.truncationUsage = event.Usage
+		//
+		// A failure the provider itself named is not the cut's to bill, so it
+		// carries no count at all. The caller installs its estimate before
+		// finalization, and a provider error flushed from the framer at the
+		// cut arrives after that, which left the estimate riding the
+		// provider's own frame -- pricing an overloaded_error as though the
+		// provider had priced its own failure. The drop is already logged
+		// where the count was refused.
+		if event.Failure == llmprotocol.FailureTruncated {
+			if encoder.truncationSource != "" &&
+				event.Usage != nil && event.Usage.State == llmprotocol.UsageAvailable {
+				encoder.truncationUsage = event.Usage
+			}
+		} else {
+			encoder.truncationUsage, encoder.truncationSource = nil, ""
 		}
 		if event.Usage != nil && event.Usage.State == llmprotocol.UsageAvailable && encoder.truncationSource == "" {
 			appendAccountingOmission(&diagnostics, encoder.policy, encoder.context.Source, encoder.context.Target, "usage", "Messages error events cannot carry token usage")

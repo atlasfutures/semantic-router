@@ -611,6 +611,9 @@ type StreamEngine struct {
 	// already logged, so one turn is one line however often its terminal is
 	// prepared.
 	reportedDrops map[string]struct{}
+	// outputDecoded says the turn decoded output a client receives, whoever
+	// wrote the bytes; see OutputDecoded.
+	outputDecoded bool
 	// outputPublished says the target encoder has written output the client
 	// can see: a delta with something in it, an image's progress, a call's
 	// start -- and only where the target wrote a frame for it. A Chat target
@@ -677,6 +680,18 @@ func (engine *StreamEngine) SetTruncationCause(cause string) {
 // delivered nothing gets.
 func (engine *StreamEngine) OutputPublished() bool {
 	return engine != nil && engine.outputPublished
+}
+
+// OutputDecoded reports whether the turn decoded output a client receives,
+// regardless of whether this engine's encoder wrote it. On a same-format
+// route the caller forwards the upstream's own frames and the encoder emits
+// none, so OutputPublished stays false while the client is in fact holding a
+// tool call, a thinking block or text. A caller that is itself putting those
+// bytes on the wire reads this instead, and a caller translating between
+// formats keeps reading OutputPublished -- there, output exists for the
+// client only if the target encoder wrote it.
+func (engine *StreamEngine) OutputDecoded() bool {
+	return engine != nil && engine.outputDecoded
 }
 
 // cutByCaller reports that the caller ended this turn, whether or not it had
@@ -747,8 +762,11 @@ func (engine *StreamEngine) encodeEvents(
 		if err != nil {
 			return frames, accepted, diagnostics, err
 		}
-		if len(encoded) > 0 && clientVisibleOutput(events[index]) {
-			engine.outputPublished = true
+		if clientVisibleOutput(events[index]) {
+			engine.outputDecoded = true
+			if len(encoded) > 0 {
+				engine.outputPublished = true
+			}
 		}
 		frames = append(frames, encoded...)
 		accepted = append(accepted, events[index])

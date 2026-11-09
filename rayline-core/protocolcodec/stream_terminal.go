@@ -39,7 +39,11 @@ func (engine *StreamEngine) recordTerminalEvent(event llmprotocol.Event) {
 	}
 	// Output that arrives after a count was stated makes that count's output
 	// leg a snapshot rather than a settlement (reconciledTruncationUsage).
-	if outputDelta(event) {
+	// Output that only materializes when its item completes counts too -- a
+	// redacted thinking block, a provider's whole web-search result -- or a
+	// count stated before it would stand as a settlement for generation the
+	// client went on to receive.
+	if clientVisibleOutput(event) {
 		engine.outputSinceUsage = true
 	}
 }
@@ -52,17 +56,26 @@ func clientVisibleOutput(event llmprotocol.Event) bool {
 	if outputDelta(event) || event.Type == llmprotocol.EventImageGenerationProgress {
 		return true
 	}
-	// A call delta that names the call -- its id and name, before any
-	// argument -- is a chunk a Chat client sees; the target decides.
-	if event.Type == llmprotocol.EventToolCallDelta && event.ToolCall != nil {
-		return true
-	}
-	// An item that only materializes when it completes -- a redacted
+	// A call delta is output when it carries arguments, which outputDelta has
+	// already accepted. One with none adds nothing: the call's id and name
+	// reach the client on the item's start below, and the state machine fills
+	// them in on every later delta too -- so reading a bare delta as a naming
+	// let a provider repeating an open call's index retire a count the
+	// upstream had settled.
+	//
+	// An item that only materializes at its lifecycle edge -- a redacted
 	// thinking block carried as an encrypted reasoning item, a provider's
 	// whole web-search result -- is output the moment the target writes it;
-	// again the target decides, by writing a frame or not.
-	if event.Type == llmprotocol.EventOutputItemCompleted && event.Content != nil {
-		return true
+	// again the target decides, by writing a frame or not. The content has to
+	// carry something: a completion whose deltas already delivered the item
+	// is handed a bare kind marker by the state machine
+	// (streamState.prepareItemCompletion), and reading that as new output
+	// would call every ordinary finish chunk generation the turn ran past.
+	switch event.Type {
+	case llmprotocol.EventOutputItemCompleted, llmprotocol.EventOutputItemStarted:
+		if materializedContent(event.Content) {
+			return true
+		}
 	}
 	if event.Type == llmprotocol.EventOutputTextDelta && event.Content != nil && len(event.Content.Citations) > 0 {
 		return true
@@ -70,11 +83,37 @@ func clientVisibleOutput(event llmprotocol.Event) bool {
 	return event.Type == llmprotocol.EventOutputItemStarted && event.ToolCall != nil
 }
 
+// materializedContent reports a content block that carries something a client
+// receives, as opposed to the bare kind marker an item's lifecycle edge takes
+// when the deltas already delivered it.
+func materializedContent(content *llmprotocol.Content) bool {
+	if content == nil {
+		return false
+	}
+	if content.Text != "" || content.Data != "" || content.URL != "" ||
+		content.FileID != "" || content.Signature != "" ||
+		len(content.Citations) > 0 || len(content.CitationsRaw) > 0 ||
+		content.GeneratedImage != nil || content.ToolResult != nil ||
+		content.ToolCall != nil || content.Unmodeled != nil {
+		return true
+	}
+	// A block whose whole substance is a member only the target contract names
+	// is still output to that target: a Responses reasoning item with no
+	// summary and no text carries its encrypted_content here, and a client
+	// that asked for it has to resend it next turn (withEncryptedReasoning).
+	return content.Extensions != nil && len(content.Extensions.Fields) > 0
+}
+
 // outputDelta reports an event that adds to what the turn has generated.
 func outputDelta(event llmprotocol.Event) bool {
 	switch event.Type {
-	case llmprotocol.EventOutputTextDelta, llmprotocol.EventReasoningDelta:
+	case llmprotocol.EventOutputTextDelta:
 		return event.Delta != ""
+	case llmprotocol.EventReasoningDelta:
+		// A thinking block whose text the provider omits still signs itself,
+		// and that signature is output: the client has to send it back on the
+		// next turn. It arrives as a delta of its own, with no text.
+		return event.Delta != "" || event.Content != nil && event.Content.Signature != ""
 	case llmprotocol.EventToolCallDelta:
 		return event.ToolCall != nil && event.ToolCall.Arguments != ""
 	}

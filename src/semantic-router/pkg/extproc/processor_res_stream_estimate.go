@@ -116,6 +116,19 @@ func generatedTextBytes(state *semanticResponseStreamState) int {
 		if item.toolCall != nil {
 			bytes += len(item.toolCall.Arguments)
 		}
+		// A block the contract cannot name is still generation the client
+		// received: an Anthropic redacted thinking block is a payload and
+		// nothing else, with no text, reasoning or arguments to add up. Left
+		// uncounted, a turn whose only output was such a block looked like a
+		// turn that generated nothing, so the provisional count message_start
+		// states before the first delta stood as the settlement and the
+		// client was billed one token (outputRestatedPastSnapshot).
+		if item.carried != nil {
+			bytes += len(item.carried.Data) + len(item.carried.Text)
+			if item.carried.Unmodeled != nil {
+				bytes += len(item.carried.Unmodeled.Raw)
+			}
+		}
 	}
 	return bytes
 }

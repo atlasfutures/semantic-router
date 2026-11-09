@@ -1,6 +1,7 @@
 package protocolcodec
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -2050,4 +2051,391 @@ func assertionPrefix(msgAndArgs []any) string {
 		return fmt.Sprint(msgAndArgs...) + ": "
 	}
 	return fmt.Sprintf(format, msgAndArgs[1:]...) + ": "
+}
+
+// A failure the provider itself named is not the cut's to bill. The Router's
+// estimate belongs on a terminal the Router produced; put on the provider's
+// own error it states a count the provider never sent, as though the provider
+// had priced its own failure.
+//
+// The estimate reached that frame whenever the provider's error arrived after
+// the caller had set a count, which is what a cut does -- and an overloaded
+// upstream arriving at that moment is exactly when a client is most likely to
+// act on what the terminal says.
+func TestAProviderStatedFailureDoesNotCarryTheCutsCount(t *testing.T) {
+	for _, framing := range []struct {
+		name  string
+		blank string
+	}{
+		{"with its blank line", "\n\n"},
+		{"flushed at the cut", "\n"},
+	} {
+		engine := NewBuiltinEngine()
+		stream, err := engine.NewStream(llmprotocol.AnthropicMessagesV1, llmprotocol.AnthropicMessagesV1,
+			llmprotocol.StreamContext{Context: t.Context()})
+		requireNoError(t, err)
+		_, _, _, err = stream.Push([]byte(
+			"event: message_start\n" +
+				`data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant",` +
+				`"model":"m","content":[],"stop_reason":null,"usage":{"input_tokens":37,"output_tokens":1}}}` + "\n\n" +
+				"event: content_block_start\n" +
+				`data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}` + "\n\n" +
+				"event: content_block_delta\n" +
+				`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"partial answer"}}` + "\n\n"))
+		requireNoError(t, err)
+
+		stream.SetTruncationUsage(estimatedTruncationUsage(), llmprotocol.UsageSourceStreamEstimate)
+		stream.SetTruncationCause(llmprotocol.TruncationDeadline)
+
+		// The provider names its own failure, arriving after the cut was set.
+		errFrames, _, _, err := stream.Push([]byte(
+			"event: error\n" +
+				`data: {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}` + framing.blank))
+		requireNoError(t, err)
+		terminal, _, _, _ := stream.Finalize(nil)
+
+		body := string(joinFrames(append(errFrames, terminal...)))
+		wantContains(t, body, "overloaded_error",
+			"%s: the provider's own failure was not what the client was told", framing.name)
+		wantNotContains(t, body, `"usage_source"`,
+			"%s: the Router's estimate was stated on the provider's own failure", framing.name)
+		wantNotContains(t, body, "268",
+			"%s: the provider's failure was priced with the cut's count", framing.name)
+	}
+}
+
+// An item that only materializes when it completes is generation the client
+// receives, so a count stated before it is a snapshot, not a settlement.
+//
+// A redacted thinking block is the case: the upstream prices the turn at
+// message_start, then delivers the block as one completed item, with no delta
+// in between. Treating only deltas as output left that stated count standing
+// as the settlement, so a turn cut after the block reached the client billed
+// the single token the count was taken at.
+func TestOutputThatMaterializesAtCompletionOutdatesAStatedCount(t *testing.T) {
+	requested := true
+	engine := NewBuiltinEngine()
+	stream, err := engine.NewStream(llmprotocol.AnthropicMessagesV1, llmprotocol.OpenAIChatV1,
+		llmprotocol.StreamContext{
+			Context: t.Context(), Options: llmprotocol.StreamOptions{IncludeUsage: &requested},
+		})
+	requireNoError(t, err)
+	served, _, _, err := stream.Push([]byte(
+		"event: message_start\n" +
+			`data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant",` +
+			`"model":"m","content":[],"stop_reason":null,"usage":{"input_tokens":37,"output_tokens":1}}}` + "\n\n" +
+			// A whole block that exists for the client only once it is complete.
+			"event: content_block_start\n" +
+			`data: {"type":"content_block_start","index":0,"content_block":` +
+			`{"type":"redacted_thinking","data":"EroCCoYBGAIiQL2/hJ"}}` + "\n\n" +
+			"event: content_block_stop\n" + `data: {"type":"content_block_stop","index":0}` + "\n\n"))
+	requireNoError(t, err)
+
+	if !stream.OutputPublished() {
+		t.Fatal("a block the client is holding was not counted as output")
+	}
+
+	stream.SetTruncationUsage(estimatedTruncationUsage(), llmprotocol.UsageSourceStreamEstimate)
+	stream.SetTruncationCause(llmprotocol.TruncationDeadline)
+	terminal, _, _, _ := stream.Finalize(llmprotocol.NewError(
+		llmprotocol.ErrorUpstreamTimeout, "stream_truncated", "deadline", nil))
+
+	body := string(joinFrames(append(served, terminal...)))
+	wantContains(t, body, "data: [DONE]", "the stream did not reach its sentinel")
+	// The stated snapshot of one token cannot settle a turn that went on to
+	// deliver the block, so the count the cut carries is what is billed.
+	wantContains(t, body, `"completion_tokens":268`,
+		"a count taken before the block was billed as the whole turn")
+	// The prompt is still the one the stream stated; a prompt does not grow.
+	wantContains(t, body, `"prompt_tokens":37`, "the stated prompt was replaced")
+}
+
+// A count the upstream settled stands. An ordinary finish chunk carries no
+// new output -- the state machine hands the item's completion a bare kind
+// marker, because the deltas already delivered it -- so a cut after that
+// chunk bills what the upstream said, not the caller's estimate.
+//
+// Reading any completion that names content as fresh output is what broke
+// this: every ordinary turn's finish chunk looked like generation the stream
+// had run past, and a settled count of 5 was republished as an estimate of
+// 268.
+func TestASettledCountSurvivesAnOrdinaryCompletion(t *testing.T) {
+	requested := true
+	engine := NewBuiltinEngine()
+	stream, err := engine.NewStream(llmprotocol.OpenAIChatV1, llmprotocol.OpenAIChatV1,
+		llmprotocol.StreamContext{
+			Context: t.Context(), Options: llmprotocol.StreamOptions{IncludeUsage: &requested},
+		})
+	requireNoError(t, err)
+	served, _, _, err := stream.Push([]byte(
+		`data: {"id":"c1","object":"chat.completion.chunk","model":"m","choices":[{"index":0,` +
+			`"delta":{"role":"assistant","content":"hello"},"finish_reason":null}]}` + "\n\n" +
+			// The upstream settles the turn's count.
+			`data: {"id":"c1","object":"chat.completion.chunk","model":"m","choices":[],` +
+			`"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}` + "\n\n" +
+			// Its finish chunk, which adds nothing.
+			`data: {"id":"c1","object":"chat.completion.chunk","model":"m","choices":[{"index":0,` +
+			`"delta":{},"finish_reason":"stop"}]}` + "\n\n"))
+	requireNoError(t, err)
+
+	stream.SetTruncationUsage(estimatedTruncationUsage(), llmprotocol.UsageSourceStreamEstimate)
+	stream.SetTruncationCause(llmprotocol.TruncationDeadline)
+	terminal, _, _, _ := stream.Finalize(llmprotocol.NewError(
+		llmprotocol.ErrorUpstreamTimeout, "stream_truncated", "deadline", nil))
+
+	body := string(joinFrames(append(served, terminal...)))
+	wantContains(t, body, `"completion_tokens":5`, "a settled count was replaced by an estimate")
+	wantNotContains(t, body, "268", "the caller's estimate overrode what the upstream settled")
+}
+
+// Output can arrive whole in the frame that opens its item: an Anthropic
+// redacted thinking block carries its payload on content_block_start, with no
+// delta and no completion to wait for. The client holds it from that frame on,
+// so a turn cut before the block closes is a turn with output.
+func TestContentDeliveredInAnItemsStartIsOutput(t *testing.T) {
+	engine := NewBuiltinEngine()
+	stream, err := engine.NewStream(llmprotocol.AnthropicMessagesV1, llmprotocol.AnthropicMessagesV1,
+		llmprotocol.StreamContext{Context: t.Context()})
+	requireNoError(t, err)
+	_, _, _, err = stream.Push([]byte(
+		"event: message_start\n" +
+			`data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant",` +
+			`"model":"m","content":[],"stop_reason":null,"usage":{"input_tokens":37,"output_tokens":1}}}` + "\n\n" +
+			"event: content_block_start\n" +
+			`data: {"type":"content_block_start","index":0,"content_block":` +
+			`{"type":"redacted_thinking","data":"EroCCoYBGAIiQL2/hJ"}}` + "\n\n"))
+	requireNoError(t, err)
+
+	if !stream.OutputDecoded() {
+		t.Fatal("a block the client already holds was not counted as output")
+	}
+}
+
+// An item's start that carries nothing is not output. A text block opens
+// empty and its deltas follow, so treating the start as output would bill a
+// turn cut between the two for generation that never happened.
+func TestAnEmptyItemStartIsNotOutput(t *testing.T) {
+	engine := NewBuiltinEngine()
+	stream, err := engine.NewStream(llmprotocol.AnthropicMessagesV1, llmprotocol.AnthropicMessagesV1,
+		llmprotocol.StreamContext{Context: t.Context()})
+	requireNoError(t, err)
+	_, _, _, err = stream.Push([]byte(
+		"event: message_start\n" +
+			`data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant",` +
+			`"model":"m","content":[],"stop_reason":null,"usage":{"input_tokens":37,"output_tokens":1}}}` + "\n\n" +
+			"event: content_block_start\n" +
+			`data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}` + "\n\n"))
+	requireNoError(t, err)
+
+	if stream.OutputDecoded() {
+		t.Fatal("an empty block opening was counted as output the client holds")
+	}
+}
+
+// A Responses reasoning item can be nothing but its encrypted_content: no
+// summary, no text, a blob the client asked for with include and has to
+// resend next turn. The encoder publishes that item, so a turn cut after it
+// is a turn with output, and it bills as one.
+//
+// Judging substance by the modelled members alone missed it -- the blob lives
+// in the extensions a target contract names -- so the turn reached the client
+// as a bare error with no count instead of an incomplete resource.
+func TestEncryptedReasoningWithNoTextIsOutput(t *testing.T) {
+	engine := NewBuiltinEngine()
+	stream, err := engine.NewStream(llmprotocol.OpenAIResponsesV1, llmprotocol.OpenAIResponsesV1,
+		llmprotocol.StreamContext{Context: t.Context()})
+	requireNoError(t, err)
+	_, _, _, err = stream.Push([]byte(
+		"event: response.created\n" +
+			`data: {"type":"response.created","sequence_number":0,"response":{"id":"resp_1",` +
+			`"object":"response","created_at":0,"model":"m","status":"in_progress","output":[]}}` + "\n\n" +
+			"event: response.output_item.added\n" +
+			`data: {"type":"response.output_item.added","sequence_number":1,"output_index":0,` +
+			`"item":{"type":"reasoning","id":"rs_1","summary":[]}}` + "\n\n" +
+			// Its whole substance is the blob, delivered when the item closes.
+			"event: response.output_item.done\n" +
+			`data: {"type":"response.output_item.done","sequence_number":2,"output_index":0,` +
+			`"item":{"type":"reasoning","id":"rs_1","summary":[],"encrypted_content":"gAAAAABo"}}` + "\n\n"))
+	requireNoError(t, err)
+
+	if !stream.OutputPublished() {
+		t.Fatal("an encrypted reasoning item the client holds was not counted as output")
+	}
+}
+
+// A thinking block whose text the provider omits still signs itself, and the
+// signature is output: the client has to send it back on the next turn. So a
+// turn cut after it is a turn with output, and it bills as one.
+func TestASignatureWithNoThinkingTextIsOutput(t *testing.T) {
+	engine := NewBuiltinEngine()
+	stream, err := engine.NewStream(llmprotocol.AnthropicMessagesV1, llmprotocol.AnthropicMessagesV1,
+		llmprotocol.StreamContext{Context: t.Context()})
+	requireNoError(t, err)
+	_, _, _, err = stream.Push([]byte(
+		"event: message_start\n" +
+			`data: {"type":"message_start","message":{"id":"m1","type":"message","role":"assistant",` +
+			`"model":"m","content":[],"stop_reason":null,"usage":{"input_tokens":37,"output_tokens":1}}}` + "\n\n" +
+			"event: content_block_start\n" +
+			`data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}}` + "\n\n" +
+			"event: content_block_delta\n" +
+			`data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"ErUBCkYIBRgCIkDa"}}` + "\n\n"))
+	requireNoError(t, err)
+
+	if !stream.OutputDecoded() {
+		t.Fatal("a signature the client has to resend was not counted as output")
+	}
+}
+
+// A provider that repeats an open call's index with empty arguments adds
+// nothing to the turn. The call's id and name reached the client when the item
+// started, and the state machine fills them in on every later delta, so
+// reading such a delta as a fresh naming retired a count the upstream had
+// settled -- replacing an authoritative 5 with an estimate and dropping the
+// reasoning split the client had been given.
+func TestAnEmptyToolArgumentDeltaDoesNotRetireASettledCount(t *testing.T) {
+	requested := true
+	engine := NewBuiltinEngine()
+	stream, err := engine.NewStream(llmprotocol.OpenAIChatV1, llmprotocol.OpenAIChatV1,
+		llmprotocol.StreamContext{
+			Context: t.Context(), Options: llmprotocol.StreamOptions{IncludeUsage: &requested},
+		})
+	requireNoError(t, err)
+	served, _, _, err := stream.Push([]byte(
+		`data: {"id":"c1","object":"chat.completion.chunk","model":"m","choices":[{"index":0,` +
+			`"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_1","type":"function",` +
+			`"function":{"name":"lookup","arguments":"{\"q\":\"x\"}"}}]},"finish_reason":null}]}` + "\n\n" +
+			// The upstream settles the turn, reasoning split included.
+			`data: {"id":"c1","object":"chat.completion.chunk","model":"m","choices":[],"usage":` +
+			`{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15,` +
+			`"completion_tokens_details":{"reasoning_tokens":2}}}` + "\n\n" +
+			// Then repeats the open call's index with nothing in it.
+			`data: {"id":"c1","object":"chat.completion.chunk","model":"m","choices":[{"index":0,` +
+			`"delta":{"tool_calls":[{"index":0,"function":{"arguments":""}}]},"finish_reason":null}]}` + "\n\n"))
+	requireNoError(t, err)
+
+	stream.SetTruncationUsage(estimatedTruncationUsage(), llmprotocol.UsageSourceStreamEstimate)
+	stream.SetTruncationCause(llmprotocol.TruncationDeadline)
+	terminal, _, _, _ := stream.Finalize(llmprotocol.NewError(
+		llmprotocol.ErrorUpstreamTimeout, "stream_truncated", "deadline", nil))
+
+	body := string(joinFrames(append(served, terminal...)))
+	wantContains(t, body, `"completion_tokens":5`, "a settled count was replaced by an estimate")
+	wantContains(t, body, `"reasoning_tokens":2`, "the settled reasoning split was dropped")
+	wantNotContains(t, body, "268", "the caller's estimate overrode what the upstream settled")
+}
+
+// Output and the count that covers it go together. A block whose whole
+// substance arrives in the frame that opens it, with the blank line
+// terminating that frame still outstanding when the cut falls, is flushed by
+// the framer after the Router has already counted the turn -- so publishing it
+// would hand the client generation the terminal's count does not cover
+// (withholdOutputFlushedAtCut). It is withheld, and the count the client is
+// given is the one for what it actually received.
+func TestOutputFlushedAfterTheCountIsWithheldAndTheCountStands(t *testing.T) {
+	engine := NewBuiltinEngine()
+	stream, err := engine.NewStream(llmprotocol.AnthropicMessagesV1, llmprotocol.AnthropicMessagesV1,
+		llmprotocol.StreamContext{Context: t.Context()})
+	requireNoError(t, err)
+	served, _, _, err := stream.Push([]byte(
+		"event: message_start\n" +
+			`data: {"type":"message_start","message":{"id":"m1","type":"message","role":"assistant",` +
+			`"model":"m","content":[],"stop_reason":null,"usage":{"input_tokens":37,"output_tokens":1}}}` + "\n\n" +
+			// A whole block, cut off from the blank line that ends its frame.
+			"event: content_block_start\n" +
+			`data: {"type":"content_block_start","index":0,"content_block":` +
+			`{"type":"redacted_thinking","data":"EroCCoYBGAIiQL2/hJ"}}` + "\n"))
+	requireNoError(t, err)
+
+	stream.SetTruncationUsage(estimatedTruncationUsage(), llmprotocol.UsageSourceStreamEstimate)
+	stream.SetTruncationCause(llmprotocol.TruncationDeadline)
+	terminal, _, _, _ := stream.Finalize(llmprotocol.NewError(
+		llmprotocol.ErrorUpstreamTimeout, "stream_truncated", "deadline", nil))
+
+	body := string(joinFrames(append(served, terminal...)))
+	wantNotContains(t, body, "EroCCoYBGAIiQL2/hJ",
+		"output flushed after the turn was counted reached the client uncounted")
+	// The turn is still billed for what the client did receive, and the
+	// snapshot message_start stated does not stand as the settlement.
+	terminalBody := string(joinFrames(terminal))
+	wantContains(t, terminalBody, `"usage_source":"stream_estimate"`, "the cut turn was billed as nothing")
+	wantContains(t, terminalBody, `"output_tokens":268`, "a snapshot was billed as the whole turn")
+}
+
+// Whether an event is output decides whether a cut turn is billed, so each
+// content shape's answer is stated here rather than left to whichever branch
+// happens to match. A shape that arrives carrying something a client receives
+// is output; one carrying only metadata about content that never arrived is
+// not. Reclassifying any row changes what a cut turn bills.
+func TestWhichContentShapesAreOutput(t *testing.T) {
+	shapes := []struct {
+		name    string
+		content llmprotocol.Content
+		output  bool
+	}{
+		{"text", llmprotocol.Content{Kind: llmprotocol.ContentText, Text: "hi"}, true},
+		{"an encrypted blob", llmprotocol.Content{Kind: llmprotocol.ContentReasoning, Data: "blob"}, true},
+		{"an image's url", llmprotocol.Content{Kind: llmprotocol.ContentImage, URL: "https://x"}, true},
+		{"a file reference", llmprotocol.Content{Kind: llmprotocol.ContentImage, FileID: "f1"}, true},
+		{"a thinking signature", llmprotocol.Content{Kind: llmprotocol.ContentReasoning, Signature: "sig"}, true},
+		{"citations", llmprotocol.Content{Kind: llmprotocol.ContentText, Citations: []llmprotocol.Citation{{}}}, true},
+		{"a generated image", llmprotocol.Content{
+			Kind: llmprotocol.ContentGeneratedImage, GeneratedImage: &llmprotocol.GeneratedImage{}}, true},
+		{"a tool result", llmprotocol.Content{
+			Kind: llmprotocol.ContentToolResult, ToolResult: &llmprotocol.ToolResult{}}, true},
+		{"a tool call", llmprotocol.Content{
+			Kind: llmprotocol.ContentToolCall, ToolCall: &llmprotocol.ToolCall{}}, true},
+		{"a block the contract cannot name", llmprotocol.Content{
+			Kind: llmprotocol.ContentText, Unmodeled: &llmprotocol.UnmodeledBlock{}}, true},
+		{"a member only the target names", llmprotocol.Content{
+			Kind: llmprotocol.ContentReasoning,
+			Extensions: &llmprotocol.UnmodeledFields{
+				Fields: map[string]json.RawMessage{"encrypted_content": json.RawMessage(`"x"`)},
+			},
+		}, true},
+
+		// Metadata about content the client never received.
+		{"a bare kind marker", llmprotocol.Content{Kind: llmprotocol.ContentText}, false},
+		{"a media type alone", llmprotocol.Content{
+			Kind: llmprotocol.ContentImage, MediaType: "image/png"}, false},
+		{"a detail level alone", llmprotocol.Content{
+			Kind: llmprotocol.ContentImage, Detail: "high"}, false},
+		{"a filename alone", llmprotocol.Content{
+			Kind: llmprotocol.ContentImage, Filename: "a.png"}, false},
+		{"an empty extensions carrier", llmprotocol.Content{
+			Kind: llmprotocol.ContentReasoning, Extensions: &llmprotocol.UnmodeledFields{}}, false},
+	}
+	// Both lifecycle edges answer alike: a block can arrive whole on either.
+	for _, edge := range []llmprotocol.EventType{
+		llmprotocol.EventOutputItemStarted,
+		llmprotocol.EventOutputItemCompleted,
+	} {
+		for _, shape := range shapes {
+			content := shape.content
+			got := clientVisibleOutput(llmprotocol.Event{Type: edge, Content: &content})
+			if got != shape.output {
+				t.Errorf("%s on %s: output = %v, want %v", shape.name, edge, got, shape.output)
+			}
+		}
+	}
+}
+
+// An event that carries no content is not output on its own, whatever its
+// type -- except an image's progress, which is a client seeing the image
+// arrive. A turn cut after only these has nothing of its own to bill.
+func TestWhichBareEventsAreOutput(t *testing.T) {
+	for _, eventType := range []llmprotocol.EventType{
+		llmprotocol.EventResponseStarted, llmprotocol.EventOutputItemStarted,
+		llmprotocol.EventOutputTextDelta, llmprotocol.EventReasoningDelta,
+		llmprotocol.EventToolCallDelta, llmprotocol.EventOutputItemCompleted,
+		llmprotocol.EventUsageUpdated, llmprotocol.EventResponseCompleted,
+		llmprotocol.EventResponseFailed, llmprotocol.EventProviderOpaque,
+		llmprotocol.EventKeepalive,
+	} {
+		if clientVisibleOutput(llmprotocol.Event{Type: eventType}) {
+			t.Errorf("a bare %s was counted as output the client holds", eventType)
+		}
+	}
+	if !clientVisibleOutput(llmprotocol.Event{Type: llmprotocol.EventImageGenerationProgress}) {
+		t.Error("an image's progress is output the client sees and was not counted")
+	}
 }
