@@ -144,8 +144,8 @@ func worstCaseBytes(body []byte) int64 {
 // normalizer can grow the body's strings past their escaped spelling: U+FDFA
 // is one \uXXXX escape (6 bytes) but 33 UTF-8 bytes under NFKC, a Hangul
 // syllable 9 under NFD. Composition never lengthens a decomposed string, so
-// NFD and NFKD bound the four. A tool call's arguments are charged twice, as
-// they are spelled twice.
+// NFD and NFKD bound the four. A tool call's arguments are charged as a
+// string and again as the value they reload to, as they are spelled twice.
 func normalizationSlack(body []byte) int64 {
 	var parsed any
 	if json.Unmarshal(body, &parsed) != nil {
@@ -165,11 +165,15 @@ func normalizationSlack(body []byte) int64 {
 				walk(item, key)
 			}
 		case string:
-			slack := stringSlack(value)
+			total += stringSlack(value)
 			if key == "arguments" {
-				slack *= 2
+				var reloaded any
+				if json.Unmarshal([]byte(value), &reloaded) == nil {
+					walk(reloaded, "")
+				} else {
+					total += stringSlack(value)
+				}
 			}
-			total += slack
 		}
 	}
 	walk(parsed, "")

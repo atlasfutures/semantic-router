@@ -961,10 +961,16 @@ func TestByteBoundCoversUnicodeNormalization(t *testing.T) {
 		text  string
 		bytes int
 	}{
-		"nfkc ligature": {strings.Repeat("ﷺ", 1024), 33 * 1024},
-		"nfd hangul":    {strings.Repeat("한", 1024), 9 * 1024},
+		"nfkc ligature": {strings.Repeat(string(rune(0xFDFA)), 1024), 33 * 1024},
+		"nfd hangul":    {strings.Repeat(string(rune(0xD55C)), 1024), 9 * 1024},
+		// Escaped inside a tool call's arguments, the string itself is ASCII.
+		"escaped arguments": {`{"s":"` + strings.Repeat(`\ufdfa`, 1024) + `"}`, 33 * 1024},
 	} {
-		body, err := json.Marshal(map[string]any{"model": "m", "messages": []any{map[string]any{"role": "user", "content": test.text}}})
+		message := map[string]any{"role": "user", "content": test.text}
+		if strings.HasPrefix(test.text, "{") {
+			message = map[string]any{"role": "assistant", "tool_calls": []any{map[string]any{"id": "c", "type": "function", "function": map[string]any{"name": "f", "arguments": test.text}}}}
+		}
+		body, err := json.Marshal(map[string]any{"model": "m", "messages": []any{message}})
 		if err != nil {
 			t.Fatal(err)
 		}
