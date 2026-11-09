@@ -21,6 +21,7 @@ import (
 	"errors"
 	"math"
 	"sort"
+	"strings"
 
 	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 
@@ -109,7 +110,7 @@ func raylineRoutesAdmissionPool(arcConfig *config.RaylineARCAlgorithmConfig) str
 	}
 	urls := make([]string, 0, len(replicas))
 	for _, replica := range replicas {
-		urls = append(urls, replica.BaseURL)
+		urls = append(urls, strings.TrimRight(strings.TrimSpace(replica.BaseURL), "/"))
 	}
 	sort.Strings(urls)
 	return raylinearc.RouteLookupPoolID(append([]string{kind, base}, urls...)...)

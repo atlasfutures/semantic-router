@@ -358,6 +358,15 @@ func (components *routerComponents) buildRouter() *OpenAIRouter {
 		resources:                     components.resources,
 	}
 	router.raylineRoutesAdmission = buildRaylineRoutesAdmission(router)
+	components.resources.add(func() error {
+		var first error
+		for _, gate := range router.raylineRoutesAdmission {
+			if err := gate.Close(); err != nil && first == nil {
+				first = err
+			}
+		}
+		return first
+	})
 	if components.classificationSvc != nil {
 		components.classificationSvc.SetEvalModelSelector(router)
 	}

@@ -206,6 +206,7 @@ func TestRouteLookupGateIsCellWideOverTheSharedStore(t *testing.T) {
 	}
 	holder.Release()
 	holder.Release() // idempotent
+	instanceA.releases.Wait()
 	if shared.held() != 0 {
 		t.Fatalf("held = %d after release, want 0", shared.held())
 	}
@@ -291,8 +292,58 @@ func TestRouteLookupGateReleasesASlotWhoseReplyWasLost(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer ticket.Release()
+	gate.releases.Wait()
 	if shared.held() != 0 {
 		t.Fatal("a lease whose reply was lost was left held until its TTL")
+	}
+}
+
+// blockingRouteLookupLeases is a Redis that answers nothing until the call's
+// context ends.
+type blockingRouteLookupLeases struct{}
+
+func (blockingRouteLookupLeases) acquire(ctx context.Context, _ string, _ time.Duration) (bool, error) {
+	<-ctx.Done()
+	return false, ctx.Err()
+}
+
+func (blockingRouteLookupLeases) release(context.Context, string) error { return nil }
+
+// A stalled Redis call is bounded by the queue wait: once the wait runs out
+// the lookup is shed on time, and the stall is not mistaken for a Redis
+// failure that would open the gate.
+func TestRouteLookupGateBoundsAStalledCallByTheQueueWait(t *testing.T) {
+	t.Parallel()
+	gate := testRouteLookupGate(1, 30*time.Millisecond, blockingRouteLookupLeases{})
+	started := time.Now()
+	_, err := gate.Acquire(context.Background())
+	if !errors.Is(err, ErrRouteLookupShed) {
+		t.Fatalf("err = %v, want shed at the queue wait", err)
+	}
+	if waited := time.Since(started); waited > 200*time.Millisecond {
+		t.Fatalf("shed after %v, want about the 30ms queue wait", waited)
+	}
+	if gate.redisBackingOff() {
+		t.Fatal("a call the queue wait ended tripped the Redis backoff")
+	}
+}
+
+// Release frees the local slot at once and the shared one in the background.
+func TestRouteLookupGateReleasesTheSharedSlotOffThePath(t *testing.T) {
+	t.Parallel()
+	shared := newFakeRouteLookupLeases(1)
+	gate := testRouteLookupGate(1, 30*time.Millisecond, shared)
+	ticket, err := gate.Acquire(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ticket.Release()
+	gate.releases.Wait()
+	if shared.held() != 0 {
+		t.Fatal("the shared slot was not released")
+	}
+	if err := gate.Close(); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -303,6 +354,9 @@ func TestRouteLookupPoolIDSeparatesBackends(t *testing.T) {
 	}
 	if RouteLookupPoolID("policy_service", "https://a") == RouteLookupPoolID("policy_service", "https://b") {
 		t.Fatal("two backends share a pool")
+	}
+	if RouteLookupPoolID("policy_service", "https://a/") != RouteLookupPoolID("policy_service", "https://a") {
+		t.Fatal("a trailing slash split one backend into two pools")
 	}
 	if RouteLookupPoolID("ab", "c") == RouteLookupPoolID("a", "bc") {
 		t.Fatal("pool ids are ambiguous across field boundaries")
@@ -350,13 +404,39 @@ func TestRouteLookupGateOnRedis(t *testing.T) {
 	if _, err := instanceB.Acquire(context.Background()); !errors.Is(err, ErrRouteLookupShed) {
 		t.Fatalf("third lookup err = %v, want shed at the cell-wide cap", err)
 	}
+	// A replayed acquire (a reply lost after the write) returns the token's
+	// own slot rather than reporting it busy or taking a second one.
+	leases := instanceA.leases.(*redisRouteLookupLeases)
+	replayed, err := leases.acquire(context.Background(), "replayed-token", time.Second)
+	if err != nil || replayed {
+		t.Fatalf("acquire with every slot held = %v, %v; want busy", replayed, err)
+	}
 	first.Release()
+	instanceA.releases.Wait()
+	for range 2 {
+		got, err := leases.acquire(context.Background(), "replayed-token", time.Second)
+		if err != nil || !got {
+			t.Fatalf("replayed acquire = %v, %v; want the token's own slot", got, err)
+		}
+	}
+	if _, err := instanceB.Acquire(context.Background()); !errors.Is(err, ErrRouteLookupShed) {
+		t.Fatalf("err = %v, want shed: the replay must not have taken a second slot", err)
+	}
+	if err := leases.release(context.Background(), "replayed-token"); err != nil {
+		t.Fatal(err)
+	}
 	third, err := instanceB.Acquire(context.Background())
 	if err != nil {
 		t.Fatalf("lookup refused after a slot freed: %v", err)
 	}
 	second.Release()
 	third.Release()
+	instanceB.releases.Wait()
+	for _, gate := range []*RouteLookupGate{instanceA, instanceB} {
+		if err := gate.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	// A crashed holder never releases; its slot frees at deadline + margin.
 	crashed := build(storeA, 1, 50*time.Millisecond)

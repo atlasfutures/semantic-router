@@ -23,6 +23,7 @@ import (
 	"errors"
 	"math/rand/v2"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -68,6 +69,10 @@ const (
 	// routeLookupRedisCallTimeout bounds one Redis round trip, so that a
 	// stalled store costs a lookup this much once and not its queue wait.
 	routeLookupRedisCallTimeout = 250 * time.Millisecond
+	// routeLookupRedisPoolSize bounds the gate's own connections. A process
+	// has at most max_inflight lookups polling (the rest queue locally), so
+	// a handful is plenty.
+	routeLookupRedisPoolSize = 4
 	// routeLookupRedisBackoff is how long the gate stops consulting Redis
 	// after a Redis error. Lookups admitted meanwhile hold the per-process
 	// cap only.
@@ -80,8 +85,14 @@ const (
 
 var (
 	// Takes the first free slot, in order, in one round trip. Returns the
-	// 1-based slot index, or 0 when every slot is held.
+	// 1-based slot index, or 0 when every slot is held. Idempotent per
+	// token: a slot this token already holds is returned as it is, so a
+	// replayed call (a reply lost after the write) neither reports the
+	// token's own slot as busy nor takes a second one.
 	routeLookupAcquireScript = redis.NewScript(`
+for index, key in ipairs(KEYS) do
+  if redis.call("GET", key) == ARGV[1] then return index end
+end
 for index, key in ipairs(KEYS) do
   if redis.call("SET", key, ARGV[1], "NX", "PX", ARGV[2]) then return index end
 end
@@ -153,6 +164,9 @@ type RouteLookupGate struct {
 	// consult Redis.
 	redisDownUntil atomic.Int64
 	now            func() time.Time
+	// releases tracks background lease releases, so tests (and Close) can
+	// wait for them.
+	releases sync.WaitGroup
 	// onFailOpen is told when a Redis error trips the backoff, so the caller
 	// can log it once per trip rather than once per lookup.
 	onFailOpen func(error)
@@ -208,9 +222,44 @@ func NewRouteLookupGate(config RouteLookupGateConfig) *RouteLookupGate {
 		now:     time.Now,
 	}
 	if store := redisEpisodeStoreOf(config.Store); store != nil {
-		gate.leases = newRedisRouteLookupLeases(store.client, config.Pool, config.MaxInflight)
+		gate.leases = newRedisRouteLookupLeases(routeLookupRedisClient(store.client), config.Pool, config.MaxInflight)
 	}
 	return gate
+}
+
+// routeLookupRedisClient opens the gate's own small pool to the episode
+// store's Redis, with the store's address, credentials and TLS.
+//
+// It is not the store's client because that one is configured for the
+// episode lease: socket timeouts of seconds, context deadlines not applied
+// to socket I/O, and automatic retries. On the gate those would let a stalled
+// Redis hold a lookup past its queue wait (or its deadline) before failing
+// open, and a retried acquire could replay a write whose reply was lost.
+// Here every call is bounded by its context and by short socket timeouts,
+// and nothing is retried: the poll loop is the retry.
+func routeLookupRedisClient(shared *redis.Client) *redis.Client {
+	options := *shared.Options()
+	options.ContextTimeoutEnabled = true
+	options.DialTimeout = routeLookupRedisCallTimeout
+	options.ReadTimeout = routeLookupRedisCallTimeout
+	options.WriteTimeout = routeLookupRedisCallTimeout
+	options.MaxRetries = -1
+	options.PoolSize = routeLookupRedisPoolSize
+	options.MinIdleConns = 0
+	return redis.NewClient(&options)
+}
+
+// Close releases the gate's Redis connections. Lookups still holding a slot
+// are left to their lease TTL.
+func (gate *RouteLookupGate) Close() error {
+	if gate == nil || gate.leases == nil {
+		return nil
+	}
+	gate.releases.Wait()
+	if closer, ok := gate.leases.(interface{ close() error }); ok {
+		return closer.close()
+	}
+	return nil
 }
 
 // redisEpisodeStoreOf unwraps the Redis episode store a recipe runs on, or
@@ -291,9 +340,11 @@ func (gate *RouteLookupGate) Acquire(ctx context.Context) (RouteLookupTicket, er
 	}
 	delay := gate.pollMin
 	for {
-		acquired, err := gate.tryLease(ctx, token)
+		acquired, err := gate.tryLease(ctx, waitContext, token)
 		if err != nil {
-			if ctx.Err() != nil {
+			if waitContext.Err() != nil {
+				// The wait (or the lookup) ran out during the call: a
+				// refusal, not a Redis failure.
 				localRelease()
 				return RouteLookupTicket{}, gate.refusal(ctx, RouteLookupBackendRedis, started)
 			}
@@ -301,10 +352,18 @@ func (gate *RouteLookupGate) Acquire(ctx context.Context) (RouteLookupTicket, er
 			return gate.admit(started, RouteLookupBackendLocal, true, localRelease), nil
 		}
 		if acquired {
+			if ctx.Err() != nil {
+				gate.releaseLeaseAsync(ctx, token)
+				localRelease()
+				return RouteLookupTicket{}, gate.refusal(ctx, RouteLookupBackendRedis, started)
+			}
 			var once sync.Once
 			release := func() {
 				once.Do(func() {
-					gate.releaseLease(ctx, token)
+					// The Redis release runs off the response path; the
+					// local slot frees at once. Until the delete lands the
+					// next local waiter just polls a slot still held.
+					gate.releaseLeaseAsync(ctx, token)
 					localRelease()
 				})
 			}
@@ -322,28 +381,36 @@ func (gate *RouteLookupGate) Acquire(ctx context.Context) (RouteLookupTicket, er
 	}
 }
 
-// tryLease makes one bounded attempt at a slot. A call that errors may still
-// have taken a slot (the reply was lost, not the write), so it releases the
-// token's slot before reporting the error.
-func (gate *RouteLookupGate) tryLease(ctx context.Context, token string) (bool, error) {
-	callContext, cancel := context.WithTimeout(ctx, routeLookupRedisCallTimeout)
+// tryLease makes one attempt at a slot, bounded by the queue wait and by
+// one call timeout. A call that errors may still have taken a slot (the
+// reply was lost, not the write), so the token's slot is released, off the
+// lookup's path, before the error is reported.
+func (gate *RouteLookupGate) tryLease(ctx, waitContext context.Context, token string) (bool, error) {
+	callContext, cancel := context.WithTimeout(waitContext, routeLookupRedisCallTimeout)
 	defer cancel()
 	acquired, err := gate.leases.acquire(callContext, token, gate.leaseTTL)
 	if err != nil {
-		gate.releaseLease(ctx, token)
+		gate.releaseLeaseAsync(ctx, token)
 		return false, err
 	}
 	return acquired, nil
 }
 
-// releaseLease frees the token's slot on a context detached from the
-// lookup, which may already be done. A failed release is left to the TTL.
-func (gate *RouteLookupGate) releaseLease(ctx context.Context, token string) {
+// releaseLeaseAsync frees the token's slot in the background, on a context
+// detached from the lookup (which may be done) and bounded by one call
+// timeout. The release compares the token, so a late one never frees a slot
+// another lookup took after this lease expired. A failed release is left to
+// the TTL.
+func (gate *RouteLookupGate) releaseLeaseAsync(ctx context.Context, token string) {
 	releaseContext, cancel := context.WithTimeout(
 		context.WithoutCancel(ctx), routeLookupRedisCallTimeout,
 	)
-	defer cancel()
-	_ = gate.leases.release(releaseContext, token)
+	gate.releases.Add(1)
+	go func() {
+		defer gate.releases.Done()
+		defer cancel()
+		_ = gate.leases.release(releaseContext, token)
+	}()
 }
 
 func (gate *RouteLookupGate) admit(
@@ -416,6 +483,9 @@ func jitterRouteLookupPoll(delay time.Duration) time.Duration {
 func RouteLookupPoolID(urls ...string) string {
 	digest := sha256.New()
 	for _, url := range urls {
+		// The clients call a base URL with its trailing slashes trimmed, so
+		// two spellings of one backend are one pool.
+		url = strings.TrimRight(strings.TrimSpace(url), "/")
 		digest.Write([]byte(strconv.Itoa(len(url))))
 		digest.Write([]byte{':'})
 		digest.Write([]byte(url))
@@ -450,4 +520,8 @@ func (leases *redisRouteLookupLeases) acquire(
 
 func (leases *redisRouteLookupLeases) release(ctx context.Context, token string) error {
 	return routeLookupReleaseScript.Run(ctx, leases.client, leases.keys, token).Err()
+}
+
+func (leases *redisRouteLookupLeases) close() error {
+	return leases.client.Close()
 }

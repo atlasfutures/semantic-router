@@ -193,6 +193,10 @@ func TestRaylineRoutesAdmissionScopeFollowsTheEpisodeBackend(t *testing.T) {
 	if raylineRoutesAdmissionPool(router.Config.Decisions[0].Algorithm.RaylineARC) != raylineRoutesAdmissionPool(sameBackend) {
 		t.Fatal("two recipes on one policy service computed two pools")
 	}
+	trailingSlash := &config.RaylineARCAlgorithmConfig{PolicyService: &config.RaylineARCPolicyServiceConfig{BaseURL: "https://policy.example/"}}
+	if raylineRoutesAdmissionPool(sameBackend) != raylineRoutesAdmissionPool(trailingSlash) {
+		t.Fatal("two spellings of one policy service computed two pools")
+	}
 	if raylineRoutesAdmissionPool(sameBackend) == raylineRoutesAdmissionPool(otherBackend) {
 		t.Fatal("two policy services share a pool")
 	}
