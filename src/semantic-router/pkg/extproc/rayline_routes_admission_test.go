@@ -903,3 +903,51 @@ func TestRouteDecisionCountsTheSessionsTrackedLookupsHold(t *testing.T) {
 		t.Fatalf("lookup sessions grew by %d, want 2", got)
 	}
 }
+
+// A caller whose deadline passed before its abandon callback ran is still
+// gone: admission refuses to pin its decision and cancels it, rather than
+// run an encode nobody is waiting for while holding the slot.
+func TestRaylineRoutesSlotDoesNotPinForACallerThatLeft(t *testing.T) {
+	gate := raylinearc.NewRouteLookupGate(raylinearc.RouteLookupGateConfig{
+		MaxInflight: 1, QueueWait: 20 * time.Millisecond, LookupDeadline: time.Second,
+	})
+	ticket, err := gate.Acquire(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	lookup, leave := context.WithCancel(context.Background())
+	leave()
+	decision, cancel := context.WithCancel(context.Background())
+	slot := heldSlot(gate, ticket, lookup)
+	slot.start(cancel, false)
+	if _, err := slot.admit(decision, nil); !errors.Is(err, context.Canceled) {
+		t.Fatalf("admit error = %v, want the caller's cancel", err)
+	}
+	if slot.pinned {
+		t.Fatal("the decision was pinned for a caller that had left")
+	}
+	if decision.Err() == nil {
+		t.Fatal("the decision was not cancelled")
+	}
+	slot.release()
+	awaitSlotFree(t, gate)
+}
+
+// A decision released uncommitted because its caller left still counts the
+// session it left on the encoder: releasing the episode does not close it.
+func TestRouteDecisionCountsTheSessionOfACallerThatLeft(t *testing.T) {
+	selector := &stubARCSelector{arm: 0, workers: decisionServiceWorkers(), sessionAction: "rebuilt"}
+	router := decisionServiceRouter(t, selector)
+	caller, cancel := context.WithCancel(context.Background())
+	cancel()
+	before := raylineRoutesLookupSessions.count(time.Now())
+	_, err := router.routeDecisionRuntimeState().RouteDecision(context.Background(), routerruntime.RouteDecisionRequest{
+		Body: anthropicBody("hello"), DecisionID: "rt_left_session", SessionID: "left-session-1", Caller: caller,
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("RouteDecision() error = %v, want the caller's cancel", err)
+	}
+	if got := raylineRoutesLookupSessions.count(time.Now()) - before; got != 1 {
+		t.Fatalf("lookup sessions grew by %d, want 1", got)
+	}
+}

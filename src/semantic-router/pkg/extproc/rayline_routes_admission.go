@@ -307,10 +307,16 @@ func (slot *raylineRoutesSlot) admit(
 
 // pinLocked pins the decision to the slot, unless the caller has already
 // left, in which case the decision is cancelled and starts no encode. The
+// caller's context is read as well as abandoned: abandon runs on its own
+// goroutine after the context is done, so it may not have run yet. The
 // caller holds mu.
 func (slot *raylineRoutesSlot) pinLocked() error {
-	if slot.abandoned {
-		return slot.lookup.Err()
+	if err := slot.lookup.Err(); slot.abandoned || err != nil {
+		slot.abandoned = true
+		if slot.cancel != nil {
+			slot.cancel()
+		}
+		return err
 	}
 	slot.pinned = true
 	return nil
@@ -385,7 +391,9 @@ func (record *raylineRoutesAdmissionRecord) log(result *selection.SelectionResul
 		return
 	}
 	sessionAction := ""
-	if err == nil && result != nil && result.RaylineARC != nil {
+	// A decision released uncommitted (its caller left) still reports what
+	// the service did; decided says whether it was answered.
+	if result != nil && result.RaylineARC != nil {
 		sessionAction = boundedPolicySessionAction(result.RaylineARC.SessionAction)
 	}
 	if sessionAction == "" {

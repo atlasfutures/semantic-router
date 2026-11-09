@@ -188,6 +188,20 @@ func (service *raylineARCDecisionService) RouteDecision(
 	}
 	selected, err := service.selectWorker(ctx, commitContext, algorithm, selectionContext, requestContext)
 	admission.log(selected.result, err)
+	// A tracked lookup that left a retained encoder session holds a slot of
+	// the container's session budget until the encoder evicts it, committed
+	// or not: an abandoned decision releases its episode but not the
+	// session. An ephemeral lookup closes its own; a zdr turn retains nothing.
+	if selected.result != nil && selected.result.RaylineARC != nil &&
+		!request.Ephemeral && !selectionContext.RaylineARC.EphemeralTurn && algorithm.RaylineARC != nil {
+		recordRaylineRoutesLookupSession(
+			request.DecisionID,
+			policyRetainedBackend(algorithm.RaylineARC),
+			selectionContext.RaylineARC.EpisodeIDHash,
+			boundedPolicySessionAction(selected.result.RaylineARC.SessionAction),
+			time.Duration(algorithm.RaylineARC.Episode.IdleTTLSeconds)*time.Second,
+		)
+	}
 	if err != nil {
 		return routerruntime.RouteDecision{}, err
 	}
@@ -213,18 +227,6 @@ func (service *raylineARCDecisionService) RouteDecision(
 		decisionFacts.Warnings = append(decisionFacts.Warnings, raylineRoutesPricesUntracked)
 	}
 	trace := selected.result.RaylineARC
-	// A tracked lookup that left a retained encoder session holds a slot of
-	// the container's session budget until the encoder evicts it. An
-	// ephemeral lookup closes its own; a zdr turn retains nothing.
-	if !request.Ephemeral && !selectionContext.RaylineARC.EphemeralTurn && algorithm.RaylineARC != nil {
-		recordRaylineRoutesLookupSession(
-			request.DecisionID,
-			policyRetainedBackend(algorithm.RaylineARC),
-			selectionContext.RaylineARC.EpisodeIDHash,
-			boundedPolicySessionAction(trace.SessionAction),
-			time.Duration(algorithm.RaylineARC.Episode.IdleTTLSeconds)*time.Second,
-		)
-	}
 	decisionFacts.ThinkingLevel = trace.ThinkingLevel
 	decisionFacts.PolicyActionID = trace.PolicyActionID
 	decisionFacts.Checkpoint = trace.ArtifactRevision
@@ -464,13 +466,17 @@ func (service *raylineARCDecisionService) selectWorker(
 	// The commit waits on the caller's context, which a detached decision
 	// (RouteDecisionRequest.Caller) does not share: a decision whose caller
 	// left is released, not committed, so the episode never records an arm
-	// nobody was given.
-	if err := commitContext.Err(); err != nil {
-		service.router.finalizeRaylineARCAbort(requestContext, raylineRoutesAbandonedFailureClass)
-		return selectedRoute{}, fmt.Errorf("decision-only routing lost its caller before the episode committed: %w", err)
+	// nobody was given. A decision on the caller's own context is released
+	// by the commit itself, under its own failure class. The selection is
+	// returned with the error: its session outlives the episode's release.
+	if commitContext != ctx {
+		if err := commitContext.Err(); err != nil {
+			service.router.finalizeRaylineARCAbort(requestContext, raylineRoutesAbandonedFailureClass)
+			return route, fmt.Errorf("decision-only routing lost its caller before the episode committed: %w", err)
+		}
 	}
 	if err := commitDecisionOnlyEpisode(commitContext, requestContext); err != nil {
-		return selectedRoute{}, err
+		return route, err
 	}
 	return route, nil
 }

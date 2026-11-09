@@ -636,7 +636,9 @@ routes_api:
   its caller is still waiting: one whose caller has gone by the time the
   backend answers releases the episode lease without committing, so the
   conversation's next turn is attributed to the turn that was actually
-  answered. Until it holds a slot (while it waits for one, or when it is
+  answered. It holds the episode lease until then too, so a retry of the
+  same conversation right after the 504 waits on (or is refused by) the
+  lease while the backend finishes. Until it holds a slot (while it waits for one, or when it is
   exempt, below) a lookup is cancelled with its caller.
 
 #### Exempting appends
