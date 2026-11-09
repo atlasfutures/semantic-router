@@ -12,6 +12,7 @@ from cli.rayline_arc_config import (
     _CHECKPOINT_LABEL,
     _MAX_CONFIG_STRING_BYTES,
     _MAX_ROUTES_ADMISSION_INFLIGHT,
+    _MAX_ROUTES_APPEND_SUFFIX_TOKENS,
     RaylineARCAlgorithmConfig,
     RaylineARCDecisionsV2Config,
     RaylineARCEncoderFailoverConfig,
@@ -365,6 +366,46 @@ def test_routes_api_admission_matches_the_go_loader():
         # The wait is spent inside the deadline: 2000 ms does not fit 1500.
         {"enabled": True, "admission": {"max_inflight": 1, "queue_wait_ms": 2_000}},
         {"enabled": True, "admission": {"max_inflight": 1, "slots": 2}},
+    ):
+        with pytest.raises(ValidationError):
+            RaylineARCRoutesAPIConfig(**rejected)
+
+
+def test_routes_api_admission_append_exempt_matches_the_go_loader():
+    assert _MAX_ROUTES_APPEND_SUFFIX_TOKENS == _go_constant(
+        "maxRaylineARCRoutesAppendMaxSuffixTokens"
+    )
+    RaylineARCRoutesAPIConfig(
+        enabled=True,
+        episode_writes=True,
+        admission={"max_inflight": 1, "append_exempt": True},
+    )
+    RaylineARCRoutesAPIConfig(
+        enabled=True,
+        episode_writes=True,
+        admission={
+            "max_inflight": 1,
+            "append_exempt": True,
+            "append_max_suffix_tokens": _MAX_ROUTES_APPEND_SUFFIX_TOKENS,
+        },
+    )
+    for rejected in (
+        {"enabled": True, "episode_writes": True, "admission": {"append_exempt": True}},
+        {"enabled": True, "admission": {"max_inflight": 1, "append_exempt": True}},
+        {
+            "enabled": True,
+            "episode_writes": True,
+            "admission": {"max_inflight": 1, "append_max_suffix_tokens": 4096},
+        },
+        {
+            "enabled": True,
+            "episode_writes": True,
+            "admission": {
+                "max_inflight": 1,
+                "append_exempt": True,
+                "append_max_suffix_tokens": _MAX_ROUTES_APPEND_SUFFIX_TOKENS + 1,
+            },
+        },
     ):
         with pytest.raises(ValidationError):
             RaylineARCRoutesAPIConfig(**rejected)

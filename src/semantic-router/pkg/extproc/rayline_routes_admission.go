@@ -28,6 +28,8 @@ import (
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/metrics"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/routerruntime"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
 
@@ -174,6 +176,19 @@ func (r *OpenAIRouter) admitRaylineRoutesLookup(
 	if gate == nil {
 		return raylinearc.RouteLookupTicket{}, nil
 	}
+	ticket, err := acquireRaylineRoutesLookup(lookupContext, gate, routeID)
+	if err != nil {
+		return raylinearc.RouteLookupTicket{}, r.raylineRoutesAdmissionRefusal(ctx, lookupContext, routeID, gate, err)
+	}
+	return ticket, nil
+}
+
+// acquireRaylineRoutesLookup takes a slot on gate and records the outcome.
+func acquireRaylineRoutesLookup(
+	lookupContext context.Context,
+	gate *raylinearc.RouteLookupGate,
+	routeID string,
+) (raylinearc.RouteLookupTicket, error) {
 	ticket, err := gate.Acquire(lookupContext)
 	if err == nil {
 		metrics.RecordRaylineARCRoutesAdmission(ticket.Outcome, ticket.Backend, ticket.Wait.Seconds())
@@ -188,20 +203,32 @@ func (r *OpenAIRouter) admitRaylineRoutesLookup(
 		return ticket, nil
 	}
 	var refusal *raylinearc.RouteLookupRefusal
-	if !errors.As(err, &refusal) {
-		return raylinearc.RouteLookupTicket{}, r.raylineRoutesFailure(ctx, lookupContext, routeID, err)
+	if errors.As(err, &refusal) {
+		metrics.RecordRaylineARCRoutesAdmission(refusal.Outcome, refusal.Backend, refusal.Wait.Seconds())
+		logging.ComponentEvent("extproc", "rayline_routes_admission_wait", map[string]interface{}{
+			"routing_decision_id": routeID,
+			"outcome":             refusal.Outcome,
+			"backend":             refusal.Backend,
+			"wait_ms":             refusal.Wait.Milliseconds(),
+		})
 	}
-	metrics.RecordRaylineARCRoutesAdmission(refusal.Outcome, refusal.Backend, refusal.Wait.Seconds())
-	logging.ComponentEvent("extproc", "rayline_routes_admission_wait", map[string]interface{}{
-		"routing_decision_id": routeID,
-		"outcome":             refusal.Outcome,
-		"backend":             refusal.Backend,
-		"wait_ms":             refusal.Wait.Milliseconds(),
-	})
+	return raylinearc.RouteLookupTicket{}, err
+}
+
+// raylineRoutesAdmissionRefusal answers a lookup the gate did not admit: 429
+// lookup_capacity for a shed, raylineRoutesFailure for anything else (a wait
+// the lookup's deadline ended answers 504).
+func (r *OpenAIRouter) raylineRoutesAdmissionRefusal(
+	ctx *RequestContext,
+	lookupContext context.Context,
+	routeID string,
+	gate *raylinearc.RouteLookupGate,
+	err error,
+) *ext_proc.ProcessingResponse {
 	if !errors.Is(err, raylinearc.ErrRouteLookupShed) {
-		return raylinearc.RouteLookupTicket{}, r.raylineRoutesFailure(ctx, lookupContext, routeID, err)
+		return r.raylineRoutesFailure(ctx, lookupContext, routeID, err)
 	}
-	return raylinearc.RouteLookupTicket{}, raylineRoutesRetryAfter(
+	return raylineRoutesRetryAfter(
 		r.createRaylineRoutesCodedError(ctx, &routesContractError{
 			status:  429,
 			errType: "rate_limit_error",
@@ -210,6 +237,97 @@ func (r *OpenAIRouter) admitRaylineRoutesLookup(
 		}),
 		raylineRoutesAdmissionRetrySeconds(gate),
 	)
+}
+
+// raylineRoutesAppendAdmission admits a tracked lookup on a cell whose
+// admission exempts predicted appends (routes_api.admission.append_exempt).
+//
+// The decision service calls admit once the episode is read and before any
+// encoder call (RouteDecisionRequest.Admit), because only then is the encode
+// predictable: a lookup predicted to append at most maxSuffixTokens to the
+// episode's retained session skips the gate; every other lookup takes a slot
+// exactly as the handler would have, inside the same lookup deadline. The
+// handler releases the slot when the decision returns, as it releases a
+// tracked lookup's slot taken up front.
+type raylineRoutesAppendAdmission struct {
+	gate            *raylinearc.RouteLookupGate
+	routeID         string
+	maxSuffixTokens int
+	ticket          raylinearc.RouteLookupTicket
+	// refused is the gate's error when it did not admit the lookup, so the
+	// handler can tell the decision's admission failure from every other.
+	refused error
+}
+
+func (admission *raylineRoutesAppendAdmission) admit(
+	lookupContext context.Context,
+	prediction routerruntime.RouteEncodePrediction,
+) (bool, error) {
+	if prediction.Append && prediction.SuffixTokens <= admission.maxSuffixTokens {
+		metrics.RecordRaylineARCRoutesAdmission(raylinearc.RouteLookupExempt, raylinearc.RouteLookupBackendNone, 0)
+		return true, nil
+	}
+	ticket, err := acquireRaylineRoutesLookup(lookupContext, admission.gate, admission.routeID)
+	if err != nil {
+		admission.refused = err
+		return false, err
+	}
+	admission.ticket = ticket
+	return false, nil
+}
+
+// refusedBy reports whether err is the gate's refusal of this lookup.
+func (admission *raylineRoutesAppendAdmission) refusedBy(err error) bool {
+	return admission != nil && admission.refused != nil && errors.Is(err, admission.refused)
+}
+
+// release frees the slot admit took, if any. Safe to call more than once.
+func (admission *raylineRoutesAppendAdmission) release() {
+	if admission != nil {
+		admission.ticket.Release()
+	}
+}
+
+// raylineRoutesAdmissionFailureClass is the episode abort class of a tracked
+// lookup the gate refused after the episode lease was taken.
+const raylineRoutesAdmissionFailureClass = "routes_admission"
+
+// raylineRoutesAdmissionRecord is a predicted lookup's admission, logged with
+// the session action its decision reported once it decided.
+type raylineRoutesAdmissionRecord struct {
+	decisionID string
+	prediction routerruntime.RouteEncodePrediction
+	exempt     bool
+}
+
+// log records whether the lookup was gated or exempt, what was predicted and
+// what the service actually did, so an exempt lookup that turned out to be a
+// full encode (session_action created or rebuilt) is counted.
+func (record *raylineRoutesAdmissionRecord) log(result *selection.SelectionResult, err error) {
+	if record == nil {
+		return
+	}
+	sessionAction := ""
+	if err == nil && result != nil && result.RaylineARC != nil {
+		sessionAction = boundedPolicySessionAction(result.RaylineARC.SessionAction)
+	}
+	if sessionAction == "" {
+		sessionAction = "none"
+	}
+	admission := "gated"
+	if record.exempt {
+		admission = raylinearc.RouteLookupExempt
+	}
+	metrics.RecordRaylineARCRoutesAdmissionPrediction(admission, record.prediction.Reason, sessionAction)
+	logging.ComponentEvent("extproc", "rayline_routes_admission_prediction", map[string]interface{}{
+		"routing_decision_id":     record.decisionID,
+		"admission":               admission,
+		"prediction":              record.prediction.Reason,
+		"predicted_append":        record.prediction.Append,
+		"predicted_suffix_tokens": record.prediction.SuffixTokens,
+		"session_action":          sessionAction,
+		"decided":                 err == nil,
+	})
 }
 
 // raylineRoutesAdmissionRetrySeconds is the Retry-After on a shed lookup:

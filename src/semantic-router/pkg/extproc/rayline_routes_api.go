@@ -422,15 +422,6 @@ func (r *OpenAIRouter) handleRaylineRoutesAPI(
 	defer cancel()
 
 	routeID := raylineRoutesRouteID(ctx)
-	// Admission comes before any encoder or episode work, and its wait is
-	// spent inside the lookup deadline: a lookup that waited still answers
-	// within deadline_ms. The slot is held until the backend answers, which
-	// for an ephemeral lookup can be after this handler has (see
-	// raylineRoutesDecide).
-	ticket, refused := r.admitRaylineRoutesLookup(ctx, lookupContext, recipe, routeID)
-	if refused != nil {
-		return refused
-	}
 	episode := raylineRoutesEpisodeIdentity(ctx)
 	// Ephemeral unless this cell keeps episodes and the caller named a
 	// conversation. Both halves are required: without the identity there is
@@ -444,18 +435,46 @@ func (r *OpenAIRouter) handleRaylineRoutesAPI(
 	if controls != nil && (controls.Execution != nil || controls.ExecutionV2 != nil) {
 		ephemeral = true
 	}
+	// The service also decides these ephemerally (see RouteDecision); the
+	// consult keeps the caller's flag so its own accounting of why still
+	// runs.
+	decidedEphemeral := ephemeral || raylineARCRoutingJoinsNoEpisode(controls)
+	consult := raylineRoutesConsultWithControls(body, routeID, episode, ephemeral, wireFormat, controls, ctx.Headers, recipe.Name)
+	// Admission comes before any encoder work, and its wait is spent inside
+	// the lookup deadline: a lookup that waited still answers within
+	// deadline_ms. Every lookup is admitted here, before any episode work,
+	// except a tracked one on a cell that exempts predicted appends: its
+	// encode can be predicted only once its episode is read, so the decision
+	// service admits it there (raylineRoutesAppendAdmission). The slot is
+	// held until the backend answers, which for an ephemeral lookup can be
+	// after this handler has (see raylineRoutesDecide).
+	var ticket raylinearc.RouteLookupTicket
+	var appendAdmission *raylineRoutesAppendAdmission
+	if gate := r.raylineRoutesAdmissionGate(recipe); gate != nil && !decidedEphemeral && settings.Admission.AppendExempt {
+		appendAdmission = &raylineRoutesAppendAdmission{
+			gate: gate, routeID: routeID, maxSuffixTokens: settings.EffectiveAppendMaxSuffixTokens(),
+		}
+		consult.Admit = appendAdmission.admit
+	} else {
+		var refused *ext_proc.ProcessingResponse
+		if ticket, refused = r.admitRaylineRoutesLookup(ctx, lookupContext, recipe, routeID); refused != nil {
+			return refused
+		}
+	}
 	started := time.Now()
 	decision, err := raylineRoutesDecide(
 		lookupContext,
 		&r.background,
 		runtime.RouteDecision,
-		raylineRoutesConsultWithControls(body, routeID, episode, ephemeral, wireFormat, controls, ctx.Headers, recipe.Name),
+		consult,
 		ticket,
-		// The service also decides these ephemerally (see RouteDecision);
-		// the consult keeps the caller's flag so its own accounting of why
-		// still runs.
-		ephemeral || raylineARCRoutingJoinsNoEpisode(controls),
+		decidedEphemeral,
 	)
+	// A tracked decision has returned, so the backend has answered it.
+	appendAdmission.release()
+	if appendAdmission.refusedBy(err) {
+		return r.raylineRoutesAdmissionRefusal(ctx, lookupContext, routeID, appendAdmission.gate, err)
+	}
 	if err != nil {
 		return r.raylineRoutesFailure(ctx, lookupContext, routeID, err)
 	}

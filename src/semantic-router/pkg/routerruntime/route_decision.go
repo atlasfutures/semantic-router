@@ -76,6 +76,31 @@ type RouteDecisionRequest struct {
 	// trusts its gateway's turn-signal headers, so a private consult is
 	// masked as a routed turn is.
 	Headers map[string]string
+	// Admit, when set, is the lookup's admission gate, which the caller
+	// asked the implementation to take once the episode is read: it is
+	// called exactly once, after the episode lease and before any encoder
+	// or policy-service call, with the implementation's prediction of the
+	// encode the decision will make. It reports whether it exempted the
+	// lookup rather than taking a slot. An error aborts the decision (the
+	// episode lease is released) and is returned as it came. The caller
+	// releases whatever slot Admit took once RouteDecision returns. Nil
+	// means the caller already admitted the lookup, or needs no admission.
+	Admit func(context.Context, RouteEncodePrediction) (exempt bool, err error)
+}
+
+// RouteEncodePrediction is what the router knows, before calling the encoder,
+// about the encode a tracked lookup will make.
+type RouteEncodePrediction struct {
+	// Append is true when the decision is predicted to append to the
+	// episode's retained encoder session rather than encode the transcript
+	// in full.
+	Append bool
+	// SuffixTokens is the estimated size of the appended suffix when the
+	// request extends the episode's committed prefix, or zero.
+	SuffixTokens int
+	// Reason names why the encode is predicted full ("appends" when it is
+	// not): a short bounded token, logged beside the admission outcome.
+	Reason string
 }
 
 // RouteDecisionSurface names which endpoint a consult came from.

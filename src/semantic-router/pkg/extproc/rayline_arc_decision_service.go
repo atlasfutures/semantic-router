@@ -121,6 +121,20 @@ func (service *raylineARCDecisionService) RouteDecision(
 		service.router.finalizeRaylineARCAbort(requestContext, failure)
 		return routerruntime.RouteDecision{}, prepareFailureError(failure)
 	}
+	// The caller's admission gate, when it left admission to this point:
+	// the episode is read, so the encode can be predicted, and nothing has
+	// called the encoder yet. A refusal releases the lease like any other
+	// exit before selection.
+	var admission *raylineRoutesAdmissionRecord
+	if request.Admit != nil {
+		prediction := predictRaylineRoutesEncode(algorithm, selectionContext.RaylineARC, request.Ephemeral)
+		exempt, err := request.Admit(ctx, prediction)
+		if err != nil {
+			service.router.finalizeRaylineARCAbort(requestContext, raylineRoutesAdmissionFailureClass)
+			return routerruntime.RouteDecision{}, err
+		}
+		admission = &raylineRoutesAdmissionRecord{decisionID: request.DecisionID, prediction: prediction, exempt: exempt}
+	}
 
 	// An ephemeral lookup minted its own encoder session and owns closing it,
 	// whatever happens next. Nothing else will: the ephemeral path prepares
@@ -152,6 +166,7 @@ func (service *raylineARCDecisionService) RouteDecision(
 	}
 
 	selected, err := service.selectWorker(ctx, algorithm, selectionContext, requestContext)
+	admission.log(selected.result, err)
 	if err != nil {
 		return routerruntime.RouteDecision{}, err
 	}

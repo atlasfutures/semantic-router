@@ -44,12 +44,18 @@ const (
 	RouteLookupShed      = "shed"
 	RouteLookupCancelled = "cancelled"
 	RouteLookupFailOpen  = "fail_open"
+	// RouteLookupExempt is a tracked lookup predicted to append to its
+	// episode's retained encoder session, which skipped the gate
+	// (routes_api.admission.append_exempt).
+	RouteLookupExempt = "exempt"
 )
 
 // Route lookup gate backends.
 const (
 	RouteLookupBackendRedis = "redis"
 	RouteLookupBackendLocal = "local"
+	// RouteLookupBackendNone labels an exempt lookup, which no gate saw.
+	RouteLookupBackendNone = "none"
 )
 
 const (

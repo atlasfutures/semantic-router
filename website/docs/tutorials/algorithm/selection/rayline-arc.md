@@ -588,6 +588,8 @@ routes_api:
   admission:
     max_inflight: 1      # 0 or absent: no admission (every lookup goes straight in)
     queue_wait_ms: 2000  # 0: 2000 ms, or half deadline_ms when that is shorter
+    append_exempt: false # true: a predicted append skips the gate (see below)
+    append_max_suffix_tokens: 0  # 0: 8192; needs append_exempt
 ```
 
 - **Scope.** With the `redis` episode backend the cap is cell-wide: each slot
@@ -632,8 +634,53 @@ routes_api:
   A lookup that joins an episode is not detached (an abandoned one would
   still commit its turn) and frees its slot at its 504.
 
+#### Exempting appends
+
+The gate protects the policy container from full encodes: a 3.6 MB
+transcript takes about 105 s. A tracked lookup whose episode's retained
+encoder session already holds the transcript encodes only what is new since
+the episode's last committed request, which takes 0.2 to 0.8 s. With
+`append_exempt: true`, such a lookup skips the gate:
+
+- **The prediction.** Once the episode is read, and before the policy
+  service is called, the router checks what it holds: the episode's committed
+  policy prefix (`prefix_len` messages and their digest). A lookup is
+  predicted to append when the episode has a committed turn, the request's
+  messages extend that prefix (no prefix break, compaction or side call),
+  its system prompt and tools match the last request this router process
+  sent for the episode, and the new messages come to at most
+  `append_max_suffix_tokens` (estimated at four bytes a token over their
+  JSON, which runs high). Anything else is predicted full and gated.
+- **The default bound is 8192 tokens.** At the measured full-encode rate
+  (about 9k tokens a second) that is at most about a second of encoder time:
+  no more than an ordinary small lookup, and inside the 2 s queue wait a
+  gated lookup would have spent anyway. A turn carrying a pasted file or a
+  large tool result goes over it and is gated.
+- **Where admission runs.** A tracked lookup on such a cell takes its slot
+  after the episode lease, from inside the decision, within the same
+  `deadline_ms`. A shed still answers `429 lookup_capacity` and releases the
+  lease, so the conversation's next lookup is not contended. Ephemeral
+  lookups, and lookups that join no episode (exploration, caller prices,
+  `exclusive`, `routing.execution`), are gated before any episode work,
+  exactly as with the knob off.
+- **Requirements.** `append_exempt` needs `max_inflight`, `episode_writes`
+  and a policy-service cell with strict episodes; the loader refuses it on an
+  artifact-mode cell or with `episode.consistency: relaxed`, where the
+  service retains no session to append to. Off, which is the default, every
+  lookup is gated.
+- **Checking the prediction.** It can be wrong: the service may have evicted
+  the session (idle, restart, replica change) and rebuild it.
+  `rayline_routes_admission_prediction` logs each predicted lookup with
+  `admission` (`gated` or `exempt`), `prediction` (`extends`, or why it was
+  predicted full), `predicted_suffix_tokens` and the `session_action` the
+  service reported (`created`, `rebuilt`, `appended`, `reused`, or `none`).
+  `llm_rayline_arc_routes_admission_prediction_total{admission, prediction,
+  session_action}` counts the same; exempt lookups with `session_action`
+  `created` or `rebuilt` are full encodes the prediction let through.
+
 `llm_rayline_arc_routes_admission_total{outcome, backend}` counts outcomes
-(`admitted`, `queued`, `shed`, `cancelled`, `fail_open`) and
+(`admitted`, `queued`, `shed`, `cancelled`, `fail_open`, and `exempt` with
+backend `none`) and
 `llm_rayline_arc_routes_admission_wait_seconds{outcome}` the time spent
 waiting; serialized lookups show as `queued` with waits near the holder's
 encode time.
@@ -701,6 +748,7 @@ routing:
             # Optional: cap concurrent lookups (see "Lookup admission").
             admission:
               max_inflight: 0
+              append_exempt: false
 ```
 
 Off by default, and deliberately not implied by configuring the algorithm. A
