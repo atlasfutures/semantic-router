@@ -636,10 +636,17 @@ routes_api:
   caller's context: one whose caller has gone by the time the backend
   answers releases the episode lease without committing (abort class
   `routes_abandoned`), so the conversation's next turn is not scored against
-  an arm nobody was given. It holds the lease until then, so a retry of the
-  same conversation right after the 504 waits on (or is refused by) the
-  lease while the backend finishes. A lookup whose caller left while it was
-  queued starts no encode.
+  an arm nobody was given. One whose commit started while its caller was
+  still waiting is answered with its route, a moment late if the deadline
+  passed meanwhile. The one exception is an episode store that does not
+  honour cancellation: a commit already inside it when the deadline fires
+  can still land after the 504, which is logged as
+  `routing_decision_episode_committed_after_deadline`. An abandoned lookup
+  holds the lease until the backend answers, so a retry of the same
+  conversation right after the 504 waits on (or is refused by) the lease
+  meanwhile; a retry stops waiting for the lease at its own deadline. A
+  lookup whose caller left while it was queued, or while it waited for the
+  lease, starts no encode.
 
 `llm_rayline_arc_routes_admission_total{outcome, backend}` counts outcomes
 (`admitted`, `queued`, `shed`, `cancelled`, `fail_open`) and

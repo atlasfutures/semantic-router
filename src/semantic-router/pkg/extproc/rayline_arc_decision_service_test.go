@@ -29,6 +29,8 @@ type stubARCSelector struct {
 	// sessionAction, when set, reports what the decision did to the
 	// episode's retained encoder session.
 	sessionAction string
+	// onSelect, when set, runs as the selector is called: the encode.
+	onSelect func()
 }
 
 func (s *stubARCSelector) Select(
@@ -36,6 +38,9 @@ func (s *stubARCSelector) Select(
 	selCtx *selection.SelectionContext,
 ) (*selection.SelectionResult, error) {
 	s.contexts = append(s.contexts, selCtx)
+	if s.onSelect != nil {
+		s.onSelect()
+	}
 	if s.err != nil {
 		return nil, s.err
 	}

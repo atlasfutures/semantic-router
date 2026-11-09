@@ -511,9 +511,10 @@ func (r *OpenAIRouter) raylineRoutesContext(ctx *RequestContext) context.Context
 // under it by a reload.
 //
 // That holds for a tracked lookup as for an ephemeral one. A tracked one
-// commits its episode turn on the caller's context (Caller), not the
+// commits its episode turn on the caller's context (Commit), not the
 // detached one: a decision whose caller has left is released, not committed,
-// so an abandoned lookup never advances its episode.
+// so an abandoned lookup never advances its episode, and one that did
+// advance is answered (raylineRoutesCommitGuard).
 func raylineRoutesDecide(
 	lookupContext context.Context,
 	background *sync.WaitGroup,
@@ -530,8 +531,10 @@ func raylineRoutesDecide(
 		ticket.Release()
 		return routerruntime.RouteDecision{}, err
 	}
+	var guard *raylineRoutesCommitGuard
 	if !ephemeral {
-		request.Caller = lookupContext
+		guard = newRaylineRoutesCommitGuard(lookupContext)
+		request.Commit = guard
 	}
 	detached, cancel := context.WithTimeout(context.WithoutCancel(lookupContext), raylinearc.RouteLookupDetachBound)
 	type outcome struct {
@@ -558,8 +561,99 @@ func raylineRoutesDecide(
 	case result := <-answered:
 		return result.decision, result.err
 	case <-lookupContext.Done():
-		return routerruntime.RouteDecision{}, lookupContext.Err()
 	}
+	// A tracked decision that is committing, or has committed, is owed its
+	// answer: answering 504 for a turn the episode recorded would score the
+	// conversation's next turn against an arm the caller was never given.
+	// The commit itself waits on the caller's context, so it resolves at
+	// once (bounded by its cancellation grace); the rest is building the
+	// answer.
+	if guard != nil && guard.leave() {
+		select {
+		case <-guard.ended:
+		case result := <-answered:
+			return result.decision, result.err
+		}
+		if guard.committed() {
+			result := <-answered
+			return result.decision, result.err
+		}
+	}
+	return routerruntime.RouteDecision{}, lookupContext.Err()
+}
+
+// raylineRoutesCommitGuard is a tracked lookup's RouteCommitGuard: whichever
+// of the commit starting (Begin) and the caller leaving (leave) comes first
+// decides whether the turn may commit, under one lock, so a caller who left
+// never has a turn committed for it and a caller still there when the commit
+// starts is answered with it.
+type raylineRoutesCommitGuard struct {
+	caller context.Context
+	ended  chan struct{}
+
+	mu    sync.Mutex
+	state raylineRoutesCommitState
+}
+
+type raylineRoutesCommitState int
+
+const (
+	raylineRoutesCommitPending raylineRoutesCommitState = iota
+	raylineRoutesCommitRunning
+	raylineRoutesCommitDone
+	raylineRoutesCommitRefused
+)
+
+func newRaylineRoutesCommitGuard(caller context.Context) *raylineRoutesCommitGuard {
+	return &raylineRoutesCommitGuard{caller: caller, ended: make(chan struct{})}
+}
+
+func (guard *raylineRoutesCommitGuard) Context() context.Context { return guard.caller }
+
+func (guard *raylineRoutesCommitGuard) Begin() bool {
+	guard.mu.Lock()
+	defer guard.mu.Unlock()
+	if guard.state != raylineRoutesCommitPending || guard.caller.Err() != nil {
+		guard.state = raylineRoutesCommitRefused
+		return false
+	}
+	guard.state = raylineRoutesCommitRunning
+	return true
+}
+
+func (guard *raylineRoutesCommitGuard) End(committed bool) {
+	guard.mu.Lock()
+	defer guard.mu.Unlock()
+	if guard.state != raylineRoutesCommitRunning {
+		return
+	}
+	guard.state = raylineRoutesCommitRefused
+	if committed {
+		guard.state = raylineRoutesCommitDone
+	}
+	close(guard.ended)
+}
+
+// leave is the caller leaving. It reports whether the caller must wait for
+// the commit's outcome: false when the commit had not started, which it now
+// never will.
+func (guard *raylineRoutesCommitGuard) leave() bool {
+	guard.mu.Lock()
+	defer guard.mu.Unlock()
+	switch guard.state {
+	case raylineRoutesCommitPending:
+		guard.state = raylineRoutesCommitRefused
+		return false
+	case raylineRoutesCommitRunning, raylineRoutesCommitDone:
+		return true
+	}
+	return false
+}
+
+func (guard *raylineRoutesCommitGuard) committed() bool {
+	guard.mu.Lock()
+	defer guard.mu.Unlock()
+	return guard.state == raylineRoutesCommitDone
 }
 
 // raylineRoutesFailure classifies a failed lookup.
