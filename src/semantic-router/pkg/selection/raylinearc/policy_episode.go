@@ -209,6 +209,11 @@ type PolicyEpisodeState struct {
 	// its encode limit) has since committed past it; nil when the service's
 	// last decide covered the committed prefix. EncodedThrough reads it.
 	EncodedPrefixLen *int `json:"encoded_prefix_len,omitempty"`
+	// EncodedShell digests the system prompt and tools of the request the
+	// service last decided in this context (PolicyShellDigest); a turn
+	// served without a decide keeps it. Empty when no decided turn recorded
+	// it.
+	EncodedShell string `json:"encoded_shell,omitempty"`
 	// Exclusions are the models this context no longer offers: a model that
 	// refused a turn (ADR 0120). They live in the policy state, so they last
 	// exactly as long as the context does: a compaction or a prefix break

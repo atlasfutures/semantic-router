@@ -77,6 +77,7 @@ func (selector *raylineARCSelector) policyEncodeSizeBypass(
 	scorer *policyServiceScorer,
 	turn *raylinearc.PolicyEpisodeState,
 	transition string,
+	shell string,
 	messages []json.RawMessage,
 	sideCall bool,
 	atBoundary bool,
@@ -88,7 +89,8 @@ func (selector *raylineARCSelector) policyEncodeSizeBypass(
 	if !arcContext.RoutesLookup || limit <= 0 {
 		return nil
 	}
-	encodeTokens, span := policyLookupEncodeTokens(arcContext, turn, transition, messages)
+	relaxed := scorer.episodeMode == raylinearc.PolicyEpisodeModeRelaxed
+	encodeTokens, span := policyLookupEncodeTokens(arcContext, turn, transition, relaxed, shell, messages)
 	if encodeTokens <= limit {
 		return nil
 	}
@@ -138,14 +140,17 @@ const (
 )
 
 // policyLookupEncodeTokens estimates what this lookup's encode would cost,
-// and the span that estimate covers. A tracked lookup that extends its
-// context (not ephemeral, transition extends) appends to the service's
-// retained session, so it costs the messages since the service's last encode
+// and the span that estimate covers. A tracked lookup on a strict cell that
+// extends its context with the system prompt and tools the service last
+// encoded (shell, against EncodedShell) appends to the service's retained
+// session, so it costs the messages since the service's last encode
 // (EncodedThrough, which a bypass or hold leaves behind): the request's own
 // estimate, ContextTokens, scaled by those messages' share of the request's
 // message bytes, rounded up. Every other lookup -- a stateless or ephemeral
-// one, a session's first, a compaction or prefix break that rebases it, a
-// side call -- is encoded whole and costs ContextTokens.
+// one, one on a relaxed cell (whose service keeps no session), a session's
+// first, a compaction, prefix break or changed shell that rebuilds it, a
+// side call -- is encoded whole and costs ContextTokens. A state no decided
+// turn recorded a shell in is taken to have this one.
 //
 // The suffix is an estimate on the assumption that the service still holds
 // the session: one it evicted is rebuilt in full.
@@ -153,10 +158,13 @@ func policyLookupEncodeTokens(
 	arcContext *selection.RaylineARCSelectionContext,
 	turn *raylinearc.PolicyEpisodeState,
 	transition string,
+	relaxed bool,
+	shell string,
 	messages []json.RawMessage,
 ) (int, string) {
 	whole := arcContext.ContextTokens
-	if arcContext.EphemeralTurn || transition != raylinearc.PolicyTransitionExtends || turn == nil {
+	if arcContext.EphemeralTurn || relaxed || transition != raylinearc.PolicyTransitionExtends || turn == nil ||
+		turn.EncodedShell != "" && turn.EncodedShell != shell {
 		return whole, raylineRoutesEncodeSpanContext
 	}
 	from := turn.EncodedThrough()
