@@ -182,13 +182,6 @@ type RouteLookupGate struct {
 	// releases tracks background lease releases, so tests (and Close) can
 	// wait for them.
 	releases sync.WaitGroup
-	// holders counts lookups holding a Redis lease, and closing is set by
-	// Close. A detached decision can outlive the router generation that
-	// admitted it; the Redis client stays open until its lease is released,
-	// so the slot frees when the backend answers, not at the lease TTL.
-	holdersMu sync.Mutex
-	holders   int
-	closing   bool
 	// onFailOpen is told when a Redis error trips the backoff, so the caller
 	// can log it once per trip rather than once per lookup.
 	onFailOpen func(error)
@@ -272,47 +265,17 @@ func routeLookupRedisClient(shared *redis.Client) *redis.Client {
 	return redis.NewClient(&options)
 }
 
-// Close releases the gate's Redis connections. While lookups still hold a
-// lease the close is deferred to the last release, which closes the client
-// once its lease delete has run.
+// Close releases the gate's Redis connections. Lookups still holding a slot
+// are left to their lease TTL.
 func (gate *RouteLookupGate) Close() error {
 	if gate == nil || gate.leases == nil {
 		return nil
 	}
-	gate.holdersMu.Lock()
-	gate.closing = true
-	held := gate.holders
-	gate.holdersMu.Unlock()
-	if held > 0 {
-		return nil
-	}
-	return gate.closeLeases()
-}
-
-func (gate *RouteLookupGate) closeLeases() error {
 	gate.releases.Wait()
 	if closer, ok := gate.leases.(interface{ close() error }); ok {
 		return closer.close()
 	}
 	return nil
-}
-
-// hold records a lookup that took a Redis lease; the returned func, called
-// after its release is queued, closes the client if Close ran meanwhile and
-// this was the last holder.
-func (gate *RouteLookupGate) hold() func() {
-	gate.holdersMu.Lock()
-	gate.holders++
-	gate.holdersMu.Unlock()
-	return func() {
-		gate.holdersMu.Lock()
-		gate.holders--
-		last := gate.closing && gate.holders == 0
-		gate.holdersMu.Unlock()
-		if last {
-			go func() { _ = gate.closeLeases() }()
-		}
-	}
 }
 
 // routeLookupLocalSemaphores holds one per-process semaphore per pool and
@@ -440,14 +403,12 @@ func (gate *RouteLookupGate) Acquire(ctx context.Context) (RouteLookupTicket, er
 				return RouteLookupTicket{}, gate.refusal(ctx, RouteLookupBackendRedis, started)
 			}
 			var once sync.Once
-			unhold := gate.hold()
 			release := func() {
 				once.Do(func() {
 					// The Redis release runs off the response path; the
 					// local slot frees at once. Until the delete lands the
 					// next local waiter just polls a slot still held.
 					gate.releaseLeaseAsync(ctx, token)
-					unhold()
 					localRelease()
 				})
 			}

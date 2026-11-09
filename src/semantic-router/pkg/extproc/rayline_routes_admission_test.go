@@ -19,6 +19,7 @@ package extproc
 import (
 	"context"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -233,8 +234,18 @@ func TestRaylineRoutesDecideHoldsTheSlotUntilTheBackendAnswers(t *testing.T) {
 	}
 	lookup, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
 	defer cancel()
-	if _, err := raylineRoutesDecide(lookup, decide, routerruntime.RouteDecisionRequest{}, ticket, true); err != context.DeadlineExceeded {
+	var background sync.WaitGroup
+	if _, err := raylineRoutesDecide(lookup, &background, decide, routerruntime.RouteDecisionRequest{}, ticket, true); err != context.DeadlineExceeded {
 		t.Fatalf("decide error = %v, want the lookup's deadline", err)
+	}
+	// A reload's Router.Close waits on background: it must not see the
+	// detached run as finished while the backend is still encoding.
+	drained := make(chan struct{})
+	go func() { background.Wait(); close(drained) }()
+	select {
+	case <-drained:
+		t.Fatal("the router's background work drained while the decision still ran")
+	case <-time.After(20 * time.Millisecond):
 	}
 	if _, err := gate.Acquire(context.Background()); err == nil {
 		t.Fatal("the next lookup was admitted while the backend was still encoding")
@@ -243,6 +254,7 @@ func TestRaylineRoutesDecideHoldsTheSlotUntilTheBackendAnswers(t *testing.T) {
 	if <-backendSawCancel {
 		t.Fatal("the detached decision saw the caller's deadline")
 	}
+	<-drained
 	deadline := time.Now().Add(time.Second)
 	for {
 		next, err := gate.Acquire(context.Background())
@@ -273,7 +285,7 @@ func TestRaylineRoutesDecideDoesNotDetachATrackedLookup(t *testing.T) {
 		}
 		return routerruntime.RouteDecision{}, nil
 	}
-	if _, err := raylineRoutesDecide(lookup, decide, routerruntime.RouteDecisionRequest{}, ticket, false); err != nil {
+	if _, err := raylineRoutesDecide(lookup, &sync.WaitGroup{}, decide, routerruntime.RouteDecisionRequest{}, ticket, false); err != nil {
 		t.Fatalf("decide: %v", err)
 	}
 	cancel()
@@ -300,7 +312,7 @@ func TestRaylineRoutesDecideSkipsACancelledLookup(t *testing.T) {
 		called = true
 		return routerruntime.RouteDecision{}, nil
 	}
-	if _, err := raylineRoutesDecide(lookup, decide, routerruntime.RouteDecisionRequest{}, ticket, true); err != context.Canceled {
+	if _, err := raylineRoutesDecide(lookup, &sync.WaitGroup{}, decide, routerruntime.RouteDecisionRequest{}, ticket, true); err != context.Canceled {
 		t.Fatalf("decide error = %v, want cancelled", err)
 	}
 	if called {

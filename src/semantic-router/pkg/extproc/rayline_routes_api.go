@@ -24,6 +24,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
@@ -446,6 +447,7 @@ func (r *OpenAIRouter) handleRaylineRoutesAPI(
 	started := time.Now()
 	decision, err := raylineRoutesDecide(
 		lookupContext,
+		&r.background,
 		runtime.RouteDecision,
 		raylineRoutesConsultWithControls(body, routeID, episode, ephemeral, wireFormat, controls, ctx.Headers, recipe.Name),
 		ticket,
@@ -507,9 +509,12 @@ func (r *OpenAIRouter) raylineRoutesContext(ctx *RequestContext) context.Context
 // backend does not stop encoding when the caller stops waiting: freeing the
 // slot at the 504 would admit the next lookup onto a backend still busy with
 // this one. The caller still waits only inside its own deadline; the late
-// answer is discarded, and the slot is freed when it arrives.
+// answer is discarded, and the slot is freed when it arrives. The detached
+// run is counted in background, so the router that owns the backend's
+// clients is not closed under it by a reload.
 func raylineRoutesDecide(
 	lookupContext context.Context,
+	background *sync.WaitGroup,
 	decide func(context.Context, routerruntime.RouteDecisionRequest) (routerruntime.RouteDecision, error),
 	request routerruntime.RouteDecisionRequest,
 	ticket raylinearc.RouteLookupTicket,
@@ -530,7 +535,9 @@ func raylineRoutesDecide(
 		err      error
 	}
 	answered := make(chan outcome, 1)
+	background.Add(1)
 	go func() {
+		defer background.Done()
 		// Released from in here, not by the handler returning: the slot is
 		// the backend's, and the backend is busy until this call returns.
 		defer ticket.Release()

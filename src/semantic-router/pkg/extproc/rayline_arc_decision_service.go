@@ -135,13 +135,19 @@ func (service *raylineARCDecisionService) RouteDecision(
 		// twice deadline_ms and still return 200 -- breaking the end-to-end
 		// bound this endpoint documents, to do housekeeping the caller is not
 		// waiting for.
+		// Counted in the router's background work, so a reload does not
+		// close the encoder pool before the session it retained is closed.
+		service.router.background.Add(1)
 		defer func() {
-			go service.closeEphemeralEncoderSession(
-				context.WithoutCancel(ctx),
-				algorithm,
-				selectionContext,
-				requestContext,
-			)
+			go func() {
+				defer service.router.background.Done()
+				service.closeEphemeralEncoderSession(
+					context.WithoutCancel(ctx),
+					algorithm,
+					selectionContext,
+					requestContext,
+				)
+			}()
 		}()
 	}
 

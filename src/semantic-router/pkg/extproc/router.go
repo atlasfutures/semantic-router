@@ -43,6 +43,12 @@ type OpenAIRouter struct {
 	Cache                 cache.CacheBackend
 	ResponseCache         *cache.ResponseCacheService
 	responseCacheMu       sync.Mutex
+	// background is work that outlives the request that started it but
+	// uses this router's resources: a /v1/routes decision detached from a
+	// caller that stopped waiting, and its encoder session cleanup. Close
+	// waits for it before releasing those resources; each such task is
+	// bounded (raylinearc.RouteLookupDetachBound).
+	background            sync.WaitGroup
 	ContextCompression    *contextcompression.Service
 	CompressionRecovery   contextcompression.RecoveryStore
 	CompressionEmbedding  embedding.Provider
@@ -111,6 +117,7 @@ func (r *OpenAIRouter) Close() error {
 	if r == nil {
 		return nil
 	}
+	r.background.Wait()
 	return r.resources.close()
 }
 
