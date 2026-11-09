@@ -91,3 +91,27 @@ upstream rules above and nothing here.
   `make test-{category,pii,jailbreak}-classifier`, `make e2e-test` (kind).
   Lint: `make go-lint`, `make check-go-mod-tidy`, `pre-commit run --all-files`,
   `markdownlint -c tools/linter/markdown/markdownlint.yaml "**/*.md"`.
+
+## OpenRouter attribution (required)
+
+Every request this repo sends to OpenRouter (directly, through a proxy, via
+litellm, or from a sandbox/verifier/judge) must identify as **Rayline**:
+
+| Header | Value |
+|---|---|
+| `HTTP-Referer` | `https://rayline.ai` |
+| `X-OpenRouter-Title` | `Rayline` |
+| `X-Title` | `Rayline` |
+| `X-OpenRouter-Categories` | `cli-agent,cloud-agent` |
+
+- Take these from the repo's single shared constant/helper; never hard-code
+  another app name or URL ("OpenRouter Bench Harness", "Workshop", litellm
+  defaults).
+- Any public link or app URL for this product is `https://rayline.ai`.
+- New OpenRouter clients must use the helper; tests should fail on a client
+  without it.
+- Proxies must set these headers on the upstream request (not rely on, or
+  strip, caller headers).
+- The Rayline ARC cells reach OpenRouter through their Envoy provider hop,
+  which sets these four headers on every OpenRouter route. Code here that
+  calls OpenRouter by any other path must set them itself.
