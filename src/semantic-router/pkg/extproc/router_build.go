@@ -357,6 +357,7 @@ func (components *routerComponents) buildRouter() *OpenAIRouter {
 		raylineARCSessionClose:        components.raylineARC.sessionClose,
 		resources:                     components.resources,
 	}
+	router.raylineRoutesAdmission = buildRaylineRoutesAdmission(router)
 	if components.classificationSvc != nil {
 		components.classificationSvc.SetEvalModelSelector(router)
 	}

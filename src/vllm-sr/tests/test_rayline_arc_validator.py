@@ -11,6 +11,7 @@ from cli.algorithms import AlgorithmConfig, ModelRef
 from cli.rayline_arc_config import (
     _CHECKPOINT_LABEL,
     _MAX_CONFIG_STRING_BYTES,
+    _MAX_ROUTES_ADMISSION_INFLIGHT,
     RaylineARCAlgorithmConfig,
     RaylineARCDecisionsV2Config,
     RaylineARCEncoderFailoverConfig,
@@ -341,6 +342,32 @@ def test_routes_api_checkpoint_label_rejects_a_trailing_newline():
     for rejected in ("arc\n", "arc\r\n", "arc\n\n"):
         with pytest.raises(ValidationError):
             RaylineARCRoutesAPIConfig(checkpoint_label=rejected)
+
+
+def test_routes_api_admission_matches_the_go_loader():
+    assert _MAX_ROUTES_ADMISSION_INFLIGHT == _go_constant(
+        "maxRaylineARCRoutesAdmissionInflight"
+    )
+    assert _go_constant("DefaultRaylineARCRoutesDeadlineMS") == 1500
+    RaylineARCRoutesAPIConfig(
+        enabled=True, deadline_ms=30_000, admission={"max_inflight": 1}
+    )
+    RaylineARCRoutesAPIConfig(
+        enabled=True,
+        deadline_ms=30_000,
+        admission={"max_inflight": 1, "queue_wait_ms": 2_000},
+    )
+    for rejected in (
+        {"enabled": True, "admission": {"max_inflight": -1}},
+        {"enabled": True, "admission": {"max_inflight": _MAX_ROUTES_ADMISSION_INFLIGHT + 1}},
+        {"enabled": True, "admission": {"queue_wait_ms": 500}},
+        {"enabled": False, "admission": {"max_inflight": 1}},
+        # The wait is spent inside the deadline: 2000 ms does not fit 1500.
+        {"enabled": True, "admission": {"max_inflight": 1, "queue_wait_ms": 2_000}},
+        {"enabled": True, "admission": {"max_inflight": 1, "slots": 2}},
+    ):
+        with pytest.raises(ValidationError):
+            RaylineARCRoutesAPIConfig(**rejected)
 
 
 def test_routes_api_refuses_unknown_keys():

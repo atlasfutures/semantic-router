@@ -46,6 +46,14 @@ const (
 	// than this has stopped being a synchronous question.
 	minRaylineARCRoutesDeadlineMS = 100
 	maxRaylineARCRoutesDeadlineMS = 30000
+	// DefaultRaylineARCRoutesQueueWaitMS is how long a lookup waits for an
+	// admission slot when routes_api.admission sets no queue_wait_ms, capped
+	// at half the lookup deadline so a lookup admitted at the end of its wait
+	// still has time to decide.
+	DefaultRaylineARCRoutesQueueWaitMS = 2000
+	// More concurrent lookups than this is no longer a cap on the encoders a
+	// lookup can occupy; it is a misconfiguration.
+	maxRaylineARCRoutesAdmissionInflight = 64
 )
 
 var (
@@ -280,6 +288,50 @@ type RaylineARCRoutesAPIConfig struct {
 	// caller's price world. Policy-service cells only. Absent, a lookup
 	// whose body carries routing is refused as unavailable.
 	Routing *RaylineARCRoutesRoutingConfig `yaml:"routing,omitempty"`
+	// Admission caps how many lookups may occupy the decision backend at
+	// once, across every router instance of the cell. Absent or max_inflight
+	// 0 disables it: every lookup goes straight to the selector, as before.
+	// Dispatched turns never pass through it.
+	Admission RaylineARCRoutesAdmissionConfig `yaml:"admission,omitempty"`
+}
+
+// RaylineARCRoutesAdmissionConfig bounds concurrent route lookups.
+//
+// A lookup drives the same encoders that dispatched turns do, and a large one
+// (hundreds of thousands of tokens) holds an encoder for tens of seconds. The
+// policy service runs one encode at a time per container and does not cancel
+// an encode whose lookup has given up, so unbounded lookups queue live turns
+// behind them. Admission keeps at most max_inflight lookups in flight on the
+// backend this decision calls; the rest wait up to queue_wait_ms for a slot
+// and are then answered 429 with Retry-After and error.code
+// "lookup_capacity".
+//
+// The cap is cell-wide when the episode backend is redis: each slot is a
+// Redis lease (SET NX PX, released by compare-and-delete) keyed by the
+// decision backend's URLs, so every router instance -- and every recipe --
+// that calls the same backend shares the same slots. Recipes that share a
+// backend should configure the same max_inflight. With the memory backend
+// there is no shared store and the cap is per router process.
+type RaylineARCRoutesAdmissionConfig struct {
+	// MaxInflight is the number of lookups admitted at once. Zero disables
+	// admission.
+	MaxInflight int `yaml:"max_inflight,omitempty"`
+	// QueueWaitMS is how long a lookup waits for a slot before it is
+	// answered 429. It is spent inside the lookup's deadline_ms, so it must
+	// be shorter than that deadline. Zero selects the default: 2000 ms, or
+	// half the deadline when that is shorter.
+	//
+	// The wait is deliberately short. A slot can be held for the whole lookup
+	// deadline (a large encode), and a long wait only parks the caller for a
+	// slot it may not get; a short wait absorbs the common case -- a burst
+	// of small lookups that each clear in well under a second -- and turns
+	// the rest into a prompt 429 the caller can schedule around.
+	QueueWaitMS int `yaml:"queue_wait_ms,omitempty"`
+}
+
+// Enabled reports whether lookups are admitted through a gate.
+func (cfg RaylineARCRoutesAdmissionConfig) Enabled() bool {
+	return cfg.MaxInflight > 0
 }
 
 // RaylineARCRoutesRoutingConfig turns on the Decisions routing controls.
@@ -306,6 +358,19 @@ func (cfg RaylineARCRoutesAPIConfig) EffectiveDeadline() time.Duration {
 		return DefaultRaylineARCRoutesDeadlineMS * time.Millisecond
 	}
 	return time.Duration(cfg.DeadlineMS) * time.Millisecond
+}
+
+// EffectiveAdmissionQueueWait is how long a lookup waits for an admission
+// slot, with the default substituted for an unset value.
+func (cfg RaylineARCRoutesAPIConfig) EffectiveAdmissionQueueWait() time.Duration {
+	if cfg.Admission.QueueWaitMS > 0 {
+		return time.Duration(cfg.Admission.QueueWaitMS) * time.Millisecond
+	}
+	wait := DefaultRaylineARCRoutesQueueWaitMS * time.Millisecond
+	if half := cfg.EffectiveDeadline() / 2; half < wait {
+		return half
+	}
+	return wait
 }
 
 // RaylineARCEncoderConfig pins the dedicated vLLM pooling service contract.
@@ -510,6 +575,9 @@ func validateRaylineARCRoutesAPIConfig(cfg RaylineARCRoutesAPIConfig) error {
 			minRaylineARCRoutesDeadlineMS,
 		)
 	}
+	if err := validateRaylineARCRoutesAdmissionConfig(cfg); err != nil {
+		return fmt.Errorf("admission: %w", err)
+	}
 	if len(cfg.CheckpointLabel) > maxRaylineARCConfigStringLength {
 		return fmt.Errorf(
 			"checkpoint_label must be at most %d bytes",
@@ -521,6 +589,33 @@ func validateRaylineARCRoutesAPIConfig(cfg RaylineARCRoutesAPIConfig) error {
 		return fmt.Errorf(
 			"checkpoint_label must be lowercase alphanumerics, dashes or underscores",
 		)
+	}
+	return nil
+}
+
+// validateRaylineARCRoutesAdmissionConfig bounds the lookup admission gate.
+// The queue wait is spent inside the lookup deadline, so a wait as long as
+// the deadline would turn every queued lookup into a 504 instead of a 429.
+func validateRaylineARCRoutesAdmissionConfig(cfg RaylineARCRoutesAPIConfig) error {
+	admission := cfg.Admission
+	if admission.MaxInflight < 0 || admission.MaxInflight > maxRaylineARCRoutesAdmissionInflight {
+		return fmt.Errorf("max_inflight must be between 0 and %d", maxRaylineARCRoutesAdmissionInflight)
+	}
+	if admission.QueueWaitMS < 0 || admission.QueueWaitMS > maxRaylineARCRoutesDeadlineMS {
+		return fmt.Errorf("queue_wait_ms must be between 0 and %d", maxRaylineARCRoutesDeadlineMS)
+	}
+	if !admission.Enabled() {
+		if admission.QueueWaitMS != 0 {
+			return fmt.Errorf("queue_wait_ms needs max_inflight")
+		}
+		return nil
+	}
+	if !cfg.Enabled {
+		return fmt.Errorf("admission needs the endpoint enabled")
+	}
+	if deadline := cfg.EffectiveDeadline(); admission.QueueWaitMS > 0 &&
+		time.Duration(admission.QueueWaitMS)*time.Millisecond >= deadline {
+		return fmt.Errorf("queue_wait_ms must be shorter than the lookup deadline (%d ms)", deadline.Milliseconds())
 	}
 	return nil
 }

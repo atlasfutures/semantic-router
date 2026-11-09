@@ -420,6 +420,14 @@ func (r *OpenAIRouter) handleRaylineRoutesAPI(
 	defer cancel()
 
 	routeID := raylineRoutesRouteID(ctx)
+	// Admission comes before any encoder or episode work, and its wait is
+	// spent inside the lookup deadline: a lookup that waited still answers
+	// within deadline_ms. The slot is held until this handler answers.
+	ticket, refused := r.admitRaylineRoutesLookup(ctx, lookupContext, recipe, routeID)
+	if refused != nil {
+		return refused
+	}
+	defer ticket.Release()
 	episode := raylineRoutesEpisodeIdentity(ctx)
 	// Ephemeral unless this cell keeps episodes and the caller named a
 	// conversation. Both halves are required: without the identity there is
@@ -609,24 +617,20 @@ func (r *OpenAIRouter) raylineRoutesFailure(
 	// honest answer is that it did not answer in the budget they are entitled
 	// to, and the two have different fixes.
 	if expired {
-		return r.createRaylineRoutesError(
-			ctx,
-			504,
-			"timeout_error",
-			"route lookup exceeded its deadline",
-		)
+		return r.createRaylineRoutesCodedError(ctx, &routesContractError{
+			status: 504, errType: "timeout_error", code: "deadline_exceeded",
+			message: "route lookup exceeded its deadline",
+		})
 	}
 	// Contention is not an outage. A 503 sends a caller into fallback and
 	// reads as this router being down; a contended lookup is a healthy router
 	// that is briefly busy with this very session, so it says so and says
 	// when to come back.
 	if contended {
-		return raylineRoutesRetryAfter(r.createRaylineRoutesError(
-			ctx,
-			429,
-			"rate_limit_error",
-			"route lookup contended: the session or the encoder is briefly at capacity",
-		), raylineRoutesContendedRetrySeconds)
+		return raylineRoutesRetryAfter(r.createRaylineRoutesCodedError(ctx, &routesContractError{
+			status: 429, errType: "rate_limit_error", code: "contended",
+			message: "route lookup contended: the session or the encoder is briefly at capacity",
+		}), raylineRoutesContendedRetrySeconds)
 	}
 	// Fail closed. The selector owns the choice and has no fallback arm, so
 	// answering with a default here would replace a policy decision with this

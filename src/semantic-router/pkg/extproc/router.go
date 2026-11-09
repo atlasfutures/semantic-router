@@ -78,6 +78,10 @@ type OpenAIRouter struct {
 	// one per recipe whose ARC decision uses a policy service.
 	RaylineARCRecipeEpisodeStores map[config.RecipeName]raylinearc.EpisodeStore
 	raylineARCSessionClose        raylineARCSessionCloseFunc
+	// raylineRoutesAdmission is each recipe's route lookup admission gate,
+	// for the recipes that configure routes_api.admission. Only the lookup
+	// handler reads it; dispatched turns never pass through a gate.
+	raylineRoutesAdmission map[config.RecipeName]*raylinearc.RouteLookupGate
 	// raylineARCInflight joins an identical resend to the decision its first
 	// copy is still making, instead of contending for the episode lease.
 	raylineARCInflight raylineARCInflightRegistry

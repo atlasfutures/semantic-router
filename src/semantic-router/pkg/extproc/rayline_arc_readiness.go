@@ -498,6 +498,12 @@ type unreadyRaylineARCEpisodeStore struct {
 	raylinearc.EpisodeStore
 }
 
+// UnwrapEpisodeStore lets the lookup admission gate reach the Redis client
+// beneath the wrapper.
+func (store unreadyRaylineARCEpisodeStore) UnwrapEpisodeStore() raylinearc.EpisodeStore {
+	return store.EpisodeStore
+}
+
 // Snapshot and CommitIfUnchanged forward to the wrapped store, which serves
 // relaxed episodes whenever its cell can be configured relaxed.
 func (store unreadyRaylineARCEpisodeStore) Snapshot(
