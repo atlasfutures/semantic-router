@@ -100,6 +100,10 @@ type policyServiceScorer struct {
 	// fallback is ADR 0120's fallback: excluded models leave the offer, and
 	// an excluded held model forces a decision.
 	fallback bool
+	// fallbackActionID is the package manifest's fallback action, when it
+	// names one this cell binds; a lookup over routes_api.max_encode_tokens
+	// with nothing held is answered with it.
+	fallbackActionID string
 	// routes names each worker's route in the cell exclusion table.
 	routes []string
 	// privateRoutes are the routes a private turn takes: an arm's private
@@ -270,6 +274,11 @@ func newPolicyServiceScorer(
 		scorer.actionOrder = append(scorer.actionOrder, binding.ActionID)
 	}
 	scorer.armOffered = policyArmOffered(policy.PackageStageOneOfferedModels(), scorer.bindings, len(scorer.workers))
+	if fallback := policy.PackageFallbackActionID(); fallback != "" {
+		if _, bound := scorer.bindings[fallback]; bound {
+			scorer.fallbackActionID = fallback
+		}
+	}
 	return scorer
 }
 
@@ -735,6 +744,16 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		if len(available) == 0 {
 			return nil, arcSelectionFailure(arcFailurePolicyUndecidable)
 		}
+	}
+	// A lookup over routes_api.max_encode_tokens is answered without the
+	// service, before anything is staged or a session is bound.
+	if bypass := selector.policyEncodeSizeBypass(
+		armed, selCtx, arcContext, state, scorer, turn, messages, sideCall, atBoundary, retained, available, workerIDs,
+	); bypass != nil {
+		bypass.RaylineARC.SettlementPrices = armed.prices
+		bypass.RaylineARC.EndpointFeed = arcContext.EndpointFeed
+		bypass.RaylineARC.MaskedArms = policyMaskedArms(scorer, workerIDs, excluded, fallback, turn, offeredRoutes)
+		return bypass, nil
 	}
 	request := raylinearc.PolicyDecisionRequest{
 		SchemaVersion: raylinearc.PolicyDecisionRequestSchema,

@@ -64,53 +64,22 @@ func (selector *raylineARCSelector) policyCapacityHold(
 	workerIDs []string,
 	latency time.Duration,
 ) *selection.SelectionResult {
-	// The ledger is the current context's, as PolicyTurn left it: a request
-	// that starts a compaction or prefix-break epoch has an empty one, so
-	// nothing from the previous context is held.
-	if state.PreviousArm == nil || turn == nil {
-		return nil
-	}
-	var held *raylinearc.PolicyLedgerEntry
-	for index := len(turn.Ledger) - 1; index >= 0; index-- {
-		entry := turn.Ledger[index]
-		if binding, ok := scorer.bindings[entry.ActionID]; ok && binding.arm == *state.PreviousArm {
-			held = &entry
-			break
-		}
-	}
-	if held == nil || !slices.Contains(available, held.ActionID) {
-		return nil
-	}
-	binding := scorer.bindings[held.ActionID]
-	count := len(workerIDs)
-	excludedArms := make([]bool, count)
-	for arm := range excludedArms {
-		excludedArms[arm] = arm != binding.arm
-	}
-	decision := raylinearc.Decision{
-		SelectedArm:                 binding.arm,
-		SelectedWorker:              workerIDs[binding.arm],
-		RawScores:                   make([]float32, count),
-		AdjustedScores:              make([]float32, count),
-		SwitchCostUSD:               make([]float64, count),
-		CacheMissTokens:             make([]int, count),
-		ColdSwitchUpgradeExemptions: make([]bool, count),
-		Stayed:                      true,
-		ExcludedArms:                excludedArms,
-	}
-	if !validARCDecision(decision, workerIDs) {
+	held := policyHeldLedgerAction(state, turn, scorer, available)
+	if held == nil {
 		return nil
 	}
 	tokens, tokensKnown := refusal.Detail["token_count"].(int)
 	maxTokens, _ := refusal.Detail["max_tokens"].(int)
 	encoded := &raylinearc.EncoderResult{SerializedTokens: tokens, FullHistoryTokens: tokens}
-	result := selector.selectionResult(armed, selCtx, arcContext, state, encoded, decision, 0)
-	// The policy scored nothing: the trace and selection log carry no scores,
-	// rather than all-zero ones a consumer would read as a real result.
-	result.RaylineARC.RawScores, result.RaylineARC.AdjustedScores = nil, nil
+	result := selector.policyUndecidedResult(
+		armed, selCtx, arcContext, state, scorer, encoded, held.ActionID, held.ArmID, true,
+		turn, messages, sideCall, atBoundary, retained, workerIDs,
+	)
+	if result == nil {
+		return nil
+	}
 	result.RaylineARC.PolicyLatency = latency
 	result.RaylineARC.PolicyHTTP = refusal.HTTPTiming
-	result.RaylineARC.EncoderLatencyUnknown = true
 	// A runtime that refuses before counting reports no token count; the
 	// counts are unknown, not zero.
 	result.RaylineARC.TokenCountsUnknown = !tokensKnown
@@ -118,19 +87,6 @@ func (selector *raylineARCSelector) policyCapacityHold(
 	result.Reasoning = "policy-service ARC decision (encoder_capacity_hold)"
 	if media {
 		result.Reasoning = "policy-service ARC decision (media_hold)"
-	}
-	result.RaylineARC.PolicyActionID = held.ActionID
-	result.RaylineARC.PolicyArmID = held.ArmID
-	result.RaylineARC.ThinkingLevel = binding.level
-	result.RaylineARC.PolicyActionModel = binding.model
-	scorer.applyDispatchArm(result, selCtx, binding, arcContext.PrivateTurn)
-	result.RaylineARC.PolicySideCall = sideCall
-	if !sideCall {
-		result.RaylineARC.PolicyTurnState = turn.Clone()
-		result.RaylineARC.PolicyNextState = turn.Next(messages, held.ActionID, held.ArmID)
-	}
-	if atBoundary && !retained {
-		result.RaylineARC.PolicyBoundary = raylinearc.NewPolicyBoundaryDecision(binding.arm, state.TurnIndex, turn, messages)
 	}
 	if media {
 		logging.ComponentEvent("extproc", "rayline_arc_media_hold", map[string]interface{}{
@@ -143,6 +99,104 @@ func (selector *raylineARCSelector) policyCapacityHold(
 		"request_id": arcContext.RequestID, "episode_id_hash": arcContext.EpisodeIDHash, "rule": "hold", "action_id": held.ActionID,
 		"token_count": knownCount(tokens, tokensKnown), "max_tokens": maxTokens, "side_call": sideCall,
 	})
+	return result
+}
+
+// policyHeldLedgerAction is the episode's held action: the latest ledger
+// action on the episode's held arm, when that action is still offered. The
+// ledger is the current context's, as PolicyTurn left it: a request that
+// starts a compaction or prefix-break epoch has an empty one, so nothing from
+// the previous context is held. Nil when nothing is.
+func policyHeldLedgerAction(
+	state *raylinearc.EpisodeState,
+	turn *raylinearc.PolicyEpisodeState,
+	scorer *policyServiceScorer,
+	available []string,
+) *raylinearc.PolicyLedgerEntry {
+	if state.PreviousArm == nil || turn == nil {
+		return nil
+	}
+	for index := len(turn.Ledger) - 1; index >= 0; index-- {
+		entry := turn.Ledger[index]
+		if binding, ok := scorer.bindings[entry.ActionID]; ok && binding.arm == *state.PreviousArm {
+			if !slices.Contains(available, entry.ActionID) {
+				return nil
+			}
+			return &entry
+		}
+	}
+	return nil
+}
+
+// policyUndecidedResult is a turn served on actionID without a policy
+// decision (a hold, or a lookup over its encode limit): the policy scored
+// nothing, so the trace carries no scores, only the served arm. With ledger
+// the turn commits like any held turn, recording actionID (attributed to
+// armID) for its reply; without it the episode's policy state is left as it
+// was. Nil when the action's arm is not a valid decision over workerIDs.
+func (selector *raylineARCSelector) policyUndecidedResult(
+	armed *raylineARCArmedComponents,
+	selCtx *selection.SelectionContext,
+	arcContext *selection.RaylineARCSelectionContext,
+	state *raylinearc.EpisodeState,
+	scorer *policyServiceScorer,
+	encoded *raylinearc.EncoderResult,
+	actionID string,
+	armID string,
+	ledger bool,
+	turn *raylinearc.PolicyEpisodeState,
+	messages []json.RawMessage,
+	sideCall bool,
+	atBoundary bool,
+	retained bool,
+	workerIDs []string,
+) *selection.SelectionResult {
+	binding, ok := scorer.bindings[actionID]
+	if !ok {
+		return nil
+	}
+	count := len(workerIDs)
+	excludedArms := make([]bool, count)
+	for arm := range excludedArms {
+		excludedArms[arm] = arm != binding.arm
+	}
+	decision := raylinearc.Decision{
+		SelectedArm:                 binding.arm,
+		SelectedWorker:              "",
+		RawScores:                   make([]float32, count),
+		AdjustedScores:              make([]float32, count),
+		SwitchCostUSD:               make([]float64, count),
+		CacheMissTokens:             make([]int, count),
+		ColdSwitchUpgradeExemptions: make([]bool, count),
+		Stayed:                      state.PreviousArm != nil && *state.PreviousArm == binding.arm,
+		ExcludedArms:                excludedArms,
+	}
+	if binding.arm >= 0 && binding.arm < count {
+		decision.SelectedWorker = workerIDs[binding.arm]
+	}
+	if !validARCDecision(decision, workerIDs) {
+		return nil
+	}
+	result := selector.selectionResult(armed, selCtx, arcContext, state, encoded, decision, 0)
+	// The policy scored nothing: the trace and selection log carry no scores,
+	// rather than all-zero ones a consumer would read as a real result.
+	result.RaylineARC.RawScores, result.RaylineARC.AdjustedScores = nil, nil
+	result.RaylineARC.EncoderLatencyUnknown = true
+	result.RaylineARC.PolicyActionID = actionID
+	result.RaylineARC.PolicyArmID = armID
+	result.RaylineARC.ThinkingLevel = binding.level
+	result.RaylineARC.PolicyActionModel = binding.model
+	scorer.applyDispatchArm(result, selCtx, binding, arcContext.PrivateTurn)
+	result.RaylineARC.PolicySideCall = sideCall
+	if !sideCall {
+		result.RaylineARC.PolicyTurnState = turn.Clone()
+		if ledger {
+			result.RaylineARC.PolicyNextState = turn.Next(messages, actionID, armID)
+		}
+	}
+	if atBoundary && !retained {
+		result.RaylineARC.PolicyBoundary = raylinearc.NewPolicyBoundaryDecision(binding.arm, state.TurnIndex, turn, messages)
+	}
 	return result
 }
 

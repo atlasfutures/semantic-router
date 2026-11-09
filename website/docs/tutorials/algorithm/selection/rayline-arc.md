@@ -675,6 +675,49 @@ busy slot. Admission waits and sheds show up in the latency such a test
 measures: read `wait_ms` on `rayline_routes_admission_wait` before reading a
 slow lookup as a slow encode.
 
+### Lookup encode limit
+
+A full encode holds a policy container for the whole transcript, at about
+35k tokens a second, and live turns on that container wait behind it. On a
+policy-service cell, `routes_api.max_encode_tokens` bounds the context a
+lookup may send to the encoder:
+
+```yaml
+routes_api:
+  enabled: true
+  max_encode_tokens: 0   # 0 or absent: no bound
+```
+
+The bound is on the router's own estimate, the conservative byte count that
+`max_context_tokens` and the per-arm masks read, not on the encoder's
+tokenizer. A lookup over it is not encoded. It is answered with the
+conversation's held action, as a context the encoder refuses is: the latest
+action on the episode's held arm, when that action is still offered. A
+tracked lookup commits that answer like any held turn, so the next lookup on
+the conversation extends the same prefix and attributes the reply to the
+held action. With nothing held (a stateless lookup, a conversation's first
+lookup, or the first after a compaction) it is answered with the policy
+package's fallback action (`decision.fallback_action_id`) when the cell binds
+it; that answer leaves the episode's policy state as it was. The answer
+carries the `encode_size_bypass` warning and reports any tools as not
+encoded.
+
+A lookup is still encoded, whatever its size, when it carries routing
+controls (its result points need the policy's scores) or when there is
+neither a held action nor a bound fallback to answer with. Turns the router
+dispatches are never bounded by it, and an artifact cell refuses the key: it
+bounds its context with `max_context_tokens`.
+
+`llm_rayline_arc_routes_encode_bypass_total{outcome}` counts lookups over the
+bound by outcome (`held`, `fallback`, `encoded`), and
+`rayline_routes_encode_bypass` logs each with `context_tokens` and
+`max_encode_tokens`.
+
+The estimate covers the whole context, so a conversation over the bound is
+answered this way on every lookup until it compacts below it: the policy does
+not score it again until then. Choose the bound from the encode time a lookup
+may hold a container for, not from the encoder's capacity.
+
 ### Episodes
 
 Three optional request headers shape continuity:
@@ -728,6 +771,9 @@ routing:
             # Optional: cap concurrent lookups (see "Lookup admission").
             admission:
               max_inflight: 0
+            # Optional, policy-service cells: skip the encode for long
+            # lookups (see "Lookup encode limit").
+            max_encode_tokens: 0
 ```
 
 Off by default, and deliberately not implied by configuring the algorithm. A

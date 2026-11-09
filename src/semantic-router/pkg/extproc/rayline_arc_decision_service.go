@@ -112,6 +112,9 @@ func (service *raylineARCDecisionService) RouteDecision(
 	)
 	selectionContext.RaylineARC.RouteControls = request.Routing
 	selectionContext.RaylineARC.RoutesLookup = true
+	if request.Surface == routerruntime.RouteDecisionSurfaceRoutes {
+		selectionContext.RaylineARC.RoutesEncodeLimit = algorithm.RaylineARC.RoutesAPI.MaxEncodeTokens
+	}
 	if failure := selectionContext.RaylineARC.PreparationFailure; failure != "" {
 		// Counted here because this path returns before Select(), whose
 		// failure constructor is where the routed path counts the same
@@ -196,8 +199,12 @@ func (service *raylineARCDecisionService) RouteDecision(
 	decisionFacts.PolicyActionID = trace.PolicyActionID
 	decisionFacts.Checkpoint = trace.ArtifactRevision
 	decisionFacts.ToolsEncoded = routeToolsEncoded(trace.PolicyToolDefinitionsStatus)
+	if trace.OfferKind == raylineRoutesEncodeBypassOfferKind {
+		decisionFacts.Warnings = append(decisionFacts.Warnings, raylineRoutesEncodeBypassWarning)
+	}
 	if raylineARCHoldOfferKind(trace.OfferKind) {
-		// A held turn (capacity or media) encoded nothing.
+		// A held turn (capacity or media, or a lookup over its encode
+		// limit) encoded nothing.
 		notEncoded := false
 		decisionFacts.ToolsEncoded = &notEncoded
 	}

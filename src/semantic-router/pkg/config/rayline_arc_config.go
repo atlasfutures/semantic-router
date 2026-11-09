@@ -293,6 +293,17 @@ type RaylineARCRoutesAPIConfig struct {
 	// 0 disables it: every lookup goes straight to the selector, as before.
 	// Dispatched turns never pass through it.
 	Admission RaylineARCRoutesAdmissionConfig `yaml:"admission,omitempty"`
+	// MaxEncodeTokens bounds the context a lookup may send to the encoder,
+	// in the router's own token estimate (the conservative byte heuristic
+	// max_context_tokens reads). A full encode holds a policy container for
+	// the whole transcript, and live turns on that container wait behind
+	// it, so a lookup over the bound is not encoded: it is answered with the
+	// conversation's held model, as a context the encoder refuses is, or,
+	// with nothing held, the policy package's fallback action, and carries
+	// the encode_size_bypass warning. A lookup with routing controls, or
+	// with neither to serve, is encoded as before. Policy-service cells
+	// only. Zero, the default, bounds nothing.
+	MaxEncodeTokens int `yaml:"max_encode_tokens,omitempty"`
 }
 
 // RaylineARCRoutesAdmissionConfig bounds concurrent route lookups.
@@ -543,6 +554,9 @@ func validateRaylineARCAlgorithmConfig(cfg *RaylineARCAlgorithmConfig) error {
 	if cfg.RoutesAPI.Routing != nil {
 		return fmt.Errorf("routes_api: routing is served by a policy-service cell, whose service decides at each result point")
 	}
+	if cfg.RoutesAPI.MaxEncodeTokens != 0 {
+		return fmt.Errorf("routes_api: max_encode_tokens is served by a policy-service cell; an artifact cell bounds its context with max_context_tokens")
+	}
 	if err := validateRaylineARCThinkingLeverConfig(cfg.ThinkingLever, false); err != nil {
 		return fmt.Errorf("thinking_lever: %w", err)
 	}
@@ -606,6 +620,12 @@ func validateRaylineARCRoutesAPIConfig(cfg RaylineARCRoutesAPIConfig) error {
 	}
 	if err := validateRaylineARCRoutesAdmissionConfig(cfg); err != nil {
 		return fmt.Errorf("admission: %w", err)
+	}
+	if cfg.MaxEncodeTokens < 0 || cfg.MaxEncodeTokens > maxRaylineARCContextTokens {
+		return fmt.Errorf("max_encode_tokens must be between 0 and %d", maxRaylineARCContextTokens)
+	}
+	if cfg.MaxEncodeTokens != 0 && !cfg.Enabled {
+		return fmt.Errorf("max_encode_tokens needs the endpoint enabled")
 	}
 	if len(cfg.CheckpointLabel) > maxRaylineARCConfigStringLength {
 		return fmt.Errorf(

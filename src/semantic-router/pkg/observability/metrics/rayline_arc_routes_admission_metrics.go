@@ -66,3 +66,20 @@ var RaylineARCRoutesLookupSessions = promauto.NewGaugeFunc(
 func SetRaylineARCRoutesLookupSessionsSource(source func() int) {
 	raylineARCRoutesLookupSessionsSource.Store(&source)
 }
+
+// RaylineARCRoutesEncodeBypasses counts route lookups over
+// routes_api.max_encode_tokens, by outcome: held (answered with the
+// conversation's held model), fallback (with the package's fallback action)
+// and encoded (neither to serve, or routing controls: encoded as before).
+var RaylineARCRoutesEncodeBypasses = promauto.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "llm_rayline_arc_routes_encode_bypass_total",
+		Help: "Rayline ARC route lookups over the encode limit, by outcome.",
+	},
+	[]string{"outcome"},
+)
+
+// RecordRaylineARCRoutesEncodeBypass records one lookup over the encode limit.
+func RecordRaylineARCRoutesEncodeBypass(outcome string) {
+	RaylineARCRoutesEncodeBypasses.WithLabelValues(outcome).Inc()
+}
