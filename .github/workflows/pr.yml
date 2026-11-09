@@ -4,9 +4,11 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
     branches: [main]
-  # Long-lived integration branches take PRs that never match the filter above,
-  # so their checks can only be run on request. Dispatch classifies against the
-  # merge base with the default branch, as a PR to main would.
+  # Long-lived integration branches take PRs that never match the filter above.
+  # Rather than widen the filter and pay the matrix on every push to one, run it
+  # on request: `gh workflow run pr.yml --ref <branch>`. A dispatched run
+  # classifies against the open pull request's base, so it selects the same
+  # domains that pull request would.
   workflow_dispatch:
     inputs:
       full:
