@@ -106,12 +106,15 @@ litellm, or from a sandbox/verifier/judge) must identify as **Rayline**:
 
 - Take these from the repo's single shared constant/helper; never hard-code
   another app name or URL ("OpenRouter Bench Harness", "Workshop", litellm
-  defaults).
+  defaults). This repo has no such helper yet: add it with the first client
+  that sets the headers, and point every later client at it.
 - Any public link or app URL for this product is `https://rayline.ai`.
 - New OpenRouter clients must use the helper; tests should fail on a client
   without it.
 - Proxies must set these headers on the upstream request (not rely on, or
   strip, caller headers).
-- The Rayline ARC cells reach OpenRouter through their Envoy provider hop,
-  which sets these four headers on every OpenRouter route. Code here that
-  calls OpenRouter by any other path must set them itself.
+- The Rayline ARC cells' deployment sets these headers on the Envoy
+  provider hop's OpenRouter routes; nothing in this repo sets them. Requests
+  this process sends itself, not through that hop (the re-sends in
+  `pkg/extproc/flex_resend.go` and `pkg/extproc/stream_host_retry.go`, the
+  benchmark judges), do not carry them yet and must set them themselves.
