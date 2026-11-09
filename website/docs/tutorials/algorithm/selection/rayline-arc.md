@@ -564,6 +564,90 @@ encoder, answers 429 with `Retry-After`. That is a healthy router saying when
 to come back, not an unavailable one, and it is worth honouring: retrying
 immediately lands on the lease or the queue that produced the contention.
 
+Every "come back later" answer carries a machine-readable `error.code`, so a
+caller can tell them apart without parsing the message:
+
+| Status | `error.code` | Meaning | Retry |
+|---|---|---|---|
+| 429 | `lookup_capacity` | admission: the cell's lookup slots stayed busy for the whole queue wait | after `Retry-After` |
+| 429 | `contended` | the conversation's episode lease or an encoder slot was briefly busy | after `Retry-After` (1 s) |
+| 504 | `deadline_exceeded` | the lookup did not answer within `deadline_ms` | with backoff; a large body may never fit |
+
+### Lookup admission
+
+A lookup drives the same encoders that dispatched turns use, and a large one
+(hundreds of thousands of tokens) can hold an encoder for tens of seconds. The
+policy service runs one encode at a time per container and does not cancel an
+encode whose lookup has given up, so unbounded lookups queue live turns behind
+them. `routes_api.admission` caps how many lookups may be in flight at once:
+
+```yaml
+routes_api:
+  enabled: true
+  deadline_ms: 30000
+  admission:
+    max_inflight: 1      # 0 or absent: no admission (every lookup goes straight in)
+    queue_wait_ms: 2000  # 0: 2000 ms, or half deadline_ms when that is shorter
+```
+
+- **Scope.** With the `redis` episode backend the cap is cell-wide: each slot
+  is a Redis lease shared by every router instance, keyed by the decision
+  backend's URLs, so recipes that call one policy service share its slots
+  (give them the same `max_inflight`). With the `memory` backend there is no
+  shared store and the cap is per router process; the router says which at
+  startup (`rayline_routes_admission`, `scope: cell|process`).
+- **Waiting.** A lookup that finds every slot taken waits up to
+  `queue_wait_ms` for one, inside its own `deadline_ms` (the wait must be
+  shorter than the deadline). It holds the slot until the backend answers
+  (see below). If no slot
+  frees in time it is answered `429 lookup_capacity` with `Retry-After` set to
+  the queue wait rounded up to whole seconds.
+- **Why the wait is short.** A slot can be held for the whole lookup deadline
+  or longer, so a long wait mostly parks the caller for a slot it will not get. The
+  default absorbs the common case, a burst of small lookups that each clear
+  in well under a second, and turns the rest into a prompt 429.
+- **Dispatched turns are unaffected.** The gate is only on `/v1/routes`;
+  routed traffic never passes through it.
+- **Redis failure fails open** to the per-process cap: an outage of the
+  episode store admits lookups at `max_inflight` per instance rather than
+  refusing them all. A Redis call that does not answer within 250 ms (50 ms
+  when the queue wait is nearly spent) counts as a failure; the gate then
+  stops consulting Redis for a few seconds and logs
+  `rayline_routes_admission_fail_open` once per trip.
+- **A crashed holder** frees its slot when its lease expires, at the longer
+  of `deadline_ms` and 120 s, plus a few seconds.
+- **Changing `max_inflight` on a config reload.** The cell-wide Redis cap
+  never exceeds the larger of the old and new limits (slots are numbered).
+  The per-process cap, which binds only on the `memory` backend or while
+  failed open, is shared per backend and limit, so while the old router
+  generation drains it may briefly admit the old and the new limit side by
+  side. Recipes on one backend with different `max_inflight` are logged at
+  startup (`rayline_routes_admission_limit_conflict`).
+- **A lookup that times out keeps its slot until the encode finishes.** The
+  backend does not stop encoding when the caller stops waiting, so an
+  ephemeral lookup (every lookup when `episode_writes` is false) runs its
+  decision detached from the caller, bounded at 120 s. The caller still gets
+  its 504 at `deadline_ms`; the slot is released when the backend answers,
+  so the next lookup is not admitted onto a backend still busy with this one.
+  A lookup that joins an episode is not detached (an abandoned one would
+  still commit its turn) and frees its slot at its 504.
+
+`llm_rayline_arc_routes_admission_total{outcome, backend}` counts outcomes
+(`admitted`, `queued`, `shed`, `cancelled`, `fail_open`) and
+`llm_rayline_arc_routes_admission_wait_seconds{outcome}` the time spent
+waiting; serialized lookups show as `queued` with waits near the holder's
+encode time.
+
+A scripted client -- a latency test, a batch job -- should send lookups one
+at a time per cell where it can, honour `Retry-After` on any 429 (with jitter
+and a growing backoff on repeats), and send a stable conversation identity
+(`x-rayline-session` on this endpoint; `X-Conversation-Id` where a gateway in
+front keys conversations on it) so its lookups are attributable in the
+cell's logs. Retrying a `lookup_capacity` 429 at once only lands on the same
+busy slot. Admission waits and sheds show up in the latency such a test
+measures: read `wait_ms` on `rayline_routes_admission_wait` before reading a
+slow lookup as a slow encode.
+
 ### Episodes
 
 Three optional request headers shape continuity:
@@ -614,6 +698,9 @@ routing:
             deadline_ms: 1500
             checkpoint_label: arc-2026-09-12
             episode_writes: false
+            # Optional: cap concurrent lookups (see "Lookup admission").
+            admission:
+              max_inflight: 0
 ```
 
 Off by default, and deliberately not implied by configuring the algorithm. A
