@@ -598,7 +598,7 @@ func routesExecutionV2Controls(execution *routesExecutionV2) (*selection.Rayline
 	sort.Slice(controls.Attribution, func(i, j int) bool { return controls.Attribution[i].Message < controls.Attribution[j].Message })
 	refused := []routesExecutionNotAdmitted{}
 	for _, target := range execution.targets {
-		controls.ActionIDs = append(controls.ActionIDs, target.actionID)
+		controls.TargetActionIDs = append(controls.TargetActionIDs, target.actionID)
 		if target.evidence != nil {
 			entry, notAdmitted := admitRoutesExecutionWorker(*target.evidence)
 			if controls.CacheContext == nil {

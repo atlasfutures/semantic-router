@@ -234,9 +234,14 @@ type RaylineARCRouteExecutionV2 struct {
 	Infeasible []string
 	TurnKey    string
 	Reconsult  *string
-	// ActionIDs are every action the envelope names, checked against the
-	// serving package's catalog.
-	ActionIDs                                          []string
+	// ActionIDs are the actions the envelope attributes, last served or
+	// holds: claims about what ran, each checked against the serving
+	// package's catalog.
+	ActionIDs []string
+	// TargetActionIDs are the caller's targets, in envelope order: what it
+	// can execute, not what ran. One the catalog lacks is left out of the
+	// offer rather than refused.
+	TargetActionIDs                                    []string
 	ExpectPackage, ExpectThinkingControls, ExpectOffer *string
 }
 

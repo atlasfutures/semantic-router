@@ -271,9 +271,11 @@ func applyRoutePolicyAndExecutionV2(
 	if v2 == nil {
 		return ""
 	}
-	for _, actionID := range v2.ActionIDs {
-		if _, bound := scorer.bindings[actionID]; !bound {
-			return arcFailureExecutionUnknownAction
+	for _, actionIDs := range [][]string{v2.ActionIDs, v2.TargetActionIDs} {
+		for _, actionID := range actionIDs {
+			if _, bound := scorer.bindings[actionID]; !bound {
+				return arcFailureExecutionUnknownAction
+			}
 		}
 	}
 	if pin := v2.ExpectPackage; pin != nil && *pin != scorer.sha256 {
