@@ -39,12 +39,15 @@ type policyRetainedRequest struct {
 	turn uint64
 }
 
-// policyRetainedEntry is one episode's record and the generation of the last
-// call that invalidated it. A call records only under the generation its own
-// invalidation returned, so a call that overlapped it (a side call, which
-// holds no lease) and invalidated later cannot be overwritten by it.
+// policyRetainedEntry is one session's record, the writers in flight on it
+// and the generation of the last write that started or was dropped. A
+// record is kept only by a writer that started last and finished with no
+// other writer in flight, so overlapping calls (a side call holds no lease;
+// a busy retry can finish after a later call) never leave a record standing
+// for a session another of them changed.
 type policyRetainedEntry struct {
 	generation uint64
+	writers    int
 	// owner is the scope of the scorer whose decide the record is.
 	owner   string
 	request *policyRetainedRequest
@@ -56,14 +59,15 @@ type policyRetainedEntry struct {
 // committed prefix is in the service's session only if it is the request
 // last retained there.
 //
-// An entry is keyed by the physical session: the policy backend and package
-// (policyRetainedBackend) and the episode hash the decide names. Every
-// scorer that writes that session invalidates it, so two recipes that send
-// one conversation to one backend each see the other's writes. A record
-// names the scorer whose decide it is (its owner scope, unique to one
-// recipe's scorer in one router generation), and only that scorer's lookups
-// read it, since only that scorer's episode committed the prefix it
-// describes; a reload starts every scorer with no records.
+// An entry is keyed by the package and the episode hash a decide names
+// (policyRetainedBackend), not by endpoint: two recipes whose endpoint sets
+// differ can still reach one replica, so every scorer deciding that package
+// for that conversation invalidates the entry. Across distinct backends that
+// only costs an exemption. A record names the scorer whose decide it is (its
+// owner scope, unique to one recipe's scorer in one router generation), and
+// only that scorer's lookups read it, since only that scorer's episode
+// committed the prefix it describes; a reload starts every scorer with no
+// records.
 //
 // It is in memory, bounded and never persisted, so it knows only the decides
 // this process made; a lookup whose previous turn another router instance
@@ -77,7 +81,7 @@ type policyRetainedSessionCache struct {
 	generation uint64
 }
 
-// policyRetainedSessionEntries bounds the episodes remembered; the oldest
+// policyRetainedSessionEntries bounds the sessions remembered; the oldest
 // inserted is forgotten first.
 const policyRetainedSessionEntries = 4096
 
@@ -85,14 +89,13 @@ var policyRetainedSessions = &policyRetainedSessionCache{entries: map[string]*po
 
 func policyRetainedKey(backend, episode string) string { return backend + "\x00" + episode }
 
-// policyRetainedBackend names the service session store a decide writes: the
-// policy backend (as admission pools name it) and the package it decides
-// with.
+// policyRetainedBackend names the session store a decide writes: the package
+// it decides with.
 func policyRetainedBackend(arcConfig *config.RaylineARCAlgorithmConfig) string {
 	if arcConfig == nil || arcConfig.PolicyService == nil {
 		return ""
 	}
-	return raylineRoutesAdmissionPool(arcConfig) + "\x00" + arcConfig.PolicyService.PackageSHA256
+	return "package:" + arcConfig.PolicyService.PackageSHA256
 }
 
 // policyRetainedScope is where a scorer's decides record retained sessions:
@@ -104,16 +107,9 @@ type policyRetainedScope struct {
 
 func (scope policyRetainedScope) valid() bool { return scope.backend != "" && scope.owner != "" }
 
-// invalidate drops the session's record: a call is about to change it, or
-// has changed it to something no record describes. It returns the fence a
-// record of that call's own outcome must present.
-func (cache *policyRetainedSessionCache) invalidate(scope policyRetainedScope, episode string) uint64 {
-	if !scope.valid() {
-		return 0
-	}
+// entry is the session's entry, created if absent. The caller holds mu.
+func (cache *policyRetainedSessionCache) entry(scope policyRetainedScope, episode string) *policyRetainedEntry {
 	key := policyRetainedKey(scope.backend, episode)
-	cache.mu.Lock()
-	defer cache.mu.Unlock()
 	entry, known := cache.entries[key]
 	if !known {
 		if len(cache.order) >= policyRetainedSessionEntries {
@@ -124,15 +120,31 @@ func (cache *policyRetainedSessionCache) invalidate(scope policyRetainedScope, e
 		entry = &policyRetainedEntry{}
 		cache.entries[key] = entry
 	}
+	return entry
+}
+
+// begin starts a write to the session: a call is about to change it. The
+// record is dropped, and the returned fence is what the call's finish
+// presents; zero when the scope records nothing.
+func (cache *policyRetainedSessionCache) begin(scope policyRetainedScope, episode string) uint64 {
+	if !scope.valid() {
+		return 0
+	}
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	entry := cache.entry(scope, episode)
 	cache.generation++
 	entry.generation, entry.owner, entry.request = cache.generation, "", nil
+	entry.writers++
 	return entry.generation
 }
 
-// record keeps shape as the request the episode's session now holds, decided
-// on the episode at turnIndex, unless another call invalidated the record
-// since fence (or the entry was evicted). A nil shape keeps nothing.
-func (cache *policyRetainedSessionCache) record(
+// finish ends the write begin fenced. shape is the request the session now
+// holds, decided on the episode at turnIndex, or nil when the call left
+// nothing a turn commits (it failed, it was a side call, it was served
+// relaxed). The record is kept only when this was the last write to start
+// and no other is still in flight; otherwise the session is left unknown.
+func (cache *policyRetainedSessionCache) finish(
 	scope policyRetainedScope,
 	episode string,
 	fence uint64,
@@ -145,13 +157,36 @@ func (cache *policyRetainedSessionCache) record(
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
 	entry, known := cache.entries[policyRetainedKey(scope.backend, episode)]
-	if !known || entry.generation != fence || shape == nil {
+	if !known {
+		return
+	}
+	if entry.writers > 0 {
+		entry.writers--
+	}
+	if entry.generation != fence || entry.writers > 0 || shape == nil {
+		// A later write started, another is in flight, or this one left
+		// nothing: whatever stood is no longer known to be in the session.
+		entry.owner, entry.request = "", nil
 		return
 	}
 	entry.owner = scope.owner
 	entry.request = &policyRetainedRequest{
 		len: shape.Len, digest: shape.Digest, system: shape.System, tools: shape.Tools, turn: turnIndex + 1,
 	}
+}
+
+// drop forgets the session's record without a write of its own in flight: a
+// call changed the session after the fact (an append, a call served strict
+// that was sent relaxed).
+func (cache *policyRetainedSessionCache) drop(scope policyRetainedScope, episode string) {
+	if !scope.valid() {
+		return
+	}
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	entry := cache.entry(scope, episode)
+	cache.generation++
+	entry.generation, entry.owner, entry.request = cache.generation, "", nil
 }
 
 // holds reports whether the episode's session is known to hold the prefix

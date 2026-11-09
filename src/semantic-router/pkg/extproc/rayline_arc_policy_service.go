@@ -907,12 +907,23 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		defer sessionBinding.Release(ctx)
 	}
 	// A strict decide changes the episode's retained session, whatever it
-	// answers; what it holds is recorded again, under this fence, once the
-	// decide is accepted.
-	var retainedFence uint64
-	if !ephemeral && (request.EpisodeMode != raylinearc.PolicyEpisodeModeRelaxed || !scorer.relaxedServed.Load()) {
-		retainedFence = policyRetainedSessions.invalidate(scorer.retainedScope, arcContext.EpisodeIDHash)
+	// answers. The write is fenced from here to every exit; the request it
+	// left is recorded only once the decide is accepted (retainedShape).
+	var (
+		retainedFence uint64
+		retainedShape *raylinearc.PolicyPrefixShape
+	)
+	beginRetained := func() {
+		if retainedFence == 0 {
+			retainedFence = policyRetainedSessions.begin(scorer.retainedScope, arcContext.EpisodeIDHash)
+		}
 	}
+	if !ephemeral && (request.EpisodeMode != raylinearc.PolicyEpisodeModeRelaxed || !scorer.relaxedServed.Load()) {
+		beginRetained()
+	}
+	defer func() {
+		policyRetainedSessions.finish(scorer.retainedScope, arcContext.EpisodeIDHash, retainedFence, state.TurnIndex, retainedShape)
+	}()
 	started := selector.now()
 	// A delta cell stages its strict main turns and sends a turn that
 	// extends the staged prefix as a delta, decided synchronously like any
@@ -979,7 +990,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		scorer.sideCallsRelaxedUnsupported(selector.now(), "refused")
 		request.EpisodeMode = scorer.episodeMode
 		if !ephemeral {
-			retainedFence = policyRetainedSessions.invalidate(scorer.retainedScope, arcContext.EpisodeIDHash)
+			beginRetained()
 		}
 		decisionMode = policyStagedFullMode(staging)
 		response, err = decidePolicyThroughBusy(ctx, decider, request, scorer.busyWait, admit, withCacheContext)
@@ -1215,12 +1226,12 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	// nothing. A side call's request is no prefix a turn commits, so it
 	// records nothing (a nil shape). A call sent relaxed and served strict
 	// (a service that predates episode_mode) after relaxed was once served
-	// took no fence: it only invalidates.
+	// took no fence: it only drops the record.
 	if !ephemeral && !servedRelaxed {
 		if retainedFence == 0 {
-			policyRetainedSessions.invalidate(scorer.retainedScope, arcContext.EpisodeIDHash)
+			policyRetainedSessions.drop(scorer.retainedScope, arcContext.EpisodeIDHash)
 		} else {
-			policyRetainedSessions.record(scorer.retainedScope, arcContext.EpisodeIDHash, retainedFence, state.TurnIndex, prefixShape)
+			retainedShape = prefixShape
 		}
 	}
 	encoded := &raylinearc.EncoderResult{

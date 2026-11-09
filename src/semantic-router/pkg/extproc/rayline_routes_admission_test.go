@@ -418,9 +418,9 @@ func seedAppendAdmissionEpisode(t *testing.T, router *OpenAIRouter, session stri
 	scope := testRetainedScope(t)
 	episode := raylinearc.HashEpisodeID(session)
 	// The first turn was decided at index 0; its commit left the next one.
-	fence := policyRetainedSessions.invalidate(scope, episode)
-	policyRetainedSessions.record(scope, episode, fence, state.TurnIndex-1, raylinearc.NewPolicyPrefixShape(messages, nil, nil))
-	t.Cleanup(func() { policyRetainedSessions.invalidate(scope, episode) })
+	fence := policyRetainedSessions.begin(scope, episode)
+	policyRetainedSessions.finish(scope, episode, fence, state.TurnIndex-1, raylinearc.NewPolicyPrefixShape(messages, nil, nil))
+	t.Cleanup(func() { policyRetainedSessions.drop(scope, episode) })
 }
 
 // holdAppendAdmissionGate takes the gate's one slot, as a full encode would.
@@ -538,10 +538,10 @@ func TestPredictRaylineRoutesEncode(t *testing.T) {
 	episode := raylinearc.HashEpisodeID("predict-" + t.Name())
 	scope := testRetainedScope(t)
 	retain := func(shape *raylinearc.PolicyPrefixShape) {
-		fence := policyRetainedSessions.invalidate(scope, episode)
-		policyRetainedSessions.record(scope, episode, fence, committed.TurnIndex-1, shape)
+		fence := policyRetainedSessions.begin(scope, episode)
+		policyRetainedSessions.finish(scope, episode, fence, committed.TurnIndex-1, shape)
 	}
-	t.Cleanup(func() { policyRetainedSessions.invalidate(scope, episode) })
+	t.Cleanup(func() { policyRetainedSessions.drop(scope, episode) })
 	arcContext := func(body string, state *raylinearc.EpisodeState) *selection.RaylineARCSelectionContext {
 		return &selection.RaylineARCSelectionContext{
 			EpisodeIDHash: episode,
@@ -625,7 +625,7 @@ func TestPredictRaylineRoutesEncode(t *testing.T) {
 func predictAfterFirstTurn(t *testing.T, fixture *deltaFixture) routerruntime.RouteEncodePrediction {
 	t.Helper()
 	scope := fixture.scorer().retainedScope
-	t.Cleanup(func() { policyRetainedSessions.invalidate(scope, fixture.episode) })
+	t.Cleanup(func() { policyRetainedSessions.drop(scope, fixture.episode) })
 	_, ctx := fixture.turn(t, policyTestRequest(t, deltaUser))
 	complete(t, ctx, deltaReply(t))
 	lease, state, err := fixture.store.Prepare(context.Background(), fixture.episode, 2)
@@ -676,38 +676,63 @@ func TestPredictRaylineRoutesEncodeAfterAnAppendedReply(t *testing.T) {
 	}
 }
 
-// A call that overlapped another and invalidated after it (a strict side
-// call, which holds no lease) is not overwritten when the earlier call
-// records its outcome.
+// Overlapping writes to one session (a strict side call holds no lease; a
+// busy retry can finish after a later call) leave it unknown: no record is
+// kept while another write is in flight, and a write that finishes after a
+// later one started clears whatever stood.
 func TestPolicyRetainedSessionRecordIsFenced(t *testing.T) {
 	scope, episode := testRetainedScope(t), raylinearc.HashEpisodeID(t.Name())
-	t.Cleanup(func() { policyRetainedSessions.invalidate(scope, episode) })
+	t.Cleanup(func() { policyRetainedSessions.drop(scope, episode) })
 	first, _, err := policyMessages(json.RawMessage(appendAdmissionFirstMessages))
 	if err != nil {
 		t.Fatal(err)
 	}
 	shape := raylinearc.NewPolicyPrefixShape(first, nil, nil)
 	state := &raylinearc.EpisodeState{TurnIndex: 1, Policy: &raylinearc.PolicyEpisodeState{PrefixLen: shape.Len, PrefixDigest: shape.Digest}}
-
-	mainFence := policyRetainedSessions.invalidate(scope, episode)
-	policyRetainedSessions.invalidate(scope, episode) // the side call starts
-	policyRetainedSessions.record(scope, episode, mainFence, 0, shape)
-	if held, _ := policyRetainedSessions.holds(scope, episode, state, shape); held {
-		t.Fatal("an earlier call restored a record a later call invalidated")
+	holds := func() bool {
+		held, _ := policyRetainedSessions.holds(scope, episode, state, shape)
+		return held
 	}
-	fence := policyRetainedSessions.invalidate(scope, episode)
-	policyRetainedSessions.record(scope, episode, fence, 0, shape)
-	if held, _ := policyRetainedSessions.holds(scope, episode, state, shape); !held {
+
+	// The main call starts, a side call starts after it, the main call
+	// finishes first: nothing is recorded while the side call runs.
+	mainFence := policyRetainedSessions.begin(scope, episode)
+	sideFence := policyRetainedSessions.begin(scope, episode)
+	policyRetainedSessions.finish(scope, episode, mainFence, 0, shape)
+	if holds() {
+		t.Fatal("a record was kept while another write was in flight")
+	}
+	policyRetainedSessions.finish(scope, episode, sideFence, 0, nil)
+	if holds() {
+		t.Fatal("a side call's finish left a record")
+	}
+
+	// A side call starts first and finishes after the main call.
+	sideFence = policyRetainedSessions.begin(scope, episode)
+	mainFence = policyRetainedSessions.begin(scope, episode)
+	policyRetainedSessions.finish(scope, episode, mainFence, 0, shape)
+	if holds() {
+		t.Fatal("a record was kept while an older write was still in flight")
+	}
+	policyRetainedSessions.finish(scope, episode, sideFence, 0, nil)
+	if holds() {
+		t.Fatal("an older write that finished last left the newer record standing")
+	}
+
+	// One write alone is recorded.
+	fence := policyRetainedSessions.begin(scope, episode)
+	policyRetainedSessions.finish(scope, episode, fence, 0, shape)
+	if !holds() {
 		t.Fatal("a call's own record was refused")
 	}
-	// Another scorer on the same backend does not read the record, and its
-	// write to the session invalidates it.
+	// Another scorer deciding the same package does not read the record,
+	// and its write to the session clears it.
 	other := policyRetainedScope{backend: scope.backend, owner: "other:" + t.Name()}
 	if held, _ := policyRetainedSessions.holds(other, episode, state, shape); held {
 		t.Fatal("another scorer read this scorer's record")
 	}
-	policyRetainedSessions.invalidate(other, episode)
-	if held, _ := policyRetainedSessions.holds(scope, episode, state, shape); held {
+	policyRetainedSessions.finish(other, episode, policyRetainedSessions.begin(other, episode), 0, nil)
+	if holds() {
 		t.Fatal("another scorer's write to the session left the record standing")
 	}
 }
