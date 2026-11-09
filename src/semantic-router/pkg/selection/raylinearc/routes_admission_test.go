@@ -24,6 +24,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/admission"
 )
 
 // fakeRouteLookupLeases is the shared store two gates (two router instances)
@@ -406,6 +408,9 @@ func TestRouteLookupGateOnRedis(t *testing.T) {
 		if !gate.Distributed() {
 			t.Fatal("a Redis episode store built a per-process gate")
 		}
+		// Each gate stands for another router instance, i.e. another
+		// process: its own local stage, the shared Redis slots.
+		gate.local = admission.NewSemaphore(limit, routeLookupLocalQueue, 0, admission.OverflowShed)
 		return gate
 	}
 
@@ -476,4 +481,31 @@ func TestRouteLookupGateOnRedis(t *testing.T) {
 	if waited := time.Since(started); waited < 100*time.Millisecond {
 		t.Fatalf("admitted after %v, before the crashed holder's TTL", waited)
 	}
+}
+
+// Two recipes (or two router generations) calling one backend share the
+// process's local cap, so with no shared store they still admit
+// max_inflight together, not each.
+func TestRouteLookupGateSharesTheLocalCapAcrossGatesOfOnePool(t *testing.T) {
+	t.Parallel()
+	pool := RouteLookupPoolID(t.Name())
+	build := func() *RouteLookupGate {
+		return NewRouteLookupGate(RouteLookupGateConfig{
+			MaxInflight: 1, QueueWait: 30 * time.Millisecond, LookupDeadline: time.Second, Pool: pool,
+		})
+	}
+	recipeA, recipeB := build(), build()
+	holder, err := recipeA.Acquire(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := recipeB.Acquire(context.Background()); !errors.Is(err, ErrRouteLookupShed) {
+		t.Fatalf("err = %v, want the second recipe shed by the shared local cap", err)
+	}
+	holder.Release()
+	next, err := recipeB.Acquire(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	next.Release()
 }

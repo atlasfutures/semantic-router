@@ -217,13 +217,11 @@ func NewRouteLookupGate(config RouteLookupGateConfig) *RouteLookupGate {
 		limit:     config.MaxInflight,
 		queueWait: config.QueueWait,
 		leaseTTL:  config.LookupDeadline + routeLookupLeaseMargin,
-		local: admission.NewSemaphore(
-			config.MaxInflight, routeLookupLocalQueue, 0, admission.OverflowShed,
-		),
-		pollMin: routeLookupPollMin,
-		pollMax: routeLookupPollMax,
-		backoff: routeLookupRedisBackoff,
-		now:     time.Now,
+		local:     routeLookupLocalSlots(config.Pool, config.MaxInflight),
+		pollMin:   routeLookupPollMin,
+		pollMax:   routeLookupPollMax,
+		backoff:   routeLookupRedisBackoff,
+		now:       time.Now,
 	}
 	if store := redisEpisodeStoreOf(config.Store); store != nil {
 		gate.leases = newRedisRouteLookupLeases(routeLookupRedisClient(store.client), config.Pool, config.MaxInflight)
@@ -264,6 +262,29 @@ func (gate *RouteLookupGate) Close() error {
 		return closer.close()
 	}
 	return nil
+}
+
+// routeLookupLocalSemaphores holds one per-process semaphore per pool and
+// limit, so every recipe and every router generation in the process that
+// calls one backend shares the local cap, the way they share its Redis
+// slots. Entries are never removed: there is one per configured backend.
+var routeLookupLocalSemaphores sync.Map
+
+// routeLookupLocalSlots is the process's local semaphore for pool. A gate
+// with no pool (tests, a backend with no identity) gets its own.
+func routeLookupLocalSlots(pool string, limit int) *admission.Semaphore {
+	build := func() *admission.Semaphore {
+		return admission.NewSemaphore(limit, routeLookupLocalQueue, 0, admission.OverflowShed)
+	}
+	if pool == "" {
+		return build()
+	}
+	key := pool + "/" + strconv.Itoa(limit)
+	if existing, ok := routeLookupLocalSemaphores.Load(key); ok {
+		return existing.(*admission.Semaphore)
+	}
+	actual, _ := routeLookupLocalSemaphores.LoadOrStore(key, build())
+	return actual.(*admission.Semaphore)
 }
 
 // redisEpisodeStoreOf unwraps the Redis episode store a recipe runs on, or
