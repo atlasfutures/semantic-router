@@ -564,6 +564,31 @@ encoder, answers 429 with `Retry-After`. That is a healthy router saying when
 to come back, not an unavailable one, and it is worth honouring: retrying
 immediately lands on the lease or the queue that produced the contention.
 
+#### Lookup admission
+
+`max_inflight_lookups` caps how many lookups one router process sends to the
+policy service at once; unset (0) leaves them unbounded. A lookup encodes the
+whole transcript, the policy container runs one encode at a time, and an encode
+runs to completion even after its caller gives up, so one large lookup holds
+the container for every live turn whose session sits on it. The cap bounds
+that share. Live turns never pass through it; they keep the policy service's
+own `max_inflight_calls`.
+
+When the cap is reached, a lookup waits up to `lookup_queue_ms` (default 2000)
+for a slot. At most four lookups wait at once; a fifth is shed at once. The
+wait counts against `deadline_ms`, and the response's `latency_ms` excludes
+it. A lookup that gets no slot in time answers 429 `rate_limit_error` with
+`Retry-After: 5`: the slot it waited on is held by a whole-transcript encode
+that runs for seconds to tens of seconds, so a 1 s retry would only rejoin the
+queue. A lookup whose own deadline ends first answers the usual 504.
+
+A caller that sends lookups back to back (a batch script, an evaluation
+harness) should send them one at a time per cell and honour `Retry-After`.
+
+The cap is per process and shared by every recipe's lookups, because they
+share the encoder; it is read from the default recipe's `routes_api`. On a
+deployment of N router instances, up to N lookups can be in flight overall.
+
 ### Episodes
 
 Three optional request headers shape continuity:
@@ -614,6 +639,8 @@ routing:
             deadline_ms: 1500
             checkpoint_label: arc-2026-09-12
             episode_writes: false
+            max_inflight_lookups: 1   # optional; 0 = unbounded
+            lookup_queue_ms: 2000     # optional; wait for a slot before 429
 ```
 
 Off by default, and deliberately not implied by configuring the algorithm. A

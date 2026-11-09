@@ -46,6 +46,14 @@ const (
 	// than this has stopped being a synchronous question.
 	minRaylineARCRoutesDeadlineMS = 100
 	maxRaylineARCRoutesDeadlineMS = 30000
+	// DefaultRaylineARCRoutesLookupQueueMS is how long a lookup waits for a
+	// slot under max_inflight_lookups: long enough to absorb two lookups
+	// arriving together, short enough that a queue behind a 20 s encode
+	// answers 429 rather than holding its caller.
+	DefaultRaylineARCRoutesLookupQueueMS = 2000
+	// maxRaylineARCRoutesMaxInflightLookups bounds the cap to what one
+	// process can sensibly hold open against the encoder.
+	maxRaylineARCRoutesMaxInflightLookups = 64
 )
 
 var (
@@ -280,6 +288,34 @@ type RaylineARCRoutesAPIConfig struct {
 	// caller's price world. Policy-service cells only. Absent, a lookup
 	// whose body carries routing is refused as unavailable.
 	Routing *RaylineARCRoutesRoutingConfig `yaml:"routing,omitempty"`
+	// MaxInflightLookups caps how many lookups this router process sends
+	// to the policy service at once. Zero leaves lookups unbounded, as
+	// before this setting existed.
+	//
+	// A lookup encodes the whole transcript, and the policy container runs
+	// one encode at a time and does not stop an encode its caller has given
+	// up on. One large lookup therefore holds the container for every live
+	// turn whose session sits on it. Capping lookups bounds that share
+	// without touching live turns, which keep their own admission gate.
+	//
+	// The cap is per process and shared by every recipe's lookups, because
+	// they share the encoder. It is read from the default recipe's
+	// routes_api; a named recipe's value is ignored.
+	MaxInflightLookups int `yaml:"max_inflight_lookups,omitempty"`
+	// LookupQueueMS is how long a lookup waits for a slot when
+	// max_inflight_lookups is reached, before it is answered 429 with a
+	// Retry-After. The wait counts against deadline_ms. Zero selects the
+	// shipped default. Read from the default recipe, like the cap.
+	LookupQueueMS int `yaml:"lookup_queue_ms,omitempty"`
+}
+
+// EffectiveLookupQueue is the bounded wait for a lookup slot, with the
+// shipped default substituted for an unset value.
+func (cfg RaylineARCRoutesAPIConfig) EffectiveLookupQueue() time.Duration {
+	if cfg.LookupQueueMS <= 0 {
+		return DefaultRaylineARCRoutesLookupQueueMS * time.Millisecond
+	}
+	return time.Duration(cfg.LookupQueueMS) * time.Millisecond
 }
 
 // RaylineARCRoutesRoutingConfig turns on the Decisions routing controls.
@@ -501,6 +537,18 @@ func validateRaylineARCRoutesAPIConfig(cfg RaylineARCRoutesAPIConfig) error {
 	if cfg.DeadlineMS < 0 || cfg.DeadlineMS > maxRaylineARCRoutesDeadlineMS {
 		return fmt.Errorf(
 			"deadline_ms must be between 0 and %d",
+			maxRaylineARCRoutesDeadlineMS,
+		)
+	}
+	if cfg.MaxInflightLookups < 0 || cfg.MaxInflightLookups > maxRaylineARCRoutesMaxInflightLookups {
+		return fmt.Errorf(
+			"max_inflight_lookups must be between 0 and %d",
+			maxRaylineARCRoutesMaxInflightLookups,
+		)
+	}
+	if cfg.LookupQueueMS < 0 || cfg.LookupQueueMS > maxRaylineARCRoutesDeadlineMS {
+		return fmt.Errorf(
+			"lookup_queue_ms must be between 0 and %d",
 			maxRaylineARCRoutesDeadlineMS,
 		)
 	}

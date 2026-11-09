@@ -99,6 +99,9 @@ type OpenAIRouter struct {
 	routerLearningRuntime   *routerLearningRuntime
 	lookupTableCancel       func()
 	routerSessionStateStore *sessiontelemetry.RouterSessionStateStoreSlot
+	// raylineRoutesLookupGate bounds the /v1/routes lookups in flight,
+	// built on first use (routes_api.max_inflight_lookups).
+	raylineRoutesLookupGate raylineRoutesLookupGate
 
 	resources *resourceScope
 }

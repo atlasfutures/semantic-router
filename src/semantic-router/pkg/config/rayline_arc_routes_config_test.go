@@ -96,6 +96,45 @@ func TestRoutesAPIEffectiveDeadlineSubstitutesTheDefault(t *testing.T) {
 	}
 }
 
+// The lookup cap and its queue are bounded: a negative value is a typo, and a
+// queue longer than the longest deadline could never be waited out.
+func TestRoutesAPILookupAdmissionIsBounded(t *testing.T) {
+	t.Parallel()
+	for name, testCase := range map[string]struct {
+		inflight, queue int
+		valid           bool
+	}{
+		"unset leaves lookups unbounded":   {valid: true},
+		"one in flight, default queue":     {inflight: 1, valid: true},
+		"one in flight, explicit queue":    {inflight: 1, queue: 2000, valid: true},
+		"cap at the ceiling":               {inflight: maxRaylineARCRoutesMaxInflightLookups, valid: true},
+		"cap above the ceiling":            {inflight: maxRaylineARCRoutesMaxInflightLookups + 1, valid: false},
+		"negative cap":                     {inflight: -1, valid: false},
+		"queue at the deadline ceiling":    {inflight: 1, queue: maxRaylineARCRoutesDeadlineMS, valid: true},
+		"queue above the deadline ceiling": {inflight: 1, queue: maxRaylineARCRoutesDeadlineMS + 1, valid: false},
+		"negative queue":                   {inflight: 1, queue: -1, valid: false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			err := validateRaylineARCRoutesAPIConfig(RaylineARCRoutesAPIConfig{
+				Enabled:            true,
+				MaxInflightLookups: testCase.inflight,
+				LookupQueueMS:      testCase.queue,
+			})
+			if testCase.valid && err != nil {
+				t.Fatalf("inflight=%d queue=%d rejected: %v", testCase.inflight, testCase.queue, err)
+			}
+			if !testCase.valid && err == nil {
+				t.Fatalf("inflight=%d queue=%d accepted, want rejected", testCase.inflight, testCase.queue)
+			}
+		})
+	}
+	unset := RaylineARCRoutesAPIConfig{Enabled: true, MaxInflightLookups: 1}
+	if got := unset.EffectiveLookupQueue().Milliseconds(); got != DefaultRaylineARCRoutesLookupQueueMS {
+		t.Fatalf("unset queue = %d ms, want the default %d", got, DefaultRaylineARCRoutesLookupQueueMS)
+	}
+}
+
 // include_tool_names changes what the selector is asked on every routed turn,
 // so its zero value has to be off.
 func TestToolNamesAndRoutesAPIDefaultOff(t *testing.T) {

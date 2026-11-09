@@ -433,6 +433,14 @@ func (r *OpenAIRouter) handleRaylineRoutesAPI(
 	if controls != nil && (controls.Execution != nil || controls.ExecutionV2 != nil) {
 		ephemeral = true
 	}
+	// One whole-transcript encode holds the policy container for every live
+	// turn on it, so lookups take a slot of their own first (bounded wait,
+	// then 429). Live turns never pass through this gate.
+	release, queued, admitErr := r.raylineRoutesLookups().acquire(lookupContext)
+	if admitErr != nil {
+		return r.raylineRoutesLookupRefused(ctx, lookupContext, routeID, queued, admitErr)
+	}
+	defer release()
 	started := time.Now()
 	decision, err := runtime.RouteDecision(
 		lookupContext,
@@ -448,6 +456,7 @@ func (r *OpenAIRouter) handleRaylineRoutesAPI(
 		"worker_model":        decision.WorkerModel,
 		"interface":           "routes",
 		"recipe":              string(recipe.Name),
+		"lookup_queue_ms":     queued.Milliseconds(),
 	})
 	if ctx != nil && ctx.RaylineARCIdentity != nil {
 		ctx.RaylineARCIdentity.arm, ctx.RaylineARCIdentity.model = decision.SelectedWorker, decision.WorkerModel
@@ -632,6 +641,33 @@ func (r *OpenAIRouter) raylineRoutesFailure(
 	// answering with a default here would replace a policy decision with this
 	// handler's guess.
 	return r.createRaylineRoutesError(ctx, 503, "api_error", "route lookup failed")
+}
+
+// raylineRoutesLookupRefused answers a lookup the lookup gate did not admit:
+// 429 with a Retry-After when the bounded wait ran out, and the lookup's own
+// deadline or cancellation otherwise.
+func (r *OpenAIRouter) raylineRoutesLookupRefused(
+	ctx *RequestContext,
+	lookupContext context.Context,
+	routeID string,
+	queued time.Duration,
+	err error,
+) *ext_proc.ProcessingResponse {
+	shed := errors.Is(err, errRaylineRoutesLookupShed)
+	logging.ComponentEvent("extproc", "routes_lookup_shed", map[string]interface{}{
+		"routing_decision_id": routeID,
+		"lookup_queue_ms":     queued.Milliseconds(),
+		"shed":                shed,
+	})
+	if shed {
+		return raylineRoutesRetryAfter(r.createRaylineRoutesError(
+			ctx,
+			429,
+			"rate_limit_error",
+			"route lookup shed: this cell is already serving a lookup; retry after the Retry-After interval",
+		), raylineRoutesLookupShedRetrySeconds)
+	}
+	return r.raylineRoutesFailure(ctx, lookupContext, routeID, err)
 }
 
 func raylineRoutesPayload(
