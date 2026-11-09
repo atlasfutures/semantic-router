@@ -349,8 +349,9 @@ type RaylineARCRoutesAdmissionConfig struct {
 	// only the turns since the episode's last committed request (0.2 to
 	// 0.8 s), so queueing it behind a full encode, or shedding it, costs
 	// more than it protects. A lookup is predicted to append when its
-	// episode committed a prefix this request extends, its system prompt
-	// and tools did not change, and the new suffix is at most
+	// episode committed a prefix this request extends, this router process
+	// last left that prefix in the service's session under the same system
+	// prompt and tools, and the new suffix is at most
 	// append_max_suffix_tokens. Ephemeral and untracked lookups are always
 	// gated. Off (the default), every lookup is gated, as before.
 	// Policy-service cells with strict episodes only: an artifact-mode cell

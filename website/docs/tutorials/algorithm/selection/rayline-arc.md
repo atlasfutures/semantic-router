@@ -647,10 +647,16 @@ the episode's last committed request, which takes 0.2 to 0.8 s. With
   policy prefix (`prefix_len` messages and their digest). A lookup is
   predicted to append when the episode has a committed turn, the request's
   messages extend that prefix (no prefix break, compaction or side call),
-  its system prompt and tools match the last request this router process
-  sent for the episode, and the new messages come to at most
-  `append_max_suffix_tokens` (estimated at four bytes a token over their
-  JSON, which runs high). Anything else is predicted full and gated.
+  this router process's own last strict decide for the episode left exactly
+  that prefix in the service's session under the same system prompt and
+  tools, and the new messages come to at most `append_max_suffix_tokens`
+  (estimated at four bytes a token over their JSON, which runs high).
+  Anything else is predicted full and gated: a first turn, a prefix a `zdr`
+  turn committed (it was decided on a throwaway service episode), a session
+  a side call or another recipe changed since, and a turn another router
+  instance decided, which this one cannot see. The record is in memory and
+  bounded, so on a cell with several router instances only lookups that
+  land on the instance that decided the previous turn are exempt.
 - **The default bound is 8192 tokens.** At the measured full-encode rate
   (about 9k tokens a second) that is at most about a second of encoder time:
   no more than an ordinary small lookup, and inside the 2 s queue wait a

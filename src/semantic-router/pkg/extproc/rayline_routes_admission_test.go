@@ -373,7 +373,8 @@ func appendAdmissionRouter(t *testing.T, appendExempt bool, maxSuffixTokens int)
 }
 
 // seedAppendAdmissionEpisode commits the conversation's first request as the
-// episode's policy prefix, as a decided first turn leaves it.
+// episode's policy prefix and records it as the service's retained session,
+// as a strict first turn this process decided leaves both.
 func seedAppendAdmissionEpisode(t *testing.T, router *OpenAIRouter, session string) {
 	t.Helper()
 	store := router.RaylineARCEpisodeStore
@@ -395,6 +396,10 @@ func seedAppendAdmissionEpisode(t *testing.T, router *OpenAIRouter, session stri
 	if err := store.Commit(context.Background(), lease, lease.Version(), state); err != nil {
 		t.Fatal(err)
 	}
+	scope := policyRetainedScope(router.Config.Decisions[0].Algorithm.RaylineARC)
+	episode := raylinearc.HashEpisodeID(session)
+	policyRetainedSessions.remember(scope, episode, raylinearc.NewPolicyPrefixShape(messages, nil, nil))
+	t.Cleanup(func() { policyRetainedSessions.forget(scope, episode) })
 }
 
 // holdAppendAdmissionGate takes the gate's one slot, as a full encode would.
@@ -416,10 +421,10 @@ func trackedRoutesContext(session string) *RequestContext {
 // encode holds the only slot.
 func TestRaylineRoutesExemptsAPredictedAppendFromAHeldSlot(t *testing.T) {
 	router, gate, selector := appendAdmissionRouter(t, true, 0)
-	seedAppendAdmissionEpisode(t, router, "conv-1")
+	seedAppendAdmissionEpisode(t, router, t.Name())
 	holdAppendAdmissionGate(t, gate)
 
-	response := router.handleRaylineRoutesAPI([]byte(appendAdmissionNext), trackedRoutesContext("conv-1"))
+	response := router.handleRaylineRoutesAPI([]byte(appendAdmissionNext), trackedRoutesContext(t.Name()))
 	if code := immediateStatusCode(t, response); code != 200 {
 		t.Fatalf("status = %d (%s), want the exempt append decided", code, response.GetImmediateResponse().GetBody())
 	}
@@ -434,7 +439,7 @@ func TestRaylineRoutesGatesAFirstTrackedLookup(t *testing.T) {
 	router, gate, selector := appendAdmissionRouter(t, true, 0)
 	holdAppendAdmissionGate(t, gate)
 
-	response := router.handleRaylineRoutesAPI([]byte(appendAdmissionFirst), trackedRoutesContext("conv-1"))
+	response := router.handleRaylineRoutesAPI([]byte(appendAdmissionFirst), trackedRoutesContext(t.Name()))
 	if status, _, code := routesErrorCode(t, response); status != 429 || code != raylineRoutesAdmissionCode {
 		t.Fatalf("first tracked lookup = %d %s, want 429 %s", status, code, raylineRoutesAdmissionCode)
 	}
@@ -446,7 +451,7 @@ func TestRaylineRoutesGatesAFirstTrackedLookup(t *testing.T) {
 	free, _, _ := appendAdmissionRouter(t, true, 0)
 	free.RaylineARCEpisodeStore = router.RaylineARCEpisodeStore
 	free.ModelSelector = router.ModelSelector
-	response = free.handleRaylineRoutesAPI([]byte(appendAdmissionFirst), trackedRoutesContext("conv-1"))
+	response = free.handleRaylineRoutesAPI([]byte(appendAdmissionFirst), trackedRoutesContext(t.Name()))
 	if code := immediateStatusCode(t, response); code != 200 {
 		t.Fatalf("lookup after a shed = %d (%s), want 200", code, response.GetImmediateResponse().GetBody())
 	}
@@ -456,10 +461,10 @@ func TestRaylineRoutesGatesAFirstTrackedLookup(t *testing.T) {
 // encode it is.
 func TestRaylineRoutesGatesAnAppendOverTheSuffixBound(t *testing.T) {
 	router, gate, _ := appendAdmissionRouter(t, true, 1)
-	seedAppendAdmissionEpisode(t, router, "conv-1")
+	seedAppendAdmissionEpisode(t, router, t.Name())
 	holdAppendAdmissionGate(t, gate)
 
-	response := router.handleRaylineRoutesAPI([]byte(appendAdmissionNext), trackedRoutesContext("conv-1"))
+	response := router.handleRaylineRoutesAPI([]byte(appendAdmissionNext), trackedRoutesContext(t.Name()))
 	if status, _, code := routesErrorCode(t, response); status != 429 || code != raylineRoutesAdmissionCode {
 		t.Fatalf("over-bound append = %d %s, want 429 %s", status, code, raylineRoutesAdmissionCode)
 	}
@@ -468,10 +473,10 @@ func TestRaylineRoutesGatesAnAppendOverTheSuffixBound(t *testing.T) {
 // With append_exempt off every lookup is gated, a predicted append included.
 func TestRaylineRoutesGatesEveryLookupWithAppendExemptOff(t *testing.T) {
 	router, gate, selector := appendAdmissionRouter(t, false, 0)
-	seedAppendAdmissionEpisode(t, router, "conv-1")
+	seedAppendAdmissionEpisode(t, router, t.Name())
 	holdAppendAdmissionGate(t, gate)
 
-	response := router.handleRaylineRoutesAPI([]byte(appendAdmissionNext), trackedRoutesContext("conv-1"))
+	response := router.handleRaylineRoutesAPI([]byte(appendAdmissionNext), trackedRoutesContext(t.Name()))
 	if status, _, code := routesErrorCode(t, response); status != 429 || code != raylineRoutesAdmissionCode {
 		t.Fatalf("append with the knob off = %d %s, want 429 %s", status, code, raylineRoutesAdmissionCode)
 	}
@@ -484,7 +489,7 @@ func TestRaylineRoutesGatesEveryLookupWithAppendExemptOff(t *testing.T) {
 // append_exempt says, and holds its slot until the backend answers.
 func TestRaylineRoutesGatesAnEphemeralLookupWithAppendExemptOn(t *testing.T) {
 	router, gate, selector := appendAdmissionRouter(t, true, 0)
-	seedAppendAdmissionEpisode(t, router, "conv-1")
+	seedAppendAdmissionEpisode(t, router, t.Name())
 	holdAppendAdmissionGate(t, gate)
 
 	// No session header: ephemeral, even though the body extends conv-1.
@@ -509,14 +514,41 @@ func TestPredictRaylineRoutesEncode(t *testing.T) {
 	committed := &raylinearc.EpisodeState{Policy: &raylinearc.PolicyEpisodeState{
 		PrefixLen: 1, PrefixDigest: raylinearc.NewPrefixDigests(first).Digest(1),
 	}}
+	episode := raylinearc.HashEpisodeID("predict-" + t.Name())
+	scope := policyRetainedScope(policy.RaylineARC)
+	retain := func(shape *raylinearc.PolicyPrefixShape) { policyRetainedSessions.remember(scope, episode, shape) }
+	t.Cleanup(func() { policyRetainedSessions.forget(scope, episode) })
 	arcContext := func(body string, state *raylinearc.EpisodeState) *selection.RaylineARCSelectionContext {
 		return &selection.RaylineARCSelectionContext{
-			EpisodeIDHash: raylinearc.HashEpisodeID("predict-" + t.Name()),
+			EpisodeIDHash: episode,
 			RawRequest:    []byte(body),
 			RequestFormat: policyFormatAnthropic,
 			State:         state,
 		}
 	}
+	// Nothing this process decided is in the session: a full encode.
+	if unknown := predictRaylineRoutesEncode(policy, arcContext(appendAdmissionNext, committed), false); unknown.Append ||
+		unknown.Reason != raylineRoutesPredictNotRetained {
+		t.Fatalf("unrecorded session = %+v, want a full encode (%s)", unknown, raylineRoutesPredictNotRetained)
+	}
+	// The session holds the prefix under another system prompt: a rebuild.
+	retain(raylinearc.NewPolicyPrefixShape(first, json.RawMessage(`"be brief"`), nil))
+	if rebuilt := predictRaylineRoutesEncode(policy, arcContext(appendAdmissionNext, committed), false); rebuilt.Append ||
+		rebuilt.Reason != raylineRoutesPredictShellChanged {
+		t.Fatalf("changed system prompt = %+v, want a full encode (%s)", rebuilt, raylineRoutesPredictShellChanged)
+	}
+	// The committed prefix is not the request the session last retained, as
+	// after a zdr turn (decided on a throwaway episode) or another decide.
+	older, _, err := policyMessages(json.RawMessage(`[{"role":"user","content":"before"}]`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	retain(raylinearc.NewPolicyPrefixShape(older, nil, nil))
+	if stale := predictRaylineRoutesEncode(policy, arcContext(appendAdmissionNext, committed), false); stale.Append ||
+		stale.Reason != raylineRoutesPredictNotRetained {
+		t.Fatalf("stale retained request = %+v, want a full encode (%s)", stale, raylineRoutesPredictNotRetained)
+	}
+	retain(raylinearc.NewPolicyPrefixShape(first, nil, nil))
 	appended := predictRaylineRoutesEncode(policy, arcContext(appendAdmissionNext, committed), false)
 	if !appended.Append || appended.Reason != raylineRoutesPredictAppends || appended.SuffixTokens <= 0 {
 		t.Fatalf("extending request = %+v, want an append with its suffix counted", appended)
@@ -554,5 +586,47 @@ func TestPredictRaylineRoutesEncode(t *testing.T) {
 				t.Fatalf("prediction = %+v, want a full encode for %s", got, testCase.reason)
 			}
 		})
+	}
+}
+
+// predictAfterFirstTurn runs and commits one turn on fixture, then predicts
+// the lookup that follows it with a reply and a tool result.
+func predictAfterFirstTurn(t *testing.T, fixture *deltaFixture) routerruntime.RouteEncodePrediction {
+	t.Helper()
+	scope := policyRetainedScope(fixture.decision.Algorithm.RaylineARC)
+	t.Cleanup(func() { policyRetainedSessions.forget(scope, fixture.episode) })
+	_, ctx := fixture.turn(t, policyTestRequest(t, deltaUser))
+	complete(t, ctx, deltaReply(t))
+	lease, state, err := fixture.store.Prepare(context.Background(), fixture.episode, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = fixture.store.Abort(context.Background(), lease) }()
+	return predictRaylineRoutesEncode(fixture.decision.Algorithm, &selection.RaylineARCSelectionContext{
+		EpisodeIDHash: fixture.episode,
+		RawRequest:    policyTestRequest(t, deltaUser, deltaAssistant, deltaToolResult),
+		RequestFormat: policyFormatAnthropic,
+		State:         state,
+	}, false)
+}
+
+// A strict turn this process decided leaves its request in the service's
+// session, so the next request is predicted to append to it.
+func TestPredictRaylineRoutesEncodeAfterAStrictTurn(t *testing.T) {
+	fixture := newDeltaFixture(t, config.RaylineARCDecideModeSync, nil)
+	if prediction := predictAfterFirstTurn(t, fixture); !prediction.Append {
+		t.Fatalf("after a strict turn = %+v, want an append", prediction)
+	}
+}
+
+// A zdr turn commits its prefix but is decided on a throwaway service
+// episode, so nothing retains it: the next request is a full encode.
+func TestPredictRaylineRoutesEncodeAfterAZDRTurn(t *testing.T) {
+	releaseInline(t)
+	fixture := newDeltaFixture(t, config.RaylineARCDecideModeSync, nil)
+	fixture.zdr = true
+	fixture.fake.servesRelease = true
+	if prediction := predictAfterFirstTurn(t, fixture); prediction.Append || prediction.Reason != raylineRoutesPredictNotRetained {
+		t.Fatalf("after a zdr turn = %+v, want a full encode (%s)", prediction, raylineRoutesPredictNotRetained)
 	}
 }

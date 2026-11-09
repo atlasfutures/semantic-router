@@ -142,6 +142,9 @@ type policyServiceScorer struct {
 	// optional work and never takes a slot a turn's decide could need.
 	appendAdmission  *raylinearc.AdmissionGate
 	deltaUnsupported atomic.Bool
+	// retainedScope keys what this cell's decides leave in the service's
+	// retained sessions (policyRetainedSessions).
+	retainedScope string
 }
 
 // policySideCallStrictFor is how long a strict cell keeps its side calls
@@ -221,6 +224,8 @@ func newPolicyServiceScorer(
 		decisionsV2:  newPolicyDecisionsV2(policy.DecisionsV2),
 		toolFreeTier: policyCellHasToolFreeOverride(policy),
 		exploration:  newPolicyExploration(policy),
+		// Read by route lookup admission to predict an append.
+		retainedScope: policyRetainedScope(decision.Algorithm.RaylineARC),
 	}
 	if decision.Algorithm.RaylineARC.Episode.RelaxedConsistency() {
 		scorer.episodeMode = raylinearc.PolicyEpisodeModeRelaxed
@@ -893,6 +898,11 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	} else if sessionBinding != nil {
 		defer sessionBinding.Release(ctx)
 	}
+	// A strict decide changes the episode's retained session, whatever it
+	// answers; what it holds is recorded again once the decide is accepted.
+	if !ephemeral && request.EpisodeMode != raylinearc.PolicyEpisodeModeRelaxed {
+		policyRetainedSessions.forget(scorer.retainedScope, arcContext.EpisodeIDHash)
+	}
 	started := selector.now()
 	// A delta cell stages its strict main turns and sends a turn that
 	// extends the staged prefix as a delta, decided synchronously like any
@@ -958,6 +968,9 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		refused.Class == raylinearc.PolicyRelaxedUnsupportedClass {
 		scorer.sideCallsRelaxedUnsupported(selector.now(), "refused")
 		request.EpisodeMode = scorer.episodeMode
+		if !ephemeral {
+			policyRetainedSessions.forget(scorer.retainedScope, arcContext.EpisodeIDHash)
+		}
 		decisionMode = policyStagedFullMode(staging)
 		response, err = decidePolicyThroughBusy(ctx, decider, request, scorer.busyWait, admit, withCacheContext)
 	}
@@ -1184,6 +1197,13 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	// The service encoded this request; a later turn's prefix break is
 	// explained against it.
 	rememberPolicyPrefix(arcContext.EpisodeIDHash, prefixShape)
+	// A strict decide left this request in the episode's retained session;
+	// a zdr turn named a throwaway episode and a relaxed one retained
+	// nothing. A side call's request is no prefix a turn commits, so it is
+	// forgotten rather than recorded (a nil shape).
+	if !ephemeral && !servedRelaxed {
+		policyRetainedSessions.remember(scorer.retainedScope, arcContext.EpisodeIDHash, prefixShape)
+	}
 	encoded := &raylinearc.EncoderResult{
 		SerializedTokens:  response.Encoding.TokenCount,
 		FullHistoryTokens: response.Encoding.TokenCount,

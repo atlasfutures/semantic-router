@@ -37,6 +37,7 @@ const (
 	raylineRoutesPredictNoCommittedTurn  = "no_committed_turn"
 	raylineRoutesPredictUnreadable       = "unreadable_request"
 	raylineRoutesPredictShellChanged     = "shell_changed"
+	raylineRoutesPredictNotRetained      = "not_retained"
 	raylineRoutesPredictEphemeralRequest = "ephemeral"
 )
 
@@ -50,16 +51,22 @@ const (
 // committed turn sent), the request's messages, and the turn signals. A
 // request that extends the committed prefix is what the service appends to
 // its retained session; anything else (no committed turn, a prefix break, a
-// compaction, a side call, a system prompt or tool change the message digest
-// does not cover) is a fresh or rebuilt session, which encodes every token.
+// compaction, a side call) is a fresh or rebuilt session, which encodes
+// every token.
 //
-// It is a prediction, not a promise. The service may have evicted the
-// session (an idle TTL, a restart, a replica change) and rebuild it anyway;
-// the decision's session_action says what actually happened, and is logged
+// The committed prefix is in the service's session only if a strict decide
+// left it there, so an append is predicted only when this process recorded
+// that decide as the session's last write (policyRetainedSessions), under
+// the system prompt and tools the request carries (the session covers them;
+// the message digest does not). That rules out a prefix a zdr turn
+// committed (decided on a throwaway service episode), a session a side call
+// or another recipe's decide changed since, and a turn another router
+// instance decided, which this process cannot see: each is gated.
+//
+// It is still a prediction. The service may have evicted the session (an
+// idle TTL, a restart, a replica change) and rebuild it anyway; the
+// decision's session_action says what actually happened, and is logged
 // beside the admission outcome so an exempt lookup that rebuilt is counted.
-// The system prompt and tools are compared only against the shape this
-// process remembers (policyPrefixShapes); a turn another replica committed
-// is compared on its messages alone.
 func predictRaylineRoutesEncode(
 	algorithm *config.AlgorithmConfig,
 	arcContext *selection.RaylineARCSelectionContext,
@@ -111,8 +118,14 @@ func predictRaylineRoutesEncode(
 		system, _ = json.Marshal(*clientRequest.Instructions)
 	}
 	current := raylinearc.NewPolicyPrefixShapeFrom(digests, system, clientRequest.Tools)
-	if recorded := policyPrefixShapes.recorded(arcContext.EpisodeIDHash, state.Policy); recorded != nil &&
-		(recorded.System != current.System || recorded.Tools != current.Tools) {
+	held, shellChanged := policyRetainedSessions.holds(
+		policyRetainedScope(algorithm.RaylineARC), arcContext.EpisodeIDHash, state.Policy, current,
+	)
+	switch {
+	case shellChanged:
+		return prediction
+	case !held:
+		prediction.Reason = raylineRoutesPredictNotRetained
 		return prediction
 	}
 	prediction.Append, prediction.Reason = true, raylineRoutesPredictAppends
