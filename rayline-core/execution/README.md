@@ -127,8 +127,9 @@ opt-in. The core reports facts and never picks or ranks a model.
     re-serialization of the prepared request (values re-encoded with
     `indent=4`, Python separators and float `repr`, non-ASCII and `<`, `>`,
     `&` escaped, each tool call's arguments reloaded and re-encoded beside
-    it), an upper bound for byte-level BPE (every token covers at least one
-    byte), raised by `headroom_ratio` and 512 tokens for a template preamble,
+    it, plus what a tokenizer's NFC/NFD/NFKC/NFKD normalizer can add to
+    non-ASCII text), an upper bound for byte-level BPE (every token covers at
+    least one byte), raised by `headroom_ratio` and 512 tokens for a template preamble,
     `provenance: "caller_bounded"`. The policy contract admits a bounded
     `fits: true` as a fit. Two template assumptions are not checked: the
     preamble is at most 512 tokens, and the template renders each part of

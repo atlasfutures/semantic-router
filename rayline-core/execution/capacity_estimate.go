@@ -2,9 +2,12 @@ package execution
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"math"
+
+	"golang.org/x/text/unicode/norm"
 
 	"github.com/atlasfutures/semantic-router/rayline-core/thinkingcontrol"
 )
@@ -126,14 +129,69 @@ func byteBoundTokens(body []byte, estimate *CapacityEstimate) (int64, int) {
 
 // worstCaseBytes is the longest spelling a template can give the request's
 // JSON (thinkingcontrol.PythonWorstCaseBytes, one parse), with each tool
-// call's arguments string reloaded and re-encoded beside it. A body that does
-// not parse is charged three times its bytes.
+// call's arguments string reloaded and re-encoded beside it, plus what a
+// tokenizer's Unicode normalizer can add (normalizationSlack). A body that
+// does not parse is charged three times its bytes.
 func worstCaseBytes(body []byte) int64 {
 	size, err := thinkingcontrol.PythonWorstCaseBytes(body, "arguments")
 	if err != nil {
 		return 3 * int64(len(body))
 	}
-	return size
+	return size + normalizationSlack(body)
+}
+
+// normalizationSlack is how far a tokenizer's NFC, NFD, NFKC or NFKD
+// normalizer can grow the body's strings past their escaped spelling: U+FDFA
+// is one \uXXXX escape (6 bytes) but 33 UTF-8 bytes under NFKC, a Hangul
+// syllable 9 under NFD. Composition never lengthens a decomposed string, so
+// NFD and NFKD bound the four. A tool call's arguments are charged twice, as
+// they are spelled twice.
+func normalizationSlack(body []byte) int64 {
+	var parsed any
+	if json.Unmarshal(body, &parsed) != nil {
+		return 0
+	}
+	var total int64
+	var walk func(value any, key string)
+	walk = func(value any, key string) {
+		switch value := value.(type) {
+		case map[string]any:
+			for member, child := range value {
+				total += stringSlack(member)
+				walk(child, member)
+			}
+		case []any:
+			for _, item := range value {
+				walk(item, key)
+			}
+		case string:
+			slack := stringSlack(value)
+			if key == "arguments" {
+				slack *= 2
+			}
+			total += slack
+		}
+	}
+	walk(parsed, "")
+	return total
+}
+
+func stringSlack(text string) int64 {
+	if norm.NFKD.IsNormalString(text) {
+		return 0
+	}
+	escaped := 0
+	for _, char := range text {
+		switch {
+		case char < 0x80:
+			escaped++
+		case char < 0x10000:
+			escaped += 6
+		default:
+			escaped += 12
+		}
+	}
+	return int64(max(len(norm.NFD.String(text))-escaped, len(norm.NFKD.String(text))-escaped, 0))
 }
 
 // inlineImages finds base64 images that are JSON structure, not text: an

@@ -952,3 +952,26 @@ func TestByteBoundIsBoundedOnlyOverAFullyKnownBody(t *testing.T) {
 		}
 	}
 }
+
+// TestByteBoundCoversUnicodeNormalization: a tokenizer may normalize before
+// byte-level BPE, and NFKC turns U+FDFA (one 6-byte escape) into 33 UTF-8
+// bytes, NFD a Hangul syllable into 9, so the bound charges the expansion.
+func TestByteBoundCoversUnicodeNormalization(t *testing.T) {
+	for name, test := range map[string]struct {
+		text  string
+		bytes int
+	}{
+		"nfkc ligature": {strings.Repeat("ﷺ", 1024), 33 * 1024},
+		"nfd hangul":    {strings.Repeat("한", 1024), 9 * 1024},
+	} {
+		body, err := json.Marshal(map[string]any{"model": "m", "messages": []any{map[string]any{"role": "user", "content": test.text}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		deployment := Deployment{ID: "local", Kind: "local", Protocol: llmprotocol.OpenAIChatV1, RegistryModel: "example/other", ContextWindow: 8192}
+		prompt, provenance, _ := localPromptSize(deployment, body)
+		if provenance == capacityProvenanceBounded && prompt < int64(test.bytes) {
+			t.Errorf("%s: bound %d below the normalized %d bytes", name, prompt, test.bytes)
+		}
+	}
+}
