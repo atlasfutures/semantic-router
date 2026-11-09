@@ -227,16 +227,20 @@ func TestRaylineRoutesDecideHoldsTheSlotUntilTheBackendAnswers(t *testing.T) {
 	}
 	unblock := make(chan struct{})
 	backendSawCancel := make(chan bool, 1)
+	entered := make(chan struct{})
 	decide := func(ctx context.Context, _ routerruntime.RouteDecisionRequest) (routerruntime.RouteDecision, error) {
+		close(entered)
 		<-unblock
 		backendSawCancel <- ctx.Err() != nil
 		return routerruntime.RouteDecision{}, nil
 	}
-	lookup, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	// The caller gives up only once the backend is encoding.
+	lookup, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	go func() { <-entered; cancel() }()
 	var background sync.WaitGroup
-	if _, err := raylineRoutesDecide(lookup, &background, decide, routerruntime.RouteDecisionRequest{}, ticket, true); err != context.DeadlineExceeded {
-		t.Fatalf("decide error = %v, want the lookup's deadline", err)
+	if _, err := raylineRoutesDecide(lookup, &background, decide, routerruntime.RouteDecisionRequest{}, ticket, true); err != context.Canceled {
+		t.Fatalf("decide error = %v, want the caller's cancel", err)
 	}
 	// A reload's Router.Close waits on background: it must not see the
 	// detached run as finished while the backend is still encoding.
@@ -251,10 +255,19 @@ func TestRaylineRoutesDecideHoldsTheSlotUntilTheBackendAnswers(t *testing.T) {
 		t.Fatal("the next lookup was admitted while the backend was still encoding")
 	}
 	close(unblock)
-	if <-backendSawCancel {
-		t.Fatal("the detached decision saw the caller's deadline")
+	select {
+	case sawCancel := <-backendSawCancel:
+		if sawCancel {
+			t.Fatal("the detached decision saw the caller's cancel")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("the detached decision never returned")
 	}
-	<-drained
+	select {
+	case <-drained:
+	case <-time.After(time.Second):
+		t.Fatal("the router's background work never drained")
+	}
 	deadline := time.Now().Add(time.Second)
 	for {
 		next, err := gate.Acquire(context.Background())
