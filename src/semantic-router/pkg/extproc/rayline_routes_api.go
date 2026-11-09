@@ -445,20 +445,22 @@ func (r *OpenAIRouter) handleRaylineRoutesAPI(
 	// deadline_ms. Every lookup is admitted here, before any episode work,
 	// except a tracked one on a cell that exempts predicted appends: its
 	// encode can be predicted only once its episode is read, so the decision
-	// service admits it there (raylineRoutesAppendAdmission). The slot is
-	// held until the backend answers, which for an ephemeral lookup can be
-	// after this handler has (see raylineRoutesDecide).
-	var ticket raylinearc.RouteLookupTicket
-	var appendAdmission *raylineRoutesAppendAdmission
-	if gate := r.raylineRoutesAdmissionGate(recipe); gate != nil && !decidedEphemeral && settings.Admission.AppendExempt {
-		appendAdmission = &raylineRoutesAppendAdmission{
-			gate: gate, routeID: routeID, maxSuffixTokens: settings.EffectiveAppendMaxSuffixTokens(),
+	// service admits it there (raylineRoutesSlot.admit). The slot is held
+	// until the backend answers, which can be after this handler has (see
+	// raylineRoutesDecide).
+	var slot *raylineRoutesSlot
+	if gate := r.raylineRoutesAdmissionGate(recipe); gate != nil {
+		slot = &raylineRoutesSlot{
+			gate: gate, routeID: routeID, lookup: lookupContext,
+			appendExempt:    !decidedEphemeral && settings.Admission.AppendExempt,
+			maxSuffixTokens: settings.EffectiveAppendMaxSuffixTokens(),
 		}
-		consult.Admit = appendAdmission.admit
-	} else {
-		var refused *ext_proc.ProcessingResponse
-		if ticket, refused = r.admitRaylineRoutesLookup(ctx, lookupContext, recipe, routeID); refused != nil {
-			return refused
+		if !slot.appendExempt {
+			ticket, refused := r.admitRaylineRoutesLookup(ctx, lookupContext, recipe, routeID)
+			if refused != nil {
+				return refused
+			}
+			slot.ticket = ticket
 		}
 	}
 	started := time.Now()
@@ -467,13 +469,11 @@ func (r *OpenAIRouter) handleRaylineRoutesAPI(
 		&r.background,
 		runtime.RouteDecision,
 		consult,
-		ticket,
+		slot,
 		decidedEphemeral,
 	)
-	// A tracked decision has returned, so the backend has answered it.
-	appendAdmission.release()
-	if appendAdmission.refusedBy(err) {
-		return r.raylineRoutesAdmissionRefusal(ctx, lookupContext, routeID, appendAdmission.gate, err)
+	if slot.refusedBy(err) {
+		return r.raylineRoutesAdmissionRefusal(ctx, lookupContext, routeID, slot.gate, err)
 	}
 	if err != nil {
 		return r.raylineRoutesFailure(ctx, lookupContext, routeID, err)
@@ -521,34 +521,44 @@ func (r *OpenAIRouter) raylineRoutesContext(ctx *RequestContext) context.Context
 // raylineRoutesDecide runs the lookup's decision and frees its admission slot
 // when the backend answers.
 //
-// A tracked lookup decides on the lookup's own context and frees the slot on
-// return, as before: detached, an abandoned lookup would still commit its
-// episode turn. An ephemeral lookup that holds a slot decides on a context
-// detached from the caller and bounded by RouteLookupDetachBound, because the
-// backend does not stop encoding when the caller stops waiting: freeing the
-// slot at the 504 would admit the next lookup onto a backend still busy with
-// this one. The caller still waits only inside its own deadline; the late
-// answer is discarded, and the slot is freed when it arrives. The detached
-// run is counted in background, so the router that owns the backend's
-// clients is not closed under it by a reload.
+// A lookup with no gate decides on the lookup's own context. A gated one
+// decides on a context detached from the caller and bounded by
+// RouteLookupDetachBound, because the backend does not stop encoding when
+// the caller stops waiting: freeing the slot at the 504 would admit the next
+// lookup onto a backend still busy with this one. The caller still waits only
+// inside its own deadline; the late answer is discarded, and the slot is
+// freed when it arrives. The detached run is counted in background, so the
+// router that owns the backend's clients is not closed under it by a reload.
+//
+// An ephemeral decision is pinned to its slot from the start. A tracked one
+// is pinned only once the decision service admits it (slot.admit), after its
+// episode is read and before any encoder call: until then, and for good when
+// it is exempt and holds no slot, it is cancelled with the caller, so an
+// abandoned lookup encodes nothing it need not. Its commit runs on the
+// caller's context (Caller), so an abandoned tracked lookup, pinned or not,
+// never advances its episode: the lease is released without a commit.
 func raylineRoutesDecide(
 	lookupContext context.Context,
 	background *sync.WaitGroup,
 	decide func(context.Context, routerruntime.RouteDecisionRequest) (routerruntime.RouteDecision, error),
 	request routerruntime.RouteDecisionRequest,
-	ticket raylinearc.RouteLookupTicket,
+	slot *raylineRoutesSlot,
 	ephemeral bool,
 ) (routerruntime.RouteDecision, error) {
-	if !ephemeral || !ticket.Held() {
-		defer ticket.Release()
+	if slot == nil {
 		return decide(lookupContext, request)
 	}
-	// A caller that left while queued starts no encode nobody waits for.
+	// A caller that left while queued starts no encode.
 	if err := lookupContext.Err(); err != nil {
-		ticket.Release()
+		slot.release()
 		return routerruntime.RouteDecision{}, err
 	}
 	detached, cancel := context.WithTimeout(context.WithoutCancel(lookupContext), raylinearc.RouteLookupDetachBound)
+	slot.start(cancel, ephemeral)
+	stopAbandon := context.AfterFunc(lookupContext, slot.abandon)
+	if !ephemeral {
+		request.Admit, request.Caller = slot.admit, lookupContext
+	}
 	type outcome struct {
 		decision routerruntime.RouteDecision
 		err      error
@@ -559,8 +569,9 @@ func raylineRoutesDecide(
 		defer background.Done()
 		// Released from in here, not by the handler returning: the slot is
 		// the backend's, and the backend is busy until this call returns.
-		defer ticket.Release()
+		defer slot.release()
 		defer cancel()
+		defer stopAbandon()
 		defer func() {
 			if recovered := recover(); recovered != nil {
 				answered <- outcome{err: fmt.Errorf("route decision panicked: %v", recovered)}

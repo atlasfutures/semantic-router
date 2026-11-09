@@ -26,6 +26,9 @@ type stubARCSelector struct {
 	err      error
 	// policyAction, when set, reports a policy-service decision.
 	policyAction string
+	// sessionAction, when set, reports what the decision did to the
+	// episode's retained encoder session.
+	sessionAction string
 }
 
 func (s *stubARCSelector) Select(
@@ -44,6 +47,7 @@ func (s *stubARCSelector) Select(
 			SelectedArm:      s.arm,
 			SerializedTokens: 11,
 			PolicyActionID:   s.policyAction,
+			SessionAction:    s.sessionAction,
 		},
 	}, nil
 }
@@ -90,6 +94,7 @@ func decisionServiceConfig() *config.RouterConfig {
 								IDHeader:              decisionServiceEpisodeHeader,
 								AcquireTimeoutSeconds: 5,
 								LeaseTTLSeconds:       30,
+								IdleTTLSeconds:        60,
 							},
 						},
 					},

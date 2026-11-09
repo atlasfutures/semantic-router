@@ -55,13 +55,13 @@ const (
 	// lookup can occupy; it is a misconfiguration.
 	maxRaylineARCRoutesAdmissionInflight = 64
 	// DefaultRaylineARCRoutesAppendMaxSuffixTokens is the suffix an exempt
-	// append may carry when append_max_suffix_tokens is unset. The measured
-	// full encode runs at roughly 9k tokens a second (3.6 MB, about 900k
-	// tokens, in 105 s), so 8k tokens is at most about a second of encoder
-	// time even before the retained prefix's cache is counted: no longer
-	// than an ordinary small lookup the gate admits in a burst, and inside
-	// the default 2 s queue wait a gated lookup would have spent anyway. An
-	// ordinary turn's suffix (an assistant reply and a user message or a
+	// append may carry when append_max_suffix_tokens is unset. In prod a full
+	// encode runs at about 35k tokens a second per container plus about
+	// 0.2 s fixed, so 8k new tokens is at most about 0.45 s of encoder time:
+	// under the 0.7 to 0.9 s an append already costs policy-side at 140 to
+	// 157k tokens, no longer than an ordinary small lookup the gate admits in
+	// a burst, and well inside the default 2 s queue wait a gated lookup
+	// would have spent anyway. An ordinary turn's suffix (an assistant reply and a user message or a
 	// few tool results) is well under it; a large pasted file or tool
 	// output is not, and is gated as the encode it is. The byte estimate
 	// overcounts tokens for most text, which errs toward gating.
@@ -345,10 +345,11 @@ type RaylineARCRoutesAdmissionConfig struct {
 	// AppendExempt lets a tracked lookup that is predicted to append to its
 	// episode's retained encoder session skip the gate. The gate exists
 	// because a full encode of a large transcript holds a policy container
-	// for its whole duration (about 105 s for 3.6 MB); an append encodes
-	// only the turns since the episode's last committed request (0.2 to
-	// 0.8 s), so queueing it behind a full encode, or shedding it, costs
-	// more than it protects. A lookup is predicted to append when its
+	// for its whole duration (in prod about 35k tokens a second plus about
+	// 0.2 s fixed: some 26 s for 900k tokens); an append encodes only the
+	// turns since the episode's last committed request (55 to 115 ms in the
+	// encoder, 0.7 to 0.9 s policy-side at 140 to 157k tokens), so queueing
+	// it behind a full encode, or shedding it, costs more than it protects. A lookup is predicted to append when its
 	// episode committed a prefix this request extends, this router process
 	// last left that prefix in the service's session under the same system
 	// prompt and tools, and the new suffix is at most

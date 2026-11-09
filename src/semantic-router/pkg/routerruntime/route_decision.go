@@ -79,13 +79,20 @@ type RouteDecisionRequest struct {
 	// Admit, when set, is the lookup's admission gate, which the caller
 	// asked the implementation to take once the episode is read: it is
 	// called exactly once, after the episode lease and before any encoder
-	// or policy-service call, with the implementation's prediction of the
-	// encode the decision will make. It reports whether it exempted the
-	// lookup rather than taking a slot. An error aborts the decision (the
-	// episode lease is released) and is returned as it came. The caller
-	// releases whatever slot Admit took once RouteDecision returns. Nil
-	// means the caller already admitted the lookup, or needs no admission.
-	Admit func(context.Context, RouteEncodePrediction) (exempt bool, err error)
+	// or policy-service call. predict returns the implementation's
+	// prediction of the encode the decision will make; it is computed only
+	// if Admit asks. Admit reports whether it exempted the lookup rather
+	// than taking a slot. An error aborts the decision (the episode lease
+	// is released) and is returned as it came. The caller releases whatever
+	// slot Admit took once RouteDecision returns. Nil means the caller
+	// needs no admission at this point.
+	Admit func(ctx context.Context, predict func() RouteEncodePrediction) (exempt bool, err error)
+	// Caller, when set, is the context of the caller waiting on the
+	// decision, where ctx is detached from it (a lookup that holds an
+	// admission slot runs on until the backend answers). The episode commit
+	// waits on Caller, not ctx: a decision whose caller has left is not
+	// committed, and its lease is released. Nil commits on ctx.
+	Caller context.Context
 }
 
 // RouteEncodePrediction is what the router knows, before calling the encoder,
