@@ -309,10 +309,11 @@ func (blockingRouteLookupLeases) acquire(ctx context.Context, _ string, _ time.D
 
 func (blockingRouteLookupLeases) release(context.Context, string) error { return nil }
 
-// A stalled Redis call is bounded by the queue wait: once the wait runs out
-// the lookup is shed on time, and the stall is not mistaken for a Redis
-// failure that would open the gate.
-func TestRouteLookupGateBoundsAStalledCallByTheQueueWait(t *testing.T) {
+// A Redis that accepts the call and never answers is bounded: the lookup is
+// shed close to its queue wait (plus at most one minimum call), and the
+// stall counts as a Redis failure, so the next lookups fail open instead of
+// each waiting on it.
+func TestRouteLookupGateBoundsAStalledCallAndTripsTheBackoff(t *testing.T) {
 	t.Parallel()
 	gate := testRouteLookupGate(1, 30*time.Millisecond, blockingRouteLookupLeases{})
 	started := time.Now()
@@ -321,10 +322,31 @@ func TestRouteLookupGateBoundsAStalledCallByTheQueueWait(t *testing.T) {
 		t.Fatalf("err = %v, want shed at the queue wait", err)
 	}
 	if waited := time.Since(started); waited > 200*time.Millisecond {
-		t.Fatalf("shed after %v, want about the 30ms queue wait", waited)
+		t.Fatalf("shed after %v, want about the queue wait plus one minimum call", waited)
 	}
-	if gate.redisBackingOff() {
-		t.Fatal("a call the queue wait ended tripped the Redis backoff")
+	if !gate.redisBackingOff() {
+		t.Fatal("a Redis that never answered did not trip the backoff")
+	}
+	next, err := gate.Acquire(context.Background())
+	if err != nil || next.Outcome != RouteLookupFailOpen {
+		t.Fatalf("next = %+v, %v; want fail_open during the backoff", next, err)
+	}
+	next.Release()
+}
+
+// A stall with a long queue wait fails open after one call timeout rather
+// than holding the lookup for the whole wait.
+func TestRouteLookupGateFailsOpenAfterOneStalledCall(t *testing.T) {
+	t.Parallel()
+	gate := testRouteLookupGate(1, 5*time.Second, blockingRouteLookupLeases{})
+	started := time.Now()
+	ticket, err := gate.Acquire(context.Background())
+	if err != nil || ticket.Outcome != RouteLookupFailOpen {
+		t.Fatalf("ticket = %+v, %v; want fail_open", ticket, err)
+	}
+	ticket.Release()
+	if waited := time.Since(started); waited > time.Second {
+		t.Fatalf("failed open after %v, want about one call timeout", waited)
 	}
 }
 

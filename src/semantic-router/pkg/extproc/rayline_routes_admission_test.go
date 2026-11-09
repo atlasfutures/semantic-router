@@ -197,6 +197,17 @@ func TestRaylineRoutesAdmissionScopeFollowsTheEpisodeBackend(t *testing.T) {
 	if raylineRoutesAdmissionPool(sameBackend) != raylineRoutesAdmissionPool(trailingSlash) {
 		t.Fatal("two spellings of one policy service computed two pools")
 	}
+	oneReplica := &config.RaylineARCAlgorithmConfig{PolicyService: &config.RaylineARCPolicyServiceConfig{
+		Replicas: []config.RaylineARCEncoderReplicaConfig{{ID: "a", BaseURL: "https://policy.example"}},
+	}}
+	if raylineRoutesAdmissionPool(sameBackend) != raylineRoutesAdmissionPool(oneReplica) {
+		t.Fatal("base_url A and replicas [A] computed two pools")
+	}
+	fleetA := &config.RaylineARCAlgorithmConfig{Episode: config.RaylineARCEpisodeConfig{KeyPrefix: "fleet-a:"}}
+	fleetB := &config.RaylineARCAlgorithmConfig{Episode: config.RaylineARCEpisodeConfig{KeyPrefix: "fleet-b:"}}
+	if raylineRoutesAdmissionPool(fleetA) == raylineRoutesAdmissionPool(fleetB) {
+		t.Fatal("two dynamic-membership encoder fleets share a pool")
+	}
 	if raylineRoutesAdmissionPool(sameBackend) == raylineRoutesAdmissionPool(otherBackend) {
 		t.Fatal("two policy services share a pool")
 	}

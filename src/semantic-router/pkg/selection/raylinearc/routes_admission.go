@@ -69,6 +69,10 @@ const (
 	// routeLookupRedisCallTimeout bounds one Redis round trip, so that a
 	// stalled store costs a lookup this much once and not its queue wait.
 	routeLookupRedisCallTimeout = 250 * time.Millisecond
+	// routeLookupRedisMinCall is the least time one call is given, so a
+	// call that fails within it is a Redis failure. A lookup may overrun its
+	// queue wait by at most this much.
+	routeLookupRedisMinCall = 50 * time.Millisecond
 	// routeLookupRedisPoolSize bounds the gate's own connections. A process
 	// has at most max_inflight lookups polling (the rest queue locally), so
 	// a handful is plenty.
@@ -342,13 +346,19 @@ func (gate *RouteLookupGate) Acquire(ctx context.Context) (RouteLookupTicket, er
 	for {
 		acquired, err := gate.tryLease(ctx, waitContext, token)
 		if err != nil {
-			if waitContext.Err() != nil {
-				// The wait (or the lookup) ran out during the call: a
-				// refusal, not a Redis failure.
+			if ctx.Err() != nil {
+				// The lookup itself ended during the call.
 				localRelease()
 				return RouteLookupTicket{}, gate.refusal(ctx, RouteLookupBackendRedis, started)
 			}
+			// A healthy Redis answers in about a millisecond, and every call
+			// is given at least routeLookupRedisMinCall, so an error here is
+			// a Redis failure even when the queue wait also ran out.
 			gate.tripRedis(err)
+			if waitContext.Err() != nil {
+				localRelease()
+				return RouteLookupTicket{}, gate.refusal(ctx, RouteLookupBackendRedis, started)
+			}
 			return gate.admit(started, RouteLookupBackendLocal, true, localRelease), nil
 		}
 		if acquired {
@@ -381,12 +391,19 @@ func (gate *RouteLookupGate) Acquire(ctx context.Context) (RouteLookupTicket, er
 	}
 }
 
-// tryLease makes one attempt at a slot, bounded by the queue wait and by
-// one call timeout. A call that errors may still have taken a slot (the
+// tryLease makes one attempt at a slot, bounded by what is left of the queue
+// wait -- but never by less than routeLookupRedisMinCall, so that a call
+// that fails is a Redis that did not answer in time, not a wait that ran out
+// as the call began -- and never by more than one call timeout or the
+// lookup's own context. A call that errors may still have taken a slot (the
 // reply was lost, not the write), so the token's slot is released, off the
 // lookup's path, before the error is reported.
 func (gate *RouteLookupGate) tryLease(ctx, waitContext context.Context, token string) (bool, error) {
-	callContext, cancel := context.WithTimeout(waitContext, routeLookupRedisCallTimeout)
+	budget := routeLookupRedisCallTimeout
+	if deadline, ok := waitContext.Deadline(); ok {
+		budget = min(max(time.Until(deadline), routeLookupRedisMinCall), routeLookupRedisCallTimeout)
+	}
+	callContext, cancel := context.WithTimeout(ctx, budget)
 	defer cancel()
 	acquired, err := gate.leases.acquire(callContext, token, gate.leaseTTL)
 	if err != nil {

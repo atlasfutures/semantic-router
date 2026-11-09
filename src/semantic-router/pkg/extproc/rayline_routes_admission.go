@@ -103,17 +103,37 @@ func buildRaylineRoutesAdmission(router *OpenAIRouter) map[config.RecipeName]*ra
 // raylineRoutesAdmissionPool names the backend a decision's lookups occupy:
 // the policy service, or the encoder in the artifact mode. Two recipes that
 // call the same backend compute the same pool and so share its slots.
+//
+// The identity is the backend kind and its endpoint set, normalized, sorted
+// and de-duplicated, so base_url: A and replicas: [A] are one pool. An
+// encoder fleet with dynamic membership has no static endpoints; its
+// identity is the membership document it reads, which lives under the
+// episode key prefix.
 func raylineRoutesAdmissionPool(arcConfig *config.RaylineARCAlgorithmConfig) string {
 	kind, base, replicas := "encoder", arcConfig.Encoder.BaseURL, arcConfig.Encoder.Replicas
 	if policy := arcConfig.PolicyService; policy != nil {
 		kind, base, replicas = "policy_service", policy.BaseURL, policy.Replicas
 	}
-	urls := make([]string, 0, len(replicas))
+	endpoints := map[string]bool{}
+	add := func(url string) {
+		if url = strings.TrimRight(strings.TrimSpace(url), "/"); url != "" {
+			endpoints[url] = true
+		}
+	}
+	add(base)
 	for _, replica := range replicas {
-		urls = append(urls, strings.TrimRight(strings.TrimSpace(replica.BaseURL), "/"))
+		add(replica.BaseURL)
+	}
+	identity := []string{kind}
+	if len(endpoints) == 0 {
+		identity = append(identity, "membership", arcConfig.Episode.KeyPrefix)
+	}
+	urls := make([]string, 0, len(endpoints))
+	for url := range endpoints {
+		urls = append(urls, url)
 	}
 	sort.Strings(urls)
-	return raylinearc.RouteLookupPoolID(append([]string{kind, base}, urls...)...)
+	return raylinearc.RouteLookupPoolID(append(identity, urls...)...)
 }
 
 // raylineRoutesAdmissionGate is the gate for a lookup's recipe, or nil when

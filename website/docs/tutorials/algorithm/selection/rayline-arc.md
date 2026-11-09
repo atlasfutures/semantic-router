@@ -609,8 +609,10 @@ routes_api:
   routed traffic never passes through it.
 - **Redis failure fails open** to the per-process cap: an outage of the
   episode store admits lookups at `max_inflight` per instance rather than
-  refusing them all. The gate stops consulting Redis for a few seconds after
-  an error and logs `rayline_routes_admission_fail_open` once per trip.
+  refusing them all. A Redis call that does not answer within 250 ms (50 ms
+  when the queue wait is nearly spent) counts as a failure; the gate then
+  stops consulting Redis for a few seconds and logs
+  `rayline_routes_admission_fail_open` once per trip.
 - **A crashed holder** frees its slot when its lease expires, at
   `deadline_ms` plus a few seconds.
 - **Limit.** The slot is released when the lookup answers. A lookup that hit
