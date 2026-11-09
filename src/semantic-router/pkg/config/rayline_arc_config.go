@@ -327,6 +327,35 @@ type RaylineARCRoutesAdmissionConfig struct {
 	// of small lookups that each clear in well under a second -- and turns
 	// the rest into a prompt 429 the caller can schedule around.
 	QueueWaitMS int `yaml:"queue_wait_ms,omitempty"`
+	// AbandonedHoldTokensPerSecond is the encode rate a tracked lookup's
+	// slot is held at after its caller left. A tracked lookup decides on its
+	// caller's context, so its deadline cancels the decision, but not the
+	// encode the policy container already started: the slot is held for that
+	// encode's estimated duration (its tokens at this rate, plus a second,
+	// capped at 120 s) so the next lookup is not admitted onto a container
+	// still busy with it. Zero selects the default, about the measured
+	// full-encode rate of one container.
+	AbandonedHoldTokensPerSecond int `yaml:"abandoned_hold_tokens_per_second,omitempty"`
+}
+
+// DefaultRaylineARCRoutesAbandonedHoldTokensPerSecond is the encode rate
+// abandoned_hold_tokens_per_second defaults to: a full encode runs at about
+// 35k tokens a second per container (plus a fixed cost the hold's extra
+// second covers).
+const (
+	DefaultRaylineARCRoutesAbandonedHoldTokensPerSecond = 35000
+	// maxRaylineARCRoutesAbandonedHoldTokensPerSecond bounds the configured
+	// rate; faster than this holds no slot worth the name.
+	maxRaylineARCRoutesAbandonedHoldTokensPerSecond = 10_000_000
+)
+
+// EffectiveAbandonedHoldTokensPerSecond is the configured rate, with the
+// default substituted for an unset value.
+func (cfg RaylineARCRoutesAdmissionConfig) EffectiveAbandonedHoldTokensPerSecond() int {
+	if cfg.AbandonedHoldTokensPerSecond > 0 {
+		return cfg.AbandonedHoldTokensPerSecond
+	}
+	return DefaultRaylineARCRoutesAbandonedHoldTokensPerSecond
 }
 
 // Enabled reports whether lookups are admitted through a gate.
@@ -604,9 +633,16 @@ func validateRaylineARCRoutesAdmissionConfig(cfg RaylineARCRoutesAPIConfig) erro
 	if admission.QueueWaitMS < 0 || admission.QueueWaitMS > maxRaylineARCRoutesDeadlineMS {
 		return fmt.Errorf("queue_wait_ms must be between 0 and %d", maxRaylineARCRoutesDeadlineMS)
 	}
+	if admission.AbandonedHoldTokensPerSecond < 0 ||
+		admission.AbandonedHoldTokensPerSecond > maxRaylineARCRoutesAbandonedHoldTokensPerSecond {
+		return fmt.Errorf("abandoned_hold_tokens_per_second must be between 0 and %d", maxRaylineARCRoutesAbandonedHoldTokensPerSecond)
+	}
 	if !admission.Enabled() {
 		if admission.QueueWaitMS != 0 {
 			return fmt.Errorf("queue_wait_ms needs max_inflight")
+		}
+		if admission.AbandonedHoldTokensPerSecond != 0 {
+			return fmt.Errorf("abandoned_hold_tokens_per_second needs max_inflight")
 		}
 		return nil
 	}

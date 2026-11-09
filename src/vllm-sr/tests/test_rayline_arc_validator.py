@@ -357,6 +357,11 @@ def test_routes_api_admission_matches_the_go_loader():
         deadline_ms=30_000,
         admission={"max_inflight": 1, "queue_wait_ms": 2_000},
     )
+    RaylineARCRoutesAPIConfig(
+        enabled=True,
+        admission={"max_inflight": 1, "abandoned_hold_tokens_per_second": 20_000},
+    )
+    assert _go_constant("DefaultRaylineARCRoutesAbandonedHoldTokensPerSecond") == 35000
     for rejected in (
         {"enabled": True, "admission": {"max_inflight": -1}},
         {"enabled": True, "admission": {"max_inflight": _MAX_ROUTES_ADMISSION_INFLIGHT + 1}},
@@ -365,6 +370,8 @@ def test_routes_api_admission_matches_the_go_loader():
         # The wait is spent inside the deadline: 2000 ms does not fit 1500.
         {"enabled": True, "admission": {"max_inflight": 1, "queue_wait_ms": 2_000}},
         {"enabled": True, "admission": {"max_inflight": 1, "slots": 2}},
+        {"enabled": True, "admission": {"abandoned_hold_tokens_per_second": 20_000}},
+        {"enabled": True, "admission": {"max_inflight": 1, "abandoned_hold_tokens_per_second": -1}},
     ):
         with pytest.raises(ValidationError):
             RaylineARCRoutesAPIConfig(**rejected)

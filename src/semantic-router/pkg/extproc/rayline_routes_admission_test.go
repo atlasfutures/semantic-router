@@ -18,7 +18,6 @@ package extproc
 
 import (
 	"context"
-	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -240,7 +239,7 @@ func TestRaylineRoutesDecideHoldsTheSlotUntilTheBackendAnswers(t *testing.T) {
 	defer cancel()
 	go func() { <-entered; cancel() }()
 	var background sync.WaitGroup
-	if _, err := raylineRoutesDecide(lookup, &background, decide, routerruntime.RouteDecisionRequest{}, ticket, true); err != context.Canceled {
+	if _, err := raylineRoutesDecide(lookup, &background, decide, routerruntime.RouteDecisionRequest{}, ticket, 0, true); err != context.Canceled {
 		t.Fatalf("decide error = %v, want the caller's cancel", err)
 	}
 	// A reload's Router.Close waits on background: it must not see the
@@ -282,11 +281,15 @@ func TestRaylineRoutesDecideHoldsTheSlotUntilTheBackendAnswers(t *testing.T) {
 	}
 }
 
-// A tracked lookup that holds the slot keeps it until the backend answers,
-// as an ephemeral one does: the container keeps encoding after the caller's
-// 504. Its decision runs on, uncancelled, but its commit guard has seen the
-// caller leave and refuses the commit.
-func TestRaylineRoutesDecideHoldsATrackedLookupsSlotUntilTheBackendAnswers(t *testing.T) {
+// A tracked lookup whose caller left mid-encode keeps its slot for the
+// encode's estimated duration, then frees it; it never commits its turn.
+func TestRaylineRoutesDecideHoldsAnAbandonedTrackedLookupsSlot(t *testing.T) {
+	defer func(fixed time.Duration) { raylineRoutesAbandonedHoldFixed = fixed }(raylineRoutesAbandonedHoldFixed)
+	raylineRoutesAbandonedHoldFixed = 50 * time.Millisecond
+	lookup, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	selector := &stubARCSelector{arm: 0, workers: decisionServiceWorkers(), onSelect: cancel}
+	router := decisionServiceRouter(t, selector)
 	gate := raylinearc.NewRouteLookupGate(raylinearc.RouteLookupGateConfig{
 		MaxInflight: 1, QueueWait: 20 * time.Millisecond, LookupDeadline: time.Second,
 	})
@@ -294,42 +297,36 @@ func TestRaylineRoutesDecideHoldsATrackedLookupsSlotUntilTheBackendAnswers(t *te
 	if err != nil {
 		t.Fatalf("acquire: %v", err)
 	}
-	lookup, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	entered, unblock := make(chan struct{}), make(chan struct{})
-	seen := make(chan [2]bool, 1)
-	decide := func(ctx context.Context, request routerruntime.RouteDecisionRequest) (routerruntime.RouteDecision, error) {
-		if request.Commit == nil || request.Commit.Context() != lookup {
-			t.Error("a tracked lookup's decision was not given its caller's commit guard")
-		}
-		close(entered)
-		<-unblock
-		seen <- [2]bool{ctx.Err() != nil, !request.Commit.Begin()}
-		return routerruntime.RouteDecision{}, nil
-	}
-	go func() { <-entered; cancel() }()
-	var background sync.WaitGroup
-	if _, err := raylineRoutesDecide(lookup, &background, decide, routerruntime.RouteDecisionRequest{}, ticket, false); err != context.Canceled {
-		t.Fatalf("decide error = %v, want the caller's cancel", err)
+	// 4000 bytes is 1000 tokens: at 4000 tokens a second, 250 ms.
+	body := anthropicBody(strings.Repeat("x", 4000-len(anthropicBody(""))))
+	started := time.Now()
+	if _, err := raylineRoutesDecide(lookup, &sync.WaitGroup{}, router.routeDecisionRuntimeState().RouteDecision,
+		routerruntime.RouteDecisionRequest{Body: body, DecisionID: "rt_abandoned", SessionID: "abandoned-1"},
+		ticket, 4000, false); err == nil {
+		t.Fatal("an abandoned tracked lookup answered")
 	}
 	if _, err := gate.Acquire(context.Background()); err == nil {
-		t.Fatal("the slot was freed at the caller's 504 while the backend still encoded")
-	}
-	close(unblock)
-	background.Wait()
-	got := <-seen
-	if got[0] {
-		t.Fatal("the tracked decision was cancelled with its caller")
-	}
-	if !got[1] {
-		t.Fatal("the commit guard let a decision commit for a caller that left")
+		t.Fatal("the slot was freed at once while the encode still ran")
 	}
 	awaitSlotFree(t, gate)
+	if held := time.Since(started); held < 250*time.Millisecond || held > 900*time.Millisecond {
+		t.Fatalf("slot held %v, want about 300 ms", held)
+	}
+	prepared, cancelPrepare := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancelPrepare()
+	lease, state, err := router.RaylineARCEpisodeStore.Prepare(prepared, raylinearc.HashEpisodeID("abandoned-1"), 2)
+	if err != nil {
+		t.Fatalf("the episode lease was not released: %v", err)
+	}
+	defer func() { _ = router.RaylineARCEpisodeStore.Abort(context.Background(), lease) }()
+	if state.TurnIndex != 0 {
+		t.Fatalf("turn index = %d, want 0: an abandoned lookup committed", state.TurnIndex)
+	}
 }
 
-// A tracked lookup decided through the detached run commits its episode turn
-// exactly once, and an ephemeral one is not handed a commit context.
-func TestRaylineRoutesDecideCommitsATrackedLookupOnce(t *testing.T) {
+// A tracked lookup that answers frees its slot at once and commits exactly
+// once.
+func TestRaylineRoutesDecideFreesATrackedLookupsSlotOnAnswer(t *testing.T) {
 	selector := &stubARCSelector{arm: 0, workers: decisionServiceWorkers()}
 	router := decisionServiceRouter(t, selector)
 	gate := raylinearc.NewRouteLookupGate(raylinearc.RouteLookupGateConfig{
@@ -339,18 +336,16 @@ func TestRaylineRoutesDecideCommitsATrackedLookupOnce(t *testing.T) {
 	if err != nil {
 		t.Fatalf("acquire: %v", err)
 	}
-	var background sync.WaitGroup
-	decision, err := raylineRoutesDecide(context.Background(), &background,
-		router.routeDecisionRuntimeState().RouteDecision,
+	if _, err := raylineRoutesDecide(context.Background(), &sync.WaitGroup{}, router.routeDecisionRuntimeState().RouteDecision,
 		routerruntime.RouteDecisionRequest{Body: anthropicBody("hello"), DecisionID: "rt_once", SessionID: "once-1"},
-		ticket, false)
-	if err != nil {
+		ticket, 0, false); err != nil {
 		t.Fatalf("decide: %v", err)
 	}
-	background.Wait()
-	if decision.SelectedWorker == "" {
-		t.Fatal("no worker selected")
+	next, err := gate.Acquire(context.Background())
+	if err != nil {
+		t.Fatalf("slot not freed when a tracked lookup answered: %v", err)
 	}
+	next.Release()
 	prepared, cancelPrepare := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancelPrepare()
 	lease, state, err := router.RaylineARCEpisodeStore.Prepare(prepared, raylinearc.HashEpisodeID("once-1"), 2)
@@ -359,49 +354,29 @@ func TestRaylineRoutesDecideCommitsATrackedLookupOnce(t *testing.T) {
 	}
 	defer func() { _ = router.RaylineARCEpisodeStore.Abort(context.Background(), lease) }()
 	if state.TurnIndex != 1 {
-		t.Fatalf("turn index = %d, want 1: the tracked lookup must commit exactly once", state.TurnIndex)
+		t.Fatalf("turn index = %d, want 1: a tracked lookup commits exactly once", state.TurnIndex)
 	}
-	awaitSlotFree(t, gate)
-
-	ticket, err = gate.Acquire(context.Background())
-	if err != nil {
-		t.Fatalf("acquire: %v", err)
-	}
-	ephemeral := func(_ context.Context, request routerruntime.RouteDecisionRequest) (routerruntime.RouteDecision, error) {
-		if request.Commit != nil {
-			t.Error("an ephemeral lookup was handed a commit guard")
-		}
-		return routerruntime.RouteDecision{}, nil
-	}
-	if _, err := raylineRoutesDecide(context.Background(), &background, ephemeral, routerruntime.RouteDecisionRequest{}, ticket, true); err != nil {
-		t.Fatalf("decide: %v", err)
-	}
-	background.Wait()
 }
 
-// A decision whose caller left during its encode is released, not
-// committed: its episode does not advance and its lease is free for the next
-// turn.
-func TestRouteDecisionDoesNotCommitForACallerThatLeft(t *testing.T) {
-	caller, cancel := context.WithCancel(context.Background())
-	selector := &stubARCSelector{arm: 0, workers: decisionServiceWorkers(), onSelect: cancel}
-	router := decisionServiceRouter(t, selector)
-	_, err := router.routeDecisionRuntimeState().RouteDecision(context.Background(), routerruntime.RouteDecisionRequest{
-		Body: anthropicBody("hello"), DecisionID: "rt_left", SessionID: "left-1",
-		Commit: newRaylineRoutesCommitGuard(caller),
-	})
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("RouteDecision() error = %v, want the caller's cancel", err)
+// The hold is the encode's tokens at the configured rate plus the fixed
+// part, from the reported tokens when there are any and the body otherwise,
+// and never longer than RouteLookupDetachBound.
+func TestRaylineRoutesAbandonedHoldIsEstimatedAndCapped(t *testing.T) {
+	if got := raylineRoutesAbandonedHold(70000, 35000); got != 3*time.Second {
+		t.Fatalf("hold = %v, want 3s", got)
 	}
-	prepared, cancelPrepare := context.WithTimeout(context.Background(), 200*time.Millisecond)
-	defer cancelPrepare()
-	lease, state, err := router.RaylineARCEpisodeStore.Prepare(prepared, raylinearc.HashEpisodeID("left-1"), 2)
-	if err != nil {
-		t.Fatalf("the episode lease was not released: %v", err)
+	if got := raylineRoutesAbandonedHold(70000, 0); got != 3*time.Second {
+		t.Fatalf("hold at the default rate = %v, want 3s", got)
 	}
-	defer func() { _ = router.RaylineARCEpisodeStore.Abort(context.Background(), lease) }()
-	if state.TurnIndex != 0 {
-		t.Fatalf("turn index = %d, want 0: the episode advanced for a caller that left", state.TurnIndex)
+	if got := raylineRoutesAbandonedHold(100_000_000, 35000); got != raylinearc.RouteLookupDetachBound {
+		t.Fatalf("hold = %v, want the %v cap", got, raylinearc.RouteLookupDetachBound)
+	}
+	if got := raylineRoutesEncodeTokens(routerruntime.RouteDecision{}, make([]byte, 4000)); got != 1000 {
+		t.Fatalf("tokens from the body = %d, want 1000", got)
+	}
+	measured := routerruntime.RouteDecision{Usage: routerruntime.RouteUsage{EncodedInputTokens: 30, CacheReadTokens: 12}}
+	if got := raylineRoutesEncodeTokens(measured, make([]byte, 4000)); got != 42 {
+		t.Fatalf("measured tokens = %d, want 42", got)
 	}
 }
 
@@ -438,7 +413,7 @@ func TestRaylineRoutesDecideSkipsACancelledLookup(t *testing.T) {
 			called = true
 			return routerruntime.RouteDecision{}, nil
 		}
-		if _, err := raylineRoutesDecide(lookup, &sync.WaitGroup{}, decide, routerruntime.RouteDecisionRequest{}, ticket, ephemeral); err != context.Canceled {
+		if _, err := raylineRoutesDecide(lookup, &sync.WaitGroup{}, decide, routerruntime.RouteDecisionRequest{}, ticket, 0, ephemeral); err != context.Canceled {
 			t.Fatalf("ephemeral=%v: decide error = %v, want cancelled", ephemeral, err)
 		}
 		if called {
@@ -475,103 +450,37 @@ func TestRaylineRoutesLookupSessionTrackerCountsDistinctLiveSessions(t *testing.
 	}
 }
 
-// A tracked lookup that left a session is counted once per episode, and so
-// is one whose caller left (releasing the episode does not close the
-// session); an ephemeral lookup closes its own session and a decision that
-// reported none left nothing, so neither is counted.
+// A tracked /v1/routes lookup that left a session is counted once per
+// episode; an ephemeral lookup closes its own session, a decision that
+// reported none left nothing, and a legacy consult is not a lookup, so none
+// of those is counted.
 func TestRouteDecisionCountsTheSessionsTrackedLookupsHold(t *testing.T) {
 	selector := &stubARCSelector{arm: 0, workers: decisionServiceWorkers(), sessionAction: "created"}
 	router := decisionServiceRouter(t, selector)
 	router.Config.Decisions[0].Algorithm.RaylineARC.RoutesAPI.Enabled = true
 	runtime := router.routeDecisionRuntimeState()
-	decide := func(sessionID string, ephemeral bool, surface routerruntime.RouteDecisionSurface, guard routerruntime.RouteCommitGuard) {
+	decide := func(sessionID string, ephemeral bool, surface routerruntime.RouteDecisionSurface) {
 		t.Helper()
 		_, err := runtime.RouteDecision(context.Background(), routerruntime.RouteDecisionRequest{
 			Body: anthropicBody("hello"), DecisionID: "rt_" + sessionID, SessionID: sessionID,
-			Ephemeral: ephemeral, Surface: surface, Commit: guard,
+			Ephemeral: ephemeral, Surface: surface,
 		})
-		if err != nil && guard == nil {
+		if err != nil {
 			t.Fatalf("RouteDecision(%s): %v", sessionID, err)
 		}
 	}
 	routes := routerruntime.RouteDecisionSurfaceRoutes
 	before := raylineRoutesLookupSessions.count(time.Now())
-	decide("sessions-held-1", false, routes, nil)
+	decide("sessions-held-1", false, routes)
 	selector.sessionAction = "appended"
-	decide("sessions-held-1", false, routes, nil)
+	decide("sessions-held-1", false, routes)
 	selector.sessionAction = "rebuilt"
-	left, leave := context.WithCancel(context.Background())
-	selector.onSelect = leave
-	decide("sessions-held-2", false, routes, newRaylineRoutesCommitGuard(left))
-	selector.onSelect = nil
-	decide("sessions-held-3", true, routes, nil)
-	decide("sessions-held-5", false, routerruntime.RouteDecisionSurfaceConsult, nil)
+	decide("sessions-held-2", false, routes)
+	decide("sessions-held-3", true, routes)
+	decide("sessions-held-5", false, routerruntime.RouteDecisionSurfaceConsult)
 	selector.sessionAction = ""
-	decide("sessions-held-4", false, routes, nil)
+	decide("sessions-held-4", false, routes)
 	if got := raylineRoutesLookupSessions.count(time.Now()) - before; got != 2 {
 		t.Fatalf("lookup sessions grew by %d, want 2", got)
-	}
-}
-
-// A tracked decision that started committing before its caller's deadline
-// is answered even if the deadline passes before the answer is built: the
-// episode recorded the turn, so a 504 would leave the caller without the arm
-// its next turn is scored against.
-func TestRaylineRoutesDecideAnswersATrackedLookupThatCommitted(t *testing.T) {
-	gate := raylinearc.NewRouteLookupGate(raylinearc.RouteLookupGateConfig{
-		MaxInflight: 1, QueueWait: 20 * time.Millisecond, LookupDeadline: time.Second,
-	})
-	ticket, err := gate.Acquire(context.Background())
-	if err != nil {
-		t.Fatalf("acquire: %v", err)
-	}
-	lookup, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	decide := func(_ context.Context, request routerruntime.RouteDecisionRequest) (routerruntime.RouteDecision, error) {
-		if !request.Commit.Begin() {
-			t.Error("the commit was refused for a caller still waiting")
-		}
-		cancel()
-		time.Sleep(20 * time.Millisecond)
-		request.Commit.End(true)
-		time.Sleep(20 * time.Millisecond)
-		return routerruntime.RouteDecision{SelectedWorker: "worker-a"}, nil
-	}
-	var background sync.WaitGroup
-	decision, err := raylineRoutesDecide(lookup, &background, decide, routerruntime.RouteDecisionRequest{}, ticket, false)
-	if err != nil || decision.SelectedWorker != "worker-a" {
-		t.Fatalf("decide = %+v, %v; want the committed answer", decision, err)
-	}
-	background.Wait()
-}
-
-// A decision whose caller leaves while it waits for the episode lease stops
-// waiting with its caller rather than taking the lease and encoding for
-// nobody, and a guard whose caller left refuses a later commit.
-func TestRouteDecisionStopsWaitingForTheLeaseWithItsCaller(t *testing.T) {
-	selector := &stubARCSelector{arm: 0, workers: decisionServiceWorkers()}
-	router := decisionServiceRouter(t, selector)
-	held, _, err := router.RaylineARCEpisodeStore.Prepare(context.Background(), raylinearc.HashEpisodeID("wait-1"), 2)
-	if err != nil {
-		t.Fatalf("hold the lease: %v", err)
-	}
-	defer func() { _ = router.RaylineARCEpisodeStore.Abort(context.Background(), held) }()
-	caller, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-	defer cancel()
-	guard := newRaylineRoutesCommitGuard(caller)
-	started := time.Now()
-	if _, err := router.routeDecisionRuntimeState().RouteDecision(context.Background(), routerruntime.RouteDecisionRequest{
-		Body: anthropicBody("hello"), DecisionID: "rt_wait", SessionID: "wait-1", Commit: guard,
-	}); err == nil {
-		t.Fatal("a decision whose caller left took a held lease")
-	}
-	if waited := time.Since(started); waited > time.Second {
-		t.Fatalf("waited %v for the lease after the caller left at 50ms", waited)
-	}
-	if len(selector.contexts) != 0 {
-		t.Fatal("a decision whose caller left encoded")
-	}
-	if guard.Begin() {
-		t.Fatal("the guard let a decision commit for a caller that left")
 	}
 }

@@ -425,7 +425,8 @@ func (r *OpenAIRouter) handleRaylineRoutesAPI(
 	// Admission comes before any encoder or episode work, and its wait is
 	// spent inside the lookup deadline: a lookup that waited still answers
 	// within deadline_ms. The slot is held until the backend answers, which
-	// can be after this handler has (see raylineRoutesDecide).
+	// for an ephemeral lookup can be after this handler has (see
+	// raylineRoutesDecide).
 	ticket, refused := r.admitRaylineRoutesLookup(ctx, lookupContext, recipe, routeID)
 	if refused != nil {
 		return refused
@@ -450,6 +451,7 @@ func (r *OpenAIRouter) handleRaylineRoutesAPI(
 		runtime.RouteDecision,
 		raylineRoutesConsultWithControls(body, routeID, episode, ephemeral, wireFormat, controls, ctx.Headers, recipe.Name),
 		ticket,
+		settings.Admission.EffectiveAbandonedHoldTokensPerSecond(),
 		// The service also decides these ephemerally (see RouteDecision);
 		// the consult keeps the caller's flag so its own accounting of why
 		// still runs.
@@ -501,26 +503,27 @@ func (r *OpenAIRouter) raylineRoutesContext(ctx *RequestContext) context.Context
 // raylineRoutesDecide runs the lookup's decision and frees its admission slot
 // when the backend answers.
 //
-// A lookup that holds a slot decides on a context detached from the caller
-// and bounded by RouteLookupDetachBound, because the backend does not stop
-// encoding when the caller stops waiting: freeing the slot at the 504 would
-// admit the next lookup onto a backend still busy with this one. The caller
-// still waits only inside its own deadline; the late answer is discarded,
-// and the slot is freed when it arrives. The detached run is counted in
-// background, so the router that owns the backend's clients is not closed
-// under it by a reload.
-//
-// That holds for a tracked lookup as for an ephemeral one. A tracked one
-// commits its episode turn on the caller's context (Commit), not the
-// detached one: a decision whose caller has left is released, not committed,
-// so an abandoned lookup never advances its episode, and one that did
-// advance is answered (raylineRoutesCommitGuard).
+// A tracked lookup decides on the lookup's own context, as before: detached,
+// an abandoned lookup would still commit its episode turn. Its deadline
+// cancels the decision but not the encode the policy container already
+// started, so a tracked lookup that ends with its context done keeps its
+// slot for that encode's estimated duration (raylineRoutesAbandonedHold);
+// one that answers, or is refused while its caller still waits, frees it at
+// once. An ephemeral lookup that holds a slot decides on a context
+// detached from the caller and bounded by RouteLookupDetachBound, because the
+// backend does not stop encoding when the caller stops waiting: freeing the
+// slot at the 504 would admit the next lookup onto a backend still busy with
+// this one. The caller still waits only inside its own deadline; the late
+// answer is discarded, and the slot is freed when it arrives. The detached
+// run is counted in background, so the router that owns the backend's
+// clients is not closed under it by a reload.
 func raylineRoutesDecide(
 	lookupContext context.Context,
 	background *sync.WaitGroup,
 	decide func(context.Context, routerruntime.RouteDecisionRequest) (routerruntime.RouteDecision, error),
 	request routerruntime.RouteDecisionRequest,
 	ticket raylinearc.RouteLookupTicket,
+	holdTokensPerSecond int,
 	ephemeral bool,
 ) (routerruntime.RouteDecision, error) {
 	if !ticket.Held() {
@@ -531,10 +534,19 @@ func raylineRoutesDecide(
 		ticket.Release()
 		return routerruntime.RouteDecision{}, err
 	}
-	var guard *raylineRoutesCommitGuard
 	if !ephemeral {
-		guard = newRaylineRoutesCommitGuard(lookupContext)
-		request.Commit = guard
+		decision, err := decide(lookupContext, request)
+		if lookupContext.Err() == nil {
+			ticket.Release()
+			return decision, err
+		}
+		hold := raylineRoutesAbandonedHold(raylineRoutesEncodeTokens(decision, request.Body), holdTokensPerSecond)
+		logging.ComponentEvent("extproc", "rayline_routes_abandoned_hold", map[string]interface{}{
+			"routing_decision_id": request.DecisionID,
+			"hold_ms":             hold.Milliseconds(),
+		})
+		time.AfterFunc(hold, ticket.Release)
+		return decision, err
 	}
 	detached, cancel := context.WithTimeout(context.WithoutCancel(lookupContext), raylinearc.RouteLookupDetachBound)
 	type outcome struct {
@@ -561,99 +573,8 @@ func raylineRoutesDecide(
 	case result := <-answered:
 		return result.decision, result.err
 	case <-lookupContext.Done():
+		return routerruntime.RouteDecision{}, lookupContext.Err()
 	}
-	// A tracked decision that is committing, or has committed, is owed its
-	// answer: answering 504 for a turn the episode recorded would score the
-	// conversation's next turn against an arm the caller was never given.
-	// The commit itself waits on the caller's context, so it resolves at
-	// once (bounded by its cancellation grace); the rest is building the
-	// answer.
-	if guard != nil && guard.leave() {
-		select {
-		case <-guard.ended:
-		case result := <-answered:
-			return result.decision, result.err
-		}
-		if guard.committed() {
-			result := <-answered
-			return result.decision, result.err
-		}
-	}
-	return routerruntime.RouteDecision{}, lookupContext.Err()
-}
-
-// raylineRoutesCommitGuard is a tracked lookup's RouteCommitGuard: whichever
-// of the commit starting (Begin) and the caller leaving (leave) comes first
-// decides whether the turn may commit, under one lock, so a caller who left
-// never has a turn committed for it and a caller still there when the commit
-// starts is answered with it.
-type raylineRoutesCommitGuard struct {
-	caller context.Context
-	ended  chan struct{}
-
-	mu    sync.Mutex
-	state raylineRoutesCommitState
-}
-
-type raylineRoutesCommitState int
-
-const (
-	raylineRoutesCommitPending raylineRoutesCommitState = iota
-	raylineRoutesCommitRunning
-	raylineRoutesCommitDone
-	raylineRoutesCommitRefused
-)
-
-func newRaylineRoutesCommitGuard(caller context.Context) *raylineRoutesCommitGuard {
-	return &raylineRoutesCommitGuard{caller: caller, ended: make(chan struct{})}
-}
-
-func (guard *raylineRoutesCommitGuard) Context() context.Context { return guard.caller }
-
-func (guard *raylineRoutesCommitGuard) Begin() bool {
-	guard.mu.Lock()
-	defer guard.mu.Unlock()
-	if guard.state != raylineRoutesCommitPending || guard.caller.Err() != nil {
-		guard.state = raylineRoutesCommitRefused
-		return false
-	}
-	guard.state = raylineRoutesCommitRunning
-	return true
-}
-
-func (guard *raylineRoutesCommitGuard) End(committed bool) {
-	guard.mu.Lock()
-	defer guard.mu.Unlock()
-	if guard.state != raylineRoutesCommitRunning {
-		return
-	}
-	guard.state = raylineRoutesCommitRefused
-	if committed {
-		guard.state = raylineRoutesCommitDone
-	}
-	close(guard.ended)
-}
-
-// leave is the caller leaving. It reports whether the caller must wait for
-// the commit's outcome: false when the commit had not started, which it now
-// never will.
-func (guard *raylineRoutesCommitGuard) leave() bool {
-	guard.mu.Lock()
-	defer guard.mu.Unlock()
-	switch guard.state {
-	case raylineRoutesCommitPending:
-		guard.state = raylineRoutesCommitRefused
-		return false
-	case raylineRoutesCommitRunning, raylineRoutesCommitDone:
-		return true
-	}
-	return false
-}
-
-func (guard *raylineRoutesCommitGuard) committed() bool {
-	guard.mu.Lock()
-	defer guard.mu.Unlock()
-	return guard.state == raylineRoutesCommitDone
 }
 
 // raylineRoutesFailure classifies a failed lookup.
@@ -1435,4 +1356,32 @@ func raylineRoutesToolWarnings(warnings []string, encoded *bool) []string {
 		}
 	}
 	return settled
+}
+
+// raylineRoutesAbandonedHoldFixed is the fixed part of an abandoned tracked
+// lookup's hold: a full encode's fixed cost (about 0.2 s) with margin.
+var raylineRoutesAbandonedHoldFixed = time.Second
+
+// raylineRoutesAbandonedHold is how long an abandoned tracked lookup keeps
+// its slot: the encode it started, at tokensPerSecond, plus the fixed part,
+// capped at RouteLookupDetachBound (which the slot's lease TTL covers).
+func raylineRoutesAbandonedHold(tokens, tokensPerSecond int) time.Duration {
+	if tokensPerSecond <= 0 {
+		tokensPerSecond = config.DefaultRaylineARCRoutesAbandonedHoldTokensPerSecond
+	}
+	hold := time.Duration(float64(tokens)/float64(tokensPerSecond)*float64(time.Second)) + raylineRoutesAbandonedHoldFixed
+	if hold > raylinearc.RouteLookupDetachBound {
+		return raylinearc.RouteLookupDetachBound
+	}
+	return hold
+}
+
+// raylineRoutesEncodeTokens is the size of the encode a lookup started: the
+// tokens its decision reports encoding, or, when it reported none (a
+// cancelled decision reports nothing), the body at four bytes a token.
+func raylineRoutesEncodeTokens(decision routerruntime.RouteDecision, body []byte) int {
+	if tokens := decision.Usage.EncodedInputTokens + decision.Usage.CacheReadTokens; tokens > 0 {
+		return tokens
+	}
+	return len(body) / 4
 }

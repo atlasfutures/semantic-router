@@ -34,12 +34,15 @@ type stubARCSelector struct {
 }
 
 func (s *stubARCSelector) Select(
-	_ context.Context,
+	ctx context.Context,
 	selCtx *selection.SelectionContext,
 ) (*selection.SelectionResult, error) {
 	s.contexts = append(s.contexts, selCtx)
 	if s.onSelect != nil {
 		s.onSelect()
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 	}
 	if s.err != nil {
 		return nil, s.err

@@ -195,11 +195,17 @@ class RaylineARCRoutesAdmissionConfig(BaseModel):
 
     max_inflight: int = Field(default=0, ge=0, le=_MAX_ROUTES_ADMISSION_INFLIGHT)
     queue_wait_ms: int = Field(default=0, ge=0, le=30_000)
+    # 0: 35000. The encode rate an abandoned tracked lookup's slot is held at.
+    abandoned_hold_tokens_per_second: int = Field(default=0, ge=0, le=10_000_000)
 
     @model_validator(mode="after")
     def _wait_needs_slots(self):
         if self.queue_wait_ms and not self.max_inflight:
             raise ValueError("routes_api.admission.queue_wait_ms needs max_inflight")
+        if self.abandoned_hold_tokens_per_second and not self.max_inflight:
+            raise ValueError(
+                "routes_api.admission.abandoned_hold_tokens_per_second needs max_inflight"
+            )
         return self
 
 

@@ -76,24 +76,6 @@ type RouteDecisionRequest struct {
 	// trusts its gateway's turn-signal headers, so a private consult is
 	// masked as a routed turn is.
 	Headers map[string]string
-	// Commit, when set, is the waiting caller's side of a decision that runs
-	// on a context detached from it (a lookup that holds an admission slot
-	// runs on until the backend answers). Nil commits on ctx.
-	Commit RouteCommitGuard
-}
-
-// RouteCommitGuard ties a detached decision's episode commit to the caller
-// still waiting on it, so a turn commits only when the caller is given it.
-type RouteCommitGuard interface {
-	// Context is the caller's. The episode lease wait ends with it, and
-	// the commit waits on it.
-	Context() context.Context
-	// Begin is called once, just before the episode commit. False means
-	// the caller has left: the decision releases its episode uncommitted.
-	// True means the caller now waits for the commit's outcome.
-	Begin() bool
-	// End reports the commit's outcome, once, after Begin returned true.
-	End(committed bool)
 }
 
 // RouteDecisionSurface names which endpoint a consult came from.
