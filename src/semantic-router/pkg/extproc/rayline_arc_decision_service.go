@@ -127,7 +127,7 @@ func (service *raylineARCDecisionService) RouteDecision(
 	// exit before selection.
 	var admission *raylineRoutesAdmissionRecord
 	if request.Admit != nil {
-		retainedScope := ""
+		var retainedScope policyRetainedScope
 		if scoper, ok := service.router.selectorForDecisionMethod(
 			selection.MethodRaylineARC, algorithm, requestContext,
 		).(raylineARCRetainedScoper); ok {

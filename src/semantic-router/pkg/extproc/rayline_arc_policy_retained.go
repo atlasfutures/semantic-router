@@ -19,6 +19,7 @@ package extproc
 import (
 	"sync"
 
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
 
@@ -44,19 +45,25 @@ type policyRetainedRequest struct {
 // holds no lease) and invalidated later cannot be overwritten by it.
 type policyRetainedEntry struct {
 	generation uint64
-	request    *policyRetainedRequest
+	// owner is the scope of the scorer whose decide the record is.
+	owner   string
+	request *policyRetainedRequest
 }
 
-// policyRetainedSessionCache remembers, per scorer and episode, the request
-// this process last had a policy service retain. A route lookup's admission
+// policyRetainedSessionCache remembers, per service session, the request this
+// process last had a policy service retain there. A route lookup's admission
 // reads it to predict an append (predictRaylineRoutesEncode): the episode's
 // committed prefix is in the service's session only if it is the request
 // last retained there.
 //
-// It is keyed by the scorer's retainedScope, which is unique to one recipe's
-// scorer in one router generation, so two recipes (whose episodes, and
-// sessions on a sessioned service, are their own) never read each other's
-// records, and a reload starts empty.
+// An entry is keyed by the physical session: the policy backend and package
+// (policyRetainedBackend) and the episode hash the decide names. Every
+// scorer that writes that session invalidates it, so two recipes that send
+// one conversation to one backend each see the other's writes. A record
+// names the scorer whose decide it is (its owner scope, unique to one
+// recipe's scorer in one router generation), and only that scorer's lookups
+// read it, since only that scorer's episode committed the prefix it
+// describes; a reload starts every scorer with no records.
 //
 // It is in memory, bounded and never persisted, so it knows only the decides
 // this process made; a lookup whose previous turn another router instance
@@ -76,16 +83,35 @@ const policyRetainedSessionEntries = 4096
 
 var policyRetainedSessions = &policyRetainedSessionCache{entries: map[string]*policyRetainedEntry{}}
 
-func policyRetainedKey(scope, episode string) string { return scope + "\x00" + episode }
+func policyRetainedKey(backend, episode string) string { return backend + "\x00" + episode }
 
-// invalidate drops the episode's record: a call is about to change its
-// session, or has changed it to something no record describes. It returns
-// the fence a record of that call's own outcome must present.
-func (cache *policyRetainedSessionCache) invalidate(scope, episode string) uint64 {
-	if scope == "" {
+// policyRetainedBackend names the service session store a decide writes: the
+// policy backend (as admission pools name it) and the package it decides
+// with.
+func policyRetainedBackend(arcConfig *config.RaylineARCAlgorithmConfig) string {
+	if arcConfig == nil || arcConfig.PolicyService == nil {
+		return ""
+	}
+	return raylineRoutesAdmissionPool(arcConfig) + "\x00" + arcConfig.PolicyService.PackageSHA256
+}
+
+// policyRetainedScope is where a scorer's decides record retained sessions:
+// the backend they write and the scorer's own owner scope.
+type policyRetainedScope struct {
+	backend string
+	owner   string
+}
+
+func (scope policyRetainedScope) valid() bool { return scope.backend != "" && scope.owner != "" }
+
+// invalidate drops the session's record: a call is about to change it, or
+// has changed it to something no record describes. It returns the fence a
+// record of that call's own outcome must present.
+func (cache *policyRetainedSessionCache) invalidate(scope policyRetainedScope, episode string) uint64 {
+	if !scope.valid() {
 		return 0
 	}
-	key := policyRetainedKey(scope, episode)
+	key := policyRetainedKey(scope.backend, episode)
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
 	entry, known := cache.entries[key]
@@ -99,7 +125,7 @@ func (cache *policyRetainedSessionCache) invalidate(scope, episode string) uint6
 		cache.entries[key] = entry
 	}
 	cache.generation++
-	entry.generation, entry.request = cache.generation, nil
+	entry.generation, entry.owner, entry.request = cache.generation, "", nil
 	return entry.generation
 }
 
@@ -107,20 +133,22 @@ func (cache *policyRetainedSessionCache) invalidate(scope, episode string) uint6
 // on the episode at turnIndex, unless another call invalidated the record
 // since fence (or the entry was evicted). A nil shape keeps nothing.
 func (cache *policyRetainedSessionCache) record(
-	scope, episode string,
+	scope policyRetainedScope,
+	episode string,
 	fence uint64,
 	turnIndex uint64,
 	shape *raylinearc.PolicyPrefixShape,
 ) {
-	if scope == "" || fence == 0 {
+	if !scope.valid() || fence == 0 {
 		return
 	}
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
-	entry, known := cache.entries[policyRetainedKey(scope, episode)]
+	entry, known := cache.entries[policyRetainedKey(scope.backend, episode)]
 	if !known || entry.generation != fence || shape == nil {
 		return
 	}
+	entry.owner = scope.owner
 	entry.request = &policyRetainedRequest{
 		len: shape.Len, digest: shape.Digest, system: shape.System, tools: shape.Tools, turn: turnIndex + 1,
 	}
@@ -132,16 +160,18 @@ func (cache *policyRetainedSessionCache) record(
 // is true when it holds the prefix under a different shell, which the
 // service rebuilds.
 func (cache *policyRetainedSessionCache) holds(
-	scope, episode string,
+	scope policyRetainedScope,
+	episode string,
 	state *raylinearc.EpisodeState,
 	current *raylinearc.PolicyPrefixShape,
 ) (held, shellChanged bool) {
-	if scope == "" || state == nil || state.Policy == nil || current == nil {
+	if !scope.valid() || state == nil || state.Policy == nil || current == nil {
 		return false, false
 	}
 	cache.mu.Lock()
 	var retained *policyRetainedRequest
-	if entry, known := cache.entries[policyRetainedKey(scope, episode)]; known && entry.request != nil {
+	if entry, known := cache.entries[policyRetainedKey(scope.backend, episode)]; known && entry.request != nil &&
+		entry.owner == scope.owner {
 		copied := *entry.request
 		retained = &copied
 	}
@@ -157,19 +187,19 @@ func (cache *policyRetainedSessionCache) holds(
 }
 
 // raylineARCRetainedScoper is a selector that can name the scope its policy
-// decides record retained sessions under; "" when it records none (an
-// artifact-mode selector, or one not yet armed).
+// decides record retained sessions under; the zero scope when it records
+// none (an artifact-mode selector, or one not yet armed).
 type raylineARCRetainedScoper interface {
-	policyRetainedScope() string
+	policyRetainedScope() policyRetainedScope
 }
 
-func (selector *raylineARCSelector) policyRetainedScope() string {
+func (selector *raylineARCSelector) policyRetainedScope() policyRetainedScope {
 	armed := selector.armedComponents()
 	if armed == nil {
-		return ""
+		return policyRetainedScope{}
 	}
 	if scorer, ok := armed.scorer.(*policyServiceScorer); ok {
 		return scorer.retainedScope
 	}
-	return ""
+	return policyRetainedScope{}
 }

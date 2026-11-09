@@ -353,10 +353,15 @@ const (
 // scope, as the policy-service selector does.
 type retainingStubSelector struct {
 	stubARCSelector
-	scope string
+	scope policyRetainedScope
 }
 
-func (s *retainingStubSelector) policyRetainedScope() string { return s.scope }
+func (s *retainingStubSelector) policyRetainedScope() policyRetainedScope { return s.scope }
+
+// testRetainedScope is a scope of the test's own.
+func testRetainedScope(t *testing.T) policyRetainedScope {
+	return policyRetainedScope{backend: "test-backend:" + t.Name(), owner: "test-owner:" + t.Name()}
+}
 
 // appendAdmissionRouter is a tracked policy-service cell whose lookups are
 // gated by one slot, which the test can hold, and decided by a stub selector.
@@ -364,7 +369,7 @@ func (s *retainingStubSelector) policyRetainedScope() string { return s.scope }
 func appendAdmissionRouter(t *testing.T, appendExempt bool, maxSuffixTokens int) (*OpenAIRouter, *raylinearc.RouteLookupGate, *retainingStubSelector) {
 	t.Helper()
 	selector := &retainingStubSelector{
-		stubARCSelector: stubARCSelector{arm: 0, workers: decisionServiceWorkers()}, scope: "test:" + t.Name(),
+		stubARCSelector: stubARCSelector{arm: 0, workers: decisionServiceWorkers()}, scope: testRetainedScope(t),
 	}
 	router := decisionServiceRouter(t, &selector.stubARCSelector)
 	registry := selection.NewRegistry()
@@ -410,7 +415,7 @@ func seedAppendAdmissionEpisode(t *testing.T, router *OpenAIRouter, session stri
 	if err := store.Commit(context.Background(), lease, lease.Version(), state); err != nil {
 		t.Fatal(err)
 	}
-	scope := "test:" + t.Name()
+	scope := testRetainedScope(t)
 	episode := raylinearc.HashEpisodeID(session)
 	// The first turn was decided at index 0; its commit left the next one.
 	fence := policyRetainedSessions.invalidate(scope, episode)
@@ -531,7 +536,7 @@ func TestPredictRaylineRoutesEncode(t *testing.T) {
 		PrefixLen: 1, PrefixDigest: raylinearc.NewPrefixDigests(first).Digest(1),
 	}}
 	episode := raylinearc.HashEpisodeID("predict-" + t.Name())
-	scope := "test:" + t.Name()
+	scope := testRetainedScope(t)
 	retain := func(shape *raylinearc.PolicyPrefixShape) {
 		fence := policyRetainedSessions.invalidate(scope, episode)
 		policyRetainedSessions.record(scope, episode, fence, committed.TurnIndex-1, shape)
@@ -675,7 +680,7 @@ func TestPredictRaylineRoutesEncodeAfterAnAppendedReply(t *testing.T) {
 // call, which holds no lease) is not overwritten when the earlier call
 // records its outcome.
 func TestPolicyRetainedSessionRecordIsFenced(t *testing.T) {
-	scope, episode := "test:"+t.Name(), raylinearc.HashEpisodeID(t.Name())
+	scope, episode := testRetainedScope(t), raylinearc.HashEpisodeID(t.Name())
 	t.Cleanup(func() { policyRetainedSessions.invalidate(scope, episode) })
 	first, _, err := policyMessages(json.RawMessage(appendAdmissionFirstMessages))
 	if err != nil {
@@ -695,7 +700,14 @@ func TestPolicyRetainedSessionRecordIsFenced(t *testing.T) {
 	if held, _ := policyRetainedSessions.holds(scope, episode, state, shape); !held {
 		t.Fatal("a call's own record was refused")
 	}
-	if held, _ := policyRetainedSessions.holds("other:"+t.Name(), episode, state, shape); held {
-		t.Fatal("another scope read this scope's record")
+	// Another scorer on the same backend does not read the record, and its
+	// write to the session invalidates it.
+	other := policyRetainedScope{backend: scope.backend, owner: "other:" + t.Name()}
+	if held, _ := policyRetainedSessions.holds(other, episode, state, shape); held {
+		t.Fatal("another scorer read this scorer's record")
+	}
+	policyRetainedSessions.invalidate(other, episode)
+	if held, _ := policyRetainedSessions.holds(scope, episode, state, shape); held {
+		t.Fatal("another scorer's write to the session left the record standing")
 	}
 }

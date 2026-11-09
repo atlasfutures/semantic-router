@@ -68,12 +68,12 @@ const (
 // decision's session_action says what actually happened, and is logged
 // beside the admission outcome so an exempt lookup that rebuilt is counted.
 //
-// retainedScope is the deciding selector's (raylineARCRetainedScoper), ""
-// when it records no retained sessions.
+// retainedScope is the deciding selector's (raylineARCRetainedScoper), the
+// zero scope when it records no retained sessions.
 func predictRaylineRoutesEncode(
 	algorithm *config.AlgorithmConfig,
 	arcContext *selection.RaylineARCSelectionContext,
-	retainedScope string,
+	retainedScope policyRetainedScope,
 	ephemeral bool,
 ) routerruntime.RouteEncodePrediction {
 	full := func(reason string) routerruntime.RouteEncodePrediction {

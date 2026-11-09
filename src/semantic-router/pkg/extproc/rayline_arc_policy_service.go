@@ -144,7 +144,12 @@ type policyServiceScorer struct {
 	deltaUnsupported atomic.Bool
 	// retainedScope keys what this cell's decides leave in the service's
 	// retained sessions (policyRetainedSessions).
-	retainedScope string
+	retainedScope policyRetainedScope
+	// relaxedServed is set once the service has served a call sent relaxed
+	// relaxed, so a relaxed call is known to leave the strict session alone.
+	// Until then a relaxed call invalidates the episode's record as a strict
+	// one does: a service that ignores episode_mode serves it strict.
+	relaxedServed atomic.Bool
 }
 
 // policySideCallStrictFor is how long a strict cell keeps its side calls
@@ -226,7 +231,9 @@ func newPolicyServiceScorer(
 		exploration:  newPolicyExploration(policy),
 		// Read by route lookup admission to predict an append; this
 		// scorer's own, so no other recipe or generation shares it.
-		retainedScope: "policy-retained:" + generation,
+		retainedScope: policyRetainedScope{
+			backend: policyRetainedBackend(decision.Algorithm.RaylineARC), owner: "policy-retained:" + generation,
+		},
 	}
 	if decision.Algorithm.RaylineARC.Episode.RelaxedConsistency() {
 		scorer.episodeMode = raylinearc.PolicyEpisodeModeRelaxed
@@ -903,7 +910,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	// answers; what it holds is recorded again, under this fence, once the
 	// decide is accepted.
 	var retainedFence uint64
-	if !ephemeral && request.EpisodeMode != raylinearc.PolicyEpisodeModeRelaxed {
+	if !ephemeral && (request.EpisodeMode != raylinearc.PolicyEpisodeModeRelaxed || !scorer.relaxedServed.Load()) {
 		retainedFence = policyRetainedSessions.invalidate(scorer.retainedScope, arcContext.EpisodeIDHash)
 	}
 	started := selector.now()
@@ -1172,6 +1179,9 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	if (response.Encoding.SessionRevision == nil) != servedRelaxed {
 		return nil, arcSelectionFailure("policy_session_revision")
 	}
+	if servedRelaxed {
+		scorer.relaxedServed.Store(true)
+	}
 	// The echo is recorded as the decision's price audit, so it must be the
 	// prices this request sent.
 	if class := routingPriceEchoMismatch(request.RoutingPrices, response.RoutingPricesUsed); class != "" {
@@ -1204,8 +1214,8 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	// a zdr turn named a throwaway episode and a relaxed one retained
 	// nothing. A side call's request is no prefix a turn commits, so it
 	// records nothing (a nil shape). A call sent relaxed and served strict
-	// (a service that predates episode_mode) took no fence: it only
-	// invalidates.
+	// (a service that predates episode_mode) after relaxed was once served
+	// took no fence: it only invalidates.
 	if !ephemeral && !servedRelaxed {
 		if retainedFence == 0 {
 			policyRetainedSessions.invalidate(scorer.retainedScope, arcContext.EpisodeIDHash)

@@ -199,7 +199,7 @@ type policyStaging struct {
 	clientBody []byte
 	// retainedScope keys the episode's policyRetainedSessions record, which
 	// an append makes stale.
-	retainedScope string
+	retainedScope policyRetainedScope
 	// appendTimeout bounds the append.
 	appendTimeout time.Duration
 	// shared is where the record is kept for the episode's other cell
