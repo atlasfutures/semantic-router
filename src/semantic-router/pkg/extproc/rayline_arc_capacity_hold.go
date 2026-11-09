@@ -132,10 +132,8 @@ func policyHeldLedgerAction(
 // decision (a hold, or a lookup over its encode limit): the policy scored
 // nothing, so the trace carries no scores, only the served arm. With ledger
 // the turn commits like any held turn, recording actionID (attributed to
-// armID) for its reply, while the state keeps where the service's encode
-// last ended (NextUnencoded); without it the episode's policy state is left
-// as it was. Nil when the action's arm is not a valid decision over
-// workerIDs.
+// armID) for its reply; without it the episode's policy state is left as it
+// was. Nil when the action's arm is not a valid decision over workerIDs.
 func (selector *raylineARCSelector) policyUndecidedResult(
 	armed *raylineARCArmedComponents,
 	selCtx *selection.SelectionContext,
@@ -193,7 +191,7 @@ func (selector *raylineARCSelector) policyUndecidedResult(
 	if !sideCall {
 		result.RaylineARC.PolicyTurnState = turn.Clone()
 		if ledger {
-			result.RaylineARC.PolicyNextState = turn.NextUnencoded(messages, actionID, armID)
+			result.RaylineARC.PolicyNextState = turn.Next(messages, actionID, armID)
 		}
 	}
 	if atBoundary && !retained {

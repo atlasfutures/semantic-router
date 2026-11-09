@@ -204,11 +204,6 @@ type PolicyEpisodeState struct {
 	PrefixLen         int                 `json:"prefix_len"`
 	PrefixDigest      string              `json:"prefix_digest"`
 	Ledger            []PolicyLedgerEntry `json:"ledger"`
-	// EncodedPrefixLen is where the policy service's encode of this context
-	// last ended, when a turn served without one (a hold, or a lookup over
-	// its encode limit) has since committed past it; nil when the service's
-	// last decide covered the committed prefix. EncodedThrough reads it.
-	EncodedPrefixLen *int `json:"encoded_prefix_len,omitempty"`
 	// Exclusions are the models this context no longer offers: a model that
 	// refused a turn (ADR 0120). They live in the policy state, so they last
 	// exactly as long as the context does: a compaction or a prefix break
@@ -298,38 +293,7 @@ func (state *PolicyEpisodeState) Clone() *PolicyEpisodeState {
 		cloned.Exclusions = nil
 	}
 	cloned.Exploration = state.Exploration.Clone()
-	if state.EncodedPrefixLen != nil {
-		encoded := *state.EncodedPrefixLen
-		cloned.EncodedPrefixLen = &encoded
-	}
 	return &cloned
-}
-
-// EncodedThrough is the number of this context's messages the policy
-// service last encoded: the committed prefix, unless turns served without an
-// encode have committed past it since.
-func (state *PolicyEpisodeState) EncodedThrough() int {
-	if state == nil {
-		return 0
-	}
-	if state.EncodedPrefixLen != nil && *state.EncodedPrefixLen <= state.PrefixLen {
-		return *state.EncodedPrefixLen
-	}
-	return state.PrefixLen
-}
-
-// NextUnencoded is Next for a turn served without a policy encode: the
-// ledger and prefix advance as for any turn, and the service's encode stays
-// where it ended.
-func (state *PolicyEpisodeState) NextUnencoded(
-	messages []json.RawMessage,
-	actionID string,
-	armID string,
-) *PolicyEpisodeState {
-	encoded := state.EncodedThrough()
-	next := state.Next(messages, actionID, armID)
-	next.EncodedPrefixLen = &encoded
-	return next
 }
 
 // NewPolicyBoundaryDecision records arm as the decision for this request at
@@ -835,8 +799,6 @@ func (state *PolicyEpisodeState) NextWithPricesFrom(
 	messages := digests.Messages()
 	next := state.Clone()
 	next.Exploration = nil
-	// A decided turn's encode covered its whole request.
-	next.EncodedPrefixLen = nil
 	next.Ledger = append(next.Ledger, PolicyLedgerEntry{
 		Message: len(messages), ActionID: actionID, ArmID: armID, Prices: prices,
 	})

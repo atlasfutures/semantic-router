@@ -293,18 +293,17 @@ type RaylineARCRoutesAPIConfig struct {
 	// 0 disables it: every lookup goes straight to the selector, as before.
 	// Dispatched turns never pass through it.
 	Admission RaylineARCRoutesAdmissionConfig `yaml:"admission,omitempty"`
-	// MaxEncodeTokens bounds what a lookup's encode may cost, in the
+	// MaxEncodeTokens bounds the context a throwaway lookup (no session
+	// identity, or episode_writes off) may send to the encoder, in the
 	// router's own token estimate (the conservative byte heuristic
-	// max_context_tokens reads): a tracked lookup that extends its context
-	// counts the messages since the service's last encode, any other its
-	// whole context. A full encode holds a policy container for the whole
-	// transcript, and live turns on that container wait behind it, so a
-	// lookup over the bound is not encoded: it is answered with the
-	// conversation's held model, as a context the encoder refuses is, or,
-	// with nothing held, the policy package's fallback action, and carries
-	// the encode_size_bypass warning. A lookup with routing controls, or
-	// with neither to serve, is encoded as before. Policy-service cells
-	// only. Zero, the default, bounds nothing.
+	// max_context_tokens reads). Such a lookup's encode is always a full one:
+	// it holds a policy container for the whole transcript, and live turns
+	// on that container wait behind it. A throwaway lookup over the bound is
+	// not encoded: it is answered with the policy package's fallback action
+	// and carries the encode_size_bypass warning. A tracked lookup is never
+	// bounded (it appends to its retained session, as a routed turn does),
+	// nor is one with routing controls, or one on a package with no bound
+	// fallback. Policy-service cells only. Zero, the default, bounds nothing.
 	MaxEncodeTokens int `yaml:"max_encode_tokens,omitempty"`
 }
 

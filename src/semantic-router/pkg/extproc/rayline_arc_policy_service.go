@@ -101,8 +101,8 @@ type policyServiceScorer struct {
 	// an excluded held model forces a decision.
 	fallback bool
 	// fallbackActionID is the package manifest's fallback action, when it
-	// names one this cell binds; a lookup over routes_api.max_encode_tokens
-	// with nothing held is answered with it.
+	// names one this cell binds; a throwaway lookup over
+	// routes_api.max_encode_tokens is answered with it.
 	fallbackActionID string
 	// routes names each worker's route in the cell exclusion table.
 	routes []string
@@ -745,10 +745,10 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 			return nil, arcSelectionFailure(arcFailurePolicyUndecidable)
 		}
 	}
-	// A lookup over routes_api.max_encode_tokens is answered without the
-	// service, before anything is staged or a session is bound.
+	// A throwaway lookup over routes_api.max_encode_tokens is answered
+	// without the service, before anything is staged or a session is bound.
 	if bypass := selector.policyEncodeSizeBypass(
-		armed, selCtx, arcContext, state, scorer, turn, transition, messages, sideCall, atBoundary, retained, available, workerIDs,
+		armed, selCtx, arcContext, state, scorer, turn, messages, sideCall, atBoundary, retained, available, workerIDs,
 	); bypass != nil {
 		bypass.RaylineARC.SettlementPrices = armed.prices
 		bypass.RaylineARC.EndpointFeed = arcContext.EndpointFeed

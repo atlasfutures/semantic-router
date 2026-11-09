@@ -236,9 +236,9 @@ class RaylineARCRoutesAPIConfig(BaseModel):
     routing: RaylineARCRoutesRoutingConfig | None = None
     # Caps concurrent lookups across the cell; absent is disabled.
     admission: RaylineARCRoutesAdmissionConfig | None = None
-    # Lookups estimated over this many tokens are answered without an
-    # encode (held model, or the package fallback). 0 bounds nothing;
-    # policy-service cells only.
+    # Throwaway lookups estimated over this many tokens are answered without
+    # an encode (the package fallback). 0 bounds nothing; policy-service
+    # cells only.
     max_encode_tokens: int = Field(default=0, ge=0, le=1 << 24)
 
     @model_validator(mode="after")

@@ -33,42 +33,31 @@ const raylineRoutesEncodeBypassOfferKind = "encode_size_bypass"
 // raylineRoutesEncodeBypassWarning tells the caller its lookup was answered
 // without scoring the conversation.
 const raylineRoutesEncodeBypassWarning = "encode_size_bypass: the conversation is over this endpoint's encode limit, " +
-	"so the policy did not score it; the route is the conversation's held model, or the policy's fallback"
+	"so the policy did not score it; the route is the policy's fallback"
 
 // Outcomes of a lookup over the encode limit.
 const (
-	raylineRoutesEncodeBypassHeld     = "held"
 	raylineRoutesEncodeBypassFallback = "fallback"
-	// Neither held nor fallback action to serve, or routing controls whose
-	// result points only the policy can answer: the lookup is encoded.
+	// No fallback action to serve, or routing controls whose result points
+	// only the policy can answer: the lookup is encoded.
 	raylineRoutesEncodeBypassEncoded = "encoded"
 )
 
-// policyEncodeSizeBypass answers a POST /v1/routes lookup whose context is
-// over routes_api.max_encode_tokens without calling the policy service. A
-// full encode holds a policy container for the whole transcript (about a
-// second per 35k tokens), and live turns on that container wait behind it,
-// so a lookup that large is answered the way a context the encoder refuses
-// is (policyCapacityHold): with the episode's held action, or, with nothing
-// held, the package's fallback action. Nothing is encoded and the policy
-// scores nothing.
+// policyEncodeSizeBypass answers a throwaway POST /v1/routes lookup whose
+// context is over routes_api.max_encode_tokens without calling the policy
+// service. Such a lookup joins no conversation, so its encode is always a
+// full one: it holds a policy container for the whole transcript (about a
+// second per 35k tokens), and live turns on that container wait behind it.
+// It is answered with the policy package's fallback action instead; nothing
+// is encoded, the policy scores nothing and no episode state is committed.
 //
-// The bound is on what the encode would cost (policyLookupEncodeTokens): a
-// tracked lookup that extends its context is encoded as a suffix on the
-// service's retained session, so only the messages since the service's last
-// encode count; any other lookup is encoded whole. A lookup carrying routing
-// controls, or one with neither a held nor a fallback action to serve, is
-// encoded as before: nil.
-//
-// A held answer commits like a capacity hold: the ledger records the held
-// action for this turn's reply, as it would for any held turn, and the
-// service's session is untouched: the state keeps where the service's encode
-// ended, so the next lookup's suffix spans this one's messages too, and the
-// next decide sends the whole request, never a delta on the ledger's prefix
-// (policyDeltaFor needs a staged turn of the committed turn index, which a
-// bypass advances past). A fallback answer records no ledger entry
-// (the router does not know the arm the service would attribute it to), so
-// the episode's policy state stays as it was.
+// The decision service sets the limit (RoutesEncodeLimit) on throwaway
+// lookups only. A tracked lookup is never bounded: it appends to its
+// conversation's retained session as a routed turn does, and how much of it
+// the service re-encodes is the service's call. The estimate is the one every
+// limit on this path reads (ContextTokens, the router's conservative byte
+// heuristic of the request). A lookup carrying routing controls, or one on a
+// cell whose package names no fallback it binds, is encoded as before: nil.
 func (selector *raylineARCSelector) policyEncodeSizeBypass(
 	armed *raylineARCArmedComponents,
 	selCtx *selection.SelectionContext,
@@ -76,7 +65,6 @@ func (selector *raylineARCSelector) policyEncodeSizeBypass(
 	state *raylinearc.EpisodeState,
 	scorer *policyServiceScorer,
 	turn *raylinearc.PolicyEpisodeState,
-	transition string,
 	messages []json.RawMessage,
 	sideCall bool,
 	atBoundary bool,
@@ -85,39 +73,24 @@ func (selector *raylineARCSelector) policyEncodeSizeBypass(
 	workerIDs []string,
 ) *selection.SelectionResult {
 	limit := arcContext.RoutesEncodeLimit
-	if !arcContext.RoutesLookup || limit <= 0 {
-		return nil
-	}
-	relaxed := scorer.episodeMode == raylinearc.PolicyEpisodeModeRelaxed
-	encodeTokens, span := policyLookupEncodeTokens(arcContext, turn, transition, relaxed, messages)
-	if encodeTokens <= limit {
+	if !arcContext.RoutesLookup || limit <= 0 || arcContext.ContextTokens <= limit {
 		return nil
 	}
 	record := func(outcome, actionID string) {
 		metrics.RecordRaylineARCRoutesEncodeBypass(outcome)
 		logging.ComponentEvent("extproc", "rayline_routes_encode_bypass", map[string]interface{}{
 			"request_id": arcContext.RequestID, "episode_id_hash": arcContext.EpisodeIDHash,
-			"outcome": outcome, "action_id": actionID, "span": span, "encode_tokens": encodeTokens,
+			"outcome": outcome, "action_id": actionID,
 			"context_tokens": arcContext.ContextTokens, "max_encode_tokens": limit,
 		})
 	}
-	if arcContext.RouteControls != nil {
+	fallback := scorer.fallbackActionID
+	if arcContext.RouteControls != nil || fallback == "" || !slices.Contains(available, fallback) {
 		record(raylineRoutesEncodeBypassEncoded, "")
 		return nil
 	}
-	outcome, actionID, armID, ledger := "", "", "", false
-	if held := policyHeldLedgerAction(state, turn, scorer, available); held != nil {
-		outcome, actionID, armID, ledger = raylineRoutesEncodeBypassHeld, held.ActionID, held.ArmID, true
-	} else if fallback := scorer.fallbackActionID; fallback != "" && slices.Contains(available, fallback) {
-		outcome, actionID = raylineRoutesEncodeBypassFallback, fallback
-	}
-	if outcome == "" {
-		record(raylineRoutesEncodeBypassEncoded, "")
-		return nil
-	}
-	encoded := &raylinearc.EncoderResult{}
 	result := selector.policyUndecidedResult(
-		armed, selCtx, arcContext, state, scorer, encoded, actionID, armID, ledger,
+		armed, selCtx, arcContext, state, scorer, &raylinearc.EncoderResult{}, fallback, "", false,
 		turn, messages, sideCall, atBoundary, retained, workerIDs,
 	)
 	if result == nil {
@@ -127,59 +100,7 @@ func (selector *raylineARCSelector) policyEncodeSizeBypass(
 	// Nothing was measured: the counts are unknown, not zero.
 	result.RaylineARC.TokenCountsUnknown = true
 	result.RaylineARC.OfferKind = raylineRoutesEncodeBypassOfferKind
-	result.Reasoning = "policy-service ARC decision (" + raylineRoutesEncodeBypassOfferKind + ", " + outcome + ")"
-	record(outcome, actionID)
+	result.Reasoning = "policy-service ARC decision (" + raylineRoutesEncodeBypassOfferKind + ", " + raylineRoutesEncodeBypassFallback + ")"
+	record(raylineRoutesEncodeBypassFallback, fallback)
 	return result
-}
-
-// Spans a lookup's encode estimate covers.
-const (
-	raylineRoutesEncodeSpanContext = "context"
-	raylineRoutesEncodeSpanSuffix  = "suffix"
-)
-
-// policyLookupEncodeTokens estimates what this lookup's encode would cost,
-// and the span that estimate covers. A tracked lookup on a strict cell that
-// extends its context appends to the service's retained session, so it
-// costs the messages since the service's last encode
-// (EncodedThrough, which a bypass or hold leaves behind): the request's own
-// estimate, ContextTokens, scaled by those messages' share of the request's
-// message bytes, rounded up. Every other lookup -- a stateless or ephemeral
-// one, one on a relaxed cell (whose service keeps no session), a session's
-// first, a compaction or prefix break that rebases it, a side call -- is
-// encoded whole and costs ContextTokens.
-//
-// The suffix assumes the service extends the session it holds. Whether it
-// does is the service's call, on its own projection of the request: a
-// session it evicted, or one it rebuilds because the system prompt or tools
-// changed in a way its projection reads, is encoded in full. The router does
-// not predict those: a second copy of the service's projection would drift
-// from it, and a false prediction of a rebuild would hold a conversation on
-// every lookup.
-func policyLookupEncodeTokens(
-	arcContext *selection.RaylineARCSelectionContext,
-	turn *raylinearc.PolicyEpisodeState,
-	transition string,
-	relaxed bool,
-	messages []json.RawMessage,
-) (int, string) {
-	whole := arcContext.ContextTokens
-	if arcContext.EphemeralTurn || relaxed || transition != raylinearc.PolicyTransitionExtends || turn == nil {
-		return whole, raylineRoutesEncodeSpanContext
-	}
-	from := turn.EncodedThrough()
-	if from <= 0 || from > len(messages) {
-		return whole, raylineRoutesEncodeSpanContext
-	}
-	total, suffix := 0, 0
-	for index, message := range messages {
-		total += len(message)
-		if index >= from {
-			suffix += len(message)
-		}
-	}
-	if total == 0 {
-		return whole, raylineRoutesEncodeSpanContext
-	}
-	return int((int64(whole)*int64(suffix) + int64(total) - 1) / int64(total)), raylineRoutesEncodeSpanSuffix
 }
