@@ -24,6 +24,8 @@ import (
 	"time"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/routerruntime"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
 
 func lookupGatedRouter(inflight, queueMS int) *OpenAIRouter {
@@ -76,7 +78,8 @@ func TestRoutesLookupGateSerializesLookups(t *testing.T) {
 	first()
 	select {
 	case waited := <-admitted:
-		if waited < 100*time.Millisecond {
+		// The goroutine may start a little after the 100 ms window opens.
+		if waited < 50*time.Millisecond {
 			t.Fatalf("second lookup waited %v, want it to have queued behind the first", waited)
 		}
 	case <-time.After(2 * time.Second):
@@ -206,6 +209,45 @@ func TestRoutesLookupGateHoldsTheSlotPastAnAbandonedLookup(t *testing.T) {
 		t.Fatalf("second lookup refused after the first finished: %v", err)
 	}
 	second()
+}
+
+// A caller already gone does not take a free slot: the semaphore admits
+// without reading the context, and an admitted ephemeral lookup would start
+// a detached encode nobody waits for.
+func TestRoutesLookupGateRefusesAGoneCallerAFreeSlot(t *testing.T) {
+	t.Parallel()
+	gate := lookupGatedRouter(1, 2000).raylineRoutesLookups()
+	gone, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, _, err := gate.acquire(gone); !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want the caller's cancellation", err)
+	}
+	release, _, err := gate.acquire(context.Background())
+	if err != nil {
+		t.Fatalf("the refused caller kept the slot: %v", err)
+	}
+	release()
+}
+
+// Detaching follows the decision service's own ephemeral rule: exploration,
+// caller prices and exclusive commit nothing, so they are detached too.
+func TestRoutesLookupCommitsNothingMirrorsTheService(t *testing.T) {
+	t.Parallel()
+	for name, testCase := range map[string]struct {
+		request routerruntime.RouteDecisionRequest
+		want    bool
+	}{
+		"tracked":     {request: routerruntime.RouteDecisionRequest{}, want: false},
+		"ephemeral":   {request: routerruntime.RouteDecisionRequest{Ephemeral: true}, want: true},
+		"no controls": {request: routerruntime.RouteDecisionRequest{Routing: &selection.RaylineARCRouteControls{}}, want: false},
+		"exploration": {request: routerruntime.RouteDecisionRequest{Routing: &selection.RaylineARCRouteControls{Exploration: &raylinearc.PolicyExplorationRequest{}}}, want: true},
+		"prices":      {request: routerruntime.RouteDecisionRequest{Routing: &selection.RaylineARCRouteControls{Prices: &raylinearc.PolicyRoutingPrices{}}}, want: true},
+		"exclusive":   {request: routerruntime.RouteDecisionRequest{Routing: &selection.RaylineARCRouteControls{Exclusive: true}}, want: true},
+	} {
+		if got := raylineRoutesCommitsNothing(testCase.request); got != testCase.want {
+			t.Errorf("%s: commits nothing = %v, want %v", name, got, testCase.want)
+		}
+	}
 }
 
 // A tracked lookup is never detached: one its caller abandoned must not go on

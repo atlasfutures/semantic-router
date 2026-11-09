@@ -91,6 +91,13 @@ func (gate *raylineRoutesLookupGate) acquire(ctx context.Context) (func(), time.
 	ticket, err := gate.slots.Acquire(waitContext)
 	waited := time.Since(started)
 	if err == nil {
+		// The semaphore hands out a free slot without looking at the
+		// context, so a caller already gone would otherwise start a
+		// detached encode nobody is waiting for.
+		if ctx.Err() != nil {
+			ticket()
+			return nil, waited, ctx.Err()
+		}
 		return func() { ticket() }, waited, nil
 	}
 	if ctx.Err() != nil {
@@ -140,6 +147,19 @@ func (gate *raylineRoutesLookupGate) decide(
 	case <-lookupContext.Done():
 		return routerruntime.RouteDecision{}, lookupContext.Err()
 	}
+}
+
+// raylineRoutesCommitsNothing reports whether a lookup will decide without an
+// episode commit, and so may be detached from its caller. It mirrors the
+// decision service's own rule (raylineARCDecisionService.RouteDecision): an
+// ephemeral consult, or one carrying exploration, caller prices or exclusive,
+// joins no episode.
+func raylineRoutesCommitsNothing(request routerruntime.RouteDecisionRequest) bool {
+	if request.Ephemeral {
+		return true
+	}
+	routing := request.Routing
+	return routing != nil && (routing.Exploration != nil || routing.Prices != nil || routing.Exclusive)
 }
 
 // raylineRoutesLookups returns this process's lookup gate, built on first use

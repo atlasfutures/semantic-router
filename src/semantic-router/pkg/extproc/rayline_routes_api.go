@@ -446,7 +446,7 @@ func (r *OpenAIRouter) handleRaylineRoutesAPI(
 	// decision outlives this request (the gate holds its slot until the
 	// policy service answers).
 	consult := raylineRoutesConsultWithControls(body, routeID, episode, ephemeral, wireFormat, controls, maps.Clone(ctx.Headers), recipe.Name)
-	decision, err := r.raylineRoutesLookups().decide(lookupContext, release, ephemeral,
+	decision, err := r.raylineRoutesLookups().decide(lookupContext, release, raylineRoutesCommitsNothing(consult),
 		func(decisionContext context.Context) (routerruntime.RouteDecision, error) {
 			return runtime.RouteDecision(decisionContext, consult)
 		})
