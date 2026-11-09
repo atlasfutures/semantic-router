@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/url"
 	"strconv"
 	"strings"
@@ -440,12 +441,15 @@ func (r *OpenAIRouter) handleRaylineRoutesAPI(
 	if admitErr != nil {
 		return r.raylineRoutesLookupRefused(ctx, lookupContext, routeID, queued, admitErr)
 	}
-	defer release()
 	started := time.Now()
-	decision, err := runtime.RouteDecision(
-		lookupContext,
-		raylineRoutesConsultWithControls(body, routeID, episode, ephemeral, wireFormat, controls, ctx.Headers, recipe.Name),
-	)
+	// The headers are copied because an abandoned ephemeral lookup's
+	// decision outlives this request (the gate holds its slot until the
+	// policy service answers).
+	consult := raylineRoutesConsultWithControls(body, routeID, episode, ephemeral, wireFormat, controls, maps.Clone(ctx.Headers), recipe.Name)
+	decision, err := r.raylineRoutesLookups().decide(lookupContext, release, ephemeral,
+		func(decisionContext context.Context) (routerruntime.RouteDecision, error) {
+			return runtime.RouteDecision(decisionContext, consult)
+		})
 	if err != nil {
 		return r.raylineRoutesFailure(ctx, lookupContext, routeID, err)
 	}

@@ -204,6 +204,12 @@ class RaylineARCRoutesAPIConfig(BaseModel):
     # The Decisions routing controls; needs the endpoint enabled and a
     # policy-service cell (the Go loader refuses it on an artifact cell).
     routing: RaylineARCRoutesRoutingConfig | None = None
+    # Lookups one router process sends to the policy service at once; zero
+    # leaves them unbounded. Mirrors the Go 0..64 window.
+    max_inflight_lookups: int = Field(default=0, ge=0, le=64)
+    # How long a lookup waits for a slot before a 429; zero selects the
+    # shipped 2000 ms default. Mirrors the Go 0..30000 window.
+    lookup_queue_ms: int = Field(default=0, ge=0, le=30_000)
 
     @model_validator(mode="after")
     def _routing_needs_the_endpoint(self):

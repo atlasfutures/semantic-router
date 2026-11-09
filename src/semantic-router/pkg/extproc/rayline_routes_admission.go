@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/admission"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/routerruntime"
 )
 
 // raylineRoutesLookupShedRetrySeconds is the Retry-After on a lookup shed by
@@ -37,6 +38,17 @@ const raylineRoutesLookupShedRetrySeconds = 5
 // beyond this is shed at once rather than queued.
 const raylineRoutesLookupQueueDepth = 4
 
+// raylineRoutesLookupDecisionMargin is the part of a lookup's deadline the
+// slot wait never takes, so an admitted lookup still has time to decide and
+// a wait that runs out answers 429 rather than racing the deadline's 504.
+const raylineRoutesLookupDecisionMargin = 500 * time.Millisecond
+
+// raylineRoutesAbandonedLookupCeiling bounds how long an abandoned lookup
+// keeps its slot while the policy service finishes the encode. Above the
+// slowest whole-transcript encode measured (about 45 s for a 1M-token
+// rebuild), and far below the encoder's own total_timeout_seconds.
+const raylineRoutesAbandonedLookupCeiling = 120 * time.Second
+
 // errRaylineRoutesLookupShed reports that no lookup slot freed up within the
 // bounded wait.
 var errRaylineRoutesLookupShed = errors.New("route lookup shed: another lookup holds this cell's lookup slot")
@@ -49,23 +61,85 @@ type raylineRoutesLookupGate struct {
 	wait  time.Duration
 }
 
-// acquire takes a lookup slot, waiting at most the configured queue time and
-// never past ctx. The release function must be called exactly once. A nil
-// receiver or an unconfigured gate admits at once.
+// enabled reports whether the gate bounds anything.
+func (gate *raylineRoutesLookupGate) enabled() bool {
+	return gate != nil && gate.slots != nil
+}
+
+// acquire takes a lookup slot. It waits at most the configured queue time,
+// and never into the last raylineRoutesLookupDecisionMargin of ctx's
+// deadline. A wait that runs out is errRaylineRoutesLookupShed; ctx ending
+// first returns ctx's own error. The release function must be called exactly
+// once. An unconfigured gate admits at once.
 func (gate *raylineRoutesLookupGate) acquire(ctx context.Context) (func(), time.Duration, error) {
-	if gate == nil || gate.slots == nil {
+	if !gate.enabled() {
 		return func() {}, 0, nil
 	}
-	started := time.Now()
-	ticket, err := gate.slots.Acquire(ctx)
-	waited := time.Since(started)
-	if err != nil {
-		if errors.Is(err, admission.ErrQueueFull) {
-			return nil, waited, errRaylineRoutesLookupShed
+	wait := gate.wait
+	if deadline, ok := ctx.Deadline(); ok {
+		if remaining := time.Until(deadline) - raylineRoutesLookupDecisionMargin; remaining < wait {
+			wait = remaining
 		}
-		return nil, waited, err
 	}
-	return func() { ticket() }, waited, nil
+	started := time.Now()
+	if wait <= 0 {
+		// No time to queue: admit only a free slot.
+		wait = time.Nanosecond
+	}
+	waitContext, cancel := context.WithTimeout(ctx, wait)
+	defer cancel()
+	ticket, err := gate.slots.Acquire(waitContext)
+	waited := time.Since(started)
+	if err == nil {
+		return func() { ticket() }, waited, nil
+	}
+	if ctx.Err() != nil {
+		return nil, waited, ctx.Err()
+	}
+	if errors.Is(err, admission.ErrQueueFull) || errors.Is(err, context.DeadlineExceeded) {
+		return nil, waited, errRaylineRoutesLookupShed
+	}
+	return nil, waited, err
+}
+
+// decide runs one admitted lookup's decision and releases the slot when the
+// policy service has answered, not when the caller stops waiting.
+//
+// The policy container does not stop an encode whose caller has gone, so a
+// slot released at the lookup's deadline would admit the next lookup onto a
+// container still busy with this one. The decision therefore runs on a
+// context detached from the caller's cancellation (bounded by
+// raylineRoutesAbandonedLookupCeiling), and the caller gets lookupContext's
+// error as soon as lookupContext ends. Only ephemeral lookups are detached:
+// a tracked lookup commits its episode, and one its caller abandoned must not.
+func (gate *raylineRoutesLookupGate) decide(
+	lookupContext context.Context,
+	release func(),
+	ephemeral bool,
+	run func(context.Context) (routerruntime.RouteDecision, error),
+) (routerruntime.RouteDecision, error) {
+	if !gate.enabled() || !ephemeral {
+		defer release()
+		return run(lookupContext)
+	}
+	type outcome struct {
+		decision routerruntime.RouteDecision
+		err      error
+	}
+	done := make(chan outcome, 1)
+	decisionContext, cancel := context.WithTimeout(context.WithoutCancel(lookupContext), raylineRoutesAbandonedLookupCeiling)
+	go func() {
+		defer cancel()
+		defer release()
+		decision, err := run(decisionContext)
+		done <- outcome{decision, err}
+	}()
+	select {
+	case result := <-done:
+		return result.decision, result.err
+	case <-lookupContext.Done():
+		return routerruntime.RouteDecision{}, lookupContext.Err()
+	}
 }
 
 // raylineRoutesLookups returns this process's lookup gate, built on first use
@@ -79,10 +153,12 @@ func (r *OpenAIRouter) raylineRoutesLookups() *raylineRoutesLookupGate {
 			return
 		}
 		gate.wait = settings.EffectiveLookupQueue()
+		// The wait is bounded by acquire's own context, so the semaphore
+		// needs no timer of its own.
 		gate.slots = admission.NewSemaphore(
 			settings.MaxInflightLookups,
 			raylineRoutesLookupQueueDepth,
-			gate.wait,
+			0,
 			admission.OverflowShed,
 		)
 	})

@@ -22,6 +22,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/routerruntime"
 )
 
 func lookupGatedRouter(inflight, queueMS int) *OpenAIRouter {
@@ -115,9 +117,11 @@ func TestRoutesLookupGateShedsWithRetryAfter(t *testing.T) {
 	}
 }
 
-// The wait counts against the lookup's own deadline: a deadline shorter than
-// the queue time ends the wait with the deadline's 504, not a 429.
-func TestRoutesLookupGateWaitEndsAtTheDeadline(t *testing.T) {
+// The wait stops short of the lookup's own deadline, so a wait that runs out
+// answers 429 with a Retry-After instead of racing the deadline into a 504:
+// with the shipped 1500 ms deadline and 2000 ms queue, a queued lookup sheds
+// at about 1000 ms.
+func TestRoutesLookupGateWaitStopsShortOfTheDeadline(t *testing.T) {
 	t.Parallel()
 	router := lookupGatedRouter(1, 2000)
 	gate := router.raylineRoutesLookups()
@@ -126,19 +130,106 @@ func TestRoutesLookupGateWaitEndsAtTheDeadline(t *testing.T) {
 		t.Fatalf("first lookup refused: %v", err)
 	}
 	defer held()
-	lookupContext, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	lookupContext, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
 	defer cancel()
+	_, waited, err := gate.acquire(lookupContext)
+	if !errors.Is(err, errRaylineRoutesLookupShed) {
+		t.Fatalf("err = %v, want a shed", err)
+	}
+	if lookupContext.Err() != nil {
+		t.Fatal("the wait ran into the deadline")
+	}
+	if waited < 800*time.Millisecond || waited > 1300*time.Millisecond {
+		t.Fatalf("waited %v, want about the 1000 ms left before the decision margin", waited)
+	}
+	response := router.raylineRoutesLookupRefused(routesContext(nil), lookupContext, "rte_1234abcd5678efab", waited, err)
+	if code := immediateStatusCode(t, response); code != 429 {
+		t.Fatalf("status = %d, want 429", code)
+	}
+}
+
+// A lookup whose context has already ended answers the deadline's 504, never
+// a 429, whatever the queue says.
+func TestRoutesLookupGateEndedContextIsTheDeadline(t *testing.T) {
+	t.Parallel()
+	router := lookupGatedRouter(1, 2000)
+	gate := router.raylineRoutesLookups()
+	held, _, err := gate.acquire(context.Background())
+	if err != nil {
+		t.Fatalf("first lookup refused: %v", err)
+	}
+	defer held()
+	lookupContext, cancel := context.WithTimeout(context.Background(), time.Nanosecond)
+	defer cancel()
+	<-lookupContext.Done()
 	_, waited, err := gate.acquire(lookupContext)
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("err = %v, want the deadline", err)
-	}
-	if waited > time.Second {
-		t.Fatalf("waited %v, want the wait cut at the 50 ms deadline", waited)
 	}
 	response := router.raylineRoutesLookupRefused(routesContext(nil), lookupContext, "rte_1234abcd5678efab", waited, err)
 	if code := immediateStatusCode(t, response); code != 504 {
 		t.Fatalf("status = %d, want 504", code)
 	}
+}
+
+// An abandoned ephemeral lookup keeps its slot until the policy service
+// answers: the container is still encoding it, so the next lookup must not
+// be admitted onto it at the first lookup's deadline.
+func TestRoutesLookupGateHoldsTheSlotPastAnAbandonedLookup(t *testing.T) {
+	t.Parallel()
+	gate := lookupGatedRouter(1, 2000).raylineRoutesLookups()
+	release, _, err := gate.acquire(context.Background())
+	if err != nil {
+		t.Fatalf("first lookup refused: %v", err)
+	}
+	encodeDone := make(chan struct{})
+	decisionCancelled := make(chan bool, 1)
+	lookupContext, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	_, err = gate.decide(lookupContext, release, true, func(decisionContext context.Context) (routerruntime.RouteDecision, error) {
+		<-encodeDone
+		decisionCancelled <- decisionContext.Err() != nil
+		return routerruntime.RouteDecision{}, nil
+	})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want the caller's deadline", err)
+	}
+	if _, _, err := gate.acquire(context.Background()); !errors.Is(err, errRaylineRoutesLookupShed) {
+		t.Fatalf("second lookup err = %v, want a shed while the first still encodes", err)
+	}
+	close(encodeDone)
+	if <-decisionCancelled {
+		t.Fatal("the abandoned decision was cancelled with its caller")
+	}
+	second, _, err := gate.acquire(context.Background())
+	if err != nil {
+		t.Fatalf("second lookup refused after the first finished: %v", err)
+	}
+	second()
+}
+
+// A tracked lookup is never detached: one its caller abandoned must not go on
+// to commit its episode.
+func TestRoutesLookupGateDoesNotDetachTrackedLookups(t *testing.T) {
+	t.Parallel()
+	gate := lookupGatedRouter(1, 2000).raylineRoutesLookups()
+	release, _, err := gate.acquire(context.Background())
+	if err != nil {
+		t.Fatalf("lookup refused: %v", err)
+	}
+	lookupContext, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = gate.decide(lookupContext, release, false, func(decisionContext context.Context) (routerruntime.RouteDecision, error) {
+		return routerruntime.RouteDecision{}, decisionContext.Err()
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want the tracked decision to see its caller's cancellation", err)
+	}
+	next, _, err := gate.acquire(context.Background())
+	if err != nil {
+		t.Fatalf("slot not released after a tracked lookup: %v", err)
+	}
+	next()
 }
 
 // Beyond the queue depth, a burst is shed at once rather than queued, so a

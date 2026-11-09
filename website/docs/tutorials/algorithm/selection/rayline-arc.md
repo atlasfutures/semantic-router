@@ -574,20 +574,32 @@ the container for every live turn whose session sits on it. The cap bounds
 that share. Live turns never pass through it; they keep the policy service's
 own `max_inflight_calls`.
 
+A slot is held until the policy service answers, not until the caller stops
+waiting. An ephemeral lookup that passes its deadline answers 504 at once, but
+its decision keeps the slot (for at most 120 s) while the container finishes
+the encode, so the next lookup is not admitted onto a container still busy
+with the last. A tracked lookup (`episode_writes` with a session) is not
+detached: it ends with its caller, so an abandoned one never commits its
+episode.
+
 When the cap is reached, a lookup waits up to `lookup_queue_ms` (default 2000)
-for a slot. At most four lookups wait at once; a fifth is shed at once. The
-wait counts against `deadline_ms`, and the response's `latency_ms` excludes
-it. A lookup that gets no slot in time answers 429 `rate_limit_error` with
+for a slot, and never into the last 500 ms of `deadline_ms`; under the 1500 ms
+default deadline the wait is 1000 ms. At most four lookups wait at once; a
+fifth is shed at once. The response's `latency_ms` excludes the wait. A lookup
+that gets no slot in time answers 429 `rate_limit_error` with
 `Retry-After: 5`: the slot it waited on is held by a whole-transcript encode
 that runs for seconds to tens of seconds, so a 1 s retry would only rejoin the
-queue. A lookup whose own deadline ends first answers the usual 504.
+queue. A lookup whose context has already ended answers the usual 504.
 
 A caller that sends lookups back to back (a batch script, an evaluation
 harness) should send them one at a time per cell and honour `Retry-After`.
 
 The cap is per process and shared by every recipe's lookups, because they
-share the encoder; it is read from the default recipe's `routes_api`. On a
-deployment of N router instances, up to N lookups can be in flight overall.
+share the encoder; it is read from the default recipe's `routes_api`, and a
+named recipe's value is ignored. On a deployment of N router instances, up to
+N × `max_inflight_lookups` lookups can be in flight overall. During a config
+reload the outgoing and incoming router generations each have their own gate,
+so the bound can briefly double.
 
 ### Episodes
 

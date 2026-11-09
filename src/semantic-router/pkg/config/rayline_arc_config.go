@@ -47,9 +47,10 @@ const (
 	minRaylineARCRoutesDeadlineMS = 100
 	maxRaylineARCRoutesDeadlineMS = 30000
 	// DefaultRaylineARCRoutesLookupQueueMS is how long a lookup waits for a
-	// slot under max_inflight_lookups: long enough to absorb two lookups
-	// arriving together, short enough that a queue behind a 20 s encode
-	// answers 429 rather than holding its caller.
+	// slot under max_inflight_lookups: short enough that a queue behind a
+	// 20 s encode answers 429 rather than holding its caller. The wait never
+	// takes the last 500 ms of deadline_ms, so under the 1500 ms default
+	// deadline it is 1000 ms in practice.
 	DefaultRaylineARCRoutesLookupQueueMS = 2000
 	// maxRaylineARCRoutesMaxInflightLookups bounds the cap to what one
 	// process can sensibly hold open against the encoder.
@@ -304,8 +305,10 @@ type RaylineARCRoutesAPIConfig struct {
 	MaxInflightLookups int `yaml:"max_inflight_lookups,omitempty"`
 	// LookupQueueMS is how long a lookup waits for a slot when
 	// max_inflight_lookups is reached, before it is answered 429 with a
-	// Retry-After. The wait counts against deadline_ms. Zero selects the
-	// shipped default. Read from the default recipe, like the cap.
+	// Retry-After. The wait counts against deadline_ms and stops 500 ms
+	// short of it, so a wait that runs out is a 429 and not a 504. Zero
+	// selects the shipped default. Read from the default recipe, like the
+	// cap.
 	LookupQueueMS int `yaml:"lookup_queue_ms,omitempty"`
 }
 

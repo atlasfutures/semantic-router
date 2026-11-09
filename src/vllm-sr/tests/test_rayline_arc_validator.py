@@ -319,6 +319,22 @@ def test_routes_api_bounds_match_the_go_loader():
     assert RaylineARCRoutesAPIConfig(deadline_ms=0).deadline_ms == 0
 
 
+def test_routes_api_lookup_admission_bounds_match_the_go_loader():
+    inflight = _go_constant("maxRaylineARCRoutesMaxInflightLookups")
+    queue = _go_constant("maxRaylineARCRoutesDeadlineMS")
+
+    RaylineARCRoutesAPIConfig(max_inflight_lookups=inflight, lookup_queue_ms=queue)
+    RaylineARCRoutesAPIConfig(max_inflight_lookups=0, lookup_queue_ms=0)
+    for field, rejected in (
+        ("max_inflight_lookups", inflight + 1),
+        ("max_inflight_lookups", -1),
+        ("lookup_queue_ms", queue + 1),
+        ("lookup_queue_ms", -1),
+    ):
+        with pytest.raises(ValidationError):
+            RaylineARCRoutesAPIConfig(**{field: rejected})
+
+
 def test_routes_api_checkpoint_label_matches_the_go_validator():
     pattern = re.search(
         r"raylineARCCheckpointLabelPattern\s*=\s*regexp\.MustCompile\(`([^`]+)`\)",
