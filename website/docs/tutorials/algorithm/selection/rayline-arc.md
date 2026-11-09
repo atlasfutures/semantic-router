@@ -588,6 +588,7 @@ routes_api:
   admission:
     max_inflight: 1      # 0 or absent: no admission (every lookup goes straight in)
     queue_wait_ms: 2000  # 0: 2000 ms, or half deadline_ms when that is shorter
+    abandoned_hold_tokens_per_second: 0  # 0: 35000; see below
 ```
 
 - **Scope.** With the `redis` episode backend the cap is cell-wide: each slot
@@ -624,19 +625,45 @@ routes_api:
   side. Recipes on one backend with different `max_inflight` are logged at
   startup (`rayline_routes_admission_limit_conflict`).
 - **A lookup that times out keeps its slot until the encode finishes.** The
-  backend does not stop encoding when the caller stops waiting, so an
-  ephemeral lookup (every lookup when `episode_writes` is false) runs its
-  decision detached from the caller, bounded at 120 s. The caller still gets
-  its 504 at `deadline_ms`; the slot is released when the backend answers,
-  so the next lookup is not admitted onto a backend still busy with this one.
-  A lookup that joins an episode is not detached (an abandoned one would
-  still commit its turn) and frees its slot at its 504.
+  backend does not stop encoding when the caller stops waiting. An ephemeral
+  lookup (every lookup when `episode_writes` is false) runs its decision
+  detached from the caller, bounded at 120 s: the caller still gets its 504
+  at `deadline_ms`, and the slot is released when the backend answers, so
+  the next lookup is not admitted onto a backend still busy with this one.
+- **A lookup that joins an episode is never detached.** It decides on its
+  caller's context, so its deadline cancels the decision: it commits
+  nothing and releases the episode lease, as an abandoned lookup must not
+  advance its conversation. Only its slot outlives it: one that ends with
+  its deadline passed (or its caller gone) keeps the slot for the encode it
+  started, estimated as its tokens (those the decision reported, or the
+  request body at four bytes a token) at `abandoned_hold_tokens_per_second`
+  (default 35000, about one container's full-encode rate) plus a second,
+  capped at 120 s, all counted from when the decision began. The hold ends
+  at least a second before the slot's cell-wide lease runs out, so no other
+  router instance is admitted on an expired lease while this one still
+  holds the slot. It logs `rayline_routes_abandoned_hold` with `hold_ms`,
+  and a reload waits for pending releases.
+  One that answers, or is refused while its caller still waits, frees the
+  slot at once. A lookup whose caller left while it was queued starts no
+  encode and frees its slot.
 
 `llm_rayline_arc_routes_admission_total{outcome, backend}` counts outcomes
 (`admitted`, `queued`, `shed`, `cancelled`, `fail_open`) and
 `llm_rayline_arc_routes_admission_wait_seconds{outcome}` the time spent
 waiting; serialized lookups show as `queued` with waits near the holder's
 encode time.
+
+Tracked lookups also leave retained encoder sessions behind, one per
+conversation, each occupying the encoder container's session budget until
+the encoder evicts it. `llm_rayline_arc_routes_lookup_sessions` is, per
+router process, the conversations whose last tracked lookup left a session
+(`session_action` `created`, `rebuilt`, `appended` or `reused`) within the
+episode `idle_ttl_seconds`; `rayline_routes_lookup_session` logs each such
+lookup with `session_action` and the count (`lookup_sessions`). It is an
+estimate to sum across router processes against the budget: it overcounts
+sessions the encoder evicted sooner, does not count a lookup whose decision
+failed (a deadline that cancelled it mid-encode may still leave a session),
+and does not see the sessions routed turns hold.
 
 A scripted client -- a latency test, a batch job -- should send lookups one
 at a time per cell where it can, honour `Retry-After` on any 429 (with jitter

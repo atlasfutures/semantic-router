@@ -196,6 +196,19 @@ type RouteLookupTicket struct {
 	// Wait is how long the lookup waited for its slot.
 	Wait    time.Duration
 	release func()
+	// leaseExpires is when the slot's cell-wide lease runs out, for a slot
+	// that has one (the redis backend); zero otherwise. Taken once the
+	// lease was granted, so it is at most one Redis call late.
+	leaseExpires time.Time
+}
+
+// LeaseRemaining is how long the slot's cell-wide lease has left at now, and
+// whether it has one: a per-process slot never expires.
+func (ticket RouteLookupTicket) LeaseRemaining(now time.Time) (time.Duration, bool) {
+	if ticket.leaseExpires.IsZero() {
+		return 0, false
+	}
+	return ticket.leaseExpires.Sub(now), true
 }
 
 // Held reports whether the ticket holds a slot, so Release frees something.
@@ -479,7 +492,11 @@ func (gate *RouteLookupGate) admit(
 	case wait >= routeLookupQueuedAfter:
 		outcome = RouteLookupQueued
 	}
-	return RouteLookupTicket{Outcome: outcome, Backend: backend, Wait: wait, release: release}
+	ticket := RouteLookupTicket{Outcome: outcome, Backend: backend, Wait: wait, release: release}
+	if backend == RouteLookupBackendRedis && !failOpen {
+		ticket.leaseExpires = gate.now().Add(gate.leaseTTL)
+	}
+	return ticket
 }
 
 // refusal says why the wait ended. ctx is the lookup's own context; when it

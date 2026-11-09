@@ -155,6 +155,21 @@ func (service *raylineARCDecisionService) RouteDecision(
 	if err != nil {
 		return routerruntime.RouteDecision{}, err
 	}
+	// A tracked lookup that left a retained encoder session holds a slot of
+	// the container's session budget until the encoder evicts it. An
+	// ephemeral lookup closes its own; a zdr turn retains nothing. A decision
+	// that failed (its caller's deadline cancelled the encode) is not
+	// counted, though the encoder may have kept its session.
+	if request.Surface == routerruntime.RouteDecisionSurfaceRoutes && selected.result.RaylineARC != nil &&
+		!request.Ephemeral && !selectionContext.RaylineARC.EphemeralTurn && algorithm.RaylineARC != nil {
+		recordRaylineRoutesLookupSession(
+			request.DecisionID,
+			raylineRoutesLookupSessionBackend(algorithm.RaylineARC),
+			selectionContext.RaylineARC.EpisodeIDHash,
+			boundedPolicySessionAction(selected.result.RaylineARC.SessionAction),
+			time.Duration(algorithm.RaylineARC.Episode.IdleTTLSeconds)*time.Second,
+		)
+	}
 	worker := selected.worker
 	decisionFacts := routerruntime.RouteDecision{
 		SelectedWorker: worker.ID,

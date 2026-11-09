@@ -151,6 +151,20 @@ func TestRoutesAPIAdmissionIsBounded(t *testing.T) {
 		"endpoint disabled": {cfg: RaylineARCRoutesAPIConfig{
 			Admission: RaylineARCRoutesAdmissionConfig{MaxInflight: 1},
 		}},
+		"explicit abandoned hold rate": {cfg: RaylineARCRoutesAPIConfig{
+			Enabled: true, Admission: RaylineARCRoutesAdmissionConfig{MaxInflight: 1, AbandonedHoldTokensPerSecond: 20000},
+		}, valid: true},
+		"negative abandoned hold rate": {cfg: RaylineARCRoutesAPIConfig{
+			Enabled: true, Admission: RaylineARCRoutesAdmissionConfig{MaxInflight: 1, AbandonedHoldTokensPerSecond: -1},
+		}},
+		"abandoned hold rate above the ceiling": {cfg: RaylineARCRoutesAPIConfig{
+			Enabled: true, Admission: RaylineARCRoutesAdmissionConfig{
+				MaxInflight: 1, AbandonedHoldTokensPerSecond: maxRaylineARCRoutesAbandonedHoldTokensPerSecond + 1,
+			},
+		}},
+		"abandoned hold rate without slots": {cfg: RaylineARCRoutesAPIConfig{
+			Enabled: true, Admission: RaylineARCRoutesAdmissionConfig{AbandonedHoldTokensPerSecond: 20000},
+		}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()

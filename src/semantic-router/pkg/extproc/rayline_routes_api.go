@@ -451,6 +451,7 @@ func (r *OpenAIRouter) handleRaylineRoutesAPI(
 		runtime.RouteDecision,
 		raylineRoutesConsultWithControls(body, routeID, episode, ephemeral, wireFormat, controls, ctx.Headers, recipe.Name),
 		ticket,
+		settings.Admission.EffectiveAbandonedHoldTokensPerSecond(),
 		// The service also decides these ephemerally (see RouteDecision);
 		// the consult keeps the caller's flag so its own accounting of why
 		// still runs.
@@ -502,9 +503,13 @@ func (r *OpenAIRouter) raylineRoutesContext(ctx *RequestContext) context.Context
 // raylineRoutesDecide runs the lookup's decision and frees its admission slot
 // when the backend answers.
 //
-// A tracked lookup decides on the lookup's own context and frees the slot on
-// return, as before: detached, an abandoned lookup would still commit its
-// episode turn. An ephemeral lookup that holds a slot decides on a context
+// A tracked lookup decides on the lookup's own context, as before: detached,
+// an abandoned lookup would still commit its episode turn. Its deadline
+// cancels the decision but not the encode the policy container already
+// started, so a tracked lookup that ends with its context done keeps its
+// slot for that encode's estimated duration (raylineRoutesAbandonedHold);
+// one that answers, or is refused while its caller still waits, frees it at
+// once. An ephemeral lookup that holds a slot decides on a context
 // detached from the caller and bounded by RouteLookupDetachBound, because the
 // backend does not stop encoding when the caller stops waiting: freeing the
 // slot at the 504 would admit the next lookup onto a backend still busy with
@@ -518,16 +523,53 @@ func raylineRoutesDecide(
 	decide func(context.Context, routerruntime.RouteDecisionRequest) (routerruntime.RouteDecision, error),
 	request routerruntime.RouteDecisionRequest,
 	ticket raylinearc.RouteLookupTicket,
+	holdTokensPerSecond int,
 	ephemeral bool,
 ) (routerruntime.RouteDecision, error) {
-	if !ephemeral || !ticket.Held() {
-		defer ticket.Release()
+	if !ticket.Held() {
 		return decide(lookupContext, request)
 	}
 	// A caller that left while queued starts no encode nobody waits for.
 	if err := lookupContext.Err(); err != nil {
 		ticket.Release()
 		return routerruntime.RouteDecision{}, err
+	}
+	if !ephemeral {
+		started := time.Now()
+		held := false
+		// Every exit that schedules no delayed release frees the slot now,
+		// a panic included: the panic goes on up, the slot does not leak.
+		defer func() {
+			if !held {
+				ticket.Release()
+			}
+		}()
+		decision, err := decide(lookupContext, request)
+		if lookupContext.Err() == nil {
+			return decision, err
+		}
+		now := time.Now()
+		leaseLeft, leased := ticket.LeaseRemaining(now)
+		hold := raylineRoutesAbandonedHold(
+			raylineRoutesEncodeTokens(decision, request.Body), holdTokensPerSecond,
+			now.Sub(started), leaseLeft, leased,
+		)
+		logging.ComponentEvent("extproc", "rayline_routes_abandoned_hold", map[string]interface{}{
+			"routing_decision_id": request.DecisionID,
+			"hold_ms":             hold.Milliseconds(),
+		})
+		if hold <= 0 {
+			return decision, err
+		}
+		// Counted in background, so a reload's Close waits for the release
+		// rather than closing the gate's Redis client under it.
+		held = true
+		background.Add(1)
+		time.AfterFunc(hold, func() {
+			defer background.Done()
+			ticket.Release()
+		})
+		return decision, err
 	}
 	detached, cancel := context.WithTimeout(context.WithoutCancel(lookupContext), raylinearc.RouteLookupDetachBound)
 	type outcome struct {
@@ -1337,4 +1379,44 @@ func raylineRoutesToolWarnings(warnings []string, encoded *bool) []string {
 		}
 	}
 	return settled
+}
+
+// raylineRoutesAbandonedHoldFixed is the fixed part of an abandoned tracked
+// lookup's hold: a full encode's fixed cost (about 0.2 s) with margin.
+var raylineRoutesAbandonedHoldFixed = time.Second
+
+// raylineRoutesAbandonedLeaseMargin is how long before its cell-wide lease
+// runs out an abandoned lookup's slot is released at the latest.
+const raylineRoutesAbandonedLeaseMargin = time.Second
+
+// raylineRoutesAbandonedHold is how much longer an abandoned tracked lookup
+// keeps its slot, elapsed after its decision began: the encode it started,
+// at tokensPerSecond, plus the fixed part, capped at RouteLookupDetachBound
+// from the start, less what has already elapsed. A slot with a cell-wide
+// lease (leased) is released at least raylineRoutesAbandonedLeaseMargin
+// before leaseLeft runs out, so no other replica is admitted on an expired
+// lease while this one still holds the slot. Zero or less: release now.
+func raylineRoutesAbandonedHold(tokens, tokensPerSecond int, elapsed, leaseLeft time.Duration, leased bool) time.Duration {
+	if tokensPerSecond <= 0 {
+		tokensPerSecond = config.DefaultRaylineARCRoutesAbandonedHoldTokensPerSecond
+	}
+	total := time.Duration(float64(tokens)/float64(tokensPerSecond)*float64(time.Second)) + raylineRoutesAbandonedHoldFixed
+	if total > raylinearc.RouteLookupDetachBound {
+		total = raylinearc.RouteLookupDetachBound
+	}
+	hold := total - elapsed
+	if leased && hold > leaseLeft-raylineRoutesAbandonedLeaseMargin {
+		hold = leaseLeft - raylineRoutesAbandonedLeaseMargin
+	}
+	return hold
+}
+
+// raylineRoutesEncodeTokens is the size of the encode a lookup started: the
+// tokens its decision reports encoding, or, when it reported none (a
+// cancelled decision reports nothing), the body at four bytes a token.
+func raylineRoutesEncodeTokens(decision routerruntime.RouteDecision, body []byte) int {
+	if tokens := decision.Usage.EncodedInputTokens + decision.Usage.CacheReadTokens; tokens > 0 {
+		return tokens
+	}
+	return len(body) / 4
 }
