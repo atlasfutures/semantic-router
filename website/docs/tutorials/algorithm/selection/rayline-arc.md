@@ -624,19 +624,39 @@ routes_api:
   side. Recipes on one backend with different `max_inflight` are logged at
   startup (`rayline_routes_admission_limit_conflict`).
 - **A lookup that times out keeps its slot until the encode finishes.** The
-  backend does not stop encoding when the caller stops waiting, so an
-  ephemeral lookup (every lookup when `episode_writes` is false) runs its
-  decision detached from the caller, bounded at 120 s. The caller still gets
-  its 504 at `deadline_ms`; the slot is released when the backend answers,
-  so the next lookup is not admitted onto a backend still busy with this one.
-  A lookup that joins an episode is not detached (an abandoned one would
-  still commit its turn) and frees its slot at its 504.
+  backend does not stop encoding when the caller stops waiting, so every
+  lookup that holds a slot runs its decision detached from the caller,
+  bounded at 120 s. The caller still gets its 504 at `deadline_ms`; the slot
+  is released when the backend answers, so the next lookup is not admitted
+  onto a backend still busy with this one. A full encode runs at about 35k
+  tokens a second per container plus about 0.2 s fixed, so a large
+  transcript can hold its slot well past a short deadline.
+- **A lookup that joins an episode commits only while its caller waits.**
+  Its decision runs on detached like any other, but its turn commits on the
+  caller's context: one whose caller has gone by the time the backend
+  answers releases the episode lease without committing (abort class
+  `routes_abandoned`), so the conversation's next turn is not scored against
+  an arm nobody was given. It holds the lease until then, so a retry of the
+  same conversation right after the 504 waits on (or is refused by) the
+  lease while the backend finishes. A lookup whose caller left while it was
+  queued starts no encode.
 
 `llm_rayline_arc_routes_admission_total{outcome, backend}` counts outcomes
 (`admitted`, `queued`, `shed`, `cancelled`, `fail_open`) and
 `llm_rayline_arc_routes_admission_wait_seconds{outcome}` the time spent
 waiting; serialized lookups show as `queued` with waits near the holder's
 encode time.
+
+Tracked lookups also leave retained encoder sessions behind, one per
+conversation, each occupying the encoder container's session budget until
+the encoder evicts it. `llm_rayline_arc_routes_lookup_sessions` is, per
+router process, the conversations whose last tracked lookup left a session
+(`session_action` `created`, `rebuilt`, `appended` or `reused`, committed or
+not) within the episode `idle_ttl_seconds`; `rayline_routes_lookup_session`
+logs each such lookup with `session_action` and the count
+(`lookup_sessions`). It is an estimate to sum across router processes
+against the budget: it overcounts sessions the encoder evicted sooner and
+does not see the sessions routed turns hold.
 
 A scripted client -- a latency test, a batch job -- should send lookups one
 at a time per cell where it can, honour `Retry-After` on any 429 (with jitter

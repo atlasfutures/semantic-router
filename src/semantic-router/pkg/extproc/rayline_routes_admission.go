@@ -36,6 +36,11 @@ import (
 // lookup that ran out of time ("deadline_exceeded").
 const raylineRoutesAdmissionCode = "lookup_capacity"
 
+// raylineRoutesAbandonedFailureClass is the episode abort class of a tracked
+// lookup whose decision ran on after its caller left (it held a slot), and
+// which is therefore released rather than committed.
+const raylineRoutesAbandonedFailureClass = "routes_abandoned"
+
 // buildRaylineRoutesAdmission builds one lookup admission gate per recipe
 // whose routes-enabled ARC decision configures routes_api.admission.
 //

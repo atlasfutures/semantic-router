@@ -425,8 +425,7 @@ func (r *OpenAIRouter) handleRaylineRoutesAPI(
 	// Admission comes before any encoder or episode work, and its wait is
 	// spent inside the lookup deadline: a lookup that waited still answers
 	// within deadline_ms. The slot is held until the backend answers, which
-	// for an ephemeral lookup can be after this handler has (see
-	// raylineRoutesDecide).
+	// can be after this handler has (see raylineRoutesDecide).
 	ticket, refused := r.admitRaylineRoutesLookup(ctx, lookupContext, recipe, routeID)
 	if refused != nil {
 		return refused
@@ -502,16 +501,19 @@ func (r *OpenAIRouter) raylineRoutesContext(ctx *RequestContext) context.Context
 // raylineRoutesDecide runs the lookup's decision and frees its admission slot
 // when the backend answers.
 //
-// A tracked lookup decides on the lookup's own context and frees the slot on
-// return, as before: detached, an abandoned lookup would still commit its
-// episode turn. An ephemeral lookup that holds a slot decides on a context
-// detached from the caller and bounded by RouteLookupDetachBound, because the
-// backend does not stop encoding when the caller stops waiting: freeing the
-// slot at the 504 would admit the next lookup onto a backend still busy with
-// this one. The caller still waits only inside its own deadline; the late
-// answer is discarded, and the slot is freed when it arrives. The detached
-// run is counted in background, so the router that owns the backend's
-// clients is not closed under it by a reload.
+// A lookup that holds a slot decides on a context detached from the caller
+// and bounded by RouteLookupDetachBound, because the backend does not stop
+// encoding when the caller stops waiting: freeing the slot at the 504 would
+// admit the next lookup onto a backend still busy with this one. The caller
+// still waits only inside its own deadline; the late answer is discarded,
+// and the slot is freed when it arrives. The detached run is counted in
+// background, so the router that owns the backend's clients is not closed
+// under it by a reload.
+//
+// That holds for a tracked lookup as for an ephemeral one. A tracked one
+// commits its episode turn on the caller's context (Caller), not the
+// detached one: a decision whose caller has left is released, not committed,
+// so an abandoned lookup never advances its episode.
 func raylineRoutesDecide(
 	lookupContext context.Context,
 	background *sync.WaitGroup,
@@ -520,14 +522,16 @@ func raylineRoutesDecide(
 	ticket raylinearc.RouteLookupTicket,
 	ephemeral bool,
 ) (routerruntime.RouteDecision, error) {
-	if !ephemeral || !ticket.Held() {
-		defer ticket.Release()
+	if !ticket.Held() {
 		return decide(lookupContext, request)
 	}
 	// A caller that left while queued starts no encode nobody waits for.
 	if err := lookupContext.Err(); err != nil {
 		ticket.Release()
 		return routerruntime.RouteDecision{}, err
+	}
+	if !ephemeral {
+		request.Caller = lookupContext
 	}
 	detached, cancel := context.WithTimeout(context.WithoutCancel(lookupContext), raylinearc.RouteLookupDetachBound)
 	type outcome struct {

@@ -1,6 +1,8 @@
 package metrics
 
 import (
+	"sync/atomic"
+
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
@@ -36,4 +38,31 @@ var (
 func RecordRaylineARCRoutesAdmission(outcome, backend string, waitSeconds float64) {
 	RaylineARCRoutesAdmissions.WithLabelValues(outcome, backend).Inc()
 	RaylineARCRoutesAdmissionWaitSeconds.WithLabelValues(outcome).Observe(waitSeconds)
+}
+
+// raylineARCRoutesLookupSessionsSource reads the retained encoder sessions
+// tracked lookups hold in this process; nil until the router sets it.
+var raylineARCRoutesLookupSessionsSource atomic.Pointer[func() int]
+
+// RaylineARCRoutesLookupSessions is, per process, the retained encoder
+// sessions tracked route lookups hold: the distinct episodes whose last
+// lookup left a session on the encoder within the episode idle TTL. A dev
+// check sums it against the encoder container's session budget. Read at
+// scrape time.
+var RaylineARCRoutesLookupSessions = promauto.NewGaugeFunc(
+	prometheus.GaugeOpts{
+		Name: "llm_rayline_arc_routes_lookup_sessions",
+		Help: "Retained encoder sessions held by this process's tracked Rayline ARC route lookups (estimate, within the episode idle TTL).",
+	},
+	func() float64 {
+		if source := raylineARCRoutesLookupSessionsSource.Load(); source != nil {
+			return float64((*source)())
+		}
+		return 0
+	},
+)
+
+// SetRaylineARCRoutesLookupSessionsSource sets what the lookup-sessions gauge reads.
+func SetRaylineARCRoutesLookupSessionsSource(source func() int) {
+	raylineARCRoutesLookupSessionsSource.Store(&source)
 }

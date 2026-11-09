@@ -76,6 +76,12 @@ type RouteDecisionRequest struct {
 	// trusts its gateway's turn-signal headers, so a private consult is
 	// masked as a routed turn is.
 	Headers map[string]string
+	// Caller, when set, is the context of the caller waiting on the
+	// decision, where ctx is detached from it (a lookup that holds an
+	// admission slot runs on until the backend answers). The episode commit
+	// waits on Caller, not ctx: a decision whose caller has left is not
+	// committed, and its lease is released. Nil commits on ctx.
+	Caller context.Context
 }
 
 // RouteDecisionSurface names which endpoint a consult came from.
