@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -327,7 +328,16 @@ type decisionsResponse struct {
 	} `json:"routing"`
 }
 
-func (provider *HTTPDecisions) Decide(ctx context.Context, input DecisionInput) (Decision, error) {
+func (provider *HTTPDecisions) Decide(ctx context.Context, input DecisionInput) (_ Decision, err error) {
+	// The route id a Decisions response names travels with any failure to
+	// read or accept it, so the core's 502 can carry it.
+	var routeID string
+	defer func() {
+		var refusal *DecisionsRefusal
+		if err != nil && routeID != "" && !errors.As(err, &refusal) {
+			err = &routedDecisionError{err: err, routeID: routeID}
+		}
+	}()
 	var body map[string]json.RawMessage
 	if err := json.Unmarshal(input.Body, &body); err != nil {
 		return Decision{}, fmt.Errorf("invalid Decisions request body")
@@ -390,17 +400,19 @@ func (provider *HTTPDecisions) Decide(ctx context.Context, input DecisionInput) 
 		return Decision{}, fmt.Errorf("Decisions request failed")
 	}
 	defer response.Body.Close()
+	if routeID = response.Header.Get("X-Rayline-Route-Id"); !refusedRouteID.MatchString(routeID) {
+		routeID = ""
+	}
 	if response.StatusCode != http.StatusOK {
+		refusal := &DecisionsRefusal{Status: response.StatusCode, RouteID: routeID}
 		if provider.config.Decisions.apiMode() == DecisionsExecutionContextV2 {
 			// v2 refusals are contract codes (execution_*, policy_*): name the
 			// code so the harness and logs show why. Messages are not echoed.
-			refusal := &DecisionsRefusal{Status: response.StatusCode, Code: refusalCode(response)}
-			refusal.RetryAfter, refusal.ShouldRetry = retryAdvice(response.Header)
-			return Decision{}, refusal
+			// Other modes carry no contract code; the message is as before.
+			refusal.Code = refusalCode(response)
 		}
-		// Other modes carry no contract code; the message is the same as before.
-		refusal := &DecisionsRefusal{Status: response.StatusCode}
 		refusal.RetryAfter, refusal.ShouldRetry = retryAdvice(response.Header)
+		refusal.log("service", routeID, provider.config.Decisions.apiMode())
 		return Decision{}, refusal
 	}
 	if tag := provider.config.Decisions.CellTag; tag != "" && response.Header.Get("X-Rayline-Cell") != tag {
@@ -719,6 +731,32 @@ type DecisionsRefusal struct {
 	RetryAfter *time.Duration
 	// ShouldRetry is x-should-retry when it is exactly "true" or "false".
 	ShouldRetry *bool
+	// RouteID is the well-formed X-Rayline-Route-Id the refusal carried, if
+	// any.
+	RouteID string
+}
+
+// routedDecisionError is a Decisions failure, other than a refusal, whose
+// response named a route id. Its message is the wrapped error's.
+type routedDecisionError struct {
+	err     error
+	routeID string
+}
+
+func (failure *routedDecisionError) Error() string { return failure.err.Error() }
+func (failure *routedDecisionError) Unwrap() error { return failure.err }
+
+// decisionRouteID is the route id a failed consult's response named, if any.
+func decisionRouteID(err error) string {
+	var refusal *DecisionsRefusal
+	if errors.As(err, &refusal) {
+		return refusal.RouteID
+	}
+	var routed *routedDecisionError
+	if errors.As(err, &routed) {
+		return routed.routeID
+	}
+	return ""
 }
 
 // maxDecisionsRetryAfter bounds the delay a refusal can ask a caller to wait.
@@ -748,12 +786,29 @@ func retryAdvice(header http.Header) (*time.Duration, *bool) {
 	return retryAfter, shouldRetry
 }
 
+// log records one refused lookup: who refused it, the status, the contract
+// code and the route id when known. Request material and credentials are
+// never logged.
+func (refusal *DecisionsRefusal) log(source, routeID string, apiMode string) {
+	known := func(value string) any {
+		if value == "" {
+			return nil
+		}
+		return value
+	}
+	slog.Warn("decisions lookup refused", "source", source, "status", refusal.Status, "code", known(refusal.Code), "route_id", known(routeID), "api_mode", apiMode)
+}
+
 func (refusal *DecisionsRefusal) Error() string {
 	if refusal.Code == "" {
 		return fmt.Sprintf("Decisions request refused (HTTP %d)", refusal.Status)
 	}
 	return fmt.Sprintf("Decisions request refused (HTTP %d, %s)", refusal.Status, refusal.Code)
 }
+
+// refusedRouteID bounds the route id a Decisions response header may put in
+// the log or the core's own response.
+var refusedRouteID = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,128}$`)
 
 // contractCode is the shape of every execution_*/policy_* contract code.
 var contractCode = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
