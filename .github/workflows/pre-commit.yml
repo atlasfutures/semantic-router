@@ -64,12 +64,16 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             export BASE_REF="origin/${{ github.base_ref }}"
-          else
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             # A dispatched run has no base ref. HEAD^ would check only the last
             # commit, so resolve the open pull request's base and check the
             # whole branch against it, as the pull request path does.
             pr_base="$(gh pr view "$GITHUB_REF_NAME" --json baseRefName -q .baseRefName 2>/dev/null || true)"
             export BASE_REF="origin/${pr_base:-${DEFAULT_BRANCH:-main}}"
+          else
+            # A push: the branch ref already points at this commit, so check
+            # what the push added.
+            export BASE_REF="HEAD^"
           fi
           make check
 
@@ -178,12 +182,16 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             export BASE_REF="origin/${{ github.base_ref }}"
-          else
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             # A dispatched run has no base ref. HEAD^ would check only the last
             # commit, so resolve the open pull request's base and check the
             # whole branch against it, as the pull request path does.
             pr_base="$(gh pr view "$GITHUB_REF_NAME" --json baseRefName -q .baseRefName 2>/dev/null || true)"
             export BASE_REF="origin/${pr_base:-${DEFAULT_BRANCH:-main}}"
+          else
+            # A push: the branch ref already points at this commit, so check
+            # what the push added.
+            export BASE_REF="HEAD^"
           fi
           make check
 
