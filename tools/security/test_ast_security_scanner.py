@@ -203,6 +203,24 @@ class CredentialExemptionTests(unittest.TestCase):
         self.assertEqual(len(findings), 1)
         self.assertEqual(findings[0].severity, SCANNER.Severity.HIGH)
 
+    def test_exempted_pattern_does_not_hide_another_marker_in_the_literal(self):
+        source_path = self.root / self.EXEMPTED_PATH
+        source_path.parent.mkdir(parents=True, exist_ok=True)
+        source_path.write_bytes(
+            (
+                "package feed\n\nconst Paths = "
+                f'"http://{METADATA_HOST}/ and ~/.ssh/id_rsa"\n'
+            ).encode()
+        )
+        self._write_exemptions(self._exempt_entry(self.EXEMPTED_PATH))
+
+        findings = self._credential_refs(source_path)
+
+        # The reviewed hostname is exempt; the unreviewed marker in the same
+        # string literal is still reported, whichever pattern is visited first.
+        self.assertEqual(len(findings), 1)
+        self.assertIn("~/.ssh", findings[0].message)
+
     def test_without_a_toml_parser_exemptions_apply_to_nothing(self):
         source_path = self._write_go_file(self.EXEMPTED_PATH)
         parser = SCANNER.tomllib

@@ -965,8 +965,11 @@ def _check_credential_strings(node, filepath: str, is_test: bool, result: ScanRe
     text = node.text.decode(errors="replace")
     for cred in CREDENTIAL_STRINGS:
         if cred in text:
+            # An exemption covers one pattern in this file, not the literal:
+            # keep checking so a second, unreviewed marker in the same string
+            # is still reported.
             if _credential_exemption(filepath, cred) is not None:
-                return
+                continue
             sev = (
                 Severity.HIGH
                 if cred in HIGH_RISK_CREDENTIAL_STRINGS
