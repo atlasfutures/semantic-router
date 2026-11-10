@@ -270,3 +270,48 @@ func upstreamUsageChunk() string {
 		`"model":"xiaomi/mimo-v2.5-pro","choices":[],` +
 		`"usage":{"prompt_tokens":220,"completion_tokens":16030,"total_tokens":16250}}` + "\n\n"
 }
+
+// A thinking marker is a signature a Router mints for thinking no provider
+// signed (protocolcodec.ThinkingMarker), so one arrives on a response only
+// from an upstream that is itself a Router. A Chat client never receives it:
+// the encoder drops a signature in the Router's namespace rather than carry
+// it as a provider's. The count added the marker's bytes all the same, so a
+// turn whose thinking was two bytes billed sixteen tokens for a marker the
+// client did not hold -- and that no upstream had billed either, since a
+// marker is minted, not generated. It is left out of the count on every
+// route for that reason, a Messages client that does receive it included.
+func TestAThinkingMarkerIsNotBilledAsGeneration(t *testing.T) {
+	logs := captureLogs(t)
+	router := &OpenAIRouter{}
+	ctx := overrunningStreamContext(t)
+	ctx.SourceFormat = llmprotocol.OpenAIChatV1
+	ctx.TargetFormat = llmprotocol.AnthropicMessagesV1
+	ctx.SemanticRequest = streamUsageRequest()
+
+	body := streamDeadlineResponseBody(t, router, ctx, sameFormatMessageStart()+
+		"event: content_block_start\n"+
+		`data: {"type":"content_block_start","index":0,"content_block":`+
+		`{"type":"thinking","thinking":"","signature":""}}`+"\n\n"+
+		"event: content_block_delta\n"+
+		`data: {"type":"content_block_delta","index":0,"delta":`+
+		`{"type":"thinking_delta","thinking":"hi"}}`+"\n\n"+
+		"event: content_block_delta\n"+
+		`data: {"type":"content_block_delta","index":0,"delta":`+
+		`{"type":"signature_delta","signature":"vsr.thinking.v1.moonshotai.AbCdEfGhIjKlMnOpQrStUvWxYz012-_9"}}`+"\n\n"+
+		"event: content_block_stop\n"+`data: {"type":"content_block_stop","index":0}`+"\n\n")
+
+	if !bytes.Contains(body, []byte(`"reasoning_content":"hi"`)) {
+		t.Fatalf("the thinking never reached the client, so this case is not being tested:\n%s", body)
+	}
+	if bytes.Contains(body, []byte("vsr.thinking")) {
+		t.Fatalf("the Chat client received the marker, so this case is not being tested:\n%s", body)
+	}
+	// Two bytes of thinking are one token; the marker adds nothing.
+	if !bytes.Contains(body, []byte(`"completion_tokens":1,`)) {
+		t.Fatalf("the client was billed for a marker it never received:\n%s", body)
+	}
+	fields := findLogEvent(t, logs, "llm_usage")
+	if got, _ := fields["completion_tokens"].(int64); got != 1 {
+		t.Fatalf("the usage row billed %v for two bytes of thinking and a marker", fields["completion_tokens"])
+	}
+}

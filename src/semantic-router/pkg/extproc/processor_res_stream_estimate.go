@@ -2,6 +2,7 @@ package extproc
 
 import (
 	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
+	"github.com/atlasfutures/semantic-router/rayline-core/protocolcodec"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/classification"
 )
@@ -120,7 +121,15 @@ func generatedTextBytes(state *semanticResponseStreamState) int {
 		// message_start states before the first delta stood as the
 		// settlement. Whether to bill such a turn is outputForwarded's
 		// answer; how much is this sum's, and the two have to agree.
-		bytes += len(item.reasoningSig)
+		//
+		// A signature in the Router's own namespace is a thinking marker
+		// (protocolcodec.ThinkingMarker), minted by a Router for thinking no
+		// provider signed. Whatever reaches the client -- a Messages client
+		// receives it, a Chat client does not -- it is not generation and
+		// the upstream bills nothing for it, so it is not counted.
+		if !protocolcodec.IsRouterSignature(item.reasoningSig) {
+			bytes += len(item.reasoningSig)
+		}
 		if item.toolCall != nil {
 			bytes += len(item.toolCall.Arguments)
 		}
