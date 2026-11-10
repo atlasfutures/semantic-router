@@ -45,8 +45,11 @@ func validateCloudTransport(deployment Deployment) error {
 		if (deployment.Protocol != llmprotocol.OpenAIChatV1 && deployment.Protocol != llmprotocol.AnthropicMessagesV1) || deployment.RegistryProvider != "openrouter" {
 			return fmt.Errorf("model_pin currently qualifies OpenRouter Chat Completions and Messages only")
 		}
-		if deployment.WireModel != deployment.RegistryModel || !strings.Contains(deployment.WireModel, "/") {
-			return fmt.Errorf("model_pin requires the concrete registry model as wire_model")
+		// registry_model names the registry cell whose controls were measured;
+		// wire_model is the gateway's id for that same model. The echo check
+		// below holds the gateway to serving exactly wire_model as a rules pin.
+		if !strings.Contains(deployment.RegistryModel, "/") || !pinWireNamesRegistryModel(deployment.WireModel, deployment.RegistryModel) {
+			return fmt.Errorf("model_pin requires a concrete registry model and wire_model naming it: the registry id, or its gateway id")
 		}
 		endpoint, err := url.Parse(deployment.URL)
 		path := "/v1/chat/completions"
@@ -169,4 +172,18 @@ func stripModelPinReasoning(request *llmprotocol.Request) int {
 	}
 	request.Messages = messages
 	return dropped
+}
+
+// pinWireNamesRegistryModel reports whether a model_pin's wire_model names its
+// registry model: the registry id itself, or the gateway's catalog id for it,
+// which drops the provider prefix and spells version dots as dashes
+// (claude-sonnet-5-5 for anthropic/claude-sonnet-5.5, which the gateway serves
+// from Anthropic directly). Deriving the id, rather than accepting any, keeps a
+// mistyped wire_model from dispatching one model under another's controls.
+func pinWireNamesRegistryModel(wire, registry string) bool {
+	if wire == registry {
+		return true
+	}
+	_, name, ok := strings.Cut(registry, "/")
+	return ok && name != "" && wire == strings.ReplaceAll(name, ".", "-")
 }
