@@ -53,6 +53,8 @@ on:
 
 permissions:
   contents: read
+  # A dispatched run resolves the open pull request's base with `gh pr view`.
+  pull-requests: read
 
 jobs:
   classify:
