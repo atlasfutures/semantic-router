@@ -439,7 +439,7 @@ func (server *Server) execute(writer http.ResponseWriter, incoming *http.Request
 		}
 		clientBeta := ""
 		if format == llmprotocol.AnthropicMessagesV1 {
-			clientBeta = incoming.Header.Get("Anthropic-Beta")
+			clientBeta = clientAnthropicBeta(incoming.Header)
 		}
 		upstream, err = server.upstream(ctx, selected, decision, session, branch, clientBeta, prepared.body)
 		if err != nil {

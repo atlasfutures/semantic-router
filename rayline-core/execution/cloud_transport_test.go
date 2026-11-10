@@ -401,50 +401,77 @@ func TestModelPinMessagesRefusesDeveloperRowThroughDispatch(t *testing.T) {
 
 // A Messages client's anthropic-beta reaches a cloud Messages deployment: the
 // body is carried member for member, and Anthropic refuses a beta-introduced
-// member (context_management) that arrives without its beta. A client on
-// another wire has no beta to forward.
+// member (context_management) that arrives without its beta. The client may
+// send one beta per header line; every line is carried. The server-side
+// fallback betas are not: the decision names the model that serves. A client
+// on another wire, a cloud deployment on another wire, and a local deployment
+// get no beta.
 func TestCloudMessagesDispatchForwardsTheClientBeta(t *testing.T) {
-	const beta = "context-management-2025-06-27,interleaved-thinking-2025-05-14"
-	for _, client := range []struct {
-		path, body, want string
+	const (
+		messagesBody = `{"model":"arc-1.0","max_tokens":64,"context_management":{"edits":[]},"messages":[{"role":"user","content":"hello"}]}`
+		chatBody     = `{"model":"arc-1.0","max_tokens":64,"messages":[{"role":"user","content":"hello"}]}`
+		messagesOut  = `{"id":"msg_fixture","type":"message","role":"assistant","model":"claude-sonnet-5-5","content":[{"type":"text","text":"ready"}],"stop_reason":"end_turn","stop_sequence":null,"usage":{"input_tokens":30,"output_tokens":1}}`
+		chatOut      = `{"id":"chatcmpl-fixture","object":"chat.completion","model":"moonshotai/kimi-k3","choices":[{"index":0,"message":{"role":"assistant","content":"ready"},"finish_reason":"stop"}],"usage":{"prompt_tokens":30,"completion_tokens":1,"total_tokens":31}}`
+		cm           = "context-management-2025-06-27"
+		thinking     = "interleaved-thinking-2025-05-14"
+	)
+	cloudMessages := func(t *testing.T, url string) Config {
+		config := modelPinConfig(t, url)
+		deployment := &config.Deployments[0]
+		deployment.URL = url + "/v1/messages"
+		deployment.Protocol = llmprotocol.AnthropicMessagesV1
+		deployment.WireModel, deployment.RegistryModel = "claude-sonnet-5-5", "anthropic/claude-sonnet-5.5"
+		config.Actions[0].Model = "claude-sonnet-5.5"
+		return config
+	}
+	for _, c := range []struct {
+		name, path, body, answer, selected, want string
+		betas                                    []string
+		config                                   func(*testing.T, string) Config
 	}{
-		{"/v1/messages", `{"model":"arc-1.0","max_tokens":64,"context_management":{"edits":[]},"messages":[{"role":"user","content":"hello"}]}`, beta},
-		{"/v1/chat/completions", `{"model":"arc-1.0","max_tokens":64,"messages":[{"role":"user","content":"hello"}]}`, ""},
+		{"messages to cloud messages", "/v1/messages", messagesBody, messagesOut, "claude-sonnet-5-5", cm + "," + thinking, []string{cm + "," + thinking}, cloudMessages},
+		{"one beta per line", "/v1/messages", messagesBody, messagesOut, "claude-sonnet-5-5", cm + "," + thinking, []string{cm, thinking}, cloudMessages},
+		{"fallback beta removed", "/v1/messages", messagesBody, messagesOut, "claude-sonnet-5-5", cm, []string{cm + ", Server-Side-Fallback-2026-06-01"}, cloudMessages},
+		{"only a fallback beta", "/v1/messages", messagesBody, messagesOut, "claude-sonnet-5-5", "", []string{"server-side-fallback-2026-06-01"}, cloudMessages},
+		{"chat client", "/v1/chat/completions", chatBody, messagesOut, "claude-sonnet-5-5", "", []string{cm}, cloudMessages},
+		{"messages to cloud chat", "/v1/messages", chatBody, chatOut, "moonshotai/kimi-k3", "", []string{cm}, modelPinConfig},
+		{"messages to local messages", "/v1/messages", messagesBody, messagesOut, "", "", []string{cm}, func(t *testing.T, url string) Config {
+			return testConfig(t, url+"/v1/messages", true)
+		}},
 	} {
-		t.Run(client.path, func(t *testing.T) {
-			got := "unset"
+		t.Run(c.name, func(t *testing.T) {
+			got, calls := "unset", 0
 			gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				got = r.Header.Get("Anthropic-Beta")
-				modelPinHeaders(w.Header())
-				w.Header().Set("X-Rayline-Selected-Model", "claude-sonnet-5-5")
-				_, _ = io.WriteString(w, `{"id":"msg_fixture","type":"message","role":"assistant","model":"claude-sonnet-5-5","content":[{"type":"text","text":"ready"}],"stop_reason":"end_turn","stop_sequence":null,"usage":{"input_tokens":30,"output_tokens":1}}`)
+				calls++
+				got = strings.Join(r.Header.Values("Anthropic-Beta"), "|")
+				if c.selected != "" {
+					modelPinHeaders(w.Header())
+					w.Header().Set("X-Rayline-Selected-Model", c.selected)
+				}
+				_, _ = io.WriteString(w, c.answer)
 			}))
 			defer gateway.Close()
-			config := modelPinConfig(t, gateway.URL)
-			deployment := &config.Deployments[0]
-			deployment.URL = gateway.URL + "/v1/messages"
-			deployment.Protocol = llmprotocol.AnthropicMessagesV1
-			deployment.WireModel, deployment.RegistryModel = "claude-sonnet-5-5", "anthropic/claude-sonnet-5.5"
-			config.Actions[0].Model = "claude-sonnet-5.5"
-			_, server := executorWithHTTPDecisions(t, config, &decisionCapture{})
-			request, err := http.NewRequest(http.MethodPost, server.URL+client.path, strings.NewReader(client.body))
+			_, server := executorWithHTTPDecisions(t, c.config(t, gateway.URL), &decisionCapture{})
+			request, err := http.NewRequest(http.MethodPost, server.URL+c.path, strings.NewReader(c.body))
 			if err != nil {
 				t.Fatal(err)
 			}
 			request.Header.Set("Authorization", "Bearer "+testCoreToken)
 			request.Header.Set("X-Rayline-Session-Id", "beta")
-			request.Header.Set("Anthropic-Beta", beta)
+			for _, beta := range c.betas {
+				request.Header.Add("Anthropic-Beta", beta)
+			}
 			response, err := http.DefaultClient.Do(request)
 			if err != nil {
 				t.Fatal(err)
 			}
 			answer, _ := io.ReadAll(response.Body)
 			response.Body.Close()
-			if response.StatusCode != 200 {
-				t.Fatalf("%d %s", response.StatusCode, answer)
+			if response.StatusCode != 200 || calls != 1 {
+				t.Fatalf("%d after %d upstream calls: %s", response.StatusCode, calls, answer)
 			}
-			if got != client.want {
-				t.Fatalf("upstream anthropic-beta = %q, want %q", got, client.want)
+			if got != c.want {
+				t.Fatalf("upstream anthropic-beta = %q, want %q", got, c.want)
 			}
 		})
 	}
