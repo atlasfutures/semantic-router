@@ -98,6 +98,10 @@ func TestEdge503IsResentOnceWithTheSameBytes(t *testing.T) {
 				"edge_resend": edgeResendAttempt, "failure_class": turnFailureUpstream5xx,
 			})
 			assertFields(t, "re-send", lines[1], map[string]interface{}{"edge_resend": edgeResendServed})
+			// The re-send was read whole: it states no first byte or first content.
+			if lines[1]["ttft_ms"] != nil || lines[1]["first_content_ms"] != nil {
+				t.Fatalf("the re-send stated ttft_ms %v, first_content_ms %v", lines[1]["ttft_ms"], lines[1]["first_content_ms"])
+			}
 			event := findLogEvent(t, logs, "edge_resend")
 			assertFields(t, "edge_resend", event, map[string]interface{}{
 				"refused_status": http.StatusServiceUnavailable, "resend_status": http.StatusOK,

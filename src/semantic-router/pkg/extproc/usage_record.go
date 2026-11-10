@@ -349,9 +349,9 @@ func (r *OpenAIRouter) newLLMUsageRecord(ctx *RequestContext, usage responseUsag
 	// A re-sent turn (flex twin or another endpoint) is read whole before the
 	// response pipeline sees it, and an unreachable re-send is answered with
 	// synthetic headers, so its "first byte" is not one: no TTFT is stated.
-	// A thinking-signature re-send is read whole the same way.
+	// A thinking-signature or edge-503 re-send is read whole the same way.
 	resent := (ctx.FlexResend != nil && ctx.FlexResend.served()) || len(ctx.RaylineARCEndpointsTried) > 1 ||
-		ctx.ThinkingSignatureRetried
+		ctx.ThinkingSignatureRetried || ctx.EdgeResent
 	if ctx.TTFTRecorded && !resent {
 		ttft := int64(ctx.TTFTSeconds * 1000)
 		record.TTFTMS = &ttft
