@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -57,6 +58,9 @@ func TestV2PreTaskSidecallSkipsDecisionsAndAnswersItsRefusal(t *testing.T) {
 	if got := header.Get("Retry-After"); got != "" {
 		t.Errorf("Retry-After %q want none", got)
 	}
+	if got := header.Get("X-Rayline-Route-Id"); got != "" {
+		t.Errorf("local refusal carried route id %q", got)
+	}
 	if lookups := fixture.snapshot(); len(lookups) != 0 {
 		t.Fatalf("pre-task sidecall consulted Decisions %d times", len(lookups))
 	}
@@ -88,25 +92,40 @@ func TestV2SidecallAfterTaskStartStillConsultsDecisions(t *testing.T) {
 }
 
 // Every HTTP refusal from the service logs one line: status, contract code,
-// and the route id its header names, never request material.
+// and the route id its header names, never request material. The core's 502
+// carries that route id, as does one for a response it could not accept.
 func TestDecisionsRefusalLogsStatusCodeAndRouteID(t *testing.T) {
 	local, cloud := &upstreamFixture{}, &upstreamFixture{}
 	config := hybridV2Config(t, chatUpstream(t, local, false).URL, chatUpstream(t, cloud, true).URL+"/v1/chat/completions")
+	var unreadable atomic.Bool
 	fixture := &v2Decisions{answer: func(w http.ResponseWriter) bool {
 		w.Header().Set("X-Rayline-Route-Id", "route-refused-1")
+		if unreadable.Load() {
+			w.Header().Set("X-Rayline-Route-Id", "route-unreadable-1")
+			_, _ = w.Write([]byte(`not json`))
+			return true
+		}
 		w.WriteHeader(http.StatusUnprocessableEntity)
 		_, _ = w.Write([]byte(`{"error":{"code":"projection_refused"}}`))
 		return true
 	}}
 	_, httpServer := v2Server(t, config, fixture)
-	var status int
+	var (
+		status int
+		header http.Header
+	)
 	records := refusalLogs(t, func() {
-		status, _ = executeHTTP(t, httpServer.URL, "/v1/chat/completions", chatTurn(userTask), "refused")
+		status, header, _ = executeWithHeaders(t, httpServer.URL, chatTurn(userTask), "refused")
 	})
-	if status != http.StatusBadGateway {
-		t.Fatalf("status %d", status)
+	if status != http.StatusBadGateway || header.Get("X-Rayline-Route-Id") != "route-refused-1" {
+		t.Fatalf("status %d route id %q", status, header.Get("X-Rayline-Route-Id"))
 	}
 	if len(records) != 1 || records[0]["source"] != "service" || records[0]["status"] != float64(422) || records[0]["code"] != "projection_refused" || records[0]["route_id"] != "route-refused-1" {
 		t.Fatalf("refusal log %v", records)
+	}
+	unreadable.Store(true)
+	status, header, response := executeWithHeaders(t, httpServer.URL, chatTurn(userTask), "unreadable")
+	if status != http.StatusBadGateway || !strings.Contains(string(response), "invalid Decisions response") || header.Get("X-Rayline-Route-Id") != "route-unreadable-1" {
+		t.Fatalf("status %d route id %q: %s", status, header.Get("X-Rayline-Route-Id"), response)
 	}
 }

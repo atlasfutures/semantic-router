@@ -692,6 +692,10 @@ func (server *Server) writeDecisionError(writer http.ResponseWriter, format llmp
 			writer.Header().Set("X-Should-Retry", strconv.FormatBool(*refusal.ShouldRetry))
 		}
 	}
+	// The route id the service named reaches the caller, as on success.
+	if routeID := decisionRouteID(err); routeID != "" {
+		writer.Header().Set("X-Rayline-Route-Id", routeID)
+	}
 	server.writeError(writer, format, http.StatusBadGateway, "decision_failed", err.Error())
 }
 
