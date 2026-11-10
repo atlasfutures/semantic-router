@@ -118,16 +118,15 @@ func routeServicePrices(scorer *policyServiceScorer, prices *raylinearc.PolicyRo
 			put(arm.service, rate)
 		}
 	}
-	// An arm read on the id it is sent on keeps that id, as does any key no
-	// remapped arm is dispatched to.
-	readOwn := map[string]bool{}
+	// A key some arm reads at the service is kept (behind any dispatched
+	// price already set under it), as is any key no remapped arm is
+	// dispatched to.
+	read := map[string]bool{}
 	for _, arm := range arms {
-		if arm.service == arm.served {
-			readOwn[arm.served] = true
-		}
+		read[arm.service] = true
 	}
 	for key, rate := range prices.Rates {
-		if !dispatched[key] || readOwn[key] {
+		if !dispatched[key] || read[key] {
 			put(key, rate)
 		}
 	}

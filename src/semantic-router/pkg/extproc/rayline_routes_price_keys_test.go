@@ -152,6 +152,33 @@ func TestRouteServicePricesKeepABoundToWorkersOwnKey(t *testing.T) {
 	}
 }
 
+// A dispatched id that another remapped arm reads as its own package id is
+// kept for that arm: remaps a -> b and b -> c over distinct workers, with
+// only b priced, send b's price under a and under b.
+func TestRouteServicePricesKeepADispatchedIDAnotherArmReads(t *testing.T) {
+	scorer := &policyServiceScorer{
+		workers: []raylinearc.WorkerManifest{
+			{ID: "a", Model: "v/a"}, {ID: "b", Model: "v/b"}, {ID: "c", Model: "v/c"},
+		},
+		actionOrder: []string{"a-up", "b-up"},
+		bindings: map[string]policyBinding{
+			"a-up": {arm: 0, dispatchArm: 1, model: "m-a"}, "b-up": {arm: 1, dispatchArm: 2, model: "m-b"},
+		},
+	}
+	sent := routeServicePrices(scorer, callerWorld(map[string]raylinearc.PolicyRoutingRate{"v/b": callerRate(0.2, 0.8)}))
+	if !slices.Equal(rateKeys(sent), []string{"v/a", "v/b"}) ||
+		routeRateLegs(sent.Rates["v/a"]) != routeRateLegs(sent.Rates["v/b"]) {
+		t.Fatalf("sent %v, want v/b's price under v/a and v/b", sent.Rates)
+	}
+	// With c priced too, b's arm takes its dispatched worker's price.
+	sent = routeServicePrices(scorer, callerWorld(map[string]raylinearc.PolicyRoutingRate{
+		"v/b": callerRate(0.2, 0.8), "v/c": callerRate(0.4, 1.6),
+	}))
+	if !slices.Equal(rateKeys(sent), []string{"v/a", "v/b"}) || routeRateLegs(sent.Rates["v/b"]) != [4]float64{0.4, 0, 0.4, 1.6} {
+		t.Fatalf("sent %v", sent.Rates)
+	}
+}
+
 // Both ids priced is never refused: the dispatched id's price, what the call
 // is billed at, wins for every arm dispatched to it, whether the two are
 // priced unlike or alike; the package id alone is read as before.
