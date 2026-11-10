@@ -83,9 +83,28 @@ const (
 	// DefaultPolicySessionIdleTimeout matches the episode store's shipped
 	// idle TTL, so a session lives as long as the episode it serves.
 	DefaultPolicySessionIdleTimeout = 900 * time.Second
-	// DefaultPolicySessionStartTimeout bounds a session start. Modal queues
-	// a start for capacity for minutes; a turn must not.
-	DefaultPolicySessionStartTimeout = 10 * time.Second
+	// DefaultPolicySessionStartTimeout bounds one attempt of a session start.
+	// Modal queues a start for capacity for minutes; a turn must not. A start
+	// that did not answer is asked once more under the same idempotency key
+	// (Start), so a turn waits at most two of these.
+	DefaultPolicySessionStartTimeout = 8 * time.Second
+	// policySessionStartRetryMinAttempt is the least time the turn must have
+	// left for a start's one retry; with less, the start fails at once.
+	policySessionStartRetryMinAttempt = time.Second
+	// policySessionReapTimeout bounds one detached re-send that ends a start
+	// the turn gave up on (Start), and policySessionReapBudget all of them:
+	// Modal's edge answers a start it is still queueing with a 504 after
+	// about 300 s, so a start not placed within the budget is not placed.
+	policySessionReapTimeout = 60 * time.Second
+	policySessionReapBudget  = 330 * time.Second
+	// policySessionReapPause is the wait before a re-send that got no answer
+	// is sent again.
+	policySessionReapPause = time.Second
+	// maxPolicySessionReaps bounds the re-sends in flight per backend. Each
+	// joins the start Modal is already placing under its key rather than
+	// place another, but a capacity incident must not hold an unbounded
+	// number of them open.
+	maxPolicySessionReaps = 64
 	// policySessionTerminateTimeout bounds a best-effort terminate.
 	policySessionTerminateTimeout = 5 * time.Second
 	// policySessionTransportRetryBudget bounds the one move a turn makes when
@@ -159,7 +178,27 @@ type PolicySessionConfig struct {
 	IdleTimeout   time.Duration
 	StartTimeout  time.Duration
 	ReplacedGrace time.Duration
+	// OnStart, when set, is told how a start that did not answer at first
+	// ended (a PolicySessionStart outcome). It must not block.
+	OnStart func(outcome string)
 }
+
+// PolicySessionStartReapSkipped is the outcome of a start the turn gave up
+// on while maxPolicySessionReaps re-sends were already in flight: it is not
+// reaped, and may hold a slot until its idle timeout.
+const PolicySessionStartReapSkipped = "reap_skipped"
+
+// The outcomes of a start that did not answer at first (PolicySessionConfig
+// OnStart): its one retry answered or did not, or the turn had no time left
+// for one; and the detached re-send under the same key then ended the
+// session Modal had placed for it, found none to end, or failed.
+const (
+	PolicySessionStartRecovered  = "recovered"
+	PolicySessionStartFailed     = "failed"
+	PolicySessionStartSkipped    = "skipped"
+	PolicySessionStartReaped     = "reaped"
+	PolicySessionStartReapFailed = "reap_failed"
+)
 
 // PolicySessionBackend starts and ends the Modal sessions of a sessioned
 // policy Server, over the cell's one client (its URL and proxy key).
@@ -176,6 +215,11 @@ type PolicySessionBackend struct {
 	suspect *suspectSessions
 	// transportRetryBudget bounds a turn's move after a transport failure.
 	transportRetryBudget time.Duration
+	// reapTimeout bounds one re-send that ends a start the turn gave up on,
+	// reapBudget all of them; reaps holds a slot per re-send in flight.
+	reapTimeout time.Duration
+	reapBudget  time.Duration
+	reaps       chan struct{}
 }
 
 // suspectSessions remembers, by a hash of the token and until the session's
@@ -250,6 +294,8 @@ func NewPolicySessionBackend(client *PolicyServiceClient, config PolicySessionCo
 	return &PolicySessionBackend{
 		client: client, controlHTTP: noRedirectClient(client.http), config: config, now: time.Now, newKey: idempotencyKey,
 		suspect: newSuspectSessions(config.IdleTimeout, time.Now), transportRetryBudget: policySessionTransportRetryBudget,
+		reapTimeout: policySessionReapTimeout, reapBudget: policySessionReapBudget,
+		reaps: make(chan struct{}, maxPolicySessionReaps),
 	}, nil
 }
 
@@ -264,9 +310,24 @@ func idempotencyKey() (string, error) {
 	return encoded[0:8] + "-" + encoded[8:12] + "-" + encoded[12:16] + "-" + encoded[16:20] + "-" + encoded[20:], nil
 }
 
-// Start starts one session, bounded by the start timeout. Any failure is a
-// PolicyServiceError of class session_start.
+// Start starts one session, each attempt bounded by the start timeout and
+// all of it by ctx. Any failure is a PolicyServiceError of class
+// session_start.
+//
+// A start that got no answer (it lapsed, the transport failed, or Modal's
+// edge answered 5xx) may still be placed by Modal after the router gave up,
+// and its token would never reach anyone: the session would hold one of a
+// container's slots until its idle timeout. So the attempt is asked once
+// more, when the turn has time left, under the same x-idempotency-key and
+// x-modal-timestamp: Modal continues a start under its key rather than place
+// a second session, so the retry answers with the session the first attempt
+// was placing. A start the turn gives up on is re-sent off its path, under
+// the same key and bounded on its own, and the session that answers is
+// ended. A caller already gone sends nothing.
 func (backend *PolicySessionBackend) Start(ctx context.Context) (PolicySession, error) {
+	if ctx.Err() != nil {
+		return PolicySession{}, &PolicyServiceError{Class: PolicySessionStartClass}
+	}
 	key, err := backend.newKey()
 	if err != nil {
 		return PolicySession{}, &PolicyServiceError{Class: PolicySessionStartClass}
@@ -275,25 +336,127 @@ func (backend *PolicySessionBackend) Start(ctx context.Context) (PolicySession, 
 	header.Set("x-modal-server-session-idle-timeout", strconv.Itoa(int(backend.config.IdleTimeout/time.Second)))
 	header.Set("x-idempotency-key", key)
 	header.Set("x-modal-timestamp", strconv.FormatFloat(float64(backend.now().UnixNano())/1e9, 'f', 6, 64))
-	status, body, err := backend.control(ctx, policySessionStartPath, header, backend.config.StartTimeout)
+	session, unanswered, err := backend.startOnce(ctx, header, backend.config.StartTimeout)
+	if !unanswered {
+		return session, err
+	}
+	if ctx.Err() != nil || !policySessionRetryFits(ctx) {
+		backend.observeStart(PolicySessionStartSkipped)
+	} else {
+		session, _, err = backend.startOnce(ctx, header, backend.config.StartTimeout)
+		if err == nil {
+			backend.observeStart(PolicySessionStartRecovered)
+			return session, nil
+		}
+		backend.observeStart(PolicySessionStartFailed)
+	}
+	// The first attempt may have placed a session whatever the retry was
+	// answered, so it is reaped (a re-send Modal refuses ends the reap).
+	backend.reap(header)
+	return PolicySession{}, err
+}
+
+// reap starts the re-send of a start the turn gave up on, unless
+// maxPolicySessionReaps are in flight already.
+func (backend *PolicySessionBackend) reap(header http.Header) {
+	select {
+	case backend.reaps <- struct{}{}:
+	default:
+		backend.observeStart(PolicySessionStartReapSkipped)
+		return
+	}
+	go func() {
+		defer func() { <-backend.reaps }()
+		backend.reapStart(header)
+	}()
+}
+
+// policySessionRetryFits reports whether ctx leaves the start's one retry
+// enough time to be answered.
+func policySessionRetryFits(ctx context.Context) bool {
+	deadline, ok := ctx.Deadline()
+	return !ok || time.Until(deadline) >= policySessionStartRetryMinAttempt
+}
+
+// startOnce sends one start. unanswered reports a start Modal may still be
+// placing, or placed without its token reaching the router: no answer, a 5xx
+// from its edge, or a 200 whose session could not be read. A refusal it
+// answered (a 4xx) or a session it answered with places nothing more.
+func (backend *PolicySessionBackend) startOnce(
+	ctx context.Context,
+	header http.Header,
+	timeout time.Duration,
+) (session PolicySession, unanswered bool, err error) {
+	status, body, err := backend.control(ctx, policySessionStartPath, header, timeout)
 	if err != nil {
-		return PolicySession{}, &PolicyServiceError{Class: PolicySessionStartClass}
+		// A refusal whose body could not be read was answered all the same;
+		// a 200 whose body could not be read lost a session's token.
+		return PolicySession{}, status == 0 || status == http.StatusOK || status >= http.StatusInternalServerError,
+			&PolicyServiceError{Class: PolicySessionStartClass, Status: status}
 	}
 	if status != http.StatusOK {
-		return PolicySession{}, &PolicyServiceError{Class: PolicySessionStartClass, Status: status}
+		return PolicySession{}, status >= http.StatusInternalServerError,
+			&PolicyServiceError{Class: PolicySessionStartClass, Status: status}
 	}
+	session, ok := startedPolicySession(body)
+	if !ok {
+		// Modal placed a session whose token did not arrive.
+		return PolicySession{}, true, &PolicyServiceError{Class: PolicySessionStartClass, Status: status}
+	}
+	return session, false, nil
+}
+
+func startedPolicySession(body []byte) (PolicySession, bool) {
 	var started struct {
 		SessionID string `json:"session_id"`
 		Token     string `json:"token"`
 	}
 	if json.Unmarshal(body, &started) != nil {
-		return PolicySession{}, &PolicyServiceError{Class: PolicySessionStartClass, Status: status}
+		return PolicySession{}, false
 	}
 	session := PolicySession{ID: started.SessionID, Token: started.Token}
-	if ValidatePolicySession(session) != nil {
-		return PolicySession{}, &PolicyServiceError{Class: PolicySessionStartClass, Status: status}
+	return session, ValidatePolicySession(session) == nil
+}
+
+// reapStart re-sends, off the turn's path, a start the turn gave up on, under
+// its key, until it is answered or the reap budget is spent, and ends the
+// session that answers: the one Modal placed for the start, or, had it
+// placed none, one it places now and that is ended at once.
+func (backend *PolicySessionBackend) reapStart(header http.Header) {
+	ctx, cancel := context.WithTimeout(context.Background(), backend.reapBudget)
+	defer cancel()
+	var session PolicySession
+	for {
+		var unanswered bool
+		var err error
+		session, unanswered, err = backend.startOnce(ctx, header, backend.reapTimeout)
+		if err == nil {
+			break
+		}
+		if !unanswered || ctx.Err() != nil {
+			backend.observeStart(PolicySessionStartReapFailed)
+			return
+		}
+		select {
+		case <-ctx.Done():
+			backend.observeStart(PolicySessionStartReapFailed)
+			return
+		case <-time.After(policySessionReapPause):
+		}
 	}
-	return session, nil
+	terminateCtx, cancel := context.WithTimeout(context.Background(), policySessionTerminateTimeout)
+	defer cancel()
+	if backend.Terminate(terminateCtx, session) != nil {
+		backend.observeStart(PolicySessionStartReapFailed)
+		return
+	}
+	backend.observeStart(PolicySessionStartReaped)
+}
+
+func (backend *PolicySessionBackend) observeStart(outcome string) {
+	if backend.config.OnStart != nil {
+		backend.config.OnStart(outcome)
+	}
 }
 
 // Terminate ends a session: its in-flight requests finish and new ones are
@@ -720,6 +883,29 @@ func (binding *PolicySessionBinding) Release(ctx context.Context) {
 	if binding == nil || !binding.ephemeral {
 		return
 	}
+	binding.endStarted(ctx)
+}
+
+// Ephemeral reports whether the turn records no session (Release ends the
+// ones it started).
+func (binding *PolicySessionBinding) Ephemeral() bool {
+	return binding != nil && binding.ephemeral
+}
+
+// EndUnrecorded ends the sessions a persisting turn started once the turn has
+// failed without a decision: no trace carries them, so no commit can record
+// them, and left alone each holds a container's session slot until Modal's
+// idle timeout. The session the episode state records is never among them
+// (it is used, not started), so it stays for the episode's next turn. A
+// private turn's sessions are its release's to end (BindPrivate).
+func (binding *PolicySessionBinding) EndUnrecorded(ctx context.Context) {
+	if binding == nil || binding.holdUntilRelease {
+		return
+	}
+	binding.endStarted(ctx)
+}
+
+func (binding *PolicySessionBinding) endStarted(ctx context.Context) {
 	for _, session := range binding.owned {
 		binding.terminate(ctx, session)
 	}

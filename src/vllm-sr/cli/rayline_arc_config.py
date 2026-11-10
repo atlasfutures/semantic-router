@@ -566,7 +566,7 @@ class RaylineARCPolicySessionsConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     enabled: bool = False
-    # 0 selects 900 s (the episode idle TTL) and 10 s in the Go loader.
+    # 0 selects 900 s (the episode idle TTL) and 8 s in the Go loader.
     idle_timeout_seconds: int = Field(default=0, ge=0, le=86400)
     start_timeout_seconds: int = Field(default=0, ge=0, le=60)
 

@@ -412,6 +412,7 @@ func createRaylineARCPolicySelector(
 		if sessions, sessionsErr = raylinearc.NewPolicySessionBackend(clientFor(policy.BaseURL), raylinearc.PolicySessionConfig{
 			IdleTimeout:  time.Duration(policy.Sessions.EffectiveIdleTimeoutSeconds()) * time.Second,
 			StartTimeout: time.Duration(policy.Sessions.EffectiveStartTimeoutSeconds()) * time.Second,
+			OnStart:      recordPolicyModalSessionStart,
 		}); sessionsErr != nil {
 			return unavailable("policy_service_sessions")
 		}
@@ -578,7 +579,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	excluded []bool,
 	hard []bool,
 	hold toolLoopHold,
-) (*selection.SelectionResult, error) {
+) (decided *selection.SelectionResult, _ error) {
 	// The offer below can still lift the tool-loop hold, so its outcome is
 	// logged once, when the turn's selection ends.
 	defer func() { hold.log(arcContext) }()
@@ -911,7 +912,10 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	// decided the service is asked to drop what it holds for the episode
 	// (rayline_arc_policy_private.go). A privacy-mode turn is not ephemeral.
 	ephemeral := arcContext.EphemeralTurn
-	sessionBinding := armed.policySessionBindingFor(state, sideCall, ephemeral)
+	// A throwaway lookup commits nothing, as a side call does, so it binds as
+	// one: a session it starts is ended once it is decided, never left to
+	// hold a container's session slot until Modal's idle timeout.
+	sessionBinding := armed.policySessionBindingFor(state, sideCall || arcContext.RoutesThrowaway, ephemeral)
 	if sessionBinding != nil {
 		decider = sessionBinding
 	}
@@ -920,7 +924,19 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		decider = tracked
 		defer releasePrivatePolicyEpisode(ctx, arcContext, request, tracked, replicaBinding, sessionBinding)
 	} else if sessionBinding != nil {
-		defer sessionBinding.Release(ctx)
+		// Off the turn's path: each end is bounded on a detached context, and
+		// nothing reads the binding once the turn has no decision or an
+		// ephemeral one (only a persisting turn's trace keeps it, for the
+		// commit). A persisting turn that failed without a decision has
+		// nothing for a commit to record either, so it ends what it started;
+		// the session its episode records is never one of those.
+		defer func() {
+			if decided == nil {
+				go sessionBinding.EndUnrecorded(ctx)
+			} else if sessionBinding.Ephemeral() {
+				go sessionBinding.Release(ctx)
+			}
+		}()
 	}
 	started := selector.now()
 	// A delta cell stages its strict main turns and sends a turn that

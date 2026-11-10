@@ -85,3 +85,14 @@ func retryPolicyStartOnce(
 	logging.ComponentWarnEvent("extproc", "rayline_arc_policy_session_start_retry", fields)
 	return response, err
 }
+
+// recordPolicyModalSessionStart counts and logs how a Modal session start
+// that got no answer at first ended (raylinearc.PolicySessionBackend.Start
+// retries it once under its idempotency key and reaps one it gave up on).
+// The episode it served is not known there; the session token never is.
+func recordPolicyModalSessionStart(outcome string) {
+	metrics.RecordRaylineARCPolicyModalSessionStart(outcome)
+	logging.ComponentWarnEvent("extproc", "rayline_arc_policy_modal_session_start", map[string]interface{}{
+		"outcome": outcome,
+	})
+}
