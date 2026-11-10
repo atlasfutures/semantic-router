@@ -56,6 +56,19 @@ type fakeModalServer struct {
 	nextID        int
 	startSleep    time.Duration
 	startCode     int
+	// keyed starts behave as Modal's under an idempotency key
+	// (policy_session_start_test.go): a start is placed once per key, after
+	// startSleep whether or not its caller still waits, and every start
+	// under the key answers with that session.
+	keyed      bool
+	placements map[string]*fakePlacement
+	// startRequests counts every start request, keyed or not.
+	startRequests int
+	// startPad pads a keyed start's refusal past what the router reads.
+	startPad int
+	// garbleNext answers the next keyed start that finds its session placed
+	// with a 200 whose body is not a session.
+	garbleNext bool
 	// violations records a decide that carried the proxy key, or a start
 	// or terminate without the headers Modal needs.
 	violations []string
@@ -88,7 +101,11 @@ func (fake *fakeModalServer) serve(w http.ResponseWriter, r *http.Request) {
 	token := strings.TrimPrefix(r.Header.Get("Modal-Authorization"), "Bearer ")
 	switch r.URL.Path {
 	case policySessionStartPath:
+		if fake.keyedStart(w, r, proxied) {
+			return
+		}
 		fake.mu.Lock()
+		fake.startRequests++
 		sleep, code := fake.startSleep, fake.startCode
 		fake.mu.Unlock()
 		if sleep > 0 {
@@ -241,6 +258,7 @@ func testSessionBackend(t *testing.T, fake *fakeModalServer, startTimeout time.D
 	if err != nil {
 		t.Fatal(err)
 	}
+	backend.reapBudget = time.Second // a start the test gave up on is not reaped for minutes
 	return backend
 }
 

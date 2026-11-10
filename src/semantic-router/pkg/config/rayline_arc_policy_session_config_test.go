@@ -60,7 +60,7 @@ sessions: {enabled: true}
 	if err := validateRaylineARCPolicySessions(&cfg); err != nil || !cfg.Sessions.Enabled {
 		t.Fatalf("decoded %+v, err %v", cfg.Sessions, err)
 	}
-	if cfg.Sessions.EffectiveIdleTimeoutSeconds() != 900 || cfg.Sessions.EffectiveStartTimeoutSeconds() != 10 {
+	if cfg.Sessions.EffectiveIdleTimeoutSeconds() != 900 || cfg.Sessions.EffectiveStartTimeoutSeconds() != 8 {
 		t.Fatalf("defaults %d / %d", cfg.Sessions.EffectiveIdleTimeoutSeconds(), cfg.Sessions.EffectiveStartTimeoutSeconds())
 	}
 	var empty RaylineARCPolicyServiceConfig

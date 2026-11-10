@@ -412,6 +412,7 @@ func createRaylineARCPolicySelector(
 		if sessions, sessionsErr = raylinearc.NewPolicySessionBackend(clientFor(policy.BaseURL), raylinearc.PolicySessionConfig{
 			IdleTimeout:  time.Duration(policy.Sessions.EffectiveIdleTimeoutSeconds()) * time.Second,
 			StartTimeout: time.Duration(policy.Sessions.EffectiveStartTimeoutSeconds()) * time.Second,
+			OnStart:      recordPolicyModalSessionStart,
 		}); sessionsErr != nil {
 			return unavailable("policy_service_sessions")
 		}

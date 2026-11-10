@@ -121,6 +121,13 @@ var (
 		},
 		[]string{"outcome"},
 	)
+	RaylineARCPolicyModalSessionStarts = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "llm_rayline_arc_policy_modal_session_start_unanswered_total",
+			Help: "Rayline ARC Modal session starts that got no answer at first, by outcome: the retry under the same idempotency key recovered or failed, or was skipped for want of deadline; the detached re-send then reaped the placed session, or failed.",
+		},
+		[]string{"outcome"},
+	)
 	RaylineARCThinkingLeverTurns = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "llm_rayline_arc_thinking_lever_turns_total",
@@ -314,6 +321,10 @@ func RecordRaylineARCPolicyStagedTurn(deltaMismatchReason string) {
 
 func RecordRaylineARCPolicySessionStartRetry(outcome string) {
 	RaylineARCPolicySessionStartRetries.WithLabelValues(outcome).Inc()
+}
+
+func RecordRaylineARCPolicyModalSessionStart(outcome string) {
+	RaylineARCPolicyModalSessionStarts.WithLabelValues(outcome).Inc()
 }
 
 func RecordRaylineARCThinkingLeverTurn(lever, outcome, reason string) {

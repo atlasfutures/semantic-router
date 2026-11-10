@@ -7,7 +7,7 @@ import (
 
 const (
 	defaultRaylineARCPolicySessionIdleSeconds  = 900
-	defaultRaylineARCPolicySessionStartSeconds = 10
+	defaultRaylineARCPolicySessionStartSeconds = 8
 	maxRaylineARCPolicySessionIdleSeconds      = 24 * 60 * 60
 	maxRaylineARCPolicySessionStartSeconds     = 60
 )
@@ -23,9 +23,10 @@ type RaylineARCPolicySessionsConfig struct {
 	// IdleTimeoutSeconds is how long Modal keeps a session without a request
 	// in flight; zero selects 900, the episode store's shipped idle TTL.
 	IdleTimeoutSeconds int `yaml:"idle_timeout_seconds,omitempty"`
-	// StartTimeoutSeconds bounds a session start; zero selects 10. Modal
-	// queues a start for capacity for minutes, so a turn whose start lapses
-	// fails closed instead of waiting.
+	// StartTimeoutSeconds bounds one attempt of a session start; zero selects
+	// 8. Modal queues a start for capacity for minutes, so a turn whose start
+	// lapses twice (it is retried once, under the same idempotency key) fails
+	// closed instead of waiting.
 	StartTimeoutSeconds int `yaml:"start_timeout_seconds,omitempty"`
 }
 

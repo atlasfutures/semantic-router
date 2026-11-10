@@ -600,10 +600,17 @@ session. It is exclusive with `replicas` and needs `modal_key_env` and
   `policy_session`, which makes the record `rayline.arc.episode-state.v10`;
   an episode without one keeps its earlier bytes. The token is a credential:
   never logged.
-- **Start bound.** A start is bounded by `start_timeout_seconds` (10 by
-  default; Modal queues a start for capacity for minutes). A start that lapses
-  or is refused fails the turn as `policy_service_session_start` (public
-  class `unavailable`) and commits nothing.
+- **Start bound.** Each attempt of a start is bounded by
+  `start_timeout_seconds` (8 by default; Modal queues a start for capacity for
+  minutes). A start that got no answer (it lapsed, or Modal's edge answered
+  5xx) is asked once more, within the turn's deadline, under the same
+  `x-idempotency-key` and `x-modal-timestamp`, so Modal answers with the
+  session it was placing instead of placing a second one. A start that still
+  fails, or is refused, fails the turn as `policy_service_session_start`
+  (public class `unavailable`) and commits nothing; one that got no answer is
+  re-sent under its key off the turn's path, and the session that answers is
+  ended, so a start placed after the router gave up does not hold a slot
+  until its idle timeout.
 - **Lost session.** Modal's 502 with an empty body (the token's container is
   gone) and its 404 `Unknown or expired session` never reached a container
   holding the episode, so the turn starts a new session and is retried there
