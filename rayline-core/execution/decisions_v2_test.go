@@ -771,10 +771,10 @@ func TestV2AppliedEchoWithoutPinsIsRefused(t *testing.T) {
 }
 
 // A service whose package lacks one of the core's targets leaves it out of
-// the offer and names it in the receipt as excluded for unknown_action
-// (semantic-router adapter, memex-desktop #8163). The core sent that target
-// as a capability, not a claim, so the receipt is accepted and the chosen
-// action executes.
+// the offer and names it in the receipt as excluded for unknown_action: the
+// executor's registry may derive more actions than the service's package
+// trained. The core sent that target as a capability, not a claim about
+// what ran, so the receipt is accepted and the chosen action executes.
 func TestV2ReceiptMayExcludeATargetTheServiceDoesNotKnow(t *testing.T) {
 	local, cloud := &upstreamFixture{}, &upstreamFixture{}
 	config := hybridV2Config(t, chatUpstream(t, local, false).URL, chatUpstream(t, cloud, true).URL+"/v1/chat/completions")

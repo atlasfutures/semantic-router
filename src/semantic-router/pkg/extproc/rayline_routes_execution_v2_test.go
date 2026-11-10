@@ -437,10 +437,11 @@ func TestRoutesPolicyEmptyScheduleIsKept(t *testing.T) {
 }
 
 // A target the serving package lacks is the caller's capability, not a
-// claim about what ran (memex-desktop #8163): it is left out of the decide
-// members (its capacity, infeasibility and cache evidence) and answered as
-// unknown; the request goes on. A request whose every target is unknown,
-// or whose history names an unknown action, is refused as before.
+// claim about what ran, so it does not fail the request: it is left out of
+// the decide members (its capacity, infeasibility and cache evidence) and
+// answered in the receipt as excluded for unknown_action; the request goes
+// on. A request whose every target is unknown, or whose history names an
+// unknown action, is refused as before.
 func TestRoutesExecutionV2ExcludesUnknownTargets(t *testing.T) {
 	vectors := readExecutionV2Vectors(t)
 	scorer := &policyServiceScorer{

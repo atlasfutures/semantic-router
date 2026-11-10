@@ -267,9 +267,10 @@ const routeExecutionUnknownTargetReason = "unknown_action"
 //
 // A target is what the caller can execute, not a claim about what ran: an
 // executor whose registry derives more actions than this cell's package
-// trained is not wrong, so an unknown target is excluded, not refused
-// (memex-desktop #8163). History, last_served and hold stay strict: they
-// attribute messages and warmth to an action, which needs the action known.
+// trained is not wrong, so an unknown target is excluded, not refused, and
+// the receipt names it so the executor sees why it was never offered.
+// History, last_served and hold stay strict: they attribute messages and
+// warmth to an action, which needs the action known.
 func applyRoutePolicyAndExecutionV2(
 	request *raylinearc.PolicyDecisionRequest,
 	scorer *policyServiceScorer,
