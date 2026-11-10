@@ -736,6 +736,15 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		return nil, arcSelectionFailure("policy_no_available_action")
 	}
 	routeControls := arcContext.RouteControls
+	if routeControls != nil && routeControls.Prices != nil {
+		// Caller prices that price one service key two ways under
+		// dispatch_model_overrides are the caller's to fix, a 400.
+		if _, conflicts := routeServicePrices(scorer, routeControls.Prices); len(conflicts) > 0 {
+			failure := arcSelectionFailure(arcFailureRoutesCallerPricesInconsistent)
+			failure.models = conflicts
+			return nil, failure
+		}
+	}
 	if routeControls != nil && routeControls.Exclusive {
 		// routing.exclusive: only the priced models are candidates. None
 		// of them able to take this turn is a turn the lookup cannot
@@ -783,7 +792,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	}
 	explorationExcluded := scorer.exploration.apply(&request, arcContext.PolicySignalHeaders, sideCall)
 	pricesStatus := attachRoutingPrices(armed.prices, &request)
-	applyRouteControls(&request, routeControls)
+	applyRouteControls(&request, scorer, routeControls)
 	request.Signals = turnSignals(arcContext)
 	predictionsAsked := false
 	if routeControls != nil && routeControls.Predictions && scorer.advertises(raylinearc.PolicyCapabilityPredictions) {

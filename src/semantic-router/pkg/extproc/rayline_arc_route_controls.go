@@ -70,11 +70,172 @@ func routeExclusiveOffer(scorer *policyServiceScorer, available []string, priced
 	return kept
 }
 
+// routeServicePrices are a caller's prices keyed as the service reads them.
+//
+// The caller keys a model by the provider id the cell lists and serves it on
+// (an action's dispatched worker's id). The service keys an arm's rate by the
+// provider id of the arm's package model, and refuses a key no arm reads
+// (unknown_price_model). The two differ under dispatch_model_overrides: an
+// action bound to a from-worker is sent on the to-worker, yet its arm still
+// reads the from-worker's id; so does an action bound to the to-worker itself
+// when it serves the same package model (a twin checkpoint standing in for
+// the from-worker). Each arm's rate therefore goes out under its service id,
+// at the legs the caller gave the worker it is served on, and a served id no
+// arm reads is not sent. A caller key no action is served on goes out as
+// sent. Without an action whose two ids differ and whose served id the caller
+// priced, prices itself is returned.
+//
+// conflicts are the caller's keys that would price one service id two ways
+// (both ids of a remapped arm priced unlike, or arms reading one id served on
+// differently priced workers), or price an arm by a worker it is not served
+// on. Such a world has no single meaning, so the lookup is refused as
+// caller_prices_inconsistent rather than one key silently winning.
+func routeServicePrices(scorer *policyServiceScorer, prices *raylinearc.PolicyRoutingPrices) (*raylinearc.PolicyRoutingPrices, []string) {
+	if scorer == nil || prices == nil {
+		return prices, nil
+	}
+	arms := routeServicePriceArms(scorer)
+	translated := false
+	for _, arm := range arms {
+		if _, priced := prices.Rates[arm.served]; priced && arm.service != arm.served {
+			translated = true
+		}
+	}
+	if !translated {
+		return prices, nil
+	}
+	rates := make(map[string]raylinearc.PolicyRoutingRate, len(prices.Rates))
+	sources := map[string]map[string]bool{}
+	conflicting := map[string]bool{}
+	put := func(key, source string, rate raylinearc.PolicyRoutingRate) {
+		if sources[key] == nil {
+			sources[key] = map[string]bool{}
+		}
+		sources[key][source] = true
+		if have, ok := rates[key]; ok && routeRateLegs(have) != routeRateLegs(rate) {
+			conflicting[key] = true
+			return
+		}
+		rates[key] = rate
+	}
+	servedOn := map[string]bool{}
+	for _, arm := range arms {
+		servedOn[arm.served] = true
+		if rate, priced := prices.Rates[arm.served]; priced {
+			put(arm.service, arm.served, rate)
+		}
+	}
+	for key, rate := range prices.Rates {
+		if !servedOn[key] {
+			put(key, key, rate)
+		}
+	}
+	// An arm whose served worker the caller left unpriced must not read a
+	// rate the caller gave another worker.
+	for _, arm := range arms {
+		if _, priced := prices.Rates[arm.served]; priced {
+			continue
+		}
+		for source := range sources[arm.service] {
+			if source != arm.service {
+				conflicting[arm.service] = true
+			}
+		}
+	}
+	if len(conflicting) > 0 {
+		names := map[string]bool{}
+		for key := range conflicting {
+			for source := range sources[key] {
+				names[source] = true
+			}
+		}
+		conflicts := make([]string, 0, len(names))
+		for name := range names {
+			conflicts = append(conflicts, name)
+		}
+		slices.Sort(conflicts)
+		return nil, conflicts
+	}
+	sent := *prices
+	sent.Rates = rates
+	return &sent, nil
+}
+
+// routeServicePriceArm is one bound action's two price ids: the provider id
+// of the worker it is served on (the caller's key) and the one its arm reads
+// at the service.
+type routeServicePriceArm struct{ served, service string }
+
+// routeServicePriceArms resolves each bound action's ids. An action's arm
+// reads its bound worker's id, except on a dispatch_model_overrides
+// to-worker: an action bound there whose package model is a from-worker's
+// reads that from-worker's id, the one the package binds the model to. Two
+// from-workers of one model with different ids onto one to-worker leave the
+// to-worker's own actions on its own id.
+func routeServicePriceArms(scorer *policyServiceScorer) []routeServicePriceArm {
+	valid := func(index int) bool { return index >= 0 && index < len(scorer.workers) }
+	type twin struct {
+		to    int
+		model string
+	}
+	standIn := map[twin]string{}
+	ambiguous := map[twin]bool{}
+	for _, actionID := range scorer.actionOrder {
+		binding, ok := scorer.bindings[actionID]
+		if !ok || !valid(binding.arm) || !valid(binding.dispatchArm) || binding.arm == binding.dispatchArm || binding.model == "" {
+			continue
+		}
+		key, own := twin{binding.dispatchArm, binding.model}, scorer.workers[binding.arm].Model
+		if have, seen := standIn[key]; seen && have != own {
+			ambiguous[key] = true
+		}
+		standIn[key] = own
+	}
+	arms := make([]routeServicePriceArm, 0, len(scorer.actionOrder))
+	for _, actionID := range scorer.actionOrder {
+		binding, ok := scorer.bindings[actionID]
+		if !ok || !valid(binding.arm) || !valid(binding.dispatchArm) {
+			continue
+		}
+		arm := routeServicePriceArm{served: scorer.workers[binding.dispatchArm].Model, service: scorer.workers[binding.arm].Model}
+		key := twin{binding.arm, binding.model}
+		if own, ok := standIn[key]; ok && binding.arm == binding.dispatchArm && !ambiguous[key] {
+			arm.service = own
+		}
+		arms = append(arms, arm)
+	}
+	return arms
+}
+
+// routeRateLegs are a rate's four legs in the contract's order.
+func routeRateLegs(rate raylinearc.PolicyRoutingRate) [4]float64 {
+	var legs [4]float64
+	for index, leg := range []*float64{rate.Input, rate.CacheRead, rate.CacheWrite, rate.Output} {
+		if leg != nil {
+			legs[index] = *leg
+		}
+	}
+	return legs
+}
+
+// routeServicePriceSHA256 is the price_sha256 the service restates for the
+// world it was sent: the caller's own hash when the rates went out as sent.
+func routeServicePriceSHA256(controls *selection.RaylineARCRouteControls, sent *raylinearc.PolicyRoutingPrices) string {
+	if sent == controls.Prices {
+		return controls.PriceSHA256
+	}
+	legs := make(map[string][4]float64, len(sent.Rates))
+	for key, rate := range sent.Rates {
+		legs[key] = routeRateLegs(rate)
+	}
+	return routesPriceSHA256(legs, controls.Exclusive)
+}
+
 // applyRouteControls writes a lookup's controls into its decide request: its
 // result points beside any the cell configures (a configured point of the
 // same name is replaced), its exploration in place of the cell's, and its
-// prices in place of the live feed's.
-func applyRouteControls(request *raylinearc.PolicyDecisionRequest, controls *selection.RaylineARCRouteControls) {
+// prices (as routeServicePrices keys them) in place of the live feed's.
+func applyRouteControls(request *raylinearc.PolicyDecisionRequest, scorer *policyServiceScorer, controls *selection.RaylineARCRouteControls) {
 	if controls == nil {
 		return
 	}
@@ -95,7 +256,10 @@ func applyRouteControls(request *raylinearc.PolicyDecisionRequest, controls *sel
 		request.Selection.Exploration = &member
 	}
 	if controls.Prices != nil {
-		request.RoutingPrices = controls.Prices
+		// A conflicting world was refused before the request was built.
+		if sent, conflicts := routeServicePrices(scorer, controls.Prices); len(conflicts) == 0 {
+			request.RoutingPrices = sent
+		}
 	}
 }
 
@@ -120,8 +284,11 @@ func recordRouteControls(
 		trace.RoutePredictions = response.Decision.Predictions
 		trace.RoutePredictionsApplied = true
 	}
-	if controls.Prices != nil && !routeCallerPricesApplied(controls, response.RoutingPricesUsed) {
-		return arcFailureRoutesPricesNotApplied
+	if controls.Prices != nil {
+		sent, conflicts := routeServicePrices(scorer, controls.Prices)
+		if len(conflicts) > 0 || !routeCallerPricesApplied(controls, routeServicePriceSHA256(controls, sent), response.RoutingPricesUsed) {
+			return arcFailureRoutesPricesNotApplied
+		}
 	}
 	var requested *float64
 	if controls.Exploration != nil && controls.Exploration.Temperature != nil {
@@ -158,12 +325,13 @@ func recordRouteControls(
 
 // routeCallerPricesApplied reports whether the decision was scored in the
 // caller's price world (pathfinder#5668): a caller-mode echo restating this
-// world's price_sha256 and exclusivity, with nothing filled or fallen back.
-func routeCallerPricesApplied(controls *selection.RaylineARCRouteControls, used *raylinearc.PolicyRoutingPricesUsed) bool {
+// world's price_sha256 (sha, the hash of the rates as sent) and exclusivity,
+// with nothing filled or fallen back.
+func routeCallerPricesApplied(controls *selection.RaylineARCRouteControls, sha string, used *raylinearc.PolicyRoutingPricesUsed) bool {
 	if used == nil || used.Mode != raylinearc.RoutingPricesModeCaller || used.PricesSHA256 == nil || used.Exclusive == nil {
 		return false
 	}
-	return *used.PricesSHA256 == controls.PriceSHA256 && *used.Exclusive == controls.Exclusive &&
+	return *used.PricesSHA256 == sha && *used.Exclusive == controls.Exclusive &&
 		len(used.FilledLegs) == 0 && len(used.FallbackArms) == 0
 }
 

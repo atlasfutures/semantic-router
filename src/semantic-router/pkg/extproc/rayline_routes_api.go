@@ -693,6 +693,14 @@ func (r *OpenAIRouter) raylineRoutesFailure(
 			"this ARC release cannot decide under caller prices; send the lookup without routing.prices."))
 	}
 	if invalid && errors.Is(err, errRaylineRoutesCallerPricesInconsistent) {
+		// The cell's own refusal names the caller's keys: models this ARC
+		// release serves one on another, priced unlike.
+		if models := raylineRoutesRefusedPriceModels(err); len(models) > 0 {
+			refusal := routesInvalid("caller_prices_inconsistent", "routing.prices prices "+strings.Join(models, ", ")+
+				" differently, and this ARC release serves one of them on another; price them alike or send only the one it serves.")
+			refusal.models = models
+			return r.createRaylineRoutesCodedError(ctx, refusal)
+		}
 		return r.createRaylineRoutesCodedError(ctx, routesInvalid("caller_prices_inconsistent",
 			"routing.prices prices one ARC model group more than one way; price every model of a group alike."))
 	}
