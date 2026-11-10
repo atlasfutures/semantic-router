@@ -368,7 +368,16 @@ func (server *Server) execute(writer http.ResponseWriter, incoming *http.Request
 				return
 			}
 		}
-		decision, err := server.provider.Decide(ctx, input)
+		var decision Decision
+		if sidecall && !ephemeral && state.held == "" {
+			// Nothing has been served on this branch yet, so the service
+			// would refuse the lookup; answer its refusal without asking.
+			refusal := preTaskSidecallRefusal()
+			refusal.log("local", "", server.config.Decisions.apiMode())
+			err = refusal
+		} else {
+			decision, err = server.provider.Decide(ctx, input)
+		}
 		if err != nil {
 			server.writeDecisionError(writer, format, err, input.Capacity)
 			return

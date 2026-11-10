@@ -391,16 +391,19 @@ func (provider *HTTPDecisions) Decide(ctx context.Context, input DecisionInput) 
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
+		refusal := &DecisionsRefusal{Status: response.StatusCode}
 		if provider.config.Decisions.apiMode() == DecisionsExecutionContextV2 {
 			// v2 refusals are contract codes (execution_*, policy_*): name the
 			// code so the harness and logs show why. Messages are not echoed.
-			refusal := &DecisionsRefusal{Status: response.StatusCode, Code: refusalCode(response)}
-			refusal.RetryAfter, refusal.ShouldRetry = retryAdvice(response.Header)
-			return Decision{}, refusal
+			// Other modes carry no contract code; the message is as before.
+			refusal.Code = refusalCode(response)
 		}
-		// Other modes carry no contract code; the message is the same as before.
-		refusal := &DecisionsRefusal{Status: response.StatusCode}
 		refusal.RetryAfter, refusal.ShouldRetry = retryAdvice(response.Header)
+		routeID := response.Header.Get("X-Rayline-Route-Id")
+		if !refusedRouteID.MatchString(routeID) {
+			routeID = ""
+		}
+		refusal.log("service", routeID, provider.config.Decisions.apiMode())
 		return Decision{}, refusal
 	}
 	if tag := provider.config.Decisions.CellTag; tag != "" && response.Header.Get("X-Rayline-Cell") != tag {
@@ -748,12 +751,38 @@ func retryAdvice(header http.Header) (*time.Duration, *bool) {
 	return retryAfter, shouldRetry
 }
 
+// preTaskSidecallRefusal is a local short-circuit of the refusal Decisions
+// gives a side call that arrives before its branch's first task start: with
+// nothing served yet there is no last_served to project an episode from, so
+// the service answers 422 projection_refused. The core answers the same
+// refusal without the lookup, marked final (a retry is refused identically).
+func preTaskSidecallRefusal() *DecisionsRefusal {
+	final := false
+	return &DecisionsRefusal{Status: http.StatusUnprocessableEntity, Code: "projection_refused", ShouldRetry: &final}
+}
+
+// log records one refused lookup: who refused it (the service, or the core's
+// local short-circuit), the status, the contract code and the route id when
+// known. Request material and credentials are never logged.
+func (refusal *DecisionsRefusal) log(source, routeID string, apiMode string) {
+	known := func(value string) any {
+		if value == "" {
+			return nil
+		}
+		return value
+	}
+	slog.Warn("decisions lookup refused", "source", source, "status", refusal.Status, "code", known(refusal.Code), "route_id", known(routeID), "api_mode", apiMode)
+}
+
 func (refusal *DecisionsRefusal) Error() string {
 	if refusal.Code == "" {
 		return fmt.Sprintf("Decisions request refused (HTTP %d)", refusal.Status)
 	}
 	return fmt.Sprintf("Decisions request refused (HTTP %d, %s)", refusal.Status, refusal.Code)
 }
+
+// refusedRouteID bounds the route id a refusal's header may put in the log.
+var refusedRouteID = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,128}$`)
 
 // contractCode is the shape of every execution_*/policy_* contract code.
 var contractCode = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
