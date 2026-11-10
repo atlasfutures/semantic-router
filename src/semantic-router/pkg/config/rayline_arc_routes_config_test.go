@@ -16,7 +16,10 @@ limitations under the License.
 
 package config
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 // The deadline is bounded from both ends. Longer than the encoder's own
 // timeout cannot bound anything; shorter than a cold encode guarantees a 504
@@ -120,7 +123,17 @@ func TestRoutesAPIAdmissionIsBounded(t *testing.T) {
 		cfg   RaylineARCRoutesAPIConfig
 		valid bool
 	}{
-		"absent is disabled": {cfg: RaylineARCRoutesAPIConfig{Enabled: true}, valid: true},
+		"absent is the default lane": {cfg: RaylineARCRoutesAPIConfig{Enabled: true}, valid: true},
+		"disabled lane": {cfg: RaylineARCRoutesAPIConfig{
+			Enabled: true, Admission: RaylineARCRoutesAdmissionConfig{Disabled: true},
+		}, valid: true},
+		"disabled lane with a cap": {cfg: RaylineARCRoutesAPIConfig{
+			Enabled: true, Admission: RaylineARCRoutesAdmissionConfig{Disabled: true, MaxInflight: 2},
+		}},
+		"disabled lane with a wait": {cfg: RaylineARCRoutesAPIConfig{
+			Enabled: true, Admission: RaylineARCRoutesAdmissionConfig{Disabled: true, QueueWaitMS: 500},
+		}},
+		"default lane on a disabled endpoint": {cfg: RaylineARCRoutesAPIConfig{}, valid: true},
 		"one slot, default wait": {cfg: RaylineARCRoutesAPIConfig{
 			Enabled: true, DeadlineMS: 30000, Admission: RaylineARCRoutesAdmissionConfig{MaxInflight: 1},
 		}, valid: true},
@@ -139,9 +152,9 @@ func TestRoutesAPIAdmissionIsBounded(t *testing.T) {
 		"negative wait": {cfg: RaylineARCRoutesAPIConfig{
 			Enabled: true, Admission: RaylineARCRoutesAdmissionConfig{MaxInflight: 1, QueueWaitMS: -1},
 		}},
-		"wait without slots": {cfg: RaylineARCRoutesAPIConfig{
+		"wait on the default lane": {cfg: RaylineARCRoutesAPIConfig{
 			Enabled: true, Admission: RaylineARCRoutesAdmissionConfig{QueueWaitMS: 500},
-		}},
+		}, valid: true},
 		"wait as long as the deadline": {cfg: RaylineARCRoutesAPIConfig{
 			Enabled: true, DeadlineMS: 3000, Admission: RaylineARCRoutesAdmissionConfig{MaxInflight: 1, QueueWaitMS: 3000},
 		}},
@@ -162,9 +175,9 @@ func TestRoutesAPIAdmissionIsBounded(t *testing.T) {
 				MaxInflight: 1, AbandonedHoldTokensPerSecond: maxRaylineARCRoutesAbandonedHoldTokensPerSecond + 1,
 			},
 		}},
-		"abandoned hold rate without slots": {cfg: RaylineARCRoutesAPIConfig{
+		"abandoned hold rate on the default lane": {cfg: RaylineARCRoutesAPIConfig{
 			Enabled: true, Admission: RaylineARCRoutesAdmissionConfig{AbandonedHoldTokensPerSecond: 20000},
-		}},
+		}, valid: true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -232,5 +245,81 @@ func TestRoutesAPIMaxEncodeTokens(t *testing.T) {
 	decision.Algorithm.RaylineARC.RoutesAPI = RaylineARCRoutesAPIConfig{Enabled: true, MaxEncodeTokens: 200000}
 	if err := validateRaylineARCAlgorithmConfig(decision.Algorithm.RaylineARC); err == nil {
 		t.Fatal("an artifact cell accepted max_encode_tokens")
+	}
+}
+
+// The lane, the caller budget and the refusal cache are on by default with
+// their documented values, and each turns off only when told to.
+func TestRoutesAPIRetryProtectionDefaults(t *testing.T) {
+	t.Parallel()
+	var zero RaylineARCRoutesAPIConfig
+	if got := zero.Admission.EffectiveMaxInflight(); got != 8 {
+		t.Fatalf("default lane = %d, want 8", got)
+	}
+	if got := zero.CallerBudget.EffectiveLookupsPerMinute(); got != 120 {
+		t.Fatalf("default lookups_per_minute = %d, want 120", got)
+	}
+	if got := zero.CallerBudget.EffectiveMaxInflight(); got != 4 {
+		t.Fatalf("default caller max_inflight = %d, want 4", got)
+	}
+	if got := zero.RefusalCache.EffectiveTTL(); got != time.Minute {
+		t.Fatalf("default refusal ttl = %v, want 1m", got)
+	}
+	if got := zero.RefusalCache.EffectiveMaxEntries(); got != 4096 {
+		t.Fatalf("default refusal max_entries = %d, want 4096", got)
+	}
+	off := RaylineARCRoutesAPIConfig{
+		Admission:    RaylineARCRoutesAdmissionConfig{Disabled: true},
+		CallerBudget: RaylineARCRoutesCallerBudgetConfig{Disabled: true},
+		RefusalCache: RaylineARCRoutesRefusalCacheConfig{Disabled: true},
+	}
+	if off.Admission.Enabled() || off.CallerBudget.EffectiveLookupsPerMinute() != 0 ||
+		off.CallerBudget.EffectiveMaxInflight() != 0 || off.RefusalCache.EffectiveTTL() != 0 ||
+		off.RefusalCache.EffectiveMaxEntries() != 0 {
+		t.Fatalf("disabled protection still applies: %+v", off)
+	}
+}
+
+func TestRoutesAPIRetryProtectionIsBounded(t *testing.T) {
+	t.Parallel()
+	for name, testCase := range map[string]struct {
+		cfg   RaylineARCRoutesAPIConfig
+		valid bool
+	}{
+		"explicit budget": {cfg: RaylineARCRoutesAPIConfig{Enabled: true,
+			CallerBudget: RaylineARCRoutesCallerBudgetConfig{LookupsPerMinute: 30, MaxInflight: 2}}, valid: true},
+		"negative rate": {cfg: RaylineARCRoutesAPIConfig{Enabled: true,
+			CallerBudget: RaylineARCRoutesCallerBudgetConfig{LookupsPerMinute: -1}}},
+		"rate above the ceiling": {cfg: RaylineARCRoutesAPIConfig{Enabled: true,
+			CallerBudget: RaylineARCRoutesCallerBudgetConfig{LookupsPerMinute: maxRaylineARCRoutesCallerLookupsPerMinute + 1}}},
+		"caller inflight above the ceiling": {cfg: RaylineARCRoutesAPIConfig{Enabled: true,
+			CallerBudget: RaylineARCRoutesCallerBudgetConfig{MaxInflight: maxRaylineARCRoutesAdmissionInflight + 1}}},
+		"disabled budget with a rate": {cfg: RaylineARCRoutesAPIConfig{Enabled: true,
+			CallerBudget: RaylineARCRoutesCallerBudgetConfig{Disabled: true, LookupsPerMinute: 10}}},
+		"budget on a disabled endpoint": {cfg: RaylineARCRoutesAPIConfig{
+			CallerBudget: RaylineARCRoutesCallerBudgetConfig{LookupsPerMinute: 10}}},
+		"explicit cache": {cfg: RaylineARCRoutesAPIConfig{Enabled: true,
+			RefusalCache: RaylineARCRoutesRefusalCacheConfig{TTLMS: 30000, MaxEntries: 100}}, valid: true},
+		"cache ttl too short": {cfg: RaylineARCRoutesAPIConfig{Enabled: true,
+			RefusalCache: RaylineARCRoutesRefusalCacheConfig{TTLMS: 10}}},
+		"cache ttl too long": {cfg: RaylineARCRoutesAPIConfig{Enabled: true,
+			RefusalCache: RaylineARCRoutesRefusalCacheConfig{TTLMS: maxRaylineARCRoutesRefusalCacheTTLMS + 1}}},
+		"negative cache size": {cfg: RaylineARCRoutesAPIConfig{Enabled: true,
+			RefusalCache: RaylineARCRoutesRefusalCacheConfig{MaxEntries: -1}}},
+		"disabled cache with a ttl": {cfg: RaylineARCRoutesAPIConfig{Enabled: true,
+			RefusalCache: RaylineARCRoutesRefusalCacheConfig{Disabled: true, TTLMS: 30000}}},
+		"cache on a disabled endpoint": {cfg: RaylineARCRoutesAPIConfig{
+			RefusalCache: RaylineARCRoutesRefusalCacheConfig{MaxEntries: 10}}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			err := validateRaylineARCRoutesAPIConfig(testCase.cfg)
+			if testCase.valid && err != nil {
+				t.Fatalf("rejected: %v", err)
+			}
+			if !testCase.valid && err == nil {
+				t.Fatal("accepted, want rejected")
+			}
+		})
 	}
 }

@@ -297,7 +297,11 @@ _GO_CONFIG = (
 
 
 def _go_constant(name: str) -> int:
-    source = _GO_CONFIG.read_text()
+    # The routes_api retry-protection defaults live beside the main file.
+    source = (
+        _GO_CONFIG.read_text()
+        + _GO_CONFIG.with_name("rayline_arc_routes_protection_config.go").read_text()
+    )
     match = re.search(rf"^\s*{name}\s*=\s*(\d+)\s*$", source, re.MULTILINE)
     assert match, f"{name} not found in {_GO_CONFIG}"
     return int(match.group(1))
@@ -364,14 +368,54 @@ def test_routes_api_admission_matches_the_go_loader():
     assert _go_constant("DefaultRaylineARCRoutesAbandonedHoldTokensPerSecond") == 35000
     for rejected in (
         {"enabled": True, "admission": {"max_inflight": -1}},
-        {"enabled": True, "admission": {"max_inflight": _MAX_ROUTES_ADMISSION_INFLIGHT + 1}},
-        {"enabled": True, "admission": {"queue_wait_ms": 500}},
+        {
+            "enabled": True,
+            "admission": {"max_inflight": _MAX_ROUTES_ADMISSION_INFLIGHT + 1},
+        },
+        {"enabled": True, "admission": {"disabled": True, "queue_wait_ms": 500}},
+        {"enabled": True, "admission": {"disabled": True, "max_inflight": 1}},
         {"enabled": False, "admission": {"max_inflight": 1}},
         # The wait is spent inside the deadline: 2000 ms does not fit 1500.
         {"enabled": True, "admission": {"max_inflight": 1, "queue_wait_ms": 2_000}},
         {"enabled": True, "admission": {"max_inflight": 1, "slots": 2}},
-        {"enabled": True, "admission": {"abandoned_hold_tokens_per_second": 20_000}},
-        {"enabled": True, "admission": {"max_inflight": 1, "abandoned_hold_tokens_per_second": -1}},
+        {
+            "enabled": True,
+            "admission": {"max_inflight": 1, "abandoned_hold_tokens_per_second": -1},
+        },
+    ):
+        with pytest.raises(ValidationError):
+            RaylineARCRoutesAPIConfig(**rejected)
+    # The lane is on by default: a wait or hold rate alone uses the default cap.
+    RaylineARCRoutesAPIConfig(enabled=True, admission={"queue_wait_ms": 500})
+    RaylineARCRoutesAPIConfig(enabled=True, admission={"disabled": True})
+    assert _go_constant("DefaultRaylineARCRoutesAdmissionInflight") == 8
+
+
+def test_routes_api_retry_protection_matches_the_go_loader():
+    assert _go_constant("DefaultRaylineARCRoutesCallerLookupsPerMinute") == 120
+    assert _go_constant("DefaultRaylineARCRoutesCallerMaxInflight") == 4
+    RaylineARCRoutesAPIConfig(
+        enabled=True,
+        caller_budget={"lookups_per_minute": 30, "max_inflight": 2},
+        refusal_cache={"ttl_ms": 30_000, "max_entries": 100},
+    )
+    RaylineARCRoutesAPIConfig(
+        enabled=True, caller_budget={"disabled": True}, refusal_cache={"disabled": True}
+    )
+    for rejected in (
+        {"enabled": True, "caller_budget": {"lookups_per_minute": -1}},
+        {"enabled": True, "caller_budget": {"lookups_per_minute": 100_001}},
+        {
+            "enabled": True,
+            "caller_budget": {"max_inflight": _MAX_ROUTES_ADMISSION_INFLIGHT + 1},
+        },
+        {"enabled": True, "caller_budget": {"disabled": True, "max_inflight": 1}},
+        {"enabled": False, "caller_budget": {"lookups_per_minute": 10}},
+        {"enabled": True, "refusal_cache": {"ttl_ms": 10}},
+        {"enabled": True, "refusal_cache": {"ttl_ms": 600_001}},
+        {"enabled": True, "refusal_cache": {"disabled": True, "ttl_ms": 30_000}},
+        {"enabled": False, "refusal_cache": {"max_entries": 10}},
+        {"enabled": True, "refusal_cache": {"size": 10}},
     ):
         with pytest.raises(ValidationError):
             RaylineARCRoutesAPIConfig(**rejected)
@@ -442,9 +486,17 @@ def test_rayline_arc_cli_mirrors_the_value_usd_max_bounds():
     policy = decision.algorithm.rayline_arc.policy_service.model_dump()
     for value, valid in ((30, True), (5, True), (0.1, False), (30.01, False)):
         policy["value_usd_max"] = value
-        payload = {**decision.algorithm.rayline_arc.model_dump(), "policy_service": policy}
+        payload = {
+            **decision.algorithm.rayline_arc.model_dump(),
+            "policy_service": policy,
+        }
         if valid:
-            assert RaylineARCAlgorithmConfig.model_validate(payload).policy_service.value_usd_max == value
+            assert (
+                RaylineARCAlgorithmConfig.model_validate(
+                    payload
+                ).policy_service.value_usd_max
+                == value
+            )
         else:
             with pytest.raises(ValidationError):
                 RaylineARCAlgorithmConfig.model_validate(payload)
@@ -626,9 +678,7 @@ def test_rayline_arc_accepts_a_context_limit_within_its_bound():
     assert fields["max_context_tokens"].default == 0
     base = _valid_decision().algorithm.rayline_arc.model_dump(exclude_none=True)
     for tokens in (0, 262144, 1_000_000, 1 << 24):
-        RaylineARCAlgorithmConfig.model_validate(
-            {**base, "max_context_tokens": tokens}
-        )
+        RaylineARCAlgorithmConfig.model_validate({**base, "max_context_tokens": tokens})
     for tokens in (-1, (1 << 24) + 1):
         with pytest.raises(ValidationError):
             RaylineARCAlgorithmConfig.model_validate(
@@ -652,7 +702,10 @@ def test_rayline_arc_accepts_readiness_wait_within_its_bound():
 
 
 def test_rayline_arc_cli_mirrors_policy_routing_prices():
-    assert _policy_service_decision().algorithm.rayline_arc.policy_service.routing_prices is None
+    assert (
+        _policy_service_decision().algorithm.rayline_arc.policy_service.routing_prices
+        is None
+    )
     prices = {
         "url": "https://router-proxy.internal/arc/routing-prices",
         "credential_env": "RAYLINE_ARC_ROUTING_PRICES_TOKEN",
@@ -678,7 +731,9 @@ def test_rayline_arc_cli_mirrors_policy_routing_prices():
         "auth": "google_id_token",
         "audience": "https://routerproxy-abc123-uc.a.run.app",
     }
-    assert RaylineARCRoutingPricesConfig.model_validate(id_token).auth == "google_id_token"
+    assert (
+        RaylineARCRoutingPricesConfig.model_validate(id_token).auth == "google_id_token"
+    )
     for changed in (
         {"audience": ""},
         {"credential_env": "RAYLINE_ARC_ROUTING_PRICES_TOKEN"},
@@ -809,12 +864,18 @@ def test_rayline_arc_cli_mirrors_routes_routing():
     decision = _policy_service_decision()
     arc = decision.algorithm.rayline_arc
     raw = arc.model_dump()
-    routed = {**raw, "routes_api": {"enabled": True, "routing": {"exploration_salt": "s"}}}
+    routed = {
+        **raw,
+        "routes_api": {"enabled": True, "routing": {"exploration_salt": "s"}},
+    }
     parsed = type(arc).model_validate(routed)
     assert parsed.routes_api.routing.exploration_salt == "s"
-    assert type(arc).model_validate(
-        {**raw, "routes_api": {"enabled": True, "routing": {}}}
-    ).routes_api.routing.exploration_salt == ""
+    assert (
+        type(arc)
+        .model_validate({**raw, "routes_api": {"enabled": True, "routing": {}}})
+        .routes_api.routing.exploration_salt
+        == ""
+    )
     for changed in (
         {"routes_api": {"enabled": False, "routing": {}}},
         {"routes_api": {"enabled": True, "routing": {"exploration_salt": "s" * 129}}},
@@ -907,12 +968,20 @@ def test_rayline_arc_policy_service_replicas_mirror_the_go_loader():
         bad = _policy_service_decision()
         bad.algorithm.rayline_arc.policy_service = (
             RaylineARCPolicyServiceConfig.model_validate(
-                {**raw, "base_url": None, "replicas": replicas, "failover": failover, **changed}
+                {
+                    **raw,
+                    "base_url": None,
+                    "replicas": replicas,
+                    "failover": failover,
+                    **changed,
+                }
             )
         )
         assert _validate_rayline_arc_decision(bad), changed
     # The reference shape: base_url with empty replicas and failover blocks.
-    RaylineARCPolicyServiceConfig.model_validate({**raw, "replicas": [], "failover": {}})
+    RaylineARCPolicyServiceConfig.model_validate(
+        {**raw, "replicas": [], "failover": {}}
+    )
     for changed in (
         {"replicas": replicas, "failover": failover},  # both modes
         {"base_url": None, "replicas": replicas, "failover": None},
@@ -959,7 +1028,12 @@ def test_rayline_arc_policy_service_sessions_mirror_the_go_loader():
             RaylineARCPolicyServiceConfig.model_validate({**keyed, **changed})
     with pytest.raises(ValidationError):
         RaylineARCPolicyServiceConfig.model_validate(
-            {**raw, "modal_key_env": "", "modal_secret_env": "", "sessions": {"enabled": True}}
+            {
+                **raw,
+                "modal_key_env": "",
+                "modal_secret_env": "",
+                "sessions": {"enabled": True},
+            }
         )
 
 
@@ -968,7 +1042,11 @@ def test_rayline_arc_cli_mirrors_decide_mode():
     raw = policy.model_dump()
     for mode in ("", "sync", "delta"):
         RaylineARCPolicyServiceConfig.model_validate({**raw, "decide_mode": mode})
-    for changed in ({"decide_mode": "race"}, {"decide_mode": "async"}, {"race_ms": 100}):
+    for changed in (
+        {"decide_mode": "race"},
+        {"decide_mode": "async"},
+        {"race_ms": 100},
+    ):
         with pytest.raises(ValidationError):
             RaylineARCPolicyServiceConfig.model_validate({**raw, **changed})
 

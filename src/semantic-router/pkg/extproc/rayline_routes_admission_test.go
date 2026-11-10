@@ -184,9 +184,16 @@ func TestRaylineRoutesAdmissionScopeFollowsTheEpisodeBackend(t *testing.T) {
 		t.Fatal("a Redis episode store (even one unready at startup) built a per-process gate")
 	}
 
+	// The lane is on by default: no admission config builds the default cap.
+	defaulted := routesRouter(true)
+	if gate := buildRaylineRoutesAdmission(defaulted)[config.DefaultRecipeName]; gate == nil ||
+		gate.Limit() != config.DefaultRaylineARCRoutesAdmissionInflight {
+		t.Fatalf("no admission config built %+v, want the default lane", gate)
+	}
 	disabled := routesRouter(true)
+	disabled.Config.Decisions[0].Algorithm.RaylineARC.RoutesAPI.Admission.Disabled = true
 	if gates := buildRaylineRoutesAdmission(disabled); len(gates) != 0 {
-		t.Fatalf("no admission config built gates: %v", gates)
+		t.Fatalf("a disabled lane built gates: %v", gates)
 	}
 
 	sameBackend := &config.RaylineARCAlgorithmConfig{PolicyService: &config.RaylineARCPolicyServiceConfig{BaseURL: "https://policy.example"}}

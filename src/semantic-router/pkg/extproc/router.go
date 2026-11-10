@@ -88,6 +88,11 @@ type OpenAIRouter struct {
 	// for the recipes that configure routes_api.admission. Only the lookup
 	// handler reads it; dispatched turns never pass through a gate.
 	raylineRoutesAdmission map[config.RecipeName]*raylinearc.RouteLookupGate
+	// raylineRoutesCallerBudgets is each recipe's per-caller lookup budget,
+	// and raylineRoutesRefusals the process's refusal cache
+	// (rayline_routes_retry_protection.go). Lookups only.
+	raylineRoutesCallerBudgets map[config.RecipeName]*raylinearc.RouteCallerBudget
+	raylineRoutesRefusals      *raylineRoutesRefusalCache
 	// raylineARCInflight joins an identical resend to the decision its first
 	// copy is still making, instead of contending for the episode lease.
 	raylineARCInflight raylineARCInflightRegistry

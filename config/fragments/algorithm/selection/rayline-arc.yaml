@@ -99,6 +99,15 @@ routing:
             # as "<label>.<hash>". Separate from artifact_revision, which is
             # deployment-private.
             checkpoint_label: ""
+            # Retry-storm protection, on by default once the endpoint is:
+            # admission is the lookups' own lane (max_inflight 0: 8 cell-wide);
+            # caller_budget holds each conversation to lookups_per_minute (0: 120)
+            # and max_inflight (0: 4); refusal_cache replays a deterministic 4xx
+            # decision refusal to the same caller and request for ttl_ms (0: 60000).
+            # Each takes disabled: true to turn it off.
+            #   admission: {max_inflight: 0}
+            #   caller_budget: {lookups_per_minute: 0, max_inflight: 0}
+            #   refusal_cache: {ttl_ms: 0, max_entries: 0}
           encoder:
             base_url: http://rayline-arc-encoder:8000
             # Set base_url to empty and populate replicas + failover to opt
