@@ -571,6 +571,7 @@ caller can tell them apart without parsing the message:
 |---|---|---|---|
 | 429 | `lookup_capacity` | admission: the cell's lookup slots stayed busy for the whole queue wait | after `Retry-After` |
 | 429 | `contended` | the conversation's episode lease or an encoder slot was briefly busy | after `Retry-After` (1 s) |
+| 429 | `caller_budget` | this caller (conversation) sent more than `lookups_per_minute`, or has `max_inflight` lookups still holding the backend | after `Retry-After` (the window's end, or 2 s) |
 | 504 | `deadline_exceeded` | the lookup did not answer within `deadline_ms` | with backoff; a large body may never fit |
 
 ### Lookup admission
@@ -579,14 +580,17 @@ A lookup drives the same encoders that dispatched turns use, and a large one
 (hundreds of thousands of tokens) can hold an encoder for tens of seconds. The
 policy service runs one encode at a time per container and does not cancel an
 encode whose lookup has given up, so unbounded lookups queue live turns behind
-them. `routes_api.admission` caps how many lookups may be in flight at once:
+them. `routes_api.admission` is the lookups' own lane: it caps how many
+lookups may be in flight at once, so they cannot take the policy Server
+session slots live turns need. It is on by default once the endpoint is:
 
 ```yaml
 routes_api:
   enabled: true
   deadline_ms: 30000
   admission:
-    max_inflight: 1      # 0 or absent: no admission (every lookup goes straight in)
+    disabled: false      # true: no lane (every lookup goes straight in)
+    max_inflight: 1      # 0 or absent: 8
     queue_wait_ms: 2000  # 0: 2000 ms, or half deadline_ms when that is shorter
     abandoned_hold_tokens_per_second: 0  # 0: 35000; see below
 ```
@@ -675,6 +679,67 @@ busy slot. Admission waits and sheds show up in the latency such a test
 measures: read `wait_ms` on `rayline_routes_admission_wait` before reading a
 slow lookup as a slow encode.
 
+The default lane of 8 is sized against the Server's 10 sessions per
+container: it leaves at least two of a single warm container's sessions to
+live turns. Even if every lookup held its slot for the whole default 1.5 s
+deadline, 8 slots serve over 300 lookups a minute, ten callers at the
+gateway's own 30-a-minute per-user limit at once.
+
+### Retry-storm protection
+
+A client that retries a refused lookup in a loop reaches the backend at
+whatever rate it retries: the lane caps concurrency, not rate, and a fast
+refusal frees its slot at once. Three more guards sit in front of the lane,
+each on by default:
+
+```yaml
+routes_api:
+  enabled: true
+  caller_budget:
+    disabled: false
+    lookups_per_minute: 0   # 0: 120 per caller per fixed minute
+    max_inflight: 0         # 0: 4 per caller at once
+  refusal_cache:
+    disabled: false
+    ttl_ms: 0               # 0: 60000
+    max_entries: 0          # 0: 4096 per router process
+```
+
+- **Caller budget.** The caller is the conversation the lookup names
+  (`x-rayline-session`, with `x-rayline-branch`), which a gateway composes
+  from the user and the conversation, so a client retrying one turn is one
+  caller. Past `lookups_per_minute` in the current minute, or with
+  `max_inflight` of its lookups still holding the backend (a lookup holds
+  its caller's slot until the backend answers, like the lane's), it is
+  answered `429 caller_budget` before any backend work. A lookup that names
+  no conversation is not counted against any caller; the lane still bounds
+  it. With the `redis` episode backend the counts are cell-wide (one
+  counter per caller per minute, one sorted set of in-flight holders with
+  lease expiries); with `memory` they are per process. A Redis failure fails
+  open to the per-process counts for a few seconds and logs
+  `rayline_routes_caller_budget_fail_open` once per trip. The default rate is
+  4x the gateway's own per-user limit, so a caller the gateway admits never
+  reaches it; the default concurrency is half the default lane.
+- **Refusal cache.** A lookup the decision refused with a deterministic 4xx
+  (`422` undecidable, `400 unknown_price_model`, a body the service cannot
+  represent, a refused `routing.execution`) is refused the same way every
+  time. For `ttl_ms`, the same caller sending the same body with the same
+  `x-rayline-*` headers (the route id aside) is answered that refusal from
+  the router's memory, without the backend, marked
+  `x-rayline-refusal-cache: hit`. A 408, 409, 429 or any 5xx is never cached,
+  nor a refusal the cell made before calling the backend.
+- **Retry headers.** Every non-2xx on `/v1/routes` says whether to retry:
+  `429` and `503` carry `Retry-After` (integer seconds) and
+  `x-should-retry: true`; `502` and `504` carry `Retry-After`; every other
+  `4xx` carries `x-should-retry: false`. A `503` on a live ARC turn carries
+  `Retry-After` too. A value the producer already set is kept.
+
+`llm_rayline_arc_routes_caller_budget_total{outcome, backend}` counts
+`admitted`, `rate_limited`, `inflight_limited`, `fail_open` and `anonymous`;
+`llm_rayline_arc_routes_refusal_cache_total{outcome}` counts `hit`, `stored`
+and `evicted`; `llm_rayline_arc_retry_hints_total{surface, status,
+should_retry, retry_after}` counts the hints on every cell non-2xx.
+
 ### Lookup encode limit
 
 A throwaway lookup -- one with no `x-rayline-session`, or on a cell with
@@ -762,9 +827,13 @@ routing:
             deadline_ms: 1500
             checkpoint_label: arc-2026-09-12
             episode_writes: false
-            # Optional: cap concurrent lookups (see "Lookup admission").
+            # The lookups' lane (see "Lookup admission"): 0 selects 8.
             admission:
               max_inflight: 0
+            # Per-caller budget and refusal cache (see "Retry-storm
+            # protection"); absent selects the defaults.
+            caller_budget: {}
+            refusal_cache: {}
             # Optional, policy-service cells: skip the encode for long
             # throwaway lookups (see "Lookup encode limit").
             max_encode_tokens: 0

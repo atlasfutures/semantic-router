@@ -321,6 +321,7 @@ func (r *OpenAIRouter) processRequestHeaders(
 	}
 	response = r.encodeImmediateResponseForClient(response, ctx)
 	stateRaylineARCIdentity(response, ctx)
+	stampRaylineRetryHints(response, ctx)
 	if err := sendResponse(stream, response, "request header"); err != nil {
 		logging.Errorf("sendResponse for headers failed: %v", err)
 		return err
@@ -343,6 +344,7 @@ func (r *OpenAIRouter) processRequestBody(
 	}
 	response = r.encodeImmediateResponseForClient(response, ctx)
 	stateRaylineARCIdentity(response, ctx)
+	stampRaylineRetryHints(response, ctx)
 	r.persistImmediateResponseObject(response, ctx)
 	// FULL_DUPLEX_STREAMED explicitly permits the processor to buffer any
 	// number of input chunks before sending a StreamedBodyResponse. A nil

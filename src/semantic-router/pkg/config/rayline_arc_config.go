@@ -288,11 +288,20 @@ type RaylineARCRoutesAPIConfig struct {
 	// caller's price world. Policy-service cells only. Absent, a lookup
 	// whose body carries routing is refused as unavailable.
 	Routing *RaylineARCRoutesRoutingConfig `yaml:"routing,omitempty"`
-	// Admission caps how many lookups may occupy the decision backend at
-	// once, across every router instance of the cell. Absent or max_inflight
-	// 0 disables it: every lookup goes straight to the selector, as before.
-	// Dispatched turns never pass through it.
+	// Admission is the lookups' own lane: it caps how many lookups may
+	// occupy the decision backend at once, across every router instance of
+	// the cell, so lookups cannot take the session slots live turns need.
+	// It is on by default once the endpoint is: absent or max_inflight 0
+	// selects the default cap (8); disabled: true turns it off. Dispatched
+	// turns never pass through it.
 	Admission RaylineARCRoutesAdmissionConfig `yaml:"admission,omitempty"`
+	// CallerBudget bounds one caller's lookups: per minute and at once,
+	// shared across the cell's router instances. On by default.
+	CallerBudget RaylineARCRoutesCallerBudgetConfig `yaml:"caller_budget,omitempty"`
+	// RefusalCache answers a caller's repeat of a request the decision just
+	// refused with a deterministic 4xx from memory, without the backend.
+	// On by default.
+	RefusalCache RaylineARCRoutesRefusalCacheConfig `yaml:"refusal_cache,omitempty"`
 	// MaxEncodeTokens bounds the context a throwaway lookup (no session
 	// identity, or episode_writes off) may send to the encoder, in the
 	// router's own token estimate (the conservative byte heuristic
@@ -325,8 +334,12 @@ type RaylineARCRoutesAPIConfig struct {
 // backend should configure the same max_inflight. With the memory backend
 // there is no shared store and the cap is per router process.
 type RaylineARCRoutesAdmissionConfig struct {
-	// MaxInflight is the number of lookups admitted at once. Zero disables
-	// admission.
+	// Disabled turns the lane off: every lookup goes straight to the
+	// selector. Off by default, so a cell that serves lookups always caps
+	// them.
+	Disabled bool `yaml:"disabled,omitempty"`
+	// MaxInflight is the number of lookups admitted at once. Zero selects
+	// the default, DefaultRaylineARCRoutesAdmissionInflight.
 	MaxInflight int `yaml:"max_inflight,omitempty"`
 	// QueueWaitMS is how long a lookup waits for a slot before it is
 	// answered 429. It is spent inside the lookup's deadline_ms, so it must
@@ -370,9 +383,40 @@ func (cfg RaylineARCRoutesAdmissionConfig) EffectiveAbandonedHoldTokensPerSecond
 	return DefaultRaylineARCRoutesAbandonedHoldTokensPerSecond
 }
 
+// DefaultRaylineARCRoutesAdmissionInflight is the lane's cap when
+// max_inflight is unset: lookups in flight across the cell at once.
+//
+// The policy Server admits sessions_per_container (10) sessions per container
+// and a lookup holds one for its whole decision, so a lane of 8 leaves at
+// least two of a single warm container's slots to live turns, and Modal
+// scales out past it. It is still above a launch spike: even a lookup that
+// held its slot for the whole default 1.5 s deadline leaves 8 slots serving
+// over 300 lookups a minute, ten callers each at the gateway's own
+// 30-lookups-a-minute cap at once, and a typical lookup clears far sooner.
+const (
+	DefaultRaylineARCRoutesAdmissionInflight = 8
+)
+
+// EffectiveMaxInflight is the lane's cap, with the default substituted for an
+// unset value; zero when the lane is disabled.
+func (cfg RaylineARCRoutesAdmissionConfig) EffectiveMaxInflight() int {
+	if cfg.Disabled {
+		return 0
+	}
+	if cfg.MaxInflight > 0 {
+		return cfg.MaxInflight
+	}
+	return DefaultRaylineARCRoutesAdmissionInflight
+}
+
 // Enabled reports whether lookups are admitted through a gate.
 func (cfg RaylineARCRoutesAdmissionConfig) Enabled() bool {
-	return cfg.MaxInflight > 0
+	return cfg.EffectiveMaxInflight() > 0
+}
+
+// explicit reports whether any admission knob was set.
+func (cfg RaylineARCRoutesAdmissionConfig) explicit() bool {
+	return cfg.MaxInflight != 0 || cfg.QueueWaitMS != 0 || cfg.AbandonedHoldTokensPerSecond != 0
 }
 
 // RaylineARCRoutesRoutingConfig turns on the Decisions routing controls.
@@ -622,6 +666,12 @@ func validateRaylineARCRoutesAPIConfig(cfg RaylineARCRoutesAPIConfig) error {
 	if err := validateRaylineARCRoutesAdmissionConfig(cfg); err != nil {
 		return fmt.Errorf("admission: %w", err)
 	}
+	if err := validateRaylineARCRoutesCallerBudgetConfig(cfg); err != nil {
+		return fmt.Errorf("caller_budget: %w", err)
+	}
+	if err := validateRaylineARCRoutesRefusalCacheConfig(cfg); err != nil {
+		return fmt.Errorf("refusal_cache: %w", err)
+	}
 	if cfg.MaxEncodeTokens < 0 || cfg.MaxEncodeTokens > maxRaylineARCContextTokens {
 		return fmt.Errorf("max_encode_tokens must be between 0 and %d", maxRaylineARCContextTokens)
 	}
@@ -658,17 +708,19 @@ func validateRaylineARCRoutesAdmissionConfig(cfg RaylineARCRoutesAPIConfig) erro
 		admission.AbandonedHoldTokensPerSecond > maxRaylineARCRoutesAbandonedHoldTokensPerSecond {
 		return fmt.Errorf("abandoned_hold_tokens_per_second must be between 0 and %d", maxRaylineARCRoutesAbandonedHoldTokensPerSecond)
 	}
-	if !admission.Enabled() {
-		if admission.QueueWaitMS != 0 {
-			return fmt.Errorf("queue_wait_ms needs max_inflight")
-		}
-		if admission.AbandonedHoldTokensPerSecond != 0 {
-			return fmt.Errorf("abandoned_hold_tokens_per_second needs max_inflight")
+	if admission.Disabled {
+		if admission.explicit() {
+			return fmt.Errorf("max_inflight, queue_wait_ms and abandoned_hold_tokens_per_second need the lane: drop disabled")
 		}
 		return nil
 	}
 	if !cfg.Enabled {
-		return fmt.Errorf("admission needs the endpoint enabled")
+		// The default lane applies only to a served endpoint; an explicit
+		// setting on an endpoint that is off is a misconfiguration.
+		if admission.explicit() {
+			return fmt.Errorf("admission needs the endpoint enabled")
+		}
+		return nil
 	}
 	if deadline := cfg.EffectiveDeadline(); admission.QueueWaitMS > 0 &&
 		time.Duration(admission.QueueWaitMS)*time.Millisecond >= deadline {

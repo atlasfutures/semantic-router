@@ -358,10 +358,17 @@ func (components *routerComponents) buildRouter() *OpenAIRouter {
 		resources:                     components.resources,
 	}
 	router.raylineRoutesAdmission = buildRaylineRoutesAdmission(router)
+	router.raylineRoutesCallerBudgets = buildRaylineRoutesCallerBudgets(router)
+	router.raylineRoutesRefusals = buildRaylineRoutesRefusalCache(router)
 	components.resources.add(func() error {
 		var first error
 		for _, gate := range router.raylineRoutesAdmission {
 			if err := gate.Close(); err != nil && first == nil {
+				first = err
+			}
+		}
+		for _, budget := range router.raylineRoutesCallerBudgets {
+			if err := budget.Close(); err != nil && first == nil {
 				first = err
 			}
 		}

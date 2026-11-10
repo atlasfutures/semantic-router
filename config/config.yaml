@@ -1762,6 +1762,15 @@ routing:
             # from artifact_revision because that pin is deployment-private.
             # Empty publishes the hash alone.
             checkpoint_label: ""
+            # Retry-storm protection, on by default once the endpoint is:
+            # admission is the lookups' own lane (max_inflight 0: 8 cell-wide);
+            # caller_budget holds each conversation to lookups_per_minute (0: 120)
+            # and max_inflight (0: 4); refusal_cache replays a deterministic 4xx
+            # decision refusal to the same caller and request for ttl_ms (0: 60000).
+            # Each takes disabled: true to turn it off.
+            #   admission: {max_inflight: 0}
+            #   caller_budget: {lookups_per_minute: 0, max_inflight: 0}
+            #   refusal_cache: {ttl_ms: 0, max_entries: 0}
             # routing (policy-service cells only; absent here) serves the
             # public Decisions controls (pathfinder#5664): every answer
             # carries presets.swift (V 0.1) and presets.sage (V 4.5), and a

@@ -37,7 +37,8 @@ import (
 const raylineRoutesAdmissionCode = "lookup_capacity"
 
 // buildRaylineRoutesAdmission builds one lookup admission gate per recipe
-// whose routes-enabled ARC decision configures routes_api.admission.
+// whose routes-enabled ARC decision serves lookups, unless that recipe sets
+// routes_api.admission.disabled: the lane is on by default.
 //
 // Only the lookup handler reads these gates. A dispatched turn never passes
 // through them: the cap exists to keep lookups from occupying the encoders
@@ -48,16 +49,15 @@ func buildRaylineRoutesAdmission(router *OpenAIRouter) map[config.RecipeName]*ra
 	}
 	var gates map[config.RecipeName]*raylinearc.RouteLookupGate
 	poolLimits := map[string]int{}
-	add := func(name config.RecipeName, recipe *config.RoutingRecipe, store raylinearc.EpisodeStore) {
-		decision := router.raylineRoutesDecision(recipe)
-		if decision == nil || !decision.Algorithm.RaylineARC.RoutesAPI.Admission.Enabled() {
+	forEachRaylineRoutesRecipe(router, func(name config.RecipeName, decision *config.Decision, store raylinearc.EpisodeStore) {
+		if !decision.Algorithm.RaylineARC.RoutesAPI.Admission.Enabled() {
 			return
 		}
 		arcConfig := decision.Algorithm.RaylineARC
 		settings := arcConfig.RoutesAPI
 		pool := raylineRoutesAdmissionPool(arcConfig)
 		gate := raylinearc.NewRouteLookupGate(raylinearc.RouteLookupGateConfig{
-			MaxInflight:    settings.Admission.MaxInflight,
+			MaxInflight:    settings.Admission.EffectiveMaxInflight(),
 			QueueWait:      settings.EffectiveAdmissionQueueWait(),
 			LookupDeadline: settings.EffectiveDeadline(),
 			Pool:           pool,
@@ -98,16 +98,32 @@ func buildRaylineRoutesAdmission(router *OpenAIRouter) map[config.RecipeName]*ra
 			gates = map[config.RecipeName]*raylinearc.RouteLookupGate{}
 		}
 		gates[name] = gate
+	})
+	return gates
+}
+
+// forEachRaylineRoutesRecipe calls visit for each recipe that serves lookups,
+// with its routes-enabled ARC decision and its episode store: the default
+// recipe first, then the named ones.
+func forEachRaylineRoutesRecipe(
+	router *OpenAIRouter,
+	visit func(config.RecipeName, *config.Decision, raylinearc.EpisodeStore),
+) {
+	if router == nil || router.Config == nil {
+		return
 	}
-	add(config.DefaultRecipeName, nil, router.RaylineARCEpisodeStore)
+	if decision := router.raylineRoutesDecision(nil); decision != nil {
+		visit(config.DefaultRecipeName, decision, router.RaylineARCEpisodeStore)
+	}
 	for index := range router.Config.Recipes {
 		recipe := &router.Config.Recipes[index]
 		if recipe.Name == config.DefaultRecipeName {
 			continue
 		}
-		add(recipe.Name, recipe, router.RaylineARCRecipeEpisodeStores[recipe.Name])
+		if decision := router.raylineRoutesDecision(recipe); decision != nil {
+			visit(recipe.Name, decision, router.RaylineARCRecipeEpisodeStores[recipe.Name])
+		}
 	}
-	return gates
 }
 
 // raylineRoutesAdmissionPool names the backend a decision's lookups occupy:
