@@ -394,8 +394,10 @@ returns identity receipts; it performs no second routing decision.
 The explicit `cloud_transport: "model_pin"` uses an existing model router's
 Chat or Messages endpoint with a concrete qualified model: `registry_model` (an
 OpenRouter registry cell) names the measured model and `wire_model` the router's
-catalog id for it, which may differ, such as `claude-sonnet-5-5` for
-`anthropic/claude-sonnet-5.5` when the router serves it from Anthropic directly.
+id for it: the registry id itself, or the router's catalog id derived from it
+(the provider prefix dropped and version dots spelled as dashes, such as
+`claude-sonnet-5-5` for `anthropic/claude-sonnet-5.5`, which the router serves
+from Anthropic directly). Any other `wire_model` is refused.
 It checks the returned
 model and pin receipt against `wire_model`, without claiming an exact provider,
 account or action receipt. Provider/profile/issuer pins are forbidden in this mode and opaque

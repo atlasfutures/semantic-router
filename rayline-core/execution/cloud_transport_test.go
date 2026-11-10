@@ -108,6 +108,7 @@ func TestModelPinScopeAndNativeControlAreExplicit(t *testing.T) {
 		"provider":  func(d *Deployment) { d.ProviderPin = &ProviderPin{Only: []string{"together"}} },
 		"wire":      func(d *Deployment) { d.WireModel = "" },
 		"spaced":    func(d *Deployment) { d.WireModel = "kimi k3" },
+		"other":     func(d *Deployment) { d.WireModel = "claude-opus-5-5" },
 		"registry":  func(d *Deployment) { d.RegistryModel = "kimi-k3" },
 		"responses": func(d *Deployment) { d.Protocol = llmprotocol.OpenAIResponsesV1 },
 	} {
@@ -242,6 +243,24 @@ func TestModelPinMessagesAdmitsActualHaikuSteeringAction(t *testing.T) {
 // Anthropic's claude-sonnet-5-5 for the registry's anthropic/claude-sonnet-5.5:
 // the controls come from the registry cell, the pin and its echo from the
 // catalog id, and an echo of the registry id is not that pin.
+func TestModelPinWireModelMustNameTheRegistryModel(t *testing.T) {
+	for _, pin := range []struct {
+		wire, registry string
+		names          bool
+	}{
+		{"anthropic/claude-sonnet-5.5", "anthropic/claude-sonnet-5.5", true},
+		{"claude-sonnet-5-5", "anthropic/claude-sonnet-5.5", true},
+		{"claude-opus-5-5", "anthropic/claude-sonnet-5.5", false},
+		{"claude-sonnet-5.5", "anthropic/claude-sonnet-5.5", false},
+		{"sonnet", "anthropic/claude-sonnet-5.5", false},
+		{"", "anthropic/", false},
+	} {
+		if pinWireNamesRegistryModel(pin.wire, pin.registry) != pin.names {
+			t.Errorf("wire %q for registry %q: names = %v", pin.wire, pin.registry, !pin.names)
+		}
+	}
+}
+
 func TestModelPinMessagesPinsGatewayCatalogId(t *testing.T) {
 	for _, echo := range []string{"claude-sonnet-5-5", "anthropic/claude-sonnet-5.5"} {
 		t.Run(echo, func(t *testing.T) {
