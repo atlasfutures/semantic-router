@@ -147,6 +147,9 @@ type RouteCallerTicket struct {
 	release func()
 }
 
+// Held reports whether the ticket holds an in-flight slot to release.
+func (ticket RouteCallerTicket) Held() bool { return ticket.release != nil }
+
 // Release frees the caller's in-flight slot. Safe to call more than once and
 // on a zero ticket.
 func (ticket RouteCallerTicket) Release() {
@@ -180,7 +183,10 @@ func NewRouteCallerBudget(config RouteCallerBudgetConfig) *RouteCallerBudget {
 		rate:     config.LookupsPerMinute,
 		inflight: config.MaxInflight,
 		window:   RouteCallerWindow,
-		leaseTTL: max(config.LookupDeadline, RouteLookupDetachBound) + routeLookupLeaseMargin,
+		// The slot is taken before the lane's queue wait (at most the
+		// lookup deadline), and the detached decision's own bound starts
+		// after it, so the lease covers both.
+		leaseTTL: config.LookupDeadline + max(config.LookupDeadline, RouteLookupDetachBound) + routeLookupLeaseMargin,
 		pool:     config.Pool,
 		local:    routeCallerLocalFor(config.Pool, config.LookupsPerMinute, config.MaxInflight),
 		backoff:  routeLookupRedisBackoff,
@@ -250,8 +256,16 @@ func (budget *RouteCallerBudget) Acquire(ctx context.Context, caller string) (Ro
 	if budget.shared == nil {
 		return budget.acquireLocalToken(caller, token, now, RouteCallerAdmitted)
 	}
+	// Every admitted lookup also holds a per-process slot, whichever backend
+	// admitted it, so switching between Redis and the fallback (a failure,
+	// a recovery) never lets one process admit more than the cap for a
+	// caller.
 	if budget.redisBackingOff(now) {
 		return budget.acquireLocalToken(caller, token, now, RouteCallerFailOpen)
+	}
+	local, err := budget.acquireLocalToken(caller, token, now, RouteCallerAdmitted)
+	if err != nil {
+		return RouteCallerTicket{}, err
 	}
 	keys := budget.keys(caller, now)
 	callContext, cancel := context.WithTimeout(ctx, routeLookupRedisCallTimeout)
@@ -260,20 +274,23 @@ func (budget *RouteCallerBudget) Acquire(ctx context.Context, caller string) (Ro
 	cancel()
 	if err != nil {
 		// The write may have landed with its reply lost: free the token's
-		// slot off the path, then count locally.
+		// slot off the path, and admit on the per-process count.
 		budget.releaseShared(ctx, keys, token)
 		if ctx.Err() == nil {
 			budget.tripRedis(err)
 		}
-		return budget.acquireLocalToken(caller, token, now, RouteCallerFailOpen)
+		local.Outcome = RouteCallerFailOpen
+		return local, nil
 	}
 	switch verdict {
 	case 1:
+		local.Release()
 		return RouteCallerTicket{}, &RouteCallerRefusal{
 			Outcome: RouteCallerRateLimited, Backend: RouteLookupBackendRedis,
 			RetryAfter: budget.windowRemaining(now),
 		}
 	case 2:
+		local.Release()
 		return RouteCallerTicket{}, &RouteCallerRefusal{
 			Outcome: RouteCallerInflightLimited, Backend: RouteLookupBackendRedis,
 			RetryAfter: routeCallerInflightRetryAfter,
@@ -283,7 +300,12 @@ func (budget *RouteCallerBudget) Acquire(ctx context.Context, caller string) (Ro
 	return RouteCallerTicket{
 		Outcome: RouteCallerAdmitted,
 		Backend: RouteLookupBackendRedis,
-		release: func() { once.Do(func() { budget.releaseShared(ctx, keys, token) }) },
+		release: func() {
+			once.Do(func() {
+				local.Release()
+				budget.releaseShared(ctx, keys, token)
+			})
+		},
 	}, nil
 }
 

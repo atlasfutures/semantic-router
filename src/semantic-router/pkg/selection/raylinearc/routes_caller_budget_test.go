@@ -161,6 +161,42 @@ func TestRouteCallerBudgetFailsOpenToTheLocalCount(t *testing.T) {
 	}
 }
 
+// switchableRouteCallerShared admits every lookup until it is told to fail.
+type switchableRouteCallerShared struct{ failing atomic.Bool }
+
+func (shared *switchableRouteCallerShared) acquire(context.Context, routeCallerKeys, int, int, time.Duration,
+	time.Time, string, time.Duration,
+) (int, error) {
+	if shared.failing.Load() {
+		return 0, errors.New("redis unavailable")
+	}
+	return 0, nil
+}
+
+func (shared *switchableRouteCallerShared) release(context.Context, routeCallerKeys, string) error {
+	return nil
+}
+
+// Lookups admitted over Redis also hold the per-process slots, so when Redis
+// fails the fallback does not admit the cap a second time in this process.
+func TestRouteCallerBudgetKeepsTheProcessCapAcrossAFailOpen(t *testing.T) {
+	t.Parallel()
+	budget := newTestRouteCallerBudget(100, 2)
+	shared := &switchableRouteCallerShared{}
+	budget.shared = shared
+	for range 2 {
+		ticket, err := budget.Acquire(context.Background(), "caller")
+		if err != nil || ticket.Backend != RouteLookupBackendRedis {
+			t.Fatalf("ticket = %+v, %v; want a Redis slot", ticket, err)
+		}
+	}
+	shared.failing.Store(true)
+	_, err := budget.Acquire(context.Background(), "caller")
+	if refusal := refusalOf(t, err); refusal.Outcome != RouteCallerInflightLimited {
+		t.Fatalf("refusal = %+v, want the process cap to hold while Redis fails", refusal)
+	}
+}
+
 // A Redis that is down (nothing listening) is the same: the lookup is
 // admitted on the per-process count, promptly.
 func TestRouteCallerBudgetFailsOpenWhenRedisIsDown(t *testing.T) {

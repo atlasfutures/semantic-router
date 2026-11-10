@@ -91,6 +91,13 @@ func retryProtectionRouter(t *testing.T, selector *countingRetrySelector) *OpenA
 
 const retryProtectionModel = "claude-sonnet-5"
 
+// statelessLookups turns episode writes off, so every lookup decides with no
+// episode state.
+func statelessLookups(router *OpenAIRouter) {
+	router.Config.Decisions[0].Algorithm.RaylineARC.RoutesAPI.EpisodeWrites = false
+	router.Config.Recipes[0].Profile.Decisions[0].Algorithm.RaylineARC.RoutesAPI.EpisodeWrites = false
+}
+
 func retryLookup(router *OpenAIRouter, session string, body []byte) *ext_proc.ProcessingResponse {
 	headers := map[string]string{}
 	if session != "" {
@@ -166,8 +173,7 @@ func TestRaylineRoutesCallerBudgetFailsOpenWhenRedisIsDown(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = budget.Close() })
 	// Episode writes would also need the dead Redis: decide ephemerally.
-	router.Config.Decisions[0].Algorithm.RaylineARC.RoutesAPI.EpisodeWrites = false
-	router.Config.Recipes[0].Profile.Decisions[0].Algorithm.RaylineARC.RoutesAPI.EpisodeWrites = false
+	statelessLookups(router)
 	if status := immediateStatusCode(t, retryLookup(router, "user-1:conv-1", oneCellBody(retryProtectionModel, false))); status != 200 {
 		t.Fatalf("Redis down: status %d, want 200 (fail open)", status)
 	}
@@ -252,6 +258,7 @@ func TestRaylineRoutesRefusalCache(t *testing.T) {
 	t.Run("4xx is replayed", func(t *testing.T) {
 		selector := &countingRetrySelector{err: &raylineARCSelectionFailure{class: arcFailurePolicyUndecidable}}
 		router := retryProtectionRouter(t, selector)
+		statelessLookups(router)
 		router.raylineRoutesRefusals = buildRaylineRoutesRefusalCache(router)
 		body := oneCellBody(retryProtectionModel, false)
 		first := retryLookup(router, "user-1:conv-1", body)
@@ -289,6 +296,22 @@ func TestRaylineRoutesRefusalCache(t *testing.T) {
 			t.Fatalf("an expired refusal was replayed (backend calls %d, want 4)", calls)
 		}
 	})
+	t.Run("a tracked lookup's 4xx is not", func(t *testing.T) {
+		// A tracked lookup's refusal can depend on its episode's state at
+		// that moment, so the same request may be decided differently next.
+		selector := &countingRetrySelector{err: &raylineARCSelectionFailure{class: arcFailurePolicyUndecidable}}
+		router := retryProtectionRouter(t, selector)
+		router.raylineRoutesRefusals = buildRaylineRoutesRefusalCache(router)
+		body := oneCellBody(retryProtectionModel, false)
+		for range 2 {
+			if status := immediateStatusCode(t, retryLookup(router, "user-1:conv-1", body)); status != 422 {
+				t.Fatalf("status %d, want 422", status)
+			}
+		}
+		if calls := selector.calls.Load(); calls != 2 {
+			t.Fatalf("backend called %d times, want 2: a tracked refusal was cached", calls)
+		}
+	})
 	t.Run("5xx is not", func(t *testing.T) {
 		selector := &countingRetrySelector{err: errors.New("policy server unavailable")}
 		router := retryProtectionRouter(t, selector)
@@ -310,6 +333,7 @@ func TestRaylineRoutesRefusalCache(t *testing.T) {
 	t.Run("disabled", func(t *testing.T) {
 		selector := &countingRetrySelector{err: &raylineARCSelectionFailure{class: arcFailurePolicyUndecidable}}
 		router := retryProtectionRouter(t, selector)
+		statelessLookups(router)
 		router.raylineRoutesRefusals = buildRaylineRoutesRefusalCache(router)
 		router.Config.Recipes[0].Profile.Decisions[0].Algorithm.RaylineARC.RoutesAPI.RefusalCache.Disabled = true
 		router.Config.Decisions[0].Algorithm.RaylineARC.RoutesAPI.RefusalCache.Disabled = true

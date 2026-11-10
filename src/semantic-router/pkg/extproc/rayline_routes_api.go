@@ -445,7 +445,9 @@ func (r *OpenAIRouter) handleRaylineRoutesAPI(
 		callerTicket.Release()
 		return refused
 	}
-	ticket = ticket.Also(callerTicket.Release)
+	if callerTicket.Held() {
+		ticket = ticket.Also(callerTicket.Release)
+	}
 	episode := raylineRoutesEpisodeIdentity(ctx)
 	// Ephemeral unless this cell keeps episodes and the caller named a
 	// conversation. Both halves are required: without the identity there is
@@ -459,6 +461,10 @@ func (r *OpenAIRouter) handleRaylineRoutesAPI(
 	if controls != nil && (controls.Execution != nil || controls.ExecutionV2 != nil) {
 		ephemeral = true
 	}
+	// The service also decides these ephemerally (see RouteDecision); the
+	// consult keeps the caller's flag so its own accounting of why still
+	// runs.
+	stateless := ephemeral || raylineARCRoutingJoinsNoEpisode(controls)
 	started := time.Now()
 	decision, err := raylineRoutesDecide(
 		lookupContext,
@@ -467,14 +473,17 @@ func (r *OpenAIRouter) handleRaylineRoutesAPI(
 		raylineRoutesConsultWithControls(body, routeID, episode, ephemeral, wireFormat, controls, ctx.Headers, recipe.Name),
 		ticket,
 		settings.Admission.EffectiveAbandonedHoldTokensPerSecond(),
-		// The service also decides these ephemerally (see RouteDecision);
-		// the consult keeps the caller's flag so its own accounting of why
-		// still runs.
-		ephemeral || raylineARCRoutingJoinsNoEpisode(controls),
+		stateless,
 	)
 	if err != nil {
-		return r.rememberRaylineRoutesRefusal(settings, refusalKey,
-			r.raylineRoutesFailure(ctx, lookupContext, routeID, err))
+		response := r.raylineRoutesFailure(ctx, lookupContext, routeID, err)
+		// Only a decision that read no episode state is the same for the
+		// same request: a tracked lookup's refusal can depend on what its
+		// episode held, or failed to read, at that moment.
+		if stateless {
+			r.rememberRaylineRoutesRefusal(settings, refusalKey, response)
+		}
+		return response
 	}
 
 	logging.ComponentEvent("extproc", "routing_decision", map[string]interface{}{

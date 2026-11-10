@@ -727,7 +727,9 @@ routes_api:
   `x-rayline-*` headers (the route id aside) is answered that refusal from
   the router's memory, without the backend, marked
   `x-rayline-refusal-cache: hit`. A 408, 409, 429 or any 5xx is never cached,
-  nor a refusal the cell made before calling the backend.
+  nor a refusal the cell made before calling the backend, nor the refusal
+  of a lookup that joins an episode (its answer can depend on what the
+  episode held at that moment).
 - **Retry headers.** Every non-2xx on `/v1/routes` says whether to retry:
   `429` and `503` carry `Retry-After` (integer seconds) and
   `x-should-retry: true`; `502` and `504` carry `Retry-After`; every other

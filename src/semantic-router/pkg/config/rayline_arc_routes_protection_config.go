@@ -59,7 +59,8 @@ type RaylineARCRoutesCallerBudgetConfig struct {
 // refusal, the same caller sending the same request (body and routing
 // headers) is answered the same refusal from this process's memory. A 429,
 // 408, 409 or any 5xx is never cached, nor a refusal the cell made before
-// calling the backend (it costs nothing to repeat).
+// calling the backend (it costs nothing to repeat), nor the refusal of a
+// lookup that joins an episode (it can depend on the episode's state).
 type RaylineARCRoutesRefusalCacheConfig struct {
 	// Disabled turns the cache off. Off by default.
 	Disabled bool `yaml:"disabled,omitempty"`

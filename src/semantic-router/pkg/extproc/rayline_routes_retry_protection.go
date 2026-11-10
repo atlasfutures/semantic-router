@@ -340,8 +340,9 @@ func (r *OpenAIRouter) replayRaylineRoutesRefusal(
 	return response
 }
 
-// rememberRaylineRoutesRefusal stores a decision refusal that the same
-// request would get again, and returns the response unchanged.
+// rememberRaylineRoutesRefusal stores a stateless decision's refusal that
+// the same request would get again, and returns the response unchanged. The
+// caller passes only refusals of decisions that read no episode state.
 func (r *OpenAIRouter) rememberRaylineRoutesRefusal(
 	settings *config.RaylineARCRoutesAPIConfig,
 	key [sha256.Size]byte,
