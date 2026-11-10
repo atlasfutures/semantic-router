@@ -19,6 +19,7 @@ package extproc
 import (
 	"context"
 	"errors"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -65,10 +66,16 @@ type raylineARCEpisodeTransaction struct {
 	// to on a sessioned policy Server, committed only with the turn; nil
 	// keeps the stored session. Never logged.
 	policySession *raylinearc.PolicySession
-	// policySessionReplaced ends the session policySession replaces, once
-	// the turn has committed; a turn that does not commit leaves it, since the
-	// episode still records it.
-	policySessionReplaced *raylinearc.PolicySessionBinding
+	// policySessionBinding is the binding that started policySession. Once
+	// the turn has committed it ends the session policySession replaces; a
+	// turn that does not commit leaves that one, since the episode still
+	// records it, and ends the ones it started instead, which nothing does.
+	policySessionBinding *raylinearc.PolicySessionBinding
+	// policySessionSuperseded are the bindings of this turn's earlier
+	// selections (a refusal reselect replaces the first, and a rollback puts
+	// it back): sessions they started that the turn no longer records. The
+	// commit and the abort end them.
+	policySessionSuperseded []*raylinearc.PolicySessionBinding
 	// policySessionCleared drops the stored session: the cell no longer
 	// decides through sessions.
 	policySessionCleared bool
@@ -302,13 +309,14 @@ func (transaction *raylineARCEpisodeTransaction) markSelectionWithAffinity(
 // markPolicySession records the session a sessioned policy Server decided
 // this turn on, when it is not the one the episode holds (nil leaves that
 // one), or, cleared, that the cell no longer uses sessions and the stored one
-// goes. A side call commits nothing, so its binding reports none. replaced,
-// when the turn moved off the episode's session, ends that one after the
-// commit.
+// goes. A side call commits nothing, so its binding reports none. binding
+// is the one that started session: when the turn moved off the episode's
+// session it ends that one after the commit, and an abort ends what it
+// started.
 func (transaction *raylineARCEpisodeTransaction) markPolicySession(
 	session *raylinearc.PolicySession,
 	cleared bool,
-	replaced *raylinearc.PolicySessionBinding,
+	binding *raylinearc.PolicySessionBinding,
 ) {
 	if transaction == nil {
 		return
@@ -319,17 +327,51 @@ func (transaction *raylineARCEpisodeTransaction) markPolicySession(
 	}
 	cloned := *session
 	transaction.policySession = &cloned
-	transaction.policySessionReplaced = replaced
+	if previous := transaction.policySessionBinding; previous != nil && previous != binding {
+		transaction.policySessionSuperseded = append(transaction.policySessionSuperseded, previous)
+	}
+	transaction.policySessionSuperseded = slices.DeleteFunc(transaction.policySessionSuperseded,
+		func(superseded *raylinearc.PolicySessionBinding) bool { return superseded == binding })
+	transaction.policySessionBinding = binding
 }
 
 // endReplacedPolicySession ends the session this turn moved the episode off,
 // now that the commit records the new one.
 func (transaction *raylineARCEpisodeTransaction) endReplacedPolicySession(ctx context.Context) {
+	transaction.endSupersededPolicySessions(ctx)
 	if transaction.policySession == nil || transaction.policySessionCleared {
 		return
 	}
-	transaction.policySessionReplaced.TerminateReplaced(ctx)
-	transaction.policySessionReplaced = nil
+	transaction.policySessionBinding.TerminateReplaced(ctx)
+	transaction.policySessionBinding = nil
+}
+
+// endSupersededPolicySessions ends, off the turn's path, the sessions an
+// earlier selection of this turn started: the turn records another, so
+// nothing records them.
+func (transaction *raylineARCEpisodeTransaction) endSupersededPolicySessions(ctx context.Context) {
+	if transaction.borrowed {
+		return
+	}
+	for _, binding := range transaction.policySessionSuperseded {
+		go binding.EndUnrecorded(ctx)
+	}
+	transaction.policySessionSuperseded = nil
+}
+
+// endUnrecordedPolicySession ends, off the turn's path, the sessions this
+// turn started once it aborts: no commit records them, so each would hold a
+// container's session slot until Modal's idle timeout. The session the
+// episode records is not among them and stays. A borrowed turn's session is
+// its leader's, which may still commit it.
+func (transaction *raylineARCEpisodeTransaction) endUnrecordedPolicySession(ctx context.Context) {
+	transaction.endSupersededPolicySessions(ctx)
+	if transaction.borrowed || transaction.policySession == nil || transaction.policySessionBinding == nil {
+		return
+	}
+	binding := transaction.policySessionBinding
+	transaction.policySession, transaction.policySessionBinding = nil, nil
+	go binding.EndUnrecorded(ctx)
 }
 
 // takesHandovers reports whether this turn, leading a coalesced group, takes a
@@ -756,6 +798,7 @@ func (transaction *raylineARCEpisodeTransaction) abort(
 	}
 	transaction.finalizeOnce.Do(func() {
 		defer transaction.releaseHold()
+		transaction.endUnrecordedPolicySession(ctx)
 		if transaction.borrowed || transaction.relaxed || transaction.leaseless {
 			return
 		}

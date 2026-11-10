@@ -581,7 +581,7 @@ func (snapshot reserveSnapshot) restore(ctx *RequestContext, reselect *raylineAR
 		if trace := snapshot.trace; trace != nil {
 			transaction.markSelectionWithAffinity(trace.SelectedArm, trace.SerializedTokens,
 				trace.EncoderReplicaID, trace.EncoderVisitedReplicaIDs)
-			transaction.markPolicySession(trace.PolicySession, trace.PolicySessionCleared, trace.PolicySessionReplaced)
+			transaction.markPolicySession(trace.PolicySession, trace.PolicySessionCleared, trace.PolicySessionBinding)
 			stageRaylineARCPolicySelection(ctx, trace, snapshot.selectedModel)
 		}
 	}

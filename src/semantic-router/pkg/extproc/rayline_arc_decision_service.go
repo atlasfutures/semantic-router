@@ -112,6 +112,7 @@ func (service *raylineARCDecisionService) RouteDecision(
 	)
 	selectionContext.RaylineARC.RouteControls = request.Routing
 	selectionContext.RaylineARC.RoutesLookup = true
+	selectionContext.RaylineARC.RoutesThrowaway = request.Ephemeral
 	selectionContext.RaylineARC.RoutesEncodeLimit = requestContext.RaylineRoutesEncodeLimit
 	if failure := selectionContext.RaylineARC.PreparationFailure; failure != "" {
 		// Counted here because this path returns before Select(), whose
@@ -492,7 +493,7 @@ func (service *raylineARCDecisionService) resolveWorker(
 		result.RaylineARC.EncoderReplicaID,
 		result.RaylineARC.EncoderVisitedReplicaIDs,
 	)
-	requestContext.RaylineARCTransaction.markPolicySession(result.RaylineARC.PolicySession, result.RaylineARC.PolicySessionCleared, result.RaylineARC.PolicySessionReplaced)
+	requestContext.RaylineARCTransaction.markPolicySession(result.RaylineARC.PolicySession, result.RaylineARC.PolicySessionCleared, result.RaylineARC.PolicySessionBinding)
 	stageRaylineARCPolicySelection(requestContext, result.RaylineARC, result.SelectedModel)
 	service.router.publishRaylineARCDecision(requestContext, result)
 	route := selectedRoute{worker: worker, result: result, catalog: provider}

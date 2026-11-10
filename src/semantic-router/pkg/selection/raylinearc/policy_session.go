@@ -720,6 +720,29 @@ func (binding *PolicySessionBinding) Release(ctx context.Context) {
 	if binding == nil || !binding.ephemeral {
 		return
 	}
+	binding.endStarted(ctx)
+}
+
+// Ephemeral reports whether the turn records no session (Release ends the
+// ones it started).
+func (binding *PolicySessionBinding) Ephemeral() bool {
+	return binding != nil && binding.ephemeral
+}
+
+// EndUnrecorded ends the sessions a persisting turn started once the turn has
+// failed without a decision: no trace carries them, so no commit can record
+// them, and left alone each holds a container's session slot until Modal's
+// idle timeout. The session the episode state records is never among them
+// (it is used, not started), so it stays for the episode's next turn. A
+// private turn's sessions are its release's to end (BindPrivate).
+func (binding *PolicySessionBinding) EndUnrecorded(ctx context.Context) {
+	if binding == nil || binding.holdUntilRelease {
+		return
+	}
+	binding.endStarted(ctx)
+}
+
+func (binding *PolicySessionBinding) endStarted(ctx context.Context) {
 	for _, session := range binding.owned {
 		binding.terminate(ctx, session)
 	}

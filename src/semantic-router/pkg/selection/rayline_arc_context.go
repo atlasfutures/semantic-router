@@ -150,6 +150,10 @@ type RaylineARCSelectionContext struct {
 	// reads whether the encode included the request's tools; a routed turn
 	// never asks for it.
 	RoutesLookup bool
+	// RoutesThrowaway is true on a lookup that joins no episode (an ephemeral
+	// one): it commits nothing, so a policy session it starts is recorded
+	// nowhere and is ended once the lookup is decided.
+	RoutesThrowaway bool
 	// RoutesEncodeLimit is a throwaway POST /v1/routes lookup's
 	// routes_api.max_encode_tokens: over it (ContextTokens), the lookup is
 	// answered without an encode. Zero, as on every tracked lookup and
@@ -510,11 +514,13 @@ type RaylineARCTrace struct {
 	// decided this turn on, which the episode commit persists; nil when the
 	// turn changes none. Internal transaction state: never logged.
 	PolicySession *raylinearc.PolicySession
-	// PolicySessionReplaced is the turn's session binding when the turn moved
-	// off the session the episode records: the episode commit ends that one
-	// once it has recorded PolicySession (TerminateReplaced), never before.
-	// Internal transaction state.
-	PolicySessionReplaced *raylinearc.PolicySessionBinding
+	// PolicySessionBinding is the turn's session binding when the turn
+	// changed the episode's session (PolicySession is set): the episode
+	// commit ends the session the turn moved off once it has recorded
+	// PolicySession (TerminateReplaced), never before; a turn that aborts
+	// instead ends the sessions it started, which nothing recorded
+	// (EndUnrecorded). Internal transaction state.
+	PolicySessionBinding *raylinearc.PolicySessionBinding
 	// PolicySessions is how many sessions the turn's calls used, and
 	// PolicySessionMoved whether the turn left a session that was gone.
 	PolicySessions     int
