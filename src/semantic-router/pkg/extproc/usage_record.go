@@ -179,6 +179,11 @@ type llmUsageRecord struct {
 	// signature_attempt on the refused call, stripped_resend on the re-send.
 	// Null on every other call.
 	ThinkingSignatureRetry *string `json:"thinking_signature_retry"`
+	// EdgeResend marks the two calls of a turn whose call OpenRouter's edge
+	// refused with a non-JSON 503 and the cell sent again once
+	// (edge_503_resend.go): edge_attempt on the refused call, edge_resend on
+	// the re-send. Null on every other call.
+	EdgeResend *string `json:"edge_resend"`
 	// HostRetry marks the calls of a streamed turn re-sent on its arm's next
 	// provider host after a call failed before any content
 	// (stream_host_retry.go): host_attempt on each call the cell went on
@@ -344,9 +349,9 @@ func (r *OpenAIRouter) newLLMUsageRecord(ctx *RequestContext, usage responseUsag
 	// A re-sent turn (flex twin or another endpoint) is read whole before the
 	// response pipeline sees it, and an unreachable re-send is answered with
 	// synthetic headers, so its "first byte" is not one: no TTFT is stated.
-	// A thinking-signature re-send is read whole the same way.
+	// A thinking-signature or edge-503 re-send is read whole the same way.
 	resent := (ctx.FlexResend != nil && ctx.FlexResend.served()) || len(ctx.RaylineARCEndpointsTried) > 1 ||
-		ctx.ThinkingSignatureRetried
+		ctx.ThinkingSignatureRetried || ctx.EdgeResent
 	if ctx.TTFTRecorded && !resent {
 		ttft := int64(ctx.TTFTSeconds * 1000)
 		record.TTFTMS = &ttft
@@ -394,6 +399,10 @@ func (r *OpenAIRouter) newLLMUsageRecord(ctx *RequestContext, usage responseUsag
 	if ctx.ThinkingSignatureRetried {
 		// The refused call's line overwrites this with signature_attempt.
 		record.ThinkingSignatureRetry = nonEmpty(thinkingRetryResend)
+	}
+	if ctx.EdgeResent {
+		// The refused call's line overwrites this with edge_attempt.
+		record.EdgeResend = nonEmpty(edgeResendServed)
 	}
 	record.ProviderEndpoint = nonEmpty(ctx.RaylineARCDispatchedEndpoint)
 	record.SessionKeySource = nonEmpty(ctx.RaylineARCSessionKeySource)

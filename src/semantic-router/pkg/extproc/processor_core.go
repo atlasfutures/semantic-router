@@ -391,6 +391,9 @@ func (r *OpenAIRouter) processResponseHeaders(
 	if resent == nil {
 		resent = r.thinkingSignatureRetryOnResponseHeaders(v, ctx)
 	}
+	if resent == nil {
+		resent = r.edgeResendOnResponseHeaders(v, ctx)
+	}
 	if resent != nil {
 		stateRaylineARCIdentity(resent, ctx)
 		if err := sendResponse(stream, resent, "response header"); err != nil {

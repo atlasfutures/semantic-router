@@ -456,6 +456,7 @@ func (r *OpenAIRouter) finalizeProviderDispatchResponse(
 	r.stageFlexResend(ctx, dispatch, body)
 	r.stageEndpointResend(ctx, dispatch, body)
 	r.stageThinkingSignatureRetry(ctx, dispatch, body)
+	r.stageEdgeResend(ctx, dispatch, body)
 	r.stageHostRetry(ctx, dispatch, body)
 	r.stageRefusalReserve(ctx, dispatch, body)
 	r.auditRaylineARCUpstream(body, ctx)

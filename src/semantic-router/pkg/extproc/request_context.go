@@ -173,6 +173,11 @@ type RequestContext struct {
 	// ThinkingSignatureRetried says the call in flight is that re-send.
 	ThinkingSignatureRetry   *thinkingSignatureRetryPlan
 	ThinkingSignatureRetried bool
+	// EdgeResend is the edge-503 re-send staged on an OpenRouter dispatch
+	// (edge_503_resend.go), and EdgeResent says the call in flight is that
+	// re-send.
+	EdgeResend *edgeResendPlan
+	EdgeResent bool
 	// streamReceiver is the ext_proc stream's receiver, so a phase that must
 	// read ahead (the guard's re-send) can, and put back what it read.
 	streamReceiver *streamReceiver
