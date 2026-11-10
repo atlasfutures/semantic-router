@@ -78,11 +78,7 @@ opt-in. The core reports facts and never picks or ranks a model.
     title and suggestion prompts, Codex's compaction prompt, Hermes'
     iteration-cap summary request). It advances nothing, and one sent without
     a session header (Pi's summary call, Hermes' summary on Messages) runs
-    statelessly instead of being refused. One on a session branch that has
-    served nothing yet (no `last_served`) is not sent to Decisions, which
-    would refuse it: the core answers that refusal itself, as 502
-    `decision_failed` "Decisions request refused (HTTP 422,
-    projection_refused)" with `x-should-retry: false`.
+    statelessly instead of being refused.
   - `compaction`: a request that rewrites the prefix is compared with the last
     request this branch saw (committed or not). A harness summary literal (Pi,
     Claude Code, Codex) or, without one, a new first user message replacing at

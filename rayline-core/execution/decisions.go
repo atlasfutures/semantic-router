@@ -732,7 +732,7 @@ type DecisionsRefusal struct {
 	// ShouldRetry is x-should-retry when it is exactly "true" or "false".
 	ShouldRetry *bool
 	// RouteID is the well-formed X-Rayline-Route-Id the refusal carried, if
-	// any; a local short-circuit has none.
+	// any.
 	RouteID string
 }
 
@@ -786,19 +786,9 @@ func retryAdvice(header http.Header) (*time.Duration, *bool) {
 	return retryAfter, shouldRetry
 }
 
-// preTaskSidecallRefusal is a local short-circuit of the refusal Decisions
-// gives a side call that arrives before its branch's first task start: with
-// nothing served yet there is no last_served to project an episode from, so
-// the service answers 422 projection_refused. The core answers the same
-// refusal without the lookup, marked final (a retry is refused identically).
-func preTaskSidecallRefusal() *DecisionsRefusal {
-	final := false
-	return &DecisionsRefusal{Status: http.StatusUnprocessableEntity, Code: "projection_refused", ShouldRetry: &final}
-}
-
-// log records one refused lookup: who refused it (the service, or the core's
-// local short-circuit), the status, the contract code and the route id when
-// known. Request material and credentials are never logged.
+// log records one refused lookup: who refused it, the status, the contract
+// code and the route id when known. Request material and credentials are
+// never logged.
 func (refusal *DecisionsRefusal) log(source, routeID string, apiMode string) {
 	known := func(value string) any {
 		if value == "" {
