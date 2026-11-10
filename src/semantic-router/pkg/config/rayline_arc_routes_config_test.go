@@ -201,3 +201,36 @@ func TestRoutesAPIAdmissionQueueWaitDefault(t *testing.T) {
 		})
 	}
 }
+
+// max_encode_tokens is bounded like max_context_tokens, needs the endpoint,
+// and is refused on an artifact cell, which has no held action to answer with.
+func TestRoutesAPIMaxEncodeTokens(t *testing.T) {
+	t.Parallel()
+	for name, testCase := range map[string]struct {
+		cfg   RaylineARCRoutesAPIConfig
+		valid bool
+	}{
+		"zero is off":       {cfg: RaylineARCRoutesAPIConfig{}, valid: true},
+		"set":               {cfg: RaylineARCRoutesAPIConfig{Enabled: true, MaxEncodeTokens: 200000}, valid: true},
+		"at the ceiling":    {cfg: RaylineARCRoutesAPIConfig{Enabled: true, MaxEncodeTokens: maxRaylineARCContextTokens}, valid: true},
+		"above the ceiling": {cfg: RaylineARCRoutesAPIConfig{Enabled: true, MaxEncodeTokens: maxRaylineARCContextTokens + 1}},
+		"negative":          {cfg: RaylineARCRoutesAPIConfig{Enabled: true, MaxEncodeTokens: -1}},
+		"endpoint disabled": {cfg: RaylineARCRoutesAPIConfig{MaxEncodeTokens: 200000}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			err := validateRaylineARCRoutesAPIConfig(testCase.cfg)
+			if testCase.valid && err != nil {
+				t.Fatalf("rejected: %v", err)
+			}
+			if !testCase.valid && err == nil {
+				t.Fatal("accepted, want rejected")
+			}
+		})
+	}
+	decision := validRaylineARCDecision()
+	decision.Algorithm.RaylineARC.RoutesAPI = RaylineARCRoutesAPIConfig{Enabled: true, MaxEncodeTokens: 200000}
+	if err := validateRaylineARCAlgorithmConfig(decision.Algorithm.RaylineARC); err == nil {
+		t.Fatal("an artifact cell accepted max_encode_tokens")
+	}
+}

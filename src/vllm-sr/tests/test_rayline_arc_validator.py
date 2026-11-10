@@ -830,6 +830,27 @@ def test_rayline_arc_cli_mirrors_routes_routing():
         )
 
 
+def test_rayline_arc_cli_mirrors_routes_max_encode_tokens():
+    """routes_api.max_encode_tokens (Go RaylineARCRoutesAPIConfig.MaxEncodeTokens)."""
+    assert RaylineARCRoutesAPIConfig().max_encode_tokens == 0
+    RaylineARCRoutesAPIConfig(enabled=True, max_encode_tokens=1 << 24)
+    for rejected in (
+        {"enabled": True, "max_encode_tokens": -1},
+        {"enabled": True, "max_encode_tokens": (1 << 24) + 1},
+        {"enabled": False, "max_encode_tokens": 200_000},
+    ):
+        with pytest.raises(ValidationError):
+            RaylineARCRoutesAPIConfig(**rejected)
+    arc = _policy_service_decision().algorithm.rayline_arc
+    bounded = {"routes_api": {"enabled": True, "max_encode_tokens": 200_000}}
+    parsed = type(arc).model_validate({**arc.model_dump(), **bounded})
+    assert parsed.routes_api.max_encode_tokens == 200_000
+    # An artifact cell has no held action to answer with.
+    artifact = _valid_decision().algorithm.rayline_arc
+    with pytest.raises(ValidationError):
+        type(artifact).model_validate({**artifact.model_dump(), **bounded})
+
+
 def test_rayline_arc_cli_mirrors_generation_routing():
     """policy_service.generation_routing (Go RaylineARCGenerationRoutingConfig, #305)."""
     policy = _policy_service_decision().algorithm.rayline_arc.policy_service

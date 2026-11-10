@@ -31,6 +31,8 @@ type stubARCSelector struct {
 	sessionAction string
 	// onSelect, when set, runs as the selector is called: the encode.
 	onSelect func()
+	// offerKind, when set, is the offer kind the decision reports.
+	offerKind string
 }
 
 func (s *stubARCSelector) Select(
@@ -56,6 +58,7 @@ func (s *stubARCSelector) Select(
 			SerializedTokens: 11,
 			PolicyActionID:   s.policyAction,
 			SessionAction:    s.sessionAction,
+			OfferKind:        s.offerKind,
 		},
 	}, nil
 }

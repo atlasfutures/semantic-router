@@ -243,6 +243,12 @@ type RequestContext struct {
 	// RaylineRoutesControlsKey names a /v1/routes lookup's routing controls
 	// in its coalescing key; empty on every routed turn.
 	RaylineRoutesControlsKey string
+	// RaylineRouteSurface is a decision-only consult's surface, and
+	// RaylineRoutesEncodeLimit the routes_api.max_encode_tokens that bounds
+	// it (throwaway lookups only). Both enter the coalescing key, so a routed
+	// turn never shares a lookup's decision; empty and zero on a routed turn.
+	RaylineRouteSurface      string
+	RaylineRoutesEncodeLimit int
 	// RaylineGenerationRouting is a generation turn's validated routing
 	// block, removed from the body; nil without one.
 	RaylineGenerationRouting *raylineGenerationRouting

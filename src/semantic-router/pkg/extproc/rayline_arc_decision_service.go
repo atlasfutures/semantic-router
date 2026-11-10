@@ -112,6 +112,7 @@ func (service *raylineARCDecisionService) RouteDecision(
 	)
 	selectionContext.RaylineARC.RouteControls = request.Routing
 	selectionContext.RaylineARC.RoutesLookup = true
+	selectionContext.RaylineARC.RoutesEncodeLimit = requestContext.RaylineRoutesEncodeLimit
 	if failure := selectionContext.RaylineARC.PreparationFailure; failure != "" {
 		// Counted here because this path returns before Select(), whose
 		// failure constructor is where the routed path counts the same
@@ -196,8 +197,12 @@ func (service *raylineARCDecisionService) RouteDecision(
 	decisionFacts.PolicyActionID = trace.PolicyActionID
 	decisionFacts.Checkpoint = trace.ArtifactRevision
 	decisionFacts.ToolsEncoded = routeToolsEncoded(trace.PolicyToolDefinitionsStatus)
+	if trace.OfferKind == raylineRoutesEncodeBypassOfferKind {
+		decisionFacts.Warnings = append(decisionFacts.Warnings, raylineRoutesEncodeBypassWarning)
+	}
 	if raylineARCHoldOfferKind(trace.OfferKind) {
-		// A held turn (capacity or media) encoded nothing.
+		// A held turn (capacity or media, or a lookup over its encode
+		// limit) encoded nothing.
 		notEncoded := false
 		decisionFacts.ToolsEncoded = &notEncoded
 	}
@@ -804,6 +809,14 @@ func (service *raylineARCDecisionService) decisionOnlyRequestContext(
 		VSRContextTokenCount: service.consultContextTokenCount(recipe, &decoded),
 		// The controls live outside the body the key digests.
 		RaylineRoutesControlsKey: raylineRoutesRoutingControlsKey(request.Routing),
+		RaylineRouteSurface:      string(request.Surface),
+	}
+	// Only a throwaway lookup is bounded: it joins no conversation, so its
+	// encode is always a full one. A tracked lookup appends to its retained
+	// session, as a routed turn does.
+	if request.Surface == routerruntime.RouteDecisionSurfaceRoutes && request.Ephemeral &&
+		algorithm.RaylineARC != nil {
+		requestContext.RaylineRoutesEncodeLimit = algorithm.RaylineARC.RoutesAPI.MaxEncodeTokens
 	}
 	requestContext.Routing.SelectRecipe(recipe)
 	return requestContext, nil
