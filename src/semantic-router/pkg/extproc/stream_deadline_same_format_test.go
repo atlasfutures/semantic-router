@@ -194,3 +194,46 @@ func TestASignatureOnlyThinkingBlockIsCounted(t *testing.T) {
 		t.Fatalf("the usage row billed %v for a turn that delivered a signature", fields["completion_tokens"])
 	}
 }
+
+// The same signature, sent in two deltas. The codec's encoders join a split
+// signature in order; the host kept the last fragment, so a long signature
+// whose final fragment was two bytes was stored as those two bytes and
+// counted as them -- one token, which is the snapshot's own number, so the
+// snapshot stood.
+func TestASplitSignatureIsCountedWhole(t *testing.T) {
+	logs := captureLogs(t)
+	router := &OpenAIRouter{}
+	ctx := overrunningStreamContext(t)
+	ctx.SourceFormat = llmprotocol.AnthropicMessagesV1
+	ctx.TargetFormat = llmprotocol.AnthropicMessagesV1
+
+	body := streamDeadlineResponseBody(t, router, ctx, sameFormatMessageStart()+
+		"event: content_block_start\n"+
+		`data: {"type":"content_block_start","index":0,"content_block":`+
+		`{"type":"thinking","thinking":"","signature":""}}`+"\n\n"+
+		"event: content_block_delta\n"+
+		`data: {"type":"content_block_delta","index":0,"delta":`+
+		`{"type":"signature_delta","signature":"ErUBCkYIBRgCIkDaFIRSTFRAGMENTOFTHESIGNATURE"}}`+"\n\n"+
+		"event: content_block_delta\n"+
+		`data: {"type":"content_block_delta","index":0,"delta":`+
+		`{"type":"signature_delta","signature":"Zz"}}`+"\n\n"+
+		"event: content_block_stop\n"+`data: {"type":"content_block_stop","index":0}`+"\n\n")
+
+	if !bytes.Contains(body, []byte("FIRSTFRAGMENTOFTHESIGNATURE")) {
+		t.Fatalf("the first fragment never reached the client, so this case is not being tested:\n%s", body)
+	}
+	if got, want := ctx.SemanticStreamState.items[0].reasoningSig, "ErUBCkYIBRgCIkDaFIRSTFRAGMENTOFTHESIGNATUREZz"; got != want {
+		t.Fatalf("the signature was stored as %q, not joined as %q", got, want)
+	}
+	_, terminal, found := bytes.Cut(body, []byte("event: error"))
+	if !found {
+		t.Fatalf("the turn did not reach a terminal:\n%s", body)
+	}
+	if bytes.Contains(terminal, []byte(`"output_tokens":1,`)) {
+		t.Fatalf("a turn that delivered a split signature was billed as one token:\n%s", terminal)
+	}
+	fields := findLogEvent(t, logs, "llm_usage")
+	if got, _ := fields["completion_tokens"].(int64); got <= 1 {
+		t.Fatalf("the usage row billed %v for a turn that delivered a split signature", fields["completion_tokens"])
+	}
+}

@@ -462,8 +462,12 @@ func (state *semanticResponseStreamState) observe(events []llmprotocol.Event) {
 		case llmprotocol.EventReasoningDelta:
 			item := state.item(event.ItemIndex)
 			item.reasoning += event.Delta
+			// A signature arrives in one delta after the thinking, or split
+			// across several; the fragments join in order, as the codec's
+			// own encoders join them. Kept as the last fragment, a split
+			// signature was stored short and counted short.
 			if event.Content != nil && event.Content.Signature != "" {
-				item.reasoningSig = event.Content.Signature
+				item.reasoningSig += event.Content.Signature
 			}
 		case llmprotocol.EventToolCallDelta:
 			item := state.item(event.ItemIndex)
