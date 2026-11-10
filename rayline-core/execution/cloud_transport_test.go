@@ -398,3 +398,54 @@ func TestModelPinMessagesRefusesDeveloperRowThroughDispatch(t *testing.T) {
 		t.Fatalf("expected one upstream call, got %d", reached)
 	}
 }
+
+// A Messages client's anthropic-beta reaches a cloud Messages deployment: the
+// body is carried member for member, and Anthropic refuses a beta-introduced
+// member (context_management) that arrives without its beta. A client on
+// another wire has no beta to forward.
+func TestCloudMessagesDispatchForwardsTheClientBeta(t *testing.T) {
+	const beta = "context-management-2025-06-27,interleaved-thinking-2025-05-14"
+	for _, client := range []struct {
+		path, body, want string
+	}{
+		{"/v1/messages", `{"model":"arc-1.0","max_tokens":64,"context_management":{"edits":[]},"messages":[{"role":"user","content":"hello"}]}`, beta},
+		{"/v1/chat/completions", `{"model":"arc-1.0","max_tokens":64,"messages":[{"role":"user","content":"hello"}]}`, ""},
+	} {
+		t.Run(client.path, func(t *testing.T) {
+			got := "unset"
+			gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				got = r.Header.Get("Anthropic-Beta")
+				modelPinHeaders(w.Header())
+				w.Header().Set("X-Rayline-Selected-Model", "claude-sonnet-5-5")
+				_, _ = io.WriteString(w, `{"id":"msg_fixture","type":"message","role":"assistant","model":"claude-sonnet-5-5","content":[{"type":"text","text":"ready"}],"stop_reason":"end_turn","stop_sequence":null,"usage":{"input_tokens":30,"output_tokens":1}}`)
+			}))
+			defer gateway.Close()
+			config := modelPinConfig(t, gateway.URL)
+			deployment := &config.Deployments[0]
+			deployment.URL = gateway.URL + "/v1/messages"
+			deployment.Protocol = llmprotocol.AnthropicMessagesV1
+			deployment.WireModel, deployment.RegistryModel = "claude-sonnet-5-5", "anthropic/claude-sonnet-5.5"
+			config.Actions[0].Model = "claude-sonnet-5.5"
+			_, server := executorWithHTTPDecisions(t, config, &decisionCapture{})
+			request, err := http.NewRequest(http.MethodPost, server.URL+client.path, strings.NewReader(client.body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			request.Header.Set("Authorization", "Bearer "+testCoreToken)
+			request.Header.Set("X-Rayline-Session-Id", "beta")
+			request.Header.Set("Anthropic-Beta", beta)
+			response, err := http.DefaultClient.Do(request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			answer, _ := io.ReadAll(response.Body)
+			response.Body.Close()
+			if response.StatusCode != 200 {
+				t.Fatalf("%d %s", response.StatusCode, answer)
+			}
+			if got != client.want {
+				t.Fatalf("upstream anthropic-beta = %q, want %q", got, client.want)
+			}
+		})
+	}
+}

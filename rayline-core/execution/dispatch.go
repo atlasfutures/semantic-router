@@ -168,7 +168,12 @@ func opaqueDeploymentIssuer(deployment Deployment) string {
 	return reasoning.OpaqueIssuer(deployment.ID, deployment.IssuerSHA256, deployment.WireModel, false, "")
 }
 
-func (server *Server) upstream(ctx context.Context, selected admittedAction, decision Decision, session, branch string, body []byte) (*http.Response, error) {
+// upstream sends the prepared request to the selected deployment. clientBeta
+// is the client's anthropic-beta value, set only when the client spoke
+// Messages: a Messages body is carried member for member, so a member a beta
+// introduced (context_management, for one) reaches a cloud Messages
+// deployment, and Anthropic refuses it there unless the beta comes with it.
+func (server *Server) upstream(ctx context.Context, selected admittedAction, decision Decision, session, branch, clientBeta string, body []byte) (*http.Response, error) {
 	deployment := selected.deployment
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, deployment.URL, bytes.NewReader(body))
 	if err != nil {
@@ -183,6 +188,9 @@ func (server *Server) upstream(ctx context.Context, selected admittedAction, dec
 		request.Header.Set("Anthropic-Version", "2023-06-01")
 	}
 	if deployment.Kind == "cloud" {
+		if deployment.Protocol == llmprotocol.AnthropicMessagesV1 && clientBeta != "" {
+			request.Header.Set("Anthropic-Beta", clientBeta)
+		}
 		if cloudTransport(deployment) == cloudModelPin {
 			request.Header.Set("X-Workshop-Required-Model", deployment.WireModel)
 		} else {
