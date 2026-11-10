@@ -168,7 +168,34 @@ func opaqueDeploymentIssuer(deployment Deployment) string {
 	return reasoning.OpaqueIssuer(deployment.ID, deployment.IssuerSHA256, deployment.WireModel, false, "")
 }
 
-func (server *Server) upstream(ctx context.Context, selected admittedAction, decision Decision, session, branch string, body []byte) (*http.Response, error) {
+// serverSideFallbackBetaPrefix names Anthropic's server-side fallback betas.
+// The decision names every model that serves a turn, so a client cannot turn
+// on the provider's own fallback to another model through the core.
+const serverSideFallbackBetaPrefix = "server-side-fallback-"
+
+// clientAnthropicBeta is the client's anthropic-beta set as one value: every
+// header line joined, since a client may send one beta per line, and the
+// server-side fallback betas removed.
+func clientAnthropicBeta(header http.Header) string {
+	kept := []string{}
+	for _, line := range header.Values("Anthropic-Beta") {
+		for _, beta := range strings.Split(line, ",") {
+			beta = strings.TrimSpace(beta)
+			if beta == "" || strings.HasPrefix(strings.ToLower(beta), serverSideFallbackBetaPrefix) {
+				continue
+			}
+			kept = append(kept, beta)
+		}
+	}
+	return strings.Join(kept, ",")
+}
+
+// upstream sends the prepared request to the selected deployment. clientBeta
+// is the client's anthropic-beta value, set only when the client spoke
+// Messages: a Messages body is carried member for member, so a member a beta
+// introduced (context_management, for one) reaches a cloud Messages
+// deployment, and Anthropic refuses it there unless the beta comes with it.
+func (server *Server) upstream(ctx context.Context, selected admittedAction, decision Decision, session, branch, clientBeta string, body []byte) (*http.Response, error) {
 	deployment := selected.deployment
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, deployment.URL, bytes.NewReader(body))
 	if err != nil {
@@ -183,6 +210,9 @@ func (server *Server) upstream(ctx context.Context, selected admittedAction, dec
 		request.Header.Set("Anthropic-Version", "2023-06-01")
 	}
 	if deployment.Kind == "cloud" {
+		if deployment.Protocol == llmprotocol.AnthropicMessagesV1 && clientBeta != "" {
+			request.Header.Set("Anthropic-Beta", clientBeta)
+		}
 		if cloudTransport(deployment) == cloudModelPin {
 			request.Header.Set("X-Workshop-Required-Model", deployment.WireModel)
 		} else {

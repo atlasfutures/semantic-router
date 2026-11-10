@@ -437,7 +437,11 @@ func (server *Server) execute(writer http.ResponseWriter, incoming *http.Request
 				"deployment", selected.deployment.ID, "deployment_kind", selected.deployment.Kind,
 				"wire_model", selected.deployment.WireModel, "stated", clamped.From, "sent", clamped.To)
 		}
-		upstream, err = server.upstream(ctx, selected, decision, session, branch, prepared.body)
+		clientBeta := ""
+		if format == llmprotocol.AnthropicMessagesV1 {
+			clientBeta = clientAnthropicBeta(incoming.Header)
+		}
+		upstream, err = server.upstream(ctx, selected, decision, session, branch, clientBeta, prepared.body)
 		if err != nil {
 			server.writeError(writer, format, http.StatusBadGateway, "upstream_unavailable", "selected endpoint request failed")
 			return
