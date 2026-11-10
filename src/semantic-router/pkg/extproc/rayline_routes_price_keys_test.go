@@ -5,7 +5,6 @@ package extproc
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -14,7 +13,6 @@ import (
 	"time"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/routerruntime"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
@@ -85,10 +83,7 @@ func checkRemappedArmKeyedByItsOwnID(t *testing.T, scorer *policyServiceScorer) 
 		"deepseek/deepseek-v4.1-flash-1017": callerRate(0.2, 0.8),
 		"anthropic/claude-opus-5":           callerRate(5, 25),
 	})
-	sent, conflicts := routeServicePrices(scorer, caller)
-	if len(conflicts) != 0 {
-		t.Fatalf("conflicts = %v", conflicts)
-	}
+	sent := routeServicePrices(scorer, caller)
 	if got := rateKeys(sent); !slices.Equal(got, []string{"anthropic/claude-opus-5", "deepseek/deepseek-v4.1-flash"}) {
 		t.Fatalf("sent keys = %v, want the arm's own id for the remapped worker", got)
 	}
@@ -133,8 +128,8 @@ func TestRouteServicePricesLeaveAnUnremappedWorldAsSent(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			caller := callerWorld(tc.rates)
-			if sent, conflicts := routeServicePrices(tc.scorer, caller); sent != caller || len(conflicts) != 0 {
-				t.Fatalf("sent %+v conflicts %v, want the caller's world itself", sent, conflicts)
+			if sent := routeServicePrices(tc.scorer, caller); sent != caller {
+				t.Fatalf("sent %+v, want the caller's world itself", sent)
 			}
 		})
 	}
@@ -150,43 +145,41 @@ func TestRouteServicePricesKeepABoundToWorkersOwnKey(t *testing.T) {
 			"glm-up": {arm: 0, dispatchArm: 1, model: "glm-5"}, "opus-max": {arm: 1, dispatchArm: 1, model: "claude-opus-5"},
 		},
 	}
-	sent, conflicts := routeServicePrices(scorer, callerWorld(map[string]raylinearc.PolicyRoutingRate{"anthropic/claude-opus-5": callerRate(5, 25)}))
-	if len(conflicts) != 0 || !slices.Equal(rateKeys(sent), []string{"anthropic/claude-opus-5", "z-ai/glm-5"}) ||
+	sent := routeServicePrices(scorer, callerWorld(map[string]raylinearc.PolicyRoutingRate{"anthropic/claude-opus-5": callerRate(5, 25)}))
+	if !slices.Equal(rateKeys(sent), []string{"anthropic/claude-opus-5", "z-ai/glm-5"}) ||
 		routeRateLegs(sent.Rates["z-ai/glm-5"]) != routeRateLegs(sent.Rates["anthropic/claude-opus-5"]) {
-		t.Fatalf("sent %v conflicts %v", sent, conflicts)
+		t.Fatalf("sent %v", sent)
 	}
 }
 
-// A world that would price one service key two ways is refused, naming the
-// caller's own keys; priced alike it has one meaning and is sent.
-func TestRouteServicePricesRefuseAConflictingWorld(t *testing.T) {
+// Both ids priced is never refused: the dispatched id's price, what the call
+// is billed at, wins for every arm dispatched to it, whether the two are
+// priced unlike or alike; the package id alone is read as before.
+func TestRouteServicePricesPreferTheDispatchedID(t *testing.T) {
 	served, own := "deepseek/deepseek-v4.1-flash-1017", "deepseek/deepseek-v4.1-flash"
-	t.Run("both ids priced unlike", func(t *testing.T) {
-		_, conflicts := routeServicePrices(remapScorer(), callerWorld(map[string]raylinearc.PolicyRoutingRate{
-			served: callerRate(0.2, 0.8), own: callerRate(0.3, 1.2),
-		}))
-		if !slices.Equal(conflicts, []string{own, served}) {
-			t.Fatalf("conflicts = %v", conflicts)
-		}
-	})
-	t.Run("both ids priced alike", func(t *testing.T) {
-		sent, conflicts := routeServicePrices(remapScorer(), callerWorld(map[string]raylinearc.PolicyRoutingRate{
-			served: callerRate(0.2, 0.8), own: callerRate(0.2, 0.8),
-		}))
-		if len(conflicts) != 0 || !slices.Equal(rateKeys(sent), []string{own}) {
-			t.Fatalf("sent %v conflicts %v", sent, conflicts)
-		}
-	})
-	t.Run("an unremapped arm on the same id left unpriced", func(t *testing.T) {
-		scorer := remapScorer()
-		scorer.workers = append(scorer.workers, raylinearc.WorkerManifest{ID: "flash-twin", Model: own})
-		scorer.actionOrder = append(scorer.actionOrder, "twin-up")
-		scorer.bindings["twin-up"] = policyBinding{arm: 3, dispatchArm: 3, model: "deepseek-v4.1-flash-0910"}
-		_, conflicts := routeServicePrices(scorer, callerWorld(map[string]raylinearc.PolicyRoutingRate{served: callerRate(0.2, 0.8)}))
-		if !slices.Equal(conflicts, []string{served}) {
-			t.Fatalf("conflicts = %v", conflicts)
-		}
-	})
+	for name, ownRate := range map[string]raylinearc.PolicyRoutingRate{
+		"priced unlike": callerRate(0.3, 1.2), "priced alike": callerRate(0.2, 0.8),
+	} {
+		t.Run(name, func(t *testing.T) {
+			sent := routeServicePrices(remapScorer(), callerWorld(map[string]raylinearc.PolicyRoutingRate{
+				served: callerRate(0.2, 0.8), own: ownRate, "anthropic/claude-opus-5": callerRate(5, 25),
+			}))
+			if !slices.Equal(rateKeys(sent), []string{"anthropic/claude-opus-5", own}) ||
+				routeRateLegs(sent.Rates[own]) != [4]float64{0.2, 0, 0.2, 0.8} {
+				t.Fatalf("sent %v, want %s at %s's price", sent.Rates, own, served)
+			}
+		})
+	}
+	// An unremapped arm on the package id: the dispatched id's price still
+	// wins, and nothing is refused.
+	scorer := remapScorer()
+	scorer.workers = append(scorer.workers, raylinearc.WorkerManifest{ID: "flash-twin", Model: own})
+	scorer.actionOrder = append(scorer.actionOrder, "twin-up")
+	scorer.bindings["twin-up"] = policyBinding{arm: 3, dispatchArm: 3, model: "deepseek-v4.1-flash-0910"}
+	sent := routeServicePrices(scorer, callerWorld(map[string]raylinearc.PolicyRoutingRate{served: callerRate(0.2, 0.8), own: callerRate(0.3, 1.2)}))
+	if !slices.Equal(rateKeys(sent), []string{own}) || routeRateLegs(sent.Rates[own]) != [4]float64{0.2, 0, 0.2, 0.8} {
+		t.Fatalf("sent %v", sent.Rates)
+	}
 }
 
 // routing.exclusive keeps a remapped action whose served worker the caller
@@ -219,9 +212,9 @@ func TestRouteControlsOnARemappedArmKeepItAndCheckTheSentWorld(t *testing.T) {
 	}
 }
 
-// Through the selector: the decide request carries the translated world, and
-// a conflicting one is refused as the caller's 400 caller_prices_inconsistent
-// naming its keys, before the service is asked.
+// Through the selector: the decide request carries the translated world, the
+// dispatched id winning when the caller prices both ids, and the service is
+// asked with it.
 func TestRouteLookupSendsRemappedPricesUnderTheArmsID(t *testing.T) {
 	remapped := func(t *testing.T) (*policySelectorFixture, []string) {
 		fixture := routesFixture(t)
@@ -261,25 +254,16 @@ func TestRouteLookupSendsRemappedPricesUnderTheArmsID(t *testing.T) {
 			t.Fatalf("rates sent = %v, want %s priced at %s's legs beside it", rates, models[0], models[1])
 		}
 	})
-	t.Run("conflict", func(t *testing.T) {
+	t.Run("both ids priced unlike", func(t *testing.T) {
 		fixture, models := remapped(t)
 		_, controls := routesControlsFor(t, fixture, `{"prices":{"`+models[1]+
 			`":{"input":1,"cache_read":0.1,"cache_write":1.25,"output":5},"`+models[0]+`":{"input":2,"cache_read":0.2,"cache_write":2.5,"output":10}}}`)
-		_, err := selectWithControls(t, fixture, controls)
-		mapped := selectionFailureError(err)
-		if !errors.Is(mapped, routerruntime.ErrRouteDecisionInvalidBody) || !errors.Is(mapped, errRaylineRoutesCallerPricesInconsistent) {
-			t.Fatalf("err = %v", mapped)
+		if _, err := selectWithControls(t, fixture, controls); err != nil {
+			t.Fatalf("select: %v", err)
 		}
-		if len(fixture.fake.receivedBodies()) != 0 {
-			t.Fatal("a conflicting world was sent to the service")
-		}
-		response := routesRouter(true).raylineRoutesFailure(nil, t.Context(), "rte_1234abcd", mapped)
-		if status, _, code := routesErrorCode(t, response); status != 400 || code != "caller_prices_inconsistent" {
-			t.Fatalf("answered %d %s", status, code)
-		}
-		body := string(response.GetImmediateResponse().Body)
-		if !strings.Contains(body, models[0]) || !strings.Contains(body, models[1]) {
-			t.Fatalf("the refusal does not name the caller's keys: %s", body)
+		rates := decodeJSONObject(t, fixture.fake.receivedBodies()[0])["routing_prices"].(map[string]any)["rates"].(map[string]any)
+		if got := rates[models[0]].(map[string]any)["input"]; got != 1.0 {
+			t.Fatalf("rates sent = %v, want %s at the dispatched %s's price", rates, models[0], models[1])
 		}
 	})
 }

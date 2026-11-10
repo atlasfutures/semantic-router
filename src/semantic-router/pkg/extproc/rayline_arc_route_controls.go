@@ -79,20 +79,21 @@ func routeExclusiveOffer(scorer *policyServiceScorer, available []string, priced
 // action bound to a from-worker is sent on the to-worker, yet its arm still
 // reads the from-worker's id; so does an action bound to the to-worker itself
 // when it serves the same package model (a twin checkpoint standing in for
-// the from-worker). Each arm's rate therefore goes out under its service id,
-// at the legs the caller gave the worker it is served on, and a served id no
-// arm reads is not sent. A caller key no action is served on goes out as
-// sent. Without an action whose two ids differ and whose served id the caller
+// the from-worker). Each such arm's rate therefore goes out under its service
+// id, at the legs the caller gave the worker it is dispatched to, and a
+// dispatched id no arm reads is not sent. Every other key goes out as sent.
+// Without an action whose two ids differ and whose dispatched id the caller
 // priced, prices itself is returned.
 //
-// conflicts are the caller's keys that would price one service id two ways
-// (both ids of a remapped arm priced unlike, or arms reading one id served on
-// differently priced workers), or price an arm by a worker it is not served
-// on. Such a world has no single meaning, so the lookup is refused as
-// caller_prices_inconsistent rather than one key silently winning.
-func routeServicePrices(scorer *policyServiceScorer, prices *raylinearc.PolicyRoutingPrices) (*raylinearc.PolicyRoutingPrices, []string) {
+// Precedence, never a refusal: when the caller prices both the dispatched id
+// and the package model's own id, the dispatched id's price wins, since the
+// call is billed at the model it is sent to. A caller pricing only the
+// package model's id is read as before. Between two dispatched workers whose
+// arms read one service id (two from-workers of one model, different ids,
+// onto one to-worker), the first bound action's wins.
+func routeServicePrices(scorer *policyServiceScorer, prices *raylinearc.PolicyRoutingPrices) *raylinearc.PolicyRoutingPrices {
 	if scorer == nil || prices == nil {
-		return prices, nil
+		return prices
 	}
 	arms := routeServicePriceArms(scorer)
 	translated := false
@@ -102,63 +103,37 @@ func routeServicePrices(scorer *policyServiceScorer, prices *raylinearc.PolicyRo
 		}
 	}
 	if !translated {
-		return prices, nil
+		return prices
 	}
 	rates := make(map[string]raylinearc.PolicyRoutingRate, len(prices.Rates))
-	sources := map[string]map[string]bool{}
-	conflicting := map[string]bool{}
-	put := func(key, source string, rate raylinearc.PolicyRoutingRate) {
-		if sources[key] == nil {
-			sources[key] = map[string]bool{}
+	put := func(key string, rate raylinearc.PolicyRoutingRate) {
+		if _, set := rates[key]; !set {
+			rates[key] = rate
 		}
-		sources[key][source] = true
-		if have, ok := rates[key]; ok && routeRateLegs(have) != routeRateLegs(rate) {
-			conflicting[key] = true
-			return
-		}
-		rates[key] = rate
 	}
-	servedOn := map[string]bool{}
+	dispatched := map[string]bool{}
 	for _, arm := range arms {
-		servedOn[arm.served] = true
-		if rate, priced := prices.Rates[arm.served]; priced {
-			put(arm.service, arm.served, rate)
+		if rate, priced := prices.Rates[arm.served]; priced && arm.service != arm.served {
+			dispatched[arm.served] = true
+			put(arm.service, rate)
+		}
+	}
+	// An arm read on the id it is sent on keeps that id, as does any key no
+	// remapped arm is dispatched to.
+	readOwn := map[string]bool{}
+	for _, arm := range arms {
+		if arm.service == arm.served {
+			readOwn[arm.served] = true
 		}
 	}
 	for key, rate := range prices.Rates {
-		if !servedOn[key] {
-			put(key, key, rate)
+		if !dispatched[key] || readOwn[key] {
+			put(key, rate)
 		}
-	}
-	// An arm whose served worker the caller left unpriced must not read a
-	// rate the caller gave another worker.
-	for _, arm := range arms {
-		if _, priced := prices.Rates[arm.served]; priced {
-			continue
-		}
-		for source := range sources[arm.service] {
-			if source != arm.service {
-				conflicting[arm.service] = true
-			}
-		}
-	}
-	if len(conflicting) > 0 {
-		names := map[string]bool{}
-		for key := range conflicting {
-			for source := range sources[key] {
-				names[source] = true
-			}
-		}
-		conflicts := make([]string, 0, len(names))
-		for name := range names {
-			conflicts = append(conflicts, name)
-		}
-		slices.Sort(conflicts)
-		return nil, conflicts
 	}
 	sent := *prices
 	sent.Rates = rates
-	return &sent, nil
+	return &sent
 }
 
 // routeServicePriceArm is one bound action's two price ids: the provider id
@@ -169,7 +144,10 @@ type routeServicePriceArm struct{ served, service string }
 // routeServicePriceArms resolves each bound action's ids. An action's arm
 // reads its bound worker's id, except on a dispatch_model_overrides
 // to-worker: an action bound there whose package model is a from-worker's
-// reads that from-worker's id, the one the package binds the model to. Two
+// reads that from-worker's id, the one the package binds the model to. The
+// cell does not see the package's model ids, so this takes the from-worker
+// to be the package model's own worker and the to-worker its stand-in, as a
+// dispatch-only remap is meant to be configured. Two
 // from-workers of one model with different ids onto one to-worker leave the
 // to-worker's own actions on its own id.
 func routeServicePriceArms(scorer *policyServiceScorer) []routeServicePriceArm {
@@ -256,10 +234,7 @@ func applyRouteControls(request *raylinearc.PolicyDecisionRequest, scorer *polic
 		request.Selection.Exploration = &member
 	}
 	if controls.Prices != nil {
-		// A conflicting world was refused before the request was built.
-		if sent, conflicts := routeServicePrices(scorer, controls.Prices); len(conflicts) == 0 {
-			request.RoutingPrices = sent
-		}
+		request.RoutingPrices = routeServicePrices(scorer, controls.Prices)
 	}
 }
 
@@ -285,8 +260,8 @@ func recordRouteControls(
 		trace.RoutePredictionsApplied = true
 	}
 	if controls.Prices != nil {
-		sent, conflicts := routeServicePrices(scorer, controls.Prices)
-		if len(conflicts) > 0 || !routeCallerPricesApplied(controls, routeServicePriceSHA256(controls, sent), response.RoutingPricesUsed) {
+		sent := routeServicePrices(scorer, controls.Prices)
+		if !routeCallerPricesApplied(controls, routeServicePriceSHA256(controls, sent), response.RoutingPricesUsed) {
 			return arcFailureRoutesPricesNotApplied
 		}
 	}
