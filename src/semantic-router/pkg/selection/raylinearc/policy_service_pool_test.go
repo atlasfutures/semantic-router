@@ -171,6 +171,30 @@ func TestPolicyPoolRemapsOnceOnAConfiguredStatus(t *testing.T) {
 	}
 }
 
+// A turn asked once more on the replica it is bound to (an episode start
+// retried after a 503) that answers clears the cooldown its first failure
+// set, so the next turn is routed to it rather than refused.
+func TestPolicyPoolAnAnsweringReplicaLeavesItsCooldown(t *testing.T) {
+	pool, fakes := testPolicyPool(t, []EncoderReplicaState{EncoderReplicaActive}, time.Second)
+	episode := episodeHash("1")
+	request := PolicyDecisionRequest{SchemaVersion: PolicyDecisionRequestSchema, EpisodeIDHash: episode, Package: fixturePackage(t)}
+	binding := pool.Bind(episode, EncoderAffinity{})
+	fakes[0].status.Store(http.StatusServiceUnavailable)
+	if _, err := binding.Decide(context.Background(), request); err == nil {
+		t.Fatal("a 503 decided")
+	}
+	fakes[0].status.Store(0)
+	if _, err := binding.Decide(context.Background(), request); err != nil {
+		t.Fatalf("retry on the bound replica: %v", err)
+	}
+	if _, err := decideOnce(t, pool, episode, EncoderAffinity{Owner: "a-replica"}); err != nil {
+		t.Fatalf("next turn after a recovered retry: %v", err)
+	}
+	if calls := fakes[0].calls.Load(); calls != 3 {
+		t.Fatalf("calls = %d, want 3", calls)
+	}
+}
+
 // Both replicas unavailable: one remap, then the failure stands.
 func TestPolicyPoolRemapsAtMostOnce(t *testing.T) {
 	pool, fakes := testPolicyPool(t, []EncoderReplicaState{EncoderReplicaActive, EncoderReplicaActive}, time.Second)

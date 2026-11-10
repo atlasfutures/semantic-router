@@ -291,7 +291,14 @@ func (binding *PolicyServiceBinding) Decide(
 	}
 	response, err := binding.current.Client.Decide(ctx, request)
 	stale := err == nil && staleOwner(request, response)
-	if !stale && (err == nil || !pool.explicitlyUnavailable(err)) {
+	if err == nil && !stale {
+		// A replica that answers is available again: a turn asked once more
+		// on the replica it is bound to (an episode start retried after a
+		// 503) clears the cooldown its first failure set.
+		pool.clearUnavailable(binding.current.ID)
+		return response, err
+	}
+	if !stale && !pool.explicitlyUnavailable(err) {
 		return response, err
 	}
 	pool.markUnavailable(binding.current.ID)
@@ -420,6 +427,12 @@ func (pool *PolicyServicePool) markUnavailable(replicaID string) {
 	pool.unavailableMu.Lock()
 	defer pool.unavailableMu.Unlock()
 	pool.unavailableTil[replicaID] = pool.now().UTC().Add(pool.config.UnavailableCooldown)
+}
+
+func (pool *PolicyServicePool) clearUnavailable(replicaID string) {
+	pool.unavailableMu.Lock()
+	defer pool.unavailableMu.Unlock()
+	delete(pool.unavailableTil, replicaID)
 }
 
 func (pool *PolicyServicePool) unavailable(replicaID string, now time.Time) bool {
