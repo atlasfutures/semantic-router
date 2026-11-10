@@ -28,6 +28,13 @@ func (c *RouterConfig) IdleSecForModel(modelName string) int {
 	return c.ResponseStreamIdleSec
 }
 
+// Transient503ResendEnabled reports whether a non-JSON 503 at the response
+// headers is re-sent once: response_stream.transient_503_resend, on unless
+// set to false.
+func (c *RouterConfig) Transient503ResendEnabled() bool {
+	return c != nil && (c.ResponseStreamTransient503Resend == nil || *c.ResponseStreamTransient503Resend)
+}
+
 // HostRetryForModel reports whether a stalled streamed turn on the arm is
 // re-sent on its next provider host: the arm's own host_retry when it sets
 // one, else the global response_stream.host_retry.

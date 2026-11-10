@@ -263,8 +263,11 @@ type RouterOptions struct {
 	// ResponseStreamSingleHostResend lets host retry re-send once on the
 	// same host when the pin names only one; see
 	// CanonicalResponseStream.SingleHostResend.
-	ResponseStreamSingleHostResend bool                 `yaml:"response_stream_single_host_resend,omitempty"`
-	SkipProcessing                 SkipProcessingConfig `yaml:"skip_processing,omitempty"`
+	ResponseStreamSingleHostResend bool `yaml:"response_stream_single_host_resend,omitempty"`
+	// ResponseStreamTransient503Resend re-sends a non-JSON 503 once; see
+	// CanonicalResponseStream.Transient503Resend. Nil means on.
+	ResponseStreamTransient503Resend *bool                `yaml:"response_stream_transient_503_resend,omitempty"`
+	SkipProcessing                   SkipProcessingConfig `yaml:"skip_processing,omitempty"`
 	// ThinkingMarkerMint signs thinking a non-Anthropic upstream wrote with a
 	// Router thinking marker on Messages output (semantic-router #191).
 	ThinkingMarkerMint bool `yaml:"thinking_marker_mint,omitempty"`

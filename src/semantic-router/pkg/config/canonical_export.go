@@ -317,6 +317,7 @@ func CanonicalGlobalFromRouterConfig(cfg *RouterConfig) *CanonicalGlobal {
 				HostRetry:          cfg.ResponseStreamHostRetry,
 				HostRetryBudgetSec: cfg.ResponseStreamHostRetryBudgetSec,
 				SingleHostResend:   cfg.ResponseStreamSingleHostResend,
+				Transient503Resend: cfg.ResponseStreamTransient503Resend,
 			},
 			SkipProcessing: cfg.SkipProcessing,
 			ModelSelection: cfg.ModelSelection,

@@ -2313,6 +2313,13 @@ global:
       # 2 s (the error's own delay when one is reported, at most 10 s).
       # Applies only where host retry is on for the arm. Off by default.
       single_host_resend: false
+      # Re-send an OpenRouter call once, unchanged, when its response headers
+      # state a 503 whose content type is not JSON (a transient refusal at
+      # the upstream's edge, not a provider's error), after a jittered
+      # 250-500 ms wait and within resend_budget_sec. A JSON 503 and any other
+      # status are never re-sent this way, nor is a turn with a flex or
+      # endpoint re-send. On by default.
+      transient_503_resend: true
       # How long a discount endpoint's standard re-send (standard_twin) may
       # take. It must stay below the ext_proc message_timeout, which bounds
       # how long Envoy waits for the re-send's answer. 0 selects 55 s (below

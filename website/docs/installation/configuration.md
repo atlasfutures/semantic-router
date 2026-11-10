@@ -434,6 +434,14 @@ global:
   re-send waits 2 s first (the error's own delay when one is reported, at most
   10 s); its first-content limit starts when it dials. It applies only where
   host retry is on for the model. Off by default.
+- `transient_503_resend: false` turns off the one re-send of an OpenRouter
+  call whose response headers state a 503 with a content type that is not JSON
+  (absent, or neither `application/json` nor a `+json` type): a transient
+  refusal at the upstream's edge rather than a provider's error. The Router waits a jittered
+  250-500 ms, sends the dispatched body again unchanged to the same endpoint
+  with the same model and credential, and answers the client with that call's
+  outcome, within `resend_budget_sec`. A JSON 503, any other status, and a turn
+  with a flex or endpoint re-send are never re-sent this way. On by default.
 - A model may set `providers.models[].host_retry` to turn the re-send on or
   off for itself; absent, the global flag applies. Host retry targets a
   provider that stalls before any content. It does not help a model whose

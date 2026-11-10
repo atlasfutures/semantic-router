@@ -179,6 +179,12 @@ type llmUsageRecord struct {
 	// signature_attempt on the refused call, stripped_resend on the re-send.
 	// Null on every other call.
 	ThinkingSignatureRetry *string `json:"thinking_signature_retry"`
+	// TransientResend marks the two calls of a turn whose call was refused
+	// with a non-JSON 503 at the response headers and re-sent once
+	// unchanged (transient_503_resend.go): transient_503_attempt on the
+	// refused call, transient_503_resend on the re-send, whose outcome the
+	// client got. Null on every other call.
+	TransientResend *string `json:"transient_resend"`
 	// HostRetry marks the calls of a streamed turn re-sent on its arm's next
 	// provider host after a call failed before any content
 	// (stream_host_retry.go): host_attempt on each call the cell went on
@@ -346,7 +352,7 @@ func (r *OpenAIRouter) newLLMUsageRecord(ctx *RequestContext, usage responseUsag
 	// synthetic headers, so its "first byte" is not one: no TTFT is stated.
 	// A thinking-signature re-send is read whole the same way.
 	resent := (ctx.FlexResend != nil && ctx.FlexResend.served()) || len(ctx.RaylineARCEndpointsTried) > 1 ||
-		ctx.ThinkingSignatureRetried
+		ctx.ThinkingSignatureRetried || ctx.TransientResent
 	if ctx.TTFTRecorded && !resent {
 		ttft := int64(ctx.TTFTSeconds * 1000)
 		record.TTFTMS = &ttft
@@ -394,6 +400,10 @@ func (r *OpenAIRouter) newLLMUsageRecord(ctx *RequestContext, usage responseUsag
 	if ctx.ThinkingSignatureRetried {
 		// The refused call's line overwrites this with signature_attempt.
 		record.ThinkingSignatureRetry = nonEmpty(thinkingRetryResend)
+	}
+	if ctx.TransientResent {
+		// The refused call's line overwrites this with transient_503_attempt.
+		record.TransientResend = nonEmpty(transientResendServed)
 	}
 	record.ProviderEndpoint = nonEmpty(ctx.RaylineARCDispatchedEndpoint)
 	record.SessionKeySource = nonEmpty(ctx.RaylineARCSessionKeySource)

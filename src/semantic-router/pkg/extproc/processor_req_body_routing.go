@@ -455,6 +455,7 @@ func (r *OpenAIRouter) finalizeProviderDispatchResponse(
 	ctx.DispatchedServiceTier = dispatchedServiceTier(body)
 	r.stageFlexResend(ctx, dispatch, body)
 	r.stageEndpointResend(ctx, dispatch, body)
+	r.stageTransientResend(ctx, dispatch, body)
 	r.stageThinkingSignatureRetry(ctx, dispatch, body)
 	r.stageHostRetry(ctx, dispatch, body)
 	r.stageRefusalReserve(ctx, dispatch, body)

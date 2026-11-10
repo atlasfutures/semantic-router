@@ -180,6 +180,11 @@ type RequestContext struct {
 	// context recovery answered. The recovered body is re-encoded for the
 	// client, which drops it, so the usage report reads it from here.
 	ContextRecoveryProviderCost *llmprotocol.ProviderCost
+	// TransientResend is the one re-send of a non-JSON 503 staged on a
+	// dispatch (transient_503_resend.go), and TransientResent says the call
+	// in flight is that re-send.
+	TransientResend *transientResendPlan
+	TransientResent bool
 	// FlexResend is the standard re-send staged for a discount-endpoint
 	// dispatch (flex_resend.go); nil for every arm without a standard twin.
 	FlexResend *flexResendPlan

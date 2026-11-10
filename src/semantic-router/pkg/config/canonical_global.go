@@ -135,6 +135,13 @@ type CanonicalResponseStream struct {
 	// and its first-content limit starts when it dials. It applies only where
 	// host retry is on for the arm. Off by default.
 	SingleHostResend bool `yaml:"single_host_resend,omitempty"`
+	// Transient503Resend re-sends an OpenRouter call once, unchanged, when
+	// its response headers state a 503 whose content type is not JSON: a
+	// transient refusal at the upstream's edge, not a provider's error. It
+	// waits a jittered 250-500 ms first and runs within resend_budget_sec. A
+	// JSON 503, any other status, and a turn with a flex or endpoint re-send
+	// are never re-sent this way. On unless set to false.
+	Transient503Resend *bool `yaml:"transient_503_resend,omitempty"`
 }
 
 // CanonicalServiceGlobal groups shared runtime services exposed by the router.
@@ -432,6 +439,7 @@ func applyCanonicalRouterGlobal(cfg *RouterConfig, router CanonicalRouterGlobal)
 	cfg.ResponseStreamHostRetry = router.ResponseStream.HostRetry
 	cfg.ResponseStreamHostRetryBudgetSec = router.ResponseStream.HostRetryBudgetSec
 	cfg.ResponseStreamSingleHostResend = router.ResponseStream.SingleHostResend
+	cfg.ResponseStreamTransient503Resend = router.ResponseStream.Transient503Resend
 	cfg.ThinkingMarkerMint = router.ThinkingMarkers.Mint
 	cfg.KeepUnservedClaudeThinking = router.ThinkingSignatures.KeepUnserved
 	cfg.SkipProcessing = router.SkipProcessing

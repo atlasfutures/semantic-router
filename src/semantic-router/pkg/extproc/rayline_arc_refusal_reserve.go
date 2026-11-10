@@ -575,6 +575,7 @@ func (snapshot reserveSnapshot) restore(ctx *RequestContext, reselect *raylineAR
 	ctx.DispatchedProviderOrder, ctx.DispatchedProviderPrivacy = snapshot.providerOrder, snapshot.providerPrivacy
 	ctx.RateLimitCtx = snapshot.rateLimit
 	ctx.FlexResend, ctx.RaylineARCEndpointResend, ctx.ThinkingSignatureRetry = nil, nil, nil
+	ctx.TransientResend = nil
 	if transaction := ctx.RaylineARCTransaction; transaction != nil {
 		transaction.state = snapshot.transactionState
 		transaction.thinkingLedger, transaction.controlPlacement = snapshot.thinkingLedger, snapshot.controlPlacement
@@ -772,6 +773,7 @@ func (r *OpenAIRouter) rebuildDispatchForReserve(
 	response, err = r.completeProviderDispatch(ctx.SemanticRequest, dispatch, response, ctx)
 	staged := ctx.HostRetry
 	ctx.FlexResend, ctx.RaylineARCEndpointResend, ctx.ThinkingSignatureRetry = nil, nil, nil
+	ctx.TransientResend = nil
 	if err != nil || response == nil {
 		return nil, nil, nil, "complete_failed"
 	}
