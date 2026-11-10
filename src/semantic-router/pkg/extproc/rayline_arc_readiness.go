@@ -482,6 +482,18 @@ func createRaylineARCEpisodeStore(
 			})
 			return unreadyRaylineARCEpisodeStore{store}, closeStore, nil
 		}
+		// A strict Redis cell keeps its client too. Its turns fail closed
+		// (episode_store) while the store is down, exactly as a cell armed
+		// before the outage does, and serve again once it answers. Disarming
+		// here instead left an instance that booted during a Redis blip
+		// answering 503 for its whole life, which the TCP startup probe never
+		// replaced.
+		if redisStore, ok := store.(*raylinearc.RedisEpisodeStore); ok {
+			logging.ComponentWarnEvent("extproc", "rayline_arc_strict_store_unready", map[string]interface{}{
+				"backend": episodeConfig.Backend,
+			})
+			return unreadyStrictRaylineARCEpisodeStore{redisStore}, closeStore, nil
+		}
 		if closeStore != nil {
 			_ = closeStore()
 		}
@@ -537,14 +549,30 @@ func (store unreadyRaylineARCEpisodeStore) Ready(ctx context.Context) error {
 	return store.EpisodeStore.(raylinearc.EpisodeStoreReadiness).Ready(ctx)
 }
 
+// unreadyStrictRaylineARCEpisodeStore is a strict cell's Redis store that did
+// not answer at startup. Embedding the concrete store keeps every capability
+// a strict turn asserts (lease renewal, staging, forks, served models); the
+// type only tells the readiness gauge to start at not ready. A strict turn's
+// lease attempt then reports the store's readiness.
+type unreadyStrictRaylineARCEpisodeStore struct {
+	*raylinearc.RedisEpisodeStore
+}
+
+// UnwrapEpisodeStore lets the lookup admission gate reach the Redis client
+// beneath the wrapper.
+func (store unreadyStrictRaylineARCEpisodeStore) UnwrapEpisodeStore() raylinearc.EpisodeStore {
+	return store.RedisEpisodeStore
+}
+
 // raylineARCEpisodeStoreReady is the readiness the gauge reports for a store
 // at wiring time.
 func raylineARCEpisodeStoreReady(store raylinearc.EpisodeStore) bool {
-	if store == nil {
+	switch store.(type) {
+	case nil, unreadyRaylineARCEpisodeStore, unreadyStrictRaylineARCEpisodeStore:
 		return false
+	default:
+		return true
 	}
-	_, unready := store.(unreadyRaylineARCEpisodeStore)
-	return !unready
 }
 
 func raylineARCRedisPassword(

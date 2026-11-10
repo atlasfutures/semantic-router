@@ -648,8 +648,21 @@ func (r *OpenAIRouter) prepareRaylineARCTransaction(
 		episodeIDHash,
 		workerCount,
 	)
+	// Each lease attempt is also the store's readiness probe: a strict cell
+	// that booted with its store down reports it ready once a lease is won,
+	// and any cell reports a store failure (not contention) as not ready.
+	failure := ""
 	if err != nil {
-		return nil, boundedARCPrepareFailure(err)
+		failure = boundedARCPrepareFailure(err)
+	}
+	switch failure {
+	case "":
+		metrics.SetRaylineARCNamedComponentReady("episode_store", true)
+	case "episode_store", "episode_store_timeout":
+		metrics.SetRaylineARCNamedComponentReady("episode_store", false)
+	}
+	if err != nil {
+		return nil, failure
 	}
 	reqCtx.RaylineARCTransaction = newRaylineARCEpisodeTransaction(
 		store,
