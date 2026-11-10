@@ -63,7 +63,9 @@ var (
 	// slot in the caller's in-flight set. Returns 0 admitted, 1 over the
 	// rate, 2 over the in-flight cap. A lookup over the rate takes no
 	// in-flight slot. Expired holders (a crashed router) are swept first;
-	// a token already holding a slot is admitted as it is.
+	// a token already holding a slot is admitted as it is. The set's own
+	// expiry only ever grows, so a holder with a shorter lease never ends a
+	// longer one's.
 	//
 	// KEYS[1] rate counter for this window, KEYS[2] in-flight sorted set.
 	// ARGV: rate limit, window ms, in-flight limit, now ms, token, lease ms.
@@ -76,7 +78,7 @@ redis.call("ZREMRANGEBYSCORE", KEYS[2], "-inf", now)
 if redis.call("ZSCORE", KEYS[2], ARGV[5]) then return 0 end
 if redis.call("ZCARD", KEYS[2]) >= tonumber(ARGV[3]) then return 2 end
 redis.call("ZADD", KEYS[2], now + tonumber(ARGV[6]), ARGV[5])
-redis.call("PEXPIRE", KEYS[2], tonumber(ARGV[6]))
+if redis.call("PTTL", KEYS[2]) < tonumber(ARGV[6]) then redis.call("PEXPIRE", KEYS[2], tonumber(ARGV[6])) end
 return 0
 `)
 	routeCallerReleaseScript = redis.NewScript(`return redis.call("ZREM", KEYS[1], ARGV[1])`)

@@ -320,6 +320,23 @@ func TestRouteCallerBudgetOnRedis(t *testing.T) {
 		t.Fatalf("refusal = %+v, want rate_limited with the window's remainder", refusal)
 	}
 
+	// A holder with a shorter lease never shortens the set's expiry under
+	// a longer-lived one.
+	long := build("test:ttl-a:", 100, 4)
+	short := build("test:ttl-b:", 100, 4)
+	short.leaseTTL = time.Second
+	if _, err := long.Acquire(context.Background(), "ttl-caller"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := short.Acquire(context.Background(), "ttl-caller"); err != nil {
+		t.Fatal(err)
+	}
+	keys := long.keys("ttl-caller", time.Now())
+	ttl, err := long.shared.(*redisRouteCallerBudget).client.PTTL(context.Background(), keys.inflight).Result()
+	if err != nil || ttl < long.leaseTTL-5*time.Second {
+		t.Fatalf("in-flight set TTL = %v, %v; want the longer lease (%v) kept", ttl, err, long.leaseTTL)
+	}
+
 	// A crashed holder never releases; its slot frees at its lease.
 	crashed := build("test:crash-a:", 100, 1)
 	crashed.leaseTTL = 150 * time.Millisecond

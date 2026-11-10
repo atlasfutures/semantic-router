@@ -65,10 +65,13 @@ func (s *countingRetrySelector) Select(ctx context.Context, selCtx *selection.Se
 			return nil, errRetryBackendFull
 		}
 	}
+	// Decided before entry is signalled, so the test's passHold (set after
+	// it saw the entries) never releases a call that already entered.
+	held := s.hold != nil && !s.passHold.Load()
 	if s.entered != nil {
 		s.entered <- struct{}{}
 	}
-	if s.hold != nil && !s.passHold.Load() {
+	if held {
 		<-s.hold
 	}
 	if s.err != nil {
@@ -128,12 +131,15 @@ func TestRaylineRoutesCallerBudgetTrips(t *testing.T) {
 		t.Fatal("no caller budget was built for the default recipe")
 	}
 	body := oneCellBody(retryProtectionModel, false)
+	// The per-process counts outlive one router (a reload shares them), so
+	// each run is its own caller.
+	caller := "user-1:" + strconv.FormatInt(time.Now().UnixNano(), 10)
 	for index := range 2 {
-		if status := immediateStatusCode(t, retryLookup(router, "user-1:conv-1", body)); status != 200 {
+		if status := immediateStatusCode(t, retryLookup(router, caller, body)); status != 200 {
 			t.Fatalf("lookup %d within the budget: status %d", index, status)
 		}
 	}
-	response := retryLookup(router, "user-1:conv-1", body)
+	response := retryLookup(router, caller, body)
 	if status, errType, code := routesErrorCode(t, response); status != 429 || errType != "rate_limit_error" ||
 		code != raylineRoutesCallerBudgetCode {
 		t.Fatalf("over budget = %d %s/%s, want 429 rate_limit_error/caller_budget", status, errType, code)
@@ -148,7 +154,7 @@ func TestRaylineRoutesCallerBudgetTrips(t *testing.T) {
 	if calls := selector.calls.Load(); calls != 2 {
 		t.Fatalf("backend called %d times, want 2: the refused lookup reached it", calls)
 	}
-	if status := immediateStatusCode(t, retryLookup(router, "user-2:conv-9", body)); status != 200 {
+	if status := immediateStatusCode(t, retryLookup(router, caller+"-other", body)); status != 200 {
 		t.Fatalf("another caller: status %d, want 200", status)
 	}
 }
