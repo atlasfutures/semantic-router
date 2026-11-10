@@ -113,6 +113,14 @@ func generatedTextBytes(state *semanticResponseStreamState) int {
 	bytes := 0
 	for _, item := range state.items {
 		bytes += len(item.text) + len(item.refusal) + len(item.reasoning)
+		// A thinking block whose text the provider omits still signs itself,
+		// and the client has to send that signature back on the next turn. It
+		// is the block's whole substance, so a turn whose only output was one
+		// counted as nothing generated, and the provisional count
+		// message_start states before the first delta stood as the
+		// settlement. Whether to bill such a turn is outputForwarded's
+		// answer; how much is this sum's, and the two have to agree.
+		bytes += len(item.reasoningSig)
 		if item.toolCall != nil {
 			bytes += len(item.toolCall.Arguments)
 		}

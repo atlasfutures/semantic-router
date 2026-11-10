@@ -152,3 +152,45 @@ func TestABlockWithOnlyAPayloadIsCounted(t *testing.T) {
 		t.Fatalf("the usage row billed %v for a turn that delivered a payload", fields["completion_tokens"])
 	}
 }
+
+// A thinking block whose text the provider omits still signs itself. The
+// signature is the block's whole substance -- the client has to send it back
+// on the next turn -- and it is output the client holds, so the turn is
+// billed. But how much was decided by a byte count that never saw the
+// signature: it stayed at zero, the snapshot epoch never advanced, and the
+// provisional count message_start states before the first delta stood as the
+// settlement on both the client's terminal and the usage row. Whether to bill
+// and how much have to come to the same answer.
+func TestASignatureOnlyThinkingBlockIsCounted(t *testing.T) {
+	logs := captureLogs(t)
+	router := &OpenAIRouter{}
+	ctx := overrunningStreamContext(t)
+	ctx.SourceFormat = llmprotocol.AnthropicMessagesV1
+	ctx.TargetFormat = llmprotocol.AnthropicMessagesV1
+
+	body := streamDeadlineResponseBody(t, router, ctx, sameFormatMessageStart()+
+		"event: content_block_start\n"+
+		`data: {"type":"content_block_start","index":0,"content_block":`+
+		`{"type":"thinking","thinking":"","signature":""}}`+"\n\n"+
+		"event: content_block_delta\n"+
+		`data: {"type":"content_block_delta","index":0,"delta":`+
+		`{"type":"signature_delta","signature":"ErUBCkYIBRgCIkDaSIGNATUREONLYPAYLOADWITHNOTEXT"}}`+"\n\n"+
+		"event: content_block_stop\n"+`data: {"type":"content_block_stop","index":0}`+"\n\n")
+
+	// The client holds the signature, so the turn is billed past the snapshot.
+	if !bytes.Contains(body, []byte("SIGNATUREONLYPAYLOADWITHNOTEXT")) {
+		t.Fatalf("the signature never reached the client, so this case is not being tested:\n%s", body)
+	}
+	_, terminal, found := bytes.Cut(body, []byte("event: error"))
+	if !found {
+		t.Fatalf("the turn did not reach a terminal:\n%s", body)
+	}
+	if bytes.Contains(terminal, []byte(`"output_tokens":1,`)) {
+		t.Fatalf("a turn that delivered a signature was billed as one token:\n%s", terminal)
+	}
+	// And the row agrees with what the client was told.
+	fields := findLogEvent(t, logs, "llm_usage")
+	if got, _ := fields["completion_tokens"].(int64); got <= 1 {
+		t.Fatalf("the usage row billed %v for a turn that delivered a signature", fields["completion_tokens"])
+	}
+}
