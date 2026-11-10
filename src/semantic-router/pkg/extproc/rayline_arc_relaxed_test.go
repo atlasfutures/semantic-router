@@ -167,9 +167,10 @@ func TestStrictCellKeepsItsStoreWhenItIsDownAtStartup(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	_, _, err = store.Prepare(ctx, strictTestEpisodeIDHash, 2)
-	var dialErr *net.OpError
-	if !errors.As(err, &dialErr) || !isStoreFailureClass(boundedARCPrepareFailure(err)) {
-		t.Fatalf("Prepare with the store down = %v, want a store (dial) failure", err)
+	// go-redis retries the dial until the deadline, so the failure surfaces as
+	// the store timing out, never as contention.
+	if err == nil || !isStoreFailureClass(boundedARCPrepareFailure(err)) {
+		t.Fatalf("Prepare with the store down = %v, want a store failure", err)
 	}
 }
 
@@ -253,7 +254,8 @@ func forwardTCP(listener net.Listener, target string) {
 				return
 			}
 			defer server.Close()
-			go func() { _, _ = io.Copy(server, client) }()
+			// The cell closing its side ends both copies.
+			go func() { _, _ = io.Copy(server, client); _ = server.Close() }()
 			_, _ = io.Copy(client, server)
 		}()
 	}
