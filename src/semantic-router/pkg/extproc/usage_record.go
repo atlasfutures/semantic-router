@@ -179,6 +179,11 @@ type llmUsageRecord struct {
 	// signature_attempt on the refused call, stripped_resend on the re-send.
 	// Null on every other call.
 	ThinkingSignatureRetry *string `json:"thinking_signature_retry"`
+	// EdgeResend marks the two calls of a turn whose call OpenRouter's edge
+	// refused with a non-JSON 503 and the cell sent again once
+	// (edge_503_resend.go): edge_attempt on the refused call, edge_resend on
+	// the re-send. Null on every other call.
+	EdgeResend *string `json:"edge_resend"`
 	// HostRetry marks the calls of a streamed turn re-sent on its arm's next
 	// provider host after a call failed before any content
 	// (stream_host_retry.go): host_attempt on each call the cell went on
@@ -394,6 +399,10 @@ func (r *OpenAIRouter) newLLMUsageRecord(ctx *RequestContext, usage responseUsag
 	if ctx.ThinkingSignatureRetried {
 		// The refused call's line overwrites this with signature_attempt.
 		record.ThinkingSignatureRetry = nonEmpty(thinkingRetryResend)
+	}
+	if ctx.EdgeResent {
+		// The refused call's line overwrites this with edge_attempt.
+		record.EdgeResend = nonEmpty(edgeResendServed)
 	}
 	record.ProviderEndpoint = nonEmpty(ctx.RaylineARCDispatchedEndpoint)
 	record.SessionKeySource = nonEmpty(ctx.RaylineARCSessionKeySource)
