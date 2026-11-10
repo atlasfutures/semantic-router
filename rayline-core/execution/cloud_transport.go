@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"unicode"
 
 	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
 	"github.com/atlasfutures/semantic-router/rayline-core/protocolcodec"
@@ -45,8 +46,15 @@ func validateCloudTransport(deployment Deployment) error {
 		if (deployment.Protocol != llmprotocol.OpenAIChatV1 && deployment.Protocol != llmprotocol.AnthropicMessagesV1) || deployment.RegistryProvider != "openrouter" {
 			return fmt.Errorf("model_pin currently qualifies OpenRouter Chat Completions and Messages only")
 		}
-		if deployment.WireModel != deployment.RegistryModel || !strings.Contains(deployment.WireModel, "/") {
-			return fmt.Errorf("model_pin requires the concrete registry model as wire_model")
+		// registry_model names the registry cell whose controls were measured;
+		// wire_model is the gateway's catalog id for that same model, which
+		// may name it without the registry's provider prefix (the gateway's
+		// claude-sonnet-5-5 for anthropic/claude-sonnet-5.5, served by
+		// Anthropic directly). The echo check below holds the gateway to
+		// serving exactly wire_model as a rules pin.
+		if !strings.Contains(deployment.RegistryModel, "/") || deployment.WireModel == "" ||
+			strings.ContainsFunc(deployment.WireModel, unicode.IsSpace) {
+			return fmt.Errorf("model_pin requires a concrete registry model and the gateway's model id as wire_model")
 		}
 		endpoint, err := url.Parse(deployment.URL)
 		path := "/v1/chat/completions"

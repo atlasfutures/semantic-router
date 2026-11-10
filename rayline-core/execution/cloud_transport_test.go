@@ -106,7 +106,9 @@ func TestModelPinScopeAndNativeControlAreExplicit(t *testing.T) {
 		"profile":   func(d *Deployment) { d.DispatchProfileSHA256 = strings.Repeat("a", 64) },
 		"issuer":    func(d *Deployment) { d.IssuerSHA256 = strings.Repeat("a", 64) },
 		"provider":  func(d *Deployment) { d.ProviderPin = &ProviderPin{Only: []string{"together"}} },
-		"wire":      func(d *Deployment) { d.WireModel = "arc-1.0" },
+		"wire":      func(d *Deployment) { d.WireModel = "" },
+		"spaced":    func(d *Deployment) { d.WireModel = "kimi k3" },
+		"registry":  func(d *Deployment) { d.RegistryModel = "kimi-k3" },
 		"responses": func(d *Deployment) { d.Protocol = llmprotocol.OpenAIResponsesV1 },
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -233,6 +235,45 @@ func TestModelPinMessagesAdmitsActualHaikuSteeringAction(t *testing.T) {
 	status, answer := executeHTTP(t, server.URL, "/v1/messages", `{"model":"arc-1.0","max_tokens":64,"messages":[{"role":"user","content":"hello"}]}`, "haiku")
 	if status != 200 || !bytes.Contains(answer, []byte("ready")) {
 		t.Fatalf("Messages action failed: %d %s", status, answer)
+	}
+}
+
+// The gateway may serve the measured model under its own catalog id, here
+// Anthropic's claude-sonnet-5-5 for the registry's anthropic/claude-sonnet-5.5:
+// the controls come from the registry cell, the pin and its echo from the
+// catalog id, and an echo of the registry id is not that pin.
+func TestModelPinMessagesPinsGatewayCatalogId(t *testing.T) {
+	for _, echo := range []string{"claude-sonnet-5-5", "anthropic/claude-sonnet-5.5"} {
+		t.Run(echo, func(t *testing.T) {
+			gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				body, _ := io.ReadAll(r.Body)
+				var wire map[string]json.RawMessage
+				if err := json.Unmarshal(body, &wire); err != nil {
+					t.Fatal(err)
+				}
+				if r.Header.Get("X-Workshop-Required-Model") != "claude-sonnet-5-5" || string(wire["model"]) != `"claude-sonnet-5-5"` {
+					t.Errorf("catalog id was not pinned: %s %s", r.Header.Get("X-Workshop-Required-Model"), wire["model"])
+				}
+				if !bytes.Contains(body, []byte("reason more thoroughly before acting")) {
+					t.Error("registry cell's private append absent")
+				}
+				modelPinHeaders(w.Header())
+				w.Header().Set("X-Rayline-Selected-Model", echo)
+				_, _ = io.WriteString(w, `{"id":"msg_fixture","type":"message","role":"assistant","model":"claude-sonnet-5-5","content":[{"type":"text","text":"ready"}],"stop_reason":"end_turn","stop_sequence":null,"usage":{"input_tokens":30,"output_tokens":1}}`)
+			}))
+			defer gateway.Close()
+			config := modelPinConfig(t, gateway.URL)
+			deployment := &config.Deployments[0]
+			deployment.URL = gateway.URL + "/v1/messages"
+			deployment.Protocol = llmprotocol.AnthropicMessagesV1
+			deployment.WireModel, deployment.RegistryModel = "claude-sonnet-5-5", "anthropic/claude-sonnet-5.5"
+			config.Actions[0].Model = "claude-sonnet-5.5"
+			_, server := executorWithHTTPDecisions(t, config, &decisionCapture{})
+			status, answer := executeHTTP(t, server.URL, "/v1/messages", `{"model":"arc-1.0","max_tokens":64,"messages":[{"role":"user","content":"hello"}]}`, "sonnet")
+			if accepted := status == 200 && bytes.Contains(answer, []byte("ready")); accepted != (echo == "claude-sonnet-5-5") {
+				t.Fatalf("echo %s: %d %s", echo, status, answer)
+			}
+		})
 	}
 }
 
