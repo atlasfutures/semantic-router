@@ -968,6 +968,12 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		}
 	} else {
 		response, err = decidePolicyThroughBusy(ctx, decider, request, firstBusyWait, admit, withCacheContext)
+		// An episode's start shed at the service's edge is asked once more
+		// (rayline_arc_policy_start_retry.go); nothing else is.
+		response, err = retryPolicyStartOnce(ctx, transition, arcContext.EpisodeIDHash, response, err,
+			func() (*raylinearc.PolicyDecisionResponse, error) {
+				return decidePolicyThroughBusy(ctx, decider, request, scorer.busyWait, admit, withCacheContext)
+			})
 	}
 	// A strict cell's relaxed side call that the service refused as
 	// unsupported is decided strict instead, as it was before side calls
