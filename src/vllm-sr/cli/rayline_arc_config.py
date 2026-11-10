@@ -179,6 +179,36 @@ class RaylineARCRoutesRoutingConfig(BaseModel):
         return value
 
 
+# maxRaylineARCRoutesAdmissionInflight in pkg/config/rayline_arc_config.go;
+# a test asserts the pair.
+_MAX_ROUTES_ADMISSION_INFLIGHT = 64
+
+
+class RaylineARCRoutesAdmissionConfig(BaseModel):
+    """Cell-wide cap on concurrent /v1/routes lookups (Go
+    RaylineARCRoutesAdmissionConfig). max_inflight 0 disables it; a lookup
+    that finds no slot within queue_wait_ms (0: 2000 ms or half the
+    deadline) is answered 429 lookup_capacity with Retry-After. Dispatched
+    turns never pass through it."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    max_inflight: int = Field(default=0, ge=0, le=_MAX_ROUTES_ADMISSION_INFLIGHT)
+    queue_wait_ms: int = Field(default=0, ge=0, le=30_000)
+    # 0: 35000. The encode rate an abandoned tracked lookup's slot is held at.
+    abandoned_hold_tokens_per_second: int = Field(default=0, ge=0, le=10_000_000)
+
+    @model_validator(mode="after")
+    def _wait_needs_slots(self):
+        if self.queue_wait_ms and not self.max_inflight:
+            raise ValueError("routes_api.admission.queue_wait_ms needs max_inflight")
+        if self.abandoned_hold_tokens_per_second and not self.max_inflight:
+            raise ValueError(
+                "routes_api.admission.abandoned_hold_tokens_per_second needs max_inflight"
+            )
+        return self
+
+
 class RaylineARCRoutesAPIConfig(BaseModel):
     """POST /v1/routes: the selector's choice, returned without executing it.
 
@@ -204,11 +234,33 @@ class RaylineARCRoutesAPIConfig(BaseModel):
     # The Decisions routing controls; needs the endpoint enabled and a
     # policy-service cell (the Go loader refuses it on an artifact cell).
     routing: RaylineARCRoutesRoutingConfig | None = None
+    # Caps concurrent lookups across the cell; absent is disabled.
+    admission: RaylineARCRoutesAdmissionConfig | None = None
+    # Throwaway lookups estimated over this many tokens are answered without
+    # an encode (the package fallback). 0 bounds nothing; policy-service
+    # cells only.
+    max_encode_tokens: int = Field(default=0, ge=0, le=1 << 24)
 
     @model_validator(mode="after")
     def _routing_needs_the_endpoint(self):
         if self.routing is not None and not self.enabled:
             raise ValueError("routes_api.routing needs the endpoint enabled")
+        if self.max_encode_tokens and not self.enabled:
+            raise ValueError("routes_api.max_encode_tokens needs the endpoint enabled")
+        return self
+
+    @model_validator(mode="after")
+    def _admission_fits_the_deadline(self):
+        admission = self.admission
+        if admission is None or not admission.max_inflight:
+            return self
+        if not self.enabled:
+            raise ValueError("routes_api.admission needs the endpoint enabled")
+        deadline = self.deadline_ms or 1500
+        if admission.queue_wait_ms and admission.queue_wait_ms >= deadline:
+            raise ValueError(
+                "routes_api.admission.queue_wait_ms must be shorter than the lookup deadline"
+            )
         return self
 
     @field_validator("deadline_ms")
@@ -726,6 +778,14 @@ class RaylineARCAlgorithmConfig(BaseModel):
         ):
             raise ValueError(
                 "routes_api.routing is served by a policy-service cell only"
+            )
+        if (
+            self.policy_service is None
+            and self.routes_api is not None
+            and self.routes_api.max_encode_tokens
+        ):
+            raise ValueError(
+                "routes_api.max_encode_tokens is served by a policy-service cell only"
             )
         return self
 

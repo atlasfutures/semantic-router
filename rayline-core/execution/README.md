@@ -47,9 +47,13 @@ opt-in. The core reports facts and never picks or ranks a model.
   `registry_path`, `registry_sha256` may be omitted and the embedded registry is
   used. Such a profile pins no package: `expect` pins only the registry (and
   any offer), and the response names the package. Every derived action is a
-  target, and the service refuses a target its serving package lacks
-  (`execution_unknown_action`), so choose `bases` to match the served actions. Raydock builds one by default, so a user needs no profile
-  file.
+  target. A target the serving package lacks is left out of the offer and
+  named in the receipt's `excluded` with reason `unknown_action` (or its own
+  capacity reason, when the core marked it not to fit); the service
+  still refuses (`execution_unknown_action`) a request whose every target it
+  lacks, or whose `history`, `last_served` or `hold` names an action it lacks.
+  `bases` narrows the targets when fewer are wanted. Raydock builds one by
+  default, so a user needs no profile file.
 - **Envelope.** Each decision sends `routing.execution` version
   `arc-execution-context.v2`: `turn` (`id`, `attempt`, `epoch`, `retry_of`,
   `reconsult`), `event`, `last_served`, `history`, `hold` (null: the core has no
@@ -98,10 +102,10 @@ opt-in. The core reports facts and never picks or ranks a model.
 - **Capacity.** For each local action whose deployment has a qualified prompt
   counter, the core prepares the request exactly as dispatch would (tools,
   history, private append) and counts it with the runtime's own tokenizer:
-  `required` = that count + the prepared output limit + the deployment's optional
-  `capacity_margin_tokens`; `available` = its configured `context_window`, with
-  `available_source: "configured"` (llama.cpp's per-slot allocation is not yet
-  observed); `units` = its `token_units`; `provenance: "local_measured"`. A
+  `required` = that count + the prepared output limit + the deployment's
+  optional, nonnegative `capacity_margin_tokens`; `available` = its configured
+  `context_window`, with `available_source: "configured"` (llama.cpp's
+  per-slot allocation is not yet observed); `units` = its `token_units`; `provenance: "local_measured"`. A
   counter that fails reports that target `fits: false` with
   `reason: "runtime_unavailable"` instead of refusing the turn. A **local**
   target without a registered counter is sized from the same prepared request:
@@ -127,25 +131,41 @@ opt-in. The core reports facts and never picks or ranks a model.
     re-serialization of the prepared request (values re-encoded with
     `indent=4`, Python separators and float `repr`, non-ASCII and `<`, `>`,
     `&` escaped, each tool call's arguments reloaded and re-encoded beside
-    it), a proven upper bound for byte-level BPE whatever a template does to
-    the request's JSON, raised by `headroom_ratio` and 512 tokens for a
-    template preamble, `provenance: "caller_estimated"`.
+    it, plus what a tokenizer's NFC/NFD/NFKC/NFKD normalizer can add to
+    non-ASCII text), an upper bound for byte-level BPE (every token covers at
+    least one byte), raised by `headroom_ratio` and 512 tokens for a template preamble,
+    `provenance: "caller_bounded"`. The policy contract admits a bounded
+    `fits: true` as a fit. Two template assumptions are not checked: the
+    preamble is at most 512 tokens, and the template renders each part of
+    the request at most once. A template that repeats request content (a
+    schema key written as an opening and a closing tag, the first tool name
+    reused for every tool result) can exceed the bound. The backstop is the
+    runtime: on a `"refuses"` deployment an over-window prompt is refused and
+    the core consults again; on a `"truncates"` one it is cut.
   - An inline base64 image is charged `media_tokens` instead of its bytes, and
-    a fact that includes one is `caller_estimated`.
+    a fact that includes one is `caller_estimated`. So is any byte bound over
+    a body the core does not fully understand: `caller_bounded` needs every
+    top-level member, message member, input item, content part and tool type
+    to be on the deployment protocol's allowlist (`capacity_bounded.go`:
+    text, tool calls and results, reasoning, sampling and output limits).
+    Media, content the body only references (`file_id`, `item_reference`,
+    `previous_response_id`), a request's own `chat_template` or
+    `role_mapping`, a server tool and any unknown or runtime-specific member
+    fall to `caller_estimated`.
   - **`context_overflow`** (local deployments, `"refuses"` or
     `"truncates"`, default `"truncates"`) states what the runtime does with a
     prompt over its window. On a `"truncates"` deployment (Ollama,
-    `mlx_lm.server`) an estimated shortfall always stands, so such a prompt is
-    never sent to be silently cut; if that leaves every target short, the turn
-    gets the compaction 400. On a `"refuses"` deployment (llama.cpp, vLLM),
-    when every executable target falls short, its estimated facts are sent as
-    unknown for all its actions: the turn dispatches there and the runtime's
-    own context refusal decides.
+    `mlx_lm.server`) an estimated or bounded shortfall always stands, so such
+    a prompt is never sent to be silently cut; if that leaves every target
+    short, the turn gets the compaction 400. On a `"refuses"` deployment
+    (llama.cpp, vLLM), when every executable target falls short, its
+    estimated and bounded facts are sent as unknown for all its actions: the
+    turn dispatches there and the runtime's own context refusal decides.
     A missing `context_overflow` means `"truncates"`; Raydock's CLI
     sets `"refuses"` when it detects llama.cpp. The rule is part of the
-    all-short decision itself: an estimated shortfall on a `"refuses"`
-    deployment counts as unknown there, so the turn start, a re-consult, the
-    re-consult limit and a service refusal all agree.
+    all-short decision itself: an estimated or bounded shortfall on a
+    `"refuses"` deployment counts as unknown there, so the turn start, a
+    re-consult, the re-consult limit and a service refusal all agree.
   - **A runtime context refusal covers its whole deployment.** It is recorded
     as `provider_reported` for every action bound to that deployment, so no
     sibling control is dispatched to be refused again, and when that leaves no
@@ -160,9 +180,16 @@ opt-in. The core reports facts and never picks or ranks a model.
   without a counter sends `capacity: null`; its provider refuses an oversized
   prompt itself, and that refusal reaches the caller translated, text intact.
 - **Runtime context refusals.** A local runtime's refusal before any output,
-  llama.cpp's or an OpenAI-compatible one (`context_length_exceeded` or
-  "maximum context length" in the error's code, type or message: vLLM, MLX, a
-  custom endpoint), re-consults with `reconsult: "capacity"`.
+  llama.cpp's or an OpenAI-compatible one (`context_length_exceeded`,
+  "maximum context length" or vLLM's "longer than the maximum model length"
+  in the error's code, type or message: vLLM, TensorFold, MLX, a custom
+  endpoint), re-consults with `reconsult: "capacity"`. So does a refusal a
+  local runtime sends as the first event of a stream it opened with 200
+  (TensorFold): the core holds back the stream's opening events (a role-only
+  Chat chunk, `message_start`, `ping`, `response.created`,
+  `response.in_progress`, comments) until the first other event, for at
+  most 2 seconds and 64 KiB, and relays them unchanged when that event is
+  not such a refusal.
 - **No deployment fits.** When every executable target has a
   `context_capacity` shortfall that stands (see `context_overflow`) and none
   is unknown, the

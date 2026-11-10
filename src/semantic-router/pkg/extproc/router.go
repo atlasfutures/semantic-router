@@ -43,6 +43,12 @@ type OpenAIRouter struct {
 	Cache                 cache.CacheBackend
 	ResponseCache         *cache.ResponseCacheService
 	responseCacheMu       sync.Mutex
+	// background is work that outlives the request that started it but
+	// uses this router's resources: a /v1/routes decision detached from a
+	// caller that stopped waiting, and its encoder session cleanup. Close
+	// waits for it before releasing those resources; each such task is
+	// bounded (raylinearc.RouteLookupDetachBound).
+	background            sync.WaitGroup
 	ContextCompression    *contextcompression.Service
 	CompressionRecovery   contextcompression.RecoveryStore
 	CompressionEmbedding  embedding.Provider
@@ -78,6 +84,10 @@ type OpenAIRouter struct {
 	// one per recipe whose ARC decision uses a policy service.
 	RaylineARCRecipeEpisodeStores map[config.RecipeName]raylinearc.EpisodeStore
 	raylineARCSessionClose        raylineARCSessionCloseFunc
+	// raylineRoutesAdmission is each recipe's route lookup admission gate,
+	// for the recipes that configure routes_api.admission. Only the lookup
+	// handler reads it; dispatched turns never pass through a gate.
+	raylineRoutesAdmission map[config.RecipeName]*raylinearc.RouteLookupGate
 	// raylineARCInflight joins an identical resend to the decision its first
 	// copy is still making, instead of contending for the episode lease.
 	raylineARCInflight raylineARCInflightRegistry
@@ -107,6 +117,7 @@ func (r *OpenAIRouter) Close() error {
 	if r == nil {
 		return nil
 	}
+	r.background.Wait()
 	return r.resources.close()
 }
 

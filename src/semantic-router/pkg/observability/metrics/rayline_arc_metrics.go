@@ -114,6 +114,13 @@ var (
 		},
 		[]string{"delta_mismatch_reason"},
 	)
+	RaylineARCPolicySessionStartRetries = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "llm_rayline_arc_policy_session_start_retry_total",
+			Help: "Rayline ARC episode-start decides retried once after a 503 backend_unavailable, by outcome (recovered, failed, or skipped for want of deadline).",
+		},
+		[]string{"outcome"},
+	)
 	RaylineARCThinkingLeverTurns = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "llm_rayline_arc_thinking_lever_turns_total",
@@ -303,6 +310,10 @@ func RecordRaylineARCEpisodeTransaction(
 
 func RecordRaylineARCPolicyStagedTurn(deltaMismatchReason string) {
 	RaylineARCPolicyStagedTurns.WithLabelValues(deltaMismatchReason).Inc()
+}
+
+func RecordRaylineARCPolicySessionStartRetry(outcome string) {
+	RaylineARCPolicySessionStartRetries.WithLabelValues(outcome).Inc()
 }
 
 func RecordRaylineARCThinkingLeverTurn(lever, outcome, reason string) {

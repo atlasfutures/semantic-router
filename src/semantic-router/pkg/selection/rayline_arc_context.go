@@ -150,6 +150,11 @@ type RaylineARCSelectionContext struct {
 	// reads whether the encode included the request's tools; a routed turn
 	// never asks for it.
 	RoutesLookup bool
+	// RoutesEncodeLimit is a throwaway POST /v1/routes lookup's
+	// routes_api.max_encode_tokens: over it (ContextTokens), the lookup is
+	// answered without an encode. Zero, as on every tracked lookup and
+	// routed turn, bounds nothing.
+	RoutesEncodeLimit int
 	// TurnCostWeight is a generation turn's own cost weight (configurable
 	// ARC's routing.value_usd, 1 / V), sent in place of the cell's; nil
 	// keeps the cell's.
@@ -229,9 +234,14 @@ type RaylineARCRouteExecutionV2 struct {
 	Infeasible []string
 	TurnKey    string
 	Reconsult  *string
-	// ActionIDs are every action the envelope names, checked against the
-	// serving package's catalog.
-	ActionIDs                                          []string
+	// ActionIDs are the actions the envelope attributes, last served or
+	// holds: claims about what ran, each checked against the serving
+	// package's catalog.
+	ActionIDs []string
+	// TargetActionIDs are the caller's targets, in envelope order: what it
+	// can execute, not what ran. One the catalog lacks is left out of the
+	// offer rather than refused.
+	TargetActionIDs                                    []string
 	ExpectPackage, ExpectThinkingControls, ExpectOffer *string
 }
 

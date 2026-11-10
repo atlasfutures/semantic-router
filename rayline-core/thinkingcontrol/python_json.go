@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf16"
+
+	"golang.org/x/text/unicode/norm"
 )
 
 // Exported Python spellings of a JSON document, for callers that must size
@@ -154,8 +156,9 @@ func writePython(buf *bytes.Buffer, v *value, indent, depth int, ensureASCII boo
 // template spelling: json.dumps(indent=4, ensure_ascii=True) with <, > and &
 // escaped as Go's json escapes them, never shorter than raw itself, plus the
 // same for every string member named reloadKey that parses as JSON (a tool
-// call's arguments, which a server reloads and re-encodes). Members are
-// visited in document order.
+// call's arguments, which a server reloads and re-encodes), plus what a
+// tokenizer's Unicode normalizer can add to every key and string of both
+// (normalizationSlack). Members are visited in document order.
 func PythonWorstCaseBytes(raw []byte, reloadKey string) (int64, error) {
 	parsed, err := parseJSON(raw)
 	if err != nil {
@@ -174,28 +177,57 @@ func PythonWorstCaseBytes(raw []byte, reloadKey string) (int64, error) {
 	if err != nil {
 		return total, err
 	}
-	var walk func(*value, string)
-	walk = func(v *value, key string) {
+	// reloaded is false inside a reloaded value, so a key named reloadKey
+	// there is not reloaded again.
+	var walk func(v *value, key string, reloaded bool)
+	walk = func(v *value, key string, reloaded bool) {
 		switch v.kind {
 		case kindObject:
 			for _, m := range v.members {
-				walk(m.val, m.key)
+				total += normalizationSlack(m.key)
+				walk(m.val, m.key, reloaded)
 			}
 		case kindArray:
 			for _, item := range v.items {
-				walk(item, key)
+				walk(item, key, reloaded)
 			}
 		case kindString:
-			if key == reloadKey {
-				if reloaded, err := parseJSON([]byte(v.str)); err == nil {
-					size, _ := spell(reloaded, len(v.str))
-					total += size
-				} else {
-					total += int64(len(v.str))
-				}
+			total += normalizationSlack(v.str)
+			if key != reloadKey || !reloaded {
+				return
+			}
+			if inner, err := parseJSON([]byte(v.str)); err == nil {
+				size, _ := spell(inner, len(v.str))
+				total += size
+				walk(inner, "", false)
+			} else {
+				total += int64(len(v.str)) + normalizationSlack(v.str)
 			}
 		}
 	}
-	walk(parsed, "")
+	walk(parsed, "", true)
 	return total, nil
+}
+
+// normalizationSlack is how far a tokenizer's NFC, NFD, NFKC or NFKD
+// normalizer can grow s past its ensure_ascii spelling: U+FDFA is one \uXXXX
+// escape (6 bytes) but 33 UTF-8 bytes under NFKC, a Hangul syllable 9 under
+// NFD. Composition never lengthens a decomposed string, so NFD and NFKD bound
+// the four.
+func normalizationSlack(s string) int64 {
+	if norm.NFKD.IsNormalString(s) {
+		return 0
+	}
+	escaped := 0
+	for _, r := range s {
+		switch {
+		case r < 0x80:
+			escaped++
+		case r < 0x10000:
+			escaped += 6
+		default:
+			escaped += 12
+		}
+	}
+	return int64(max(len(norm.NFD.String(s))-escaped, len(norm.NFKD.String(s))-escaped, 0))
 }

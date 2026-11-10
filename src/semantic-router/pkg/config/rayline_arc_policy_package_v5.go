@@ -106,6 +106,17 @@ func (cfg *RaylineARCPolicyServiceConfig) PackageThinkingControlsSHA256() string
 	return pkg.manifest.ThinkingControlsSHA256
 }
 
+// PackageFallbackActionID is the manifest's decision.fallback_action_id, the
+// action the package names to serve when its policy decides nothing; empty
+// when the manifest does not load or names none.
+func (cfg *RaylineARCPolicyServiceConfig) PackageFallbackActionID() string {
+	pkg, err := cfg.loadPackageV5()
+	if err != nil {
+		return ""
+	}
+	return pkg.manifest.Decision.FallbackActionID
+}
+
 // PackageTwoStage reports whether the package is two-stage: its manifest
 // carries pathfinder's stage_one part, so the policy service chooses the
 // model at the package's own stage-one boundaries and holds it between them

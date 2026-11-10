@@ -76,6 +76,8 @@ func (service *raylineARCDecisionService) RouteDecision(
 	// (or exclusive) joins no episode either: committed, its pick would
 	// become the previous arm that later paid turns hold to, so the caller's
 	// prices would steer what the cell executes.
+	// raylineARCRoutingJoinsNoEpisode is the same rule; the lookup handler
+	// reads it to decide whether a timed-out lookup may run on detached.
 	untracked, unpriced := false, false
 	if request.Routing != nil && !request.Ephemeral {
 		if request.Routing.Exploration != nil {
@@ -110,6 +112,7 @@ func (service *raylineARCDecisionService) RouteDecision(
 	)
 	selectionContext.RaylineARC.RouteControls = request.Routing
 	selectionContext.RaylineARC.RoutesLookup = true
+	selectionContext.RaylineARC.RoutesEncodeLimit = requestContext.RaylineRoutesEncodeLimit
 	if failure := selectionContext.RaylineARC.PreparationFailure; failure != "" {
 		// Counted here because this path returns before Select(), whose
 		// failure constructor is where the routed path counts the same
@@ -133,19 +136,40 @@ func (service *raylineARCDecisionService) RouteDecision(
 		// twice deadline_ms and still return 200 -- breaking the end-to-end
 		// bound this endpoint documents, to do housekeeping the caller is not
 		// waiting for.
+		// Counted in the router's background work, so a reload does not
+		// close the encoder pool before the session it retained is closed.
+		service.router.background.Add(1)
 		defer func() {
-			go service.closeEphemeralEncoderSession(
-				context.WithoutCancel(ctx),
-				algorithm,
-				selectionContext,
-				requestContext,
-			)
+			go func() {
+				defer service.router.background.Done()
+				service.closeEphemeralEncoderSession(
+					context.WithoutCancel(ctx),
+					algorithm,
+					selectionContext,
+					requestContext,
+				)
+			}()
 		}()
 	}
 
 	selected, err := service.selectWorker(ctx, algorithm, selectionContext, requestContext)
 	if err != nil {
 		return routerruntime.RouteDecision{}, err
+	}
+	// A tracked lookup that left a retained encoder session holds a slot of
+	// the container's session budget until the encoder evicts it. An
+	// ephemeral lookup closes its own; a zdr turn retains nothing. A decision
+	// that failed (its caller's deadline cancelled the encode) is not
+	// counted, though the encoder may have kept its session.
+	if request.Surface == routerruntime.RouteDecisionSurfaceRoutes && selected.result.RaylineARC != nil &&
+		!request.Ephemeral && !selectionContext.RaylineARC.EphemeralTurn && algorithm.RaylineARC != nil {
+		recordRaylineRoutesLookupSession(
+			request.DecisionID,
+			raylineRoutesLookupSessionBackend(algorithm.RaylineARC),
+			selectionContext.RaylineARC.EpisodeIDHash,
+			boundedPolicySessionAction(selected.result.RaylineARC.SessionAction),
+			time.Duration(algorithm.RaylineARC.Episode.IdleTTLSeconds)*time.Second,
+		)
 	}
 	worker := selected.worker
 	decisionFacts := routerruntime.RouteDecision{
@@ -173,8 +197,12 @@ func (service *raylineARCDecisionService) RouteDecision(
 	decisionFacts.PolicyActionID = trace.PolicyActionID
 	decisionFacts.Checkpoint = trace.ArtifactRevision
 	decisionFacts.ToolsEncoded = routeToolsEncoded(trace.PolicyToolDefinitionsStatus)
+	if trace.OfferKind == raylineRoutesEncodeBypassOfferKind {
+		decisionFacts.Warnings = append(decisionFacts.Warnings, raylineRoutesEncodeBypassWarning)
+	}
 	if raylineARCHoldOfferKind(trace.OfferKind) {
-		// A held turn (capacity or media) encoded nothing.
+		// A held turn (capacity or media, or a lookup over its encode
+		// limit) encoded nothing.
 		notEncoded := false
 		decisionFacts.ToolsEncoded = &notEncoded
 	}
@@ -781,6 +809,14 @@ func (service *raylineARCDecisionService) decisionOnlyRequestContext(
 		VSRContextTokenCount: service.consultContextTokenCount(recipe, &decoded),
 		// The controls live outside the body the key digests.
 		RaylineRoutesControlsKey: raylineRoutesRoutingControlsKey(request.Routing),
+		RaylineRouteSurface:      string(request.Surface),
+	}
+	// Only a throwaway lookup is bounded: it joins no conversation, so its
+	// encode is always a full one. A tracked lookup appends to its retained
+	// session, as a routed turn does.
+	if request.Surface == routerruntime.RouteDecisionSurfaceRoutes && request.Ephemeral &&
+		algorithm.RaylineARC != nil {
+		requestContext.RaylineRoutesEncodeLimit = algorithm.RaylineARC.RoutesAPI.MaxEncodeTokens
 	}
 	requestContext.Routing.SelectRecipe(recipe)
 	return requestContext, nil
@@ -1057,4 +1093,11 @@ func routeToolsEncoded(status *string) *bool {
 		return encoded(false)
 	}
 	return nil
+}
+
+// raylineARCRoutingJoinsNoEpisode reports whether a lookup's routing controls
+// make the decision ephemeral whatever the caller asked: exploration, caller
+// prices and exclusive never join an episode (see RouteDecision).
+func raylineARCRoutingJoinsNoEpisode(routing *selection.RaylineARCRouteControls) bool {
+	return routing != nil && (routing.Exploration != nil || routing.Prices != nil || routing.Exclusive)
 }

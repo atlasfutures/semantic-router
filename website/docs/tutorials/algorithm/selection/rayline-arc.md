@@ -564,6 +564,154 @@ encoder, answers 429 with `Retry-After`. That is a healthy router saying when
 to come back, not an unavailable one, and it is worth honouring: retrying
 immediately lands on the lease or the queue that produced the contention.
 
+Every "come back later" answer carries a machine-readable `error.code`, so a
+caller can tell them apart without parsing the message:
+
+| Status | `error.code` | Meaning | Retry |
+|---|---|---|---|
+| 429 | `lookup_capacity` | admission: the cell's lookup slots stayed busy for the whole queue wait | after `Retry-After` |
+| 429 | `contended` | the conversation's episode lease or an encoder slot was briefly busy | after `Retry-After` (1 s) |
+| 504 | `deadline_exceeded` | the lookup did not answer within `deadline_ms` | with backoff; a large body may never fit |
+
+### Lookup admission
+
+A lookup drives the same encoders that dispatched turns use, and a large one
+(hundreds of thousands of tokens) can hold an encoder for tens of seconds. The
+policy service runs one encode at a time per container and does not cancel an
+encode whose lookup has given up, so unbounded lookups queue live turns behind
+them. `routes_api.admission` caps how many lookups may be in flight at once:
+
+```yaml
+routes_api:
+  enabled: true
+  deadline_ms: 30000
+  admission:
+    max_inflight: 1      # 0 or absent: no admission (every lookup goes straight in)
+    queue_wait_ms: 2000  # 0: 2000 ms, or half deadline_ms when that is shorter
+    abandoned_hold_tokens_per_second: 0  # 0: 35000; see below
+```
+
+- **Scope.** With the `redis` episode backend the cap is cell-wide: each slot
+  is a Redis lease shared by every router instance, keyed by the decision
+  backend's URLs, so recipes that call one policy service share its slots
+  (give them the same `max_inflight`). With the `memory` backend there is no
+  shared store and the cap is per router process; the router says which at
+  startup (`rayline_routes_admission`, `scope: cell|process`).
+- **Waiting.** A lookup that finds every slot taken waits up to
+  `queue_wait_ms` for one, inside its own `deadline_ms` (the wait must be
+  shorter than the deadline). It holds the slot until the backend answers
+  (see below). If no slot
+  frees in time it is answered `429 lookup_capacity` with `Retry-After` set to
+  the queue wait rounded up to whole seconds.
+- **Why the wait is short.** A slot can be held for the whole lookup deadline
+  or longer, so a long wait mostly parks the caller for a slot it will not get. The
+  default absorbs the common case, a burst of small lookups that each clear
+  in well under a second, and turns the rest into a prompt 429.
+- **Dispatched turns are unaffected.** The gate is only on `/v1/routes`;
+  routed traffic never passes through it.
+- **Redis failure fails open** to the per-process cap: an outage of the
+  episode store admits lookups at `max_inflight` per instance rather than
+  refusing them all. A Redis call that does not answer within 250 ms (50 ms
+  when the queue wait is nearly spent) counts as a failure; the gate then
+  stops consulting Redis for a few seconds and logs
+  `rayline_routes_admission_fail_open` once per trip.
+- **A crashed holder** frees its slot when its lease expires, at the longer
+  of `deadline_ms` and 120 s, plus a few seconds.
+- **Changing `max_inflight` on a config reload.** The cell-wide Redis cap
+  never exceeds the larger of the old and new limits (slots are numbered).
+  The per-process cap, which binds only on the `memory` backend or while
+  failed open, is shared per backend and limit, so while the old router
+  generation drains it may briefly admit the old and the new limit side by
+  side. Recipes on one backend with different `max_inflight` are logged at
+  startup (`rayline_routes_admission_limit_conflict`).
+- **A lookup that times out keeps its slot until the encode finishes.** The
+  backend does not stop encoding when the caller stops waiting. An ephemeral
+  lookup (every lookup when `episode_writes` is false) runs its decision
+  detached from the caller, bounded at 120 s: the caller still gets its 504
+  at `deadline_ms`, and the slot is released when the backend answers, so
+  the next lookup is not admitted onto a backend still busy with this one.
+- **A lookup that joins an episode is never detached.** It decides on its
+  caller's context, so its deadline cancels the decision: it commits
+  nothing and releases the episode lease, as an abandoned lookup must not
+  advance its conversation. Only its slot outlives it: one that ends with
+  its deadline passed (or its caller gone) keeps the slot for the encode it
+  started, estimated as its tokens (those the decision reported, or the
+  request body at four bytes a token) at `abandoned_hold_tokens_per_second`
+  (default 35000, about one container's full-encode rate) plus a second,
+  capped at 120 s, all counted from when the decision began. The hold ends
+  at least a second before the slot's cell-wide lease runs out, so no other
+  router instance is admitted on an expired lease while this one still
+  holds the slot. It logs `rayline_routes_abandoned_hold` with `hold_ms`,
+  and a reload waits for pending releases.
+  One that answers, or is refused while its caller still waits, frees the
+  slot at once. A lookup whose caller left while it was queued starts no
+  encode and frees its slot.
+
+`llm_rayline_arc_routes_admission_total{outcome, backend}` counts outcomes
+(`admitted`, `queued`, `shed`, `cancelled`, `fail_open`) and
+`llm_rayline_arc_routes_admission_wait_seconds{outcome}` the time spent
+waiting; serialized lookups show as `queued` with waits near the holder's
+encode time.
+
+Tracked lookups also leave retained encoder sessions behind, one per
+conversation, each occupying the encoder container's session budget until
+the encoder evicts it. `llm_rayline_arc_routes_lookup_sessions` is, per
+router process, the conversations whose last tracked lookup left a session
+(`session_action` `created`, `rebuilt`, `appended` or `reused`) within the
+episode `idle_ttl_seconds`; `rayline_routes_lookup_session` logs each such
+lookup with `session_action` and the count (`lookup_sessions`). It is an
+estimate to sum across router processes against the budget: it overcounts
+sessions the encoder evicted sooner, does not count a lookup whose decision
+failed (a deadline that cancelled it mid-encode may still leave a session),
+and does not see the sessions routed turns hold.
+
+A scripted client -- a latency test, a batch job -- should send lookups one
+at a time per cell where it can, honour `Retry-After` on any 429 (with jitter
+and a growing backoff on repeats), and send a stable conversation identity
+(`x-rayline-session` on this endpoint; `X-Conversation-Id` where a gateway in
+front keys conversations on it) so its lookups are attributable in the
+cell's logs. Retrying a `lookup_capacity` 429 at once only lands on the same
+busy slot. Admission waits and sheds show up in the latency such a test
+measures: read `wait_ms` on `rayline_routes_admission_wait` before reading a
+slow lookup as a slow encode.
+
+### Lookup encode limit
+
+A throwaway lookup -- one with no `x-rayline-session`, or on a cell with
+`episode_writes` off -- joins no conversation, so its encode is always a
+full one: it holds a policy container for the whole transcript, at about
+35k tokens a second, and live turns on that container wait behind it. On a
+policy-service cell, `routes_api.max_encode_tokens` bounds the context such a
+lookup may send to the encoder:
+
+```yaml
+routes_api:
+  enabled: true
+  max_encode_tokens: 0   # 0 or absent: no bound
+```
+
+The bound is on the router's own estimate, the conservative byte count that
+`max_context_tokens` and the per-arm masks read, not on the encoder's
+tokenizer. A throwaway lookup over it is not encoded: it is answered with
+the policy package's fallback action (`decision.fallback_action_id`), when
+the cell binds it, and carries the `encode_size_bypass` warning and reports
+any tools as not encoded. A lookup with routing controls (its result points
+need the policy's scores), or on a package with no bound fallback, is
+encoded as before.
+
+Tracked lookups are never bounded. They append to their conversation's
+retained session as a routed turn does, so after the first lookup of a
+conversation (a full encode, as a routed turn's first is) the service
+encodes what is new; how much it re-encodes is the service's own call.
+Turns the router dispatches are never bounded either, and an artifact cell
+refuses the key: it bounds its context with `max_context_tokens`.
+
+`llm_rayline_arc_routes_encode_bypass_total{outcome}` counts throwaway
+lookups over the bound by outcome (`fallback`, `encoded`), and
+`rayline_routes_encode_bypass` logs each with `context_tokens` and
+`max_encode_tokens`. Choose the bound from the encode time a lookup may hold
+a container for, not from the encoder's capacity.
+
 ### Episodes
 
 Three optional request headers shape continuity:
@@ -614,6 +762,12 @@ routing:
             deadline_ms: 1500
             checkpoint_label: arc-2026-09-12
             episode_writes: false
+            # Optional: cap concurrent lookups (see "Lookup admission").
+            admission:
+              max_inflight: 0
+            # Optional, policy-service cells: skip the encode for long
+            # throwaway lookups (see "Lookup encode limit").
+            max_encode_tokens: 0
 ```
 
 Off by default, and deliberately not implied by configuring the algorithm. A

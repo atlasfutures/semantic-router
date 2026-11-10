@@ -29,6 +29,10 @@ func (r *OpenAIRouter) adaptProviderRequest(
 		if err != nil {
 			return nil, err
 		}
+		body, err = r.stabilizeBillingAttribution(body, dispatch, ctx)
+		if err != nil {
+			return nil, err
+		}
 		recordDispatchedReasoningControls(ctx, body)
 		return body, nil
 	}
@@ -106,8 +110,9 @@ func (r *OpenAIRouter) applyPrivateProviderPreferences(
 // provider pin and session_id as its Chat API. Both self-gate on OpenRouter,
 // so a body bound for Anthropic itself is left as the codec rendered it, as
 // is the fold of Claude Code's mid-conversation tool changes, which
-// OpenRouter refuses as content blocks, and the strip of its per-turn
-// message-level output_config.
+// OpenRouter refuses as content blocks, the strip of its per-turn
+// message-level output_config, and the removal of its billing line's per-turn
+// fields for a worker Anthropic does not publish.
 func (r *OpenAIRouter) adaptMessagesProviderRequest(
 	body []byte,
 	dispatch *providerDispatch,
@@ -118,6 +123,10 @@ func (r *OpenAIRouter) adaptMessagesProviderRequest(
 		return nil, err
 	}
 	body, err = stripMessageOutputConfig(body, dispatch)
+	if err != nil {
+		return nil, err
+	}
+	body, err = r.stabilizeBillingAttribution(body, dispatch, ctx)
 	if err != nil {
 		return nil, err
 	}

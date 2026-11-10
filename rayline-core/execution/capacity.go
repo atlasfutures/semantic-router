@@ -20,11 +20,14 @@ const (
 	// labelled runtime_observed.
 	capacitySourceConfigured = "configured"
 
-	// A fact counted by the target's own tokenizer, versus one estimated from
-	// the prepared request (capacity_estimate.go). The policy contract
-	// (pathfinder arc_execution_v2.decide_inputs_v2) admits an estimated
-	// fits:false as exclusion and reads an estimated fits:true as unknown.
+	// A fact counted by the target's own tokenizer, one bounded from above by
+	// the prepared request's bytes, or one estimated (an image charged a
+	// fixed number of tokens) (capacity_estimate.go). The policy contract
+	// (the ARC execution-context contract) admits a measured or
+	// bounded fits:true, reads an estimated fits:true as unknown, and admits
+	// any fits:false as exclusion.
 	capacityProvenanceMeasured  = "local_measured"
+	capacityProvenanceBounded   = "caller_bounded"
 	capacityProvenanceEstimated = "caller_estimated"
 
 	// CodeContextExceedsAllDeployments refuses a turn that every admitted
@@ -173,12 +176,13 @@ func isContextShortfall(fact *CapacityFact) bool {
 	return fact != nil && !fact.Fits && fact.Reason != nil && *fact.Reason == CapacityContext
 }
 
-// yieldsToRuntime reports an estimated shortfall on a deployment whose
+// yieldsToRuntime reports an estimated or bounded shortfall (an upper bound
+// over the window says nothing certain) on a deployment whose
 // runtime refuses an over-window prompt itself (context_overflow "refuses"):
 // it never settles that every target falls short. A truncating runtime's
 // estimate (the default) stands.
 func (server *Server) yieldsToRuntime(id string, fact *CapacityFact) bool {
-	return isContextShortfall(fact) && fact.Provenance == capacityProvenanceEstimated && server.actions[id].deployment.ContextOverflow == ContextOverflowRefuses
+	return isContextShortfall(fact) && (fact.Provenance == capacityProvenanceEstimated || fact.Provenance == capacityProvenanceBounded) && server.actions[id].deployment.ContextOverflow == ContextOverflowRefuses
 }
 
 // everyTarget reports whether every executable action's fact satisfies
@@ -198,14 +202,17 @@ func (server *Server) everyTarget(facts map[string]*CapacityFact, holds func(*Ca
 }
 
 // isRuntimeContextRejection recognizes a local runtime's refusal of a prompt
-// over its context before any output: llama.cpp's documented error, or an
-// OpenAI-compatible context-length refusal (vLLM, MLX, a custom endpoint:
-// context_length_exceeded or "maximum context length" in the error's code,
-// type or message).
+// over its context before any output (runtimeContextRefusal).
 func isRuntimeContextRejection(deployment Deployment, status int, body []byte) bool {
-	if deployment.Kind != "local" {
-		return false
-	}
+	return deployment.Kind == "local" && runtimeContextRefusal(status, body)
+}
+
+// runtimeContextRefusal recognizes a runtime's context-window refusal:
+// llama.cpp's documented error, or an OpenAI-compatible context-length
+// refusal in the error's code, type or message: context_length_exceeded,
+// "maximum context length" (vLLM's renderer, TensorFold, MLX, a custom
+// endpoint) or vLLM's engine check, "longer than the maximum model length".
+func runtimeContextRefusal(status int, body []byte) bool {
 	if status == 400 {
 		for _, marker := range [][]byte{[]byte("exceed_context_size_error"), []byte("exceeds the available context size")} {
 			if bytes.Contains(body, marker) {
@@ -213,7 +220,7 @@ func isRuntimeContextRejection(deployment Deployment, status int, body []byte) b
 			}
 		}
 	}
-	return contextRefusalNames(status, body, "context_length_exceeded", "maximum context length")
+	return contextRefusalNames(status, body, "context_length_exceeded", "maximum context length", "longer than the maximum model length")
 }
 
 func int64OrNil(value *int64) any {
@@ -257,7 +264,7 @@ func (server *Server) contextExceededMessage(facts map[string]*CapacityFact) str
 	// A stated size is never smaller than the window it is compared with.
 	size := "every available deployment reports that it exceeds its context window, so it exceeds"
 	if sized != nil && sized.Required != nil && *sized.Required > window {
-		basis := map[string]string{capacityProvenanceEstimated: "estimated", capacityProvenanceMeasured: "measured"}[sized.Provenance]
+		basis := map[string]string{capacityProvenanceEstimated: "estimated", capacityProvenanceBounded: "upper bound", capacityProvenanceMeasured: "measured"}[sized.Provenance]
 		if basis == "" {
 			basis = "reported"
 		}

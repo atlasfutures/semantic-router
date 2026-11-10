@@ -111,3 +111,126 @@ func TestToolNamesAndRoutesAPIDefaultOff(t *testing.T) {
 		t.Fatal("episode_writes defaults on, want off")
 	}
 }
+
+// Admission is bounded, needs the endpoint, and its wait must fit inside the
+// lookup deadline it is spent from.
+func TestRoutesAPIAdmissionIsBounded(t *testing.T) {
+	t.Parallel()
+	for name, testCase := range map[string]struct {
+		cfg   RaylineARCRoutesAPIConfig
+		valid bool
+	}{
+		"absent is disabled": {cfg: RaylineARCRoutesAPIConfig{Enabled: true}, valid: true},
+		"one slot, default wait": {cfg: RaylineARCRoutesAPIConfig{
+			Enabled: true, DeadlineMS: 30000, Admission: RaylineARCRoutesAdmissionConfig{MaxInflight: 1},
+		}, valid: true},
+		"explicit wait inside the deadline": {cfg: RaylineARCRoutesAPIConfig{
+			Enabled: true, DeadlineMS: 30000, Admission: RaylineARCRoutesAdmissionConfig{MaxInflight: 1, QueueWaitMS: 5000},
+		}, valid: true},
+		"at the slot ceiling": {cfg: RaylineARCRoutesAPIConfig{
+			Enabled: true, Admission: RaylineARCRoutesAdmissionConfig{MaxInflight: maxRaylineARCRoutesAdmissionInflight},
+		}, valid: true},
+		"above the slot ceiling": {cfg: RaylineARCRoutesAPIConfig{
+			Enabled: true, Admission: RaylineARCRoutesAdmissionConfig{MaxInflight: maxRaylineARCRoutesAdmissionInflight + 1},
+		}},
+		"negative slots": {cfg: RaylineARCRoutesAPIConfig{
+			Enabled: true, Admission: RaylineARCRoutesAdmissionConfig{MaxInflight: -1},
+		}},
+		"negative wait": {cfg: RaylineARCRoutesAPIConfig{
+			Enabled: true, Admission: RaylineARCRoutesAdmissionConfig{MaxInflight: 1, QueueWaitMS: -1},
+		}},
+		"wait without slots": {cfg: RaylineARCRoutesAPIConfig{
+			Enabled: true, Admission: RaylineARCRoutesAdmissionConfig{QueueWaitMS: 500},
+		}},
+		"wait as long as the deadline": {cfg: RaylineARCRoutesAPIConfig{
+			Enabled: true, DeadlineMS: 3000, Admission: RaylineARCRoutesAdmissionConfig{MaxInflight: 1, QueueWaitMS: 3000},
+		}},
+		"wait longer than the default deadline": {cfg: RaylineARCRoutesAPIConfig{
+			Enabled: true, Admission: RaylineARCRoutesAdmissionConfig{MaxInflight: 1, QueueWaitMS: 2000},
+		}},
+		"endpoint disabled": {cfg: RaylineARCRoutesAPIConfig{
+			Admission: RaylineARCRoutesAdmissionConfig{MaxInflight: 1},
+		}},
+		"explicit abandoned hold rate": {cfg: RaylineARCRoutesAPIConfig{
+			Enabled: true, Admission: RaylineARCRoutesAdmissionConfig{MaxInflight: 1, AbandonedHoldTokensPerSecond: 20000},
+		}, valid: true},
+		"negative abandoned hold rate": {cfg: RaylineARCRoutesAPIConfig{
+			Enabled: true, Admission: RaylineARCRoutesAdmissionConfig{MaxInflight: 1, AbandonedHoldTokensPerSecond: -1},
+		}},
+		"abandoned hold rate above the ceiling": {cfg: RaylineARCRoutesAPIConfig{
+			Enabled: true, Admission: RaylineARCRoutesAdmissionConfig{
+				MaxInflight: 1, AbandonedHoldTokensPerSecond: maxRaylineARCRoutesAbandonedHoldTokensPerSecond + 1,
+			},
+		}},
+		"abandoned hold rate without slots": {cfg: RaylineARCRoutesAPIConfig{
+			Enabled: true, Admission: RaylineARCRoutesAdmissionConfig{AbandonedHoldTokensPerSecond: 20000},
+		}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			err := validateRaylineARCRoutesAPIConfig(testCase.cfg)
+			if testCase.valid && err != nil {
+				t.Fatalf("rejected: %v", err)
+			}
+			if !testCase.valid && err == nil {
+				t.Fatal("accepted, want rejected")
+			}
+		})
+	}
+}
+
+// An unset wait is 2 s, or half the deadline when that is shorter, so a
+// lookup admitted at the end of its wait still has time to decide.
+func TestRoutesAPIAdmissionQueueWaitDefault(t *testing.T) {
+	t.Parallel()
+	for name, testCase := range map[string]struct {
+		cfg  RaylineARCRoutesAPIConfig
+		want int64
+	}{
+		"long deadline":    {cfg: RaylineARCRoutesAPIConfig{DeadlineMS: 30000}, want: DefaultRaylineARCRoutesQueueWaitMS},
+		"default deadline": {cfg: RaylineARCRoutesAPIConfig{}, want: DefaultRaylineARCRoutesDeadlineMS / 2},
+		"explicit": {cfg: RaylineARCRoutesAPIConfig{
+			DeadlineMS: 30000, Admission: RaylineARCRoutesAdmissionConfig{MaxInflight: 1, QueueWaitMS: 400},
+		}, want: 400},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if got := testCase.cfg.EffectiveAdmissionQueueWait().Milliseconds(); got != testCase.want {
+				t.Fatalf("EffectiveAdmissionQueueWait() = %d ms, want %d", got, testCase.want)
+			}
+		})
+	}
+}
+
+// max_encode_tokens is bounded like max_context_tokens, needs the endpoint,
+// and is refused on an artifact cell, which has no held action to answer with.
+func TestRoutesAPIMaxEncodeTokens(t *testing.T) {
+	t.Parallel()
+	for name, testCase := range map[string]struct {
+		cfg   RaylineARCRoutesAPIConfig
+		valid bool
+	}{
+		"zero is off":       {cfg: RaylineARCRoutesAPIConfig{}, valid: true},
+		"set":               {cfg: RaylineARCRoutesAPIConfig{Enabled: true, MaxEncodeTokens: 200000}, valid: true},
+		"at the ceiling":    {cfg: RaylineARCRoutesAPIConfig{Enabled: true, MaxEncodeTokens: maxRaylineARCContextTokens}, valid: true},
+		"above the ceiling": {cfg: RaylineARCRoutesAPIConfig{Enabled: true, MaxEncodeTokens: maxRaylineARCContextTokens + 1}},
+		"negative":          {cfg: RaylineARCRoutesAPIConfig{Enabled: true, MaxEncodeTokens: -1}},
+		"endpoint disabled": {cfg: RaylineARCRoutesAPIConfig{MaxEncodeTokens: 200000}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			err := validateRaylineARCRoutesAPIConfig(testCase.cfg)
+			if testCase.valid && err != nil {
+				t.Fatalf("rejected: %v", err)
+			}
+			if !testCase.valid && err == nil {
+				t.Fatal("accepted, want rejected")
+			}
+		})
+	}
+	decision := validRaylineARCDecision()
+	decision.Algorithm.RaylineARC.RoutesAPI = RaylineARCRoutesAPIConfig{Enabled: true, MaxEncodeTokens: 200000}
+	if err := validateRaylineARCAlgorithmConfig(decision.Algorithm.RaylineARC); err == nil {
+		t.Fatal("an artifact cell accepted max_encode_tokens")
+	}
+}

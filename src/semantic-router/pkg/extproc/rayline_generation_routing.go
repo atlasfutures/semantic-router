@@ -319,9 +319,13 @@ func raylineGenerationSignalsHeader(ctx *RequestContext) string {
 	return compact.String()
 }
 
-// raylineARCHoldOfferKind reports a turn served by a hold (capacity or media):
-// the policy decided nothing on it.
+// raylineARCHoldOfferKind reports a turn served by a hold (capacity or media)
+// or a lookup answered over its encode limit: the policy decided nothing on
+// it.
 func raylineARCHoldOfferKind(kind string) bool {
+	if kind == raylineRoutesEncodeBypassOfferKind {
+		return true
+	}
 	for _, hold := range policyHoldOfferKinds {
 		if kind == hold {
 			return true

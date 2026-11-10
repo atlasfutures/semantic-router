@@ -87,6 +87,11 @@ func NewServer(config Config, registry *thinkingcontrol.Registry, provider Decis
 		if err := deployment.CapacityEstimate.validate(); err != nil {
 			return nil, fmt.Errorf("deployment %s: %w", deployment.ID, err)
 		}
+		// A negative margin would shrink a measured or bounded size below
+		// the count it bounds, and the policy admits such a fit.
+		if deployment.CapacityMarginTokens < 0 {
+			return nil, fmt.Errorf("deployment %s: capacity_margin_tokens must be nonnegative", deployment.ID)
+		}
 		if overflow := deployment.ContextOverflow; overflow != "" && overflow != ContextOverflowRefuses && overflow != ContextOverflowTruncates {
 			return nil, fmt.Errorf("deployment %s: context_overflow must be %q or %q", deployment.ID, ContextOverflowRefuses, ContextOverflowTruncates)
 		}
@@ -436,14 +441,29 @@ func (server *Server) execute(writer http.ResponseWriter, incoming *http.Request
 			server.writeError(writer, format, http.StatusBadGateway, "upstream_unavailable", "selected endpoint request failed")
 			return
 		}
+		var (
+			errorBody []byte
+			readErr   error
+			rejected  bool
+		)
 		if upstream.StatusCode >= 200 && upstream.StatusCode < 300 {
-			break
+			// A local stream may open with 200 and refuse the prompt as
+			// its first event, before any output.
+			if !v2 || selected.deployment.Kind != "local" || !isEventStream(upstream.Header) {
+				break
+			}
+			if rejected, upstream.Body = peekStreamContextRejection(upstream.Body); !rejected {
+				break
+			}
+			upstream.Body.Close()
+		} else {
+			errorBody, readErr = readBounded(upstream.Body, 1<<20)
+			upstream.Body.Close()
+			rejected = v2 && readErr == nil && isRuntimeContextRejection(selected.deployment, upstream.StatusCode, errorBody)
 		}
-		errorBody, readErr := readBounded(upstream.Body, 1<<20)
-		upstream.Body.Close()
 		// A runtime's own context refusal arrives before any output. It is a
 		// fact for the service, never a local reselection or truncation.
-		if v2 && readErr == nil && isRuntimeContextRejection(selected.deployment, upstream.StatusCode, errorBody) {
+		if rejected {
 			previous := capacityFact(selected.deployment, prompt, prepared.outputLimit)
 			if previous == nil {
 				previous = pending.input.Capacity[selected.action.ID]

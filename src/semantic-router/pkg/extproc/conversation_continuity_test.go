@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/atlasfutures/semantic-router/rayline-core/protocolcodec"
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 	"github.com/tidwall/sjson"
@@ -75,6 +76,10 @@ const (
 	transformUnservedThinkingStripped = "unserved_thinking_stripped"
 	// A worker that is not Claude loses the active loop's thinking too.
 	transformUnservedLoopThinkingStripped = "unserved_loop_thinking_stripped"
+	// A worker that is not Claude, reached over Messages, is sent Claude
+	// Code's billing attribution line without its per-turn fields
+	// (provider_billing_attribution.go).
+	transformBillingLineStabilized = "billing_line_stabilized"
 )
 
 type continuityCase struct {
@@ -476,6 +481,13 @@ func conversationKept(client, provider []byte, transforms []string) error {
 	for _, name := range transforms {
 		allowed[name] = true
 	}
+	if allowed[transformBillingLineStabilized] {
+		stable, err := withStableBillingLine(client)
+		if err != nil {
+			return fmt.Errorf("client body: %w", err)
+		}
+		client = stable
+	}
 	sent, err := conversationShape(client)
 	if err != nil {
 		return fmt.Errorf("client body: %w", err)
@@ -499,6 +511,33 @@ func conversationKept(client, provider []byte, transforms []string) error {
 		}
 	}
 	return nil
+}
+
+// withStableBillingLine is the client body with each system block that is
+// Claude Code's billing attribution line rewritten without its per-turn
+// fields, as the cell sends it to a worker that is not Claude.
+func withStableBillingLine(body []byte) ([]byte, error) {
+	var wire struct {
+		System []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		} `json:"system"`
+	}
+	if json.Unmarshal(body, &wire) != nil {
+		return body, nil
+	}
+	for index, block := range wire.System {
+		if block.Type != "text" {
+			continue
+		}
+		if stable, isLine := protocolcodec.StableBillingAttributionLine(block.Text); isLine {
+			var err error
+			if body, err = sjson.SetBytes(body, fmt.Sprintf("system.%d.text", index), stable); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return body, nil
 }
 
 // withoutSteer removes the steer from the provider's conversation: one text
@@ -745,7 +784,7 @@ func TestConversationContinuityOfCapturedClients(t *testing.T) {
 				// Every arm here reads Messages, which takes thinking only signed.
 				transforms = append([]string{transformUnservedThinkingStripped}, transforms...)
 				if action.ID != v5OpusAction {
-					transforms = append([]string{transformUnservedLoopThinkingStripped}, transforms...)
+					transforms = append([]string{transformUnservedLoopThinkingStripped, transformBillingLineStabilized}, transforms...)
 				}
 				err := errors.Join(
 					conversationKept(fixture.Client, result.Provider, transforms),

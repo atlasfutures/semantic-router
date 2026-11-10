@@ -41,19 +41,26 @@ import (
 
 const routesExecutionVersionV2 = "arc-execution-context.v2"
 
+// provenanceCallerBounded is a capacity size the caller proves is an upper
+// bound on the target's own token count (Rayline Local's byte bound: no text
+// token is shorter than one byte, over the template's most expensive
+// spelling). A fits true from a bound holds for the exact count too, so it is
+// admitted; caller_estimated is still a guess and is not. Capacity only.
+const provenanceCallerBounded = "caller_bounded"
+
 var (
 	routesPolicyPresets = []string{"arc-policy.package-default.v1", "arc-policy.hybrid-default.v1", "arc-policy.prefer-local.v1"}
 	// routesSelectionPresets are the presets with a selection rule, the only
 	// ones overrides.selection applies to.
-	routesSelectionPresets     = []string{"arc-policy.prefer-local.v1"}
-	routesScheduleClasses      = []string{"cache_boundaries", "user_messages", "all_turns"}
-	routesExecutorEventKinds   = []string{"task_start", "user_message", "tool_result", "compaction", "subagent_start", "sidecall"}
-	routesExecutorEventBases   = []string{"explicit_client", "marker_inferred", "unknown"}
-	routesCapacityReasons      = []string{"context_capacity", "runtime_unavailable"}
-	routesCapacitySources      = []string{"configured", "runtime_observed"}
-	routesExecutionReconsults  = []string{"capacity", "veto"}
-	routesExecutionPlacements  = []string{"cloud", "local"}
-	routesExecutionProvenances = []string{provenanceProviderReported, provenanceLocalMeasured, provenanceCallerEstimated}
+	routesSelectionPresets    = []string{"arc-policy.prefer-local.v1"}
+	routesScheduleClasses     = []string{"cache_boundaries", "user_messages", "all_turns"}
+	routesExecutorEventKinds  = []string{"task_start", "user_message", "tool_result", "compaction", "subagent_start", "sidecall"}
+	routesExecutorEventBases  = []string{"explicit_client", "marker_inferred", "unknown"}
+	routesCapacityReasons     = []string{"context_capacity", "runtime_unavailable"}
+	routesCapacitySources     = []string{"configured", "runtime_observed"}
+	routesExecutionReconsults = []string{"capacity", "veto"}
+	routesExecutionPlacements = []string{"cloud", "local"}
+	routesCapacityProvenances = []string{provenanceProviderReported, provenanceLocalMeasured, provenanceCallerBounded, provenanceCallerEstimated}
 )
 
 // --- routing.policy ----------------------------------------------------------
@@ -515,7 +522,7 @@ func readRoutesExecutionV2Capacity(raw json.RawMessage, path string) (*routesExe
 	if capacity.units, failure = routesExecutionNullableString(members["units"], routesExecutionUnits, path+".units"); failure != nil {
 		return nil, failure
 	}
-	if capacity.provenance, failure = routesExecutionEnum(members["provenance"], path+".provenance", routesExecutionProvenances...); failure != nil {
+	if capacity.provenance, failure = routesExecutionEnum(members["provenance"], path+".provenance", routesCapacityProvenances...); failure != nil {
 		return nil, failure
 	}
 	if (capacity.fits != nil && !*capacity.fits) != (capacity.reason != nil) {
@@ -569,8 +576,9 @@ func routesTurnKey(turnID string) string {
 
 // routesExecutionV2Controls maps the envelope onto decide-request members
 // (arc_execution_v2.decide_inputs_v2): v1's admission for each target's
-// cache evidence; capacity fits true admitted only from local_measured or
-// provider_reported (else unknown, named), fits false from any provenance.
+// cache evidence; capacity fits true admitted only from local_measured,
+// provider_reported or caller_bounded (else unknown, named), fits false from
+// any provenance.
 func routesExecutionV2Controls(execution *routesExecutionV2) (*selection.RaylineARCRouteExecutionV2, []routesExecutionNotAdmitted) {
 	controls := &selection.RaylineARCRouteExecutionV2{
 		ContextEpoch:           execution.turnEpoch,
@@ -590,7 +598,7 @@ func routesExecutionV2Controls(execution *routesExecutionV2) (*selection.Rayline
 	sort.Slice(controls.Attribution, func(i, j int) bool { return controls.Attribution[i].Message < controls.Attribution[j].Message })
 	refused := []routesExecutionNotAdmitted{}
 	for _, target := range execution.targets {
-		controls.ActionIDs = append(controls.ActionIDs, target.actionID)
+		controls.TargetActionIDs = append(controls.TargetActionIDs, target.actionID)
 		if target.evidence != nil {
 			entry, notAdmitted := admitRoutesExecutionWorker(*target.evidence)
 			if controls.CacheContext == nil {
@@ -609,7 +617,7 @@ func routesExecutionV2Controls(execution *routesExecutionV2) (*selection.Rayline
 		}
 		if fact := target.capacity; fact != nil {
 			fits := fact.fits
-			if fits != nil && *fits && fact.provenance == provenanceCallerEstimated {
+			if fits != nil && *fits && fact.provenance != provenanceProviderReported && fact.provenance != provenanceLocalMeasured && fact.provenance != provenanceCallerBounded {
 				fits = nil
 				refused = append(refused, routesExecutionNotAdmitted{ActionID: target.actionID, Field: "capacity", Reason: "estimated_not_admitted"})
 			}
@@ -637,7 +645,9 @@ func routesExecutionV2Controls(execution *routesExecutionV2) (*selection.Rayline
 
 // raylineRoutesReceipt is one public result's receipt
 // (arc_execution_v2.result_receipt): the decide's decision.receipt with the
-// result's own action and control, copied, never recomputed.
+// result's own action and control, copied, never recomputed. Its excluded
+// list ends with the targets this cell's catalog lacked, if any
+// (routeReceiptWithUnknownTargets); the service's entries come first.
 type raylineRoutesReceipt struct {
 	ActionID        string                             `json:"action_id"`
 	ControlID       *string                            `json:"control_id"`

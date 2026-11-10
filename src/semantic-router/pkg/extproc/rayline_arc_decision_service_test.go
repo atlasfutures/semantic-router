@@ -26,13 +26,26 @@ type stubARCSelector struct {
 	err      error
 	// policyAction, when set, reports a policy-service decision.
 	policyAction string
+	// sessionAction, when set, reports what the decision did to the
+	// episode's retained encoder session.
+	sessionAction string
+	// onSelect, when set, runs as the selector is called: the encode.
+	onSelect func()
+	// offerKind, when set, is the offer kind the decision reports.
+	offerKind string
 }
 
 func (s *stubARCSelector) Select(
-	_ context.Context,
+	ctx context.Context,
 	selCtx *selection.SelectionContext,
 ) (*selection.SelectionResult, error) {
 	s.contexts = append(s.contexts, selCtx)
+	if s.onSelect != nil {
+		s.onSelect()
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+	}
 	if s.err != nil {
 		return nil, s.err
 	}
@@ -44,6 +57,8 @@ func (s *stubARCSelector) Select(
 			SelectedArm:      s.arm,
 			SerializedTokens: 11,
 			PolicyActionID:   s.policyAction,
+			SessionAction:    s.sessionAction,
+			OfferKind:        s.offerKind,
 		},
 	}, nil
 }
@@ -90,6 +105,7 @@ func decisionServiceConfig() *config.RouterConfig {
 								IDHeader:              decisionServiceEpisodeHeader,
 								AcquireTimeoutSeconds: 5,
 								LeaseTTLSeconds:       30,
+								IdleTTLSeconds:        60,
 							},
 						},
 					},

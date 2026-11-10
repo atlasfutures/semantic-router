@@ -100,6 +100,10 @@ type policyServiceScorer struct {
 	// fallback is ADR 0120's fallback: excluded models leave the offer, and
 	// an excluded held model forces a decision.
 	fallback bool
+	// fallbackActionID is the package manifest's fallback action, when it
+	// names one this cell binds; a throwaway lookup over
+	// routes_api.max_encode_tokens is answered with it.
+	fallbackActionID string
 	// routes names each worker's route in the cell exclusion table.
 	routes []string
 	// privateRoutes are the routes a private turn takes: an arm's private
@@ -270,6 +274,11 @@ func newPolicyServiceScorer(
 		scorer.actionOrder = append(scorer.actionOrder, binding.ActionID)
 	}
 	scorer.armOffered = policyArmOffered(policy.PackageStageOneOfferedModels(), scorer.bindings, len(scorer.workers))
+	if fallback := policy.PackageFallbackActionID(); fallback != "" {
+		if _, bound := scorer.bindings[fallback]; bound {
+			scorer.fallbackActionID = fallback
+		}
+	}
 	return scorer
 }
 
@@ -736,6 +745,16 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 			return nil, arcSelectionFailure(arcFailurePolicyUndecidable)
 		}
 	}
+	// A throwaway lookup over routes_api.max_encode_tokens is answered
+	// without the service, before anything is staged or a session is bound.
+	if bypass := selector.policyEncodeSizeBypass(
+		armed, selCtx, arcContext, state, scorer, turn, messages, sideCall, atBoundary, retained, available, workerIDs,
+	); bypass != nil {
+		bypass.RaylineARC.SettlementPrices = armed.prices
+		bypass.RaylineARC.EndpointFeed = arcContext.EndpointFeed
+		bypass.RaylineARC.MaskedArms = policyMaskedArms(scorer, workerIDs, excluded, fallback, turn, offeredRoutes)
+		return bypass, nil
+	}
 	request := raylinearc.PolicyDecisionRequest{
 		SchemaVersion: raylinearc.PolicyDecisionRequestSchema,
 		Package:       raylinearc.PolicyPackageRef{Alias: scorer.alias, PackageSHA256: scorer.sha256},
@@ -791,11 +810,21 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	if routeControls != nil {
 		executionV2 = routeControls.ExecutionV2
 	}
-	if class := applyRoutePolicyAndExecutionV2(&request, scorer, routeControls); class != "" {
+	unknownTargets, class := applyRoutePolicyAndExecutionV2(&request, scorer, routeControls)
+	if class != "" {
 		logging.ComponentErrorEvent("extproc", "rayline_arc_policy_service_failed", map[string]interface{}{
 			"class": class, "episode_id_hash": arcContext.EpisodeIDHash,
 		})
 		return nil, arcSelectionFailure(class)
+	}
+	if len(unknownTargets) > 0 {
+		ids := make([]string, 0, len(unknownTargets))
+		for _, entry := range unknownTargets {
+			ids = append(ids, entry.ActionID)
+		}
+		logging.ComponentWarnEvent("extproc", "rayline_arc_route_targets_unknown", map[string]interface{}{
+			"count": len(ids), "action_ids": ids, "episode_id_hash": arcContext.EpisodeIDHash,
+		})
 	}
 	if class := applyRouteExecution(&request, scorer, execution); class != "" {
 		logging.ComponentErrorEvent("extproc", "rayline_arc_policy_service_failed", map[string]interface{}{
@@ -949,6 +978,12 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		}
 	} else {
 		response, err = decidePolicyThroughBusy(ctx, decider, request, firstBusyWait, admit, withCacheContext)
+		// An episode's start shed at the service's edge is asked once more
+		// (rayline_arc_policy_start_retry.go); nothing else is.
+		response, err = retryPolicyStartOnce(ctx, transition, arcContext.EpisodeIDHash, response, err,
+			func() (*raylinearc.PolicyDecisionResponse, error) {
+				return decidePolicyThroughBusy(ctx, decider, request, scorer.busyWait, admit, withCacheContext)
+			})
 	}
 	// A strict cell's relaxed side call that the service refused as
 	// unsupported is decided strict instead, as it was before side calls
@@ -1263,7 +1298,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 			}
 		}
 		if executionV2 != nil || routeControls.Policy != nil {
-			result.RaylineARC.RouteReceipt = response.Decision.Receipt
+			result.RaylineARC.RouteReceipt = routeReceiptWithUnknownTargets(response.Decision.Receipt, unknownTargets)
 		}
 		result.RaylineARC.RouteIdentity = &identity
 		result.RaylineARC.RouteExecutionApplied = execution != nil

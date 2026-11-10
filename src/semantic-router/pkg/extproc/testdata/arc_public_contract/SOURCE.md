@@ -19,7 +19,9 @@ reference `src/rayline_router/serving/arc_execution_context.py`).
 The hybrid routing v2 fixtures (`execution_v2_vectors.json`,
 `request_*execution_v2*.json`, `request_*policy*.json`) are copied unchanged
 from pathfinder main at `0b5131db24` (#5904, #5907, #5915 and #5913,
-prefer-local).
+prefer-local). `execution_v2_vectors.json` is then copied unchanged from
+the contract source at `d33008cec3` (`caller_bounded` capacity provenance, the
+`bounded_fit_is_admitted` vector).
 
 `selection_refusals_v2.v1.json` (from `tests/fixtures/arc_policy_service/`)
 is copied unchanged from pathfinder#5906 at `87b156e001`: the policy

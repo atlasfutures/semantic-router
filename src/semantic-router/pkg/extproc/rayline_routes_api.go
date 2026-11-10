@@ -24,6 +24,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
@@ -36,6 +37,7 @@ import (
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/routerruntime"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
 
 // raylineRoutesAPIPath answers one question -- where should this request go --
@@ -420,6 +422,15 @@ func (r *OpenAIRouter) handleRaylineRoutesAPI(
 	defer cancel()
 
 	routeID := raylineRoutesRouteID(ctx)
+	// Admission comes before any encoder or episode work, and its wait is
+	// spent inside the lookup deadline: a lookup that waited still answers
+	// within deadline_ms. The slot is held until the backend answers, which
+	// for an ephemeral lookup can be after this handler has (see
+	// raylineRoutesDecide).
+	ticket, refused := r.admitRaylineRoutesLookup(ctx, lookupContext, recipe, routeID)
+	if refused != nil {
+		return refused
+	}
 	episode := raylineRoutesEpisodeIdentity(ctx)
 	// Ephemeral unless this cell keeps episodes and the caller named a
 	// conversation. Both halves are required: without the identity there is
@@ -434,9 +445,17 @@ func (r *OpenAIRouter) handleRaylineRoutesAPI(
 		ephemeral = true
 	}
 	started := time.Now()
-	decision, err := runtime.RouteDecision(
+	decision, err := raylineRoutesDecide(
 		lookupContext,
+		&r.background,
+		runtime.RouteDecision,
 		raylineRoutesConsultWithControls(body, routeID, episode, ephemeral, wireFormat, controls, ctx.Headers, recipe.Name),
+		ticket,
+		settings.Admission.EffectiveAbandonedHoldTokensPerSecond(),
+		// The service also decides these ephemerally (see RouteDecision);
+		// the consult keeps the caller's flag so its own accounting of why
+		// still runs.
+		ephemeral || raylineARCRoutingJoinsNoEpisode(controls),
 	)
 	if err != nil {
 		return r.raylineRoutesFailure(ctx, lookupContext, routeID, err)
@@ -479,6 +498,106 @@ func (r *OpenAIRouter) raylineRoutesContext(ctx *RequestContext) context.Context
 		return ctx.TraceContext
 	}
 	return context.Background()
+}
+
+// raylineRoutesDecide runs the lookup's decision and frees its admission slot
+// when the backend answers.
+//
+// A tracked lookup decides on the lookup's own context, as before: detached,
+// an abandoned lookup would still commit its episode turn. Its deadline
+// cancels the decision but not the encode the policy container already
+// started, so a tracked lookup that ends with its context done keeps its
+// slot for that encode's estimated duration (raylineRoutesAbandonedHold);
+// one that answers, or is refused while its caller still waits, frees it at
+// once. An ephemeral lookup that holds a slot decides on a context
+// detached from the caller and bounded by RouteLookupDetachBound, because the
+// backend does not stop encoding when the caller stops waiting: freeing the
+// slot at the 504 would admit the next lookup onto a backend still busy with
+// this one. The caller still waits only inside its own deadline; the late
+// answer is discarded, and the slot is freed when it arrives. The detached
+// run is counted in background, so the router that owns the backend's
+// clients is not closed under it by a reload.
+func raylineRoutesDecide(
+	lookupContext context.Context,
+	background *sync.WaitGroup,
+	decide func(context.Context, routerruntime.RouteDecisionRequest) (routerruntime.RouteDecision, error),
+	request routerruntime.RouteDecisionRequest,
+	ticket raylinearc.RouteLookupTicket,
+	holdTokensPerSecond int,
+	ephemeral bool,
+) (routerruntime.RouteDecision, error) {
+	if !ticket.Held() {
+		return decide(lookupContext, request)
+	}
+	// A caller that left while queued starts no encode nobody waits for.
+	if err := lookupContext.Err(); err != nil {
+		ticket.Release()
+		return routerruntime.RouteDecision{}, err
+	}
+	if !ephemeral {
+		started := time.Now()
+		held := false
+		// Every exit that schedules no delayed release frees the slot now,
+		// a panic included: the panic goes on up, the slot does not leak.
+		defer func() {
+			if !held {
+				ticket.Release()
+			}
+		}()
+		decision, err := decide(lookupContext, request)
+		if lookupContext.Err() == nil {
+			return decision, err
+		}
+		now := time.Now()
+		leaseLeft, leased := ticket.LeaseRemaining(now)
+		hold := raylineRoutesAbandonedHold(
+			raylineRoutesEncodeTokens(decision, request.Body), holdTokensPerSecond,
+			now.Sub(started), leaseLeft, leased,
+		)
+		logging.ComponentEvent("extproc", "rayline_routes_abandoned_hold", map[string]interface{}{
+			"routing_decision_id": request.DecisionID,
+			"hold_ms":             hold.Milliseconds(),
+		})
+		if hold <= 0 {
+			return decision, err
+		}
+		// Counted in background, so a reload's Close waits for the release
+		// rather than closing the gate's Redis client under it.
+		held = true
+		background.Add(1)
+		time.AfterFunc(hold, func() {
+			defer background.Done()
+			ticket.Release()
+		})
+		return decision, err
+	}
+	detached, cancel := context.WithTimeout(context.WithoutCancel(lookupContext), raylinearc.RouteLookupDetachBound)
+	type outcome struct {
+		decision routerruntime.RouteDecision
+		err      error
+	}
+	answered := make(chan outcome, 1)
+	background.Add(1)
+	go func() {
+		defer background.Done()
+		// Released from in here, not by the handler returning: the slot is
+		// the backend's, and the backend is busy until this call returns.
+		defer ticket.Release()
+		defer cancel()
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				answered <- outcome{err: fmt.Errorf("route decision panicked: %v", recovered)}
+			}
+		}()
+		decision, err := decide(detached, request)
+		answered <- outcome{decision: decision, err: err}
+	}()
+	select {
+	case result := <-answered:
+		return result.decision, result.err
+	case <-lookupContext.Done():
+		return routerruntime.RouteDecision{}, lookupContext.Err()
+	}
 }
 
 // raylineRoutesFailure classifies a failed lookup.
@@ -609,24 +728,20 @@ func (r *OpenAIRouter) raylineRoutesFailure(
 	// honest answer is that it did not answer in the budget they are entitled
 	// to, and the two have different fixes.
 	if expired {
-		return r.createRaylineRoutesError(
-			ctx,
-			504,
-			"timeout_error",
-			"route lookup exceeded its deadline",
-		)
+		return r.createRaylineRoutesCodedError(ctx, &routesContractError{
+			status: 504, errType: "timeout_error", code: "deadline_exceeded",
+			message: "route lookup exceeded its deadline",
+		})
 	}
 	// Contention is not an outage. A 503 sends a caller into fallback and
 	// reads as this router being down; a contended lookup is a healthy router
 	// that is briefly busy with this very session, so it says so and says
 	// when to come back.
 	if contended {
-		return raylineRoutesRetryAfter(r.createRaylineRoutesError(
-			ctx,
-			429,
-			"rate_limit_error",
-			"route lookup contended: the session or the encoder is briefly at capacity",
-		), raylineRoutesContendedRetrySeconds)
+		return raylineRoutesRetryAfter(r.createRaylineRoutesCodedError(ctx, &routesContractError{
+			status: 429, errType: "rate_limit_error", code: "contended",
+			message: "route lookup contended: the session or the encoder is briefly at capacity",
+		}), raylineRoutesContendedRetrySeconds)
 	}
 	// Fail closed. The selector owns the choice and has no fallback arm, so
 	// answering with a default here would replace a policy decision with this
@@ -1264,4 +1379,44 @@ func raylineRoutesToolWarnings(warnings []string, encoded *bool) []string {
 		}
 	}
 	return settled
+}
+
+// raylineRoutesAbandonedHoldFixed is the fixed part of an abandoned tracked
+// lookup's hold: a full encode's fixed cost (about 0.2 s) with margin.
+var raylineRoutesAbandonedHoldFixed = time.Second
+
+// raylineRoutesAbandonedLeaseMargin is how long before its cell-wide lease
+// runs out an abandoned lookup's slot is released at the latest.
+const raylineRoutesAbandonedLeaseMargin = time.Second
+
+// raylineRoutesAbandonedHold is how much longer an abandoned tracked lookup
+// keeps its slot, elapsed after its decision began: the encode it started,
+// at tokensPerSecond, plus the fixed part, capped at RouteLookupDetachBound
+// from the start, less what has already elapsed. A slot with a cell-wide
+// lease (leased) is released at least raylineRoutesAbandonedLeaseMargin
+// before leaseLeft runs out, so no other replica is admitted on an expired
+// lease while this one still holds the slot. Zero or less: release now.
+func raylineRoutesAbandonedHold(tokens, tokensPerSecond int, elapsed, leaseLeft time.Duration, leased bool) time.Duration {
+	if tokensPerSecond <= 0 {
+		tokensPerSecond = config.DefaultRaylineARCRoutesAbandonedHoldTokensPerSecond
+	}
+	total := time.Duration(float64(tokens)/float64(tokensPerSecond)*float64(time.Second)) + raylineRoutesAbandonedHoldFixed
+	if total > raylinearc.RouteLookupDetachBound {
+		total = raylinearc.RouteLookupDetachBound
+	}
+	hold := total - elapsed
+	if leased && hold > leaseLeft-raylineRoutesAbandonedLeaseMargin {
+		hold = leaseLeft - raylineRoutesAbandonedLeaseMargin
+	}
+	return hold
+}
+
+// raylineRoutesEncodeTokens is the size of the encode a lookup started: the
+// tokens its decision reports encoding, or, when it reported none (a
+// cancelled decision reports nothing), the body at four bytes a token.
+func raylineRoutesEncodeTokens(decision routerruntime.RouteDecision, body []byte) int {
+	if tokens := decision.Usage.EncodedInputTokens + decision.Usage.CacheReadTokens; tokens > 0 {
+		return tokens
+	}
+	return len(body) / 4
 }
