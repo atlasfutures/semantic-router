@@ -11,6 +11,7 @@ import (
 	"os"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -393,9 +394,14 @@ func (provider *HTTPDecisions) Decide(ctx context.Context, input DecisionInput) 
 		if provider.config.Decisions.apiMode() == DecisionsExecutionContextV2 {
 			// v2 refusals are contract codes (execution_*, policy_*): name the
 			// code so the harness and logs show why. Messages are not echoed.
-			return Decision{}, &DecisionsRefusal{Status: response.StatusCode, Code: refusalCode(response)}
+			refusal := &DecisionsRefusal{Status: response.StatusCode, Code: refusalCode(response)}
+			refusal.RetryAfter, refusal.ShouldRetry = retryAdvice(response.Header)
+			return Decision{}, refusal
 		}
-		return Decision{}, fmt.Errorf("Decisions request refused (HTTP %d)", response.StatusCode)
+		// Other modes carry no contract code; the message is the same as before.
+		refusal := &DecisionsRefusal{Status: response.StatusCode}
+		refusal.RetryAfter, refusal.ShouldRetry = retryAdvice(response.Header)
+		return Decision{}, refusal
 	}
 	if tag := provider.config.Decisions.CellTag; tag != "" && response.Header.Get("X-Rayline-Cell") != tag {
 		return Decision{}, fmt.Errorf("Decisions did not use the configured cell_tag")
@@ -701,11 +707,45 @@ func validateCachePolicyEcho(source, mode, episodeIdentity string, multiwarm *bo
 	return nil
 }
 
-// DecisionsRefusal is a v2 non-200 answer, with its contract code when the
-// body names one (execution_*, policy_*). Messages are not echoed.
+// DecisionsRefusal is a non-200 Decisions answer, with its contract code when
+// a v2 body names one (execution_*, policy_*). Messages are not echoed.
+// RetryAfter and ShouldRetry carry the service's retry advice, when it gave
+// any, so the core can pass it on to its own caller.
 type DecisionsRefusal struct {
 	Status int
 	Code   string
+	// RetryAfter is the Retry-After delta-seconds, clamped to
+	// maxDecisionsRetryAfter; nil when absent or not delta-seconds.
+	RetryAfter *time.Duration
+	// ShouldRetry is x-should-retry when it is exactly "true" or "false".
+	ShouldRetry *bool
+}
+
+// maxDecisionsRetryAfter bounds the delay a refusal can ask a caller to wait.
+const maxDecisionsRetryAfter = 300 * time.Second
+
+// retryAdvice reads the Decisions retry headers. Retry-After is honoured only
+// as non-negative integer delta-seconds (an HTTP-date is ignored);
+// x-should-retry only as exactly "true" or "false".
+func retryAdvice(header http.Header) (*time.Duration, *bool) {
+	var retryAfter *time.Duration
+	if value := strings.TrimSpace(header.Get("Retry-After")); value != "" && strings.Trim(value, "0123456789") == "" {
+		delay := maxDecisionsRetryAfter
+		// A value too large to parse is past the bound anyway.
+		if seconds, err := strconv.ParseInt(value, 10, 64); err == nil && seconds < int64(maxDecisionsRetryAfter/time.Second) {
+			delay = time.Duration(seconds) * time.Second
+		}
+		retryAfter = &delay
+	}
+	var shouldRetry *bool
+	switch strings.TrimSpace(header.Get("X-Should-Retry")) {
+	case "true":
+		shouldRetry = new(bool)
+		*shouldRetry = true
+	case "false":
+		shouldRetry = new(bool)
+	}
+	return retryAfter, shouldRetry
 }
 
 func (refusal *DecisionsRefusal) Error() string {
