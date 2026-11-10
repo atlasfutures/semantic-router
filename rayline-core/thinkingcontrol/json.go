@@ -28,6 +28,7 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf16"
+	"unicode/utf8"
 )
 
 // kind is a JSON value's type.
@@ -371,7 +372,24 @@ func writeValue(buf *bytes.Buffer, v *value, sortKeys bool) error {
 func writeString(buf *bytes.Buffer, s string) {
 	const hex = "0123456789abcdef"
 	buf.WriteByte('"')
-	for _, r := range s {
+	start := 0
+	for index, r := range s {
+		if r >= 0x20 && r != '"' && r != '\\' {
+			if r != utf8.RuneError {
+				continue
+			}
+			if _, size := utf8.DecodeRuneInString(s[index:]); size > 1 {
+				continue
+			}
+			// Match range/WriteRune's replacement of each invalid UTF-8 byte.
+			buf.WriteString(s[start:index])
+			buf.WriteRune(utf8.RuneError)
+			start = index + 1
+			continue
+		}
+		// Ordinary text, including valid UTF-8, needs no transformation.
+		// Copy the whole span rather than writing every rune separately.
+		buf.WriteString(s[start:index])
 		switch r {
 		case '"':
 			buf.WriteString(`\"`)
@@ -388,15 +406,13 @@ func writeString(buf *bytes.Buffer, s string) {
 		case '\f':
 			buf.WriteString(`\f`)
 		default:
-			if r < 0x20 {
-				buf.WriteString(`\u00`)
-				buf.WriteByte(hex[r>>4])
-				buf.WriteByte(hex[r&0xf])
-			} else {
-				buf.WriteRune(r)
-			}
+			buf.WriteString(`\u00`)
+			buf.WriteByte(hex[r>>4])
+			buf.WriteByte(hex[r&0xf])
 		}
+		start = index + 1
 	}
+	buf.WriteString(s[start:])
 	buf.WriteByte('"')
 }
 
