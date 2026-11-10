@@ -78,6 +78,8 @@ type v2Decisions struct {
 	failNext int
 	// refuse, when it returns a code, answers HTTP 409 with that contract code.
 	refuse func(contextV2) string
+	// answer, when set and it returns true, has written the whole response.
+	answer func(http.ResponseWriter) bool
 }
 
 func (fixture *v2Decisions) snapshot() []v2Lookup {
@@ -119,6 +121,9 @@ func v2Server(t *testing.T, config Config, fixture *v2Decisions, counts ...int) 
 			return
 		}
 		sent := body.Routing.Execution
+		if fixture.answer != nil && fixture.answer(w) {
+			return
+		}
 		if fixture.refuse != nil {
 			if code := fixture.refuse(sent); code != "" {
 				w.WriteHeader(http.StatusConflict)

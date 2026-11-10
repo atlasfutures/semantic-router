@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -668,9 +669,19 @@ func (server *Server) reserveGenerationAttempt() bool {
 // same compaction message as the core's own refusal, not a generic failure.
 func (server *Server) writeDecisionError(writer http.ResponseWriter, format llmprotocol.WireFormat, err error, capacity map[string]*CapacityFact) {
 	var refusal *DecisionsRefusal
-	noFeasible := errors.Is(err, errSelectedInfeasible) || errors.As(err, &refusal) && (refusal.Code == "execution_no_feasible_target" || refusal.Code == "no_feasible_target")
+	isRefusal := errors.As(err, &refusal)
+	noFeasible := errors.Is(err, errSelectedInfeasible) || isRefusal && (refusal.Code == "execution_no_feasible_target" || refusal.Code == "no_feasible_target")
 	if noFeasible && server.writeContextExceeded(writer, format, capacity) {
 		return
+	}
+	// The service's retry advice reaches the caller unchanged in meaning.
+	if isRefusal {
+		if refusal.RetryAfter != nil {
+			writer.Header().Set("Retry-After", strconv.FormatInt(int64(*refusal.RetryAfter/time.Second), 10))
+		}
+		if refusal.ShouldRetry != nil {
+			writer.Header().Set("X-Should-Retry", strconv.FormatBool(*refusal.ShouldRetry))
+		}
 	}
 	server.writeError(writer, format, http.StatusBadGateway, "decision_failed", err.Error())
 }
