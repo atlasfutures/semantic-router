@@ -3,6 +3,7 @@ package protocolcodec
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"unicode/utf8"
 
 	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
@@ -109,7 +110,65 @@ func (framer *sseFramer) Finalize() ([][]byte, error) {
 	}
 	frame := append([]byte(nil), framer.buffer...)
 	framer.buffer = nil
+	if sseFrameDataCutBeforeItsValue(frame) {
+		// The frame's "data:" arrived and its value did not. Pushing it on
+		// would be refused for an empty document, which is what a provider's
+		// own empty frame is -- this is a read that stopped at that boundary,
+		// and the bytes that never came would have completed it. Saying so
+		// keeps a cut here from reaching the client as malformed upstream
+		// bytes with its count dropped (truncatedTrailingFragment).
+		return nil, llmprotocol.NewError(
+			llmprotocol.ErrorUpstreamUnavailable, upstreamFrameCutCode,
+			"upstream SSE frame ends before its data value", io.ErrUnexpectedEOF,
+		)
+	}
 	return [][]byte{frame}, nil
+}
+
+// upstreamFrameCutCode names an unfinished frame that stops where its data
+// value would begin.
+const upstreamFrameCutCode = "upstream_frame_cut"
+
+// sentinelCutShort reports data that is a proper prefix of the OpenAI SSE
+// convention's terminal sentinel: a read that stopped partway through
+// "[DONE]". Anything else, including a complete sentinel, is left alone.
+//
+// Both the Chat decoder and the Anthropic decoder need this: OpenRouter's
+// Messages adapter sends the sentinel as a trailer after message_stop, so a
+// stream carrying Anthropic events can end inside it too.
+func sentinelCutShort(data []byte) bool {
+	trimmed := bytes.TrimSpace(data)
+	sentinel := []byte("[DONE]")
+	if len(trimmed) == 0 || len(trimmed) >= len(sentinel) {
+		return false
+	}
+	return bytes.Equal(sentinel[:len(trimmed)], trimmed)
+}
+
+// sseFrameDataCutBeforeItsValue reports whether an unfinished frame names a
+// data field and carries no value for it.
+//
+// The frame is read with the stream's own line parser, so every line
+// terminator the format allows is handled and several data lines accumulate
+// into one value, as they do on a complete frame. A frame whose accumulated
+// value is empty stopped where that value would begin; one carrying anything
+// -- even half a JSON object, even an earlier line's whole value -- is passed
+// on and classified by the decoder that reads it, so a provider's malformed
+// bytes are never hidden behind a trailing bare "data:".
+func sseFrameDataCutBeforeItsValue(frame []byte) bool {
+	// first=true so a leading BOM is stripped rather than refused: this frame
+	// may be the stream's first, and whether it is one is not what decides
+	// whether the read stopped before a value.
+	normalized, err := normalizeSSEFrame(frame, true)
+	if err != nil {
+		// A frame this parser refuses is not one to reclassify.
+		normalized = frame
+	}
+	var parsed sseFrame
+	for _, line := range bytes.Split(normalized, []byte("\n")) {
+		parseSSELine(&parsed, line)
+	}
+	return parsed.HasData && len(bytes.TrimSpace(parsed.Data)) == 0
 }
 
 func completeSSEFrame(payload []byte) (int, bool) {
@@ -189,11 +248,52 @@ func validateSSEFrameBytes(frame []byte, limit int) error {
 		return llmprotocol.NewError(llmprotocol.ErrorUpstreamUnavailable, "sse_frame_limit", "SSE frame is empty or too large", nil)
 	}
 	if !utf8.Valid(frame) {
+		if utf8RuneCutAtTail(frame) {
+			// Valid up to a character the bytes stopped inside: what a cut
+			// leaves behind, not what a provider sends.
+			return llmprotocol.NewError(
+				llmprotocol.ErrorUpstreamUnavailable, upstreamUTF8CutCode, "upstream SSE frame ends inside a UTF-8 character", nil,
+			)
+		}
 		return llmprotocol.NewError(
 			llmprotocol.ErrorUpstreamUnavailable, "invalid_upstream_utf8", "upstream SSE frame is not valid UTF-8", nil,
 		)
 	}
 	return nil
+}
+
+// upstreamUTF8CutCode names a frame whose only fault is a multibyte character
+// cut in half at its end. Appending the missing bytes would have made it
+// valid, which is never true of an invalid byte; the two must not share a
+// code, because a cut turn bills and a malformed one does not.
+const upstreamUTF8CutCode = "upstream_utf8_cut"
+
+// utf8RuneCutAtTail reports whether a frame is valid UTF-8 except for an
+// incomplete multibyte sequence at its very end.
+func utf8RuneCutAtTail(frame []byte) bool {
+	for i := 0; i < len(frame); {
+		r, size := utf8.DecodeRune(frame[i:])
+		if r != utf8.RuneError || size != 1 {
+			i += size
+			continue
+		}
+		tail := frame[i:]
+		if len(tail) >= utf8.UTFMax || utf8.FullRune(tail) {
+			return false
+		}
+		// The tail is a lead byte and continuation bytes of a longer sequence
+		// that never finished; any other arrangement is simply invalid.
+		if tail[0] < 0xc2 || tail[0] > 0xf4 {
+			return false
+		}
+		for _, b := range tail[1:] {
+			if b&0xc0 != 0x80 {
+				return false
+			}
+		}
+		return true
+	}
+	return false
 }
 
 func normalizeSSEFrame(frame []byte, first bool) ([]byte, error) {

@@ -49,6 +49,21 @@ type semanticResponseStreamState struct {
 	// upstreamFailed is the provider's error as it said it, before the
 	// client's copy was made public; the failure is classed by it.
 	upstreamFailed *llmprotocol.ProtocolError
+
+	// generatedAtUsage is how much output the turn had produced when the
+	// upstream last stated a count. A count stated before more output arrived
+	// is a snapshot, not a settlement: Anthropic's message_start says
+	// output_tokens 1 before a single delta, and a turn cut after that has
+	// generated far more than 1 (outputRestatedPastSnapshot).
+	generatedAtUsage int
+	// outputForwarded says the target encoder has written something the
+	// client can see (StreamEngine.OutputPublished): a delta of any kind, an
+	// image's progress, a call's start where the format shows one. Text bytes
+	// alone do not say so -- a call that has only started, or an image still
+	// generating, is output a client holds with no bytes to count -- and the
+	// decoded events alone do not either: a Chat target writes nothing for a
+	// call's start, so a Chat client holds nothing yet.
+	outputForwarded bool
 }
 
 type semanticStreamItem struct {
@@ -125,17 +140,19 @@ func (r *OpenAIRouter) handleSemanticStreamingResponseBody(
 	if cut || endOfStream {
 		if readCut {
 			buffers.recordError(ctx, ctx.UpstreamBodyCut, true)
-			r.attachTruncatedStreamUsage(ctx)
+			r.attachTruncatedStreamUsage(ctx, ctx.UpstreamBodyCut)
 		}
 		if overran {
 			r.logResponseStreamTruncation(ctx)
-			buffers.recordError(ctx, r.truncatedStreamError(), true)
-			r.attachTruncatedStreamUsage(ctx)
+			cut := r.truncatedStreamError()
+			buffers.recordError(ctx, cut, true)
+			r.attachTruncatedStreamUsage(ctx, cut)
 		}
 		if silent {
 			r.logResponseStreamSilence(ctx)
-			buffers.recordError(ctx, silentStreamError(ctx), true)
-			r.attachTruncatedStreamUsage(ctx)
+			cut := silentStreamError(ctx)
+			buffers.recordError(ctx, cut, true)
+			r.attachTruncatedStreamUsage(ctx, cut)
 		}
 		buffers.finalize(ctx)
 		// A codec that states the stop only when its stream is finalized
@@ -192,8 +209,25 @@ func (buffers *semanticStreamBuffers) push(responseBody []byte, ctx *RequestCont
 		frames, events, diagnostics, err := ctx.ProtocolResponseStream.Push(responseBody)
 		buffers.translated = appendProtocolFrames(buffers.translated, frames)
 		observeProtocolStream(ctx, events, diagnostics)
+		// Who wrote the bytes decides which answer is the honest one. With a
+		// public filter the upstream's own frames are what reaches the client
+		// and the encoder emits none, so the encoder's answer would call a
+		// turn that already delivered a tool call pre-output -- and a cut
+		// would then drop its count and close nothing.
+		if ctx.SemanticStreamState != nil && streamForwardedOutput(ctx) {
+			ctx.SemanticStreamState.outputForwarded = true
+		}
 		buffers.recordError(ctx, err, true)
 	}
+}
+
+// streamForwardedOutput reports whether the client is holding output of this
+// turn, asking whichever component is putting this route's bytes on the wire.
+func streamForwardedOutput(ctx *RequestContext) bool {
+	if ctx.PublicStreamFilter != nil {
+		return ctx.ProtocolResponseStream.OutputDecoded()
+	}
+	return ctx.ProtocolResponseStream.OutputPublished()
 }
 
 func (buffers *semanticStreamBuffers) finalize(ctx *RequestContext) {
@@ -380,6 +414,7 @@ func (state *semanticResponseStreamState) observe(events []llmprotocol.Event) {
 		}
 		if event.Usage != nil {
 			state.usage = *event.Usage
+			state.generatedAtUsage = generatedTextBytes(state)
 		}
 		if event.StopReason != "" {
 			state.stop = event.StopReason
@@ -427,8 +462,12 @@ func (state *semanticResponseStreamState) observe(events []llmprotocol.Event) {
 		case llmprotocol.EventReasoningDelta:
 			item := state.item(event.ItemIndex)
 			item.reasoning += event.Delta
+			// A signature arrives in one delta after the thinking, or split
+			// across several; the fragments join in order, as the codec's
+			// own encoders join them. Kept as the last fragment, a split
+			// signature was stored short and counted short.
 			if event.Content != nil && event.Content.Signature != "" {
-				item.reasoningSig = event.Content.Signature
+				item.reasoningSig += event.Content.Signature
 			}
 		case llmprotocol.EventToolCallDelta:
 			item := state.item(event.ItemIndex)
@@ -740,9 +779,16 @@ func truncatedStreamUsage(ctx *RequestContext, usage responseUsageMetrics) respo
 	}
 	if ctx.SemanticStreamState != nil {
 		usage = responseUsageFromSemanticUsage(ctx.SemanticStreamState.usage)
+		if usage.invalid {
+			// The terminal the codec wrote for the cut has already reconciled
+			// the count (reconciledTruncationUsage), and what it restated is
+			// an estimate by provenance. That is the row, not a reason to
+			// discard the stream's own input legs and measure everything.
+			usage = responseUsageFromRestatedUsage(ctx.SemanticStreamState.usage)
+		}
 	}
 	if !usage.invalid {
-		return usage
+		return outputRestatedPastSnapshot(ctx, usage)
 	}
 	if estimated, carried := estimatedTruncatedStreamUsage(ctx); carried {
 		// The counts are the Router's estimate; a charge the upstream

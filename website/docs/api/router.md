@@ -149,7 +149,7 @@ the schema's zero-valued object and marks it beside `usage`:
 |---|---|---|
 | absent | any response | `usage` holds the provider's counts |
 | `"unknown"` | buffered message; terminal `message_delta` | `usage` is a placeholder; the turn's usage is unknown |
-| `"stream_estimate"` | `error` event of a stream the router cut | `usage` is the router's estimate for the cut turn |
+| `"stream_estimate"` | `error` event of a stream the router cut | `usage` is the router's estimate for the cut turn. A count the upstream stated before the cut is kept where it still stands; see *What a client receives when the Router ends a turn* in the configuration guide for the rule, and for how Chat Completions and Responses end the same turn |
 
 A proxy that bills from the client response should record a turn marked
 `"unknown"` as unknown usage, not as zero tokens. The router's own usage

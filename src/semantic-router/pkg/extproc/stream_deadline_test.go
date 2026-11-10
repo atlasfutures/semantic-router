@@ -46,22 +46,123 @@ func TestRouterEndsAStreamAtItsOwnDeadline(t *testing.T) {
 	}
 }
 
-// The Chat error object does have a code, and it is where the Router's own
-// name for this failure travels: the turn was truncated, by the Router, at its
-// own deadline.
-func TestTruncatedChatStreamNamesTheCode(t *testing.T) {
+// A turn the Router cut ends in the terminal Chat Completions defines, not in
+// an error frame.
+//
+// This replaces the opposite assertion. The error frame was the whole defect:
+// Chat has no error frame that also carries usage, so a cut turn reached the
+// client with no finish_reason, no usage and no sentinel -- unclosable and
+// unbillable, while the upstream charged for every token it had produced.
+// The format's own terminal for a turn stopped at a
+// limit says all three, and the Router did stop the model where it stood.
+//
+// The Router's own name for the cut (code stream_truncated) stays on its log
+// line and its usage row. Chat gives a chunk no member for it that an SDK
+// would keep, and inventing one was the contract this removes.
+func TestTruncatedChatStreamEndsInTheFormatsOwnTerminal(t *testing.T) {
 	router := &OpenAIRouter{}
 	ctx := overrunningStreamContext(t)
 	ctx.SourceFormat = llmprotocol.OpenAIChatV1
+	ctx.SemanticRequest = streamUsageRequest()
 
 	body := streamDeadlineResponseBody(t, router, ctx, endlessUpstreamChunk(1))
 
+	// The exact terminal sequence: the chunk that names the stop, the
+	// usage-only chunk, the sentinel. In that order and nothing between.
+	terminal := truncatedChatTerminalFrames(t, body)
+	if len(terminal) != 3 {
+		t.Fatalf("the terminal was not three frames:\n%s", body)
+	}
+	if !bytes.Contains(terminal[0], []byte(`"finish_reason":"length"`)) {
+		t.Fatalf("the turn did not name a stop the client can close on:\n%s", terminal[0])
+	}
+	if !bytes.Contains(terminal[1], []byte(`"choices":[]`)) ||
+		!bytes.Contains(terminal[1], []byte(`"completion_tokens":4`)) {
+		t.Fatalf("the usage chunk did not state what the turn cost:\n%s", terminal[1])
+	}
+	if !bytes.Equal(terminal[2], []byte("data: [DONE]")) {
+		t.Fatalf("the stream did not reach its sentinel:\n%s", body)
+	}
+	// "length" is the nearest stop this format's closed vocabulary has, so the
+	// mechanism travels beside it: a caller choosing between retrying and
+	// asking for less work in one turn reads the cause, not the stop.
+	if !bytes.Contains(terminal[0], []byte(`"rayline":{"truncated":"deadline"}`)) {
+		t.Fatalf("the terminal did not name why the turn was cut:\n%s", terminal[0])
+	}
+	// The error frame the lane used to end on is gone.
+	if bytes.Contains(body, []byte(`"error"`)) {
+		t.Fatalf("the turn still ended on an error frame:\n%s", body)
+	}
+}
+
+// A turn cut before the upstream produced anything has no count to state. It
+// cannot close as a length stop with a usage of zeros -- that would bill a turn
+// that generated nothing -- so it ends as the failure it is, and the client
+// still receives a terminal rather than an open stream.
+func TestTruncatedChatStreamWithNoOutputStillTerminates(t *testing.T) {
+	router := &OpenAIRouter{}
+	ctx := overrunningStreamContext(t)
+	ctx.SourceFormat = llmprotocol.OpenAIChatV1
+	ctx.SemanticRequest = streamUsageRequest()
+
+	// The deadline falls with no chunk ever forwarded.
+	body := streamDeadlineResponseBody(t, router, ctx, "")
+
 	if !bytes.Contains(body, []byte(`"code":"stream_truncated"`)) {
-		t.Fatalf("the failure did not say the stream was truncated:\n%s", body)
+		t.Fatalf("an uncounted cut did not name itself:\n%s", body)
 	}
-	if bytes.Contains(body, []byte("data: [DONE]")) {
-		t.Fatalf("a truncated turn published a success sentinel:\n%s", body)
+	if bytes.Contains(body, []byte(`"usage"`)) {
+		t.Fatalf("a turn that generated nothing was billed:\n%s", body)
 	}
+	if bytes.Contains(body, []byte(`"finish_reason":"length"`)) {
+		t.Fatalf("a turn that generated nothing claimed a length stop:\n%s", body)
+	}
+}
+
+// Messages is left exactly as it was. Its error-plus-usage frame is a
+// published contract that Messages clients already read, so there is nothing
+// to gain by changing its wire shape and a working contract to lose.
+func TestTruncatedMessagesStreamKeepsItsErrorFrame(t *testing.T) {
+	router := &OpenAIRouter{}
+	ctx := overrunningStreamContext(t)
+
+	body := streamDeadlineResponseBody(t, router, ctx, endlessUpstreamChunk(1))
+
+	if !bytes.Contains(body, []byte(`"type":"error"`)) {
+		t.Fatalf("the Messages contract stopped naming the failure:\n%s", body)
+	}
+	if !bytes.Contains(body, []byte(`"usage_source":"stream_estimate"`)) {
+		t.Fatalf("the Messages contract stopped carrying the count:\n%s", body)
+	}
+	if bytes.Contains(body, []byte("message_stop")) || bytes.Contains(body, []byte("data: [DONE]")) {
+		t.Fatalf("a truncated Messages turn published a success terminal:\n%s", body)
+	}
+}
+
+// streamUsageRequest is a client that asked for the stream's usage chunk.
+// Chat omits that chunk unless it was requested, which is the format's own
+// opt-in and not something a truncation may override.
+func streamUsageRequest() *llmprotocol.Request {
+	requested := true
+	return &llmprotocol.Request{
+		StreamOptions: llmprotocol.StreamOptions{IncludeUsage: &requested},
+	}
+}
+
+// truncatedChatTerminalFrames is the last three data frames of a Chat stream,
+// in order, with the SSE framing removed.
+func truncatedChatTerminalFrames(t *testing.T, body []byte) [][]byte {
+	t.Helper()
+	frames := make([][]byte, 0, 4)
+	for _, frame := range bytes.Split(body, []byte("\n\n")) {
+		if trimmed := bytes.TrimSpace(frame); len(trimmed) > 0 {
+			frames = append(frames, trimmed)
+		}
+	}
+	if len(frames) < 3 {
+		t.Fatalf("the stream carried no terminal:\n%s", body)
+	}
+	return frames[len(frames)-3:]
 }
 
 // Once the Router has ended the turn, whatever the upstream keeps sending is
@@ -168,4 +269,49 @@ func upstreamUsageChunk() string {
 	return `data: {"id":"gen-1","object":"chat.completion.chunk","created":1788474769,` +
 		`"model":"xiaomi/mimo-v2.5-pro","choices":[],` +
 		`"usage":{"prompt_tokens":220,"completion_tokens":16030,"total_tokens":16250}}` + "\n\n"
+}
+
+// A thinking marker is a signature a Router mints for thinking no provider
+// signed (protocolcodec.ThinkingMarker), so one arrives on a response only
+// from an upstream that is itself a Router. A Chat client never receives it:
+// the encoder drops a signature in the Router's namespace rather than carry
+// it as a provider's. The count added the marker's bytes all the same, so a
+// turn whose thinking was two bytes billed sixteen tokens for a marker the
+// client did not hold -- and that no upstream had billed either, since a
+// marker is minted, not generated. It is left out of the count on every
+// route for that reason, a Messages client that does receive it included.
+func TestAThinkingMarkerIsNotBilledAsGeneration(t *testing.T) {
+	logs := captureLogs(t)
+	router := &OpenAIRouter{}
+	ctx := overrunningStreamContext(t)
+	ctx.SourceFormat = llmprotocol.OpenAIChatV1
+	ctx.TargetFormat = llmprotocol.AnthropicMessagesV1
+	ctx.SemanticRequest = streamUsageRequest()
+
+	body := streamDeadlineResponseBody(t, router, ctx, sameFormatMessageStart()+
+		"event: content_block_start\n"+
+		`data: {"type":"content_block_start","index":0,"content_block":`+
+		`{"type":"thinking","thinking":"","signature":""}}`+"\n\n"+
+		"event: content_block_delta\n"+
+		`data: {"type":"content_block_delta","index":0,"delta":`+
+		`{"type":"thinking_delta","thinking":"hi"}}`+"\n\n"+
+		"event: content_block_delta\n"+
+		`data: {"type":"content_block_delta","index":0,"delta":`+
+		`{"type":"signature_delta","signature":"vsr.thinking.v1.moonshotai.AbCdEfGhIjKlMnOpQrStUvWxYz012-_9"}}`+"\n\n"+
+		"event: content_block_stop\n"+`data: {"type":"content_block_stop","index":0}`+"\n\n")
+
+	if !bytes.Contains(body, []byte(`"reasoning_content":"hi"`)) {
+		t.Fatalf("the thinking never reached the client, so this case is not being tested:\n%s", body)
+	}
+	if bytes.Contains(body, []byte("vsr.thinking")) {
+		t.Fatalf("the Chat client received the marker, so this case is not being tested:\n%s", body)
+	}
+	// Two bytes of thinking are one token; the marker adds nothing.
+	if !bytes.Contains(body, []byte(`"completion_tokens":1,`)) {
+		t.Fatalf("the client was billed for a marker it never received:\n%s", body)
+	}
+	fields := findLogEvent(t, logs, "llm_usage")
+	if got, _ := fields["completion_tokens"].(int64); got != 1 {
+		t.Fatalf("the usage row billed %v for two bytes of thinking and a marker", fields["completion_tokens"])
+	}
 }

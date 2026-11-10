@@ -538,8 +538,14 @@ func TestFlexResendStreamCutAfterUsageIsNotCommitted(t *testing.T) {
 	if immediate == nil {
 		t.Fatalf("the 429 was not answered: %v", reply)
 	}
-	if !strings.Contains(string(immediate.GetBody()), "error") {
-		t.Fatalf("the cut stream did not end with an error:\n%s", immediate.GetBody())
+	// The cut has to be visible to the client, and it is -- but not as an
+	// error frame any more. A turn the provider finished before its transport
+	// was cut now closes in the format's own shape, so the client can end the
+	// stream, and the cause rides the chunk that states the stop. Asserting
+	// the word "error" here outlived the behaviour it described: it passed
+	// only while such a turn reached the client with nothing to close on.
+	if !strings.Contains(string(immediate.GetBody()), `"truncated":"transport"`) {
+		t.Fatalf("the cut stream did not tell the client it was cut:\n%s", immediate.GetBody())
 	}
 	// An aborted stream is what keeps the turn from committing: the
 	// selection commits only a stream that was not aborted, and the cut

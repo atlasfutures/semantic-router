@@ -13,6 +13,17 @@
       }
     },
     {
+      "name": "rayline_truncated",
+      "stream": {
+        "public_model": "public-model",
+        "provider_model": "provider-model",
+        "chunks": [
+          "data: {\"id\":\"chatcmpl_3\",\"object\":\"chat.completion.chunk\",\"created\":100,\"model\":\"provider-model\",\"choices\":[{\"index\":0,\"finish_reason\":null,\"delta\":{\"role\":\"assistant\",\"content\":\"ninety-one is\"}}]}\n\n",
+          "data: {\"id\":\"chatcmpl_3\",\"object\":\"chat.completion.chunk\",\"created\":100,\"model\":\"provider-model\",\"choices\":[{\"index\":0,\"finish_reason\":\"length\",\"delta\":{}}],\"rayline\":{\"truncated\":\"deadline\"},\"usage\":{\"prompt_tokens\":55,\"completion_tokens\":268,\"total_tokens\":323}}\n\ndata: [DONE]\n\n"
+        ]
+      }
+    },
+    {
       "name": "delta_extensions",
       "stream": {
         "public_model": "public-model",

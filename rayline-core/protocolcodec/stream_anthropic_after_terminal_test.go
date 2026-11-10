@@ -113,3 +113,64 @@ func TestAnthropicLateDeltaComparesCountsExactly(t *testing.T) {
 		t.Fatal("the same count compared unequal")
 	}
 }
+
+// A connection dropping inside the trailing sentinel leaves the finished
+// answer its terminal.
+//
+// The sentinel was matched only complete, so a read that stopped partway
+// through one of these trailers went to the JSON decoder and the turn ended on
+// stream_event_after_terminal -- the client got a bare error where its
+// finish_reason and [DONE] belonged, with nothing to close the stream on,
+// after the model had already finished (codex round 13). The sentinel whole
+// adds nothing to a complete message, so neither could the bytes that never
+// came have.
+func TestAnthropicStreamToleratesASentinelTheConnectionDroppedInside(t *testing.T) {
+	for _, tail := range []string{"data: [", "data: [D", "data: [DO", "data: [DON", "data: [DONE"} {
+		for target, closing := range map[llmprotocol.WireFormat]string{
+			llmprotocol.AnthropicMessagesV1: "event: message_stop",
+			llmprotocol.OpenAIResponsesV1:   "event: response.completed",
+			llmprotocol.OpenAIChatV1:        "data: [DONE]",
+		} {
+			stream, err := NewBuiltinEngine().NewStream(llmprotocol.AnthropicMessagesV1, target,
+				llmprotocol.StreamContext{Context: context.Background(), PublicModel: "public-model"})
+			requireNoError(t, err)
+			served, _, _, err := stream.Push([]byte(anthropicCompleteToolUseStream + tail))
+			requireNoError(t, err, "%q -> %s: refused before the cut", tail, target)
+			terminal, _, _, err := stream.Finalize(nil)
+			requireNoError(t, err, "%q -> %s: a cut sentinel failed the stream", tail, target)
+
+			body := string(joinFrames(append(served, terminal...)))
+			wantNotContains(t, body, "stream_event_after_terminal",
+				"%q -> %s: a dropped connection was called a protocol violation", tail, target)
+			wantContains(t, body, "toolu_1", "%q -> %s: the finished answer did not reach the client", tail, target)
+			wantContains(t, body, closing, "%q -> %s: the stream had nothing to close on", tail, target)
+		}
+	}
+}
+
+// A turn the Router then cut keeps the stop and the count the complete message
+// had already stated: the cut landed in a trailer, after the answer.
+func TestACutInsideATrailingSentinelBillsWhatTheMessageStated(t *testing.T) {
+	requested := true
+	stream, err := NewBuiltinEngine().NewStream(llmprotocol.AnthropicMessagesV1, llmprotocol.OpenAIChatV1,
+		llmprotocol.StreamContext{
+			Context: context.Background(), PublicModel: "public-model",
+			Options: llmprotocol.StreamOptions{IncludeUsage: &requested},
+		})
+	requireNoError(t, err)
+	served, _, _, err := stream.Push([]byte(anthropicCompleteToolUseStream + "data: [DON"))
+	requireNoError(t, err)
+	stream.SetTruncationUsage(estimatedTruncationUsage(), llmprotocol.UsageSourceStreamEstimate)
+	stream.SetTruncationCause(llmprotocol.TruncationTransport)
+	terminal, _, _, err := stream.Finalize(llmprotocol.NewError(
+		llmprotocol.ErrorUpstreamUnavailable, "standard_resend_body_cut", "the body was cut", nil))
+	requireNoError(t, err)
+
+	body := string(joinFrames(append(served, terminal...)))
+	wantContains(t, body, `"finish_reason":"tool_calls"`, "the stop the model reached was overwritten")
+	// The message settled its own count at message_stop; the Router's estimate
+	// of 268 would charge for output the provider never billed.
+	wantContains(t, body, `"completion_tokens":9`, "the message's own settlement was lost")
+	wantNotContains(t, body, "268", "the Router's estimate replaced a count the provider had settled")
+	wantContains(t, body, "data: [DONE]", "the stream had nothing to close on")
+}

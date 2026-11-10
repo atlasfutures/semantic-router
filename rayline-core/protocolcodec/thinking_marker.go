@@ -19,8 +19,11 @@ import "strings"
 // (thinking_marker_strip.go): one pre-pass per source format, run on the
 // client's body before any decoding or classification, so nothing downstream
 // ever reads a Router signature as provenance. The request encoders refuse
-// one again (thinking_marker_egress.go) only as defence in depth. Those two are
-// the only callers of routerSignature.
+// one again (thinking_marker_egress.go) only as defence in depth. The
+// response encoders that cannot carry a marker drop it rather than sign a
+// block with it, and a host counting what a cut turn generated leaves it out
+// (IsRouterSignature): a marker is minted, not generated, and no upstream
+// bills for one.
 //
 // The whole "vsr." namespace is the Router's. No provider signature starts
 // with it -- the dot is outside the base64 alphabet Anthropic's and every
@@ -52,6 +55,14 @@ func routerSignature(signature string) (family string, reserved bool) {
 		return "", true
 	}
 	return family, true
+}
+
+// IsRouterSignature reports whether a thinking signature is in the Router's
+// namespace: a marker, or a forgery of one. Either way it is nothing a
+// provider generated or signed.
+func IsRouterSignature(signature string) bool {
+	_, reserved := routerSignature(signature)
+	return reserved
 }
 
 func validMarkerFamily(family string) bool {

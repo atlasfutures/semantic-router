@@ -12,6 +12,30 @@ type FailureScope string
 const (
 	FailureTransport FailureScope = "transport"
 	FailureResponse  FailureScope = "response"
+	// FailureTruncated is a turn the Router itself ended after the upstream had
+	// already produced output: its own deadline, its silence limit, or a body
+	// that was cut mid-read. The generation happened and was billed to us, so
+	// the terminal has to carry the count -- and every one of these turns
+	// stopped the model where it stood rather than failing, which is a stop
+	// each client protocol can already say in its own vocabulary. An encoder
+	// renders this scope as the shape its own format defines for a response
+	// that stopped early, not as a transport error; see the stop reason the
+	// event carries. Messages is the exception: its own published shape.
+	FailureTruncated FailureScope = "truncated"
+)
+
+// The causes a host may give for a turn it ended. A host states one of these
+// on a FailureTruncated terminal (Event.Truncation); a codec renders it where
+// its format has a place for one. The vocabulary names the mechanism rather
+// than a remedy or a transport category: a caller reads TruncationDeadline and
+// asks for less work in one turn, TruncationSilence and retries a model that
+// stopped talking, TruncationTransport and retries a connection. A string
+// rather than a boolean, so a further cause can be added without changing the
+// shape.
+const (
+	TruncationDeadline  = "deadline"
+	TruncationSilence   = "silence"
+	TruncationTransport = "transport"
 )
 
 const (
@@ -74,6 +98,18 @@ type Event struct {
 	Error               *ProtocolError
 	Failure             FailureScope
 	Opaque              []byte
+
+	// UpstreamStated marks an Error the upstream sent, read off an error
+	// event in the stream, rather than one the Router produced from the
+	// reason it stopped reading. A turn the host cut states its own terminal,
+	// but not over a failure the provider had already named: the provider's
+	// word for what went wrong is the only one that can be the client's.
+	UpstreamStated bool
+	// Truncation is why the host ended the turn, on a FailureTruncated
+	// terminal only: one of the Truncation* causes, or empty when the host
+	// stated none. The host that cut the turn is the one that knows why; the
+	// codec only carries it.
+	Truncation string
 }
 
 type StreamContext struct {
