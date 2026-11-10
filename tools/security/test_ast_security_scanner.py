@@ -203,6 +203,19 @@ class CredentialExemptionTests(unittest.TestCase):
         self.assertEqual(len(findings), 1)
         self.assertEqual(findings[0].severity, SCANNER.Severity.HIGH)
 
+    def test_without_a_toml_parser_exemptions_apply_to_nothing(self):
+        source_path = self._write_go_file(self.EXEMPTED_PATH)
+        parser = SCANNER.tomllib
+        self.addCleanup(setattr, SCANNER, "tomllib", parser)
+        SCANNER.tomllib = None
+        self._write_exemptions(self._exempt_entry(self.EXEMPTED_PATH))
+
+        findings = self._credential_refs(source_path)
+
+        self.assertEqual(SCANNER._credential_exemptions, {})
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0].severity, SCANNER.Severity.HIGH)
+
     def test_malformed_exemption_file_exempts_nothing(self):
         source_path = self._write_go_file(self.EXEMPTED_PATH)
         self._write_exemptions("[[exemption]\npath = broken\n")

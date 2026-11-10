@@ -33,7 +33,13 @@ from dataclasses import dataclass, field
 from enum import IntEnum
 from pathlib import Path
 
-import tomllib
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.10: tomllib arrived in 3.11
+    try:
+        import tomli as tomllib
+    except ModuleNotFoundError:
+        tomllib = None
 
 # ---------------------------------------------------------------------------
 # Tree-sitter language setup
@@ -659,6 +665,15 @@ def _load_credential_exemptions(root: Path):
     _exemptions_root = root
     exemptions_file = root / "tools" / "security" / "ast-scan-exemptions.toml"
     if not exemptions_file.is_file():
+        return
+    if tomllib is None:
+        # Fail closed: without a TOML parser the reviewed entries cannot be
+        # read, so none applies and the reference is reported as usual.
+        print(
+            f"Warning: cannot load {exemptions_file}: no TOML parser "
+            "(Python 3.11+ or the tomli package); exempting nothing",
+            file=sys.stderr,
+        )
         return
     try:
         data = tomllib.loads(exemptions_file.read_text(encoding="utf-8"))
