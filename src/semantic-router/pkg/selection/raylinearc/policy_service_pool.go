@@ -269,6 +269,16 @@ type PolicyServiceBinding struct {
 	attempted []string
 	visited   []string
 	remapped  bool
+	// cooled is the cooldown this turn's own 503 set on the replica it is
+	// bound to, cleared if a later call of the turn there is answered.
+	cooled cooledReplica
+}
+
+// cooledReplica names one replica's cooldown by its deadline, so a turn
+// clears only the one it set, never a newer one another turn set since.
+type cooledReplica struct {
+	id    string
+	until time.Time
 }
 
 // Decide asks the bound replica for one decision. A configured unavailable
@@ -291,10 +301,23 @@ func (binding *PolicyServiceBinding) Decide(
 	}
 	response, err := binding.current.Client.Decide(ctx, request)
 	stale := err == nil && staleOwner(request, response)
-	if !stale && (err == nil || !pool.explicitlyUnavailable(err)) {
+	if err == nil && !stale {
+		// A turn asked once more on the replica it is bound to (an episode
+		// start retried after a 503) that is answered clears the cooldown
+		// its own 503 set, so the episode's next turn is not refused.
+		if binding.cooled.id == binding.current.ID {
+			pool.clearUnavailable(binding.cooled)
+			binding.cooled = cooledReplica{}
+		}
 		return response, err
 	}
-	pool.markUnavailable(binding.current.ID)
+	if !stale && !pool.explicitlyUnavailable(err) {
+		return response, err
+	}
+	until := pool.markUnavailable(binding.current.ID)
+	if !stale && policyServiceStatus(err) == http.StatusServiceUnavailable {
+		binding.cooled = cooledReplica{id: binding.current.ID, until: until}
+	}
 	if stale {
 		// The caller still refuses a stale answer if no remap replaces it.
 		err = nil
@@ -310,9 +333,22 @@ func (binding *PolicyServiceBinding) Decide(
 	binding.remapped = true
 	response, err = secondary.Client.Decide(ctx, request)
 	if err != nil && pool.explicitlyUnavailable(err) || err == nil && staleOwner(request, response) {
-		pool.markUnavailable(secondary.ID)
+		until := pool.markUnavailable(secondary.ID)
+		if err != nil && policyServiceStatus(err) == http.StatusServiceUnavailable {
+			binding.cooled = cooledReplica{id: secondary.ID, until: until}
+		}
 	}
 	return response, err
+}
+
+// policyServiceStatus is the HTTP status a policy service failure answered,
+// 0 for none.
+func policyServiceStatus(err error) int {
+	var failure *PolicyServiceError
+	if errors.As(err, &failure) {
+		return failure.Status
+	}
+	return 0
 }
 
 // staleOwner reports a replica that answered for another package than the
@@ -416,10 +452,22 @@ func (pool *PolicyServicePool) explicitlyUnavailable(err error) bool {
 		slices.Contains(pool.config.UnavailableStatusCodes, failure.Status)
 }
 
-func (pool *PolicyServicePool) markUnavailable(replicaID string) {
+func (pool *PolicyServicePool) markUnavailable(replicaID string) time.Time {
 	pool.unavailableMu.Lock()
 	defer pool.unavailableMu.Unlock()
-	pool.unavailableTil[replicaID] = pool.now().UTC().Add(pool.config.UnavailableCooldown)
+	until := pool.now().UTC().Add(pool.config.UnavailableCooldown)
+	pool.unavailableTil[replicaID] = until
+	return until
+}
+
+// clearUnavailable ends a replica's cooldown if it is still the one cooled
+// names; a later cooldown stands.
+func (pool *PolicyServicePool) clearUnavailable(cooled cooledReplica) {
+	pool.unavailableMu.Lock()
+	defer pool.unavailableMu.Unlock()
+	if until, ok := pool.unavailableTil[cooled.id]; ok && until.Equal(cooled.until) {
+		delete(pool.unavailableTil, cooled.id)
+	}
 }
 
 func (pool *PolicyServicePool) unavailable(replicaID string, now time.Time) bool {
