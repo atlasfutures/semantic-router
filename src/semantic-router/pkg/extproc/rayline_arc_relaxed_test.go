@@ -3,6 +3,9 @@ package extproc
 import (
 	"context"
 	"errors"
+	"io"
+	"net"
+	"os"
 	"testing"
 	"time"
 
@@ -142,13 +145,140 @@ func unreachableRedisEpisodeConfig(consistency string) config.RaylineARCEpisodeC
 	}
 }
 
-// A relaxed cell whose Redis is down at startup keeps its store and serves:
-// each turn decides statelessly until the store is back. A strict cell still
-// refuses to start without its store.
-func TestRelaxedCellStartsAndServesWithItsStoreDown(t *testing.T) {
-	if _, _, err := createRaylineARCEpisodeStore(unreachableRedisEpisodeConfig(config.RaylineARCConsistencyStrict)); err == nil {
-		t.Fatal("a strict cell started without its store")
+// A strict cell whose Redis is down at startup keeps its client, reported not
+// ready, with every capability a strict turn asserts, so it serves once the
+// store answers instead of staying disarmed for the life of the process. Its
+// turns fail closed meanwhile: a lease attempt fails as a store failure.
+func TestStrictCellKeepsItsStoreWhenItIsDownAtStartup(t *testing.T) {
+	store, closeStore, err := createRaylineARCEpisodeStore(unreachableRedisEpisodeConfig(config.RaylineARCConsistencyStrict))
+	if err != nil || store == nil {
+		t.Fatalf("strict cell store = %v, err %v; want the store kept", store, err)
 	}
+	t.Cleanup(func() { _ = closeStore() })
+	if raylineARCEpisodeStoreReady(store) {
+		t.Fatal("a store that did not answer at startup is reported ready")
+	}
+	if _, ok := store.(raylinearc.EpisodeLeaseRenewer); !ok {
+		t.Fatal("the kept strict store lost lease renewal")
+	}
+	if _, ok := store.(raylinearc.EpisodeForkRegistry); !ok {
+		t.Fatal("the kept strict store lost the fork registry")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	_, _, err = store.Prepare(ctx, strictTestEpisodeIDHash, 2)
+	// go-redis retries the dial until the deadline, so the failure surfaces as
+	// the store timing out, never as contention.
+	if err == nil || !isStoreFailureClass(boundedARCPrepareFailure(err)) {
+		t.Fatalf("Prepare with the store down = %v, want a store failure", err)
+	}
+}
+
+// strictTestEpisodeIDHash is a well-formed episode hash, so a failing lease
+// attempt fails on the store, not on hash validation.
+const strictTestEpisodeIDHash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+// The kept strict store recovers by itself: a cell that booted while its
+// Redis was unreachable fails its lease attempts, then wins one once the same
+// address answers, with no restart. Needs a real Redis
+// (RAYLINE_ARC_TEST_REDIS_ADDR); the address the cell boots against is a local
+// port that starts forwarding to it only after the store was built.
+func TestStrictCellStoreDownAtStartupServesOnceRedisAnswers(t *testing.T) {
+	target := os.Getenv("RAYLINE_ARC_TEST_REDIS_ADDR")
+	if target == "" {
+		t.Skip("RAYLINE_ARC_TEST_REDIS_ADDR is not set")
+	}
+	reserved, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	address := reserved.Addr().String()
+	_ = reserved.Close()
+
+	episodeConfig := unreachableRedisEpisodeConfig(config.RaylineARCConsistencyStrict)
+	episodeConfig.Redis.Address = address
+	episodeConfig.KeyPrefix = "test:rayline-arc-strict-recovery:" + time.Now().Format("150405.000000000") + ":"
+	store, closeStore, err := createRaylineARCEpisodeStore(episodeConfig)
+	if err != nil || raylineARCEpisodeStoreReady(store) {
+		t.Fatalf("strict store with Redis down = %v (ready %v), err %v; want kept and not ready",
+			store, raylineARCEpisodeStoreReady(store), err)
+	}
+	t.Cleanup(func() { _ = closeStore() })
+	down, cancelDown := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancelDown()
+	if _, _, err := store.Prepare(down, strictTestEpisodeIDHash, 2); err == nil {
+		t.Fatal("a strict lease was won with Redis down")
+	}
+
+	// Redis comes back at the address the cell was configured with.
+	listener, err := net.Listen("tcp", address)
+	if err != nil {
+		t.Fatalf("relisten on %s: %v", address, err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	go forwardTCP(listener, target)
+
+	// go-redis stops dialing after a run of dial errors and probes in the
+	// background about once a second, so the first attempts may still fail.
+	var lease raylinearc.Lease
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(200 * time.Millisecond) {
+		attempt, cancelAttempt := context.WithTimeout(context.Background(), 2*time.Second)
+		lease, _, err = store.Prepare(attempt, strictTestEpisodeIDHash, 2)
+		cancelAttempt()
+		if err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("Prepare once Redis answers = %v, want the lease", err)
+		}
+	}
+	up, cancelUp := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelUp()
+	if err := store.Abort(up, lease); err != nil {
+		t.Fatalf("Abort = %v", err)
+	}
+}
+
+// forwardTCP proxies every accepted connection to target until the listener
+// closes.
+func forwardTCP(listener net.Listener, target string) {
+	for {
+		client, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		go func() {
+			defer client.Close()
+			server, err := net.Dial("tcp", target)
+			if err != nil {
+				return
+			}
+			defer server.Close()
+			// The cell closing its side ends both copies.
+			go func() { _, _ = io.Copy(server, client); _ = server.Close() }()
+			_, _ = io.Copy(client, server)
+		}()
+	}
+}
+
+// Every capability a strict turn asserts on its store survives the wrapper.
+var (
+	_ raylinearc.EpisodeLeaseRenewer    = unreadyStrictRaylineARCEpisodeStore{}
+	_ raylinearc.EpisodeStateStager     = unreadyStrictRaylineARCEpisodeStore{}
+	_ raylinearc.EpisodeForkRegistry    = unreadyStrictRaylineARCEpisodeStore{}
+	_ raylinearc.EpisodeSnapshotStore   = unreadyStrictRaylineARCEpisodeStore{}
+	_ raylinearc.EpisodeStagedTurnStore = unreadyStrictRaylineARCEpisodeStore{}
+	_ raylinearc.ServedModelStore       = unreadyStrictRaylineARCEpisodeStore{}
+	_ raylinearc.EpisodeStoreReadiness  = unreadyStrictRaylineARCEpisodeStore{}
+)
+
+func isStoreFailureClass(class string) bool {
+	return class == "episode_store" || class == "episode_store_timeout"
+}
+
+// A relaxed cell whose Redis is down at startup keeps its store and serves:
+// each turn decides statelessly until the store is back.
+func TestRelaxedCellStartsAndServesWithItsStoreDown(t *testing.T) {
 	store, closeStore, err := createRaylineARCEpisodeStore(unreachableRedisEpisodeConfig(config.RaylineARCConsistencyRelaxed))
 	if err != nil || store == nil {
 		t.Fatalf("relaxed cell store = %v, err %v; want the store kept", store, err)
