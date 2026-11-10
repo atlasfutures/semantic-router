@@ -94,7 +94,8 @@ func recordPolicyReplica(trace *selection.RaylineARCTrace, binding *raylinearc.P
 
 // policySessionBindingFor is the turn's binding to the episode's Modal
 // session on a sessioned policy Server, nil for any other cell. A side call
-// commits nothing, so its binding is ephemeral: it decides on the episode's
+// (or a throwaway lookup, which the caller passes as one) commits nothing, so
+// its binding is ephemeral: it decides on the episode's
 // session when there is one and never records one; a session it had to start
 // is ended once the call is done. A zdr turn is ephemeral too, and never
 // decides on the episode's session: it starts one of its own, which its
@@ -141,9 +142,7 @@ func recordPolicySession(
 	trace.PolicySessions, trace.PolicySessionMoved = binding.Sessions()
 	if session, changed := binding.Session(); changed {
 		trace.PolicySession = session
-		if binding.Replaces() {
-			trace.PolicySessionReplaced = binding
-		}
+		trace.PolicySessionBinding = binding
 	}
 	if trace.PolicySessionMoved {
 		logging.ComponentWarnEvent("extproc", "rayline_arc_policy_session_moved", map[string]interface{}{

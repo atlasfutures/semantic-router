@@ -32,8 +32,9 @@ type fakeSessionedServer struct {
 	sessions   map[string]int
 	dead       map[int]bool
 	// reset containers drop a decide's connection without an answer.
-	reset  map[int]bool
-	starts int
+	reset      map[int]bool
+	starts     int
+	terminates int
 }
 
 func newFakeSessionedServer(t *testing.T, containers []*fakePolicyService) *fakeSessionedServer {
@@ -61,7 +62,12 @@ func newFakeSessionedServer(t *testing.T, containers []*fakePolicyService) *fake
 		}
 		if r.URL.Path == "/_modal/sessions/terminate" {
 			// Modal reads the terminate token from x-modal-server-session-token (a bearer alone is refused, 401).
-			delete(front.sessions, r.Header.Get("x-modal-server-session-token"))
+			// Only a live session's end counts.
+			token := r.Header.Get("x-modal-server-session-token")
+			if _, live := front.sessions[token]; live {
+				delete(front.sessions, token)
+				front.terminates++
+			}
 			front.mu.Unlock()
 			return
 		}
@@ -264,7 +270,7 @@ func sessionTurn(
 	}
 	transaction.markSelection(result.RaylineARC.SelectedArm, 10)
 	transaction.markPolicySession(
-		result.RaylineARC.PolicySession, result.RaylineARC.PolicySessionCleared, result.RaylineARC.PolicySessionReplaced,
+		result.RaylineARC.PolicySession, result.RaylineARC.PolicySessionCleared, result.RaylineARC.PolicySessionBinding,
 	)
 	transaction.markPolicyState(result.RaylineARC.PolicyNextState, false)
 	return transaction, result, nil
@@ -314,7 +320,7 @@ func TestPolicySessionTransportFailureMovesTheTurnAndEndsTheOldOnCommit(t *testi
 		t.Fatalf("the retried turn failed: %v", err)
 	}
 	if moved := trace.RaylineARC; moved.PolicySession == nil || *moved.PolicySession == *session ||
-		!moved.PolicySessionMoved || moved.PolicySessionReplaced == nil {
+		!moved.PolicySessionMoved || !moved.PolicySessionBinding.Replaces() {
 		t.Fatalf("moved trace %+v", moved)
 	}
 	if err := aborted.abort(context.Background(), "upstream_status"); err != nil {
@@ -367,5 +373,208 @@ func TestPolicySessionTransportFailureMovesTheTurnAndEndsTheOldOnCommit(t *testi
 	if fields["class"] != "transport" || cause == "" || strings.Contains(cause, "secret") ||
 		strings.Contains(cause, front.server.URL) {
 		t.Fatalf("failure fields %v", fields)
+	}
+}
+
+func (front *fakeSessionedServer) counts() (starts, terminates int) {
+	front.mu.Lock()
+	defer front.mu.Unlock()
+	return front.starts, front.terminates
+}
+
+// waitForTerminates waits for the session ends that run off the turn's path.
+func waitForTerminates(t *testing.T, front *fakeSessionedServer, want int) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		_, terminates := front.counts()
+		if terminates == want {
+			return
+		}
+		if terminates > want || time.Now().After(deadline) {
+			t.Fatalf("terminates %d, want %d", terminates, want)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// A throwaway /v1/routes lookup commits nothing, so a session it starts is
+// recorded nowhere: it is ended once the lookup is decided, or refused,
+// rather than holding a container's session slot until Modal's idle timeout.
+// A tracked lookup and a main turn keep theirs for the commit to persist. A
+// main turn that fails without a decision ends the session it started (no
+// commit can record it), never the one its episode records.
+func TestPolicySessionUnrecordableTurnsEndTheirSessions(t *testing.T) {
+	fixture, front := newPolicySessionFixture(t)
+	body := policyTestRequest(t, map[string]any{"role": "user", "content": "fix the bug"})
+	lookup := func(throwaway bool) func(*selection.RaylineARCSelectionContext) {
+		return func(arcContext *selection.RaylineARCSelectionContext) {
+			arcContext.RoutesLookup, arcContext.RoutesThrowaway = true, throwaway
+		}
+	}
+	fresh := func() *raylinearc.EpisodeState {
+		state, _ := raylinearc.NewEpisodeState(2)
+		return state
+	}
+	refuse := func(code string) {
+		for _, container := range front.containers {
+			container.failNext(code)
+		}
+	}
+
+	decided, err := fixture.selectOnWith(t, fresh(), body, lookup(true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decided.RaylineARC.PolicySession != nil {
+		t.Fatalf("a throwaway lookup traced a session for a commit: %+v", decided.RaylineARC.PolicySession)
+	}
+	waitForTerminates(t, front, 1)
+
+	refuse("selection_refused")
+	if _, err := fixture.selectOnWith(t, fresh(), body, lookup(true)); err == nil {
+		t.Fatal("the refused lookup was answered")
+	}
+	waitForTerminates(t, front, 2)
+	refuse("")
+
+	tracked, err := fixture.selectOnWith(t, fresh(), body, lookup(false))
+	if err != nil || tracked.RaylineARC.PolicySession == nil {
+		t.Fatalf("tracked lookup %+v, %v", tracked, err)
+	}
+	main, err := fixture.selectOn(t, fresh(), body)
+	if err != nil || main.RaylineARC.PolicySession == nil {
+		t.Fatalf("main turn %+v, %v", main, err)
+	}
+	time.Sleep(50 * time.Millisecond)
+	if starts, terminates := front.counts(); starts != 4 || terminates != 2 {
+		t.Fatalf("starts %d terminates %d, want 4 and 2: a persisting turn ended its session", starts, terminates)
+	}
+	if front.containerOf(tracked.RaylineARC.PolicySession.Token) == -1 ||
+		front.containerOf(main.RaylineARC.PolicySession.Token) == -1 {
+		t.Fatal("a session a commit would persist was ended")
+	}
+
+	// A main turn refused on a session it started: nothing commits it.
+	refuse("selection_refused")
+	if _, err := fixture.selectOn(t, fresh(), body); err == nil {
+		t.Fatal("the refused main turn was answered")
+	}
+	waitForTerminates(t, front, 3)
+	// One refused on the session its episode records keeps that session.
+	recorded := fresh()
+	recorded.PolicySession = main.RaylineARC.PolicySession
+	if _, err := fixture.selectOn(t, recorded, body); err == nil {
+		t.Fatal("the refused main turn was answered")
+	}
+	time.Sleep(50 * time.Millisecond)
+	if starts, terminates := front.counts(); starts != 5 || terminates != 3 ||
+		front.containerOf(main.RaylineARC.PolicySession.Token) == -1 {
+		t.Fatalf("starts %d terminates %d: a failed turn ended the session its episode records", starts, terminates)
+	}
+}
+
+// A main turn decided on a session it started that then aborts (its upstream
+// failed) commits nothing, so it ends that session; a committed turn keeps
+// its session. One that moved off the session its episode records and then
+// aborts ends the session it moved to, and the episode's own stays.
+func TestPolicySessionAbortedTurnEndsTheSessionItStarted(t *testing.T) {
+	fixture, front := newPolicySessionFixture(t)
+	store, episode := newLedgerTestStore(t)
+	body := policyTestRequest(t, map[string]any{"role": "user", "content": "fix the bug"})
+
+	aborted, trace, err := sessionTurn(t, fixture, store, episode, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := trace.RaylineARC.PolicySession
+	if err := aborted.abort(context.Background(), "upstream_status"); err != nil {
+		t.Fatal(err)
+	}
+	waitForSessionEnded(t, front, started.Token)
+	if readLedgerTestStateNoWait(store, episode).PolicySession != nil {
+		t.Fatal("an aborted turn recorded its session")
+	}
+
+	committed, _, err := sessionTurn(t, fixture, store, episode, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := committed.commit(context.Background(), &RequestContext{}); err != nil {
+		t.Fatal(err)
+	}
+	session := readLedgerTestStateNoWait(store, episode).PolicySession
+	time.Sleep(50 * time.Millisecond)
+	if session == nil || front.containerOf(session.Token) == -1 {
+		t.Fatal("a committed turn's session was ended")
+	}
+
+	owner := front.containerOf(session.Token)
+	front.mu.Lock()
+	front.dead[owner] = true
+	front.mu.Unlock()
+	moved, trace, err := sessionTurn(t, fixture, store, episode, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !trace.RaylineARC.PolicySessionMoved {
+		t.Fatalf("the turn did not move: %+v", trace.RaylineARC)
+	}
+	if err := moved.abort(context.Background(), "upstream_status"); err != nil {
+		t.Fatal(err)
+	}
+	waitForSessionEnded(t, front, trace.RaylineARC.PolicySession.Token)
+	time.Sleep(50 * time.Millisecond)
+	if stored := readLedgerTestStateNoWait(store, episode).PolicySession; *stored != *session ||
+		front.containerOf(session.Token) != owner {
+		t.Fatal("an aborted turn ended the session the episode records")
+	}
+}
+
+// A refusal reselect decides the turn again on a session of its own; the
+// sessions of the selection the turn no longer records are ended by its
+// commit, or with the rest by its abort. A rollback to the first selection
+// keeps that one's session for the commit and ends the reselect's.
+func TestPolicySessionReselectEndsTheSelectionItSupersedes(t *testing.T) {
+	fixture, front := newPolicySessionFixture(t)
+	store, episode := newLedgerTestStore(t)
+	body := policyTestRequest(t, map[string]any{"role": "user", "content": "fix the bug"})
+	reselect := func(transaction *raylineARCEpisodeTransaction) *selection.RaylineARCTrace {
+		state, _ := raylinearc.NewEpisodeState(2)
+		result, err := fixture.selectOn(t, state, body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		trace := result.RaylineARC
+		transaction.markPolicySession(trace.PolicySession, trace.PolicySessionCleared, trace.PolicySessionBinding)
+		return trace
+	}
+
+	aborted, first, err := sessionTurn(t, fixture, store, episode, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := reselect(aborted)
+	if err := aborted.abort(context.Background(), "upstream_status"); err != nil {
+		t.Fatal(err)
+	}
+	waitForSessionEnded(t, front, first.RaylineARC.PolicySession.Token)
+	waitForSessionEnded(t, front, second.PolicySession.Token)
+
+	committed, kept, err := sessionTurn(t, fixture, store, episode, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dropped := reselect(committed)
+	// The rollback marks the first selection again (reserveSnapshot.restore).
+	committed.markPolicySession(kept.RaylineARC.PolicySession, false, kept.RaylineARC.PolicySessionBinding)
+	if err := committed.commit(context.Background(), &RequestContext{}); err != nil {
+		t.Fatal(err)
+	}
+	waitForSessionEnded(t, front, dropped.PolicySession.Token)
+	time.Sleep(50 * time.Millisecond)
+	stored := readLedgerTestStateNoWait(store, episode).PolicySession
+	if stored == nil || *stored != *kept.RaylineARC.PolicySession || front.containerOf(stored.Token) == -1 {
+		t.Fatal("the commit did not keep the session it records")
 	}
 }
