@@ -70,11 +70,149 @@ func routeExclusiveOffer(scorer *policyServiceScorer, available []string, priced
 	return kept
 }
 
+// routeServicePrices are a caller's prices keyed as the service reads them.
+//
+// The caller keys a model by the provider id the cell lists and serves it on
+// (an action's dispatched worker's id). The service keys an arm's rate by the
+// provider id of the arm's package model, and refuses a key no arm reads
+// (unknown_price_model). The two differ under dispatch_model_overrides: an
+// action bound to a from-worker is sent on the to-worker, yet its arm still
+// reads the from-worker's id; so does an action bound to the to-worker itself
+// when it serves the same package model (a twin checkpoint standing in for
+// the from-worker). Each such arm's rate therefore goes out under its service
+// id, at the legs the caller gave the worker it is dispatched to, and a
+// dispatched id no arm reads is not sent. Every other key goes out as sent.
+// Without an action whose two ids differ and whose dispatched id the caller
+// priced, prices itself is returned.
+//
+// Precedence, never a refusal: when the caller prices both the dispatched id
+// and the package model's own id, the dispatched id's price wins, since the
+// call is billed at the model it is sent to. A caller pricing only the
+// package model's id is read as before. Between two dispatched workers whose
+// arms read one service id (two from-workers of one model, different ids,
+// onto one to-worker), the first bound action's wins.
+func routeServicePrices(scorer *policyServiceScorer, prices *raylinearc.PolicyRoutingPrices) *raylinearc.PolicyRoutingPrices {
+	if scorer == nil || prices == nil {
+		return prices
+	}
+	arms := routeServicePriceArms(scorer)
+	translated := false
+	for _, arm := range arms {
+		if _, priced := prices.Rates[arm.served]; priced && arm.service != arm.served {
+			translated = true
+		}
+	}
+	if !translated {
+		return prices
+	}
+	rates := make(map[string]raylinearc.PolicyRoutingRate, len(prices.Rates))
+	put := func(key string, rate raylinearc.PolicyRoutingRate) {
+		if _, set := rates[key]; !set {
+			rates[key] = rate
+		}
+	}
+	dispatched := map[string]bool{}
+	for _, arm := range arms {
+		if rate, priced := prices.Rates[arm.served]; priced && arm.service != arm.served {
+			dispatched[arm.served] = true
+			put(arm.service, rate)
+		}
+	}
+	// A key some arm reads at the service is kept (behind any dispatched
+	// price already set under it), as is any key no remapped arm is
+	// dispatched to.
+	read := map[string]bool{}
+	for _, arm := range arms {
+		read[arm.service] = true
+	}
+	for key, rate := range prices.Rates {
+		if !dispatched[key] || read[key] {
+			put(key, rate)
+		}
+	}
+	sent := *prices
+	sent.Rates = rates
+	return &sent
+}
+
+// routeServicePriceArm is one bound action's two price ids: the provider id
+// of the worker it is served on (the caller's key) and the one its arm reads
+// at the service.
+type routeServicePriceArm struct{ served, service string }
+
+// routeServicePriceArms resolves each bound action's ids. An action's arm
+// reads its bound worker's id, except on a dispatch_model_overrides
+// to-worker: an action bound there whose package model is a from-worker's
+// reads that from-worker's id, the one the package binds the model to. The
+// cell does not see the package's model ids, so this takes the from-worker
+// to be the package model's own worker and the to-worker its stand-in, as a
+// dispatch-only remap is meant to be configured. Two
+// from-workers of one model with different ids onto one to-worker leave the
+// to-worker's own actions on its own id.
+func routeServicePriceArms(scorer *policyServiceScorer) []routeServicePriceArm {
+	valid := func(index int) bool { return index >= 0 && index < len(scorer.workers) }
+	type twin struct {
+		to    int
+		model string
+	}
+	standIn := map[twin]string{}
+	ambiguous := map[twin]bool{}
+	for _, actionID := range scorer.actionOrder {
+		binding, ok := scorer.bindings[actionID]
+		if !ok || !valid(binding.arm) || !valid(binding.dispatchArm) || binding.arm == binding.dispatchArm || binding.model == "" {
+			continue
+		}
+		key, own := twin{binding.dispatchArm, binding.model}, scorer.workers[binding.arm].Model
+		if have, seen := standIn[key]; seen && have != own {
+			ambiguous[key] = true
+		}
+		standIn[key] = own
+	}
+	arms := make([]routeServicePriceArm, 0, len(scorer.actionOrder))
+	for _, actionID := range scorer.actionOrder {
+		binding, ok := scorer.bindings[actionID]
+		if !ok || !valid(binding.arm) || !valid(binding.dispatchArm) {
+			continue
+		}
+		arm := routeServicePriceArm{served: scorer.workers[binding.dispatchArm].Model, service: scorer.workers[binding.arm].Model}
+		key := twin{binding.arm, binding.model}
+		if own, ok := standIn[key]; ok && binding.arm == binding.dispatchArm && !ambiguous[key] {
+			arm.service = own
+		}
+		arms = append(arms, arm)
+	}
+	return arms
+}
+
+// routeRateLegs are a rate's four legs in the contract's order.
+func routeRateLegs(rate raylinearc.PolicyRoutingRate) [4]float64 {
+	var legs [4]float64
+	for index, leg := range []*float64{rate.Input, rate.CacheRead, rate.CacheWrite, rate.Output} {
+		if leg != nil {
+			legs[index] = *leg
+		}
+	}
+	return legs
+}
+
+// routeServicePriceSHA256 is the price_sha256 the service restates for the
+// world it was sent: the caller's own hash when the rates went out as sent.
+func routeServicePriceSHA256(controls *selection.RaylineARCRouteControls, sent *raylinearc.PolicyRoutingPrices) string {
+	if sent == controls.Prices {
+		return controls.PriceSHA256
+	}
+	legs := make(map[string][4]float64, len(sent.Rates))
+	for key, rate := range sent.Rates {
+		legs[key] = routeRateLegs(rate)
+	}
+	return routesPriceSHA256(legs, controls.Exclusive)
+}
+
 // applyRouteControls writes a lookup's controls into its decide request: its
 // result points beside any the cell configures (a configured point of the
 // same name is replaced), its exploration in place of the cell's, and its
-// prices in place of the live feed's.
-func applyRouteControls(request *raylinearc.PolicyDecisionRequest, controls *selection.RaylineARCRouteControls) {
+// prices (as routeServicePrices keys them) in place of the live feed's.
+func applyRouteControls(request *raylinearc.PolicyDecisionRequest, scorer *policyServiceScorer, controls *selection.RaylineARCRouteControls) {
 	if controls == nil {
 		return
 	}
@@ -95,7 +233,7 @@ func applyRouteControls(request *raylinearc.PolicyDecisionRequest, controls *sel
 		request.Selection.Exploration = &member
 	}
 	if controls.Prices != nil {
-		request.RoutingPrices = controls.Prices
+		request.RoutingPrices = routeServicePrices(scorer, controls.Prices)
 	}
 }
 
@@ -120,8 +258,11 @@ func recordRouteControls(
 		trace.RoutePredictions = response.Decision.Predictions
 		trace.RoutePredictionsApplied = true
 	}
-	if controls.Prices != nil && !routeCallerPricesApplied(controls, response.RoutingPricesUsed) {
-		return arcFailureRoutesPricesNotApplied
+	if controls.Prices != nil {
+		sent := routeServicePrices(scorer, controls.Prices)
+		if !routeCallerPricesApplied(controls, routeServicePriceSHA256(controls, sent), response.RoutingPricesUsed) {
+			return arcFailureRoutesPricesNotApplied
+		}
 	}
 	var requested *float64
 	if controls.Exploration != nil && controls.Exploration.Temperature != nil {
@@ -158,12 +299,13 @@ func recordRouteControls(
 
 // routeCallerPricesApplied reports whether the decision was scored in the
 // caller's price world (pathfinder#5668): a caller-mode echo restating this
-// world's price_sha256 and exclusivity, with nothing filled or fallen back.
-func routeCallerPricesApplied(controls *selection.RaylineARCRouteControls, used *raylinearc.PolicyRoutingPricesUsed) bool {
+// world's price_sha256 (sha, the hash of the rates as sent) and exclusivity,
+// with nothing filled or fallen back.
+func routeCallerPricesApplied(controls *selection.RaylineARCRouteControls, sha string, used *raylinearc.PolicyRoutingPricesUsed) bool {
 	if used == nil || used.Mode != raylinearc.RoutingPricesModeCaller || used.PricesSHA256 == nil || used.Exclusive == nil {
 		return false
 	}
-	return *used.PricesSHA256 == controls.PriceSHA256 && *used.Exclusive == controls.Exclusive &&
+	return *used.PricesSHA256 == sha && *used.Exclusive == controls.Exclusive &&
 		len(used.FilledLegs) == 0 && len(used.FallbackArms) == 0
 }
 
