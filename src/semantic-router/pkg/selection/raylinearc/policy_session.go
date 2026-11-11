@@ -48,7 +48,8 @@ import (
 //     session's container; it needs no proxy key.
 //   - A token whose container is gone (stopped, preempted) answers 502 with
 //     an empty body; an idle-expired session answers 404 "Unknown or expired
-//     session". Neither is ever routed elsewhere by Modal.
+//     session"; a token another app issued answers 401
+//     {"error":"invalid session token"}. None is ever routed elsewhere by Modal.
 //   - POST {url}/_modal/sessions/terminate needs the proxy key and the
 //     token; the token alone is 401.
 const (
@@ -63,11 +64,21 @@ const (
 	// answers for a token, recognised by their verified signatures only: a
 	// 502 with an empty body (the session's container is gone) and a 404
 	// "Unknown or expired session". Neither reached a container that holds
-	// the episode, so the turn may move to a new session, once. A 401 is not
-	// among them: no token-rejection signature is verified, so it fails the
-	// turn closed like any other refusal.
+	// the episode, so the turn may move to a new session, once. A 401 counts
+	// only with the verified invalid-token body (PolicySessionInvalidClass);
+	// any other 401 fails the turn closed like any other refusal.
 	PolicySessionGoneClass    = "session_gone"
 	PolicySessionExpiredClass = "session_expired"
+	// PolicySessionInvalidClass is Modal's answer for a token another app
+	// issued: a 401 with exactly {"error":"invalid session token"} (measured on
+	// prod 2026-11-11, an -arc10-server token presented to -s-server; the same
+	// token still answered 200 on its own app). It reached no container, so the
+	// turn may move to a new session, once: after a cell moves its
+	// policy_service base_url to a new app, every episode the old app's
+	// sessions recorded otherwise fails every turn closed until it idles out.
+	// Modal's other 401 (no token: "session token required...") keeps its
+	// class.
+	PolicySessionInvalidClass = "session_invalid"
 	// PolicySessionUnrecognisedClass is any other non-200 answer for a
 	// session token whose body is not JSON: the policy service answers every
 	// refusal in JSON, so this answer came from in front of it (prod
@@ -600,6 +611,8 @@ func policySessionFailureClass(status int, body []byte) string {
 		return PolicySessionGoneClass
 	case status == http.StatusNotFound && string(bytes.TrimSpace(body)) == "Unknown or expired session":
 		return PolicySessionExpiredClass
+	case status == http.StatusUnauthorized && string(bytes.TrimSpace(body)) == `{"error":"invalid session token"}`:
+		return PolicySessionInvalidClass
 	default:
 		return ""
 	}
@@ -620,7 +633,7 @@ func policySessionLost(err error) bool {
 		return false
 	}
 	switch failure.Class {
-	case PolicySessionGoneClass, PolicySessionExpiredClass, PolicySessionUnrecognisedClass:
+	case PolicySessionGoneClass, PolicySessionExpiredClass, PolicySessionInvalidClass, PolicySessionUnrecognisedClass:
 		return true
 	default:
 		return false

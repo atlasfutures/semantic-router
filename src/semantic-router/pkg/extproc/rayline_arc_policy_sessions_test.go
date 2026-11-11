@@ -237,7 +237,7 @@ func TestPolicyWithoutSessionsDropsAStoredSession(t *testing.T) {
 func TestPolicySessionFailuresAreNotAnswers(t *testing.T) {
 	for _, class := range []string{
 		raylinearc.PolicySessionStartClass, raylinearc.PolicySessionGoneClass, raylinearc.PolicySessionExpiredClass,
-		raylinearc.PolicySessionUnrecognisedClass,
+		raylinearc.PolicySessionInvalidClass, raylinearc.PolicySessionUnrecognisedClass,
 	} {
 		if policyServiceAnswered(&raylinearc.PolicyServiceError{Class: class}) {
 			t.Fatalf("%s counts as an answer", class)
