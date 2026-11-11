@@ -2,7 +2,13 @@ package extproc
 
 import (
 	"bytes"
+	"encoding/json"
+	"fmt"
+	"strings"
 	"testing"
+	"time"
+
+	"go.uber.org/zap/zaptest/observer"
 
 	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
 )
@@ -236,4 +242,284 @@ func TestASplitSignatureIsCountedWhole(t *testing.T) {
 	if got, _ := fields["completion_tokens"].(int64); got <= 1 {
 		t.Fatalf("the usage row billed %v for a turn that delivered a split signature", fields["completion_tokens"])
 	}
+}
+
+// A same-format Messages stream whose blocks overlap reaches the client one
+// block at a time: the filter holds a block that starts while another is
+// still open, until that one stops. A cut used to switch the client to the
+// encoder's frames for its last chunk, so a block the filter still held was
+// never sent -- and was billed, since the decoder had it. The cut now stays on
+// the filter's frames and sends what it held before the terminal, so the
+// client holds everything it is billed for.
+//
+// Two cuts are checked: one on a chunk that releases nothing, and one on the
+// chunk that stops the open block and so releases the held ones itself.
+func TestACutSendsWhatTheFilterHeld(t *testing.T) {
+	for name, cutChunk := range map[string]string{
+		"while held": "event: ping\ndata: {\"type\":\"ping\"}\n\n",
+		"on release": "event: content_block_stop\n" + `data: {"type":"content_block_stop","index":0}` + "\n\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			logs := captureLogs(t)
+			router := &OpenAIRouter{}
+			ctx := sameFormatMessagesContext(t)
+
+			client := streamDeadlineResponseBody(t, router, ctx, sameFormatMessageStart()+
+				overlappingThinkingChunk(strings.Repeat("thinking ", 40)))
+			ctx.StartTime = time.Now().Add(-600 * time.Second)
+			client = append(client, streamDeadlineResponseBody(t, router, ctx, cutChunk)...)
+
+			delivered := wellFormedMessagesOutput(t, client)
+			if delivered.redacted != 33 || delivered.text != 30 || delivered.thinking != 360 {
+				t.Fatalf("the client did not receive every block the turn is billed for: %+v\n%s", delivered, client)
+			}
+			// 360 bytes of thinking, 30 of text, and the redacted block by its
+			// raw form (71 bytes): 461 bytes, 116 tokens. The count is the
+			// one the turn was billed before; the client now holds it.
+			assertCutBilled(t, logs, client, 116)
+		})
+	}
+}
+
+// A tool_use block the filter held, whose arguments and stop arrive on the
+// chunk the Router cuts on, reaches the client once, from the filter, and is
+// billed. The encoder holds a tool call until it closes, so on that chunk it
+// would have written the whole call -- under its own index.
+func TestAHeldToolCallCompletedOnTheCutChunkIsSentOnceAndBilled(t *testing.T) {
+	logs := captureLogs(t)
+	router := &OpenAIRouter{}
+	ctx := sameFormatMessagesContext(t)
+	args := strings.Repeat("DELIVERED", 40)
+
+	client := streamDeadlineResponseBody(t, router, ctx, sameFormatMessageStart()+
+		"event: content_block_start\n"+
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}}`+"\n\n"+
+		"event: content_block_delta\n"+
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"thinking"}}`+"\n\n"+
+		"event: content_block_start\n"+
+		`data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_1","name":"lookup","input":{}}}`+"\n\n")
+	ctx.StartTime = time.Now().Add(-600 * time.Second)
+	client = append(client, streamDeadlineResponseBody(t, router, ctx,
+		"event: content_block_delta\n"+
+			`data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"q\":\"`+args+`\"}"}}`+"\n\n"+
+			"event: content_block_stop\n"+`data: {"type":"content_block_stop","index":1}`+"\n\n")...)
+
+	if got := bytes.Count(client, []byte(args)); got != 1 {
+		t.Fatalf("the call's arguments reached the client %d times:\n%s", got, client)
+	}
+	delivered := wellFormedMessagesOutput(t, client)
+	// The client holds 8 bytes of thinking and 368 of arguments. The count
+	// also takes the start's own input, {}: 378 bytes, 95 tokens.
+	if delivered.thinking+delivered.arguments != 376 {
+		t.Fatalf("the client did not receive the call: %+v\n%s", delivered, client)
+	}
+	assertCutBilled(t, logs, client, 95)
+}
+
+// A turn cut while every block is in order ends on the filter's frames too:
+// both deltas, the open block stopped, then the terminal.
+func TestACutInOrderStreamEndsOnTheFiltersFrames(t *testing.T) {
+	logs := captureLogs(t)
+	router := &OpenAIRouter{}
+	ctx := sameFormatMessagesContext(t)
+	text := strings.Repeat("answer ", 20)
+
+	client := streamDeadlineResponseBody(t, router, ctx, sameFormatMessageStart()+
+		"event: content_block_start\n"+
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`+"\n\n"+
+		"event: content_block_delta\n"+
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"`+text+`"}}`+"\n\n")
+	ctx.StartTime = time.Now().Add(-600 * time.Second)
+	client = append(client, streamDeadlineResponseBody(t, router, ctx,
+		"event: content_block_delta\n"+
+			`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"`+text+`"}}`+"\n\n")...)
+
+	if delivered := wellFormedMessagesOutput(t, client); delivered.text != 2*len(text) {
+		t.Fatalf("the client did not receive both deltas: %+v\n%s", delivered, client)
+	}
+	assertCutBilled(t, logs, client, 70)
+}
+
+// A cut chunk that also carries a frame the codec refuses, or an error the
+// upstream sent, is not ended by the filter: the filter would publish the
+// malformed frame the codec dropped, or end a provider's failure as the
+// Router's cut. The codec's terminal ends it, as before.
+func TestACutChunkThatFailsIsEndedByTheCodec(t *testing.T) {
+	for name, tc := range map[string]struct{ chunk, absent, terminal string }{
+		"refused frame": {
+			chunk:    "event: content_block_delta\ndata: {]\n\n",
+			absent:   "{]",
+			terminal: `"type":"api_error"`,
+		},
+		"upstream error": {
+			chunk: "event: error\n" +
+				`data: {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}` + "\n\n",
+			absent:   "timeout_error",
+			terminal: `"type":"overloaded_error"`,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			router := &OpenAIRouter{}
+			ctx := sameFormatMessagesContext(t)
+			client := streamDeadlineResponseBody(t, router, ctx, sameFormatMessageStart()+
+				overlappingThinkingChunk(strings.Repeat("thinking ", 4)))
+			ctx.StartTime = time.Now().Add(-600 * time.Second)
+			client = append(client, streamDeadlineResponseBody(t, router, ctx, tc.chunk)...)
+
+			if bytes.Contains(client, []byte(tc.absent)) {
+				t.Fatalf("the client received %s:\n%s", tc.absent, client)
+			}
+			if !bytes.Contains(client, []byte(tc.terminal)) {
+				t.Fatalf("the turn did not end on %s:\n%s", tc.terminal, client)
+			}
+		})
+	}
+}
+
+// A cut that lands on the chunk where the upstream finished drops the
+// upstream's own terminal frames, the [DONE] some providers send after
+// message_stop included: a client that honours it would stop before the
+// Router's terminal.
+func TestACutOnTheUpstreamsLastChunkEndsOnOneTerminal(t *testing.T) {
+	router := &OpenAIRouter{}
+	ctx := sameFormatMessagesContext(t)
+	client := streamDeadlineResponseBody(t, router, ctx, sameFormatMessageStart()+
+		overlappingThinkingChunk(strings.Repeat("thinking ", 4)))
+	ctx.StartTime = time.Now().Add(-600 * time.Second)
+	client = append(client, streamDeadlineResponseBody(t, router, ctx,
+		"event: content_block_stop\n"+`data: {"type":"content_block_stop","index":0}`+"\n\n"+
+			"event: content_block_stop\n"+`data: {"type":"content_block_stop","index":2}`+"\n\n"+
+			"event: message_delta\n"+
+			`data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":100}}`+"\n\n"+
+			"event: message_stop\n"+`data: {"type":"message_stop"}`+"\n\n"+
+			"data: [DONE]\n\n")...)
+
+	if bytes.Contains(client, []byte("[DONE]")) {
+		t.Fatalf("the upstream's [DONE] reached the client beside the Router's terminal:\n%s", client)
+	}
+	wellFormedMessagesOutput(t, client)
+}
+
+func sameFormatMessagesContext(t *testing.T) *RequestContext {
+	t.Helper()
+	ctx := overrunningStreamContext(t)
+	ctx.SourceFormat = llmprotocol.AnthropicMessagesV1
+	ctx.TargetFormat = llmprotocol.AnthropicMessagesV1
+	ctx.StartTime = time.Now()
+	return ctx
+}
+
+// messagesOutput is the output a Messages client assembled, in bytes.
+type messagesOutput struct {
+	thinking, text, arguments, redacted int
+}
+
+// wellFormedMessagesOutput reads a Messages stream as a client that assembles
+// blocks as they stop would: one block open at a time, each started once and
+// stopped before the next starts, deltas and a stop only while it is open,
+// every block stopped before the stream ends on one terminal, and nothing
+// after that.
+func wellFormedMessagesOutput(t *testing.T, body []byte) messagesOutput {
+	t.Helper()
+	var output messagesOutput
+	open := map[int]bool{}
+	started := map[int]bool{}
+	terminals := 0
+	for _, frame := range strings.Split(string(body), "\n\n") {
+		_, data, found := strings.Cut(frame, "data: ")
+		if !found {
+			continue
+		}
+		if terminals > 0 {
+			t.Fatalf("a frame followed the terminal:\n%s", body)
+		}
+		var event struct {
+			Type         string `json:"type"`
+			Index        int    `json:"index"`
+			ContentBlock struct {
+				Type string `json:"type"`
+				Data string `json:"data"`
+			} `json:"content_block"`
+			Delta struct {
+				Thinking    string `json:"thinking"`
+				Text        string `json:"text"`
+				PartialJSON string `json:"partial_json"`
+			} `json:"delta"`
+		}
+		if err := json.Unmarshal([]byte(data), &event); err != nil {
+			t.Fatalf("frame is not JSON: %v\n%s", err, frame)
+		}
+		switch event.Type {
+		case "content_block_start":
+			if started[event.Index] {
+				t.Fatalf("block %d started twice:\n%s", event.Index, body)
+			}
+			for index, isOpen := range open {
+				if isOpen {
+					t.Fatalf("block %d started while block %d was open:\n%s", event.Index, index, body)
+				}
+			}
+			started[event.Index], open[event.Index] = true, true
+			output.redacted += len(event.ContentBlock.Data)
+		case "content_block_delta":
+			if !open[event.Index] {
+				t.Fatalf("a delta for block %d, which is not open:\n%s", event.Index, body)
+			}
+			output.thinking += len(event.Delta.Thinking)
+			output.text += len(event.Delta.Text)
+			output.arguments += len(event.Delta.PartialJSON)
+		case "content_block_stop":
+			if !open[event.Index] {
+				t.Fatalf("a stop for block %d, which is not open:\n%s", event.Index, body)
+			}
+			open[event.Index] = false
+		case "error", "message_stop":
+			for index, isOpen := range open {
+				if isOpen {
+					t.Fatalf("the stream ended with block %d open:\n%s", index, body)
+				}
+			}
+			terminals++
+		}
+	}
+	if terminals != 1 {
+		t.Fatalf("the stream ended on %d terminals:\n%s", terminals, body)
+	}
+	return output
+}
+
+// assertCutBilled checks the count on the cut's terminal and on its usage row.
+func assertCutBilled(t *testing.T, logs *observer.ObservedLogs, client []byte, tokens int) {
+	t.Helper()
+	_, terminal, found := bytes.Cut(client, []byte("event: error"))
+	if !found {
+		t.Fatalf("the turn did not end on the cut's terminal:\n%s", client)
+	}
+	if want := fmt.Sprintf(`"output_tokens":%d,`, tokens); !bytes.Contains(terminal, []byte(want)) {
+		t.Fatalf("the terminal did not bill %d tokens:\n%s", tokens, terminal)
+	}
+	fields := findLogEvent(t, logs, "llm_usage")
+	if got, _ := fields["completion_tokens"].(int64); got != int64(tokens) {
+		t.Fatalf("the usage row billed %v, the terminal %d", fields["completion_tokens"], tokens)
+	}
+}
+
+// overlappingThinkingChunk opens a thinking block and streams it, then starts
+// a redacted thinking block and a text block while it is still open.
+func overlappingThinkingChunk(thinking string) string {
+	return "event: content_block_start\n" +
+		`data: {"type":"content_block_start","index":0,"content_block":` +
+		`{"type":"thinking","thinking":"","signature":""}}` + "\n\n" +
+		"event: content_block_delta\n" +
+		`data: {"type":"content_block_delta","index":0,"delta":` +
+		`{"type":"thinking_delta","thinking":"` + thinking + `"}}` + "\n\n" +
+		"event: content_block_start\n" +
+		`data: {"type":"content_block_start","index":1,"content_block":` +
+		`{"type":"redacted_thinking","data":"HELDPAYLOADHELDPAYLOADHELDPAYLOAD"}}` + "\n\n" +
+		"event: content_block_stop\n" + `data: {"type":"content_block_stop","index":1}` + "\n\n" +
+		"event: content_block_start\n" +
+		`data: {"type":"content_block_start","index":2,"content_block":{"type":"text","text":""}}` + "\n\n" +
+		"event: content_block_delta\n" +
+		`data: {"type":"content_block_delta","index":2,"delta":` +
+		`{"type":"text_delta","text":"HELDANSWERHELDANSWERHELDANSWER"}}` + "\n\n"
 }

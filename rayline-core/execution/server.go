@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/atlasfutures/semantic-router/rayline-core/cachecontext"
@@ -394,6 +395,14 @@ func (server *Server) execute(writer http.ResponseWriter, incoming *http.Request
 			server.writeError(writer, format, http.StatusBadGateway, "decision_identity_mismatch", err.Error())
 			return
 		}
+		// A refusal already recorded for this turn is never dispatched again,
+		// nor prepared and measured: a failed runtime may not count either.
+		if known := pending.input.Capacity[selected.action.ID]; v2 && known != nil && !known.Fits {
+			if !server.reconsult(ctx, writer, format, pending, selected.action.ID, decision.RouteID, "veto", known) {
+				return
+			}
+			continue
+		}
 		prepared, err = server.prepare(request, envelope, selected, roles, state)
 		if err != nil {
 			server.writeError(writer, format, http.StatusBadRequest, "execution_plan_failed", err.Error())
@@ -408,14 +417,7 @@ func (server *Server) execute(writer http.ResponseWriter, incoming *http.Request
 			return
 		}
 		// The pre-dispatch capacity check. The core may veto the final
-		// prepared request with a reason; the service reselects. A refusal
-		// already recorded for this turn is never dispatched again.
-		if known := pending.input.Capacity[selected.action.ID]; v2 && known != nil && !known.Fits {
-			if !server.reconsult(ctx, writer, format, pending, selected.action.ID, decision.RouteID, "veto", known) {
-				return
-			}
-			continue
-		}
+		// prepared request with a reason; the service reselects.
 		if v2 {
 			if fact := capacityFact(selected.deployment, prompt, prepared.outputLimit); fact != nil && !fact.Fits {
 				if !server.reconsult(ctx, writer, format, pending, selected.action.ID, decision.RouteID, "veto", fact) {
@@ -443,6 +445,15 @@ func (server *Server) execute(writer http.ResponseWriter, incoming *http.Request
 		}
 		upstream, err = server.upstream(ctx, selected, decision, session, branch, clientBeta, prepared.body)
 		if err != nil {
+			if selected.deployment.Kind == "local" {
+				logLocalUpstreamFailure(decision.RouteID, selected.deployment.ID, 0, transportFailure(err))
+				if v2 && ctx.Err() == nil && !pending.localFallback {
+					if !server.fallBackFromLocal(ctx, writer, format, pending, selected, decision) {
+						return
+					}
+					continue
+				}
+			}
 			server.writeError(writer, format, http.StatusBadGateway, "upstream_unavailable", "selected endpoint request failed")
 			return
 		}
@@ -462,9 +473,21 @@ func (server *Server) execute(writer http.ResponseWriter, incoming *http.Request
 			}
 			upstream.Body.Close()
 		} else {
-			errorBody, readErr = readBounded(upstream.Body, 1<<20)
+			if selected.deployment.Kind == "local" {
+				// A runtime that sends its status and stalls on the body
+				// must not hold the turn: the status alone decides fallback.
+				failedBody := upstream.Body
+				stall := time.AfterFunc(localErrorBodyTimeout, func() { failedBody.Close() })
+				errorBody, readErr = readBounded(upstream.Body, 1<<20)
+				stall.Stop()
+			} else {
+				errorBody, readErr = readBounded(upstream.Body, 1<<20)
+			}
 			upstream.Body.Close()
 			rejected = v2 && readErr == nil && isRuntimeContextRejection(selected.deployment, upstream.StatusCode, errorBody)
+			if selected.deployment.Kind == "local" {
+				logLocalUpstreamFailure(decision.RouteID, selected.deployment.ID, upstream.StatusCode, upstreamErrorDetail(errorBody))
+			}
 		}
 		// A runtime's own context refusal arrives before any output. It is a
 		// fact for the service, never a local reselection or truncation.
@@ -479,6 +502,15 @@ func (server *Server) execute(writer http.ResponseWriter, incoming *http.Request
 			// never dispatched to be refused again.
 			pending.input.Capacity = server.withDeploymentRefusal(pending.input.Capacity, selected.deployment, selected.action.ID, fact)
 			if !server.reconsult(ctx, writer, format, pending, selected.action.ID, decision.RouteID, "capacity", fact) {
+				return
+			}
+			continue
+		}
+		// A local runtime that fails before any output (a template
+		// exception, a crash, an unloaded model) leaves the turn to another
+		// target, once per turn, rather than failing it.
+		if v2 && selected.deployment.Kind == "local" && upstream.StatusCode >= 500 && !pending.localFallback {
+			if !server.fallBackFromLocal(ctx, writer, format, pending, selected, decision) {
 				return
 			}
 			continue
@@ -571,9 +603,87 @@ func (server *Server) execute(writer http.ResponseWriter, incoming *http.Request
 	slog.Info("execution completed", "route_id", decision.RouteID, "selected_model", selection.Model, "selected_action_id", selection.ActionID, "selected_control_id", selection.ControlID, "executed_model", decision.Model, "executed_action_id", decision.ActionID, "executed_control_id", prepared.receipt.ControlID, "worker", decision.Worker, "deployment", selected.deployment.ID, "deployment_kind", selected.deployment.Kind, "test_alias_reason", aliasReason, "context_epoch", call.ContextEpoch, "event_kind", event.kindName(), "event_basis", event.Basis, "decided_by", decidedBy, "consults", pending.consults+1, "output_tokens", tokenCountOrNil(response.Usage.OutputTotal), "input_tokens", tokenCountOrNil(response.Usage.InputTotal), "cache", completionCacheEvidence(state, selected.deployment.ID, measuredEvidence, currentPrefix))
 }
 
-// maxReconsults bounds re-consults for one request: one post-decision veto and
-// one runtime context refusal.
-const maxReconsults = 2
+// maxReconsults bounds re-consults for one request: one post-decision veto,
+// one runtime context refusal and one local runtime failure.
+const maxReconsults = 3
+
+// fallBackFromLocal re-consults after a local runtime failed before any
+// output: every action on that deployment is reported runtime_unavailable
+// for this turn, so the service picks another target and the refused one is
+// never dispatched again, a client retry of the same request included. It
+// runs at most once per turn and writes the visible error on failure.
+func (server *Server) fallBackFromLocal(ctx context.Context, writer http.ResponseWriter, format llmprotocol.WireFormat, pending *pendingTurn, selected admittedAction, decision Decision) bool {
+	pending.localFallback = true
+	reason := CapacityRuntimeUnavailable
+	fact := &CapacityFact{Fits: false, Reason: &reason, Provenance: "provider_reported"}
+	capacity := withFact(pending.input.Capacity, selected.action.ID, fact)
+	for id, action := range server.actions {
+		if action.deployment.ID == selected.deployment.ID {
+			capacity[id] = fact
+		}
+	}
+	pending.input.Capacity = capacity
+	return server.reconsult(ctx, writer, format, pending, selected.action.ID, decision.RouteID, "capacity", fact)
+}
+
+// localErrorBodyTimeout bounds reading a local runtime's error body.
+var localErrorBodyTimeout = 10 * time.Second
+
+// transportFailure names a request failure without its URL or addresses.
+func transportFailure(err error) string {
+	var timeout interface{ Timeout() bool }
+	switch {
+	case errors.Is(err, syscall.ECONNREFUSED):
+		return "connection refused"
+	case errors.Is(err, syscall.ECONNRESET):
+		return "connection reset"
+	case errors.As(err, &timeout) && timeout.Timeout():
+		return "timeout"
+	case errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF):
+		return "connection closed"
+	}
+	return "request failed"
+}
+
+// maxUpstreamErrorDetail bounds the runtime's error text in logs.
+const maxUpstreamErrorDetail = 200
+
+// logLocalUpstreamFailure records a local runtime's failure before any
+// output. status is 0 when no response arrived.
+func logLocalUpstreamFailure(routeID, deploymentID string, status int, detail string) {
+	slog.Warn("local upstream failed", "route_id", routeID, "deployment", deploymentID, "status", status, "error", truncateDetail(detail))
+}
+
+// upstreamErrorDetail is an error body's message field ({"error":
+// {"message"}}, {"error": "..."} or a top-level "message"), never the rest
+// of the body, which may echo the request.
+func upstreamErrorDetail(body []byte) string {
+	var envelope map[string]json.RawMessage
+	if json.Unmarshal(body, &envelope) != nil {
+		return ""
+	}
+	var inner map[string]json.RawMessage
+	if json.Unmarshal(envelope["error"], &inner) == nil {
+		envelope = inner
+	}
+	for _, field := range []json.RawMessage{envelope["message"], envelope["error"]} {
+		var text string
+		if json.Unmarshal(field, &text) == nil && text != "" {
+			return text
+		}
+	}
+	return ""
+}
+
+// truncateDetail collapses whitespace and keeps at most
+// maxUpstreamErrorDetail runes, an ellipsis included.
+func truncateDetail(detail string) string {
+	runes := []rune(strings.Join(strings.Fields(detail), " "))
+	if len(runes) <= maxUpstreamErrorDetail {
+		return string(runes)
+	}
+	return string(runes[:maxUpstreamErrorDetail-1]) + "…"
+}
 
 // reconsult asks the service again for the same turn with one narrowing fact.
 // The core reports the fact and executes the service's new choice; it never

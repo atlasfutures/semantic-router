@@ -35,13 +35,14 @@ jobs:
 
       - name: Pin trusted scanner policy
         run: |
-          if [ -f base/tools/security/ast-scan-allowlist.txt ]; then
-            mkdir -p pr-code/tools/security
-            cp base/tools/security/ast-scan-allowlist.txt \
-              pr-code/tools/security/ast-scan-allowlist.txt
-          else
-            rm -f pr-code/tools/security/ast-scan-allowlist.txt
-          fi
+          mkdir -p pr-code/tools/security
+          for policy in ast-scan-allowlist.txt ast-scan-exemptions.toml; do
+            if [ -f "base/tools/security/$policy" ]; then
+              cp "base/tools/security/$policy" "pr-code/tools/security/$policy"
+            else
+              rm -f "pr-code/tools/security/$policy"
+            fi
+          done
 
       - uses: actions/setup-python@v5
         with:
