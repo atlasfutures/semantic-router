@@ -846,7 +846,7 @@ func TestPrivacyAllowedEndpointsMaskArms(t *testing.T) {
 	allowedBoth := []string{endpointPickArm, "arc/direct"}
 	mask := func(endpoints privacyAllowedEndpoints) ([]bool, []*raylinearc.ArmEndpoints) {
 		return router.withPrivacyEndpointConstraints(
-			privacyExcludedArms(raylineARCPrivacyModeZDR, allowedBoth, refs), endpoints, refs,
+			privacyExcludedArms(raylineARCPrivacyModeZDR, allowedBoth, refs), endpoints, refs, raylineARCPrivacyModeZDR,
 		)
 	}
 

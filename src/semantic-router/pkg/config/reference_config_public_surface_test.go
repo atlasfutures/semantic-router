@@ -16,7 +16,11 @@ func assertReferenceConfigProviderCoverage(t testingT, root map[string]interface
 
 	assertMapCoversStructFields(t, providers, reflect.TypeOf(CanonicalProviders{}), "providers")
 	assertMapCoversStructFields(t, defaults, reflect.TypeOf(CanonicalProviderDefaults{}), "providers.defaults")
-	assertSliceUnionCoversStructFields(t, models, reflect.TypeOf(CanonicalProviderModel{}), "providers.models")
+	// private_provider_preferences is the retired key the loader refuses, so
+	// the reference config cannot carry it.
+	assertSliceUnionCoversStructFields(
+		t, models, reflect.TypeOf(CanonicalProviderModel{}), "providers.models", "private_provider_preferences",
+	)
 	assertSliceUnionCoversStructFields(
 		t,
 		collectChildMapsFromSlice(t, models, "reasoning", "providers.models"),

@@ -46,8 +46,11 @@ func applyCanonicalModelCardOverlay(cfg *RouterConfig, canonical *CanonicalConfi
 		if model.ProviderPreferences != nil {
 			params.ProviderPreferences = copyProviderPreferences(model.ProviderPreferences)
 		}
-		if model.PrivateProviderPreferences != nil {
-			params.PrivateProviderPreferences = copyProviderPreferences(model.PrivateProviderPreferences)
+		if model.PrivacyProviderPreferences != nil {
+			params.PrivacyProviderPreferences = copyProviderPreferences(model.PrivacyProviderPreferences)
+		}
+		if model.ZDRProviderPreferences != nil {
+			params.ZDRProviderPreferences = copyProviderPreferences(model.ZDRProviderPreferences)
 		}
 		params.StandardTwin = model.StandardTwin
 		params.ServiceTier = model.ServiceTier

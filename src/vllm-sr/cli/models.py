@@ -1839,9 +1839,12 @@ class Model(BaseModel):
     accepted_formats: Optional[List[Literal["openai", "responses", "anthropic"]]] = None
     external_model_ids: Optional[Dict[str, str]] = None
     provider_preferences: Optional[OpenRouterProviderPreferences] = None
-    # Mirrors CanonicalProviderModel.PrivateProviderPreferences: the pin a
-    # privacy or zdr turn sends instead of provider_preferences.
-    private_provider_preferences: Optional[OpenRouterProviderPreferences] = None
+    # Mirrors CanonicalProviderModel.PrivacyProviderPreferences and
+    # ZDRProviderPreferences: the pin a privacy (Standard) turn, or a zdr turn,
+    # sends instead of provider_preferences. Each applies to its own mode only.
+    # The retired private_provider_preferences key is refused (extra="forbid").
+    privacy_provider_preferences: Optional[OpenRouterProviderPreferences] = None
+    zdr_provider_preferences: Optional[OpenRouterProviderPreferences] = None
     # Mirrors CanonicalProviderModel.StandardTwin: the providers.models entry a
     # discount endpoint's 429 or pre-byte timeout is re-sent on, once. The Go
     # loader validates the pairing.
@@ -1860,6 +1863,20 @@ class Model(BaseModel):
     # Mirrors CanonicalProviderModel.HostRetry: the arm's own host-retry
     # switch; absent follows global response_stream.host_retry.
     host_retry: Optional[bool] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_private_provider_preferences(cls, data):
+        # Mirrors the Go loader: the retired key covered privacy and zdr turns
+        # alike, so it is refused by name, whatever its value.
+        if isinstance(data, dict) and "private_provider_preferences" in data:
+            raise ValueError(
+                "private_provider_preferences is no longer accepted: use "
+                "zdr_provider_preferences for the zdr-turn pin, and "
+                "privacy_provider_preferences only if privacy (Standard) turns "
+                "need a pin other than provider_preferences"
+            )
+        return data
 
     @model_validator(mode="after")
     def validate_accepted_formats(self):

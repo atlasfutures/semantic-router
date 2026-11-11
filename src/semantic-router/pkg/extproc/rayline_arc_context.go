@@ -325,10 +325,10 @@ func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 	reqCtx.RaylineARCOverOutputArms = result.OverOutputArms
 	result.DisabledArms = r.disabledArms(modelRefs)
 	result.PrivacyExcludedArms = privacyExcludedArms(reqCtx.RaylineARCPrivacyMode, reqCtx.RaylineARCPrivacyAllowedArms, modelRefs)
-	result.PrivateTurn = reqCtx.RaylineARCPrivacyMode != ""
+	result.PrivacyMode = reqCtx.RaylineARCPrivacyMode
 	result.EphemeralTurn = raylineARCEphemeralTurn(reqCtx.RaylineARCPrivacyMode)
 	result.PrivacyExcludedArms, result.PrivacyArmEndpoints = r.withPrivacyEndpointConstraints(
-		result.PrivacyExcludedArms, reqCtx.RaylineARCPrivacyAllowedEndpoints, modelRefs,
+		result.PrivacyExcludedArms, reqCtx.RaylineARCPrivacyAllowedEndpoints, modelRefs, reqCtx.RaylineARCPrivacyMode,
 	)
 	result.RequiredCapabilities = requestRoutingCapabilities(reqCtx)
 	result.IncapableArms = r.incapableArms(modelRefs, result.RequiredCapabilities)

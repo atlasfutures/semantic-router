@@ -109,7 +109,12 @@ func (fixture *deltaFixture) turn(t *testing.T, body []byte) (*selection.Selecti
 		if fixture.shared != nil {
 			arcContext.PolicyStagedTurns = fixture.shared
 		}
-		arcContext.PrivateTurn = fixture.private || fixture.zdr
+		switch {
+		case fixture.zdr:
+			arcContext.PrivacyMode = raylineARCPrivacyModeZDR
+		case fixture.private:
+			arcContext.PrivacyMode = raylineARCPrivacyModePrivacy
+		}
 		arcContext.EphemeralTurn = fixture.zdr
 	})
 	if err != nil {

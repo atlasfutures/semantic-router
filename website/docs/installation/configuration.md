@@ -63,15 +63,22 @@ without `allow_fallbacks: false` is a preference rather than a pin: OpenRouter
 may still serve the request from an unlisted provider. See
 [Provider Routing](https://openrouter.ai/docs/features/provider-routing).
 
-`providers.models[].private_provider_preferences` takes the same keys and
-rules. When set, a private turn (`x-rayline-privacy-mode` `privacy` or `zdr`)
-sends it in place of `provider_preferences`, so an arm whose standard providers
-retain data can serve private turns from zero-data-retention providers without
-moving its standard turns. The private turn's data-use members
-(`allow_fallbacks: false`, `data_collection: deny`, and `zdr: true` on a zdr
-turn) are added to it as they are to `provider_preferences`. The `/v1/models`
-listing publishes it per candidate as `private_provider_pin`, beside
-`provider_pin`, and omits it when the key is absent.
+`providers.models[].privacy_provider_preferences` and
+`providers.models[].zdr_provider_preferences` take the same keys and rules.
+Each is picked by the turn's mode (`x-rayline-privacy-mode`): a `privacy`
+(Standard) turn sends `privacy_provider_preferences` in place of
+`provider_preferences` when set, and a `zdr` turn sends
+`zdr_provider_preferences` in place of it when set. Neither ever applies to the
+other mode, and a turn whose override is absent sends `provider_preferences`.
+So an arm whose regular providers retain data can serve zdr turns from
+zero-data-retention providers without moving its Standard turns. The private
+turn's data-use members (`allow_fallbacks: false`, `data_collection: deny`, and
+`zdr: true` on a zdr turn) are added to the pin it sends. The `/v1/models`
+listing publishes them per candidate as `standard_provider_pin` and
+`zdr_provider_pin`, beside `provider_pin`, and omits each when its key is
+absent; `private_provider_pin` (deprecated) repeats `zdr_provider_pin` for
+gateways that predate the split. The retired `private_provider_preferences`
+key, which covered both modes, is refused at load.
 
 A discount endpoint (an OpenRouter flex or contributor pin) can name its
 standard twin with `providers.models[].standard_twin`: another

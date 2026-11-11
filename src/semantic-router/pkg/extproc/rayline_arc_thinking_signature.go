@@ -200,9 +200,11 @@ func (r *OpenAIRouter) hostFamiliesInConfig() []string {
 		}
 	}
 	for name := range r.Config.ModelConfig {
-		// A private pin's hosts serve the arm too, on private turns.
+		// A privacy or zdr override's hosts serve the arm too, on those turns.
 		for _, pin := range []*config.OpenRouterProviderPreferences{
-			r.Config.ProviderPreferencesForModel(name), r.Config.PrivateProviderPreferencesForModel(name),
+			r.Config.ProviderPreferencesForModel(name),
+			r.Config.PrivacyProviderPreferencesForModel(name),
+			r.Config.ZDRProviderPreferencesForModel(name),
 		} {
 			if pin == nil {
 				continue

@@ -77,29 +77,53 @@ func validateStandardTwin(discount CanonicalProviderModel, byName map[string]Can
 			)
 		}
 	}
-	// A private turn is sent on each side's private pin when it declares
-	// one: its re-send must not land on the endpoint its private call used.
-	if discount.PrivateProviderPreferences == nil && twin.PrivateProviderPreferences == nil {
+	// A privacy or zdr turn is sent on each side's override for its mode
+	// when it declares one: its re-send must not land on the endpoint its
+	// own call used.
+	for _, mode := range []struct {
+		key            string
+		discount, twin *OpenRouterProviderPreferences
+	}{
+		{privacyProviderPreferencesKey, discount.PrivacyProviderPreferences, twin.PrivacyProviderPreferences},
+		{zdrProviderPreferencesKey, discount.ZDRProviderPreferences, twin.ZDRProviderPreferences},
+	} {
+		if err := validateStandardTwinModePins(name, twinName, mode.key, discount, twin, mode.discount, mode.twin); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateStandardTwinModePins holds one turn mode's pins to the twin rule:
+// the discount side's effective pin names its endpoint and the twin's
+// effective pin excludes it. Neither side overriding leaves the regular pins,
+// already checked.
+func validateStandardTwinModePins(
+	name, twinName, key string,
+	discount, twin CanonicalProviderModel,
+	discountOverride, twinOverride *OpenRouterProviderPreferences,
+) error {
+	if discountOverride == nil && twinOverride == nil {
 		return nil
 	}
-	privateDiscount, privateTwin := discount.ProviderPreferences, twin.ProviderPreferences
-	if discount.PrivateProviderPreferences != nil {
-		privateDiscount = discount.PrivateProviderPreferences
+	modeDiscount, modeTwin := discount.ProviderPreferences, twin.ProviderPreferences
+	if discountOverride != nil {
+		modeDiscount = discountOverride
 	}
-	if twin.PrivateProviderPreferences != nil {
-		privateTwin = twin.PrivateProviderPreferences
+	if twinOverride != nil {
+		modeTwin = twinOverride
 	}
-	if len(privateDiscount.Only) == 0 {
+	if len(modeDiscount.Only) == 0 {
 		return fmt.Errorf(
-			"providers.models[%s].standard_twin needs private_provider_preferences.only naming the discount endpoint",
-			name,
+			"providers.models[%s].standard_twin needs %s.only naming the discount endpoint",
+			name, key,
 		)
 	}
-	for _, slug := range privateDiscount.Only {
-		if providerPinAdmits(privateTwin, slug) {
+	for _, slug := range modeDiscount.Only {
+		if providerPinAdmits(modeTwin, slug) {
 			return fmt.Errorf(
-				"providers.models[%s] is the standard twin of %s and its private-turn pin must exclude the private endpoint %q (ignore it, or leave it out of only)",
-				twinName, name, slug,
+				"providers.models[%s] is the standard twin of %s and its %s must exclude the discount endpoint %q (ignore it, or leave it out of only)",
+				twinName, name, key, slug,
 			)
 		}
 	}

@@ -106,10 +106,12 @@ type policyServiceScorer struct {
 	fallbackActionID string
 	// routes names each worker's route in the cell exclusion table.
 	routes []string
-	// privateRoutes are the routes a private turn takes: an arm's private
-	// provider pin in place of its standard one. Equal to routes at an arm
-	// that declares none, so such an arm's exclusions stay shared.
-	privateRoutes []string
+	// privacyRoutes and zdrRoutes are the routes a privacy or zdr turn
+	// takes: an arm's override pin for that mode in place of its standard
+	// one. Equal to routes at an arm that declares none, so such an arm's
+	// exclusions stay shared.
+	privacyRoutes []string
+	zdrRoutes     []string
 	// episodeMode is the decide request's episode_mode: empty (strict) or
 	// relaxed.
 	episodeMode string
@@ -243,13 +245,17 @@ func newPolicyServiceScorer(
 		index[modelRef.Model] = arm
 		scorer.workerIDs = append(scorer.workerIDs, modelRef.Model)
 		scorer.workers = append(scorer.workers, policyWorkerManifest(cfg, modelRef))
-		route, privateRoute := policyWorkerRoute(cfg, modelRef, false), policyWorkerRoute(cfg, modelRef, true)
+		route := policyWorkerRoute(cfg, modelRef, "")
+		privacyRoute := policyWorkerRoute(cfg, modelRef, config.ProviderTurnModePrivacy)
+		zdrRoute := policyWorkerRoute(cfg, modelRef, config.ProviderTurnModeZDR)
 		if route != "" {
 			route = generation + "\x00" + route
-			privateRoute = generation + "\x00" + privateRoute
+			privacyRoute = generation + "\x00" + privacyRoute
+			zdrRoute = generation + "\x00" + zdrRoute
 		}
 		scorer.routes = append(scorer.routes, route)
-		scorer.privateRoutes = append(scorer.privateRoutes, privateRoute)
+		scorer.privacyRoutes = append(scorer.privacyRoutes, privacyRoute)
+		scorer.zdrRoutes = append(scorer.zdrRoutes, zdrRoute)
 	}
 	for _, binding := range policy.Bindings {
 		level, model := binding.Level, binding.Model
@@ -296,17 +302,18 @@ func newPolicyServiceScorer(
 // pinned on one, and excluding the whole worker would also take its healthy
 // endpoints out of the offer.
 //
-// A private turn's route carries the arm's private pin
-// (private_provider_preferences) when it declares one, so a private host's
-// failure excludes the arm for private turns only. The worker manifest below
-// reads the standard pin only: a private pin changes which host serves a
-// private turn, not the worker the policy decides over.
-func policyWorkerRoute(cfg *config.RouterConfig, modelRef config.ModelRef, private bool) string {
+// A privacy or zdr turn's route carries the arm's override pin for that mode
+// (privacy_provider_preferences or zdr_provider_preferences) when it declares
+// one, so an override host's failure excludes the arm for that mode's turns
+// only. The worker manifest below reads the standard pin only: an override
+// changes which host serves a private turn, not the worker the policy
+// decides over.
+func policyWorkerRoute(cfg *config.RouterConfig, modelRef config.ModelRef, privacyMode string) string {
 	if len(cfg.GetEndpointsForModel(modelRef.Model)) > 1 {
 		return ""
 	}
 	address, endpoint, _, _ := cfg.ResolvePrimaryBackendForModel(modelRef.Model)
-	preferences, _ := json.Marshal(cfg.ProviderPreferencesForTurn(modelRef.Model, private))
+	preferences, _ := json.Marshal(cfg.ProviderPreferencesForTurn(modelRef.Model, privacyMode))
 	return strings.Join([]string{
 		modelRef.Model, endpoint, address, cfg.ResolveExternalModelID(modelRef.Model, endpoint), string(preferences),
 	}, "\x00")
@@ -648,7 +655,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	// which never retains a boundary for a side call (retainPolicyBoundary).
 	var cellOut map[int]string
 	if scorer.fallback && !sideCall && turn != nil {
-		cellOut = scorer.cellExclusions(selector.now(), arcContext.PrivateTurn)
+		cellOut = scorer.cellExclusions(selector.now(), arcContext.PrivacyMode)
 	}
 	// The session's family exclusions (pathfinder#6066 D3) hold across the
 	// contexts the session opens, where the context's own exclusions end.
@@ -1264,7 +1271,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	result.RaylineARC.PolicyArmID = response.Decision.SelectedArmID
 	result.RaylineARC.ThinkingLevel = binding.level
 	result.RaylineARC.PolicyActionModel = binding.model
-	scorer.applyDispatchArm(result, selCtx, binding, arcContext.PrivateTurn)
+	scorer.applyDispatchArm(result, selCtx, binding, arcContext.PrivacyMode)
 	result.RaylineARC.PolicySideCall = sideCall
 	result.RaylineARC.OfferKind = policyOfferKind(derivedOffer, forced, retained, held)
 	result.RaylineARC.MaskedArms = policyMaskedArms(scorer, workerIDs, excluded, fallback, turn, offeredRoutes)
@@ -1417,10 +1424,10 @@ func (scorer *policyServiceScorer) actionModel(actionID string) string {
 // and DispatchArm move to it, while SelectedArm, and so the episode's held
 // arm, stays the policy's own.
 func (scorer *policyServiceScorer) applyDispatchArm(
-	result *selection.SelectionResult, selCtx *selection.SelectionContext, binding policyBinding, private bool,
+	result *selection.SelectionResult, selCtx *selection.SelectionContext, binding policyBinding, privacyMode string,
 ) {
 	result.RaylineARC.WorkerProviderModel = scorer.workers[binding.dispatchArm].Model
-	result.RaylineARC.WorkerRoute = scorer.routeFor(binding.dispatchArm, private)
+	result.RaylineARC.WorkerRoute = scorer.routeFor(binding.dispatchArm, privacyMode)
 	if binding.dispatchArm == binding.arm || binding.dispatchArm >= len(selCtx.CandidateModels) {
 		return
 	}
@@ -1452,21 +1459,31 @@ func (scorer *policyServiceScorer) dispatchedModel(actionID string) string {
 	return scorer.armModel(binding.dispatchArm)
 }
 
-// routeFor is the route an arm's turn takes: its private route on a private
-// turn, otherwise its standard one.
-func (scorer *policyServiceScorer) routeFor(arm int, private bool) string {
-	if private && arm < len(scorer.privateRoutes) {
-		return scorer.privateRoutes[arm]
+// routeFor is the route an arm's turn in the given privacy mode takes: its
+// privacy route on a privacy turn, its zdr route on a zdr turn (or one in a
+// mode the cell does not know, served as zdr, as ProviderPreferencesForTurn
+// does), otherwise its standard one.
+func (scorer *policyServiceScorer) routeFor(arm int, privacyMode string) string {
+	switch privacyMode {
+	case "":
+	case config.ProviderTurnModePrivacy:
+		if arm < len(scorer.privacyRoutes) {
+			return scorer.privacyRoutes[arm]
+		}
+	default:
+		if arm < len(scorer.zdrRoutes) {
+			return scorer.zdrRoutes[arm]
+		}
 	}
 	return scorer.routes[arm]
 }
 
 // cellExclusions are the arms whose routes the cell has excluded at now,
 // with the failure class that excluded each.
-func (scorer *policyServiceScorer) cellExclusions(now time.Time, private bool) map[int]string {
+func (scorer *policyServiceScorer) cellExclusions(now time.Time, privacyMode string) map[int]string {
 	var out map[int]string
 	for arm := range scorer.routes {
-		route := scorer.routeFor(arm, private)
+		route := scorer.routeFor(arm, privacyMode)
 		if route == "" {
 			continue
 		}
