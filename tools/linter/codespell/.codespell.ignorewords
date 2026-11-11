@@ -86,3 +86,15 @@ deques
 # Intentional typos for config unknown-field validation tests (validate_test.go)
 wieght
 naem
+# Go identifiers in pkg/selection/raylinearc (selectOn/InForce read as
+# "selection"/"enforce"): decision field names, not prose.
+selectOn
+InForce
+inForce
+# Deliberately split or truncated strings in test fixtures and test data:
+# a tokenizer test splits "hello" as "hel"+"lo", and captured wire bodies
+# are stored clipped.
+hel
+sessio
+retur
+caf

@@ -117,6 +117,15 @@ repos:
         language: system
         pass_filenames: false
         files: \.(py|go|js|ts|tsx|rs)$
+      # The scanner's own tests. security-scan.yml runs these against the base
+      # branch's copy, but that job is pull-request-only, so a change to the
+      # scanner reaches an integration branch with its tests unrun.
+      - id: ast-scanner-tests
+        name: AST scanner self-test
+        entry: bash -c 'if [ ! -x ./.venv-agent/bin/python ]; then echo "run make precommit-install" >&2; exit 1; fi; exec ./.venv-agent/bin/python tools/security/test_ast_security_scanner.py'
+        language: system
+        pass_filenames: false
+        files: ^tools/security/(ast_security_scanner\.py|test_ast_security_scanner\.py|ast-scan-exemptions\.toml|ast-scan-allowlist\.txt)$
 
   # Deterministic architecture checks. Numeric size findings are advisory;
   # forbidden dependencies, cycles, and root-placement contracts still block.

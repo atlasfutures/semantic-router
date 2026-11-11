@@ -357,4 +357,5 @@ These require the corresponding service to be enabled; otherwise the API returns
 | `GET` | `/api/v1/context-compression/stats` | Get redacted context-compression statistics |
 | `POST` | `/api/v1/context-compression/preview` | Preview context compression without persistence |
 | `POST` | `/api/v1/context-compression/recovery/invalidate` | Invalidate a trusted context-recovery request scope |
+| `POST` | `/v1/route` | Select a worker for one request without executing it |
 <!-- END-GENERATED-ENDPOINT-INDEX -->
