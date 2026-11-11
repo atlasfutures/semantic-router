@@ -497,7 +497,7 @@ func TestARCAliasAdvertisesTheServedEndpointHeaderOnlyWithTheFeed(t *testing.T) 
 }
 
 // An OpenRouter arm lists the pins its privacy and zdr turns send as
-// privacy_provider_pin and zdr_provider_pin, in provider_pin's shape, each
+// standard_provider_pin and zdr_provider_pin, in provider_pin's shape, each
 // only when its card declares it. private_provider_pin (deprecated) repeats
 // zdr_provider_pin for the gateway that predates the split, and is never the
 // privacy pin.
@@ -521,16 +521,16 @@ func TestCandidatesListTheirTurnModePinsOnlyWhenDeclared(t *testing.T) {
 	first := candidates[0].(map[string]interface{})
 	wantZDR := `{"allow_fallbacks":true,"max_price":{"completion":3},"only":["phala","novita"],"order":["phala","novita"],"pinned":true}`
 	for field, want := range map[string]string{
-		"zdr_provider_pin":     wantZDR,
-		"private_provider_pin": wantZDR,
-		"privacy_provider_pin": `{"only":["deepinfra"],"pinned":true}`,
-		"provider_pin":         `{"order":["z-ai"],"pinned":true}`,
+		"zdr_provider_pin":      wantZDR,
+		"private_provider_pin":  wantZDR,
+		"standard_provider_pin": `{"only":["deepinfra"],"pinned":true}`,
+		"provider_pin":          `{"order":["z-ai"],"pinned":true}`,
 	} {
 		if got, _ := json.Marshal(first[field]); string(got) != want {
 			t.Fatalf("%s = %s, want %s", field, got, want)
 		}
 	}
-	for _, field := range []string{"privacy_provider_pin", "zdr_provider_pin", "private_provider_pin"} {
+	for _, field := range []string{"standard_provider_pin", "zdr_provider_pin", "private_provider_pin"} {
 		if _, present := candidates[1].(map[string]interface{})[field]; present {
 			t.Fatalf("an arm without overrides lists %s", field)
 		}
@@ -549,7 +549,7 @@ func TestCandidatesPrivateProviderPinIsNeverThePrivacyPin(t *testing.T) {
 	declared.PrivacyProviderPreferences = &config.OpenRouterProviderPreferences{Only: []string{"deepinfra"}}
 	cfg.ModelConfig["z-ai/glm-5.2@thinking-off"] = declared
 	first := candidatesOf(t, marshalListing(t, NewOpenAIModelList(cfg, 123)), "rayline/arc-dev")[0].(map[string]interface{})
-	if _, present := first["privacy_provider_pin"]; !present {
+	if _, present := first["standard_provider_pin"]; !present {
 		t.Fatal("the privacy override is not listed")
 	}
 	for _, field := range []string{"zdr_provider_pin", "private_provider_pin"} {

@@ -61,12 +61,12 @@ type RoutingCandidate struct {
 	// turn's native Responses body carries none). Absent when the arm is not
 	// dispatched through OpenRouter, where no provider object is sent.
 	ProviderPin *CandidateProviderPin `json:"provider_pin,omitempty"`
-	// PrivacyProviderPin is the pin a privacy (Standard) turn on the arm
+	// StandardProviderPin is the pin a privacy (Standard) turn on the arm
 	// sends in place of ProviderPin, from the card's
 	// privacy_provider_preferences, in the same shape. Present, it is what
 	// privacy turns send (with the data mode added); absent, they send
 	// ProviderPin. A zdr turn never sends it.
-	PrivacyProviderPin *CandidateProviderPin `json:"privacy_provider_pin,omitempty"`
+	StandardProviderPin *CandidateProviderPin `json:"standard_provider_pin,omitempty"`
 	// ZDRProviderPin is the pin a zdr turn on the arm sends in place of
 	// ProviderPin, from the card's zdr_provider_preferences, in the same
 	// shape. Present, it is what zdr turns send (with the data mode added);
@@ -75,6 +75,10 @@ type RoutingCandidate struct {
 	// PrivateProviderPin is deprecated: it carries ZDRProviderPin's value for
 	// the transition, because the gateway released before the split judges
 	// private_provider_pin. Drop it once the gateway reads zdr_provider_pin.
+	// That gateway judges it on Standard turns too, which send the Standard
+	// pin, not this one: until it reads standard_provider_pin, an arm with a
+	// zdr override must keep a Standard list the gateway's Standard policy
+	// admits in full (the deployment's config tests hold that).
 	// All three are absent when the arm is not dispatched through OpenRouter.
 	PrivateProviderPin *CandidateProviderPin `json:"private_provider_pin,omitempty"`
 }
@@ -264,7 +268,7 @@ func routingCandidateOf(cfg *config.RouterConfig, modelRef config.ModelRef, outp
 			candidate.ProviderPin = providerPinOf(cfg.ProviderPreferencesForModel(model))
 			// The dispatch reads the same field (ProviderPreferencesForTurn).
 			if privacy := cfg.PrivacyProviderPreferencesForModel(model); privacy != nil {
-				candidate.PrivacyProviderPin = providerPinOf(privacy)
+				candidate.StandardProviderPin = providerPinOf(privacy)
 			}
 			if zdr := cfg.ZDRProviderPreferencesForModel(model); zdr != nil {
 				candidate.ZDRProviderPin = providerPinOf(zdr)

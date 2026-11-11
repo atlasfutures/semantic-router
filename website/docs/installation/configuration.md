@@ -74,7 +74,7 @@ So an arm whose regular providers retain data can serve zdr turns from
 zero-data-retention providers without moving its Standard turns. The private
 turn's data-use members (`allow_fallbacks: false`, `data_collection: deny`, and
 `zdr: true` on a zdr turn) are added to the pin it sends. The `/v1/models`
-listing publishes them per candidate as `privacy_provider_pin` and
+listing publishes them per candidate as `standard_provider_pin` and
 `zdr_provider_pin`, beside `provider_pin`, and omits each when its key is
 absent; `private_provider_pin` (deprecated) repeats `zdr_provider_pin` for
 gateways that predate the split. The retired `private_provider_preferences`
