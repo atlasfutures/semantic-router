@@ -2,7 +2,9 @@ package execution
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net"
@@ -11,6 +13,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+
+	"github.com/atlasfutures/semantic-router/rayline-core/cachecontext"
 )
 
 // jinjaFailure is llama.cpp's answer when the chat template raises.
@@ -239,5 +243,63 @@ func TestLocalFailureExcludesEverySiblingOnThatDeployment(t *testing.T) {
 	}
 	if calls.Load() != 1 || cloud.count() != 1 || len(fixture.snapshot()) != 2 {
 		t.Fatalf("local=%d cloud=%d lookups=%d", calls.Load(), cloud.count(), len(fixture.snapshot()))
+	}
+}
+
+// downCounter is a qualified counter whose runtime can go away.
+type downCounter struct {
+	identity cachecontext.PromptIdentity
+	down     atomic.Bool
+}
+
+func (counter *downCounter) Identity() cachecontext.PromptIdentity { return counter.identity }
+
+func (counter *downCounter) Count(context.Context, cachecontext.PreparedPrompt) (cachecontext.PromptMeasurement, error) {
+	if counter.down.Load() {
+		return cachecontext.PromptMeasurement{}, errors.New("counter runtime unreachable")
+	}
+	return cachecontext.PromptMeasurement{PromptTokens: 300, Provenance: "provider_reported"}, nil
+}
+
+// When the fallback consult itself fails, the identical client retry still
+// holds the failed local decision. Its recorded fact re-consults before the
+// request is prepared or counted, so a counter on the same failed runtime
+// cannot fail the retry.
+func TestRetryAfterFailedFallbackConsultSkipsTheFailedRuntime(t *testing.T) {
+	counter := &downCounter{}
+	var calls atomic.Int64
+	local := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		_, _ = io.Copy(io.Discard, r.Body)
+		counter.down.Store(true)
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = io.WriteString(w, jinjaFailure)
+	}))
+	t.Cleanup(local.Close)
+	cloud := &upstreamFixture{}
+	config := hybridV2Config(t, local.URL, chatUpstream(t, cloud, true).URL+"/v1/chat/completions")
+	fixture := &v2Decisions{}
+	fixture.choose = func(sent contextV2) string {
+		if sent.Turn.Reconsult == nil {
+			fixture.mu.Lock()
+			fixture.failNext = 1
+			fixture.mu.Unlock()
+		}
+		return unavailableFirst(sent)
+	}
+	server, httpServer := v2Server(t, config, fixture)
+	counter.identity = promptIdentity(config.Deployments[0])
+	if err := server.RegisterPromptCounter(config.Deployments[0].ID, counter); err != nil {
+		t.Fatal(err)
+	}
+	if status, _, response := executeWithHeaders(t, httpServer.URL, chatTurn(userTask), "retry-down"); status != http.StatusBadGateway {
+		t.Fatalf("first attempt status %d: %s", status, response)
+	}
+	status, header, response := executeWithHeaders(t, httpServer.URL, chatTurn(userTask), "retry-down")
+	if status != 200 || header.Get("X-Rayline-Executed-Action-Id") != cloudActionID {
+		t.Fatalf("retry status %d executed %q: %s", status, header.Get("X-Rayline-Executed-Action-Id"), response)
+	}
+	if calls.Load() != 1 || cloud.count() != 1 {
+		t.Fatalf("local=%d cloud=%d", calls.Load(), cloud.count())
 	}
 }

@@ -394,6 +394,14 @@ func (server *Server) execute(writer http.ResponseWriter, incoming *http.Request
 			server.writeError(writer, format, http.StatusBadGateway, "decision_identity_mismatch", err.Error())
 			return
 		}
+		// A refusal already recorded for this turn is never dispatched again,
+		// nor prepared and measured: a failed runtime may not count either.
+		if known := pending.input.Capacity[selected.action.ID]; v2 && known != nil && !known.Fits {
+			if !server.reconsult(ctx, writer, format, pending, selected.action.ID, decision.RouteID, "veto", known) {
+				return
+			}
+			continue
+		}
 		prepared, err = server.prepare(request, envelope, selected, roles, state)
 		if err != nil {
 			server.writeError(writer, format, http.StatusBadRequest, "execution_plan_failed", err.Error())
@@ -408,14 +416,7 @@ func (server *Server) execute(writer http.ResponseWriter, incoming *http.Request
 			return
 		}
 		// The pre-dispatch capacity check. The core may veto the final
-		// prepared request with a reason; the service reselects. A refusal
-		// already recorded for this turn is never dispatched again.
-		if known := pending.input.Capacity[selected.action.ID]; v2 && known != nil && !known.Fits {
-			if !server.reconsult(ctx, writer, format, pending, selected.action.ID, decision.RouteID, "veto", known) {
-				return
-			}
-			continue
-		}
+		// prepared request with a reason; the service reselects.
 		if v2 {
 			if fact := capacityFact(selected.deployment, prompt, prepared.outputLimit); fact != nil && !fact.Fits {
 				if !server.reconsult(ctx, writer, format, pending, selected.action.ID, decision.RouteID, "veto", fact) {
