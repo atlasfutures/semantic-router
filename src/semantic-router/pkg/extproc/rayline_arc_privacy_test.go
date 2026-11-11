@@ -36,7 +36,8 @@ func TestPrivacyExcludedArmsReadTheGatewayHeaders(t *testing.T) {
 		"unstated":                  {map[string]string{}, "", nil},
 		"privacy":                   {privacyHeaders("privacy", "arm-0, arm-2"), "privacy", []bool{false, true, false}},
 		"zdr":                       {privacyHeaders("ZDR", "arm-1"), "zdr", []bool{true, false, true}},
-		"unknown mode fails closed": {privacyHeaders("true", "arm-1"), "privacy", []bool{true, false, true}},
+		"unknown mode fails closed": {privacyHeaders("true", "arm-1"), "zdr", []bool{true, false, true}},
+		"unknown mode is zdr":       {privacyHeaders("strict", "arm-1"), "zdr", []bool{true, false, true}},
 		"no allowed arms":           {privacyHeaders("privacy", ""), "privacy", []bool{true, true, true}},
 		"unknown arm only":          {privacyHeaders("privacy", "other"), "privacy", []bool{true, true, true}},
 	}

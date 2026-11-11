@@ -148,19 +148,32 @@ func TestTurnModePinsAreKnownCanonicalKeys(t *testing.T) {
 // and the error points at both keys that replace it. Warning and dropping it
 // would silently move zdr turns onto the regular pin.
 func TestLegacyPrivateProviderPreferencesIsRefused(t *testing.T) {
-	_, err := ParseYAMLBytes([]byte(providerPreferencesConfigYAML(regularPinYAML + `      private_provider_preferences:
-        only:
-          - phala
-`)))
-	if err == nil {
-		t.Fatal("a config with private_provider_preferences loaded")
-	}
-	for _, want := range []string{
-		"providers.models[model-a].private_provider_preferences is no longer accepted",
-		"zdr_provider_preferences", "privacy_provider_preferences",
+	// A null, empty or malformed value is refused as a valid one is: by the
+	// key's presence, with the same message.
+	for name, value := range map[string]string{
+		"a mapping":    "\n        only:\n          - phala\n",
+		"null":         " null\n",
+		"empty":        "\n",
+		"not a pin":    " phala\n",
+		"an empty map": " {}\n",
 	} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("err = %v, want it to contain %q", err, want)
+		for parser, parse := range map[string]func([]byte) (*RouterConfig, error){
+			"ParseYAMLBytes": ParseYAMLBytes, "ParseYAMLBytesWithoutEnvExpansion": ParseYAMLBytesWithoutEnvExpansion,
+		} {
+			t.Run(name+"/"+parser, func(t *testing.T) {
+				_, err := parse([]byte(providerPreferencesConfigYAML(regularPinYAML + "      private_provider_preferences:" + value)))
+				if err == nil {
+					t.Fatal("a config with private_provider_preferences loaded")
+				}
+				for _, want := range []string{
+					"providers.models[model-a].private_provider_preferences is no longer accepted",
+					"zdr_provider_preferences", "privacy_provider_preferences",
+				} {
+					if !strings.Contains(err.Error(), want) {
+						t.Fatalf("err = %v, want it to contain %q", err, want)
+					}
+				}
+			})
 		}
 	}
 }

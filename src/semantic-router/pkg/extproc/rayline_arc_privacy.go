@@ -43,15 +43,18 @@ const (
 const arcFailureNoPrivateArm = "no_private_arm"
 
 // raylineARCPrivacyMode reads the request's data mode off the trusted signal
-// headers: "" for a standard request, else privacy or zdr.
+// headers: "" for a standard request, else privacy or zdr. Only an explicit
+// privacy is a privacy turn; any other private value is served as zdr, the
+// most restrictive mode, so a value the cell does not know never gets a
+// privacy turn's broader provider pin (memex-desktop#8229).
 func raylineARCPrivacyMode(signalHeaders map[string]string) string {
 	switch mode := strings.ToLower(strings.TrimSpace(signalHeaders[raylineARCPrivacyModeHeader])); mode {
 	case "", "false":
 		return ""
-	case raylineARCPrivacyModeZDR:
-		return raylineARCPrivacyModeZDR
-	default:
+	case raylineARCPrivacyModePrivacy:
 		return raylineARCPrivacyModePrivacy
+	default:
+		return raylineARCPrivacyModeZDR
 	}
 }
 

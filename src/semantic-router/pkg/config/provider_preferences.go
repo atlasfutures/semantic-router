@@ -106,6 +106,30 @@ func validateNoLegacyPrivateProviderPreferences(modelName string, legacy *OpenRo
 	if legacy == nil {
 		return nil
 	}
+	return legacyPrivateProviderPreferencesError(modelName)
+}
+
+// rejectRetiredPrivateProviderPreferences refuses the retired key by its
+// presence in the raw config, before typed decoding: a null or empty value
+// decodes to no pin and a malformed one fails decoding with a generic error,
+// and neither may load or hide the migration message.
+func rejectRetiredPrivateProviderPreferences(raw map[string]interface{}) error {
+	models, _ := nestedStringMap(raw["providers"])["models"].([]interface{})
+	for index, rawModel := range models {
+		model := nestedStringMap(rawModel)
+		if _, present := model["private_provider_preferences"]; !present {
+			continue
+		}
+		name, _ := model["name"].(string)
+		if name == "" {
+			name = fmt.Sprintf("%d", index)
+		}
+		return legacyPrivateProviderPreferencesError(name)
+	}
+	return nil
+}
+
+func legacyPrivateProviderPreferencesError(modelName string) error {
 	return fmt.Errorf(
 		"providers.models[%s].private_provider_preferences is no longer accepted: "+
 			"use %s for the zdr-turn pin, and %s only if privacy (Standard) turns need a pin other than provider_preferences",
