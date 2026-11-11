@@ -154,7 +154,7 @@ func (r *OpenAIRouter) handleSemanticStreamingResponseBody(
 			buffers.recordError(ctx, cut, true)
 			r.attachTruncatedStreamUsage(ctx, cut)
 		}
-		buffers.finalize(ctx)
+		buffers.finalize(ctx, cut)
 		// A codec that states the stop only when its stream is finalized
 		// (Messages) shows the refusal here, still before anything was sent.
 		if !cut && r.reserveRefusedTurn(ctx) {
@@ -191,6 +191,9 @@ type semanticStreamBuffers struct {
 	// pass through.
 	upstream  []byte
 	streamErr error
+	// filterCut says the turn was cut and public holds the client's whole
+	// reply for it, terminal included (AnthropicPublicStreamFilter.Cut).
+	filterCut bool
 }
 
 func (buffers *semanticStreamBuffers) push(responseBody []byte, ctx *RequestContext) {
@@ -230,12 +233,34 @@ func streamForwardedOutput(ctx *RequestContext) bool {
 	return ctx.ProtocolResponseStream.OutputPublished()
 }
 
-func (buffers *semanticStreamBuffers) finalize(ctx *RequestContext) {
+func (buffers *semanticStreamBuffers) finalize(ctx *RequestContext, cut bool) {
+	// A turn the Router cuts stays on the filter's frames to its end, with
+	// only the terminal taken from the encoder (AnthropicPublicStreamFilter.Cut).
+	// Switching writers on the last chunk sent the client the encoder's
+	// content frames there, numbered its own way, while blocks the filter
+	// held were counted and never sent. Only a cut that is the stream's one
+	// failure qualifies: a frame the codec refused, or an error the upstream
+	// sent, is the codec's to end the turn on, as it was.
+	filterEnds := cut && ctx.ProtocolResponseStream != nil && ctx.SemanticStreamErr == buffers.streamErr &&
+		(ctx.SemanticStreamState == nil || ctx.SemanticStreamState.upstreamFailed == nil)
 	if ctx.ProtocolResponseStream != nil {
 		frames, events, diagnostics, err := ctx.ProtocolResponseStream.Finalize(buffers.streamErr)
 		buffers.translated = appendProtocolFrames(buffers.translated, frames)
 		observeProtocolStream(ctx, events, diagnostics)
 		buffers.recordError(ctx, err, true)
+		filterEnds = filterEnds && err == nil
+	}
+	if filter, ok := ctx.PublicStreamFilter.(interface {
+		Cut(published, terminal []byte) ([]byte, error)
+	}); ok && filterEnds {
+		// A filter that cannot end the turn leaves it to the codec's
+		// terminal, which buffers.translated already holds.
+		public, err := filter.Cut(buffers.public, buffers.translated)
+		if err == nil {
+			buffers.public, buffers.filterCut = public, true
+		}
+		buffers.recordError(ctx, err, false)
+		return
 	}
 	if ctx.PublicStreamFilter != nil {
 		filtered, err := ctx.PublicStreamFilter.Finalize()
@@ -276,6 +301,10 @@ func (buffers *semanticStreamBuffers) processingResponse(
 	ctx *RequestContext,
 	endOfStream bool,
 ) *ext_proc.ProcessingResponse {
+	if buffers.filterCut {
+		return buildResponseBodyContinueResponse(
+			responseStreamBodyMutation(ctx, buffers.public, endOfStream), nil)
+	}
 	if ctx.ProtocolResponseStream != nil &&
 		(requiresClientResponseRewrite(ctx) || ctx.StreamingAborted) {
 		return buildResponseBodyContinueResponse(

@@ -59,7 +59,7 @@ func driveMaxTokensToolCut(
 	for _, chunk := range chunks {
 		buffers.push([]byte(chunk), ctx)
 	}
-	buffers.finalize(ctx)
+	buffers.finalize(ctx, false)
 	(&OpenAIRouter{}).finalizeSemanticStreamingResponse(ctx, buffers.streamErr)
 	return ctx, buffers, logs
 }
