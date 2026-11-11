@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -131,7 +132,12 @@ func (counter *httpCounter) exchange(ctx context.Context, method string, body []
 	}
 	response, err := counter.client.Do(request)
 	if err != nil {
-		return fmt.Errorf("token_counter: %w", err)
+		// url.Error quotes the request URL; report only what failed.
+		var requestErr *url.Error
+		if errors.As(err, &requestErr) {
+			err = requestErr.Err
+		}
+		return fmt.Errorf("token_counter request failed: %w", err)
 	}
 	defer response.Body.Close()
 	payload, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))

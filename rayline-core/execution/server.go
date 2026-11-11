@@ -418,7 +418,14 @@ func (server *Server) execute(writer http.ResponseWriter, incoming *http.Request
 			if _, counted := server.counters[selected.deployment.ID].(*httpCounter); v2 && counted {
 				slog.Warn("token counter failed before dispatch", "route_id", decision.RouteID, "deployment", selected.deployment.ID, "error", err.Error())
 				reason := CapacityRuntimeUnavailable
-				if !server.reconsult(ctx, writer, format, pending, selected.action.ID, decision.RouteID, "veto", &CapacityFact{Fits: false, Reason: &reason, Provenance: capacityProvenanceMeasured}) {
+				unavailable := &CapacityFact{Fits: false, Reason: &reason, Provenance: capacityProvenanceMeasured}
+				// Every action on this deployment shares the failed counter.
+				for _, sibling := range server.config.Actions {
+					if sibling.DeploymentID == selected.deployment.ID && sibling.ID != selected.action.ID {
+						pending.input.Capacity = withFact(pending.input.Capacity, sibling.ID, unavailable)
+					}
+				}
+				if !server.reconsult(ctx, writer, format, pending, selected.action.ID, decision.RouteID, "veto", unavailable) {
 					return
 				}
 				continue

@@ -3,6 +3,7 @@ package execution
 import (
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -244,5 +245,19 @@ func TestTokenCounterWorkerThatCannotPrepareLeavesThePrefixUnknown(t *testing.T)
 	}
 	if lookups := fixture.snapshot(); len(lookups) != 2 {
 		t.Fatalf("the second turn was not decided: %d lookups", len(lookups))
+	}
+}
+
+func TestTokenCounterTransportErrorsNeverQuoteTheURL(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	address := listener.Addr().String()
+	listener.Close()
+	counter := &httpCounter{url: "http://" + address + "/v1/token-count?private-marker", client: &http.Client{}}
+	err = counter.exchange(t.Context(), http.MethodGet, nil, &struct{}{})
+	if err == nil || strings.Contains(err.Error(), "private-marker") || strings.Contains(err.Error(), "/v1/token-count") {
+		t.Fatalf("error %v", err)
 	}
 }
