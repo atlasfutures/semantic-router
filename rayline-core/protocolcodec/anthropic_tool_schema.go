@@ -15,6 +15,9 @@ import (
 // that an ARC cell gives to a Claude arm would otherwise be a 400.
 var anthropicSchemaCombinators = []string{"oneOf", "anyOf", "allOf"}
 
+// localDefinitionMembers hold the definitions a branch's "$ref" can name.
+var localDefinitionMembers = []string{"$defs", "definitions"}
+
 // anthropicInputSchema returns schema in the form Messages accepts, and
 // whether it changed it. A schema with no top-level combinator is returned as
 // it came, and so is one it cannot fold without losing a branch's properties
@@ -43,6 +46,14 @@ func anthropicInputSchema(schema json.RawMessage) (json.RawMessage, bool) {
 	if properties == nil {
 		properties = map[string]json.RawMessage{}
 	}
+	definitions := map[string]map[string]json.RawMessage{}
+	for _, member := range localDefinitionMembers {
+		var table map[string]json.RawMessage
+		if !decodeSchemaMember(top, member, &table) {
+			return schema, false
+		}
+		definitions[member] = table
+	}
 	for _, combinator := range anthropicSchemaCombinators {
 		var branches []map[string]json.RawMessage
 		if !decodeSchemaMember(top, combinator, &branches) {
@@ -52,7 +63,7 @@ func anthropicInputSchema(schema json.RawMessage) (json.RawMessage, bool) {
 		alternatives := map[string][]json.RawMessage{}
 		seen := map[string]bool{}
 		for _, branch := range branches {
-			branch, resolved := resolveLocalSchemaRef(top, branch)
+			branch, resolved := resolveLocalSchemaRef(definitions, branch)
 			if !resolved || hasAnthropicSchemaCombinator(branch) {
 				return schema, false
 			}
@@ -124,7 +135,7 @@ func compactJSON(value json.RawMessage) []byte {
 // for a $ref it cannot resolve, or one with sibling members, so the schema is
 // sent unchanged rather than folded into an object that lost the branch's
 // properties.
-func resolveLocalSchemaRef(top, branch map[string]json.RawMessage) (map[string]json.RawMessage, bool) {
+func resolveLocalSchemaRef(definitions map[string]map[string]json.RawMessage, branch map[string]json.RawMessage) (map[string]json.RawMessage, bool) {
 	raw, present := branch["$ref"]
 	if !present {
 		return branch, true
@@ -133,17 +144,17 @@ func resolveLocalSchemaRef(top, branch map[string]json.RawMessage) (map[string]j
 	if len(branch) > 1 || json.Unmarshal(raw, &ref) != nil {
 		return nil, false
 	}
-	for _, member := range []string{"$defs", "definitions"} {
+	for _, member := range localDefinitionMembers {
 		name, local := strings.CutPrefix(ref, "#/"+member+"/")
 		if !local {
 			continue
 		}
-		var definitions map[string]map[string]json.RawMessage
-		if !decodeSchemaMember(top, member, &definitions) {
+		raw, defined := definitions[member][name]
+		var definition map[string]json.RawMessage
+		if !defined || json.Unmarshal(raw, &definition) != nil {
 			return nil, false
 		}
-		definition, defined := definitions[name]
-		if _, nested := definition["$ref"]; !defined || nested {
+		if _, nested := definition["$ref"]; nested {
 			return nil, false
 		}
 		return definition, true
