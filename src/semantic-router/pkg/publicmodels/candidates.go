@@ -61,12 +61,21 @@ type RoutingCandidate struct {
 	// turn's native Responses body carries none). Absent when the arm is not
 	// dispatched through OpenRouter, where no provider object is sent.
 	ProviderPin *CandidateProviderPin `json:"provider_pin,omitempty"`
-	// PrivateProviderPin is the pin a private (privacy or zdr) turn on the
-	// arm sends in place of ProviderPin, from the card's
-	// private_provider_preferences, in the same shape. Present, it is what
-	// privacy and zdr turns send (with the data mode added); absent, they
-	// send ProviderPin. Absent too when the arm is not dispatched through
-	// OpenRouter.
+	// PrivacyProviderPin is the pin a privacy (Standard) turn on the arm
+	// sends in place of ProviderPin, from the card's
+	// privacy_provider_preferences, in the same shape. Present, it is what
+	// privacy turns send (with the data mode added); absent, they send
+	// ProviderPin. A zdr turn never sends it.
+	PrivacyProviderPin *CandidateProviderPin `json:"privacy_provider_pin,omitempty"`
+	// ZDRProviderPin is the pin a zdr turn on the arm sends in place of
+	// ProviderPin, from the card's zdr_provider_preferences, in the same
+	// shape. Present, it is what zdr turns send (with the data mode added);
+	// absent, they send ProviderPin. A privacy turn never sends it.
+	ZDRProviderPin *CandidateProviderPin `json:"zdr_provider_pin,omitempty"`
+	// PrivateProviderPin is deprecated: it carries ZDRProviderPin's value for
+	// the transition, because the gateway released before the split judges
+	// private_provider_pin. Drop it once the gateway reads zdr_provider_pin.
+	// All three are absent when the arm is not dispatched through OpenRouter.
 	PrivateProviderPin *CandidateProviderPin `json:"private_provider_pin,omitempty"`
 }
 
@@ -254,8 +263,12 @@ func routingCandidateOf(cfg *config.RouterConfig, modelRef config.ModelRef, outp
 		if profile, err := cfg.GetProviderProfileForEndpoint(endpointName); err == nil && profile.IsOpenRouter() {
 			candidate.ProviderPin = providerPinOf(cfg.ProviderPreferencesForModel(model))
 			// The dispatch reads the same field (ProviderPreferencesForTurn).
-			if private := cfg.PrivateProviderPreferencesForModel(model); private != nil {
-				candidate.PrivateProviderPin = providerPinOf(private)
+			if privacy := cfg.PrivacyProviderPreferencesForModel(model); privacy != nil {
+				candidate.PrivacyProviderPin = providerPinOf(privacy)
+			}
+			if zdr := cfg.ZDRProviderPreferencesForModel(model); zdr != nil {
+				candidate.ZDRProviderPin = providerPinOf(zdr)
+				candidate.PrivateProviderPin = providerPinOf(zdr)
 			}
 		}
 	}

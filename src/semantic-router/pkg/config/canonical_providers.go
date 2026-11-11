@@ -35,13 +35,26 @@ type CanonicalProviderModel struct {
 	// because which provider serves an arm is an access detail, not a routing
 	// signal.
 	ProviderPreferences *OpenRouterProviderPreferences `yaml:"provider_preferences,omitempty"`
-	// PrivateProviderPreferences pins the providers a private (privacy or
-	// zdr) turn on this binding may use, in place of ProviderPreferences: an
-	// arm whose standard providers retain data can serve private turns from
-	// zero-data-retention ones without moving its standard turns. Same schema
-	// and validation as ProviderPreferences. Absent, private turns send
+	// PrivacyProviderPreferences pins the providers a privacy (Standard) turn
+	// on this binding may use, in place of ProviderPreferences: an arm whose
+	// regular providers fail the Standard data policy can serve privacy turns
+	// from ones that pass it. It never applies to a zdr turn. Same schema and
+	// validation as ProviderPreferences. Absent, privacy turns send
 	// ProviderPreferences.
-	PrivateProviderPreferences *OpenRouterProviderPreferences `yaml:"private_provider_preferences,omitempty"`
+	PrivacyProviderPreferences *OpenRouterProviderPreferences `yaml:"privacy_provider_preferences,omitempty"`
+	// ZDRProviderPreferences pins the providers a zdr turn on this binding
+	// may use, in place of ProviderPreferences: an arm whose regular
+	// providers retain data can serve zdr turns from zero-data-retention ones
+	// without moving its other turns. It never applies to a privacy turn.
+	// Same schema and validation as ProviderPreferences. Absent, zdr turns
+	// send ProviderPreferences.
+	ZDRProviderPreferences *OpenRouterProviderPreferences `yaml:"zdr_provider_preferences,omitempty"`
+	// LegacyPrivateProviderPreferences is the retired private_provider_preferences
+	// key, which covered privacy and zdr turns alike. It is read only so the
+	// loader can refuse it by name (validateNoLegacyPrivateProviderPreferences)
+	// rather than warn and drop it: dropping it would quietly send zdr turns
+	// to the regular pin.
+	LegacyPrivateProviderPreferences *OpenRouterProviderPreferences `yaml:"private_provider_preferences,omitempty"`
 	// StandardTwin declares this binding a discount endpoint (an OpenRouter
 	// flex or contributor pin) and names its standard twin: the
 	// providers.models entry serving the same model at the standard endpoint.

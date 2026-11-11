@@ -94,15 +94,25 @@ func TestStandardTwinRefusesUnsafePairings(t *testing.T) {
 			"      provider_preferences:\n        order:\n          - openai\n",
 			`must exclude its endpoint "openai/flex"`,
 		},
-		"twin's private pin admits the flex endpoint": {
+		"twin's zdr pin admits the flex endpoint": {
 			"      standard_twin: luna\n",
-			standardTwinIgnorePin + "      private_provider_preferences:\n        only:\n          - openai/flex\n",
-			`private-turn pin must exclude the private endpoint "openai/flex"`,
+			standardTwinIgnorePin + "      zdr_provider_preferences:\n        only:\n          - openai/flex\n",
+			`its zdr_provider_preferences must exclude the discount endpoint "openai/flex"`,
 		},
-		"twin's private pin admits the discount's private endpoint": {
-			"      standard_twin: luna\n      private_provider_preferences:\n        only:\n          - azure\n",
-			standardTwinIgnorePin + "      private_provider_preferences:\n        only:\n          - azure\n",
-			`private-turn pin must exclude the private endpoint "azure"`,
+		"twin's zdr pin admits the discount's zdr endpoint": {
+			"      standard_twin: luna\n      zdr_provider_preferences:\n        only:\n          - azure\n",
+			standardTwinIgnorePin + "      zdr_provider_preferences:\n        only:\n          - azure\n",
+			`its zdr_provider_preferences must exclude the discount endpoint "azure"`,
+		},
+		"twin's privacy pin admits the flex endpoint": {
+			"      standard_twin: luna\n",
+			standardTwinIgnorePin + "      privacy_provider_preferences:\n        only:\n          - openai/flex\n",
+			`its privacy_provider_preferences must exclude the discount endpoint "openai/flex"`,
+		},
+		"discount's privacy pin names no endpoint": {
+			"      standard_twin: luna\n      privacy_provider_preferences:\n        order:\n          - azure\n",
+			standardTwinIgnorePin,
+			"needs privacy_provider_preferences.only naming the discount endpoint",
 		},
 		"twin pins nothing": {
 			"      standard_twin: luna\n", "", "must set provider_preferences",

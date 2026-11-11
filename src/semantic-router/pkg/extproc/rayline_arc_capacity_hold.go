@@ -186,7 +186,7 @@ func (selector *raylineARCSelector) policyUndecidedResult(
 	result.RaylineARC.PolicyArmID = armID
 	result.RaylineARC.ThinkingLevel = binding.level
 	result.RaylineARC.PolicyActionModel = binding.model
-	scorer.applyDispatchArm(result, selCtx, binding, arcContext.PrivateTurn)
+	scorer.applyDispatchArm(result, selCtx, binding, arcContext.PrivacyMode)
 	result.RaylineARC.PolicySideCall = sideCall
 	if !sideCall {
 		result.RaylineARC.PolicyTurnState = turn.Clone()

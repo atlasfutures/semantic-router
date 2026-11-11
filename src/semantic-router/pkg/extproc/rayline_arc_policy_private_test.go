@@ -110,7 +110,7 @@ func TestPrivateTurnShedBeforeDecideSendsNoRelease(t *testing.T) {
 	defer held()
 	state, _ := raylinearc.NewEpisodeState(2)
 	if _, err := fixture.selectOnWith(t, state, policyTestRequest(t, deltaUser), func(arcContext *selection.RaylineARCSelectionContext) {
-		arcContext.PrivateTurn, arcContext.EphemeralTurn = true, true
+		arcContext.PrivacyMode, arcContext.EphemeralTurn = raylineARCPrivacyModeZDR, true
 	}); err == nil {
 		t.Fatal("a shed private turn was served")
 	}
@@ -206,7 +206,7 @@ func TestPrivateTurnDecidesOnASessionOfItsOwn(t *testing.T) {
 	owner := front.containerOf(persisted.Token)
 
 	private, err := fixture.selectOnWith(t, state, body, func(arcContext *selection.RaylineARCSelectionContext) {
-		arcContext.PrivateTurn, arcContext.EphemeralTurn = true, true
+		arcContext.PrivacyMode, arcContext.EphemeralTurn = raylineARCPrivacyModeZDR, true
 	})
 	if err != nil {
 		t.Fatal(err)

@@ -137,6 +137,7 @@ func (r *OpenAIRouter) withPrivacyEndpointConstraints(
 	excluded []bool,
 	endpoints privacyAllowedEndpoints,
 	modelRefs []config.ModelRef,
+	privacyMode string,
 ) ([]bool, []*raylinearc.ArmEndpoints) {
 	if !endpoints.present || len(excluded) != len(modelRefs) {
 		return excluded, nil
@@ -155,14 +156,14 @@ func (r *OpenAIRouter) withPrivacyEndpointConstraints(
 			// Listed as arm=: allowed, with no endpoints to narrow by.
 			continue
 		}
-		constraints[index] = r.armEndpointConstraint(ref.Model, allowed)
+		constraints[index] = r.armEndpointConstraint(ref.Model, allowed, privacyMode)
 	}
 	return excluded, constraints
 }
 
-// armEndpointConstraint is an OpenRouter arm's endpoint constraint, or nil for
-// an arm dispatched elsewhere.
-func (r *OpenAIRouter) armEndpointConstraint(model string, allowed []string) *raylinearc.ArmEndpoints {
+// armEndpointConstraint is an OpenRouter arm's endpoint constraint on a turn
+// in the given privacy mode, or nil for an arm dispatched elsewhere.
+func (r *OpenAIRouter) armEndpointConstraint(model string, allowed []string, privacyMode string) *raylinearc.ArmEndpoints {
 	if r == nil || r.Config == nil {
 		return nil
 	}
@@ -171,9 +172,9 @@ func (r *OpenAIRouter) armEndpointConstraint(model string, allowed []string) *ra
 		return nil
 	}
 	constraint := &raylinearc.ArmEndpoints{Model: r.Config.ResolveExternalModelID(model, backend), Allowed: allowed}
-	// Only a private turn narrows by endpoint, so the constraint is the arm's
-	// private pin when it declares one: the endpoints the turn can reach.
-	if pin := armProviderPin(r.Config, model, raylineARCPrivacyModePrivacy); pin != nil {
+	// Only a private turn narrows by endpoint, so the constraint is the pin
+	// the turn's mode sends: the endpoints the turn can reach.
+	if pin := armProviderPin(r.Config, model, privacyMode); pin != nil {
 		constraint.Only, constraint.Order, constraint.Ignore = pin.Only, pin.Order, pin.Ignore
 	}
 	return constraint
@@ -273,9 +274,10 @@ func withPrivacyExcludedArms(
 }
 
 // armProviderPin is the pin a turn in the given privacy mode sends for the
-// model before its data-use members are added: on a private turn (privacy or
-// zdr) the card's private_provider_preferences when it declares one, otherwise
-// its provider_preferences. A standard turn ("") always gets the latter.
+// model before its data-use members are added: on a privacy turn the card's
+// privacy_provider_preferences, on a zdr turn its zdr_provider_preferences,
+// each when the card declares it, otherwise its provider_preferences. A
+// standard turn ("") always gets the latter (ProviderPreferencesForTurn).
 func armProviderPin(
 	cfg *config.RouterConfig,
 	model string,
@@ -284,7 +286,7 @@ func armProviderPin(
 	if cfg == nil {
 		return nil
 	}
-	return cfg.ProviderPreferencesForTurn(model, privacyMode != "")
+	return cfg.ProviderPreferencesForTurn(model, privacyMode)
 }
 
 // privacyProviderPreferences is the provider object a private turn sends: the

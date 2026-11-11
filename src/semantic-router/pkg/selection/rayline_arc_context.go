@@ -65,10 +65,11 @@ type RaylineARCSelectionContext struct {
 	// (extproc/rayline_arc_privacy.go). Nil for a standard request, which
 	// leaves selection exactly as it was.
 	PrivacyExcludedArms []bool
-	// PrivateTurn is true on a privacy or zdr request. Such a turn sends an
-	// arm's private provider pin when it declares one, so its failures are
-	// recorded against that route, not the standard one.
-	PrivateTurn bool
+	// PrivacyMode is the request's data mode: "" for a standard request,
+	// else privacy or zdr. A privacy or zdr turn sends an arm's override pin
+	// for its mode when the arm declares one, so its failures are recorded
+	// against that route, not the standard one.
+	PrivacyMode string
 	// EphemeralTurn is true on a zdr request only. Such a turn holds nothing
 	// at the policy service past its own decide: it names a fresh episode,
 	// never stages or appends, and asks the service to release what the

@@ -90,10 +90,27 @@ func validateProviderPreferences(modelName string, preferences *OpenRouterProvid
 	return validateProviderPreferencesField(modelName, "provider_preferences", preferences)
 }
 
-// validatePrivateProviderPreferences holds a private pin to the same rules,
+// The per-mode override keys. Each is held to the provider_preferences rules,
 // its errors naming its own key.
-func validatePrivateProviderPreferences(modelName string, preferences *OpenRouterProviderPreferences) error {
-	return validateProviderPreferencesField(modelName, "private_provider_preferences", preferences)
+const (
+	privacyProviderPreferencesKey = "privacy_provider_preferences"
+	zdrProviderPreferencesKey     = "zdr_provider_preferences"
+)
+
+// validateNoLegacyPrivateProviderPreferences refuses the retired
+// private_provider_preferences key. It applied to privacy (Standard) and zdr
+// turns alike, which narrowed Standard to ZDR hosts (memex-desktop#8229); the
+// error names the keys that replace it so the operator picks the mode
+// explicitly rather than carrying the old meaning over.
+func validateNoLegacyPrivateProviderPreferences(modelName string, legacy *OpenRouterProviderPreferences) error {
+	if legacy == nil {
+		return nil
+	}
+	return fmt.Errorf(
+		"providers.models[%s].private_provider_preferences is no longer accepted: "+
+			"use %s for the zdr-turn pin, and %s only if privacy (Standard) turns need a pin other than provider_preferences",
+		modelName, zdrProviderPreferencesKey, privacyProviderPreferencesKey,
+	)
 }
 
 func validateProviderPreferencesField(modelName string, key string, preferences *OpenRouterProviderPreferences) error {
@@ -166,29 +183,61 @@ func (c *RouterConfig) ProviderPreferencesForModel(modelName string) *OpenRouter
 	return params.ProviderPreferences
 }
 
-// ProviderPreferencesForTurn returns the pin a turn on the model sends: on a
-// private (privacy or zdr) turn the model's private_provider_preferences when
-// it declares one, and otherwise the same pin ProviderPreferencesForModel
-// returns. A standard turn never sees the private pin. The /v1/models listing
-// publishes both from the same fields, so it cannot advertise a private pin
-// the dispatch does not apply.
-func (c *RouterConfig) ProviderPreferencesForTurn(modelName string, private bool) *OpenRouterProviderPreferences {
-	if private {
-		if pin := c.PrivateProviderPreferencesForModel(modelName); pin != nil {
-			return pin
-		}
+// The turn modes ProviderPreferencesForTurn tells apart: the values of the
+// x-rayline-privacy-mode signal the cell reads. A standard turn is "".
+const (
+	ProviderTurnModePrivacy = "privacy"
+	ProviderTurnModeZDR     = "zdr"
+)
+
+// ProviderPreferencesForTurn returns the pin a turn in the given privacy mode
+// sends on the model:
+//
+//   - "" (standard): provider_preferences, as ProviderPreferencesForModel.
+//   - "privacy" (Standard): privacy_provider_preferences when the model
+//     declares it, else provider_preferences. Never the zdr pin.
+//   - "zdr": zdr_provider_preferences when the model declares it, else
+//     provider_preferences. Never the privacy pin.
+//
+// Any other mode is served as zdr, the most restrictive: a mode this code
+// does not know is a private turn whose terms it cannot read, and sending it
+// the regular pin could reach a provider that retains its data.
+//
+// The /v1/models listing publishes each pin from the same fields, so it
+// cannot advertise a pin the dispatch does not apply.
+func (c *RouterConfig) ProviderPreferencesForTurn(modelName string, mode string) *OpenRouterProviderPreferences {
+	var override *OpenRouterProviderPreferences
+	switch mode {
+	case "":
+	case ProviderTurnModePrivacy:
+		override = c.PrivacyProviderPreferencesForModel(modelName)
+	default:
+		override = c.ZDRProviderPreferencesForModel(modelName)
+	}
+	if override != nil {
+		return override
 	}
 	return c.ProviderPreferencesForModel(modelName)
 }
 
-// PrivateProviderPreferencesForModel returns the model's private-turn pin, or
-// nil when it declares none.
-func (c *RouterConfig) PrivateProviderPreferencesForModel(modelName string) *OpenRouterProviderPreferences {
+// PrivacyProviderPreferencesForModel returns the model's privacy-turn
+// override, or nil when it declares none.
+func (c *RouterConfig) PrivacyProviderPreferencesForModel(modelName string) *OpenRouterProviderPreferences {
 	params, found := c.resolveModelConfig(modelName)
 	if !found {
 		return nil
 	}
-	return params.PrivateProviderPreferences
+	return params.PrivacyProviderPreferences
+}
+
+// ZDRProviderPreferencesForModel returns the model's zdr-turn pin, or nil
+// when it declares none.
+func (c *RouterConfig) ZDRProviderPreferencesForModel(modelName string) *OpenRouterProviderPreferences {
+	params, found := c.resolveModelConfig(modelName)
+	if !found {
+		return nil
+	}
+	return params.ZDRProviderPreferences
 }
 
 // copyProviderPreferences keeps the loaded config free of shared slices, the
