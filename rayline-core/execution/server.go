@@ -413,6 +413,16 @@ func (server *Server) execute(writer http.ResponseWriter, incoming *http.Request
 		}
 		prompt, err = server.measurePreparedPrompt(ctx, selected, prepared.body, state, reuse)
 		if err != nil {
+			// A token_counter that cannot count makes its target unavailable,
+			// as in capacity measurement; the service reselects.
+			if _, counted := server.counters[selected.deployment.ID].(*httpCounter); v2 && counted {
+				slog.Warn("token counter failed before dispatch", "route_id", decision.RouteID, "deployment", selected.deployment.ID, "error", err.Error())
+				reason := CapacityRuntimeUnavailable
+				if !server.reconsult(ctx, writer, format, pending, selected.action.ID, decision.RouteID, "veto", &CapacityFact{Fits: false, Reason: &reason, Provenance: capacityProvenanceMeasured}) {
+					return
+				}
+				continue
+			}
 			server.writeError(writer, format, http.StatusBadGateway, "prefix_measurement_failed", err.Error())
 			return
 		}

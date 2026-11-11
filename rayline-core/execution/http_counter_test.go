@@ -215,3 +215,34 @@ func TestTokenCounterFailureAfterALocalTurnHandsOff(t *testing.T) {
 		}
 	}
 }
+
+// After a local turn, a request the local worker cannot carry (an output
+// allowance over its limit) is decided again rather than refused.
+func TestTokenCounterWorkerThatCannotPrepareLeavesThePrefixUnknown(t *testing.T) {
+	counter := &tokenCounterFixture{units: counterUnits, tokens: 100}
+	config, _ := countedLocalConfig(t, counter.serve(t).URL)
+	// The service picks local first, then the cloud, which can carry 400.
+	turns := 0
+	fixture := &v2Decisions{choose: func(sent contextV2) string {
+		turns++
+		if turns == 1 {
+			return fitPolicy(sent)
+		}
+		return cloudActionID
+	}}
+	server, httpServer := v2Server(t, config, fixture)
+	if err := server.RegisterConfiguredPromptCounters(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	first := `{"model":"arc-1.0","max_tokens":100,"messages":[{"role":"user","content":"hi"}]}`
+	if status, response := executeHTTP(t, httpServer.URL, "/v1/messages", first, "counter-prepare"); status != http.StatusOK {
+		t.Fatalf("first turn %d: %.300s", status, response)
+	}
+	next := `{"model":"arc-1.0","max_tokens":400,"messages":[{"role":"user","content":"hi"},{"role":"assistant","content":"hello"},{"role":"user","content":"again"}]}`
+	if status, response := executeHTTP(t, httpServer.URL, "/v1/messages", next, "counter-prepare"); status != http.StatusOK {
+		t.Fatalf("second turn %d: %.300s", status, response)
+	}
+	if lookups := fixture.snapshot(); len(lookups) != 2 {
+		t.Fatalf("the second turn was not decided: %d lookups", len(lookups))
+	}
+}

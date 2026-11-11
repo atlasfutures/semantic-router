@@ -71,15 +71,21 @@ func (server *Server) measureExecutionContext(ctx context.Context, body []byte, 
 		if err != nil {
 			return ExecutionContext{}, nil, err
 		}
+		_, countOnly := server.counters[worker.DeploymentID].(*httpCounter)
 		prepared, err := server.prepare(request, envelope, selected, clientRoles, state)
 		if err != nil {
+			// A count-only counter carries no prefix evidence: a worker that
+			// cannot carry this request leaves the prefix unknown.
+			if countOnly {
+				continue
+			}
 			return ExecutionContext{}, nil, fmt.Errorf("prepare worker prefix: %w", err)
 		}
 		current, err := server.measurePreparedPrompt(ctx, selected, prepared.body, state, nil)
 		if err != nil {
 			// A token_counter carries no prefix evidence; its failure leaves
 			// the prefix unknown, and capacity marks the target unavailable.
-			if _, http := server.counters[worker.DeploymentID].(*httpCounter); http {
+			if countOnly {
 				slog.Warn("token counter failed during prefix measurement", "deployment", worker.DeploymentID, "error", err.Error())
 				continue
 			}
