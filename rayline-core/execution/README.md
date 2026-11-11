@@ -190,6 +190,15 @@ opt-in. The core reports facts and never picks or ranks a model.
   `response.in_progress`, comments) until the first other event, for at
   most 2 seconds and 64 KiB, and relays them unchanged when that event is
   not such a refusal.
+- **Local runtime failures.** A local runtime that answers 5xx, or cannot be
+  reached, before any output re-consults once per turn with
+  `reconsult: "capacity"` and every action on that deployment reported
+  `fits: false`, `reason: "runtime_unavailable"`, so the service picks another
+  target and the failed runtime is not dispatched again for that request. A
+  second local failure in the same turn, or any other local error, is
+  forwarded. Each local failure is logged (`local upstream failed`) with the
+  route id, deployment, HTTP status (0 when nothing answered) and at most 200
+  characters of the error's message field, never the rest of the body.
 - **No deployment fits.** When every executable target has a
   `context_capacity` shortfall that stands (see `context_overflow`) and none
   is unknown, the
@@ -410,9 +419,12 @@ model, runtime, template and tokenizer checks are described in the module README
 Other external inference servers can execute without this counter, but their
 current prefix counts remain unknown. Compatibility of a model name or HTTP
 format does not qualify thinking controls or establish KV residency.
-The optional `inband_system: "fold_before_unit_v1"` compatibility rule is
-restricted to local Chat with the native default control and a matching runtime
-identity suffix; see the [module README](../README.md#qualified-local-token-counting)
+A local Chat deployment under the native default control folds a later
+system message into the turn before it (`fold_before_unit_v1`), so the runtime
+receives one leading system message. The explicit
+`inband_system: "fold_before_unit_v1"` setting is restricted to the same
+deployments with a matching runtime identity suffix and makes a refused fold
+fail the plan; see the [module README](../README.md#qualified-local-token-counting)
 for its role semantics and refusal conditions.
 
 An explicit `test_alias` such as `{"selected_model":"gpt-6-luna",

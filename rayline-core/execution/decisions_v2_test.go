@@ -181,7 +181,8 @@ type upstreamFixture struct {
 	mu     sync.Mutex
 	bodies []map[string]json.RawMessage
 	// reject answers with llama.cpp's context refusal while positive; fail
-	// answers with an unrelated 503 while positive.
+	// answers with an unrelated 429 while positive: a failure before output
+	// that is forwarded, not a 5xx a local runtime falls back from.
 	reject int
 	fail   int
 }
@@ -210,8 +211,8 @@ func chatUpstream(t *testing.T, fixture *upstreamFixture, cloud bool) *httptest.
 		}
 		fixture.mu.Unlock()
 		if fail {
-			w.WriteHeader(503)
-			_, _ = io.WriteString(w, `{"error":{"code":503,"message":"loading model","type":"unavailable_error"}}`)
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = io.WriteString(w, `{"error":{"code":429,"message":"too many requests","type":"rate_limit_error"}}`)
 			return
 		}
 		if reject {
@@ -412,7 +413,7 @@ func TestV2PreDispatchVetoReconsultsWithTheFact(t *testing.T) {
 		return localActionID
 	}}
 	_, httpServer := v2Server(t, config, fixture, 300, 990)
-	if status, _ := executeHTTP(t, httpServer.URL, "/v1/chat/completions", chatTurn(userTask), "veto"); status != 503 {
+	if status, _ := executeHTTP(t, httpServer.URL, "/v1/chat/completions", chatTurn(userTask), "veto"); status != http.StatusTooManyRequests {
 		t.Fatalf("first attempt status %d", status)
 	}
 	if status, response := executeHTTP(t, httpServer.URL, "/v1/chat/completions", chatTurn(userTask), "veto"); status != 200 {
@@ -621,7 +622,7 @@ func TestV2CompactionRetryAfterFailureKeepsRetainedAttribution(t *testing.T) {
 	local.mu.Lock()
 	local.fail = 1
 	local.mu.Unlock()
-	if status, _ := executeHTTP(t, httpServer.URL, "/v1/chat/completions", compaction(followUp), "compact-retry"); status != 503 {
+	if status, _ := executeHTTP(t, httpServer.URL, "/v1/chat/completions", compaction(followUp), "compact-retry"); status != http.StatusTooManyRequests {
 		t.Fatalf("first compaction attempt status %d", status)
 	}
 	// The harness retries with a changed body (for example a re-sent prompt);

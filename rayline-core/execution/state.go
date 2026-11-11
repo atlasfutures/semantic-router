@@ -67,6 +67,9 @@ type pendingTurn struct {
 	// event and history and narrows only the stated capacity fact.
 	input    DecisionInput
 	consults int
+	// localFallback is set once a local runtime's failure re-consulted this
+	// turn; a second failure is forwarded.
+	localFallback bool
 }
 
 type stateStore struct {

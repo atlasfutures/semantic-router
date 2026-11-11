@@ -91,11 +91,9 @@ func (server *Server) prepare(request llmprotocol.Request, envelope llmprotocol.
 	if err != nil {
 		return nil, err
 	}
-	if deployment.InbandSystem == thinkingcontrol.InbandSystemFold {
-		encoded.Body, err = thinkingcontrol.FoldInbandSystem(encoded.Body, selected.format)
-		if err != nil {
-			return nil, err
-		}
+	encoded.Body, err = foldInbandSystem(encoded.Body, deployment, selected)
+	if err != nil {
+		return nil, err
 	}
 	key := thinkingcontrol.PlacementKey(deployment.ID+"|"+deployment.RuntimeIdentity, selected.format, selected.control)
 	placer, err := thinkingcontrol.NewPlacer(selected.format)

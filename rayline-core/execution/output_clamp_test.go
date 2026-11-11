@@ -244,7 +244,7 @@ func TestAVetoedClampingSelectionRecordsNoClamp(t *testing.T) {
 	// Otherwise chatTurn's own shape, whose tools and identity the v2 envelope
 	// requires.
 	turn := `{"model":"arc-1.0","max_tokens":1000,` + v2Tools + `,"messages":[` + userTask + `]}`
-	if status, _ := executeHTTP(t, httpServer.URL, "/v1/chat/completions", turn, "clamp-veto"); status != 503 {
+	if status, _ := executeHTTP(t, httpServer.URL, "/v1/chat/completions", turn, "clamp-veto"); status != http.StatusTooManyRequests {
 		t.Fatalf("first attempt status %d, want the upstream failure", status)
 	}
 	if status, response := executeHTTP(t, httpServer.URL, "/v1/chat/completions", turn, "clamp-veto"); status != 200 {
