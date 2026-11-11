@@ -57,6 +57,7 @@ func countedLocalConfig(t *testing.T, counterURL string) (Config, *upstreamFixtu
 	config.Deployments[0].InputModalities = []string{"text", "image"}
 	config.Deployments[0].TokenCounter = &TokenCounterConfig{URL: counterURL, AuthEnv: "TEST_TOKEN_COUNTER_KEY"}
 	t.Setenv("TEST_TOKEN_COUNTER_KEY", "counter-secret")
+	t.Setenv("TEST_COUNTER_ALIAS", "fixture-hosted-key-never-for-local")
 	return config, local
 }
 
@@ -132,6 +133,8 @@ func TestTokenCounterQualification(t *testing.T) {
 		"two counters":       func(d *Deployment) { d.PromptCounter = &LlamaCPPConfig{} },
 		"no units":           func(d *Deployment) { d.TokenUnits = "" },
 		"credentials in url": func(d *Deployment) { d.TokenCounter.URL = strings.Replace(url, "http://", "http://user:pass@", 1) },
+		"decisions key":      func(d *Deployment) { d.TokenCounter.AuthEnv = "TEST_DECISIONS_KEY" },
+		"hosted key alias":   func(d *Deployment) { d.TokenCounter.AuthEnv = "TEST_COUNTER_ALIAS" },
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -162,7 +165,7 @@ func TestTokenCounterRefusesAChangedUnitOrAMissingCount(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	deployment := Deployment{ID: "local", Kind: "local", Protocol: "openai.chat.v1", TokenUnits: counterUnits, RuntimeIdentity: "r", WireModel: "m", TokenCounter: &TokenCounterConfig{URL: server.URL}}
-	counter, err := newHTTPCounter(t.Context(), deployment)
+	counter, err := newHTTPCounter(t.Context(), deployment, Config{Deployments: []Deployment{deployment}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,5 +175,43 @@ func TestTokenCounterRefusesAChangedUnitOrAMissingCount(t *testing.T) {
 	}
 	if _, err := counter.Count(t.Context(), cachecontext.PreparedPrompt{Identity: counter.Identity(), ContextEpoch: "e1", Body: body}); err == nil || !strings.Contains(err.Error(), "prompt_tokens") {
 		t.Fatalf("missing count: %v", err)
+	}
+}
+
+func TestTokenCounterURLErrorsNeverQuoteTheURL(t *testing.T) {
+	deployment := Deployment{ID: "local", Kind: "local", Protocol: "openai.chat.v1", TokenUnits: counterUnits, TokenCounter: &TokenCounterConfig{URL: "http://user:synthetic-secret@127.0.0.1:bad/count"}}
+	_, err := newHTTPCounter(t.Context(), deployment, Config{Deployments: []Deployment{deployment}})
+	if err == nil || strings.Contains(err.Error(), "synthetic-secret") {
+		t.Fatalf("error %v", err)
+	}
+}
+
+// A counter that fails after a local turn leaves the prefix unknown and the
+// local target unavailable; the turn is decided again, not refused.
+func TestTokenCounterFailureAfterALocalTurnHandsOff(t *testing.T) {
+	counter := &tokenCounterFixture{units: counterUnits, tokens: 100}
+	config, _ := countedLocalConfig(t, counter.serve(t).URL)
+	fixture := &v2Decisions{choose: fitPolicy}
+	server, httpServer := v2Server(t, config, fixture)
+	if err := server.RegisterConfiguredPromptCounters(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	first := `{"model":"arc-1.0","max_tokens":100,"messages":[{"role":"user","content":"hi"}]}`
+	if status, response := executeHTTP(t, httpServer.URL, "/v1/messages", first, "counter-fails"); status != http.StatusOK {
+		t.Fatalf("first turn %d: %.300s", status, response)
+	}
+	counter.mu.Lock()
+	counter.units = "hf-tokenizer:changed"
+	counter.mu.Unlock()
+	next := `{"model":"arc-1.0","max_tokens":100,"messages":[{"role":"user","content":"hi"},{"role":"assistant","content":"hello"},{"role":"user","content":"again"}]}`
+	status, response := executeHTTP(t, httpServer.URL, "/v1/messages", next, "counter-fails")
+	if status != http.StatusOK {
+		t.Fatalf("second turn %d: %.300s", status, response)
+	}
+	lookups := fixture.snapshot()
+	for _, target := range lookups[len(lookups)-1].Execution.Targets {
+		if target.Placement == "local" && (target.Capacity == nil || target.Capacity.Fits || target.Capacity.Reason == nil || *target.Capacity.Reason != CapacityRuntimeUnavailable) {
+			t.Fatalf("local capacity %+v", target.Capacity)
+		}
 	}
 }

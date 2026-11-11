@@ -44,14 +44,15 @@ type httpCounter struct {
 
 const httpCounterTimeout = 30 * time.Second
 
-func newHTTPCounter(ctx context.Context, deployment Deployment) (*httpCounter, error) {
-	config := deployment.TokenCounter
-	if config == nil || deployment.Kind != "local" || deployment.Protocol != llmprotocol.OpenAIChatV1 || deployment.TokenUnits == "" {
+func newHTTPCounter(ctx context.Context, deployment Deployment, config Config) (*httpCounter, error) {
+	counterConfig := deployment.TokenCounter
+	if counterConfig == nil || deployment.Kind != "local" || deployment.Protocol != llmprotocol.OpenAIChatV1 || deployment.TokenUnits == "" {
 		return nil, fmt.Errorf("token_counter requires a local Chat deployment with token_units")
 	}
-	endpoint, err := url.Parse(config.URL)
+	endpoint, err := url.Parse(counterConfig.URL)
 	if err != nil {
-		return nil, fmt.Errorf("token_counter url: %w", err)
+		// The parse error quotes the URL, which may embed credentials.
+		return nil, fmt.Errorf("token_counter url is not a valid URL")
 	}
 	host := endpoint.Hostname()
 	ip := net.ParseIP(host)
@@ -63,10 +64,23 @@ func newHTTPCounter(ctx context.Context, deployment Deployment) (*httpCounter, e
 		url:      endpoint.String(),
 		client:   &http.Client{Timeout: httpCounterTimeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
 	}
-	if config.AuthEnv != "" {
-		counter.credential = os.Getenv(config.AuthEnv)
+	if counterConfig.AuthEnv != "" {
+		counter.credential = os.Getenv(counterConfig.AuthEnv)
 		if counter.credential == "" {
-			return nil, fmt.Errorf("token_counter auth_env %s is not set", config.AuthEnv)
+			return nil, fmt.Errorf("token_counter auth_env %s is not set", counterConfig.AuthEnv)
+		}
+		// Like local inference, the counter never receives a hosted credential,
+		// by name or by an alias holding the same value.
+		hosted := []string{config.Decisions.AuthEnv}
+		for _, other := range config.Deployments {
+			if other.Kind != "local" {
+				hosted = append(hosted, other.AuthEnv)
+			}
+		}
+		for _, name := range hosted {
+			if name != "" && (name == counterConfig.AuthEnv || os.Getenv(name) == counter.credential) {
+				return nil, fmt.Errorf("token_counter auth_env must not carry a hosted credential")
+			}
 		}
 	}
 	var identity struct {

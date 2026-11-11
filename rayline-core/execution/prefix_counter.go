@@ -3,6 +3,7 @@ package execution
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	"github.com/atlasfutures/semantic-router/rayline-core/cachecontext"
 	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
@@ -76,6 +77,12 @@ func (server *Server) measureExecutionContext(ctx context.Context, body []byte, 
 		}
 		current, err := server.measurePreparedPrompt(ctx, selected, prepared.body, state, nil)
 		if err != nil {
+			// A token_counter carries no prefix evidence; its failure leaves
+			// the prefix unknown, and capacity marks the target unavailable.
+			if _, http := server.counters[worker.DeploymentID].(*httpCounter); http {
+				slog.Warn("token counter failed during prefix measurement", "deployment", worker.DeploymentID, "error", err.Error())
+				continue
+			}
 			return ExecutionContext{}, nil, err
 		}
 		measured[worker.DeploymentID] = current

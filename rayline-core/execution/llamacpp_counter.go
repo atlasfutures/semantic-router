@@ -46,7 +46,7 @@ func (server *Server) RegisterConfiguredPromptCounters(ctx context.Context) erro
 			if deployment.PromptCounter != nil {
 				return fmt.Errorf("deployment %s sets both prompt_counter and token_counter", deployment.ID)
 			}
-			counter, err := newHTTPCounter(ctx, deployment)
+			counter, err := newHTTPCounter(ctx, deployment, server.config)
 			if err != nil {
 				return fmt.Errorf("qualify token counter for %s: %w", deployment.ID, err)
 			}
