@@ -476,7 +476,8 @@ func (server *Server) execute(writer http.ResponseWriter, incoming *http.Request
 			if selected.deployment.Kind == "local" {
 				// A runtime that sends its status and stalls on the body
 				// must not hold the turn: the status alone decides fallback.
-				stall := time.AfterFunc(localErrorBodyTimeout, func() { upstream.Body.Close() })
+				failedBody := upstream.Body
+				stall := time.AfterFunc(localErrorBodyTimeout, func() { failedBody.Close() })
 				errorBody, readErr = readBounded(upstream.Body, 1<<20)
 				stall.Stop()
 			} else {
@@ -675,13 +676,13 @@ func upstreamErrorDetail(body []byte) string {
 }
 
 // truncateDetail collapses whitespace and keeps at most
-// maxUpstreamErrorDetail runes.
+// maxUpstreamErrorDetail runes, an ellipsis included.
 func truncateDetail(detail string) string {
 	runes := []rune(strings.Join(strings.Fields(detail), " "))
 	if len(runes) <= maxUpstreamErrorDetail {
 		return string(runes)
 	}
-	return string(runes[:maxUpstreamErrorDetail]) + "…"
+	return string(runes[:maxUpstreamErrorDetail-1]) + "…"
 }
 
 // reconsult asks the service again for the same turn with one narrowing fact.

@@ -102,7 +102,7 @@ func TestLocalServerErrorBeforeOutputReselectsCloud(t *testing.T) {
 	failure := failures[0]
 	detail, _ := failure["error"].(string)
 	if failure["route_id"] != "route-0" || failure["deployment"] != config.Deployments[0].ID || failure["status"] != float64(500) ||
-		!strings.Contains(detail, "raise_exception('System message must be at the beginnin") || len([]rune(detail)) > maxUpstreamErrorDetail+1 {
+		!strings.Contains(detail, "raise_exception('System message must be at the beginnin") || len([]rune(detail)) > maxUpstreamErrorDetail {
 		t.Fatalf("failure record %v", failure)
 	}
 	if strings.Contains(logs.String(), "Read the file.") {
@@ -211,7 +211,7 @@ func TestUpstreamErrorDetailKeepsOnlyTheMessage(t *testing.T) {
 			t.Fatalf("%s: got %q", body, got)
 		}
 	}
-	if got := truncateDetail(strings.Repeat("é", 300)); len([]rune(got)) != maxUpstreamErrorDetail+1 {
+	if got := truncateDetail(strings.Repeat("é", 300)); len([]rune(got)) != maxUpstreamErrorDetail {
 		t.Fatalf("truncated to %d runes", len([]rune(got)))
 	}
 }
