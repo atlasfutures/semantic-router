@@ -50,6 +50,7 @@ func anthropicInputSchema(schema json.RawMessage) (json.RawMessage, bool) {
 		}
 		delete(top, combinator)
 		alternatives := map[string][]json.RawMessage{}
+		seen := map[string]bool{}
 		for _, branch := range branches {
 			branch, resolved := resolveLocalSchemaRef(top, branch)
 			if !resolved || hasAnthropicSchemaCombinator(branch) {
@@ -62,7 +63,11 @@ func anthropicInputSchema(schema json.RawMessage) (json.RawMessage, bool) {
 				return schema, false
 			}
 			for name, property := range branchProperties {
-				if _, declared := properties[name]; !declared && !containsSchema(alternatives[name], property) {
+				if _, declared := properties[name]; declared {
+					continue
+				}
+				if key := name + "\x00" + string(compactJSON(property)); !seen[key] {
+					seen[key] = true
 					alternatives[name] = append(alternatives[name], property)
 				}
 			}
@@ -105,12 +110,6 @@ func combinedPropertySchema(combinator string, schemas []json.RawMessage) json.R
 	return combined
 }
 
-func containsSchema(schemas []json.RawMessage, schema json.RawMessage) bool {
-	return slices.ContainsFunc(schemas, func(known json.RawMessage) bool {
-		return bytes.Equal(compactJSON(known), compactJSON(schema))
-	})
-}
-
 func compactJSON(value json.RawMessage) []byte {
 	var compacted bytes.Buffer
 	if json.Compact(&compacted, value) != nil {
@@ -122,15 +121,16 @@ func compactJSON(value json.RawMessage) []byte {
 // resolveLocalSchemaRef returns the definition a branch names with a "$ref"
 // to the schema's own $defs or definitions (how generated union schemas spell
 // their branches), or the branch itself when it has no $ref. It reports false
-// for a $ref it cannot resolve, so the schema is sent unchanged rather than
-// folded into an object that lost the branch's properties.
+// for a $ref it cannot resolve, or one with sibling members, so the schema is
+// sent unchanged rather than folded into an object that lost the branch's
+// properties.
 func resolveLocalSchemaRef(top, branch map[string]json.RawMessage) (map[string]json.RawMessage, bool) {
 	raw, present := branch["$ref"]
 	if !present {
 		return branch, true
 	}
 	var ref string
-	if json.Unmarshal(raw, &ref) != nil {
+	if len(branch) > 1 || json.Unmarshal(raw, &ref) != nil {
 		return nil, false
 	}
 	for _, member := range []string{"$defs", "definitions"} {
