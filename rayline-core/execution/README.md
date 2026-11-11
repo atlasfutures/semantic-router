@@ -414,7 +414,9 @@ reasoning remains unqualified. Only the transport's supported native controls
 and registry-admitted private append are accepted; unsupported request shapes
 fail before dispatch.
 
-The optional `prompt_counter` qualifies one same-host llama.cpp deployment. Its
+The optional `prompt_counter` qualifies one same-host llama.cpp deployment. The optional `token_counter`
+qualifies a same-host HTTP counter that uses the serving model's tokenizer and
+template, images included (see the [module README](../README.md#qualified-local-token-counting)). Its
 model, runtime, template and tokenizer checks are described in the module README.
 Other external inference servers can execute without this counter, but their
 current prefix counts remain unknown. Compatibility of a model name or HTTP

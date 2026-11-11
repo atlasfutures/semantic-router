@@ -74,6 +74,26 @@ execution core does not download a model or launch inference.
 }
 ```
 
+A local Chat deployment can instead name a same-host HTTP counter in
+`token_counter` (at most one of the two members). The counter renders the
+prepared request with the serving model's own chat template and counts it with
+the model's own tokenizer, images included, so its counts are
+`local_measured`:
+
+```json
+{
+  "token_units": "hf-tokenizer:<digest of tokenizer and template>",
+  "token_counter": {"url": "http://127.0.0.1:<port>/count", "auth_env": "<optional>"}
+}
+```
+
+`GET url` answers `{"units": "..."}`, which must equal `token_units` before
+readiness. `POST url` with the prepared OpenAI Chat request, byte for byte,
+answers `{"prompt_tokens": N, "units": "..."}`. A counter that fails or changes
+units makes that target `fits: false` (`runtime_unavailable`) for the turn. It
+returns no token IDs, so current-prefix overlap stays unknown; capacity uses its
+count. The URL must be loopback `http`, without credentials or a query.
+
 The surrounding deployment must already pin `runtime_identity`, `wire_model`,
 and `token_units`. The counter hashes the model file once before readiness, then
 checks file identity, size and modification time and `/props` model/build/template
