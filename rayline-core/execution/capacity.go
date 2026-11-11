@@ -119,8 +119,12 @@ func (server *Server) measureCapacity(ctx context.Context, body []byte, format l
 		prepared, err := server.prepare(request, envelope, selected, clientRoles, state)
 		if err != nil {
 			// This action cannot carry the request at all (for example an
-			// output allowance above its limit); that is not a context fact.
+			// output allowance above its limit). That is not a context fact,
+			// but the target is unavailable for this turn: Decisions must not
+			// select it and see the turn refused at dispatch.
 			slog.Warn("capacity preparation failed", "action_id", id, "deployment", selected.deployment.ID, "error", err.Error())
+			reason := CapacityRuntimeUnavailable
+			facts[id] = &CapacityFact{Fits: false, Reason: &reason, Provenance: capacityProvenanceMeasured}
 			continue
 		}
 		if !counted {

@@ -222,15 +222,9 @@ func TestTokenCounterFailureAfterALocalTurnHandsOff(t *testing.T) {
 func TestTokenCounterWorkerThatCannotPrepareLeavesThePrefixUnknown(t *testing.T) {
 	counter := &tokenCounterFixture{units: counterUnits, tokens: 100}
 	config, _ := countedLocalConfig(t, counter.serve(t).URL)
-	// The service picks local first, then the cloud, which can carry 400.
-	turns := 0
-	fixture := &v2Decisions{choose: func(sent contextV2) string {
-		turns++
-		if turns == 1 {
-			return fitPolicy(sent)
-		}
-		return cloudActionID
-	}}
+	// The service prefers local whenever it fits; only the core's facts can
+	// steer the second turn to the cloud.
+	fixture := &v2Decisions{choose: fitPolicy}
 	server, httpServer := v2Server(t, config, fixture)
 	if err := server.RegisterConfiguredPromptCounters(t.Context()); err != nil {
 		t.Fatal(err)
