@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"slices"
+	"strings"
 )
 
 // anthropicSchemaCombinators are the members Messages refuses at the top
@@ -48,6 +49,10 @@ func anthropicInputSchema(schema json.RawMessage) (json.RawMessage, bool) {
 		delete(top, combinator)
 		alternatives := map[string][]json.RawMessage{}
 		for _, branch := range branches {
+			branch, resolved := resolveLocalSchemaRef(top, branch)
+			if !resolved {
+				return schema, false
+			}
 			var branchProperties map[string]json.RawMessage
 			var branchRequired []string
 			if !decodeSchemaMember(branch, "properties", &branchProperties) ||
@@ -110,6 +115,38 @@ func compactJSON(value json.RawMessage) []byte {
 		return value
 	}
 	return compacted.Bytes()
+}
+
+// resolveLocalSchemaRef returns the definition a branch names with a "$ref"
+// to the schema's own $defs or definitions (how generated union schemas spell
+// their branches), or the branch itself when it has no $ref. It reports false
+// for a $ref it cannot resolve, so the schema is sent unchanged rather than
+// folded into an object that lost the branch's properties.
+func resolveLocalSchemaRef(top, branch map[string]json.RawMessage) (map[string]json.RawMessage, bool) {
+	raw, present := branch["$ref"]
+	if !present {
+		return branch, true
+	}
+	var ref string
+	if json.Unmarshal(raw, &ref) != nil {
+		return nil, false
+	}
+	for _, member := range []string{"$defs", "definitions"} {
+		name, local := strings.CutPrefix(ref, "#/"+member+"/")
+		if !local {
+			continue
+		}
+		var definitions map[string]map[string]json.RawMessage
+		if !decodeSchemaMember(top, member, &definitions) {
+			return nil, false
+		}
+		definition, defined := definitions[name]
+		if _, nested := definition["$ref"]; !defined || nested {
+			return nil, false
+		}
+		return definition, true
+	}
+	return nil, false
 }
 
 func hasAnthropicSchemaCombinator(schema map[string]json.RawMessage) bool {

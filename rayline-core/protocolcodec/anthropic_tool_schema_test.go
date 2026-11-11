@@ -60,6 +60,17 @@ func TestAnthropicTargetFoldsTopLevelSchemaCombinators(t *testing.T) {
 				"action": {"anyOf": [{"enum": ["run"]}, {"enum": ["finish"]}]}, "code": {"type": "string"}}}`,
 		},
 		{
+			name: "oneOf branches that name $defs definitions fold those definitions",
+			schema: `{"$defs": {
+					"Run": {"type": "object", "required": ["code"], "properties": {"code": {"type": "string"}}},
+					"Finish": {"type": "object", "properties": {"completion_summary": {"type": "string"}}}},
+				"oneOf": [{"$ref": "#/$defs/Run"}, {"$ref": "#/$defs/Finish"}]}`,
+			want: `{"type": "object", "$defs": {
+					"Run": {"type": "object", "required": ["code"], "properties": {"code": {"type": "string"}}},
+					"Finish": {"type": "object", "properties": {"completion_summary": {"type": "string"}}}},
+				"properties": {"code": {"type": "string"}, "completion_summary": {"type": "string"}}}`,
+		},
+		{
 			name: "allOf keeps every branch's required names",
 			schema: `{"type": "object", "allOf": [
 				{"required": ["a"], "properties": {"a": {"type": "string"}}},
@@ -83,10 +94,14 @@ func TestAnthropicTargetFoldsTopLevelSchemaCombinators(t *testing.T) {
 	}
 }
 
-func TestAnthropicTargetLeavesSchemasWithoutTopLevelCombinators(t *testing.T) {
+// A schema with no top-level combinator, or a union whose branch is a $ref
+// the schema does not define, is sent as it came.
+func TestAnthropicTargetLeavesSchemasItCannotFold(t *testing.T) {
 	for _, schema := range []string{
 		`{"type": "object", "properties": {"code": {"type": "string"}}, "required": ["code"]}`,
 		`{"type": "object", "properties": {"x": {"oneOf": [{"type": "string"}, {"type": "integer"}]}}}`,
+		`{"oneOf": [{"$ref": "https://example.com/run.json"}, {"properties": {"y": {"type": "string"}}}]}`,
+		`{"$defs": {}, "oneOf": [{"$ref": "#/$defs/Missing"}]}`,
 	} {
 		result := translateToolTurn(t, llmprotocol.OpenAIResponsesV1, llmprotocol.AnthropicMessagesV1, schema)
 		if got := anthropicToolSchema(t, result.Body); !jsonEqual(t, got, json.RawMessage(schema)) {
