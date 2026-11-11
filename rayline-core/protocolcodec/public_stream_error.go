@@ -86,6 +86,88 @@ func (filter *AnthropicPublicStreamFilter) Push(chunk []byte) ([]byte, error) {
 	return filter.filterFrames(frames)
 }
 
+// Cut is what the client receives on the chunk a caller ends the stream on,
+// before the upstream ended it. published is what Push returned for that
+// chunk and terminal is the encoder's frames for it, ending in the terminal
+// the caller's cut gave the turn.
+//
+// The client stays on the filter's frames: the encoder numbers blocks its own
+// way and holds a tool call until it closes, so its content frames on this
+// chunk do not continue what the filter sent. Blocks the filter was holding
+// behind the open one are sent now, in order, since the decoder has counted
+// them, and every block is stopped under the index the client knows it by
+// (anthropicBlockOrder.close). The upstream's own message_delta, message_stop
+// and error are dropped -- the turn ends on the caller's terminal, taken from
+// the encoder, and nothing else of the encoder's is sent. The filter is
+// finalized.
+func (filter *AnthropicPublicStreamFilter) Cut(published, terminal []byte) ([]byte, error) {
+	if filter.finalized {
+		return nil, llmprotocol.NewError(llmprotocol.ErrorConflict, "stream_terminal", "stream is already finalized", nil)
+	}
+	filter.finalized = true
+	if filter.failure != nil {
+		return nil, filter.failure
+	}
+	content := published
+	if filter.order != nil {
+		held, err := filter.order.close()
+		if err != nil {
+			filter.failure = err
+			return nil, err
+		}
+		released, err := filter.writeOrdered(held)
+		if err != nil {
+			return nil, err
+		}
+		content = append(append([]byte(nil), published...), released...)
+	}
+	var output bytes.Buffer
+	if err := filter.writeFrames(&output, content, func(eventType string) bool { return !anthropicTerminalEvent(eventType) }); err != nil {
+		return nil, err
+	}
+	if err := filter.writeFrames(&output, terminal, anthropicTerminalEvent); err != nil {
+		return nil, err
+	}
+	return output.Bytes(), nil
+}
+
+// anthropicTerminalEvent reports the Messages events that end a turn, and the
+// [DONE] sentinel some providers send after message_stop: a client that
+// honours it would stop before the cut's terminal.
+func anthropicTerminalEvent(eventType string) bool {
+	return eventType == "message_delta" || eventType == "message_stop" || eventType == "error" ||
+		eventType == "[DONE]"
+}
+
+// writeFrames writes the whole SSE frames of body whose event type keep
+// accepts.
+func (filter *AnthropicPublicStreamFilter) writeFrames(output *bytes.Buffer, body []byte, keep func(string) bool) error {
+	framer := newSSEFramer(filter.framer.limit)
+	frames, err := framer.Push(body)
+	if err != nil {
+		return err
+	}
+	for _, frame := range frames {
+		parsed, err := parseSSEFrame(frame, filter.framer.limit)
+		if err != nil {
+			return err
+		}
+		var wire struct {
+			Type string `json:"type"`
+		}
+		eventType := parsed.Event
+		if parsed.HasData && json.Unmarshal(parsed.Data, &wire) == nil && wire.Type != "" {
+			eventType = wire.Type
+		} else if bytes.Equal(bytes.TrimSpace(parsed.Data), []byte("[DONE]")) {
+			eventType = "[DONE]"
+		}
+		if keep(eventType) {
+			output.Write(frame)
+		}
+	}
+	return nil
+}
+
 func (filter *AnthropicPublicStreamFilter) Finalize() ([]byte, error) {
 	if filter.finalized {
 		return nil, nil

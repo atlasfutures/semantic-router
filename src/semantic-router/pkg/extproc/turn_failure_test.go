@@ -650,7 +650,7 @@ func TestAnIncompleteStreamNamesItsFailure(t *testing.T) {
 	buffers.push([]byte("event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"m\",\"content\":[],\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{\"input_tokens\":1,\"output_tokens\":0}}}\n\n"+
 		"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n"+
 		"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"half an answer\"}}\n\n"), ctx)
-	buffers.finalize(ctx)
+	buffers.finalize(ctx, false)
 	(&OpenAIRouter{}).finalizeSemanticStreamingResponse(ctx, buffers.streamErr)
 	if got := findLogEvent(t, logs, "llm_usage")["failure_detail"]; got != "stream_incomplete" {
 		t.Fatalf("failure_detail = %q, want stream_incomplete", got)
@@ -691,7 +691,7 @@ func TestAProviderFailureDuringACutToolCallKeepsItsClass(t *testing.T) {
 				}
 				buffers := &semanticStreamBuffers{}
 				buffers.push([]byte(frames), ctx)
-				buffers.finalize(ctx)
+				buffers.finalize(ctx, false)
 				(&OpenAIRouter{}).finalizeSemanticStreamingResponse(ctx, buffers.streamErr)
 				body := string(buffers.translated)
 				if buffers.streamErr != nil || strings.Contains(body, "invalid_stream_tool_arguments") {

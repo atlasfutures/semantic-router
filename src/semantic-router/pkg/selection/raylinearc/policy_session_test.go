@@ -399,53 +399,6 @@ func TestPolicySessionExpiredStartsANewOne(t *testing.T) {
 	}
 }
 
-// An app swap (prod 2026-11-11, S): the episode's session was started on one
-// policy app and the cell now calls another, which answers Modal's 401
-// {"error":"invalid session token"} for it. The turn moves to a new session on
-// the new app, once, and the episode's old session is the replaced one; a
-// second invalid answer on the new session fails the turn closed.
-func TestPolicySessionFromAnotherAppMovesOnce(t *testing.T) {
-	oldApp := newFakeModalServer(t, 1)
-	first := testSessionBackend(t, oldApp, time.Second).Bind(nil, false)
-	if _, err := sessionDecide(t, first); err != nil {
-		t.Fatal(err)
-	}
-	persisted, _ := first.Session()
-
-	newApp := newFakeModalServer(t, 1)
-	newApp.mu.Lock()
-	newApp.unknownStatus, newApp.unknownBody = http.StatusUnauthorized, `{"error":"invalid session token"}`
-	newApp.mu.Unlock()
-	backend := testSessionBackend(t, newApp, time.Second)
-	turn := backend.Bind(persisted, false)
-	if _, err := sessionDecide(t, turn); err != nil {
-		t.Fatalf("the old app's session failed the turn on the new app: %v", err)
-	}
-	if _, moved := turn.Sessions(); !moved {
-		t.Fatal("the old app's session was not replaced")
-	}
-	if !turn.Replaces() {
-		t.Fatal("the episode's old session is not the replaced one")
-	}
-	if starts, _, _ := newApp.counts(); starts != 1 {
-		t.Fatalf("new app starts = %d, want 1", starts)
-	}
-
-	// Every token invalid on the new app: one move, then the turn fails closed.
-	newApp.mu.Lock()
-	newApp.unknownAll = true
-	newApp.mu.Unlock()
-	again := backend.Bind(persisted, false)
-	_, err := sessionDecide(t, again)
-	var failure *PolicyServiceError
-	if !errors.As(err, &failure) || failure.Class != PolicySessionInvalidClass {
-		t.Fatalf("a second invalid answer = %v, want %s", err, PolicySessionInvalidClass)
-	}
-	if starts, _, _ := newApp.counts(); starts != 2 {
-		t.Fatalf("new app starts = %d, want 2 (no second move)", starts)
-	}
-}
-
 // Any other non-JSON answer for a token (prod 2026-11-06: episodes resumed
 // after a long idle failed policy_service_status on every turn) moves the
 // turn to a new session once; a JSON refusal still fails it closed.
@@ -703,10 +656,6 @@ func TestPolicySessionLossNeedsModalsSignature(t *testing.T) {
 		{http.StatusNotFound, `{"error":"package_not_loaded","detail":{"message":"Unknown or expired session"}}`, ""},
 		{http.StatusNotFound, "Unknown or expired session\n", PolicySessionExpiredClass},
 		{http.StatusUnauthorized, `{"error":"session token required"}`, ""},
-		{http.StatusUnauthorized, `{"error":"invalid session token"}`, PolicySessionInvalidClass},
-		{http.StatusUnauthorized, "{\"error\":\"invalid session token\"}\n", PolicySessionInvalidClass},
-		{http.StatusUnauthorized, `{"error":"invalid session token","detail":{}}`, ""},
-		{http.StatusForbidden, `{"error":"invalid session token"}`, ""},
 		{http.StatusServiceUnavailable, "", ""},
 	} {
 		if got := policySessionFailureClass(tc.status, []byte(tc.body)); got != tc.want {

@@ -73,7 +73,7 @@ func TestKeepalivesReachTheClientAndAreNotContent(t *testing.T) {
 				buffers.push([]byte(chunk), ctx)
 			}
 			// The upstream goes away before any content.
-			buffers.finalize(ctx)
+			buffers.finalize(ctx, false)
 			(&OpenAIRouter{}).finalizeSemanticStreamingResponse(ctx, buffers.streamErr)
 
 			if got := bytes.Count(buffers.translated, []byte(test.keepalive)); got != upstreamKeepalives {

@@ -42,7 +42,7 @@ func TestEveryRouterCutNamesItsCauseToTheClient(t *testing.T) {
 		cut := llmprotocol.NewError(llmprotocol.ErrorUpstreamTimeout, code, "the router ended this stream", nil)
 		buffers.recordError(ctx, cut, true)
 		router.attachTruncatedStreamUsage(ctx, cut)
-		buffers.finalize(ctx)
+		buffers.finalize(ctx, false)
 
 		want := []byte(`"rayline":{"truncated":"` + cause + `"}`)
 		if !bytes.Contains(buffers.translated, want) {

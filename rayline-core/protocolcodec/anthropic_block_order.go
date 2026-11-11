@@ -238,6 +238,29 @@ func (order *anthropicBlockOrder) drain() ([][]byte, error) {
 	}
 }
 
+// close ends the stream for a caller that cuts it: everything held is sent
+// in start order and every block is stopped, each before the next starts and
+// the last before the terminal, as the client would have seen them had the
+// upstream finished. A block stopped here is stopped under its client index.
+func (order *anthropicBlockOrder) close() ([][]byte, error) {
+	var out [][]byte
+	for {
+		released, err := order.release()
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, released...)
+		if order.live < 0 {
+			return out, nil
+		}
+		block := order.blocks[order.live]
+		out = append(out, []byte("event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":"+
+			strconv.Itoa(block.client)+"}\n\n"))
+		block.state = anthropicOrderDone
+		order.live = -1
+	}
+}
+
 // renumbered is the frame with its index set to the block's client index:
 // raw, byte for byte, when that index is the upstream's own.
 func (order *anthropicBlockOrder) renumbered(frame anthropicOrderFrame, client int) ([]byte, error) {
