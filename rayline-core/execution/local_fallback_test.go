@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/atlasfutures/semantic-router/rayline-core/cachecontext"
 )
@@ -139,7 +140,7 @@ func TestUnreachableLocalRuntimeReselectsCloud(t *testing.T) {
 		t.Fatalf("status %d executed %q: %s", status, header.Get("X-Rayline-Executed-Action-Id"), response)
 	}
 	failures := logRecords(t, logs, "local upstream failed")
-	if len(failures) != 1 || failures[0]["status"] != float64(0) || !strings.Contains(failures[0]["error"].(string), "refused") {
+	if len(failures) != 1 || failures[0]["status"] != float64(0) || failures[0]["error"] != "connection refused" || strings.Contains(logs.String(), closed) {
 		t.Fatalf("failure records %v", failures)
 	}
 }
@@ -301,5 +302,43 @@ func TestRetryAfterFailedFallbackConsultSkipsTheFailedRuntime(t *testing.T) {
 	}
 	if calls.Load() != 1 || cloud.count() != 1 {
 		t.Fatalf("local=%d cloud=%d", calls.Load(), cloud.count())
+	}
+}
+
+// A runtime that sends a 5xx status and then stalls on its body still falls
+// back once the bounded read gives up.
+func TestStalledLocalErrorBodyStillFallsBack(t *testing.T) {
+	previous := localErrorBodyTimeout
+	localErrorBodyTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { localErrorBodyTimeout = previous })
+	release := make(chan struct{})
+	local := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = io.WriteString(w, `{"error":`)
+		w.(http.Flusher).Flush()
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	t.Cleanup(local.Close)
+	cloud := &upstreamFixture{}
+	config := hybridV2Config(t, local.URL, chatUpstream(t, cloud, true).URL+"/v1/chat/completions")
+	_, httpServer := v2Server(t, config, &v2Decisions{choose: unavailableFirst})
+	// Registered last so it runs first: servers close only after the stall ends.
+	t.Cleanup(func() { close(release) })
+	done := make(chan int, 1)
+	go func() {
+		status, _, _ := executeWithHeaders(t, httpServer.URL, chatTurn(userTask), "stalled")
+		done <- status
+	}()
+	select {
+	case status := <-done:
+		if status != 200 || cloud.count() != 1 {
+			t.Fatalf("status %d cloud=%d", status, cloud.count())
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("a stalled local error body held the turn")
 	}
 }

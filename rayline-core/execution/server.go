@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/atlasfutures/semantic-router/rayline-core/cachecontext"
@@ -445,7 +446,7 @@ func (server *Server) execute(writer http.ResponseWriter, incoming *http.Request
 		upstream, err = server.upstream(ctx, selected, decision, session, branch, clientBeta, prepared.body)
 		if err != nil {
 			if selected.deployment.Kind == "local" {
-				logLocalUpstreamFailure(decision.RouteID, selected.deployment.ID, 0, err.Error())
+				logLocalUpstreamFailure(decision.RouteID, selected.deployment.ID, 0, transportFailure(err))
 				if v2 && ctx.Err() == nil && !pending.localFallback {
 					if !server.fallBackFromLocal(ctx, writer, format, pending, selected, decision) {
 						return
@@ -472,7 +473,15 @@ func (server *Server) execute(writer http.ResponseWriter, incoming *http.Request
 			}
 			upstream.Body.Close()
 		} else {
-			errorBody, readErr = readBounded(upstream.Body, 1<<20)
+			if selected.deployment.Kind == "local" {
+				// A runtime that sends its status and stalls on the body
+				// must not hold the turn: the status alone decides fallback.
+				stall := time.AfterFunc(localErrorBodyTimeout, func() { upstream.Body.Close() })
+				errorBody, readErr = readBounded(upstream.Body, 1<<20)
+				stall.Stop()
+			} else {
+				errorBody, readErr = readBounded(upstream.Body, 1<<20)
+			}
 			upstream.Body.Close()
 			rejected = v2 && readErr == nil && isRuntimeContextRejection(selected.deployment, upstream.StatusCode, errorBody)
 			if selected.deployment.Kind == "local" {
@@ -614,6 +623,25 @@ func (server *Server) fallBackFromLocal(ctx context.Context, writer http.Respons
 	}
 	pending.input.Capacity = capacity
 	return server.reconsult(ctx, writer, format, pending, selected.action.ID, decision.RouteID, "capacity", fact)
+}
+
+// localErrorBodyTimeout bounds reading a local runtime's error body.
+var localErrorBodyTimeout = 10 * time.Second
+
+// transportFailure names a request failure without its URL or addresses.
+func transportFailure(err error) string {
+	var timeout interface{ Timeout() bool }
+	switch {
+	case errors.Is(err, syscall.ECONNREFUSED):
+		return "connection refused"
+	case errors.Is(err, syscall.ECONNRESET):
+		return "connection reset"
+	case errors.As(err, &timeout) && timeout.Timeout():
+		return "timeout"
+	case errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF):
+		return "connection closed"
+	}
+	return "request failed"
 }
 
 // maxUpstreamErrorDetail bounds the runtime's error text in logs.
