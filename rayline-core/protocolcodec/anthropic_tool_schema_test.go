@@ -94,14 +94,15 @@ func TestAnthropicTargetFoldsTopLevelSchemaCombinators(t *testing.T) {
 	}
 }
 
-// A schema with no top-level combinator, or a union whose branch is a $ref
-// the schema does not define, is sent as it came.
+// A schema with no top-level combinator, or one whose branch is a $ref the
+// schema does not define or is itself a combinator, is sent as it came.
 func TestAnthropicTargetLeavesSchemasItCannotFold(t *testing.T) {
 	for _, schema := range []string{
 		`{"type": "object", "properties": {"code": {"type": "string"}}, "required": ["code"]}`,
 		`{"type": "object", "properties": {"x": {"oneOf": [{"type": "string"}, {"type": "integer"}]}}}`,
 		`{"oneOf": [{"$ref": "https://example.com/run.json"}, {"properties": {"y": {"type": "string"}}}]}`,
 		`{"$defs": {}, "oneOf": [{"$ref": "#/$defs/Missing"}]}`,
+		`{"allOf": [{"anyOf": [{"properties": {"code": {"type": "string"}}}, {"properties": {"done": {"type": "string"}}}]}]}`,
 	} {
 		result := translateToolTurn(t, llmprotocol.OpenAIResponsesV1, llmprotocol.AnthropicMessagesV1, schema)
 		if got := anthropicToolSchema(t, result.Body); !jsonEqual(t, got, json.RawMessage(schema)) {

@@ -17,8 +17,10 @@ var anthropicSchemaCombinators = []string{"oneOf", "anyOf", "allOf"}
 
 // anthropicInputSchema returns schema in the form Messages accepts, and
 // whether it changed it. A schema with no top-level combinator is returned as
-// it came, and so is one whose members are not the shape JSON Schema gives
-// them: Messages refuses that schema either way, and says why.
+// it came, and so is one it cannot fold without losing a branch's properties
+// (members not the shape JSON Schema gives them, a branch that is itself a
+// union or intersection, or a $ref outside the schema): Messages refuses
+// that schema either way, and says why.
 //
 // Each combinator is removed and its object branches folded into the object
 // itself. A property the top level declares keeps its own schema; one only
@@ -50,7 +52,7 @@ func anthropicInputSchema(schema json.RawMessage) (json.RawMessage, bool) {
 		alternatives := map[string][]json.RawMessage{}
 		for _, branch := range branches {
 			branch, resolved := resolveLocalSchemaRef(top, branch)
-			if !resolved {
+			if !resolved || hasAnthropicSchemaCombinator(branch) {
 				return schema, false
 			}
 			var branchProperties map[string]json.RawMessage
