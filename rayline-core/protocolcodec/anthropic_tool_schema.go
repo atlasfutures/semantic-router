@@ -1,6 +1,7 @@
 package protocolcodec
 
 import (
+	"bytes"
 	"encoding/json"
 	"slices"
 )
@@ -19,22 +20,24 @@ var anthropicSchemaCombinators = []string{"oneOf", "anyOf", "allOf"}
 // them: Messages refuses that schema either way, and says why.
 //
 // Each combinator is removed and its object branches folded into the object
-// itself: a property any branch declares joins the top level (a property the
-// top level declares keeps its own schema), and every name an allOf branch
-// requires stays required. What is lost is which oneOf/anyOf branch applies,
-// so their required names are not carried: requiring them all would refuse
-// every valid call. The tool's own server still validates the arguments.
+// itself. A property the top level declares keeps its own schema; one only
+// branches declare joins the top level, as the branches' schemas combined by
+// the same combinator nested on the property (anyOf for oneOf and anyOf, so
+// every alternative stays a valid value). Every name an allOf branch requires
+// stays required. What is lost is which oneOf/anyOf branch applies, so their
+// required names are not carried: requiring them all would refuse every valid
+// call. The tool's own server still validates the arguments.
 func anthropicInputSchema(schema json.RawMessage) (json.RawMessage, bool) {
 	var top map[string]json.RawMessage
 	if json.Unmarshal(schema, &top) != nil || !hasAnthropicSchemaCombinator(top) {
 		return schema, false
 	}
-	properties := map[string]json.RawMessage{}
+	var properties map[string]json.RawMessage
 	var required []string
 	if !decodeSchemaMember(top, "properties", &properties) || !decodeSchemaMember(top, "required", &required) {
 		return schema, false
 	}
-	if properties == nil { // "properties": null
+	if properties == nil {
 		properties = map[string]json.RawMessage{}
 	}
 	for _, combinator := range anthropicSchemaCombinators {
@@ -43,6 +46,7 @@ func anthropicInputSchema(schema json.RawMessage) (json.RawMessage, bool) {
 			return schema, false
 		}
 		delete(top, combinator)
+		alternatives := map[string][]json.RawMessage{}
 		for _, branch := range branches {
 			var branchProperties map[string]json.RawMessage
 			var branchRequired []string
@@ -51,8 +55,8 @@ func anthropicInputSchema(schema json.RawMessage) (json.RawMessage, bool) {
 				return schema, false
 			}
 			for name, property := range branchProperties {
-				if _, declared := properties[name]; !declared {
-					properties[name] = property
+				if _, declared := properties[name]; !declared && !containsSchema(alternatives[name], property) {
+					alternatives[name] = append(alternatives[name], property)
 				}
 			}
 			for _, name := range branchRequired {
@@ -60,6 +64,9 @@ func anthropicInputSchema(schema json.RawMessage) (json.RawMessage, bool) {
 					required = append(required, name)
 				}
 			}
+		}
+		for name, schemas := range alternatives {
+			properties[name] = combinedPropertySchema(combinator, schemas)
 		}
 	}
 	if _, typed := top["type"]; !typed {
@@ -76,6 +83,33 @@ func anthropicInputSchema(schema json.RawMessage) (json.RawMessage, bool) {
 		return schema, false
 	}
 	return encoded, true
+}
+
+// combinedPropertySchema is one property's schema from the distinct schemas
+// the branches of combinator gave it.
+func combinedPropertySchema(combinator string, schemas []json.RawMessage) json.RawMessage {
+	if len(schemas) == 1 {
+		return schemas[0]
+	}
+	if combinator != "allOf" {
+		combinator = "anyOf"
+	}
+	combined, _ := json.Marshal(map[string][]json.RawMessage{combinator: schemas})
+	return combined
+}
+
+func containsSchema(schemas []json.RawMessage, schema json.RawMessage) bool {
+	return slices.ContainsFunc(schemas, func(known json.RawMessage) bool {
+		return bytes.Equal(compactJSON(known), compactJSON(schema))
+	})
+}
+
+func compactJSON(value json.RawMessage) []byte {
+	var compacted bytes.Buffer
+	if json.Compact(&compacted, value) != nil {
+		return value
+	}
+	return compacted.Bytes()
 }
 
 func hasAnthropicSchemaCombinator(schema map[string]json.RawMessage) bool {

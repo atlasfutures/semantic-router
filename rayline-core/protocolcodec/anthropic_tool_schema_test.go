@@ -52,12 +52,20 @@ func TestAnthropicTargetFoldsTopLevelSchemaCombinators(t *testing.T) {
 				"id": {"type": "string"}, "path": {"type": "string"}, "url": {"type": "string"}}}`,
 		},
 		{
+			name: "oneOf branches that type one property differently keep every alternative",
+			schema: `{"type": "object", "required": ["action"], "oneOf": [
+				{"properties": {"action": {"enum": ["run"]}, "code": {"type": "string"}}},
+				{"properties": {"action": {"enum": ["finish"]}, "code": {"type": "string"}}}]}`,
+			want: `{"type": "object", "required": ["action"], "properties": {
+				"action": {"anyOf": [{"enum": ["run"]}, {"enum": ["finish"]}]}, "code": {"type": "string"}}}`,
+		},
+		{
 			name: "allOf keeps every branch's required names",
 			schema: `{"type": "object", "allOf": [
 				{"required": ["a"], "properties": {"a": {"type": "string"}}},
-				{"required": ["b", "a"], "properties": {"b": {"type": "number"}}}]}`,
+				{"required": ["b", "a"], "properties": {"b": {"type": "number"}, "a": {"maxLength": 8}}}]}`,
 			want: `{"type": "object", "required": ["a", "b"], "properties": {
-				"a": {"type": "string"}, "b": {"type": "number"}}}`,
+				"a": {"allOf": [{"type": "string"}, {"maxLength": 8}]}, "b": {"type": "number"}}}`,
 		},
 	}
 	for _, test := range tests {
