@@ -35,13 +35,13 @@ type CanonicalProviderModel struct {
 	// because which provider serves an arm is an access detail, not a routing
 	// signal.
 	ProviderPreferences *OpenRouterProviderPreferences `yaml:"provider_preferences,omitempty"`
-	// PrivacyProviderPreferences pins the providers a privacy (Standard) turn
+	// StandardProviderPreferences pins the providers a privacy (Standard) turn
 	// on this binding may use, in place of ProviderPreferences: an arm whose
 	// regular providers fail the Standard data policy can serve privacy turns
 	// from ones that pass it. It never applies to a zdr turn. Same schema and
 	// validation as ProviderPreferences. Absent, privacy turns send
 	// ProviderPreferences.
-	PrivacyProviderPreferences *OpenRouterProviderPreferences `yaml:"privacy_provider_preferences,omitempty"`
+	StandardProviderPreferences *OpenRouterProviderPreferences `yaml:"standard_provider_preferences,omitempty"`
 	// ZDRProviderPreferences pins the providers a zdr turn on this binding
 	// may use, in place of ProviderPreferences: an arm whose regular
 	// providers retain data can serve zdr turns from zero-data-retention ones

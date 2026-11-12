@@ -1,0 +1,255 @@
+[
+  {
+    "context_window": null,
+    "disabled": false,
+    "max_output_tokens": null,
+    "model": "z-ai/glm-5.2@thinking-off",
+    "pricing": null,
+    "private_provider_pin": {
+      "allow_fallbacks": false,
+      "only": [
+        "z-ai"
+      ],
+      "order": [
+        "z-ai"
+      ],
+      "pinned": true
+    },
+    "provider": "openrouter",
+    "provider_model": "z-ai/glm-5.2",
+    "provider_pin": {
+      "allow_fallbacks": false,
+      "only": [
+        "z-ai"
+      ],
+      "order": [
+        "z-ai"
+      ],
+      "pinned": true
+    },
+    "standard_provider_pin": {
+      "allow_fallbacks": false,
+      "only": [
+        "z-ai"
+      ],
+      "order": [
+        "z-ai"
+      ],
+      "pinned": true
+    },
+    "thinking": {
+      "mode": "off"
+    },
+    "tools": true,
+    "vision": true,
+    "zdr_provider_pin": {
+      "allow_fallbacks": false,
+      "only": [
+        "z-ai"
+      ],
+      "order": [
+        "z-ai"
+      ],
+      "pinned": true
+    }
+  },
+  {
+    "context_window": null,
+    "disabled": false,
+    "max_output_tokens": null,
+    "model": "qwen/qwen3.6-35b-a3b@thinking-off",
+    "pricing": null,
+    "private_provider_pin": {
+      "only": [
+        "alibaba"
+      ],
+      "order": [
+        "alibaba"
+      ],
+      "pinned": true
+    },
+    "provider": "openrouter",
+    "provider_model": "qwen/qwen3.6-35b-a3b",
+    "provider_pin": {
+      "only": [
+        "alibaba"
+      ],
+      "order": [
+        "alibaba"
+      ],
+      "pinned": true
+    },
+    "standard_provider_pin": {
+      "allow_fallbacks": false,
+      "only": [
+        "deepinfra"
+      ],
+      "order": [
+        "deepinfra"
+      ],
+      "pinned": true
+    },
+    "thinking": {
+      "mode": "off"
+    },
+    "tools": true,
+    "vision": true,
+    "zdr_provider_pin": {
+      "only": [
+        "alibaba"
+      ],
+      "order": [
+        "alibaba"
+      ],
+      "pinned": true
+    }
+  },
+  {
+    "context_window": null,
+    "disabled": false,
+    "max_output_tokens": null,
+    "model": "deepseek/deepseek-v4-flash@thinking-on",
+    "pricing": null,
+    "private_provider_pin": {
+      "max_price": {
+        "completion": 3
+      },
+      "only": [
+        "phala",
+        "novita"
+      ],
+      "order": [
+        "phala",
+        "novita"
+      ],
+      "pinned": true
+    },
+    "provider": "openrouter",
+    "provider_model": "deepseek/deepseek-v4-flash",
+    "provider_pin": {
+      "pinned": false
+    },
+    "standard_provider_pin": {
+      "pinned": false
+    },
+    "thinking": {
+      "mode": "on"
+    },
+    "tools": true,
+    "vision": true,
+    "zdr_provider_pin": {
+      "max_price": {
+        "completion": 3
+      },
+      "only": [
+        "phala",
+        "novita"
+      ],
+      "order": [
+        "phala",
+        "novita"
+      ],
+      "pinned": true
+    }
+  },
+  {
+    "context_window": null,
+    "disabled": false,
+    "max_output_tokens": null,
+    "model": "qwen3.8-27b",
+    "pricing": {
+      "cache_read_per_mtok": 0.085,
+      "cache_write_per_mtok": 0.53125,
+      "currency": "USD",
+      "input_per_mtok": 0.425,
+      "output_per_mtok": 2.55
+    },
+    "private_provider_pin": {
+      "allow_fallbacks": false,
+      "max_price": {
+        "completion": 3,
+        "prompt": 0.425
+      },
+      "only": [
+        "phala",
+        "novita"
+      ],
+      "order": [
+        "phala",
+        "novita"
+      ],
+      "pinned": true
+    },
+    "provider": "openrouter",
+    "provider_model": "qwen/qwen3.8-27b",
+    "provider_pin": {
+      "allow_fallbacks": true,
+      "max_price": {
+        "completion": 3,
+        "prompt": 0.425
+      },
+      "only": [
+        "alibaba",
+        "phala",
+        "novita"
+      ],
+      "order": [
+        "alibaba",
+        "phala",
+        "novita"
+      ],
+      "pinned": true
+    },
+    "standard_provider_pin": {
+      "allow_fallbacks": true,
+      "max_price": {
+        "completion": 3,
+        "prompt": 0.425
+      },
+      "only": [
+        "phala",
+        "novita"
+      ],
+      "order": [
+        "phala",
+        "novita"
+      ],
+      "pinned": true
+    },
+    "thinking": {
+      "mode": "off"
+    },
+    "tools": true,
+    "vision": true,
+    "zdr_provider_pin": {
+      "allow_fallbacks": false,
+      "max_price": {
+        "completion": 3,
+        "prompt": 0.425
+      },
+      "only": [
+        "phala",
+        "novita"
+      ],
+      "order": [
+        "phala",
+        "novita"
+      ],
+      "pinned": true
+    }
+  },
+  {
+    "context_window": null,
+    "disabled": false,
+    "max_output_tokens": null,
+    "model": "local/qwen3.6-35b-a3b@thinking-off",
+    "pricing": null,
+    "provider": "vllm",
+    "provider_model": "Qwen/Qwen3.6-35B-A3B",
+    "thinking": {
+      "mode": "off"
+    },
+    "tools": true,
+    "vision": true
+  }
+]

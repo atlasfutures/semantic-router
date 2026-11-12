@@ -84,7 +84,7 @@ func validateStandardTwin(discount CanonicalProviderModel, byName map[string]Can
 		key            string
 		discount, twin *OpenRouterProviderPreferences
 	}{
-		{privacyProviderPreferencesKey, discount.PrivacyProviderPreferences, twin.PrivacyProviderPreferences},
+		{standardProviderPreferencesKey, discount.StandardProviderPreferences, twin.StandardProviderPreferences},
 		{zdrProviderPreferencesKey, discount.ZDRProviderPreferences, twin.ZDRProviderPreferences},
 	} {
 		if err := validateStandardTwinModePins(name, twinName, mode.key, discount, twin, mode.discount, mode.twin); err != nil {

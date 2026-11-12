@@ -17,7 +17,7 @@ const regularPinYAML = `      provider_preferences:
           completion: 2.55
 `
 
-const privacyPinYAML = `      privacy_provider_preferences:
+const standardPinYAML = `      standard_provider_preferences:
         order:
           - deepinfra
         only:
@@ -40,7 +40,7 @@ const zdrPinYAML = `      zdr_provider_preferences:
 // standard turn the regular pin, a privacy turn the privacy override, a zdr
 // turn the zdr pin.
 func TestTurnModePinsLoadBesideTheRegularPin(t *testing.T) {
-	parsed, err := ParseYAMLBytes([]byte(providerPreferencesConfigYAML(regularPinYAML + privacyPinYAML + zdrPinYAML)))
+	parsed, err := ParseYAMLBytes([]byte(providerPreferencesConfigYAML(regularPinYAML + standardPinYAML + zdrPinYAML)))
 	if err != nil {
 		t.Fatalf("ParseYAMLBytes: %v", err)
 	}
@@ -49,9 +49,9 @@ func TestTurnModePinsLoadBesideTheRegularPin(t *testing.T) {
 		zdr.MaxPrice["completion"] != 3.0 || zdr.AllowFallbacks == nil || !*zdr.AllowFallbacks {
 		t.Fatalf("zdr_provider_preferences did not reach the model params: %#v", zdr)
 	}
-	privacy := parsed.PrivacyProviderPreferencesForModel("model-a")
+	privacy := parsed.StandardProviderPreferencesForModel("model-a")
 	if privacy == nil || !reflect.DeepEqual(privacy.Only, []string{"deepinfra"}) {
-		t.Fatalf("privacy_provider_preferences did not reach the model params: %#v", privacy)
+		t.Fatalf("standard_provider_preferences did not reach the model params: %#v", privacy)
 	}
 	standard := parsed.ProviderPreferencesForModel("model-a")
 	if standard == nil || !reflect.DeepEqual(standard.Order, []string{"openai"}) || standard.MaxPrice["completion"] != 2.55 {
@@ -76,8 +76,8 @@ func TestPrivacyTurnNeverReadsTheZDRPin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseYAMLBytes: %v", err)
 	}
-	if parsed.PrivacyProviderPreferencesForModel("model-a") != nil {
-		t.Fatal("an arm without privacy_provider_preferences has a privacy override")
+	if parsed.StandardProviderPreferencesForModel("model-a") != nil {
+		t.Fatal("an arm without standard_provider_preferences has a privacy override")
 	}
 	standard := parsed.ProviderPreferencesForModel("model-a")
 	if got := parsed.ProviderPreferencesForTurn("model-a", ProviderTurnModePrivacy); got != standard {
@@ -91,7 +91,7 @@ func TestPrivacyTurnNeverReadsTheZDRPin(t *testing.T) {
 // A zdr turn on an arm with only a privacy override sends the regular pin,
 // never the privacy one: the override admits hosts a zdr turn may not use.
 func TestZDRTurnNeverReadsThePrivacyPin(t *testing.T) {
-	parsed, err := ParseYAMLBytes([]byte(providerPreferencesConfigYAML(regularPinYAML + privacyPinYAML)))
+	parsed, err := ParseYAMLBytes([]byte(providerPreferencesConfigYAML(regularPinYAML + standardPinYAML)))
 	if err != nil {
 		t.Fatalf("ParseYAMLBytes: %v", err)
 	}
@@ -99,14 +99,14 @@ func TestZDRTurnNeverReadsThePrivacyPin(t *testing.T) {
 	if got := parsed.ProviderPreferencesForTurn("model-a", ProviderTurnModeZDR); got != standard {
 		t.Fatalf("a zdr turn read %#v, want the regular pin %#v", got, standard)
 	}
-	if got := parsed.ProviderPreferencesForTurn("model-a", ProviderTurnModePrivacy); got != parsed.PrivacyProviderPreferencesForModel("model-a") {
+	if got := parsed.ProviderPreferencesForTurn("model-a", ProviderTurnModePrivacy); got != parsed.StandardProviderPreferencesForModel("model-a") {
 		t.Fatalf("a privacy turn read %#v, want the privacy override", got)
 	}
 }
 
 // A mode the cell does not know is served as zdr, the most restrictive.
 func TestUnknownTurnModeIsServedAsZDR(t *testing.T) {
-	parsed, err := ParseYAMLBytes([]byte(providerPreferencesConfigYAML(regularPinYAML + privacyPinYAML + zdrPinYAML)))
+	parsed, err := ParseYAMLBytes([]byte(providerPreferencesConfigYAML(regularPinYAML + standardPinYAML + zdrPinYAML)))
 	if err != nil {
 		t.Fatalf("ParseYAMLBytes: %v", err)
 	}
@@ -124,7 +124,7 @@ func TestPrivateTurnsFallBackToTheRegularPin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseYAMLBytes: %v", err)
 	}
-	if parsed.ZDRProviderPreferencesForModel("model-a") != nil || parsed.PrivacyProviderPreferencesForModel("model-a") != nil {
+	if parsed.ZDRProviderPreferencesForModel("model-a") != nil || parsed.StandardProviderPreferencesForModel("model-a") != nil {
 		t.Fatal("an arm without the keys has an override pin")
 	}
 	for _, mode := range []string{ProviderTurnModePrivacy, ProviderTurnModeZDR} {
@@ -136,11 +136,11 @@ func TestPrivateTurnsFallBackToTheRegularPin(t *testing.T) {
 
 func TestTurnModePinsAreKnownCanonicalKeys(t *testing.T) {
 	var raw map[string]interface{}
-	if err := yamlv3.Unmarshal([]byte(providerPreferencesConfigYAML(privacyPinYAML+zdrPinYAML)), &raw); err != nil {
+	if err := yamlv3.Unmarshal([]byte(providerPreferencesConfigYAML(standardPinYAML+zdrPinYAML)), &raw); err != nil {
 		t.Fatalf("unmarshal raw canonical config: %v", err)
 	}
 	if warnings := collectUnknownFields(raw, reflect.TypeOf(CanonicalConfig{})); len(warnings) != 0 {
-		t.Fatalf("privacy/zdr_provider_preferences are not known canonical keys: %v", warnings)
+		t.Fatalf("standard/zdr_provider_preferences are not known canonical keys: %v", warnings)
 	}
 }
 
@@ -167,11 +167,39 @@ func TestLegacyPrivateProviderPreferencesIsRefused(t *testing.T) {
 				}
 				for _, want := range []string{
 					"providers.models[model-a].private_provider_preferences is no longer accepted",
-					"zdr_provider_preferences", "privacy_provider_preferences",
+					"zdr_provider_preferences", "standard_provider_preferences",
 				} {
 					if !strings.Contains(err.Error(), want) {
 						t.Fatalf("err = %v, want it to contain %q", err, want)
 					}
+				}
+			})
+		}
+	}
+}
+
+// privacy_provider_preferences, renamed standard_provider_preferences, is
+// refused by its presence, whatever its value, and the error names the new
+// key: accepting both names would let a config and the listing disagree on
+// which one the Standard pin comes from (memex-desktop#8281).
+func TestRenamedPrivacyProviderPreferencesIsRefused(t *testing.T) {
+	for name, value := range map[string]string{
+		"a mapping": "\n        only:\n          - deepinfra\n",
+		"null":      " null\n",
+		"empty":     "\n",
+		"not a pin": " deepinfra\n",
+	} {
+		for parser, parse := range map[string]func([]byte) (*RouterConfig, error){
+			"ParseYAMLBytes": ParseYAMLBytes, "ParseYAMLBytesWithoutEnvExpansion": ParseYAMLBytesWithoutEnvExpansion,
+		} {
+			t.Run(name+"/"+parser, func(t *testing.T) {
+				_, err := parse([]byte(providerPreferencesConfigYAML(regularPinYAML + "      privacy_provider_preferences:" + value)))
+				if err == nil {
+					t.Fatal("a config with privacy_provider_preferences loaded")
+				}
+				want := "providers.models[model-a].privacy_provider_preferences is no longer accepted: it is renamed standard_provider_preferences"
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("err = %v, want it to contain %q", err, want)
 				}
 			})
 		}
@@ -216,7 +244,7 @@ func TestTurnModePinsRejectMalformedValues(t *testing.T) {
 `, `unsupported field "sort"`},
 		"not a mapping": {" phala\n", ""},
 	}
-	for _, key := range []string{"privacy_provider_preferences", "zdr_provider_preferences"} {
+	for _, key := range []string{"standard_provider_preferences", "zdr_provider_preferences"} {
 		for name, test := range cases {
 			t.Run(key+"/"+name, func(t *testing.T) {
 				want := strings.ReplaceAll(test.want, "KEY", key)

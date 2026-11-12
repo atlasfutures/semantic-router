@@ -157,15 +157,24 @@ def test_private_provider_preferences_is_refused_naming_the_new_keys(value):
     with pytest.raises(ValueError) as refused:
         UserConfig(**config)
     assert "zdr_provider_preferences" in str(refused.value)
-    assert "privacy_provider_preferences" in str(refused.value)
+    assert "standard_provider_preferences" in str(refused.value)
+
+
+@pytest.mark.parametrize("value", [None, {}, {"only": ["deepinfra"]}])
+def test_privacy_provider_preferences_is_refused_naming_its_new_name(value):
+    config = _provider_model(order=["openai"])
+    config["providers"]["models"][0]["privacy_provider_preferences"] = value
+    with pytest.raises(ValueError) as refused:
+        UserConfig(**config)
+    assert "renamed standard_provider_preferences" in str(refused.value)
 
 
 def test_turn_mode_provider_preferences_parse():
     config = _provider_model(order=["openai"])
-    config["providers"]["models"][0]["privacy_provider_preferences"] = {"only": ["groq"]}
+    config["providers"]["models"][0]["standard_provider_preferences"] = {"only": ["groq"]}
     config["providers"]["models"][0]["zdr_provider_preferences"] = {"only": ["phala"]}
     model = UserConfig(**config).providers.models[0]
-    assert model.privacy_provider_preferences.only == ["groq"]
+    assert model.standard_provider_preferences.only == ["groq"]
     assert model.zdr_provider_preferences.only == ["phala"]
 
 

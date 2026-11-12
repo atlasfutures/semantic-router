@@ -1839,11 +1839,12 @@ class Model(BaseModel):
     accepted_formats: Optional[List[Literal["openai", "responses", "anthropic"]]] = None
     external_model_ids: Optional[Dict[str, str]] = None
     provider_preferences: Optional[OpenRouterProviderPreferences] = None
-    # Mirrors CanonicalProviderModel.PrivacyProviderPreferences and
+    # Mirrors CanonicalProviderModel.StandardProviderPreferences and
     # ZDRProviderPreferences: the pin a privacy (Standard) turn, or a zdr turn,
     # sends instead of provider_preferences. Each applies to its own mode only.
-    # The retired private_provider_preferences key is refused (extra="forbid").
-    privacy_provider_preferences: Optional[OpenRouterProviderPreferences] = None
+    # The retired private_provider_preferences and privacy_provider_preferences
+    # keys are refused by name.
+    standard_provider_preferences: Optional[OpenRouterProviderPreferences] = None
     zdr_provider_preferences: Optional[OpenRouterProviderPreferences] = None
     # Mirrors CanonicalProviderModel.StandardTwin: the providers.models entry a
     # discount endpoint's 429 or pre-byte timeout is re-sent on, once. The Go
@@ -1873,8 +1874,14 @@ class Model(BaseModel):
             raise ValueError(
                 "private_provider_preferences is no longer accepted: use "
                 "zdr_provider_preferences for the zdr-turn pin, and "
-                "privacy_provider_preferences only if privacy (Standard) turns "
+                "standard_provider_preferences only if privacy (Standard) turns "
                 "need a pin other than provider_preferences"
+            )
+        # privacy_provider_preferences is renamed, with the same meaning.
+        if isinstance(data, dict) and "privacy_provider_preferences" in data:
+            raise ValueError(
+                "privacy_provider_preferences is no longer accepted: it is "
+                "renamed standard_provider_preferences, with the same meaning"
             )
         return data
 

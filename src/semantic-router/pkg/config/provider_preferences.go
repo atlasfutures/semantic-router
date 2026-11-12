@@ -93,8 +93,8 @@ func validateProviderPreferences(modelName string, preferences *OpenRouterProvid
 // The per-mode override keys. Each is held to the provider_preferences rules,
 // its errors naming its own key.
 const (
-	privacyProviderPreferencesKey = "privacy_provider_preferences"
-	zdrProviderPreferencesKey     = "zdr_provider_preferences"
+	standardProviderPreferencesKey = "standard_provider_preferences"
+	zdrProviderPreferencesKey      = "zdr_provider_preferences"
 )
 
 // validateNoLegacyPrivateProviderPreferences refuses the retired
@@ -109,22 +109,34 @@ func validateNoLegacyPrivateProviderPreferences(modelName string, legacy *OpenRo
 	return legacyPrivateProviderPreferencesError(modelName)
 }
 
-// rejectRetiredPrivateProviderPreferences refuses the retired key by its
+// retiredProviderPreferencesKeys are the providers.models keys refused at
+// load, each with the error that names what replaces it.
+var retiredProviderPreferencesKeys = []struct {
+	key    string
+	refuse func(modelName string) error
+}{
+	{"private_provider_preferences", legacyPrivateProviderPreferencesError},
+	{"privacy_provider_preferences", renamedPrivacyProviderPreferencesError},
+}
+
+// rejectRetiredProviderPreferencesKeys refuses the retired keys by their
 // presence in the raw config, before typed decoding: a null or empty value
 // decodes to no pin and a malformed one fails decoding with a generic error,
 // and neither may load or hide the migration message.
-func rejectRetiredPrivateProviderPreferences(raw map[string]interface{}) error {
+func rejectRetiredProviderPreferencesKeys(raw map[string]interface{}) error {
 	models, _ := nestedStringMap(raw["providers"])["models"].([]interface{})
 	for index, rawModel := range models {
 		model := nestedStringMap(rawModel)
-		if _, present := model["private_provider_preferences"]; !present {
-			continue
+		for _, retired := range retiredProviderPreferencesKeys {
+			if _, present := model[retired.key]; !present {
+				continue
+			}
+			name, _ := model["name"].(string)
+			if name == "" {
+				name = fmt.Sprintf("%d", index)
+			}
+			return retired.refuse(name)
 		}
-		name, _ := model["name"].(string)
-		if name == "" {
-			name = fmt.Sprintf("%d", index)
-		}
-		return legacyPrivateProviderPreferencesError(name)
 	}
 	return nil
 }
@@ -133,7 +145,19 @@ func legacyPrivateProviderPreferencesError(modelName string) error {
 	return fmt.Errorf(
 		"providers.models[%s].private_provider_preferences is no longer accepted: "+
 			"use %s for the zdr-turn pin, and %s only if privacy (Standard) turns need a pin other than provider_preferences",
-		modelName, zdrProviderPreferencesKey, privacyProviderPreferencesKey,
+		modelName, zdrProviderPreferencesKey, standardProviderPreferencesKey,
+	)
+}
+
+// renamedPrivacyProviderPreferencesError refuses privacy_provider_preferences,
+// renamed standard_provider_preferences with the same meaning: the Standard
+// pin is published as standard_provider_pin, and one name per mode keeps the
+// config, the listing and the gateway reading the same field
+// (memex-desktop#8281).
+func renamedPrivacyProviderPreferencesError(modelName string) error {
+	return fmt.Errorf(
+		"providers.models[%s].privacy_provider_preferences is no longer accepted: it is renamed %s, with the same meaning",
+		modelName, standardProviderPreferencesKey,
 	)
 }
 
@@ -218,7 +242,7 @@ const (
 // sends on the model:
 //
 //   - "" (standard): provider_preferences, as ProviderPreferencesForModel.
-//   - "privacy" (Standard): privacy_provider_preferences when the model
+//   - "privacy" (Standard): standard_provider_preferences when the model
 //     declares it, else provider_preferences. Never the zdr pin.
 //   - "zdr": zdr_provider_preferences when the model declares it, else
 //     provider_preferences. Never the privacy pin.
@@ -234,7 +258,7 @@ func (c *RouterConfig) ProviderPreferencesForTurn(modelName string, mode string)
 	switch mode {
 	case "":
 	case ProviderTurnModePrivacy:
-		override = c.PrivacyProviderPreferencesForModel(modelName)
+		override = c.StandardProviderPreferencesForModel(modelName)
 	default:
 		override = c.ZDRProviderPreferencesForModel(modelName)
 	}
@@ -244,14 +268,14 @@ func (c *RouterConfig) ProviderPreferencesForTurn(modelName string, mode string)
 	return c.ProviderPreferencesForModel(modelName)
 }
 
-// PrivacyProviderPreferencesForModel returns the model's privacy-turn
+// StandardProviderPreferencesForModel returns the model's privacy-turn
 // override, or nil when it declares none.
-func (c *RouterConfig) PrivacyProviderPreferencesForModel(modelName string) *OpenRouterProviderPreferences {
+func (c *RouterConfig) StandardProviderPreferencesForModel(modelName string) *OpenRouterProviderPreferences {
 	params, found := c.resolveModelConfig(modelName)
 	if !found {
 		return nil
 	}
-	return params.PrivacyProviderPreferences
+	return params.StandardProviderPreferences
 }
 
 // ZDRProviderPreferencesForModel returns the model's zdr-turn pin, or nil

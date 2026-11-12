@@ -203,7 +203,7 @@ func (r *OpenAIRouter) hostFamiliesInConfig() []string {
 		// A privacy or zdr override's hosts serve the arm too, on those turns.
 		for _, pin := range []*config.OpenRouterProviderPreferences{
 			r.Config.ProviderPreferencesForModel(name),
-			r.Config.PrivacyProviderPreferencesForModel(name),
+			r.Config.StandardProviderPreferencesForModel(name),
 			r.Config.ZDRProviderPreferencesForModel(name),
 		} {
 			if pin == nil {

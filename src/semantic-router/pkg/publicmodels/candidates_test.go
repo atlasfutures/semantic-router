@@ -2,6 +2,7 @@ package publicmodels
 
 import (
 	"encoding/json"
+	"os"
 	"testing"
 
 	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
@@ -496,65 +497,268 @@ func TestARCAliasAdvertisesTheServedEndpointHeaderOnlyWithTheFeed(t *testing.T) 
 	}
 }
 
-// An OpenRouter arm lists the pins its privacy and zdr turns send as
-// standard_provider_pin and zdr_provider_pin, in provider_pin's shape, each
-// only when its card declares it. private_provider_pin (deprecated) repeats
-// zdr_provider_pin for the gateway that predates the split, and is never the
-// privacy pin.
-func TestCandidatesListTheirTurnModePinsOnlyWhenDeclared(t *testing.T) {
+// The cell's half of the gateway contract (memex-desktop#8281): every
+// OpenRouter arm lists provider_pin, standard_provider_pin and
+// zdr_provider_pin, each exactly what ProviderPreferencesForTurn sends for its
+// mode, whether or not the card overrides it, and the deprecated
+// private_provider_pin repeats zdr_provider_pin; an arm not dispatched
+// through OpenRouter lists none. The listed candidates are held to a golden
+// file the gateway's fixture can be built from.
+func TestCandidatesListOnePinPerTurnMode(t *testing.T) {
 	t.Setenv("PUBLICMODELS_CANDIDATES_TEST_KEY", "public-candidates-test-key")
-	cfg, err := config.ParseYAMLBytes([]byte(candidatesConfig))
+	t.Setenv("PUBLICMODELS_CANDIDATES_TEST_LOCAL_KEY", "public-candidates-test-local-key")
+	cfg, err := config.ParseYAMLBytes([]byte(turnModePinsConfig))
 	if err != nil {
-		t.Fatalf("the candidates config did not load: %v", err)
+		t.Fatalf("the turn-mode pins config did not load: %v", err)
 	}
-	fallbacks := true
-	declared := cfg.ModelConfig["z-ai/glm-5.2@thinking-off"]
-	declared.ProviderPreferences = &config.OpenRouterProviderPreferences{Order: []string{"z-ai"}}
-	declared.PrivacyProviderPreferences = &config.OpenRouterProviderPreferences{Only: []string{"deepinfra"}}
-	declared.ZDRProviderPreferences = &config.OpenRouterProviderPreferences{
-		Order: []string{"phala", "novita"}, Only: []string{"phala", "novita"}, AllowFallbacks: &fallbacks,
-		MaxPrice: map[string]float64{"completion": 3},
-	}
-	cfg.ModelConfig["z-ai/glm-5.2@thinking-off"] = declared
 	candidates := candidatesOf(t, marshalListing(t, NewOpenAIModelList(cfg, 123)), "rayline/arc-dev")
 
-	first := candidates[0].(map[string]interface{})
-	wantZDR := `{"allow_fallbacks":true,"max_price":{"completion":3},"only":["phala","novita"],"order":["phala","novita"],"pinned":true}`
-	for field, want := range map[string]string{
-		"zdr_provider_pin":      wantZDR,
-		"private_provider_pin":  wantZDR,
-		"standard_provider_pin": `{"only":["deepinfra"],"pinned":true}`,
-		"provider_pin":          `{"order":["z-ai"],"pinned":true}`,
-	} {
-		if got, _ := json.Marshal(first[field]); string(got) != want {
-			t.Fatalf("%s = %s, want %s", field, got, want)
+	modes := map[string]string{
+		"provider_pin":          "",
+		"standard_provider_pin": config.ProviderTurnModePrivacy,
+		"zdr_provider_pin":      config.ProviderTurnModeZDR,
+		// Deprecated, one release: the zdr pin again (memex-desktop#8282).
+		"private_provider_pin": config.ProviderTurnModeZDR,
+	}
+	for _, entry := range candidates {
+		candidate := entry.(map[string]interface{})
+		model := candidate["model"].(string)
+		openRouter := candidate["provider"] == "openrouter"
+		for field, mode := range modes {
+			listed, present := candidate[field]
+			if present != openRouter {
+				t.Fatalf("%s (provider %v) lists %s: %v", model, candidate["provider"], field, present)
+			}
+			if !openRouter {
+				continue
+			}
+			got, _ := json.Marshal(listed)
+			want := marshalAsListed(t, providerPinOf(cfg.ProviderPreferencesForTurn(model, mode)))
+			if string(got) != want {
+				t.Fatalf("%s %s = %s, want what a %q turn sends, %s", model, field, got, mode, want)
+			}
 		}
 	}
-	for _, field := range []string{"standard_provider_pin", "zdr_provider_pin", "private_provider_pin"} {
-		if _, present := candidates[1].(map[string]interface{})[field]; present {
-			t.Fatalf("an arm without overrides lists %s", field)
+
+	// An arm with no override lists provider_pin under every mode.
+	noOverride := candidates[0].(map[string]interface{})
+	for _, field := range []string{"standard_provider_pin", "zdr_provider_pin"} {
+		if got, want := marshalAsListed(t, noOverride[field]), marshalAsListed(t, noOverride["provider_pin"]); got != want {
+			t.Fatalf("an arm without overrides lists %s = %s, want provider_pin %s", field, got, want)
 		}
+	}
+	// qwen3.8-27b: alibaba only on regular turns.
+	qwen := candidates[3].(map[string]interface{})
+	for field, want := range map[string]string{
+		"provider_pin":          `{"allow_fallbacks":true,"max_price":{"completion":3,"prompt":0.425},"only":["alibaba","phala","novita"],"order":["alibaba","phala","novita"],"pinned":true}`,
+		"standard_provider_pin": `{"allow_fallbacks":true,"max_price":{"completion":3,"prompt":0.425},"only":["phala","novita"],"order":["phala","novita"],"pinned":true}`,
+		"zdr_provider_pin":      `{"allow_fallbacks":false,"max_price":{"completion":3,"prompt":0.425},"only":["phala","novita"],"order":["phala","novita"],"pinned":true}`,
+	} {
+		if got := marshalAsListed(t, qwen[field]); got != want {
+			t.Fatalf("qwen3.8-27b %s = %s, want %s", field, got, want)
+		}
+	}
+
+	got, err := json.MarshalIndent(candidates, "", "  ")
+	if err != nil {
+		t.Fatalf("json.MarshalIndent() error = %v", err)
+	}
+	got = append(got, '\n')
+	const golden = "testdata/turn_mode_pins_candidates.golden.json"
+	if os.Getenv("UPDATE_GOLDEN") == "1" {
+		if err := os.WriteFile(golden, got, 0o644); err != nil {
+			t.Fatalf("write %s: %v", golden, err)
+		}
+	}
+	want, err := os.ReadFile(golden)
+	if err != nil {
+		t.Fatalf("read %s: %v", golden, err)
+	}
+	if string(got) != string(want) {
+		t.Fatalf("listed candidates differ from %s (UPDATE_GOLDEN=1 rewrites it):\n%s", golden, got)
 	}
 }
 
-// An arm with only a privacy override lists no zdr pin, and so no
-// private_provider_pin: the deprecated field must never carry the privacy pin.
-func TestCandidatesPrivateProviderPinIsNeverThePrivacyPin(t *testing.T) {
-	t.Setenv("PUBLICMODELS_CANDIDATES_TEST_KEY", "public-candidates-test-key")
-	cfg, err := config.ParseYAMLBytes([]byte(candidatesConfig))
+// marshalAsListed spells value the way a listing decoded into maps re-encodes
+// it, so the two compare byte for byte.
+func marshalAsListed(t *testing.T, value interface{}) string {
+	t.Helper()
+	encoded, err := json.Marshal(value)
 	if err != nil {
-		t.Fatalf("the candidates config did not load: %v", err)
+		t.Fatalf("json.Marshal() error = %v", err)
 	}
-	declared := cfg.ModelConfig["z-ai/glm-5.2@thinking-off"]
-	declared.PrivacyProviderPreferences = &config.OpenRouterProviderPreferences{Only: []string{"deepinfra"}}
-	cfg.ModelConfig["z-ai/glm-5.2@thinking-off"] = declared
-	first := candidatesOf(t, marshalListing(t, NewOpenAIModelList(cfg, 123)), "rayline/arc-dev")[0].(map[string]interface{})
-	if _, present := first["standard_provider_pin"]; !present {
-		t.Fatal("the privacy override is not listed")
+	var decoded interface{}
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
 	}
-	for _, field := range []string{"zdr_provider_pin", "private_provider_pin"} {
-		if _, present := first[field]; present {
-			t.Fatalf("an arm with only a privacy override lists %s", field)
-		}
-	}
+	reencoded, _ := json.Marshal(decoded)
+	return string(reencoded)
 }
+
+// Five arms: an OpenRouter arm with no override, one with only a Standard
+// override, one with only a zdr override, qwen3.8-27b with both as the prod
+// cell declares it, and a vLLM arm not dispatched through OpenRouter.
+const turnModePinsConfig = `
+version: v0.3
+providers:
+  defaults:
+    model: z-ai/glm-5.2@thinking-off
+  models:
+    - name: z-ai/glm-5.2@thinking-off
+      provider_model_id: z-ai/glm-5.2
+      api_format: openai
+      provider_preferences:
+        order: [z-ai]
+        only: [z-ai]
+        allow_fallbacks: false
+      backend_refs:
+        - name: openrouter
+          base_url: https://openrouter.ai/api/v1
+          provider: openrouter
+          api_key_env: PUBLICMODELS_CANDIDATES_TEST_KEY
+    - name: qwen/qwen3.6-35b-a3b@thinking-off
+      provider_model_id: qwen/qwen3.6-35b-a3b
+      api_format: openai
+      provider_preferences:
+        order: [alibaba]
+        only: [alibaba]
+      standard_provider_preferences:
+        order: [deepinfra]
+        only: [deepinfra]
+        allow_fallbacks: false
+      backend_refs:
+        - name: openrouter
+          base_url: https://openrouter.ai/api/v1
+          provider: openrouter
+          api_key_env: PUBLICMODELS_CANDIDATES_TEST_KEY
+    - name: deepseek/deepseek-v4-flash@thinking-on
+      provider_model_id: deepseek/deepseek-v4-flash
+      api_format: openai
+      zdr_provider_preferences:
+        order: [phala, novita]
+        only: [phala, novita]
+        max_price:
+          completion: 3
+      backend_refs:
+        - name: openrouter
+          base_url: https://openrouter.ai/api/v1
+          provider: openrouter
+          api_key_env: PUBLICMODELS_CANDIDATES_TEST_KEY
+    # qwen3.8-27b as the prod cell declares it: alibaba retains data, so
+    # Standard and zdr turns each pin phala and novita.
+    - name: qwen3.8-27b
+      provider_model_id: qwen/qwen3.8-27b
+      api_format: anthropic
+      pricing:
+        currency: USD
+        prompt_per_1m: 0.425
+        cached_input_per_1m: 0.085
+        cache_write_per_1m: 0.53125
+        completion_per_1m: 2.55
+      provider_preferences:
+        only: [alibaba, phala, novita]
+        order: [alibaba, phala, novita]
+        allow_fallbacks: true
+        max_price:
+          prompt: 0.425
+          completion: 3.0
+      standard_provider_preferences:
+        only: [phala, novita]
+        order: [phala, novita]
+        allow_fallbacks: true
+        max_price:
+          prompt: 0.425
+          completion: 3.0
+      zdr_provider_preferences:
+        only: [phala, novita]
+        order: [phala, novita]
+        allow_fallbacks: false
+        max_price:
+          prompt: 0.425
+          completion: 3.0
+      backend_refs:
+        - name: openrouter
+          base_url: https://openrouter.ai/api/v1
+          provider: openrouter
+          protocol: https
+          api_key_env: PUBLICMODELS_CANDIDATES_TEST_KEY
+    - name: local/qwen3.6-35b-a3b@thinking-off
+      provider_model_id: Qwen/Qwen3.6-35B-A3B
+      api_format: openai
+      backend_refs:
+        - name: local
+          endpoint: 127.0.0.1:8000
+          protocol: http
+          provider: vllm
+          api_key_env: PUBLICMODELS_CANDIDATES_TEST_LOCAL_KEY
+routing:
+  modelCards:
+    - name: z-ai/glm-5.2@thinking-off
+      capabilities: [chat, tools]
+    - name: qwen/qwen3.6-35b-a3b@thinking-off
+      capabilities: [chat, tools]
+    - name: deepseek/deepseek-v4-flash@thinking-on
+      capabilities: [chat, tools]
+    - name: qwen3.8-27b
+      capabilities: [chat, tools]
+    - name: local/qwen3.6-35b-a3b@thinking-off
+      capabilities: [chat, tools]
+  decisions:
+    - name: rayline-arc-dev
+      priority: 100
+      rules:
+        operator: AND
+        conditions: []
+      modelRefs:
+        - model: z-ai/glm-5.2@thinking-off
+          use_reasoning: false
+        - model: qwen/qwen3.6-35b-a3b@thinking-off
+          use_reasoning: false
+        - model: deepseek/deepseek-v4-flash@thinking-on
+          use_reasoning: true
+        - model: qwen3.8-27b
+          use_reasoning: false
+        - model: local/qwen3.6-35b-a3b@thinking-off
+          use_reasoning: false
+      adaptations:
+        mode: bypass
+      plugins:
+        - type: router_replay
+          configuration:
+            enabled: false
+      algorithm:
+        type: rayline_arc
+        on_error: fail_closed
+        rayline_arc:
+          routes_api:
+            enabled: true
+            checkpoint_label: arc-c82-dev
+          artifact_dir: /var/lib/vllm-sr/rayline-arc
+          artifact_revision: c82-dev-shadow-openrouter-v1
+          encoder:
+            base_url: https://encoder.example.test
+            model: Qwen/Qwen3.5-0.8B
+            model_revision: 2fc06364715b967f1860aea9cf38778875588b17
+            expected_build_id: vllm@test
+            expected_io_plugin_version: rayline-arc-io@0.1.0
+            serializer_version: mtrouter-token-blocks-v2
+            serving_rung: B
+            required_pooling_capabilities:
+              - chunked_causal_mean
+            connect_timeout_seconds: 1
+            total_timeout_seconds: 5
+            max_retries: 0
+            max_inflight_encoder_calls: 4
+          episode:
+            id_header: x-rayline-session
+            backend: memory
+            key_prefix: "vsr:rayline-arc-test:"
+            acquire_timeout_seconds: 2
+            lease_ttl_seconds: 3
+            idle_ttl_seconds: 900
+            max_in_memory_episodes: 16
+            development_mode: true
+global:
+  router:
+    auto_model_names: ["rayline/arc-dev"]
+`

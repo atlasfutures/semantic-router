@@ -303,7 +303,7 @@ func newPolicyServiceScorer(
 // endpoints out of the offer.
 //
 // A privacy or zdr turn's route carries the arm's override pin for that mode
-// (privacy_provider_preferences or zdr_provider_preferences) when it declares
+// (standard_provider_preferences or zdr_provider_preferences) when it declares
 // one, so an override host's failure excludes the arm for that mode's turns
 // only. The worker manifest below reads the standard pin only: an override
 // changes which host serves a private turn, not the worker the policy
