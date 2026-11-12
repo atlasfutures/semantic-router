@@ -134,7 +134,9 @@ type llmUsageRecord struct {
 	// to name; "unnamed" when the call was served but the upstream named no
 	// provider, the case a record cannot attribute to a host; "cached" when
 	// the Router's response cache answered and no upstream was called.
-	// UpstreamProvider stays null unless named, so a reader that counts
+	// A cached record keeps the cached response's provider, as it did before
+	// this field, so a reader attributing hosts filters on the state.
+	// Otherwise UpstreamProvider stays null unless named, so a reader that counts
 	// served providers never counts a failure as one.
 	UpstreamProviderState string `json:"upstream_provider_state"`
 	// AttemptedProvider is the provider the call was pinned to when it is
