@@ -132,7 +132,8 @@ type llmUsageRecord struct {
 	// provider that served the call; "unserved" when the call failed before
 	// any provider answered (no usage, no content), so there is no provider
 	// to name; "unnamed" when the call was served but the upstream named no
-	// provider, the case a record cannot attribute to a host.
+	// provider, the case a record cannot attribute to a host; "cached" when
+	// the Router's response cache answered and no upstream was called.
 	// UpstreamProvider stays null unless named, so a reader that counts
 	// served providers never counts a failure as one.
 	UpstreamProviderState string `json:"upstream_provider_state"`
@@ -464,6 +465,7 @@ const (
 	upstreamProviderNamed    = "named"
 	upstreamProviderUnserved = "unserved"
 	upstreamProviderUnnamed  = "unnamed"
+	upstreamProviderCached   = "cached"
 )
 
 // unservedFailureClasses are the failures that end a call before a provider
@@ -486,6 +488,11 @@ var unservedFailureClasses = map[string]bool{
 func (record *llmUsageRecord) setUpstreamProviderState() {
 	record.AttemptedProvider = attemptedProvider(record)
 	switch {
+	case record.FromCache:
+		// Served from the Router's response cache: no upstream call, so
+		// no provider is attributed to this turn, whatever the cached
+		// response says.
+		record.UpstreamProviderState = upstreamProviderCached
 	case record.UpstreamProvider != nil:
 		record.UpstreamProviderState = upstreamProviderNamed
 	case record.FailureClass != nil && unservedFailureClasses[*record.FailureClass] &&

@@ -522,6 +522,7 @@ type reserveSnapshot struct {
 	endpointSource, dispatchedEndpoint string
 	endpointOrder, endpointsTried      []string
 	providerOrder                      []string
+	providerOnly                       []string
 	providerPrivacy                    dispatchedProviderPrivacy
 	rateLimit                          *ratelimit.Context
 }
@@ -539,8 +540,9 @@ func snapshotReserveState(ctx *RequestContext, reselect *raylineARCReselect) res
 		endpointFeed: ctx.RaylineARCEndpointFeed, endpointSource: ctx.RaylineARCEndpointSource,
 		dispatchedEndpoint: ctx.RaylineARCDispatchedEndpoint,
 		endpointOrder:      ctx.RaylineARCEndpointOrder, endpointsTried: ctx.RaylineARCEndpointsTried,
-		providerOrder: ctx.DispatchedProviderOrder, providerPrivacy: ctx.DispatchedProviderPrivacy,
-		rateLimit: ctx.RateLimitCtx,
+		providerOrder: ctx.DispatchedProviderOrder, providerOnly: ctx.DispatchedProviderOnly,
+		providerPrivacy: ctx.DispatchedProviderPrivacy,
+		rateLimit:       ctx.RateLimitCtx,
 	}
 	if transaction := ctx.RaylineARCTransaction; transaction != nil {
 		snapshot.transactionState = transaction.state
@@ -573,6 +575,7 @@ func (snapshot reserveSnapshot) restore(ctx *RequestContext, reselect *raylineAR
 	ctx.RaylineARCDispatchedEndpoint = snapshot.dispatchedEndpoint
 	ctx.RaylineARCEndpointOrder, ctx.RaylineARCEndpointsTried = snapshot.endpointOrder, snapshot.endpointsTried
 	ctx.DispatchedProviderOrder, ctx.DispatchedProviderPrivacy = snapshot.providerOrder, snapshot.providerPrivacy
+	ctx.DispatchedProviderOnly = snapshot.providerOnly
 	ctx.RateLimitCtx = snapshot.rateLimit
 	ctx.FlexResend, ctx.RaylineARCEndpointResend, ctx.ThinkingSignatureRetry = nil, nil, nil
 	ctx.EdgeResend = nil

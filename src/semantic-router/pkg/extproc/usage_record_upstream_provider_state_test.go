@@ -68,6 +68,11 @@ func TestUsageRecordAlwaysStatesTheUpstreamProvider(t *testing.T) {
 			wantState: upstreamProviderUnserved, wantAttempted: stringPointer("openai"),
 		},
 		{
+			name:      "cache hit calls no upstream",
+			record:    llmUsageRecord{UsageSource: "upstream", FromCache: true, UpstreamProvider: stringPointer("Anthropic")},
+			wantState: upstreamProviderCached,
+		},
+		{
 			name:      "open route, nothing known",
 			record:    llmUsageRecord{UsageSource: "upstream"},
 			wantState: upstreamProviderUnnamed,
@@ -86,7 +91,7 @@ func TestUsageRecordAlwaysStatesTheUpstreamProvider(t *testing.T) {
 			case tc.wantAttempted != nil && (record.AttemptedProvider == nil || *record.AttemptedProvider != *tc.wantAttempted):
 				t.Fatalf("attempted_provider = %v, want %q", record.AttemptedProvider, *tc.wantAttempted)
 			}
-			if tc.wantState != upstreamProviderNamed && record.UpstreamProvider != nil {
+			if tc.wantState != upstreamProviderNamed && tc.wantState != upstreamProviderCached && record.UpstreamProvider != nil {
 				t.Fatal("upstream_provider must stay null unless the upstream named it")
 			}
 			fields := record.fields()
