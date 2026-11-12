@@ -124,6 +124,9 @@ type llmUsageRecord struct {
 	// named it; ProviderOrder is the route the dispatched body pinned.
 	UpstreamProvider *string  `json:"upstream_provider"`
 	ProviderOrder    []string `json:"provider_order"`
+	// ProviderOnly is the only list the dispatched body pinned, null when
+	// it pinned none.
+	ProviderOnly []string `json:"provider_only"`
 	// UpstreamProviderState is never null, so a record always says why
 	// UpstreamProvider is what it is: "named" when the upstream named the
 	// provider that served the call; "unserved" when the call failed before
@@ -135,7 +138,8 @@ type llmUsageRecord struct {
 	UpstreamProviderState string `json:"upstream_provider_state"`
 	// AttemptedProvider is the provider the call was pinned to when it is
 	// known: the slug a provider error named, else the first host of the
-	// dispatched provider order, else the endpoint tag's host; null when
+	// dispatched provider order, else of its only list, else the endpoint
+	// tag's host; null when
 	// the route left the choice to OpenRouter.
 	AttemptedProvider *string `json:"attempted_provider"`
 	// The provider's own ids for the call (upstream_call_ids.go), null when
@@ -345,7 +349,6 @@ func (r *OpenAIRouter) newLLMUsageRecord(ctx *RequestContext, usage responseUsag
 	record.ProviderReportedUpstream = usage.providerCost.UpstreamInference
 	record.ProviderReportedBYOK = usage.providerCost.BYOK
 	if ctx == nil {
-		record.setUpstreamProviderState()
 		return record
 	}
 	if record.ProviderReportedCost != nil && ctx.DispatchedToOpenRouter {
@@ -390,6 +393,9 @@ func (r *OpenAIRouter) newLLMUsageRecord(ctx *RequestContext, usage responseUsag
 	}
 	if len(ctx.DispatchedProviderOrder) > 0 {
 		record.ProviderOrder = append([]string(nil), ctx.DispatchedProviderOrder...)
+	}
+	if len(ctx.DispatchedProviderOnly) > 0 {
+		record.ProviderOnly = append([]string(nil), ctx.DispatchedProviderOnly...)
 	}
 	record.ProviderDataCollection = nonEmpty(ctx.DispatchedProviderPrivacy.dataCollection)
 	record.ProviderZDR = ctx.DispatchedProviderPrivacy.zdr
@@ -451,7 +457,6 @@ func (r *OpenAIRouter) newLLMUsageRecord(ctx *RequestContext, usage responseUsag
 	addHostRetryFields(&record, ctx)
 	addRefusalReserveFields(&record, ctx)
 	addUsageRecordARCAttribution(&record, ctx)
-	record.setUpstreamProviderState()
 	return record
 }
 
@@ -461,14 +466,30 @@ const (
 	upstreamProviderUnnamed  = "unnamed"
 )
 
+// unservedFailureClasses are the failures that end a call before a provider
+// served it. A refusal (the refusal reserve) and a blocked response are calls
+// a provider answered; a client that left, or a turn the cell refused itself,
+// is not a provider outcome. None of those is unserved.
+var unservedFailureClasses = map[string]bool{
+	turnFailureRateLimited:     true,
+	turnFailureUpstream5xx:     true,
+	turnFailureTimeout:         true,
+	turnFailureNoEndpoint:      true,
+	turnFailureContextOverflow: true,
+	turnFailureUpstreamError:   true,
+	turnFailureStreamCut:       true,
+}
+
 // setUpstreamProviderState fills UpstreamProviderState and AttemptedProvider
-// from the record's own fields, last, after everything they read is set.
+// from the record's own fields. emitLLMUsageRecord calls it, so it reads what
+// every caller settled on the record.
 func (record *llmUsageRecord) setUpstreamProviderState() {
 	record.AttemptedProvider = attemptedProvider(record)
 	switch {
 	case record.UpstreamProvider != nil:
 		record.UpstreamProviderState = upstreamProviderNamed
-	case record.FailureClass != nil && record.UsageSource == usageSourceUnknown &&
+	case record.FailureClass != nil && unservedFailureClasses[*record.FailureClass] &&
+		record.UsageSource == usageSourceUnknown &&
 		(record.ContentSentBeforeFailure == nil || !*record.ContentSentBeforeFailure):
 		record.UpstreamProviderState = upstreamProviderUnserved
 	default:
@@ -481,9 +502,11 @@ func attemptedProvider(record *llmUsageRecord) *string {
 	if record.UpstreamErrorPinnedProviderSlug != nil {
 		return record.UpstreamErrorPinnedProviderSlug
 	}
-	for _, slug := range record.ProviderOrder {
-		if host := providerSlugHost(slug); host != "" {
-			return &host
+	for _, slugs := range [][]string{record.ProviderOrder, record.ProviderOnly} {
+		for _, slug := range slugs {
+			if host := providerSlugHost(slug); host != "" {
+				return &host
+			}
 		}
 	}
 	if record.ProviderEndpoint != nil {
@@ -633,6 +656,9 @@ func (r *OpenAIRouter) priceUsageRecordQuietly(record *llmUsageRecord, ctx *Requ
 // emitLLMUsageRecord writes the record as the llm_usage log line and, when a
 // durable sink is configured, as one entry there.
 func emitLLMUsageRecord(record llmUsageRecord) {
+	// Last, so callers that settle a refused or stalled attempt's failure
+	// fields after building the record are read as written.
+	record.setUpstreamProviderState()
 	logging.LogEvent("llm_usage", record.fields())
 	if !usagerecords.Active() {
 		return

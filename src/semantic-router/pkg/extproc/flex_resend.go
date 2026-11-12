@@ -561,6 +561,7 @@ func (r *OpenAIRouter) serveFlexTwin(
 	result flexTwinResult,
 ) *ext_proc.ProcessingResponse {
 	ctx.DispatchedProviderOrder = append([]string(nil), plan.twinPin.Order...)
+	ctx.DispatchedProviderOnly = append([]string(nil), plan.twinPin.Only...)
 	ctx.DispatchedProviderPrivacy = dispatchedProviderPrivacy{
 		dataCollection: plan.twinPin.DataCollection,
 		zdr:            plan.twinPin.ZDR,

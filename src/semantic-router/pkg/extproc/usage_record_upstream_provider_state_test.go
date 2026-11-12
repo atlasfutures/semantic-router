@@ -49,6 +49,25 @@ func TestUsageRecordAlwaysStatesTheUpstreamProvider(t *testing.T) {
 			wantState: upstreamProviderUnnamed, wantAttempted: stringPointer("deepinfra"),
 		},
 		{
+			// The refusal reserve: the provider answered, the cell refused it.
+			name: "refusal is not unserved",
+			record: llmUsageRecord{UsageSource: usageSourceUnknown, FailureClass: stringPointer(turnFailureRefusal),
+				ContentSentBeforeFailure: &notSent},
+			wantState: upstreamProviderUnnamed,
+		},
+		{
+			name: "blocked response is not unserved",
+			record: llmUsageRecord{UsageSource: usageSourceUnknown, FailureClass: stringPointer(turnFailureResponseBlocked),
+				ContentSentBeforeFailure: &notSent},
+			wantState: upstreamProviderUnnamed,
+		},
+		{
+			name: "only pin with no order names its host",
+			record: llmUsageRecord{UsageSource: usageSourceUnknown, FailureClass: stringPointer(turnFailureUpstream5xx),
+				ProviderOnly: []string{"openai/flex"}},
+			wantState: upstreamProviderUnserved, wantAttempted: stringPointer("openai"),
+		},
+		{
 			name:      "open route, nothing known",
 			record:    llmUsageRecord{UsageSource: "upstream"},
 			wantState: upstreamProviderUnnamed,
@@ -75,6 +94,41 @@ func TestUsageRecordAlwaysStatesTheUpstreamProvider(t *testing.T) {
 				t.Fatalf("log line upstream_provider_state = %v, want %q", fields["upstream_provider_state"], tc.wantState)
 			}
 		})
+	}
+}
+
+// A refused re-send attempt (flex, edge-503, endpoint, thinking signature)
+// and a stalled host settle their failure fields after building the record;
+// the state is read at emit, so it reflects them.
+func TestUpstreamProviderStateReadsFieldsSettledAfterBuild(t *testing.T) {
+	logs := captureLogs(t)
+	router := &OpenAIRouter{}
+	ctx := emptyCompletionContext()
+	ctx.DispatchedProviderOrder = []string{"azure/us"}
+	record := router.newLLMUsageRecord(ctx, responseUsageMetrics{})
+	record.FailureClass = nonEmpty(turnFailureUpstreamError)
+	notSent := false
+	record.ContentSentBeforeFailure = &notSent
+	emitLLMUsageRecord(record)
+	fields := findLogEvent(t, logs, "llm_usage")
+	if got := fields["upstream_provider_state"]; got != upstreamProviderUnserved {
+		t.Fatalf("upstream_provider_state = %v, want unserved", got)
+	}
+	if got := fields["attempted_provider"]; got != "azure" {
+		t.Fatalf("attempted_provider = %v, want azure", got)
+	}
+}
+
+// The provider object's only list is read back onto the record.
+func TestDispatchedProviderOnlyIsRecorded(t *testing.T) {
+	ctx := &RequestContext{}
+	recordDispatchedProviderPin(ctx, []byte(`{"provider":{"only":["openai/flex"]}}`))
+	if len(ctx.DispatchedProviderOnly) != 1 || ctx.DispatchedProviderOnly[0] != "openai/flex" {
+		t.Fatalf("DispatchedProviderOnly = %v", ctx.DispatchedProviderOnly)
+	}
+	record := (&OpenAIRouter{}).newLLMUsageRecord(ctx, responseUsageMetrics{})
+	if len(record.ProviderOnly) != 1 {
+		t.Fatalf("provider_only = %v", record.ProviderOnly)
 	}
 }
 
