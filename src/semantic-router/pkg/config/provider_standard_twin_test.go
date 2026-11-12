@@ -106,13 +106,13 @@ func TestStandardTwinRefusesUnsafePairings(t *testing.T) {
 		},
 		"twin's privacy pin admits the flex endpoint": {
 			"      standard_twin: luna\n",
-			standardTwinIgnorePin + "      privacy_provider_preferences:\n        only:\n          - openai/flex\n",
-			`its privacy_provider_preferences must exclude the discount endpoint "openai/flex"`,
+			standardTwinIgnorePin + "      standard_provider_preferences:\n        only:\n          - openai/flex\n",
+			`its standard_provider_preferences must exclude the discount endpoint "openai/flex"`,
 		},
 		"discount's privacy pin names no endpoint": {
-			"      standard_twin: luna\n      privacy_provider_preferences:\n        order:\n          - azure\n",
+			"      standard_twin: luna\n      standard_provider_preferences:\n        order:\n          - azure\n",
 			standardTwinIgnorePin,
-			"needs privacy_provider_preferences.only naming the discount endpoint",
+			"needs standard_provider_preferences.only naming the discount endpoint",
 		},
 		"twin pins nothing": {
 			"      standard_twin: luna\n", "", "must set provider_preferences",

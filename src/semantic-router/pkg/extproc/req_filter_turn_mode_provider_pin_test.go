@@ -16,7 +16,7 @@ import (
 func turnModeProviderPinRouter(standard, privacy, zdr *config.OpenRouterProviderPreferences) *OpenAIRouter {
 	router := providerPinRouter("https://openrouter.ai/api/v1", standard)
 	arm := router.Config.ModelConfig[providerPinArm]
-	arm.PrivacyProviderPreferences = privacy
+	arm.StandardProviderPreferences = privacy
 	arm.ZDRProviderPreferences = zdr
 	router.Config.ModelConfig[providerPinArm] = arm
 	return router

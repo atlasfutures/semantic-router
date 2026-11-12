@@ -427,10 +427,10 @@ type ModelParams struct {
 	// Absent leaves the choice to OpenRouter's own ranking; see
 	// OpenRouterProviderPreferences.
 	ProviderPreferences *OpenRouterProviderPreferences `yaml:"provider_preferences,omitempty"`
-	// PrivacyProviderPreferences is the pin a privacy (Standard) turn sends
+	// StandardProviderPreferences is the pin a privacy (Standard) turn sends
 	// instead of ProviderPreferences; see ProviderPreferencesForTurn. Absent,
 	// a privacy turn sends ProviderPreferences.
-	PrivacyProviderPreferences *OpenRouterProviderPreferences `yaml:"privacy_provider_preferences,omitempty"`
+	StandardProviderPreferences *OpenRouterProviderPreferences `yaml:"standard_provider_preferences,omitempty"`
 	// ZDRProviderPreferences is the pin a zdr turn sends instead of
 	// ProviderPreferences; see ProviderPreferencesForTurn. Absent, a zdr turn
 	// sends ProviderPreferences.

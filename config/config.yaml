@@ -55,9 +55,10 @@ providers:
         max_price:
           prompt: 0.5
           completion: 1.5
-      # The pin a privacy (Standard) turn sends instead; same keys. Absent,
-      # privacy turns send provider_preferences. Never applies to zdr turns.
-      privacy_provider_preferences:
+      # The pin a Standard (privacy-mode) turn sends instead; same keys.
+      # Absent, Standard turns send provider_preferences. Never applies to zdr
+      # turns.
+      standard_provider_preferences:
         order:
           - deepinfra
         only:

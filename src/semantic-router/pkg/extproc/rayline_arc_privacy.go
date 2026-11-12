@@ -278,7 +278,7 @@ func withPrivacyExcludedArms(
 
 // armProviderPin is the pin a turn in the given privacy mode sends for the
 // model before its data-use members are added: on a privacy turn the card's
-// privacy_provider_preferences, on a zdr turn its zdr_provider_preferences,
+// standard_provider_preferences, on a zdr turn its zdr_provider_preferences,
 // each when the card declares it, otherwise its provider_preferences. A
 // standard turn ("") always gets the latter (ProviderPreferencesForTurn).
 func armProviderPin(
