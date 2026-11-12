@@ -78,7 +78,12 @@ listing publishes, on every OpenRouter candidate, the pin each mode sends:
 `provider_pin` for a regular turn, `standard_provider_pin` for a `privacy`
 (Standard) turn and `zdr_provider_pin` for a `zdr` turn, each the mode's
 override when set and `provider_preferences` otherwise. A candidate not
-dispatched through OpenRouter lists none of them. The retired
+dispatched through OpenRouter lists none of them. `private_provider_pin`
+(deprecated, kept for one release) repeats `zdr_provider_pin`. The cell masks
+a private turn by the worker it is served on after `dispatch_model_overrides`,
+not by the listed arm id, so an arm whose override target is allowed is served
+even when its own listed pin is not (e.g. `deepseek-v4.1-flash` ->
+`deepseek-v4.1-flash-1017`). The retired
 `private_provider_preferences` key, which covered both modes, and the old name
 of `standard_provider_preferences` are refused at load.
 

@@ -500,9 +500,10 @@ func TestARCAliasAdvertisesTheServedEndpointHeaderOnlyWithTheFeed(t *testing.T) 
 // The cell's half of the gateway contract (memex-desktop#8281): every
 // OpenRouter arm lists provider_pin, standard_provider_pin and
 // zdr_provider_pin, each exactly what ProviderPreferencesForTurn sends for its
-// mode, whether or not the card overrides it; an arm not dispatched through
-// OpenRouter lists none. The listed candidates are held to a golden file the
-// gateway's fixture can be built from.
+// mode, whether or not the card overrides it, and the deprecated
+// private_provider_pin repeats zdr_provider_pin; an arm not dispatched
+// through OpenRouter lists none. The listed candidates are held to a golden
+// file the gateway's fixture can be built from.
 func TestCandidatesListOnePinPerTurnMode(t *testing.T) {
 	t.Setenv("PUBLICMODELS_CANDIDATES_TEST_KEY", "public-candidates-test-key")
 	t.Setenv("PUBLICMODELS_CANDIDATES_TEST_LOCAL_KEY", "public-candidates-test-local-key")
@@ -516,13 +517,12 @@ func TestCandidatesListOnePinPerTurnMode(t *testing.T) {
 		"provider_pin":          "",
 		"standard_provider_pin": config.ProviderTurnModePrivacy,
 		"zdr_provider_pin":      config.ProviderTurnModeZDR,
+		// Deprecated, one release: the zdr pin again (memex-desktop#8282).
+		"private_provider_pin": config.ProviderTurnModeZDR,
 	}
 	for _, entry := range candidates {
 		candidate := entry.(map[string]interface{})
 		model := candidate["model"].(string)
-		if _, present := candidate["private_provider_pin"]; present {
-			t.Fatalf("%s lists the retired private_provider_pin", model)
-		}
 		openRouter := candidate["provider"] == "openrouter"
 		for field, mode := range modes {
 			listed, present := candidate[field]

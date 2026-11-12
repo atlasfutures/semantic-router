@@ -5,6 +5,16 @@
     "max_output_tokens": null,
     "model": "z-ai/glm-5.2@thinking-off",
     "pricing": null,
+    "private_provider_pin": {
+      "allow_fallbacks": false,
+      "only": [
+        "z-ai"
+      ],
+      "order": [
+        "z-ai"
+      ],
+      "pinned": true
+    },
     "provider": "openrouter",
     "provider_model": "z-ai/glm-5.2",
     "provider_pin": {
@@ -49,6 +59,15 @@
     "max_output_tokens": null,
     "model": "qwen/qwen3.6-35b-a3b@thinking-off",
     "pricing": null,
+    "private_provider_pin": {
+      "only": [
+        "alibaba"
+      ],
+      "order": [
+        "alibaba"
+      ],
+      "pinned": true
+    },
     "provider": "openrouter",
     "provider_model": "qwen/qwen3.6-35b-a3b",
     "provider_pin": {
@@ -91,6 +110,20 @@
     "max_output_tokens": null,
     "model": "deepseek/deepseek-v4-flash@thinking-on",
     "pricing": null,
+    "private_provider_pin": {
+      "max_price": {
+        "completion": 3
+      },
+      "only": [
+        "phala",
+        "novita"
+      ],
+      "order": [
+        "phala",
+        "novita"
+      ],
+      "pinned": true
+    },
     "provider": "openrouter",
     "provider_model": "deepseek/deepseek-v4-flash",
     "provider_pin": {
@@ -130,6 +163,22 @@
       "currency": "USD",
       "input_per_mtok": 0.425,
       "output_per_mtok": 2.55
+    },
+    "private_provider_pin": {
+      "allow_fallbacks": false,
+      "max_price": {
+        "completion": 3,
+        "prompt": 0.425
+      },
+      "only": [
+        "phala",
+        "novita"
+      ],
+      "order": [
+        "phala",
+        "novita"
+      ],
+      "pinned": true
     },
     "provider": "openrouter",
     "provider_model": "qwen/qwen3.8-27b",

@@ -66,9 +66,19 @@ type RoutingCandidate struct {
 	// none. All three are present on every arm dispatched through
 	// OpenRouter, and all three absent on any other arm, where no provider
 	// object is sent.
+	//
+	// The cell masks a private turn by the worker it is served on after
+	// dispatch_model_overrides, not by the listed arm id: an arm whose
+	// override target is allowed is served even when its own listed pin is
+	// not (e.g. deepseek-v4.1-flash -> deepseek-v4.1-flash-1017).
 	ProviderPin         *CandidateProviderPin `json:"provider_pin,omitempty"`
 	StandardProviderPin *CandidateProviderPin `json:"standard_provider_pin,omitempty"`
 	ZDRProviderPin      *CandidateProviderPin `json:"zdr_provider_pin,omitempty"`
+	// PrivateProviderPin is deprecated: it repeats ZDRProviderPin, kept for
+	// one release for routerProxy builds before memex-desktop#8282, which
+	// read it on ZDR turns; removed in the cell release after #8282 is live
+	// in prod (memex-desktop#8281). Present exactly when ZDRProviderPin is.
+	PrivateProviderPin *CandidateProviderPin `json:"private_provider_pin,omitempty"`
 }
 
 // CandidateProviderPin is an OpenRouter arm's provider routing. Pinned is
@@ -256,6 +266,7 @@ func routingCandidateOf(cfg *config.RouterConfig, modelRef config.ModelRef, outp
 			candidate.ProviderPin = providerPinOf(cfg.ProviderPreferencesForTurn(model, ""))
 			candidate.StandardProviderPin = providerPinOf(cfg.ProviderPreferencesForTurn(model, config.ProviderTurnModePrivacy))
 			candidate.ZDRProviderPin = providerPinOf(cfg.ProviderPreferencesForTurn(model, config.ProviderTurnModeZDR))
+			candidate.PrivateProviderPin = providerPinOf(cfg.ProviderPreferencesForTurn(model, config.ProviderTurnModeZDR))
 		}
 	}
 	if pricing, ok := cfg.GetFullModelPricing(model); ok {
