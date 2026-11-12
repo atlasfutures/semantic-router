@@ -42,6 +42,7 @@
     "cache_trace",
     "execution_context_v2",
     "staged_turns",
-    "tool_free_override"
+    "tool_free_override",
+    "session_reuse"
   ]
 }
