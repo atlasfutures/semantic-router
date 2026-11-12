@@ -237,6 +237,9 @@ type RequestContext struct {
 	// DispatchedProviderOrder is the OpenRouter provider order the rendered
 	// upstream body carries, read back the same way and for the same reason.
 	DispatchedProviderOrder []string
+	// DispatchedProviderOnly is the provider object's only list, read back
+	// the same way: the hosts a pin with no order still names.
+	DispatchedProviderOnly []string
 	// DispatchedProviderPrivacy is the provider object's data-use members the
 	// rendered upstream body carries, read back the same way.
 	DispatchedProviderPrivacy dispatchedProviderPrivacy

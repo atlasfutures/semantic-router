@@ -124,6 +124,27 @@ type llmUsageRecord struct {
 	// named it; ProviderOrder is the route the dispatched body pinned.
 	UpstreamProvider *string  `json:"upstream_provider"`
 	ProviderOrder    []string `json:"provider_order"`
+	// ProviderOnly is the only list the dispatched body pinned, null when
+	// it pinned none.
+	ProviderOnly []string `json:"provider_only"`
+	// UpstreamProviderState is never null, so a record always says why
+	// UpstreamProvider is what it is: "named" when the upstream named the
+	// provider that served the call; "unserved" when the call failed before
+	// any provider answered (no usage, no content), so there is no provider
+	// to name; "unnamed" when the call was served but the upstream named no
+	// provider, the case a record cannot attribute to a host; "cached" when
+	// the Router's response cache answered and no upstream was called.
+	// A cached record keeps the cached response's provider, as it did before
+	// this field, so a reader attributing hosts filters on the state.
+	// Otherwise UpstreamProvider stays null unless named, so a reader that counts
+	// served providers never counts a failure as one.
+	UpstreamProviderState string `json:"upstream_provider_state"`
+	// AttemptedProvider is the provider the call was pinned to when it is
+	// known: the slug a provider error named, else the first host of the
+	// dispatched provider order, else of its only list, else the endpoint
+	// tag's host; null when
+	// the route left the choice to OpenRouter.
+	AttemptedProvider *string `json:"attempted_provider"`
 	// The provider's own ids for the call (upstream_call_ids.go), null when
 	// the upstream stated none: UpstreamGenerationID is the x-generation-id
 	// header or the response's id (OpenRouter's generation id), and
@@ -376,6 +397,9 @@ func (r *OpenAIRouter) newLLMUsageRecord(ctx *RequestContext, usage responseUsag
 	if len(ctx.DispatchedProviderOrder) > 0 {
 		record.ProviderOrder = append([]string(nil), ctx.DispatchedProviderOrder...)
 	}
+	if len(ctx.DispatchedProviderOnly) > 0 {
+		record.ProviderOnly = append([]string(nil), ctx.DispatchedProviderOnly...)
+	}
 	record.ProviderDataCollection = nonEmpty(ctx.DispatchedProviderPrivacy.dataCollection)
 	record.ProviderZDR = ctx.DispatchedProviderPrivacy.zdr
 	record.ProviderAllowFallbacks = ctx.DispatchedProviderPrivacy.allowFallbacks
@@ -437,6 +461,76 @@ func (r *OpenAIRouter) newLLMUsageRecord(ctx *RequestContext, usage responseUsag
 	addRefusalReserveFields(&record, ctx)
 	addUsageRecordARCAttribution(&record, ctx)
 	return record
+}
+
+const (
+	upstreamProviderNamed    = "named"
+	upstreamProviderUnserved = "unserved"
+	upstreamProviderUnnamed  = "unnamed"
+	upstreamProviderCached   = "cached"
+)
+
+// unservedFailureClasses are the failures that end a call before a provider
+// served it. A refusal (the refusal reserve) and a blocked response are calls
+// a provider answered; a client that left, or a turn the cell refused itself,
+// is not a provider outcome. None of those is unserved.
+var unservedFailureClasses = map[string]bool{
+	turnFailureRateLimited:     true,
+	turnFailureUpstream5xx:     true,
+	turnFailureTimeout:         true,
+	turnFailureNoEndpoint:      true,
+	turnFailureContextOverflow: true,
+	turnFailureUpstreamError:   true,
+	turnFailureStreamCut:       true,
+}
+
+// setUpstreamProviderState fills UpstreamProviderState and AttemptedProvider
+// from the record's own fields. emitLLMUsageRecord calls it, so it reads what
+// every caller settled on the record.
+func (record *llmUsageRecord) setUpstreamProviderState() {
+	record.AttemptedProvider = attemptedProvider(record)
+	switch {
+	case record.FromCache:
+		// Served from the Router's response cache: no upstream call, so
+		// no provider is attributed to this turn, whatever the cached
+		// response says.
+		record.UpstreamProviderState = upstreamProviderCached
+	case record.UpstreamProvider != nil:
+		record.UpstreamProviderState = upstreamProviderNamed
+	case record.FailureClass != nil && unservedFailureClasses[*record.FailureClass] &&
+		record.UsageSource == usageSourceUnknown &&
+		(record.ContentSentBeforeFailure == nil || !*record.ContentSentBeforeFailure):
+		record.UpstreamProviderState = upstreamProviderUnserved
+	default:
+		record.UpstreamProviderState = upstreamProviderUnnamed
+	}
+}
+
+// attemptedProvider is the provider slug the call was pinned to, when known.
+func attemptedProvider(record *llmUsageRecord) *string {
+	if record.UpstreamErrorPinnedProviderSlug != nil {
+		return record.UpstreamErrorPinnedProviderSlug
+	}
+	for _, slugs := range [][]string{record.ProviderOrder, record.ProviderOnly} {
+		for _, slug := range slugs {
+			if host := providerSlugHost(slug); host != "" {
+				return &host
+			}
+		}
+	}
+	if record.ProviderEndpoint != nil {
+		if host := providerSlugHost(*record.ProviderEndpoint); host != "" {
+			return &host
+		}
+	}
+	return nil
+}
+
+// providerSlugHost is an OpenRouter provider slug's host: "azure/us" and
+// "deepinfra/fp8/flex" name azure and deepinfra.
+func providerSlugHost(slug string) string {
+	host, _, _ := strings.Cut(strings.TrimSpace(slug), "/")
+	return host
 }
 
 func addUsageRecordARCAttribution(record *llmUsageRecord, ctx *RequestContext) {
@@ -571,6 +665,9 @@ func (r *OpenAIRouter) priceUsageRecordQuietly(record *llmUsageRecord, ctx *Requ
 // emitLLMUsageRecord writes the record as the llm_usage log line and, when a
 // durable sink is configured, as one entry there.
 func emitLLMUsageRecord(record llmUsageRecord) {
+	// Last, so callers that settle a refused or stalled attempt's failure
+	// fields after building the record are read as written.
+	record.setUpstreamProviderState()
 	logging.LogEvent("llm_usage", record.fields())
 	if !usagerecords.Active() {
 		return

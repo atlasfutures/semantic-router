@@ -103,6 +103,7 @@ func recordDispatchedProviderPin(ctx *RequestContext, body []byte) {
 		return
 	}
 	ctx.DispatchedProviderOrder = nil
+	ctx.DispatchedProviderOnly = nil
 	ctx.DispatchedProviderPrivacy = dispatchedProviderPrivacy{}
 
 	var wire dispatchedProviderWire
@@ -117,6 +118,7 @@ func recordDispatchedProviderPin(ctx *RequestContext, body []byte) {
 type dispatchedProviderWire struct {
 	Provider struct {
 		Order          []string `json:"order"`
+		Only           []string `json:"only"`
 		DataCollection string   `json:"data_collection"`
 		ZDR            *bool    `json:"zdr"`
 		AllowFallbacks *bool    `json:"allow_fallbacks"`
@@ -125,6 +127,7 @@ type dispatchedProviderWire struct {
 
 func (wire *dispatchedProviderWire) record(ctx *RequestContext) {
 	ctx.DispatchedProviderOrder = wire.Provider.Order
+	ctx.DispatchedProviderOnly = wire.Provider.Only
 	ctx.DispatchedProviderPrivacy = dispatchedProviderPrivacy{
 		dataCollection: wire.Provider.DataCollection,
 		zdr:            wire.Provider.ZDR,
