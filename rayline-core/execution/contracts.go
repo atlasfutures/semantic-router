@@ -37,6 +37,10 @@ type Deployment struct {
 	InputModalities []string        `json:"input_modalities"`
 	TokenUnits      string          `json:"token_units"`
 	PromptCounter   *LlamaCPPConfig `json:"prompt_counter,omitempty"`
+	// TokenCounter is a same-host counter that answers with the serving
+	// model's own tokenizer and chat template (http_counter.go). At most one
+	// of PromptCounter and TokenCounter.
+	TokenCounter *TokenCounterConfig `json:"token_counter,omitempty"`
 	// ClampOutputAllowance lowers an allowance over MaxOutputTokens to it
 	// instead of refusing the request, for a harness that states one output
 	// limit for a session whose deployments do not share one and cannot be

@@ -42,6 +42,19 @@ type llamaCPPCounter struct {
 
 func (server *Server) RegisterConfiguredPromptCounters(ctx context.Context) error {
 	for _, deployment := range server.config.Deployments {
+		if deployment.TokenCounter != nil {
+			if deployment.PromptCounter != nil {
+				return fmt.Errorf("deployment %s sets both prompt_counter and token_counter", deployment.ID)
+			}
+			counter, err := newHTTPCounter(ctx, deployment, server.config)
+			if err != nil {
+				return fmt.Errorf("qualify token counter for %s: %w", deployment.ID, err)
+			}
+			if err := server.RegisterPromptCounter(deployment.ID, counter); err != nil {
+				return err
+			}
+			continue
+		}
 		if deployment.PromptCounter == nil {
 			continue
 		}
