@@ -352,3 +352,18 @@ func TestDispatchedReasoningEffortReadsOutputConfig(t *testing.T) {
 		t.Fatalf("dispatched effort = %q, want the digest", ctx.DispatchedReasoningEffort)
 	}
 }
+
+// Claude Code 2.1.322's display "updates" is a published value, so the record
+// states it verbatim rather than as a digest.
+func TestOutboundParamsRecordThinkingDisplayUpdates(t *testing.T) {
+	body := `{"model":"anthropic/claude-sonnet-5.5","max_tokens":64,"messages":[{"role":"user","content":"hi"}],"thinking":{"type":"adaptive","display":"updates"}}`
+	dispatch := &providerDispatch{
+		targetFormat: llmprotocol.AnthropicMessagesV1, backendName: "openrouter",
+		profile: &config.ProviderProfile{Type: "openai", BaseURL: "https://openrouter.ai/api/v1"},
+	}
+	record := map[string]interface{}{}
+	appendOutboundParamFields(record, readDispatchedOutboundParams([]byte(body), dispatch))
+	if got := fmt.Sprint(record["outbound_thinking_display"]); got != "updates" {
+		t.Fatalf("outbound_thinking_display = %v, want updates", got)
+	}
+}
