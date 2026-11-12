@@ -124,6 +124,20 @@ type llmUsageRecord struct {
 	// named it; ProviderOrder is the route the dispatched body pinned.
 	UpstreamProvider *string  `json:"upstream_provider"`
 	ProviderOrder    []string `json:"provider_order"`
+	// UpstreamProviderState is never null, so a record always says why
+	// UpstreamProvider is what it is: "named" when the upstream named the
+	// provider that served the call; "unserved" when the call failed before
+	// any provider answered (no usage, no content), so there is no provider
+	// to name; "unnamed" when the call was served but the upstream named no
+	// provider, the case a record cannot attribute to a host.
+	// UpstreamProvider stays null unless named, so a reader that counts
+	// served providers never counts a failure as one.
+	UpstreamProviderState string `json:"upstream_provider_state"`
+	// AttemptedProvider is the provider the call was pinned to when it is
+	// known: the slug a provider error named, else the first host of the
+	// dispatched provider order, else the endpoint tag's host; null when
+	// the route left the choice to OpenRouter.
+	AttemptedProvider *string `json:"attempted_provider"`
 	// The provider's own ids for the call (upstream_call_ids.go), null when
 	// the upstream stated none: UpstreamGenerationID is the x-generation-id
 	// header or the response's id (OpenRouter's generation id), and
@@ -331,6 +345,7 @@ func (r *OpenAIRouter) newLLMUsageRecord(ctx *RequestContext, usage responseUsag
 	record.ProviderReportedUpstream = usage.providerCost.UpstreamInference
 	record.ProviderReportedBYOK = usage.providerCost.BYOK
 	if ctx == nil {
+		record.setUpstreamProviderState()
 		return record
 	}
 	if record.ProviderReportedCost != nil && ctx.DispatchedToOpenRouter {
@@ -436,7 +451,54 @@ func (r *OpenAIRouter) newLLMUsageRecord(ctx *RequestContext, usage responseUsag
 	addHostRetryFields(&record, ctx)
 	addRefusalReserveFields(&record, ctx)
 	addUsageRecordARCAttribution(&record, ctx)
+	record.setUpstreamProviderState()
 	return record
+}
+
+const (
+	upstreamProviderNamed    = "named"
+	upstreamProviderUnserved = "unserved"
+	upstreamProviderUnnamed  = "unnamed"
+)
+
+// setUpstreamProviderState fills UpstreamProviderState and AttemptedProvider
+// from the record's own fields, last, after everything they read is set.
+func (record *llmUsageRecord) setUpstreamProviderState() {
+	record.AttemptedProvider = attemptedProvider(record)
+	switch {
+	case record.UpstreamProvider != nil:
+		record.UpstreamProviderState = upstreamProviderNamed
+	case record.FailureClass != nil && record.UsageSource == usageSourceUnknown &&
+		(record.ContentSentBeforeFailure == nil || !*record.ContentSentBeforeFailure):
+		record.UpstreamProviderState = upstreamProviderUnserved
+	default:
+		record.UpstreamProviderState = upstreamProviderUnnamed
+	}
+}
+
+// attemptedProvider is the provider slug the call was pinned to, when known.
+func attemptedProvider(record *llmUsageRecord) *string {
+	if record.UpstreamErrorPinnedProviderSlug != nil {
+		return record.UpstreamErrorPinnedProviderSlug
+	}
+	for _, slug := range record.ProviderOrder {
+		if host := providerSlugHost(slug); host != "" {
+			return &host
+		}
+	}
+	if record.ProviderEndpoint != nil {
+		if host := providerSlugHost(*record.ProviderEndpoint); host != "" {
+			return &host
+		}
+	}
+	return nil
+}
+
+// providerSlugHost is an OpenRouter provider slug's host: "azure/us" and
+// "deepinfra/fp8/flex" name azure and deepinfra.
+func providerSlugHost(slug string) string {
+	host, _, _ := strings.Cut(strings.TrimSpace(slug), "/")
+	return host
 }
 
 func addUsageRecordARCAttribution(record *llmUsageRecord, ctx *RequestContext) {
