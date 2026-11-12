@@ -37,6 +37,8 @@ check-go-mod-tidy: ## Check go mod tidy for all Go modules
 	@echo "Checking go mod tidy for all Go modules..."
 	@echo "Checking rayline-core..."
 	@cd rayline-core && go mod tidy -diff
+	@echo "Checking dashboard/backend..."
+	@cd dashboard/backend && go mod tidy -diff
 	@echo "Checking candle-binding..."
 	@cd candle-binding && go mod tidy && \
 		(git diff --exit-code go.mod 2>/dev/null || (echo "ERROR: go.mod file is not tidy in candle-binding. Please run 'go mod tidy' in candle-binding directory and commit the changes." && git diff go.mod && exit 1)) && \

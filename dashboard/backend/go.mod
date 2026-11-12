@@ -46,6 +46,9 @@ require (
 
 replace github.com/vllm-project/semantic-router/src/semantic-router => ../../src/semantic-router
 
-require github.com/atlasfutures/semantic-router/rayline-core v0.0.0 // indirect
+require (
+	github.com/atlasfutures/semantic-router/rayline-core v0.0.0 // indirect
+	golang.org/x/text v0.37.0 // indirect
+)
 
 replace github.com/atlasfutures/semantic-router/rayline-core => ../../rayline-core
