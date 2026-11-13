@@ -138,4 +138,9 @@ func TestALegacyShapeKeyedPlacerResumesItsTranscript(t *testing.T) {
 	if _, found := state.ControlPlacementFor(thinkingcontrol.PlacementKey("opus", "chat")); found {
 		t.Fatal("another format's transcript resumed")
 	}
+	// The transcript's next commit replaces its per-shape states.
+	next := WithControlPlacement(state.Controls, ControlPlacement{Key: thinkingcontrol.PlacementKey("opus", "messages"), State: resumed})
+	if len(next) != 2 || next[0].Key != "glm|messages|default|-|true" || next[1].Key != "opus|messages" {
+		t.Fatalf("placements after the commit: %+v", next)
+	}
 }

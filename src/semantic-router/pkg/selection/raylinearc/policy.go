@@ -119,12 +119,13 @@ func (state *EpisodeState) ControlPlacementFor(key string) (thinkingcontrol.Plac
 }
 
 // WithControlPlacement returns the placements with placement as the most
-// recent, replacing its key's previous state and dropping the oldest beyond
-// the bound.
+// recent, replacing its key's previous state (and the per-shape states an
+// older record kept for the same transcript, which it resumed) and dropping
+// the oldest beyond the bound.
 func WithControlPlacement(placements []ControlPlacement, placement ControlPlacement) []ControlPlacement {
 	next := make([]ControlPlacement, 0, len(placements)+1)
 	for _, existing := range placements {
-		if existing.Key != placement.Key {
+		if existing.Key != placement.Key && !strings.HasPrefix(existing.Key, placement.Key+"|") {
 			next = append(next, existing)
 		}
 	}
