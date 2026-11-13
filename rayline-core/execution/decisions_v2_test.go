@@ -574,23 +574,21 @@ func TestV2ConfigRequiresAnExplicitPolicy(t *testing.T) {
 		routing string
 		ok      bool
 	}{
-		"default preset":             {DecisionsExecutionContextV2, `{"policy":{"preset":"arc-policy.hybrid-default.v1"}}`, true},
-		"David's schedule with V":    {DecisionsExecutionContextV2, `{"policy":{"preset":"arc-policy.hybrid-default.v1","overrides":{"schedule":{"model":["cache_boundaries","user_messages"],"thinking":["all_turns"]}}},"v_value":0.1}`, true},
-		"package default":            {DecisionsExecutionContextV2, `{"policy":{"preset":"arc-policy.package-default.v1"}}`, true},
-		"prefer local":               {DecisionsExecutionContextV2, `{"policy":{"preset":"arc-policy.prefer-local.v1"}}`, true},
-		"prefer local threshold":     {DecisionsExecutionContextV2, `{"policy":{"preset":"arc-policy.prefer-local.v1","overrides":{"selection":{"min_p_pass":0.65}}}}`, true},
-		"threshold out of range":     {DecisionsExecutionContextV2, `{"policy":{"preset":"arc-policy.prefer-local.v1","overrides":{"selection":{"min_p_pass":1}}}}`, false},
-		"absent policy":              {DecisionsExecutionContextV2, `{}`, false},
-		"policy forwarded in v1":     {DecisionsExecutionContextV1, `{"policy":{"preset":"arc-policy.hybrid-default.v1"}}`, true},
-		"policy refused in current":  {DecisionsCurrent, `{"policy":{"preset":"arc-policy.hybrid-default.v1"}}`, false},
-		"preset sent to ARC as is":   {DecisionsExecutionContextV2, `{"policy":{"preset":"arc-policy.always-local.v1"}}`, true},
-		"missing preset":             {DecisionsExecutionContextV2, `{"policy":{}}`, false},
-		"empty preset":               {DecisionsExecutionContextV2, `{"policy":{"preset":""}}`, false},
-		"unknown class":              {DecisionsExecutionContextV2, `{"policy":{"preset":"arc-policy.hybrid-default.v1","overrides":{"schedule":{"model":["every_5"]}}}}`, false},
-		"selection override":         {DecisionsExecutionContextV2, `{"policy":{"preset":"arc-policy.hybrid-default.v1","overrides":{"selection":{"min_p_pass":0.5}}}}`, false},
-		"unknown override":           {DecisionsExecutionContextV2, `{"policy":{"preset":"arc-policy.hybrid-default.v1","overrides":{"selector":"utility"}}}`, false},
-		"unacknowledged routing key": {DecisionsExecutionContextV2, `{"policy":{"preset":"arc-policy.hybrid-default.v1"},"lookahead":1}`, false},
-		"V under its old name":       {DecisionsExecutionContextV2, `{"policy":{"preset":"arc-policy.hybrid-default.v1"},"value_usd":0.1}`, false},
+		"default preset":              {DecisionsExecutionContextV2, `{"policy":{"preset":"arc-policy.hybrid-default.v1"}}`, true},
+		"David's schedule with V":     {DecisionsExecutionContextV2, `{"policy":{"preset":"arc-policy.hybrid-default.v1","overrides":{"schedule":{"model":["cache_boundaries","user_messages"],"thinking":["all_turns"]}}},"v_value":0.1}`, true},
+		"package default":             {DecisionsExecutionContextV2, `{"policy":{"preset":"arc-policy.package-default.v1"}}`, true},
+		"prefer local":                {DecisionsExecutionContextV2, `{"policy":{"preset":"arc-policy.prefer-local.v1"}}`, true},
+		"prefer local threshold":      {DecisionsExecutionContextV2, `{"policy":{"preset":"arc-policy.prefer-local.v1","overrides":{"selection":{"min_p_pass":0.65}}}}`, true},
+		"absent policy":               {DecisionsExecutionContextV2, `{}`, false},
+		"policy forwarded in v1":      {DecisionsExecutionContextV1, `{"policy":{"preset":"arc-policy.hybrid-default.v1"}}`, true},
+		"policy refused in current":   {DecisionsCurrent, `{"policy":{"preset":"arc-policy.hybrid-default.v1"}}`, false},
+		"preset sent to ARC as is":    {DecisionsExecutionContextV2, `{"policy":{"preset":"arc-policy.always-local.v1"}}`, true},
+		"missing preset":              {DecisionsExecutionContextV2, `{"policy":{}}`, false},
+		"empty preset":                {DecisionsExecutionContextV2, `{"policy":{"preset":""}}`, false},
+		"overrides sent to ARC as is": {DecisionsExecutionContextV2, `{"policy":{"preset":"arc-policy.hybrid-default.v1","overrides":{"selector":"utility"}}}`, true},
+		"unknown policy member":       {DecisionsExecutionContextV2, `{"policy":{"preset":"arc-policy.hybrid-default.v1","selector":"utility"}}`, false},
+		"unacknowledged routing key":  {DecisionsExecutionContextV2, `{"policy":{"preset":"arc-policy.hybrid-default.v1"},"lookahead":1}`, false},
+		"V under its old name":        {DecisionsExecutionContextV2, `{"policy":{"preset":"arc-policy.hybrid-default.v1"},"value_usd":0.1}`, false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			config := base

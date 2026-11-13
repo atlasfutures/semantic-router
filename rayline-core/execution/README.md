@@ -20,11 +20,9 @@ the API's selected action rather than ranking marginal predictions locally.
 (pathfinder `docs/plans/2026-10-24-decisions-execution-context-v2.md`). It is
 opt-in. The core reports facts and never picks or ranks a model.
 
-- **Policy.** `decisions.routing.policy` is required: `{"preset": ...}` with an
-  optional `overrides.schedule` (`model`/`thinking` sets of `cache_boundaries`,
-  `user_messages`, `all_turns`) and, for `arc-policy.prefer-local.v1` only,
-  `overrides.selection.min_p_pass` in (0, 1). The preset id is sent to the
-  service unchanged and the service validates it. At most 16 executable bindings fit
+- **Policy.** `decisions.routing.policy` is required: `{"preset": ...}` with
+  optional `overrides`. The preset id and the overrides are sent to the
+  service unchanged and the service validates them. At most 16 executable bindings fit
   `targets[]`. Raydock writes
   `arc-policy.hybrid-default.v1` when its user sets no override; the core never
   sends an absent policy in this mode. Allowed routing keys are `policy`,
