@@ -99,6 +99,10 @@ routing:
             # as "<label>.<hash>". Separate from artifact_revision, which is
             # deployment-private.
             checkpoint_label: ""
+            # Policy-service cells: throwaway lookups that name a
+            # conversation append to its warm lookup encoder session instead
+            # of encoding from scratch. Still commits nothing.
+            lookup_sessions: false
           encoder:
             base_url: http://rayline-arc-encoder:8000
             # Set base_url to empty and populate replicas + failover to opt

@@ -712,6 +712,44 @@ lookups over the bound by outcome (`fallback`, `encoded`), and
 `max_encode_tokens`. Choose the bound from the encode time a lookup may hold
 a container for, not from the encoder's capacity.
 
+### Lookup sessions
+
+A throwaway lookup that names a conversation (`x-rayline-session`) still
+encodes its transcript from token 0, because it decides under a minted
+episode id. That covers every lookup with `routing.execution`, caller
+`routing.prices`, `exclusive` or exploration, and every lookup on a cell with
+`episode_writes` off. On a policy-service cell,
+`routes_api.lookup_sessions` lets such a lookup append to a warm encoder
+session kept per conversation instead:
+
+```yaml
+routes_api:
+  enabled: true
+  lookup_sessions: true   # default false
+```
+
+The session belongs to the conversation's lookup scope, an episode id
+derived from the authenticated user and the conversation, never the
+conversation's routed episode. The decide is sent strict with
+`session_scope: "lookup"`, so the service keeps the encoder session and
+records nothing on it: no turn, no held arm, no staging. The lookup still
+commits nothing and still carries its `prices_untracked` or
+`exploration_untracked` warning. Exploration draws on the scope are
+deterministic per conversation, as on a tracked episode.
+
+The cell sends the scope only to a service that advertises
+`lookup_sessions`. A lookup the scope cannot serve is decided one-shot within
+the same deadline, as with the setting off: a service without the capability,
+a call classified as a side call, a zdr turn, a concurrent lookup on the same
+conversation (`session_busy`) and a refused scope. The cell never closes a
+lookup session: the service ends it on its own idle TTL, and evicts lookup
+sessions before live ones when its cache is full. A throwaway lookup over
+`max_encode_tokens` is still answered without an encode.
+
+Each lookup's `routing_decision` event carries `lookup_session`,
+`session_action` and `encode_ms`, and a lookup that left its scope logs
+`rayline_routes_lookup_session_fallback` with the reason.
+
 ### Episodes
 
 Three optional request headers shape continuity:
