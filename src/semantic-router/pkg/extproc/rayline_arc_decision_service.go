@@ -63,8 +63,10 @@ func (service *raylineARCDecisionService) RouteDecision(
 	// A lookup whose scope could not be served is decided again one-shot,
 	// inside the same deadline (rayline_routes_lookup_scope.go). Only a
 	// failure the scope itself caused does this; nothing was committed or
-	// left open by the scoped attempt.
-	if err != nil && isRaylineRoutesLookupSessionFallback(err) {
+	// left open by the scoped attempt. A lookup its caller already gave up
+	// on starts no second encode: a detached decision outlives that
+	// deadline, and its answer would be discarded.
+	if err != nil && isRaylineRoutesLookupSessionFallback(err) && raylineRoutesCallerWaits(ctx, request) {
 		return service.routeDecision(ctx, request, false)
 	}
 	return decided, err

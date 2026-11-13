@@ -738,10 +738,15 @@ commits nothing and still carries its `prices_untracked` or
 deterministic per conversation, as on a tracked episode.
 
 The cell sends the scope only to a service that advertises
-`lookup_sessions`. A lookup the scope cannot serve is decided one-shot within
-the same deadline, as with the setting off: a service without the capability,
-a call classified as a side call, a zdr turn, a concurrent lookup on the same
-conversation (`session_busy`) and a refused scope. The cell never closes a
+`lookup_sessions`, and never from a cell with `policy_service.replicas`: the
+capability is read once for the cell, and a lookup could fail over to an
+older replica that would run it as a strict episode. A lookup the scope
+cannot serve is decided one-shot within the same deadline, as with the
+setting off: a service without the capability, a replica pool, a call
+classified as a side call, a zdr turn, a concurrent lookup on the same
+conversation (`session_busy`) and a refused scope. On a cell with policy
+sessions, each lookup still ends the Modal session it started, so the next
+one may land on another container and encode from scratch. The cell never closes a
 lookup session: the service ends it on its own idle TTL, and evicts lookup
 sessions before live ones when its cache is full. A throwaway lookup over
 `max_encode_tokens` is still answered without an encode.

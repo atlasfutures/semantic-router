@@ -17,6 +17,7 @@ limitations under the License.
 package extproc
 
 import (
+	"context"
 	"errors"
 	"time"
 
@@ -103,6 +104,8 @@ func (scorer *policyServiceScorer) policyLookupSessionUnservable(
 	sideCall bool,
 ) string {
 	switch {
+	case !scorer.lookupSessionsServable:
+		return "replica_pool"
 	case !scorer.advertises(raylinearc.PolicyCapabilityLookupSessions):
 		// An older service ignores session_scope and would run the call as a
 		// strict episode on the scope, holding its arm for the next lookup.
@@ -154,6 +157,17 @@ func raylineRoutesLookupSessionFallback(
 		"reason":     reason,
 	})
 	return &raylineARCSelectionFailure{class: arcFailureRoutesLookupSessionFallback}
+}
+
+// raylineRoutesCallerWaits reports whether the lookup's caller still waits:
+// neither the decision's context nor the caller's own deadline has passed.
+// An ephemeral lookup that holds an admission slot decides on a context
+// detached from its caller, so the caller's deadline travels on the request.
+func raylineRoutesCallerWaits(ctx context.Context, request routerruntime.RouteDecisionRequest) bool {
+	if ctx.Err() != nil {
+		return false
+	}
+	return request.CallerDeadline.IsZero() || time.Now().Before(request.CallerDeadline)
 }
 
 // isRaylineRoutesLookupSessionFallback reports whether a decision failed only

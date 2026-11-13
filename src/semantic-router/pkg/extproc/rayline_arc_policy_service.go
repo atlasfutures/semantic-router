@@ -148,6 +148,9 @@ type policyServiceScorer struct {
 	// optional work and never takes a slot a turn's decide could need.
 	appendAdmission  *raylinearc.AdmissionGate
 	deltaUnsupported atomic.Bool
+	// lookupSessionsServable is a cell that may send session_scope at all:
+	// one policy service, no replica pool (rayline_routes_lookup_scope.go).
+	lookupSessionsServable bool
 }
 
 // policySideCallStrictFor is how long a strict cell keeps its side calls
@@ -234,6 +237,11 @@ func newPolicyServiceScorer(
 	// Only a strict cell stages turns, and only one whose episodes stay on
 	// one service (no replica pool). A delta decides on the same tokens as a
 	// full request, so an eval cell may send them too.
+	// Lookup sessions need every service the cell decides on to advertise
+	// them, and the capability list is the cell's, not each replica's: a
+	// replica pool may fail a lookup over to an older replica, which would
+	// run it as a strict episode on its lookup scope.
+	scorer.lookupSessionsServable = len(policy.Replicas) == 0
 	if policy.SendsTurnDeltas() && scorer.episodeMode == "" && len(policy.Replicas) == 0 {
 		scorer.delta = true
 		scorer.appendTimeout = policyAppendTimeout(time.Duration(policy.TotalTimeoutSeconds)*time.Second, scorer.busyWait)
@@ -786,11 +794,6 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	if sideCall {
 		request.EpisodeMode = scorer.sideCallEpisodeMode(selector.now())
 	}
-	// A lookup scope is strict whatever the cell's mode: the service keeps
-	// its encoder session, and records nothing on it.
-	if arcContext.RoutesLookupSession {
-		request.EpisodeMode, request.SessionScope = "", raylinearc.PolicySessionScopeLookup
-	}
 	scorer.decisionsV2.apply(&request)
 	if weight := arcContext.TurnCostWeight; weight != nil {
 		// Configurable ARC: the turn's own V, within the bounds readiness
@@ -855,6 +858,12 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 			"class": class, "episode_id_hash": arcContext.EpisodeIDHash,
 		})
 		return nil, arcSelectionFailure(class)
+	}
+	// A lookup scope is strict whatever the cell's mode or the lookup's
+	// routing.execution (which would send it relaxed): the service keeps its
+	// encoder session, and records nothing on it.
+	if arcContext.RoutesLookupSession {
+		request.EpisodeMode, request.SessionScope = "", raylinearc.PolicySessionScopeLookup
 	}
 	// The episode's cache evidence is read at each call, so a retry's gaps
 	// are as of that call, on the wall clock the commit dates warmth by. A

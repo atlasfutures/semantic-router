@@ -418,3 +418,62 @@ func TestRaylineRoutesLookupSessionsEndToEnd(t *testing.T) {
 		}
 	}
 }
+
+// A lookup with routing.execution, which is otherwise sent relaxed, is sent
+// strict on its scope: the execution helpers run before the scope is set.
+func TestScopedExecutionLookupIsSentStrict(t *testing.T) {
+	fixture := executionFixture(t, false)
+	scorer := fixture.selector.armed.Load().scorer.(*policyServiceScorer)
+	scorer.setAdvertised(append(append([]string{}, *scorer.advertised.Load()...), raylinearc.PolicyCapabilityLookupSessions))
+	controls := executionControls(t, fixture)
+	state, _ := raylinearc.NewEpisodeState(2)
+	_, err := fixture.selectOnWith(t, state, lookupBody(t), func(arcContext *selection.RaylineARCSelectionContext) {
+		arcContext.RouteControls = controls
+		arcContext.RoutesLookup, arcContext.RoutesThrowaway = true, true
+		if !applyRaylineRoutesLookupScope(arcContext, lookupScopeTestScope) {
+			t.Fatal("the lookup was not placed on its scope")
+		}
+	})
+	if err != nil {
+		t.Fatalf("select: %v", err)
+	}
+	sent := fixture.fake.received()[0]
+	if sent.SessionScope != raylinearc.PolicySessionScopeLookup || sent.EpisodeMode != "" || sent.ContextEpoch != "e7" {
+		t.Fatalf("sent scope %q mode %q epoch %q", sent.SessionScope, sent.EpisodeMode, sent.ContextEpoch)
+	}
+}
+
+// A cell with a replica pool never sends the scope: the capability is read
+// once for the cell, and a lookup may fail over to an older replica.
+func TestScopedLookupFallsBackOnAReplicaPool(t *testing.T) {
+	fixture := newPolicySelectorFixture(t, "")
+	advertiseLookupSessions(fixture)
+	fixture.selector.armedComponents().scorer.(*policyServiceScorer).lookupSessionsServable = false
+	if _, err := fixture.scopedLookupOn(t, lookupScopeTestScope); !isRaylineRoutesLookupSessionFallback(err) {
+		t.Fatalf("err = %v, want the lookup-session fallback", err)
+	}
+	if got := len(fixture.fake.received()); got != 0 {
+		t.Fatalf("%d decides sent from a replica pool", got)
+	}
+	pooled := policyTestDecision("")
+	pooled.Algorithm.RaylineARC.PolicyService.Replicas = []config.RaylineARCEncoderReplicaConfig{{}}
+	if newPolicyServiceScorer(&config.RouterConfig{}, pooled).lookupSessionsServable {
+		t.Fatal("a replica-pool cell may send session_scope")
+	}
+	if !newPolicyServiceScorer(&config.RouterConfig{}, policyTestDecision("")).lookupSessionsServable {
+		t.Fatal("a single-service cell may not send session_scope")
+	}
+}
+
+// A scoped lookup whose caller has already gone starts no one-shot encode.
+func TestRouteDecisionSkipsTheFallbackPastTheCallersDeadline(t *testing.T) {
+	fixture := newLookupScopeFixture(t)
+	fixture.selector.failScoped = true
+	_, err := fixture.router.routeDecisionRuntimeState().RouteDecision(context.Background(), routerruntime.RouteDecisionRequest{
+		Body: anthropicBody("hello"), DecisionID: "rt_scope_late", Surface: routerruntime.RouteDecisionSurfaceRoutes,
+		Ephemeral: true, LookupScope: lookupScopeTestScope, CallerDeadline: time.Now().Add(-time.Millisecond),
+	})
+	if !isRaylineRoutesLookupSessionFallback(err) || len(fixture.selector.contexts) != 1 {
+		t.Fatalf("err = %v after %d selections, want the scoped attempt alone", err, len(fixture.selector.contexts))
+	}
+}
