@@ -107,6 +107,12 @@ func v5RouterWithManifest(
 func v5Turn(t *testing.T, router *OpenAIRouter, fake *fakePolicyService, action, episode, client string) ([]byte, *RequestContext) {
 	t.Helper()
 	fake.chooseWith(func(raylinearc.PolicyDecisionRequest) string { return action })
+	return v5TurnWithChooser(t, router, episode, client)
+}
+
+// v5TurnWithChooser is v5Turn with the fake's chooser already set.
+func v5TurnWithChooser(t *testing.T, router *OpenAIRouter, episode, client string) ([]byte, *RequestContext) {
+	t.Helper()
 	ctx := &RequestContext{
 		Headers: map[string]string{}, RequestID: fmt.Sprintf("v5-%s-%d", episode, time.Now().UnixNano()),
 		StartTime: time.Now(), TraceContext: context.Background(),
