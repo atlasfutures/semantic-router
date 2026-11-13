@@ -132,3 +132,30 @@ func TestRouteFeedPricesPassCallerWorldsAndAbsentFeedsThrough(t *testing.T) {
 		t.Fatal("a cell without a scorer changed the feed")
 	}
 }
+
+// A remapped arm takes its dispatched rate even when an unremapped action
+// reading the same id is bound before it.
+func TestRouteFeedPricesRemappedArmWinsWhateverTheActionOrder(t *testing.T) {
+	scorer := feedScorer()
+	scorer.actionOrder = append([]string{"flash-own"}, scorer.actionOrder...)
+	scorer.bindings["flash-own"] = policyBinding{arm: 0, dispatchArm: 0, model: "deepseek-v4.1-flash"}
+	feed := taggedFeed()
+	feed.Rates["deepseek/deepseek-v4.1-flash@cohere"] = callerRate(0.5, 2)
+	sent := routeFeedPrices(scorer, feed)
+	if got := routeRateLegs(sent.Rates["deepseek/deepseek-v4.1-flash"]); got != [4]float64{0.098, 0, 0.098, 0.294} {
+		t.Fatalf("flash = %v, want the dispatched 1017 deepinfra rate", got)
+	}
+}
+
+// An own-id entry with a null leg is not the served rate with that leg 0:
+// the translated rate goes out.
+func TestRouteFeedPricesTellANullLegFromZero(t *testing.T) {
+	feed := taggedFeed()
+	own := callerRate(0.098, 0.294)
+	own.CacheRead = nil
+	feed.Rates["deepseek/deepseek-v4.1-flash"] = own
+	sent := routeFeedPrices(feedScorer(), feed)
+	if sent == feed || sent.Rates["deepseek/deepseek-v4.1-flash"].CacheRead == nil {
+		t.Fatal("a null cache_read leg was taken for the served rate's 0")
+	}
+}

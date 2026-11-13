@@ -22,6 +22,7 @@ package extproc
 // sent, since the echo becomes the decision's price audit.
 
 import (
+	"reflect"
 	"time"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
@@ -228,7 +229,7 @@ func policySelectedPredictedCost(response *raylinearc.PolicyDecisionResponse) *f
 // endpoint (OpenRouterProviderOrder[0]): the rate the cell's pricing block
 // assumes for a worker that may fall back. A remapped arm takes its served
 // rate even over an entry under its own id, as routeServicePrices gives a
-// caller's dispatched price precedence; any other arm's id is only added
+// caller's dispatched price precedence, whatever the action order; any other arm's id is only added
 // where the feed has none, and no other entry changes. Between two
 // dispatched workers whose arms read one id, the first bound action's wins.
 // The feed is copied, never changed in place: the cache shares it.
@@ -237,20 +238,29 @@ func routeFeedPrices(scorer *policyServiceScorer, prices *raylinearc.PolicyRouti
 		return prices
 	}
 	add := map[string]raylinearc.PolicyRoutingRate{}
-	for _, arm := range routeServicePriceArms(scorer) {
-		if _, set := add[arm.service]; set {
-			continue
-		}
-		if _, listed := prices.Rates[arm.service]; listed && arm.service == arm.served {
-			continue
-		}
-		if rate, ok := feedServedRate(prices, arm.served, scorer.workers[arm.dispatch].OpenRouterProviderOrder); ok {
-			add[arm.service] = rate
+	arms := routeServicePriceArms(scorer)
+	// Remapped arms first, so their dispatched rate wins over an unremapped
+	// arm reading the same id, whatever the action order.
+	for _, remapped := range []bool{true, false} {
+		for _, arm := range arms {
+			if (arm.service != arm.served) != remapped {
+				continue
+			}
+			if _, set := add[arm.service]; set {
+				continue
+			}
+			if _, listed := prices.Rates[arm.service]; listed && !remapped {
+				continue
+			}
+			if rate, ok := feedServedRate(prices, arm.served, scorer.workers[arm.dispatch].OpenRouterProviderOrder); ok {
+				add[arm.service] = rate
+			}
 		}
 	}
 	changed := false
 	for key, rate := range add {
-		if existing, listed := prices.Rates[key]; !listed || routeRateLegs(existing) != routeRateLegs(rate) {
+		// Compare the whole row, a null leg included: absent is not zero.
+		if existing, listed := prices.Rates[key]; !listed || !reflect.DeepEqual(existing, rate) {
 			changed = true
 			break
 		}
