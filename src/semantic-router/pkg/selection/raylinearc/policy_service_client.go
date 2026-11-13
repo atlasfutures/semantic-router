@@ -268,6 +268,7 @@ var policyMediaRefusalSubReasons = map[string]bool{
 	"connection":           true,
 	"http_status":          true,
 	"pinned_bytes_missing": true,
+	// unsupported_image_media_type, listed above, is also a fetch sub_reason.
 }
 
 // PolicyMediaRefusalSubReason is a media refusal's bounded sub_reason.
@@ -708,7 +709,10 @@ func (client *PolicyServiceClient) exchange(
 					refusal.Detail = map[string]any{"reason": reason}
 				}
 			case PolicyMediaRefusedClass:
-				refusal.Detail = map[string]any{"sub_reason": PolicyMediaRefusalSubReason(failure.Detail)}
+				// The reason is one of the image refusals policyImageRefusal
+				// admits (media_refused, encoder_refused,
+				// remote_image_fetch_failed), so it stays bounded.
+				refusal.Detail = map[string]any{"reason": failure.Detail["reason"], "sub_reason": PolicyMediaRefusalSubReason(failure.Detail)}
 			case PolicyDecisionsV2RefusedClass, PolicyExplorationRefusedClass, PolicySignalRefusedClass:
 				refusal.Detail = map[string]any{"reason": failure.Detail["reason"]}
 			}
