@@ -248,6 +248,11 @@ func (decoder *responsesStreamDecoder) pushFrame(frame []byte) ([]llmprotocol.Ev
 	if err != nil {
 		return nil, nil, err
 	}
+	// The [DONE] after the terminal event ended the stream: any frame after
+	// it, a comment or a data-less event included, is rejected.
+	if decoder.doneAfterTerminal {
+		return nil, nil, invalidProviderResponse("stream_event_after_terminal", "Responses stream sent a frame after its [DONE] sentinel")
+	}
 	if parsed.commentOnly() {
 		return decoder.keepalive()
 	}
@@ -264,10 +269,8 @@ func (decoder *responsesStreamDecoder) pushFrame(frame []byte) ([]llmprotocol.Ev
 		// OpenRouter's /v1/responses sends [DONE] after the terminal event.
 		// The turn is complete by then; the sentinel ends the stream, and is
 		// dropped with a diagnostic as the Anthropic decoder drops it.
-		if !decoder.doneAfterTerminal {
-			decoder.doneAfterTerminal = true
-			return nil, afterTerminalDiagnostic(llmprotocol.OpenAIResponsesV1, "terminal_event", "[DONE]"), nil
-		}
+		decoder.doneAfterTerminal = true
+		return nil, afterTerminalDiagnostic(llmprotocol.OpenAIResponsesV1, "terminal_event", "[DONE]"), nil
 	}
 	if decoder.terminal {
 		return nil, nil, invalidProviderResponse("stream_event_after_terminal", "Responses stream emitted data after its terminal event")

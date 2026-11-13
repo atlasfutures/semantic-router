@@ -422,6 +422,8 @@ func TestResponsesStreamDoneSentinelEndsACompletedStream(t *testing.T) {
 	for _, after := range []string{
 		"data: [DONE]\n\n",
 		"event: response.in_progress\ndata: {\"type\":\"response.in_progress\",\"sequence_number\":8}\n\n",
+		": keepalive\n\n",
+		"event: response.in_progress\n\n",
 	} {
 		decoder := OpenAIResponsesCodec{}.NewDecoder(
 			llmprotocol.StreamContext{Context: context.Background()}, llmprotocol.DefaultPolicy(),
@@ -437,7 +439,7 @@ func TestResponsesStreamDoneSentinelEndsACompletedStream(t *testing.T) {
 			t.Fatalf("[DONE] after the terminal event: events=%+v diagnostics=%+v err=%v", events, diagnostics, err)
 		}
 		// The sentinel ended the stream: nothing may follow it, not even
-		// another [DONE].
+		// another [DONE], an SSE comment or a data-less event.
 		_, _, err = decoder.Push([]byte(after))
 		assertProtocolError(t, err, llmprotocol.ErrorUpstreamUnavailable, "stream_event_after_terminal")
 	}
