@@ -24,6 +24,14 @@ func cloudTransport(deployment Deployment) string {
 	return deployment.CloudTransport
 }
 
+// modelPinPaths is the gateway endpoint that serves a model_pin deployment of
+// each protocol it qualifies.
+var modelPinPaths = map[llmprotocol.WireFormat]string{
+	llmprotocol.AnthropicMessagesV1: "/v1/messages",
+	llmprotocol.OpenAIChatV1:        "/v1/chat/completions",
+	llmprotocol.OpenAIResponsesV1:   "/v1/responses",
+}
+
 func validateCloudTransport(deployment Deployment) error {
 	if deployment.Kind != "cloud" {
 		if deployment.CloudTransport != "" {
@@ -42,8 +50,9 @@ func validateCloudTransport(deployment Deployment) error {
 		if deployment.DispatchProfileSHA256 != "" || deployment.IssuerSHA256 != "" || deployment.ProviderPin != nil {
 			return fmt.Errorf("model_pin cannot claim an exact dispatch profile, issuer or provider pin")
 		}
-		if (deployment.Protocol != llmprotocol.OpenAIChatV1 && deployment.Protocol != llmprotocol.AnthropicMessagesV1) || deployment.RegistryProvider != "openrouter" {
-			return fmt.Errorf("model_pin currently qualifies OpenRouter Chat Completions and Messages only")
+		path, qualified := modelPinPaths[deployment.Protocol]
+		if !qualified || deployment.RegistryProvider != "openrouter" {
+			return fmt.Errorf("model_pin currently qualifies OpenRouter Chat Completions, Messages and Responses only")
 		}
 		// registry_model names the registry cell whose controls were measured;
 		// wire_model is the gateway's id for that same model. The echo check
@@ -52,10 +61,6 @@ func validateCloudTransport(deployment Deployment) error {
 			return fmt.Errorf("model_pin requires a concrete registry model and wire_model naming it: the registry id, or its gateway id")
 		}
 		endpoint, err := url.Parse(deployment.URL)
-		path := "/v1/chat/completions"
-		if deployment.Protocol == llmprotocol.AnthropicMessagesV1 {
-			path = "/v1/messages"
-		}
 		if err != nil || !strings.HasSuffix(endpoint.Path, path) {
 			return fmt.Errorf("model_pin requires the gateway %s endpoint", path)
 		}

@@ -68,6 +68,43 @@ func TestModelPinTransportsPrivateAppend(t *testing.T) {
 	}
 }
 
+// Codex speaks only Responses, so a cloud model ARC picks for it is served by
+// a model_pin deployment on the gateway's /v1/responses endpoint.
+func TestModelPinServesResponses(t *testing.T) {
+	for name, tc := range map[string]struct {
+		selected string
+		status   int
+	}{"pinned": {"moonshotai/kimi-k3", http.StatusOK}, "other model": {"moonshotai/kimi-k2", http.StatusBadGateway}} {
+		t.Run(name, func(t *testing.T) {
+			calls := 0
+			gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				body, _ := io.ReadAll(r.Body)
+				if r.URL.Path != "/v1/responses" || r.Header.Get("X-Workshop-Required-Model") != "moonshotai/kimi-k3" {
+					t.Errorf("model pin dispatched to %s requiring %q", r.URL.Path, r.Header.Get("X-Workshop-Required-Model"))
+				}
+				if !bytes.Contains(body, []byte(`"model":"moonshotai/kimi-k3"`)) || !bytes.Contains(body, []byte(`"store":false`)) || bytes.Contains(body, []byte(`"provider"`)) {
+					t.Errorf("model pin Responses body: %s", body)
+				}
+				modelPinHeaders(w.Header())
+				w.Header().Set("X-Rayline-Selected-Model", tc.selected)
+				_, _ = io.WriteString(w, `{"id":"resp1","object":"response","created_at":1,"status":"completed","model":"moonshotai/kimi-k3","output":[{"type":"message","id":"msg_1","role":"assistant","status":"completed","content":[{"type":"output_text","text":"ready","annotations":[]}]}],"usage":{"input_tokens":20,"output_tokens":1,"total_tokens":21}}`)
+			}))
+			defer gateway.Close()
+			config := onProtocol(t, modelPinConfig(t, gateway.URL), llmprotocol.OpenAIResponsesV1)
+			// Kimi's Responses cell admits only the native default control.
+			action := &config.Actions[0]
+			action.ControlID = "628d285537ca7cdb52c4bd3433cea7a1ec36005a14dbc67ffa1c40487d7b8ad0"
+			action.Control = publicControl(t, action.ControlID)
+			_, server := executorWithHTTPDecisions(t, config, &decisionCapture{})
+			status, answer := executeHTTP(t, server.URL, "/v1/responses", `{"model":"arc-1.0","store":false,"include":["reasoning.encrypted_content"],"instructions":"You are Codex.","input":[{"role":"user","content":"hello"}]}`, "model-pin-responses-"+name)
+			if status != tc.status || calls != 1 || (status == http.StatusOK && !bytes.Contains(answer, []byte("ready"))) {
+				t.Fatalf("model pin Responses: %d %s (calls=%d)", status, answer, calls)
+			}
+		})
+	}
+}
+
 func TestModelPinRejectsMissingOrContradictoryReceiptWithoutRetry(t *testing.T) {
 	for _, reason := range []string{"", "fallback", "arc_model"} {
 		t.Run(fmt.Sprintf("reason=%s", reason), func(t *testing.T) {
@@ -102,7 +139,8 @@ func TestModelPinScopeAndNativeControlAreExplicit(t *testing.T) {
 		"spaced":    func(d *Deployment) { d.WireModel = "kimi k3" },
 		"other":     func(d *Deployment) { d.WireModel = "claude-opus-5-5" },
 		"registry":  func(d *Deployment) { d.RegistryModel = "kimi-k3" },
-		"responses": func(d *Deployment) { d.Protocol = llmprotocol.OpenAIResponsesV1 },
+		"protocol":  func(d *Deployment) { d.Protocol = "google.generate_content.v1" },
+		"path":      func(d *Deployment) { d.Protocol = llmprotocol.OpenAIResponsesV1 },
 	} {
 		t.Run(name, func(t *testing.T) {
 			invalid := deployment

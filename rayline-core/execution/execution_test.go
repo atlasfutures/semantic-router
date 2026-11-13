@@ -66,10 +66,8 @@ func onProtocol(t *testing.T, config Config, protocol llmprotocol.WireFormat) Co
 			continue
 		}
 		switch {
-		case deployment.Kind == "cloud" && protocol == llmprotocol.AnthropicMessagesV1:
-			deployment.URL = strings.TrimSuffix(deployment.URL, "/v1/chat/completions") + "/v1/messages"
 		case deployment.Kind == "cloud":
-			t.Fatalf("model_pin fixture %s has no %s endpoint", deployment.ID, protocol)
+			deployment.URL = strings.TrimSuffix(deployment.URL, modelPinPaths[deployment.Protocol]) + modelPinPaths[protocol]
 		case protocol == llmprotocol.AnthropicMessagesV1:
 			deployment.RegistryProvider = "anthropic"
 		default:

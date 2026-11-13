@@ -392,7 +392,8 @@ must also match that profile. The gateway verifies provider-ready bytes and
 returns identity receipts; it performs no second routing decision.
 
 The explicit `cloud_transport: "model_pin"` uses an existing model router's
-Chat or Messages endpoint with a concrete qualified model: `registry_model` (an
+Messages, Chat or Responses endpoint (`/v1/messages`, `/v1/chat/completions`
+or `/v1/responses`, matching the deployment's protocol) with a concrete qualified model: `registry_model` (an
 OpenRouter registry cell) names the measured model and `wire_model` the router's
 id for it: the registry id itself, or the router's catalog id derived from it
 (the provider prefix dropped and version dots spelled as dashes, such as
