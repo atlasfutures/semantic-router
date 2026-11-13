@@ -62,6 +62,9 @@ type policyBinding struct {
 	level       string
 	// model is the action's trained model, when the binding declares it.
 	model string
+	// base is the effort a v5 action is dispatched at, which the episode's
+	// effort pin compares (rayline_arc_effort_pin.go); nil for a v4 binding.
+	base *effortBase
 }
 
 // policyServiceScorer carries the worker catalog and action bindings. It does
@@ -97,6 +100,8 @@ type policyServiceScorer struct {
 	workers     []raylinearc.WorkerManifest
 	bindings    map[string]policyBinding
 	actionOrder []string
+	// effortOverrides is the cell's dispatch_effort_overrides, by worker.
+	effortOverrides map[string]string
 	// fallback is ADR 0120's fallback: excluded models leave the offer, and
 	// an excluded held model forces a decision.
 	fallback bool
@@ -214,6 +219,7 @@ func newPolicyServiceScorer(
 	generation := strconv.FormatUint(raylineARCScorerGeneration.Add(1), 10)
 	scorer := &policyServiceScorer{
 		fallback:         policy.FallbackEnabled(),
+		effortOverrides:  policy.DispatchEffortOverrides,
 		schedule:         policy.ModelSchedule,
 		twoStage:         policy.PackageTwoStage(),
 		attestable:       policy.PackageTwoStage() && policy.PackageStageOneByModel(),
@@ -259,10 +265,15 @@ func newPolicyServiceScorer(
 	}
 	for _, binding := range policy.Bindings {
 		level, model := binding.Level, binding.Model
+		var base *effortBase
 		// A v5 binding is only its action and worker; the package names the
 		// model and the control's level.
 		if action, ok := policy.PackageV5Action(binding.ActionID); ok {
 			level, model = "", action.Model
+			dispatched, sentOn, _ := raylineARCDispatchedControl(policy, binding.ActionID, action.Control)
+			override, overridden := policy.DispatchEffortOverride(sentOn)
+			shape := effortBaseOf(dispatched, override, overridden)
+			base = &shape
 			if action.Control.Instruction != nil {
 				level = action.Control.Instruction.Level
 			}
@@ -275,7 +286,7 @@ func newPolicyServiceScorer(
 		// policy still holds and offers it on its own worker.
 		worker, _ := policy.DispatchWorker(binding.Worker)
 		scorer.bindings[binding.ActionID] = policyBinding{
-			arm: index[binding.Worker], dispatchArm: index[worker], level: level, model: model,
+			arm: index[binding.Worker], dispatchArm: index[worker], level: level, model: model, base: base,
 		}
 		scorer.actionOrder = append(scorer.actionOrder, binding.ActionID)
 	}
@@ -665,7 +676,13 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	}
 	fallback := scorer.fallback && !sideCall && turn != nil &&
 		(len(turn.Exclusions) > 0 || len(cellOut) > 0 || len(families) > 0)
-	offer := func(cellOut map[int]string) ([]string, int, bool) {
+	// Each worker stays at the base its transcript started at
+	// (rayline_arc_effort_pin.go).
+	pins := scorer.effortPins(state.Controls)
+	pinMasked, pinLifted := 0, false
+	var offer func(cellOut map[int]string) ([]string, int, bool)
+	offer = func(cellOut map[int]string) ([]string, int, bool) {
+		pinMasked = 0
 		held, forced := held, false
 		out := func(arm int, model string) bool {
 			_, routeOut := cellOut[arm]
@@ -696,7 +713,17 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 			if out(sent, scorer.dispatchedModel(actionID)) {
 				continue
 			}
+			if scorer.effortPinned(actionID, pins) {
+				pinMasked++
+				continue
+			}
 			available = append(available, actionID)
+		}
+		if len(available) == 0 && pinMasked > 0 {
+			// The pin is advice: a turn it would leave nothing to serve
+			// switches effort, a cache boundary, rather than failing.
+			pins, pinLifted = nil, true
+			return offer(cellOut)
 		}
 		return available, held, forced
 	}
@@ -733,6 +760,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	} else {
 		held = offeredHeld
 	}
+	logRaylineARCEffortPin(arcContext, pins, pinMasked, pinLifted)
 	logRaylineARCPolicyTurn(arcContext.EpisodeIDHash, arcContext.Fork, signals, transition, state.TurnIndex, turn, held >= 0, retained)
 	// Every model excluded leaves nothing to serve, and the turn fails.
 	if len(available) == 0 {

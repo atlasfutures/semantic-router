@@ -44,6 +44,15 @@ func v5Router(t *testing.T, glmFormat string) (*OpenAIRouter, *fakePolicyService
 
 // v5RouterWith is v5Router with edit applied to the rendered config.
 func v5RouterWith(t *testing.T, glmFormat string, edit func(string) string) (*OpenAIRouter, *fakePolicyService) {
+	t.Helper()
+	return v5RouterWithManifest(t, glmFormat, edit, nil)
+}
+
+// v5RouterWithManifest is v5RouterWith with editManifest applied to the
+// fixture's manifest; it returns the action ids the fake service may choose.
+func v5RouterWithManifest(
+	t *testing.T, glmFormat string, edit func(string) string, editManifest func([]byte) ([]byte, []string),
+) (*OpenAIRouter, *fakePolicyService) {
 	if !strings.Contains(glmFormat, ":") {
 		glmFormat = "api_format: " + glmFormat
 	}
@@ -52,6 +61,12 @@ func v5RouterWith(t *testing.T, glmFormat string, edit func(string) string) (*Op
 	manifest, err := os.ReadFile("../selection/raylinearc/testdata/policy_service/package_manifest.v5.json")
 	if err != nil {
 		t.Fatal(err)
+	}
+	actions := []string{v5OpusAction, v5GLMNone, v5GLMUp}
+	if editManifest != nil {
+		var extra []string
+		manifest, extra = editManifest(manifest)
+		actions = append(actions, extra...)
 	}
 	// The fixture names actions by trained model, as published packages do,
 	// unlike the provider model ids the workers serve and the registry keys
@@ -66,7 +81,7 @@ func v5RouterWith(t *testing.T, glmFormat string, edit func(string) string) (*Op
 	}
 	sum := sha256.Sum256(manifest)
 	packageSHA := hex.EncodeToString(sum[:])
-	fake := newFakePolicyService(t, policyTestAlias, packageSHA, []string{v5OpusAction, v5GLMNone, v5GLMUp})
+	fake := newFakePolicyService(t, policyTestAlias, packageSHA, actions)
 	rendered := strings.NewReplacer(
 		"{{POLICY_URL}}", fake.URL(), "{{ALIAS}}", policyTestAlias, "{{PACKAGE}}", packageSHA,
 		"{{MANIFEST}}", manifestPath, "{{GLM_FORMAT}}", glmFormat,
@@ -92,6 +107,12 @@ func v5RouterWith(t *testing.T, glmFormat string, edit func(string) string) (*Op
 func v5Turn(t *testing.T, router *OpenAIRouter, fake *fakePolicyService, action, episode, client string) ([]byte, *RequestContext) {
 	t.Helper()
 	fake.chooseWith(func(raylinearc.PolicyDecisionRequest) string { return action })
+	return v5TurnWithChooser(t, router, episode, client)
+}
+
+// v5TurnWithChooser is v5Turn with the fake's chooser already set.
+func v5TurnWithChooser(t *testing.T, router *OpenAIRouter, episode, client string) ([]byte, *RequestContext) {
+	t.Helper()
 	ctx := &RequestContext{
 		Headers: map[string]string{}, RequestID: fmt.Sprintf("v5-%s-%d", episode, time.Now().UnixNano()),
 		StartTime: time.Now(), TraceContext: context.Background(),

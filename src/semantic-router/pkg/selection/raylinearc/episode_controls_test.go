@@ -121,3 +121,26 @@ func TestControlPlacementsAreBounded(t *testing.T) {
 		t.Fatalf("placements not bounded to the most recent: %d, oldest %q", len(placements), placements[0].Key)
 	}
 }
+
+// An episode recorded when placers were keyed per control shape resumes each
+// transcript from the shape its last request was rendered with.
+func TestALegacyShapeKeyedPlacerResumesItsTranscript(t *testing.T) {
+	high, low := "high", "low"
+	state := &EpisodeState{Controls: []ControlPlacement{
+		{Key: "opus|messages|high|-|true", State: thinkingcontrol.PlacerState{First: &thinkingcontrol.Control{Native: high}}},
+		{Key: "opus|messages|default|-|false", State: thinkingcontrol.PlacerState{First: &thinkingcontrol.Control{Native: low}}},
+		{Key: "glm|messages|default|-|true", State: thinkingcontrol.PlacerState{}},
+	}}
+	resumed, found := state.ControlPlacementFor(thinkingcontrol.PlacementKey("opus", "messages"))
+	if !found || resumed.First == nil || resumed.First.Native != low {
+		t.Fatalf("resumed %+v, %v; want the most recent opus|messages shape", resumed, found)
+	}
+	if _, found := state.ControlPlacementFor(thinkingcontrol.PlacementKey("opus", "chat")); found {
+		t.Fatal("another format's transcript resumed")
+	}
+	// The transcript's next commit replaces its per-shape states.
+	next := WithControlPlacement(state.Controls, ControlPlacement{Key: thinkingcontrol.PlacementKey("opus", "messages"), State: resumed})
+	if len(next) != 2 || next[0].Key != "glm|messages|default|-|true" || next[1].Key != "opus|messages" {
+		t.Fatalf("placements after the commit: %+v", next)
+	}
+}
