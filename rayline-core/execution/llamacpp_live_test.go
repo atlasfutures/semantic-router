@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/atlasfutures/semantic-router/rayline-core/cachecontext"
-	"github.com/atlasfutures/semantic-router/rayline-core/thinkingcontrol"
 )
 
 // Opt-in real-runtime qualification. This test counts only; it never starts
@@ -36,20 +35,11 @@ func TestLlamaCPPLiveQualificationAndPrefix(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if deployment.InbandSystem == thinkingcontrol.InbandSystemFold {
-			body, err = thinkingcontrol.FoldInbandSystem(body, thinkingcontrol.FormatChat)
-			if err != nil {
-				t.Fatal(err)
-			}
-		}
 		measurement, err := cachecontext.MeasurePrompt(t.Context(), counter, cachecontext.PreparedPrompt{Identity: counter.Identity(), ContextEpoch: "live-qualified-epoch", Body: body})
 		if err != nil {
 			t.Fatal(err)
 		}
 		return measurement
-	}
-	if deployment.InbandSystem == thinkingcontrol.InbandSystemFold {
-		messages = append(messages, map[string]any{"role": "system", "content": []any{map[string]any{"type": "text", "text": "Environment for the current turn.", "cache_control": map[string]string{"type": "ephemeral"}}}})
 	}
 	previous := measure(messages)
 	messages = append(messages,
@@ -76,12 +66,6 @@ func TestLlamaCPPLiveQualificationAndPrefix(t *testing.T) {
 		body, err := os.ReadFile(requestPath)
 		if err != nil {
 			t.Fatal(err)
-		}
-		if deployment.InbandSystem == thinkingcontrol.InbandSystemFold {
-			body, err = thinkingcontrol.FoldInbandSystem(body, thinkingcontrol.FormatChat)
-			if err != nil {
-				t.Fatal(err)
-			}
 		}
 		measured, err := counter.Count(t.Context(), cachecontext.PreparedPrompt{Identity: counter.Identity(), ContextEpoch: "captured-harness", Body: body})
 		if err != nil {

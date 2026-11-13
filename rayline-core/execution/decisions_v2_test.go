@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/atlasfutures/semantic-router/rayline-core/cachecontext"
+	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
 	"github.com/atlasfutures/semantic-router/rayline-core/thinkingcontrol"
 )
 
@@ -185,6 +186,8 @@ type upstreamFixture struct {
 	// that is forwarded, not a 5xx a local runtime falls back from.
 	reject int
 	fail   int
+	// messages answers in the Messages format, for a Messages deployment.
+	messages bool
 }
 
 func (fixture *upstreamFixture) count() int {
@@ -202,7 +205,7 @@ func chatUpstream(t *testing.T, fixture *upstreamFixture, cloud bool) *httptest.
 		}
 		fixture.mu.Lock()
 		fixture.bodies = append(fixture.bodies, body)
-		reject, fail := fixture.reject > 0, fixture.fail > 0 && fixture.reject == 0
+		reject, fail, messages := fixture.reject > 0, fixture.fail > 0 && fixture.reject == 0, fixture.messages
 		if reject {
 			fixture.reject--
 		}
@@ -223,11 +226,25 @@ func chatUpstream(t *testing.T, fixture *upstreamFixture, cloud bool) *httptest.
 		if cloud {
 			modelPinHeaders(w.Header())
 		}
+		if messages {
+			_, _ = io.WriteString(w, messagesReady)
+			return
+		}
 		_, _ = io.WriteString(w, `{"id":"chat1","object":"chat.completion","created":1,"model":"fixture","choices":[{"index":0,"message":{"role":"assistant","content":"ready"},"finish_reason":"stop"}],"usage":{"prompt_tokens":20,"completion_tokens":1,"total_tokens":21}}`)
 	}))
 	t.Cleanup(server.Close)
 	return server
 }
+
+const (
+	messagesReady       = `{"id":"msg1","type":"message","role":"assistant","model":"fixture","content":[{"type":"text","text":"ready"}],"stop_reason":"end_turn","stop_sequence":null,"usage":{"input_tokens":20,"output_tokens":1}}`
+	messagesStreamReady = "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg1\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"fixture\",\"content\":[],\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{\"input_tokens\":20,\"output_tokens\":0}}}\n\n" +
+		"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n" +
+		"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"ok\"}}\n\n" +
+		"event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n" +
+		"event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":1}}\n\n" +
+		"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+)
 
 const v2Tools = `"tools":[{"type":"function","function":{"name":"read","parameters":{"type":"object","properties":{}}}}]`
 
@@ -305,7 +322,7 @@ func TestV2ExplicitEventIsStrippedAndPrecedesMarkers(t *testing.T) {
 	local, cloud := &upstreamFixture{}, &upstreamFixture{}
 	config := hybridV2Config(t, chatUpstream(t, local, false).URL, chatUpstream(t, cloud, true).URL+"/v1/chat/completions")
 	fixture := &v2Decisions{choose: func(contextV2) string { return localActionID }}
-	_, httpServer := v2Server(t, config, fixture)
+	_, httpServer := v2Server(t, config, fixture, 300)
 	if status, response := executeHTTP(t, httpServer.URL, "/v1/chat/completions", chatTurn(userTask), "explicit"); status != 200 {
 		t.Fatalf("status %d: %s", status, response)
 	}
@@ -475,7 +492,7 @@ func TestV2SidecallDoesNotAdvanceBranchState(t *testing.T) {
 	local, cloud := &upstreamFixture{}, &upstreamFixture{}
 	config := hybridV2Config(t, chatUpstream(t, local, false).URL, chatUpstream(t, cloud, true).URL+"/v1/chat/completions")
 	fixture := &v2Decisions{choose: func(contextV2) string { return localActionID }}
-	server, httpServer := v2Server(t, config, fixture)
+	server, httpServer := v2Server(t, config, fixture, 300)
 	if status, response := executeHTTP(t, httpServer.URL, "/v1/chat/completions", chatTurn(userTask), "side"); status != 200 {
 		t.Fatalf("status %d: %s", status, response)
 	}
@@ -507,7 +524,7 @@ func TestV2CompactionCarriesRetainedAttribution(t *testing.T) {
 	local, cloud := &upstreamFixture{}, &upstreamFixture{}
 	config := hybridV2Config(t, chatUpstream(t, local, false).URL, chatUpstream(t, cloud, true).URL+"/v1/chat/completions")
 	fixture := &v2Decisions{choose: func(contextV2) string { return localActionID }}
-	_, httpServer := v2Server(t, config, fixture)
+	_, httpServer := v2Server(t, config, fixture, 300)
 	for _, body := range []string{chatTurn(userTask), chatTurn(userTask, toolCall, toolResult)} {
 		if status, response := executeHTTP(t, httpServer.URL, "/v1/chat/completions", body, "compact"); status != 200 {
 			t.Fatalf("status %d: %s", status, response)
@@ -565,7 +582,7 @@ func TestV2ResponseChecksRefuseUnappliedOrUnexplainedDecisions(t *testing.T) {
 	}
 }
 
-func TestV2ConfigRequiresAnExplicitPublishedPolicy(t *testing.T) {
+func TestV2ConfigRequiresAnExplicitPolicy(t *testing.T) {
 	t.Setenv("TEST_DECISIONS_KEY", "fixture")
 	base := hybridV2Config(t, "http://127.0.0.1:1/v1/chat/completions", "http://127.0.0.1:2")
 	base.Decisions.URL = "http://127.0.0.1:3/v1/routes"
@@ -574,21 +591,21 @@ func TestV2ConfigRequiresAnExplicitPublishedPolicy(t *testing.T) {
 		routing string
 		ok      bool
 	}{
-		"default preset":             {DecisionsExecutionContextV2, `{"policy":{"preset":"arc-policy.hybrid-default.v1"}}`, true},
-		"David's schedule with V":    {DecisionsExecutionContextV2, `{"policy":{"preset":"arc-policy.hybrid-default.v1","overrides":{"schedule":{"model":["cache_boundaries","user_messages"],"thinking":["all_turns"]}}},"v_value":0.1}`, true},
-		"package default":            {DecisionsExecutionContextV2, `{"policy":{"preset":"arc-policy.package-default.v1"}}`, true},
-		"prefer local":               {DecisionsExecutionContextV2, `{"policy":{"preset":"arc-policy.prefer-local.v1"}}`, true},
-		"prefer local threshold":     {DecisionsExecutionContextV2, `{"policy":{"preset":"arc-policy.prefer-local.v1","overrides":{"selection":{"min_p_pass":0.65}}}}`, true},
-		"threshold out of range":     {DecisionsExecutionContextV2, `{"policy":{"preset":"arc-policy.prefer-local.v1","overrides":{"selection":{"min_p_pass":1}}}}`, false},
-		"absent policy":              {DecisionsExecutionContextV2, `{}`, false},
-		"policy forwarded in v1":     {DecisionsExecutionContextV1, `{"policy":{"preset":"arc-policy.hybrid-default.v1"}}`, true},
-		"policy refused in current":  {DecisionsCurrent, `{"policy":{"preset":"arc-policy.hybrid-default.v1"}}`, false},
-		"unpublished preset":         {DecisionsExecutionContextV2, `{"policy":{"preset":"arc-policy.always-local.v1"}}`, false},
-		"unknown class":              {DecisionsExecutionContextV2, `{"policy":{"preset":"arc-policy.hybrid-default.v1","overrides":{"schedule":{"model":["every_5"]}}}}`, false},
-		"selection override":         {DecisionsExecutionContextV2, `{"policy":{"preset":"arc-policy.hybrid-default.v1","overrides":{"selection":{"min_p_pass":0.5}}}}`, false},
-		"unknown override":           {DecisionsExecutionContextV2, `{"policy":{"preset":"arc-policy.hybrid-default.v1","overrides":{"selector":"utility"}}}`, false},
-		"unacknowledged routing key": {DecisionsExecutionContextV2, `{"policy":{"preset":"arc-policy.hybrid-default.v1"},"lookahead":1}`, false},
-		"V under its old name":       {DecisionsExecutionContextV2, `{"policy":{"preset":"arc-policy.hybrid-default.v1"},"value_usd":0.1}`, false},
+		"default preset":              {DecisionsExecutionContextV2, `{"policy":{"preset":"arc-policy.hybrid-default.v1"}}`, true},
+		"David's schedule with V":     {DecisionsExecutionContextV2, `{"policy":{"preset":"arc-policy.hybrid-default.v1","overrides":{"schedule":{"model":["cache_boundaries","user_messages"],"thinking":["all_turns"]}}},"v_value":0.1}`, true},
+		"package default":             {DecisionsExecutionContextV2, `{"policy":{"preset":"arc-policy.package-default.v1"}}`, true},
+		"prefer local":                {DecisionsExecutionContextV2, `{"policy":{"preset":"arc-policy.prefer-local.v1"}}`, true},
+		"prefer local threshold":      {DecisionsExecutionContextV2, `{"policy":{"preset":"arc-policy.prefer-local.v1","overrides":{"selection":{"min_p_pass":0.65}}}}`, true},
+		"absent policy":               {DecisionsExecutionContextV2, `{}`, false},
+		"policy forwarded in v1":      {DecisionsExecutionContextV1, `{"policy":{"preset":"arc-policy.hybrid-default.v1"}}`, true},
+		"policy refused in current":   {DecisionsCurrent, `{"policy":{"preset":"arc-policy.hybrid-default.v1"}}`, false},
+		"preset sent to ARC as is":    {DecisionsExecutionContextV2, `{"policy":{"preset":"arc-policy.always-local.v1"}}`, true},
+		"missing preset":              {DecisionsExecutionContextV2, `{"policy":{}}`, false},
+		"empty preset":                {DecisionsExecutionContextV2, `{"policy":{"preset":""}}`, false},
+		"overrides sent to ARC as is": {DecisionsExecutionContextV2, `{"policy":{"preset":"arc-policy.hybrid-default.v1","overrides":{"selector":"utility"}}}`, true},
+		"unknown policy member":       {DecisionsExecutionContextV2, `{"policy":{"preset":"arc-policy.hybrid-default.v1","selector":"utility"}}`, false},
+		"unacknowledged routing key":  {DecisionsExecutionContextV2, `{"policy":{"preset":"arc-policy.hybrid-default.v1"},"lookahead":1}`, false},
+		"V under its old name":        {DecisionsExecutionContextV2, `{"policy":{"preset":"arc-policy.hybrid-default.v1"},"value_usd":0.1}`, false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			config := base
@@ -610,7 +627,7 @@ func TestV2CompactionRetryAfterFailureKeepsRetainedAttribution(t *testing.T) {
 	local, cloud := &upstreamFixture{}, &upstreamFixture{}
 	config := hybridV2Config(t, chatUpstream(t, local, false).URL, chatUpstream(t, cloud, true).URL+"/v1/chat/completions")
 	fixture := &v2Decisions{choose: func(contextV2) string { return localActionID }}
-	_, httpServer := v2Server(t, config, fixture)
+	_, httpServer := v2Server(t, config, fixture, 300)
 	for _, body := range []string{chatTurn(userTask), chatTurn(userTask, toolCall, toolResult)} {
 		if status, response := executeHTTP(t, httpServer.URL, "/v1/chat/completions", body, "compact-retry"); status != 200 {
 			t.Fatalf("status %d: %s", status, response)
@@ -641,7 +658,7 @@ func TestV2OptionalExplicitEventDoesNotStopWireInference(t *testing.T) {
 	local, cloud := &upstreamFixture{}, &upstreamFixture{}
 	config := hybridV2Config(t, chatUpstream(t, local, false).URL, chatUpstream(t, cloud, true).URL+"/v1/chat/completions")
 	fixture := &v2Decisions{choose: func(contextV2) string { return localActionID }}
-	server, httpServer := v2Server(t, config, fixture)
+	server, httpServer := v2Server(t, config, fixture, 300)
 	explicit := `{"rayline_event":{"kind":"task_start"},` + chatTurn(userTask)[1:]
 	if status, response := executeHTTP(t, httpServer.URL, "/v1/chat/completions", explicit, "optional"); status != 200 {
 		t.Fatalf("status %d: %s", status, response)
@@ -675,11 +692,11 @@ func TestV2OptionalExplicitEventDoesNotStopWireInference(t *testing.T) {
 // the session's main branch is untouched. A user turn that merely starts with
 // the literal is not a side call and, headerless, is still refused.
 func TestV2HeaderlessHermesSummaryRunsAsSidecall(t *testing.T) {
-	local, cloud := &upstreamFixture{}, &upstreamFixture{}
-	config := hybridV2Config(t, chatUpstream(t, local, false).URL, chatUpstream(t, cloud, true).URL+"/v1/chat/completions")
+	local, cloud := &upstreamFixture{messages: true}, &upstreamFixture{messages: true}
+	config := onProtocol(t, hybridV2Config(t, chatUpstream(t, local, false).URL, chatUpstream(t, cloud, true).URL+"/v1/chat/completions"), llmprotocol.AnthropicMessagesV1)
 	fixture := &v2Decisions{choose: func(contextV2) string { return localActionID }}
-	server, httpServer := v2Server(t, config, fixture)
-	if status, response := executeHTTP(t, httpServer.URL, "/v1/chat/completions", chatTurn(userTask), "hermes"); status != 200 {
+	server, httpServer := v2Server(t, config, fixture, 300)
+	if status, response := executeHTTP(t, httpServer.URL, "/v1/messages", `{"model":"arc-1.0","max_tokens":64,"messages":[`+userTask+`]}`, "hermes"); status != 200 {
 		t.Fatalf("status %d: %s", status, response)
 	}
 	// The shape Hermes sends when its loop exhausts after a tool call: the

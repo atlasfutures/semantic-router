@@ -2,8 +2,9 @@
 
 `cmd/rayline-core` is the HTTP transport for the shared VSR implementation.
 Raydock's `rld` owns the process, credentials, and harness gateway. The executor owns
-protocol conversion, ARC decisions, exact deployment binding, thinking controls,
-private append, and completed-execution evidence.
+wire decoding and encoding, ARC decisions, exact deployment binding, thinking controls,
+private append, and completed-execution evidence. It never translates between
+protocols: a request is served only by deployments of its own protocol (below).
 
 The default `decisions.api_mode: "current"` uses the deployed Decisions API and
 keeps execution/cache evidence in this process. It sends no `routing.execution`
@@ -20,13 +21,10 @@ the API's selected action rather than ranking marginal predictions locally.
 (pathfinder `docs/plans/2026-10-24-decisions-execution-context-v2.md`). It is
 opt-in. The core reports facts and never picks or ranks a model.
 
-- **Policy.** `decisions.routing.policy` is required: `{"preset": ...}` with an
-  optional `overrides.schedule` (`model`/`thinking` sets of `cache_boundaries`,
-  `user_messages`, `all_turns`) and, for `arc-policy.prefer-local.v1` only,
-  `overrides.selection.min_p_pass` in (0, 1). Served presets:
-  `arc-policy.hybrid-default.v1`, `arc-policy.prefer-local.v1` (pathfinder
-  #5913) and `arc-policy.package-default.v1`. At most 16 executable bindings fit
-  `targets[]`. Raydock writes
+- **Policy.** `decisions.routing.policy` is required: `{"preset": ...}` with
+  optional `overrides`. The preset id and the overrides are sent to the
+  service unchanged and the service validates them. At most 16 executable bindings
+  per protocol fit `targets[]`. Raydock writes
   `arc-policy.hybrid-default.v1` when its user sets no override; the core never
   sends an absent policy in this mode. Allowed routing keys are `policy`,
   `v_value`, `prices`, `price_profile`, `models`, `excluded_models` and
@@ -54,6 +52,21 @@ opt-in. The core reports facts and never picks or ranks a model.
   lacks, or whose `history`, `last_served` or `hold` names an action it lacks.
   `bases` narrows the targets when fewer are wanted. Raydock builds one by
   default, so a user needs no profile file.
+- **One action, one deployment per protocol.** A request's protocol comes from
+  its route (`/v1/messages`, `/v1/chat/completions`, `/v1/responses`), and ARC
+  is offered only the actions bound to a deployment of that protocol, so each
+  protocol sees its own subset of targets. A model served on several protocols
+  has one `derived_actions` entry per deployment, all with the same `worker`;
+  a control that several of those deployments admit is one action (one action
+  id) bound once per protocol, and a control only some admit is offered only
+  there. Load refuses an action bound to two deployments of one protocol, an
+  action whose deployments name different workers or reported models, and a
+  deployment whose cell admits no controls. A request in a protocol with no
+  bound deployment is refused (`protocol_not_bound`) with the configured
+  models and the protocol named. Only `execution_context_v2` sends the
+  per-protocol targets; `current` and `execution_context_v1` offer every
+  action, so they refuse at load an action that a served protocol has no
+  deployment for.
 - **Envelope.** Each decision sends `routing.execution` version
   `arc-execution-context.v2`: `turn` (`id`, `attempt`, `epoch`, `retry_of`,
   `reconsult`), `event`, `last_served`, `history`, `hold` (null: the core has no
@@ -109,25 +122,7 @@ opt-in. The core reports facts and never picks or ranks a model.
   counter that fails reports that target `fits: false` with
   `reason: "runtime_unavailable"` instead of refusing the turn. A **local**
   target without a registered counter is sized from the same prepared request:
-  - **Qwen3.8-27B** (`registry_model: "qwen/qwen3.8-27b"`, Chat wire; the
-    Raydock default) is rendered with the model's chat template as
-    vLLM's Chat path feeds it (`qwen_capacity.go`: arguments and tools
-    re-spelt by Python's `tojson`, floats by `repr`; each tool as
-    `model_dump()` spells it, declared fields first with null
-    `description`/`parameters`; text parts joined with "\n" in the rendered
-    text, and a plain concatenation charged too where it costs more) and
-    counted in-process with the embedded tokenizer (`tokencount`, pure Go:
-    the snapshot's `merges.txt`, its added tokens, NFC and its
-    pre-tokenizer), `provenance: "local_measured"`. The rendering takes the
-    template's most expensive branch where the request does not pin one and
-    adds 16 tokens, 2 per message and 8 per tool. A message the counter can
-    only bound by its bytes (text x/text cannot normalize as the reference
-    does: a supplementary character in non-NFC text, or one of the combining
-    marks the reference's older Unicode tables lack) makes the fact
-    `caller_estimated`. This assumes the runtime serves Qwen3.8-27B with that
-    template; the core does not verify the served model. An operator serving
-    Qwen with a custom template should register a llama.cpp counter instead.
-  - **Any other model** gets the UTF-8 byte count of a worst-case
+  - It gets the UTF-8 byte count of a worst-case
     re-serialization of the prepared request (values re-encoded with
     `indent=4`, Python separators and float `repr`, non-ASCII and `<`, `>`,
     `&` escaped, each tool call's arguments reloaded and re-encoded beside
@@ -383,11 +378,10 @@ counts thinking inside `max_tokens`.
 `capacity_estimate` (v2, optional, local deployments) tunes the sizing of a
 local deployment without a registered counter: `{"headroom_ratio": 0.05,
 "media_tokens": 8192}` are the defaults for absent members (limits:
-`headroom_ratio` in [0, 10], `media_tokens` >= 0). `headroom_ratio` applies
-only to the byte bound; `media_tokens` (a Retina screenshot is about 6.6k
-Qwen-VL tokens) to both. Each distinct prepared body is sized once per
-deployment and turn, and a configured Qwen3.8 deployment builds its counter
-at startup.
+`headroom_ratio` in [0, 10], `media_tokens` >= 0). `headroom_ratio` raises
+the byte bound; `media_tokens` (a Retina screenshot is about 6.6k Qwen-VL
+tokens) is charged per inline image. Each distinct prepared body is sized
+once per deployment and turn.
 Local inference cannot receive the hosted Decisions credential, including under
 an alternate environment-variable name. Unknown token units are an empty string;
 they cannot support comparable prefix evidence.
@@ -401,7 +395,8 @@ must also match that profile. The gateway verifies provider-ready bytes and
 returns identity receipts; it performs no second routing decision.
 
 The explicit `cloud_transport: "model_pin"` uses an existing model router's
-Chat or Messages endpoint with a concrete qualified model: `registry_model` (an
+Messages, Chat or Responses endpoint (`/v1/messages`, `/v1/chat/completions`
+or `/v1/responses`, matching the deployment's protocol) with a concrete qualified model: `registry_model` (an
 OpenRouter registry cell) names the measured model and `wire_model` the router's
 id for it: the registry id itself, or the router's catalog id derived from it
 (the provider prefix dropped and version dots spelled as dashes, such as
@@ -421,13 +416,6 @@ model, runtime, template and tokenizer checks are described in the module README
 Other external inference servers can execute without this counter, but their
 current prefix counts remain unknown. Compatibility of a model name or HTTP
 format does not qualify thinking controls or establish KV residency.
-A local Chat deployment under the native default control folds a later
-system message into the turn before it (`fold_before_unit_v1`), so the runtime
-receives one leading system message. The explicit
-`inband_system: "fold_before_unit_v1"` setting is restricted to the same
-deployments with a matching runtime identity suffix and makes a refused fold
-fail the plan; see the [module README](../README.md#qualified-local-token-counting)
-for its role semantics and refusal conditions.
 
 An explicit `test_alias` such as `{"selected_model":"gpt-6-luna",
 "execution_action_id":"<neutral Qwen package action ID>"}` can exercise local

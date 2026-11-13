@@ -3,7 +3,6 @@ package execution
 import (
 	"bytes"
 	"fmt"
-	"log/slog"
 	"math"
 
 	"github.com/atlasfutures/semantic-router/rayline-core/thinkingcontrol"
@@ -11,29 +10,21 @@ import (
 
 // A local target without a registered runtime counter gets a capacity fact
 // from the exact prepared request, so an over-window turn is handed off before
-// the runtime can silently truncate it:
+// the runtime can silently truncate it: the UTF-8 byte count of a worst-case
+// re-serialization of the prepared request, an upper bound for a byte-level
+// BPE tokenizer (every token covers at least one byte) provided the template
+// renders each part of the request at most once and adds at most the margin
+// below (README): values re-encoded with indent=4, Python separators, floats
+// by repr, non-ASCII and <, >, & escaped, and each tool call's arguments
+// string reloaded and re-encoded the same way beside it. It is raised by
+// headroom_ratio and estimateTemplateMarginTokens for a preamble the body
+// does not carry; provenance caller_bounded, which the policy contract admits
+// as a fit (a bound that fits holds for the exact count too).
 //
-//   - Qwen3.8-27B (registry_model qwen/qwen3.8-27b, Chat wire): the request
-//     is rendered with the model's chat template and counted with the
-//     embedded tokenizer (qwen_capacity.go), provenance local_measured.
-//     A segment the counter can only bound by bytes (text x/text cannot
-//     normalize as the reference does) makes the fact caller_estimated.
-//   - Any other model: the UTF-8 byte count of a worst-case re-serialization
-//     of the prepared request, an upper bound for a byte-level BPE
-//     tokenizer (every token covers at least one byte) provided the template
-//     renders each part of the request at most once and adds at most the
-//     margin below (README): values re-encoded with indent=4, Python
-//     separators, floats by repr, non-ASCII and <, >, & escaped, and each
-//     tool call's arguments string reloaded and re-encoded the same way
-//     beside it. It is raised by headroom_ratio and
-//     estimateTemplateMarginTokens for a preamble the body does not carry;
-//     provenance caller_bounded, which the policy contract admits as a fit
-//     (a bound that fits holds for the exact count too).
-//
-// An inline base64 image is charged media_tokens instead of its bytes in both
-// cases, and a fact with images is caller_estimated: the runtime's image
-// token count depends on the resolution. So is any byte bound over a body
-// the core does not fully understand (boundedBody, capacity_bounded.go).
+// An inline base64 image is charged media_tokens instead of its bytes, and a
+// fact with images is caller_estimated: the runtime's image token count
+// depends on the resolution. So is any byte bound over a body the core does
+// not fully understand (boundedBody, capacity_bounded.go).
 const (
 	defaultEstimateHeadroomRatio = 0.05
 	// A Retina screenshot is about 6.6k Qwen-VL tokens; Claude caps an image
@@ -44,7 +35,6 @@ const (
 	// The longest system preamble a served template adds (Qwen3.8's tools
 	// instructions are about 330 tokens).
 	estimateTemplateMarginTokens = 512
-	qwenTokenUnits               = "hf:Qwen/Qwen3.8-27B"
 )
 
 func (estimate *CapacityEstimate) settings() (headroom float64, mediaTokens int64) {
@@ -69,25 +59,10 @@ func (estimate *CapacityEstimate) validate() error {
 	return nil
 }
 
-// localPromptSize sizes a prepared request for a local target without a
-// registered counter: counted for Qwen3.8-27B, otherwise bounded by bytes.
+// localPromptSize bounds a prepared request by bytes for a local target
+// without a registered counter.
 func localPromptSize(deployment Deployment, body []byte) (int64, string, string) {
-	_, mediaTokens := deployment.CapacityEstimate.settings()
 	units := deployment.TokenUnits
-	if isQwen38Deployment(deployment) {
-		tokens, images, exact, err := qwenPromptTokens(body)
-		if err == nil {
-			provenance := capacityProvenanceEstimated
-			if images == 0 && exact {
-				provenance = capacityProvenanceMeasured
-			}
-			if units == "" {
-				units = qwenTokenUnits
-			}
-			return tokens + images*mediaTokens, provenance, units
-		}
-		slog.Warn("qwen capacity count failed; using the byte bound", "deployment", deployment.ID, "error", err.Error())
-	}
 	tokens, images := byteBoundTokens(body, deployment.CapacityEstimate)
 	if images > 0 || !boundedBody(deployment.Protocol, body) {
 		return tokens, capacityProvenanceEstimated, units

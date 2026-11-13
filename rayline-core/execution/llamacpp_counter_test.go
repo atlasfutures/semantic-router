@@ -193,7 +193,7 @@ func TestConfiguredCounterReusesPreparedMeasurementWithoutAdvancingState(t *test
 		t.Fatal(err)
 	}
 	defer state.release()
-	selected := server.actions[config.Actions[0].ID]
+	selected := server.actions[config.Deployments[0].Protocol][config.Actions[0].ID]
 	prepare := func(body []byte) *preparedDispatch {
 		t.Helper()
 		request, envelope, _, err := server.engine.DecodeRequestForMutation(llmprotocol.OpenAIChatV1, body)

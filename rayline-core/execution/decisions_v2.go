@@ -19,71 +19,22 @@ const executionContextV2 = "arc-execution-context.v2"
 // maxTargetsV2 is the contract's targets[] bound (pathfinder #5904 schema).
 const maxTargetsV2 = 16
 
-// policyPresets are the presets the policy service serves (pathfinder #5904;
-// arc-policy.prefer-local.v1 since #5913).
-var policyPresets = map[string]bool{
-	"arc-policy.hybrid-default.v1":  true,
-	"arc-policy.prefer-local.v1":    true,
-	"arc-policy.package-default.v1": true,
-}
-
-var scheduleClasses = map[string]bool{"cache_boundaries": true, "user_messages": true, "all_turns": true}
-
-type policyOverrides struct {
-	Schedule *struct {
-		Model    []string `json:"model,omitempty"`
-		Thinking []string `json:"thinking,omitempty"`
-	} `json:"schedule,omitempty"`
-	Selection *struct {
-		MinPPass *float64 `json:"min_p_pass"`
-	} `json:"selection,omitempty"`
-}
-
 type routingPolicy struct {
-	Preset    string           `json:"preset"`
-	Overrides *policyOverrides `json:"overrides,omitempty"`
+	Preset    string          `json:"preset"`
+	Overrides json.RawMessage `json:"overrides,omitempty"`
 }
 
-// validateRoutingPolicy admits only the published shape: a known preset and
-// optional schedule and prefer-local threshold overrides. Package
-// admission of a class is the service's refusal, not a local guess.
+// validateRoutingPolicy admits a preset and optional overrides. Both are sent
+// to the service unchanged and the service validates them.
 func validateRoutingPolicy(raw json.RawMessage) (routingPolicy, error) {
 	var policy routingPolicy
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&policy); err != nil {
-		return policy, fmt.Errorf("routing.policy must contain only preset and overrides.{schedule,selection}: %v", err)
+		return policy, fmt.Errorf("routing.policy must contain only preset and overrides: %v", err)
 	}
-	if !policyPresets[policy.Preset] {
-		return policy, fmt.Errorf("routing.policy.preset %q is not a published preset", policy.Preset)
-	}
-	if overrides := policy.Overrides; overrides != nil {
-		if schedule := overrides.Schedule; schedule != nil {
-			for name, classes := range map[string][]string{"model": schedule.Model, "thinking": schedule.Thinking} {
-				if classes == nil {
-					continue
-				}
-				seen := map[string]bool{}
-				if len(classes) == 0 {
-					return policy, fmt.Errorf("routing.policy schedule.%s must name at least one class", name)
-				}
-				for _, class := range classes {
-					if !scheduleClasses[class] || seen[class] {
-						return policy, fmt.Errorf("routing.policy schedule.%s has unknown or duplicate class %q", name, class)
-					}
-					seen[class] = true
-				}
-			}
-		}
-	}
-	if overrides := policy.Overrides; overrides != nil && overrides.Selection != nil {
-		threshold := overrides.Selection.MinPPass
-		if threshold == nil || !(*threshold > 0 && *threshold < 1) {
-			return policy, fmt.Errorf("routing.policy selection.min_p_pass must be in (0, 1)")
-		}
-		if policy.Preset != "arc-policy.prefer-local.v1" {
-			return policy, fmt.Errorf("routing.policy selection.min_p_pass applies only to arc-policy.prefer-local.v1")
-		}
+	if policy.Preset == "" {
+		return policy, fmt.Errorf("routing.policy.preset is required")
 	}
 	return policy, nil
 }
@@ -184,7 +135,7 @@ func (provider *HTTPDecisions) projectV2(input DecisionInput) contextV2 {
 	if held := input.State.HeldActionID; held != "" {
 		served := &lastServedV2{ActionID: held, Worker: input.State.HeldWorker}
 		if served.Worker == "" {
-			served.Worker = provider.actions[held].Worker
+			served.Worker = provider.actions[input.Format][held].Worker
 		}
 		for _, entry := range external.History {
 			if entry.ActionID == held && (served.Message == nil || entry.Message > *served.Message) {
@@ -199,15 +150,18 @@ func (provider *HTTPDecisions) projectV2(input DecisionInput) contextV2 {
 	for _, worker := range v1.Workers {
 		cache[worker.ActionID] = &cacheV2{ContextEpoch: worker.ContextEpoch, Gap: worker.Gap, TTL: worker.TTL, Residency: worker.Residency, Usage: worker.Usage, CurrentPrefix: worker.CurrentPrefix}
 	}
-	ids := make([]string, 0, len(provider.actions))
-	for id, action := range provider.actions {
+	// ARC is offered only the actions bound to a deployment of the
+	// request's protocol: the core does not translate between protocols.
+	actions := provider.actions[input.Format]
+	ids := make([]string, 0, len(actions))
+	for id, action := range actions {
 		if action.DeploymentID != "" {
 			ids = append(ids, id)
 		}
 	}
 	sort.Strings(ids)
 	for _, id := range ids {
-		action := provider.actions[id]
+		action := actions[id]
 		external.Targets = append(external.Targets, targetV2{ActionID: id, Worker: action.Worker, Placement: provider.deployments[action.DeploymentID].Kind, Cache: cache[id], Capacity: input.Capacity[id]})
 	}
 	return external

@@ -89,8 +89,9 @@ func runtimeContextRejection(deployment Deployment, previous *CapacityFact) *Cap
 func (server *Server) measureCapacity(ctx context.Context, body []byte, format llmprotocol.WireFormat, state *branchState) (map[string]*CapacityFact, map[string]*cachecontext.MeasuredPrompt, error) {
 	facts := make(map[string]*CapacityFact)
 	measured := make(map[string]*cachecontext.MeasuredPrompt)
-	ids := make([]string, 0, len(server.actions))
-	for id := range server.actions {
+	actions := server.actions[format]
+	ids := make([]string, 0, len(actions))
+	for id := range actions {
 		ids = append(ids, id)
 	}
 	sort.Strings(ids)
@@ -100,7 +101,7 @@ func (server *Server) measureCapacity(ctx context.Context, body []byte, format l
 	}
 	sizes := map[string]promptSize{}
 	for _, id := range ids {
-		selected := server.actions[id]
+		selected := actions[id]
 		counted := server.counters[selected.deployment.ID] != nil
 		// A cloud target without a counter stays unknown: its provider
 		// refuses an oversized prompt itself, and an estimate would only
@@ -154,7 +155,7 @@ func (server *Server) measureCapacity(ctx context.Context, body []byte, format l
 		measured[id] = prompt
 		facts[id] = capacityFact(selected.deployment, prompt, prepared.outputLimit)
 	}
-	server.relaxEstimatedShortfalls(facts)
+	server.relaxEstimatedShortfalls(format, facts)
 	return facts, measured, nil
 }
 
@@ -165,12 +166,12 @@ func (server *Server) measureCapacity(ctx context.Context, body []byte, format l
 // there and the runtime's own context refusal decides. While some target is
 // not short, every estimate still excludes its target, so the turn hands off
 // rather than probing a runtime.
-func (server *Server) relaxEstimatedShortfalls(facts map[string]*CapacityFact) {
-	if !server.everyTarget(facts, isContextShortfall) {
+func (server *Server) relaxEstimatedShortfalls(format llmprotocol.WireFormat, facts map[string]*CapacityFact) {
+	if !server.everyTarget(format, facts, isContextShortfall) {
 		return
 	}
 	for id, fact := range facts {
-		if server.yieldsToRuntime(id, fact) {
+		if server.yieldsToRuntime(format, id, fact) {
 			delete(facts, id)
 		}
 	}
@@ -185,15 +186,15 @@ func isContextShortfall(fact *CapacityFact) bool {
 // runtime refuses an over-window prompt itself (context_overflow "refuses"):
 // it never settles that every target falls short. A truncating runtime's
 // estimate (the default) stands.
-func (server *Server) yieldsToRuntime(id string, fact *CapacityFact) bool {
-	return isContextShortfall(fact) && (fact.Provenance == capacityProvenanceEstimated || fact.Provenance == capacityProvenanceBounded) && server.actions[id].deployment.ContextOverflow == ContextOverflowRefuses
+func (server *Server) yieldsToRuntime(format llmprotocol.WireFormat, id string, fact *CapacityFact) bool {
+	return isContextShortfall(fact) && (fact.Provenance == capacityProvenanceEstimated || fact.Provenance == capacityProvenanceBounded) && server.actions[format][id].deployment.ContextOverflow == ContextOverflowRefuses
 }
 
 // everyTarget reports whether every executable action's fact satisfies
 // holds; false when there is none.
-func (server *Server) everyTarget(facts map[string]*CapacityFact, holds func(*CapacityFact) bool) bool {
+func (server *Server) everyTarget(format llmprotocol.WireFormat, facts map[string]*CapacityFact, holds func(*CapacityFact) bool) bool {
 	executable := 0
-	for id, selected := range server.actions {
+	for id, selected := range server.actions[format] {
 		if selected.deployment.ID == "" {
 			continue
 		}
@@ -239,9 +240,10 @@ func int64OrNil(value *int64) any {
 // among the executable targets. It starts with Anthropic's "prompt is too
 // long" (Claude Code compacts on it) and carries OpenAI's "maximum context
 // length" wording. Callers check exceedsAllDeployments first.
-func (server *Server) contextExceededMessage(facts map[string]*CapacityFact) string {
-	ids := make([]string, 0, len(server.actions))
-	for id, selected := range server.actions {
+func (server *Server) contextExceededMessage(format llmprotocol.WireFormat, facts map[string]*CapacityFact) string {
+	actions := server.actions[format]
+	ids := make([]string, 0, len(actions))
+	for id, selected := range actions {
 		if selected.deployment.ID != "" {
 			ids = append(ids, id)
 		}
@@ -250,8 +252,8 @@ func (server *Server) contextExceededMessage(facts map[string]*CapacityFact) str
 	var window int64
 	model, windowID := "", ""
 	for _, id := range ids {
-		if deployment := server.actions[id].deployment; deployment.ContextWindow > window {
-			window, model, windowID = deployment.ContextWindow, server.actions[id].action.Model, id
+		if deployment := actions[id].deployment; deployment.ContextWindow > window {
+			window, model, windowID = deployment.ContextWindow, actions[id].action.Model, id
 		}
 	}
 	// The size is the largest target's own fact when it has one, else the
@@ -286,13 +288,13 @@ func (server *Server) contextExceededMessage(facts map[string]*CapacityFact) str
 // counts as unknown. A target with no fact (unknown, such as a cloud target
 // without a counter) is never assumed not to fit. Every refusal path (turn
 // start, re-consult, re-consult limit, a service refusal) decides with it.
-func (server *Server) exceedsAllDeployments(facts map[string]*CapacityFact) bool {
-	return server.everyTarget(facts, isContextShortfall) && !server.anyYields(facts)
+func (server *Server) exceedsAllDeployments(format llmprotocol.WireFormat, facts map[string]*CapacityFact) bool {
+	return server.everyTarget(format, facts, isContextShortfall) && !server.anyYields(format, facts)
 }
 
-func (server *Server) anyYields(facts map[string]*CapacityFact) bool {
+func (server *Server) anyYields(format llmprotocol.WireFormat, facts map[string]*CapacityFact) bool {
 	for id, fact := range facts {
-		if server.yieldsToRuntime(id, fact) {
+		if server.yieldsToRuntime(format, id, fact) {
 			return true
 		}
 	}

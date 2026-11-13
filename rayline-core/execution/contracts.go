@@ -48,9 +48,6 @@ type Deployment struct {
 	// caller's, so refusing is what a deployment does until its operator
 	// opts out.
 	ClampOutputAllowance bool `json:"clamp_output_allowance,omitempty"`
-	// InbandSystem is an explicitly qualified role-changing compatibility
-	// rule, separate from the action's exact thinking-control identity.
-	InbandSystem string `json:"inband_system,omitempty"`
 	// CapacityMarginTokens is an explicit counting margin added to the exact
 	// prepared prompt and output limit in capacity admission (v2 only).
 	CapacityMarginTokens int64 `json:"capacity_margin_tokens,omitempty"`
@@ -74,8 +71,7 @@ const (
 // CapacityEstimate overrides the estimator constants for one deployment
 // (capacity_estimate.go).
 type CapacityEstimate struct {
-	// HeadroomRatio raises the byte bound of a model other than Qwen3.8-27B
-	// (default 0.05).
+	// HeadroomRatio raises the byte bound (default 0.05).
 	HeadroomRatio *float64 `json:"headroom_ratio,omitempty"`
 	// MediaTokens is charged per inline base64 image instead of its bytes
 	// (default 8192).

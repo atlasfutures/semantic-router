@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -24,7 +25,6 @@ import (
 	"github.com/atlasfutures/semantic-router/rayline-core/protocolcodec"
 	"github.com/atlasfutures/semantic-router/rayline-core/reasoning"
 	"github.com/atlasfutures/semantic-router/rayline-core/thinkingcontrol"
-	"github.com/atlasfutures/semantic-router/rayline-core/tokencount"
 )
 
 type admittedAction struct {
@@ -36,11 +36,14 @@ type admittedAction struct {
 }
 
 type Server struct {
-	config             Config
-	provider           DecisionProvider
-	engine             *protocolcodec.Engine
-	client             *http.Client
-	actions            map[string]admittedAction
+	config   Config
+	provider DecisionProvider
+	engine   *protocolcodec.Engine
+	client   *http.Client
+	// actions is each request protocol's admitted actions by id
+	// (Config.actionsByProtocol): a request is offered and executes only
+	// its own protocol's.
+	actions            map[llmprotocol.WireFormat]map[string]admittedAction
 	counters           map[string]cachecontext.PromptCounter
 	states             stateStore
 	token              string
@@ -64,7 +67,7 @@ func NewServer(config Config, registry *thinkingcontrol.Registry, provider Decis
 	if _, err := rand.Read(instance); err != nil {
 		return nil, err
 	}
-	server := &Server{config: config, provider: provider, engine: protocolcodec.NewBuiltinEngine(), actions: make(map[string]admittedAction), states: stateStore{branches: make(map[string]*branchState)}, token: token, instance: hex.EncodeToString(instance), now: time.Now,
+	server := &Server{config: config, provider: provider, engine: protocolcodec.NewBuiltinEngine(), actions: make(map[llmprotocol.WireFormat]map[string]admittedAction), states: stateStore{branches: make(map[string]*branchState)}, token: token, instance: hex.EncodeToString(instance), now: time.Now,
 		client: &http.Client{Transport: &http.Transport{Proxy: http.ProxyFromEnvironment, ResponseHeaderTimeout: 2 * time.Minute, IdleConnTimeout: 90 * time.Second}, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
 	deployments := make(map[string]Deployment)
 	for _, deployment := range config.Deployments {
@@ -97,13 +100,6 @@ func NewServer(config Config, registry *thinkingcontrol.Registry, provider Decis
 		if overflow := deployment.ContextOverflow; overflow != "" && overflow != ContextOverflowRefuses && overflow != ContextOverflowTruncates {
 			return nil, fmt.Errorf("deployment %s: context_overflow must be %q or %q", deployment.ID, ContextOverflowRefuses, ContextOverflowTruncates)
 		}
-		if isQwen38Deployment(deployment) {
-			// Build the embedded counter now, so a corrupt embed fails at
-			// startup rather than on a turn.
-			if _, err := tokencount.Qwen38(); err != nil {
-				return nil, fmt.Errorf("deployment %s: qwen3.8 counter: %w", deployment.ID, err)
-			}
-		}
 		if deployment.Kind == "local" && deployment.AuthEnv != "" &&
 			(deployment.AuthEnv == config.Decisions.AuthEnv || (os.Getenv(deployment.AuthEnv) != "" && os.Getenv(deployment.AuthEnv) == os.Getenv(config.Decisions.AuthEnv))) {
 			return nil, fmt.Errorf("local inference cannot receive the hosted Decisions credential")
@@ -113,59 +109,24 @@ func NewServer(config Config, registry *thinkingcontrol.Registry, provider Decis
 		}
 		deployments[deployment.ID] = deployment
 	}
-	for _, action := range config.Actions {
-		if !validSHA256(action.ID) || action.Worker == "" || action.Model == "" {
-			return nil, fmt.Errorf("action identity is incomplete")
-		}
-		if _, exists := server.actions[action.ID]; exists {
-			return nil, fmt.Errorf("action %s binds more than one deployment", action.ID)
-		}
-		control, err := thinkingcontrol.ParseControl(action.Control)
-		if err != nil {
-			return nil, fmt.Errorf("action control: %w", err)
-		}
-		if control.ID() != action.ControlID {
-			return nil, fmt.Errorf("action control identity mismatch")
-		}
-		if action.ReportedModel != "" && !sameModelName(action.Model, action.ReportedModel) {
-			return nil, fmt.Errorf("reported_model must identify the bound action model")
-		}
-		if action.DeploymentID == "" {
-			alias := config.TestAlias
-			_, knownControl := registry.Control(action.ControlID)
-			if alias == nil || alias.SelectedModel != action.Model || action.ReportedModel == "" || !knownControl {
-				return nil, fmt.Errorf("a selection-only binding requires an explicit alias source, reported_model and registry-known control")
+	bindings := make(map[string]Action)
+	for protocol, actions := range config.actionsByProtocol() {
+		server.actions[protocol] = make(map[string]admittedAction, len(actions))
+		for _, action := range actions {
+			admitted, err := admitAction(config, action, deployments, registry)
+			if err != nil {
+				return nil, err
 			}
-			server.actions[action.ID] = admittedAction{action: action, control: control}
-			continue
-		}
-		deployment, ok := deployments[action.DeploymentID]
-		if !ok {
-			return nil, fmt.Errorf("action names unknown deployment %q", action.DeploymentID)
-		}
-		if !sameModelName(action.Model, deployment.RegistryModel) {
-			return nil, fmt.Errorf("action model does not match its deployment; substitutions require explicit test_alias")
-		}
-		if err := validateModelPinControl(deployment, control); err != nil {
-			return nil, fmt.Errorf("deployment %s: %w", deployment.ID, err)
-		}
-		if err := validateInbandSystem(deployment, control); err != nil {
-			return nil, fmt.Errorf("deployment %s: %w", deployment.ID, err)
-		}
-		format, err := registryFormat(deployment.Protocol)
-		if err != nil {
-			return nil, err
-		}
-		cell, err := registry.Admit(deployment.RegistryModel, deployment.RegistryProvider, format, control, config.AllowExperimentalControls)
-		if err != nil {
-			return nil, fmt.Errorf("deployment %s control admission: %w", deployment.ID, err)
-		}
-		if deployment.ProviderPin != nil {
-			if err := cell.AdmitEndpoint(control, deployment.ProviderPin.Only[0]); err != nil {
-				return nil, fmt.Errorf("deployment %s endpoint admission: %w", deployment.ID, err)
+			if _, exists := server.actions[protocol][action.ID]; exists {
+				return nil, fmt.Errorf("action %s binds more than one %s deployment", action.ID, protocol)
 			}
+			// One action is one ARC target identity in every protocol.
+			if bound, exists := bindings[action.ID]; exists && (bound.Worker != action.Worker || bound.ReportedModel != action.ReportedModel) {
+				return nil, fmt.Errorf("action %s names a different worker or reported_model on another deployment", action.ID)
+			}
+			bindings[action.ID] = action
+			server.actions[protocol][action.ID] = admitted
 		}
-		server.actions[action.ID] = admittedAction{action, deployment, control, cell, format}
 	}
 	if len(server.actions) == 0 {
 		return nil, fmt.Errorf("at least one admitted action is required")
@@ -179,6 +140,79 @@ func NewServer(config Config, registry *thinkingcontrol.Registry, provider Decis
 		return nil, err
 	}
 	return server, nil
+}
+
+// unboundProtocol explains why a request in format cannot run when no action
+// is bound to a deployment of that protocol, and is "" otherwise. The core
+// does not translate between protocols or pick another one.
+func (server *Server) unboundProtocol(format llmprotocol.WireFormat) string {
+	for _, selected := range server.actions[format] {
+		if selected.deployment.ID != "" {
+			return ""
+		}
+	}
+	served := map[string]bool{}
+	for _, actions := range server.actions {
+		for _, selected := range actions {
+			served[selected.action.Model] = true
+		}
+	}
+	models := make([]string, 0, len(served))
+	for model := range served {
+		models = append(models, model)
+	}
+	sort.Strings(models)
+	return fmt.Sprintf("no deployment serves %s requests for models %s; the core does not translate between protocols", format, strings.Join(models, ", "))
+}
+
+// admitAction validates one binding of an action: its identity, and its
+// control against the registry cell of its deployment's protocol.
+func admitAction(config Config, action Action, deployments map[string]Deployment, registry *thinkingcontrol.Registry) (admittedAction, error) {
+	if !validSHA256(action.ID) || action.Worker == "" || action.Model == "" {
+		return admittedAction{}, fmt.Errorf("action identity is incomplete")
+	}
+	control, err := thinkingcontrol.ParseControl(action.Control)
+	if err != nil {
+		return admittedAction{}, fmt.Errorf("action control: %w", err)
+	}
+	if control.ID() != action.ControlID {
+		return admittedAction{}, fmt.Errorf("action control identity mismatch")
+	}
+	if action.ReportedModel != "" && !sameModelName(action.Model, action.ReportedModel) {
+		return admittedAction{}, fmt.Errorf("reported_model must identify the bound action model")
+	}
+	if action.DeploymentID == "" {
+		alias := config.TestAlias
+		_, knownControl := registry.Control(action.ControlID)
+		if alias == nil || alias.SelectedModel != action.Model || action.ReportedModel == "" || !knownControl {
+			return admittedAction{}, fmt.Errorf("a selection-only binding requires an explicit alias source, reported_model and registry-known control")
+		}
+		return admittedAction{action: action, control: control}, nil
+	}
+	deployment, ok := deployments[action.DeploymentID]
+	if !ok {
+		return admittedAction{}, fmt.Errorf("action names unknown deployment %q", action.DeploymentID)
+	}
+	if !sameModelName(action.Model, deployment.RegistryModel) {
+		return admittedAction{}, fmt.Errorf("action model does not match its deployment; substitutions require explicit test_alias")
+	}
+	if err := validateModelPinControl(deployment, control); err != nil {
+		return admittedAction{}, fmt.Errorf("deployment %s: %w", deployment.ID, err)
+	}
+	format, err := registryFormat(deployment.Protocol)
+	if err != nil {
+		return admittedAction{}, err
+	}
+	cell, err := registry.Admit(deployment.RegistryModel, deployment.RegistryProvider, format, control, config.AllowExperimentalControls)
+	if err != nil {
+		return admittedAction{}, fmt.Errorf("deployment %s control admission: %w", deployment.ID, err)
+	}
+	if deployment.ProviderPin != nil {
+		if err := cell.AdmitEndpoint(control, deployment.ProviderPin.Only[0]); err != nil {
+			return admittedAction{}, fmt.Errorf("deployment %s endpoint admission: %w", deployment.ID, err)
+		}
+	}
+	return admittedAction{action, deployment, control, cell, format}, nil
 }
 
 func sameModelName(model, qualified string) bool {
@@ -207,6 +241,10 @@ func (server *Server) ServeHTTP(writer http.ResponseWriter, request *http.Reques
 }
 
 func (server *Server) execute(writer http.ResponseWriter, incoming *http.Request, format llmprotocol.WireFormat) {
+	if message := server.unboundProtocol(format); message != "" {
+		server.writeError(writer, format, http.StatusBadRequest, "protocol_not_bound", message)
+		return
+	}
 	ctx := incoming.Context()
 	body, err := io.ReadAll(http.MaxBytesReader(writer, incoming.Body, 64<<20))
 	if err != nil {
@@ -390,7 +428,7 @@ func (server *Server) execute(writer http.ResponseWriter, incoming *http.Request
 	)
 	for {
 		selection = pending.decision
-		selected, decision, aliasReason, err = server.executionFor(selection)
+		selected, decision, aliasReason, err = server.executionFor(format, selection)
 		if err != nil {
 			server.writeError(writer, format, http.StatusBadGateway, "decision_identity_mismatch", err.Error())
 			return
@@ -537,7 +575,7 @@ func (server *Server) execute(writer http.ResponseWriter, incoming *http.Request
 			return
 		}
 		upstream.Body = io.NopCloser(bytes.NewReader(errorBody))
-		server.forwardError(writer, format, selected.deployment.Protocol, upstream, selected.deployment.Kind == "cloud" && isProviderContextRefusal(upstream.StatusCode, errorBody))
+		server.forwardError(writer, format, upstream, selected.deployment.Kind == "cloud" && isProviderContextRefusal(upstream.StatusCode, errorBody))
 		return
 	}
 	defer upstream.Body.Close()
@@ -634,7 +672,7 @@ func (server *Server) fallBackFromLocal(ctx context.Context, writer http.Respons
 	reason := CapacityRuntimeUnavailable
 	fact := &CapacityFact{Fits: false, Reason: &reason, Provenance: "provider_reported"}
 	capacity := withFact(pending.input.Capacity, selected.action.ID, fact)
-	for id, action := range server.actions {
+	for id, action := range server.actions[format] {
 		if action.deployment.ID == selected.deployment.ID {
 			capacity[id] = fact
 		}
@@ -717,9 +755,9 @@ func (server *Server) reconsult(ctx context.Context, writer http.ResponseWriter,
 	capacity := withFact(input.Capacity, actionID, fact)
 	// The new fact may leave every target short: an estimate on a runtime
 	// that refuses for itself then yields, as at turn start.
-	server.relaxEstimatedShortfalls(capacity)
+	server.relaxEstimatedShortfalls(format, capacity)
 	input.Capacity = capacity
-	if server.exceedsAllDeployments(capacity) {
+	if server.exceedsAllDeployments(format, capacity) {
 		// Nothing is left to choose: answer the compaction refusal now
 		// rather than spend re-consults on targets known not to fit.
 		pending.input.Capacity = capacity
@@ -756,7 +794,7 @@ func (server *Server) withDeploymentRefusal(facts map[string]*CapacityFact, depl
 	for id, existing := range facts {
 		capacity[id] = existing
 	}
-	for id, action := range server.actions {
+	for id, action := range server.actions[deployment.Protocol] {
 		switch {
 		case id == selectedID:
 			capacity[id] = fact
@@ -824,10 +862,10 @@ func (server *Server) writeDecisionError(writer http.ResponseWriter, format llmp
 // writeContextExceeded writes the compaction refusal when every target has a
 // context shortfall and none is unknown.
 func (server *Server) writeContextExceeded(writer http.ResponseWriter, format llmprotocol.WireFormat, capacity map[string]*CapacityFact) bool {
-	if !server.exceedsAllDeployments(capacity) {
+	if !server.exceedsAllDeployments(format, capacity) {
 		return false
 	}
-	server.writeError(writer, format, http.StatusBadRequest, CodeContextExceedsAllDeployments, server.contextExceededMessage(capacity))
+	server.writeError(writer, format, http.StatusBadRequest, CodeContextExceedsAllDeployments, server.contextExceededMessage(format, capacity))
 	return true
 }
 

@@ -59,8 +59,8 @@ func TestUnknownHistoricalSessionCannotLosePrivateLedger(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { t.Error("untracked history reached inference") }))
 	defer upstream.Close()
 	capture := &decisionCapture{}
-	_, server := executorWithHTTPDecisions(t, testConfig(t, upstream.URL, false), capture)
-	for _, path := range []string{"/v1/messages", "/v1/chat/completions", "/v1/responses"} {
+	for path, protocol := range map[string]llmprotocol.WireFormat{"/v1/messages": llmprotocol.AnthropicMessagesV1, "/v1/chat/completions": llmprotocol.OpenAIChatV1, "/v1/responses": llmprotocol.OpenAIResponsesV1} {
+		_, server := executorWithHTTPDecisions(t, onProtocol(t, testConfig(t, upstream.URL, false), protocol), capture)
 		body := `{"model":"arc-1.0","max_tokens":64,"messages":[{"role":"user","content":"old"},{"role":"assistant","content":"old reply"},{"role":"user","content":"continue"}]}`
 		if path == "/v1/responses" {
 			body = strings.ReplaceAll(strings.ReplaceAll(body, "max_tokens", "max_output_tokens"), "messages", "input")

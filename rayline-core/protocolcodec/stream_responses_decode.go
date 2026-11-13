@@ -348,6 +348,12 @@ func applyResponsesTransportFailure(event *llmprotocol.Event, wire responsesEven
 }
 
 func (decoder *responsesStreamDecoder) Finalize(reason error) ([]llmprotocol.Event, llmprotocol.Diagnostics, error) {
+	// The [DONE] after the terminal event ended the stream, so any unfinished
+	// input after it is rejected too, as pushFrame rejects a whole frame,
+	// before the framer's end-of-stream cleanup drops or reclassifies it.
+	if decoder.doneAfterTerminal && len(decoder.framer.buffer) != 0 {
+		return nil, nil, invalidProviderResponse("stream_event_after_terminal", "Responses stream sent a frame after its [DONE] sentinel")
+	}
 	events, diagnostics, frameErr := finalizeDecoderFrames(decoder.framer.Finalize, decoder.pushFrame, decoder.policy.Limits.Diagnostics)
 	if frameErr != nil {
 		return events, diagnostics, frameErr

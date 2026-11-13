@@ -113,37 +113,5 @@ out["enum_50k_indent4"] = {"body": {"model": "qwen", "max_tokens": 4096, "tools"
                            "qwen_prompt_tokens": enum_tokens, "vllm": False, "tool_json_only": True}
 print("enum_50k_indent4", enum_tokens)
 
-# Boundary conversations: one user message whose templated count is exactly 98,304 - 4,096 - 18 (the capacity
-# margins for one message), so a 98,304 window with a 4,096-token output allowance fits with nothing to spare.
-target = 98304 - 4096 - 18
-zh = ("路由器根据上下文窗口的大小决定是否把请求交给云端模型。本地模型的上下文窗口较小，超过时必须在发送之前切换。"
-      "ルーターはコンテキストウィンドウの大きさに基づいてリクエストをクラウドに渡します。\n")
-sources = {"prose": text("prose", 10**7), "code": text("code_30k", 10**7), "cjk": zh * 4000,
-           "cyrillic": text("cyrillic", 10**7), "arabic": text("arabic", 10**7), "hebrew": text("probe_hebrew_niqqud", 10**7),
-           "numeric_csv": text("numeric_csv", 10**7), "hex": text("hex_sha256", 10**7), "base64": text("base64", 10**7)}
-count_user = lambda content: len(tokenizer.apply_chat_template([{"role": "user", "content": content}], add_generation_prompt=True, tokenize=True))
-boundaries = {}
-for name, source in sources.items():
-    while len(source) < 1_200_000:
-        source += source
-    lo, hi = 0, len(source)
-    while lo < hi:
-        mid = (lo + hi + 1) // 2
-        if count_user(source[:mid]) <= target:
-            lo = mid
-        else:
-            hi = mid - 1
-    content = source[:lo]
-    filler = 0
-    while count_user(content) < target:
-        content += "."
-        filler += 1
-    if count_user(content) != target:
-        raise SystemExit(f"{name}: cannot reach {target} exactly")
-    boundaries[name] = {"source_chars": lo, "filler_dots": filler, "qwen_prompt_tokens": target}
-    print("boundary", name, lo, filler)
-out["_boundaries"] = {"zh_line": zh, "fixtures": {"prose": "prose", "code": "code_30k", "cyrillic": "cyrillic", "arabic": "arabic",
-                                                  "hebrew": "probe_hebrew_niqqud", "numeric_csv": "numeric_csv", "hex": "hex_sha256",
-                                                  "base64": "base64"}, "cases": boundaries}
 with open(os.path.join(OUT, "conversations.json.gz"), "wb") as raw, gzip.GzipFile(fileobj=raw, mode="wb", mtime=0) as gz:
     gz.write(json.dumps(out, ensure_ascii=False, indent=1).encode())

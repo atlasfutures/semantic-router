@@ -10,6 +10,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
 )
 
 func writeDerivedConfig(t *testing.T, mutate func(map[string]any)) string {
@@ -178,5 +180,134 @@ func TestV2RefusalNamesTheContractCode(t *testing.T) {
 	_, err = provider.Decide(t.Context(), DecisionInput{Body: []byte(`{"model":"arc-1.0","messages":[]}`), Format: "openai.chat.v1", SessionID: "s", BranchID: "main", RequestID: "r"})
 	if err == nil || !strings.Contains(err.Error(), "HTTP 409, execution_identity_mismatch") || strings.Contains(err.Error(), "secret") {
 		t.Fatalf("error %v", err)
+	}
+}
+
+// glmProtocolsConfig serves z-ai/glm-5.3 through model_pin on Messages and on
+// Chat, beside local Qwen on Chat. OpenRouter admits more glm controls on
+// Messages than on Chat, so the two protocols offer different glm actions.
+func glmProtocolsConfig(t *testing.T, mutate func(map[string]any)) string {
+	t.Helper()
+	return writeDerivedConfig(t, func(config map[string]any) {
+		deployments := config["deployments"].([]any)
+		glm := func(id, protocol, path string) map[string]any {
+			deployment := map[string]any{}
+			for key, value := range deployments[1].(map[string]any) {
+				deployment[key] = value
+			}
+			deployment["id"], deployment["protocol"], deployment["url"] = id, protocol, "https://router.example"+path
+			deployment["wire_model"], deployment["registry_model"] = "z-ai/glm-5.3", "z-ai/glm-5.3"
+			return deployment
+		}
+		config["deployments"] = []any{deployments[0], glm("glm-messages", "anthropic.messages.v1", "/v1/messages"), glm("glm-chat", "openai.chat.v1", "/v1/chat/completions")}
+		config["derived_actions"] = []any{
+			map[string]any{"model": "qwen3.8-27b", "worker": "qwen3.8-27b", "deployment_id": "local"},
+			map[string]any{"model": "glm-5.3", "worker": "glm-5.3", "deployment_id": "glm-messages"},
+			map[string]any{"model": "glm-5.3", "worker": "glm-5.3", "deployment_id": "glm-chat"},
+		}
+		if mutate != nil {
+			mutate(config)
+		}
+	})
+}
+
+func loadServer(t *testing.T, path string) (Config, *HTTPDecisions, *Server, error) {
+	t.Helper()
+	config, registry, err := LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TEST_DECISIONS_KEY", "fixture")
+	provider, err := NewHTTPDecisions(config)
+	if err != nil {
+		return config, nil, nil, err
+	}
+	server, err := NewServer(config, registry, provider, testCoreToken)
+	return config, provider, server, err
+}
+
+// Each protocol is offered only the actions bound to one of its deployments;
+// a control both glm deployments admit is one action in both views.
+func TestEachProtocolIsOfferedOnlyItsBoundActions(t *testing.T) {
+	config, provider, server, err := loadServer(t, glmProtocolsConfig(t, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	deploymentOf := map[string][]string{}
+	for _, action := range config.Actions {
+		deploymentOf[action.ID] = append(deploymentOf[action.ID], action.DeploymentID)
+	}
+	offered := func(format llmprotocol.WireFormat) map[string]bool {
+		ids := map[string]bool{}
+		for _, target := range provider.projectV2(DecisionInput{Format: format, State: ExecutionContext{ContextEpoch: "e:0"}}).Targets {
+			ids[target.ActionID] = true
+		}
+		return ids
+	}
+	chat, messages := offered(llmprotocol.OpenAIChatV1), offered(llmprotocol.AnthropicMessagesV1)
+	shared := 0
+	for id, deployments := range deploymentOf {
+		bound := map[string]bool{}
+		for _, deployment := range deployments {
+			bound[deployment] = true
+		}
+		if chat[id] != (bound["local"] || bound["glm-chat"]) || messages[id] != bound["glm-messages"] {
+			t.Fatalf("action %s on %v: chat=%v messages=%v", id, deployments, chat[id], messages[id])
+		}
+		if bound["glm-chat"] && bound["glm-messages"] {
+			shared++
+		}
+	}
+	// The default control is admitted on both cells; the Messages cell admits
+	// more, which Chat is never offered.
+	if shared == 0 || len(messages) <= shared {
+		t.Fatalf("shared=%d messages=%d chat=%d", shared, len(messages), len(chat))
+	}
+	if message := server.unboundProtocol(llmprotocol.OpenAIResponsesV1); message != "no deployment serves openai.responses.v1 requests for models glm-5.3, qwen3.8-27b; the core does not translate between protocols" {
+		t.Fatalf("unbound protocol message %q", message)
+	}
+	if message := server.unboundProtocol(llmprotocol.AnthropicMessagesV1); message != "" {
+		t.Fatalf("bound protocol refused: %q", message)
+	}
+}
+
+func TestProtocolBindingErrorsFailAtLoad(t *testing.T) {
+	for name, tc := range map[string]struct {
+		mutate func(map[string]any)
+		want   string
+	}{
+		"two deployments of one protocol": {func(config map[string]any) {
+			deployments := config["deployments"].([]any)
+			second := map[string]any{}
+			for key, value := range deployments[2].(map[string]any) {
+				second[key] = value
+			}
+			second["id"] = "glm-chat-2"
+			config["deployments"] = append(deployments, second)
+			config["derived_actions"] = append(config["derived_actions"].([]any), map[string]any{"model": "glm-5.3", "worker": "glm-5.3", "deployment_id": "glm-chat-2"})
+		}, "binds more than one openai.chat.v1 deployment"},
+		"another worker on another protocol": {func(config map[string]any) {
+			config["derived_actions"].([]any)[2].(map[string]any)["worker"] = "glm-5.3-chat"
+		}, "names a different worker or reported_model on another deployment"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, _, _, err := loadServer(t, glmProtocolsConfig(t, tc.mutate)); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// Only execution_context_v2 offers ARC the request's own targets, so the
+// other modes refuse at load an action some served protocol cannot execute.
+func TestOfferWideModesRefuseProtocolSpecificActions(t *testing.T) {
+	t.Setenv("TEST_DECISIONS_KEY", "fixture")
+	config, _, err := LoadConfig(writeDerivedConfig(t, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.Decisions.APIMode, config.Decisions.Routing = DecisionsCurrent, json.RawMessage(`{}`)
+	if _, err := NewHTTPDecisions(config); err == nil || !strings.Contains(err.Error(), "current Decisions offers every action to every protocol: action ") {
+		t.Fatalf("protocol-specific actions under current: %v", err)
 	}
 }
