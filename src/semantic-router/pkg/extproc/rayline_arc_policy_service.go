@@ -62,7 +62,7 @@ type policyBinding struct {
 	level       string
 	// model is the action's trained model, when the binding declares it.
 	model string
-	// base is a v5 action's dispatched base and budget, which the episode's
+	// base is the effort a v5 action is dispatched at, which the episode's
 	// effort pin compares (rayline_arc_effort_pin.go); nil for a v4 binding.
 	base *effortBase
 }
@@ -100,6 +100,8 @@ type policyServiceScorer struct {
 	workers     []raylinearc.WorkerManifest
 	bindings    map[string]policyBinding
 	actionOrder []string
+	// effortOverrides is the cell's dispatch_effort_overrides, by worker.
+	effortOverrides map[string]string
 	// fallback is ADR 0120's fallback: excluded models leave the offer, and
 	// an excluded held model forces a decision.
 	fallback bool
@@ -217,6 +219,7 @@ func newPolicyServiceScorer(
 	generation := strconv.FormatUint(raylineARCScorerGeneration.Add(1), 10)
 	scorer := &policyServiceScorer{
 		fallback:         policy.FallbackEnabled(),
+		effortOverrides:  policy.DispatchEffortOverrides,
 		schedule:         policy.ModelSchedule,
 		twoStage:         policy.PackageTwoStage(),
 		attestable:       policy.PackageTwoStage() && policy.PackageStageOneByModel(),
@@ -267,8 +270,9 @@ func newPolicyServiceScorer(
 		// model and the control's level.
 		if action, ok := policy.PackageV5Action(binding.ActionID); ok {
 			level, model = "", action.Model
-			dispatched, _, _ := raylineARCDispatchedControl(policy, binding.ActionID, action.Control)
-			shape := effortBaseOf(dispatched)
+			dispatched, sentOn, _ := raylineARCDispatchedControl(policy, binding.ActionID, action.Control)
+			override, overridden := policy.DispatchEffortOverride(sentOn)
+			shape := effortBaseOf(dispatched, override, overridden)
 			base = &shape
 			if action.Control.Instruction != nil {
 				level = action.Control.Instruction.Level
@@ -674,9 +678,10 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		(len(turn.Exclusions) > 0 || len(cellOut) > 0 || len(families) > 0)
 	// Each worker stays at the base its transcript started at
 	// (rayline_arc_effort_pin.go).
-	pins := effortPins(state.Controls)
-	pinMasked := 0
-	offer := func(cellOut map[int]string) ([]string, int, bool) {
+	pins := scorer.effortPins(state.Controls)
+	pinMasked, pinLifted := 0, false
+	var offer func(cellOut map[int]string) ([]string, int, bool)
+	offer = func(cellOut map[int]string) ([]string, int, bool) {
 		pinMasked = 0
 		held, forced := held, false
 		out := func(arm int, model string) bool {
@@ -714,19 +719,18 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 			}
 			available = append(available, actionID)
 		}
+		if len(available) == 0 && pinMasked > 0 {
+			// The pin is advice: a turn it would leave nothing to serve
+			// switches effort, a cache boundary, rather than failing.
+			pins, pinLifted = nil, true
+			return offer(cellOut)
+		}
 		return available, held, forced
 	}
 	// loggedRoutes keeps the route exclusions in force for the log, even when
 	// the offer sets them aside; offeredRoutes are the ones the offer applied.
 	loggedRoutes, offeredRoutes := cellOut, cellOut
 	available, offeredHeld, forced := offer(cellOut)
-	pinLifted := false
-	if len(available) == 0 && pinMasked > 0 {
-		// The pin is advice: a turn it would leave nothing to serve switches
-		// base, a cache boundary, rather than failing.
-		pins, pinLifted = nil, true
-		available, offeredHeld, forced = offer(cellOut)
-	}
 	if len(available) == 0 && !slices.Equal(excluded, hard) {
 		// The tool-loop family hold yields to the fallback's exclusions,
 		// a model's and a route's alike: when they leave its family nothing

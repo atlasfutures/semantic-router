@@ -10,6 +10,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/atlasfutures/semantic-router/rayline-core/thinkingcontrol"
+
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
 
@@ -111,4 +113,19 @@ func short(ids []string) string {
 		out = append(out, id[:8])
 	}
 	return fmt.Sprint(out)
+}
+
+// A worker's pin compares the effort each control sends: under a
+// dispatch_effort_overrides entry a default-base control sends the override,
+// so it matches an action at that base and differs from the default.
+func TestEffortBaseIsTheEffortSent(t *testing.T) {
+	steer := &thinkingcontrol.Instruction{Level: "up"}
+	defaultBase := thinkingcontrol.Control{Native: "default", Instruction: steer}
+	high := thinkingcontrol.Control{Native: "high", Instruction: steer}
+	if effortBaseOf(defaultBase, "high", true) != effortBaseOf(high, "high", true) {
+		t.Fatal("a default-base control under a high override pins apart from a high-base action")
+	}
+	if effortBaseOf(defaultBase, "", false) == effortBaseOf(high, "", false) {
+		t.Fatal("without an override, default and high pin together")
+	}
 }

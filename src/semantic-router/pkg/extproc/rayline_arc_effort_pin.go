@@ -6,6 +6,7 @@ import (
 
 	"github.com/atlasfutures/semantic-router/rayline-core/thinkingcontrol"
 
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
@@ -21,15 +22,21 @@ import (
 // that transcript's base and budget; the per-turn lever (the steering
 // instruction) still varies freely.
 
-// effortBase is a control's request-level shape: its native base and
-// budget.
+// effortBase is the request-level effort a control sends on a worker: its
+// native base and budget, or the worker's dispatch_effort_overrides effort
+// where that replaces the base.
 type effortBase struct {
 	native   string
 	budget   int64
 	budgeted bool
 }
 
-func effortBaseOf(control thinkingcontrol.Control) effortBase {
+// effortBaseOf is the effort control sends on a worker whose
+// dispatch_effort_overrides entry, if any, is override.
+func effortBaseOf(control thinkingcontrol.Control, override string, overridden bool) effortBase {
+	if overridden && config.RaylineARCOverridableBase(control) {
+		return effortBase{native: override}
+	}
 	base := effortBase{native: control.Native}
 	if control.BudgetTokens != nil {
 		base.budget, base.budgeted = *control.BudgetTokens, true
@@ -37,16 +44,18 @@ func effortBaseOf(control thinkingcontrol.Control) effortBase {
 	return base
 }
 
-// effortPins are the bases this episode's workers are fixed at: per worker,
-// the first control of its most recently dispatched transcript.
-func effortPins(controls []raylinearc.ControlPlacement) map[string]effortBase {
+// effortPins are the efforts this episode's workers are fixed at: per worker,
+// the first control of its most recently dispatched transcript (placements
+// are kept most recent last).
+func (scorer *policyServiceScorer) effortPins(controls []raylinearc.ControlPlacement) map[string]effortBase {
 	pins := map[string]effortBase{}
 	for _, placement := range controls {
 		worker, _, found := strings.Cut(placement.Key, "|")
 		if !found || placement.State.First == nil {
 			continue
 		}
-		pins[worker] = effortBaseOf(*placement.State.First)
+		override, overridden := scorer.effortOverrides[worker]
+		pins[worker] = effortBaseOf(*placement.State.First, override, overridden)
 	}
 	return pins
 }
