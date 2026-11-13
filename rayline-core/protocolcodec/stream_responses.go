@@ -25,6 +25,13 @@ type responsesStreamDecoder struct {
 	// upstreamServiceTier is the service_tier a lifecycle event's response
 	// named: the tier the upstream served the turn at.
 	upstreamServiceTier string
+	// doneAfterTerminal is set by the [DONE] sentinel that followed the
+	// terminal event; it ends the stream, so nothing may follow it.
+	doneAfterTerminal bool
+	// doneCRLFOpen is set while the [DONE] frame's blank line ends on a CR
+	// that was the last byte read: the LF of that CRLF may still arrive, as
+	// the next read's first frame, and is the one byte allowed after it.
+	doneCRLFOpen bool
 }
 
 type responsesOutputKind string
@@ -237,6 +244,12 @@ func (decoder *responsesStreamDecoder) Push(chunk []byte) ([]llmprotocol.Event, 
 			return events, diagnostics, decodeErr
 		}
 	}
+	if len(chunk) != 0 {
+		// The framer ends a frame on a lone CR when it is the last byte read,
+		// and frames the LF that completes it on its own in the next read.
+		decoder.doneCRLFOpen = decoder.doneAfterTerminal && len(frames) != 0 &&
+			bytes.HasSuffix(frames[len(frames)-1], []byte("\r")) && len(decoder.framer.buffer) == 0
+	}
 	return events, diagnostics, nil
 }
 
@@ -245,6 +258,16 @@ func (decoder *responsesStreamDecoder) pushFrame(frame []byte) ([]llmprotocol.Ev
 	if err != nil {
 		return nil, nil, err
 	}
+	// The [DONE] after the terminal event ended the stream: any frame after
+	// it, a comment or a data-less event included, is rejected -- except the
+	// LF completing the CRLF that ended the [DONE] frame across reads.
+	if decoder.doneAfterTerminal {
+		if decoder.doneCRLFOpen && bytes.Equal(frame, []byte("\n")) {
+			decoder.doneCRLFOpen = false
+			return nil, nil, nil
+		}
+		return nil, nil, invalidProviderResponse("stream_event_after_terminal", "Responses stream sent a frame after its [DONE] sentinel")
+	}
 	if parsed.commentOnly() {
 		return decoder.keepalive()
 	}
@@ -252,10 +275,17 @@ func (decoder *responsesStreamDecoder) pushFrame(frame []byte) ([]llmprotocol.Ev
 		return nil, nil, nil
 	}
 	if bytes.Equal(bytes.TrimSpace(parsed.Data), []byte("[DONE]")) {
-		return nil, nil, invalidProviderResponse(
-			"invalid_responses_stream_sentinel",
-			"Responses streams terminate with a response terminal event, not a [DONE] sentinel",
-		)
+		if !decoder.terminal {
+			return nil, nil, invalidProviderResponse(
+				"invalid_responses_stream_sentinel",
+				"Responses streams terminate with a response terminal event, not a [DONE] sentinel",
+			)
+		}
+		// OpenRouter's /v1/responses sends [DONE] after the terminal event.
+		// The turn is complete by then; the sentinel ends the stream, and is
+		// dropped with a diagnostic as the Anthropic decoder drops it.
+		decoder.doneAfterTerminal = true
+		return nil, afterTerminalDiagnostic(llmprotocol.OpenAIResponsesV1, "terminal_event", "[DONE]"), nil
 	}
 	if decoder.terminal {
 		return nil, nil, invalidProviderResponse("stream_event_after_terminal", "Responses stream emitted data after its terminal event")

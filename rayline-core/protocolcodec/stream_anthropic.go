@@ -1132,7 +1132,7 @@ func (encoder *anthropicStreamEncoder) terminateAnthropicStream(
 // is on record.
 func (decoder *anthropicStreamDecoder) afterTerminal(parsed sseFrame) ([]llmprotocol.Event, llmprotocol.Diagnostics, error) {
 	if bytes.Equal(bytes.TrimSpace(parsed.Data), []byte("[DONE]")) {
-		return nil, afterTerminalDiagnostic("[DONE]"), nil
+		return nil, afterMessageStopDiagnostic("[DONE]"), nil
 	}
 	if sentinelCutShort(parsed.Data) {
 		// A connection dropping partway through that sentinel used to be read
@@ -1141,7 +1141,7 @@ func (decoder *anthropicStreamDecoder) afterTerminal(parsed sseFrame) ([]llmprot
 		// and [DONE] belonged, with no way to close the stream. The sentinel
 		// whole adds nothing to a complete message, so neither could the bytes
 		// that never came have (codex round 13).
-		return nil, afterTerminalDiagnostic("a cut [DONE]"), nil
+		return nil, afterMessageStopDiagnostic("a cut [DONE]"), nil
 	}
 	eventType, err := decodeProviderEventType(parsed.Data, parsed.Event, decoder.policy)
 	if err != nil {
@@ -1152,7 +1152,7 @@ func (decoder *anthropicStreamDecoder) afterTerminal(parsed sseFrame) ([]llmprot
 		// Only the bare event: a ping or stop carrying anything else (usage,
 		// a delta) brings evidence the stream can no longer carry.
 		if bareEvent(parsed.Data) {
-			return nil, afterTerminalDiagnostic(eventType), nil
+			return nil, afterMessageStopDiagnostic(eventType), nil
 		}
 	case "message_delta":
 		// Usage and stop reason were published with the completion at
@@ -1160,7 +1160,7 @@ func (decoder *anthropicStreamDecoder) afterTerminal(parsed sseFrame) ([]llmprot
 		// when it restates them. New counts or a charge are accounting the
 		// stream can no longer carry, so they fail it rather than vanish.
 		if decoder.lateDeltaRestates(parsed.Data) {
-			return nil, afterTerminalDiagnostic(eventType), nil
+			return nil, afterMessageStopDiagnostic(eventType), nil
 		}
 		return nil, nil, invalidProviderResponse("stream_event_after_terminal",
 			"Anthropic stream emitted a message_delta with new usage or stop after message_stop")
@@ -1173,11 +1173,8 @@ func (decoder *anthropicStreamDecoder) afterTerminal(parsed sseFrame) ([]llmprot
 		"Anthropic stream emitted "+boundedEventName(eventType)+" after message_stop")
 }
 
-func afterTerminalDiagnostic(frame string) llmprotocol.Diagnostics {
-	return llmprotocol.Diagnostics{{
-		Source: llmprotocol.AnthropicMessagesV1, Field: "stream.after_message_stop", Action: llmprotocol.DiagnosticDropped,
-		Reason: "the provider sent " + frame + " after message_stop; the message was already complete",
-	}}
+func afterMessageStopDiagnostic(frame string) llmprotocol.Diagnostics {
+	return afterTerminalDiagnostic(llmprotocol.AnthropicMessagesV1, "message_stop", frame)
 }
 
 // boundedEventName keeps a provider-chosen event name fit for an error
