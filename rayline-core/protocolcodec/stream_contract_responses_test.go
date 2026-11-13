@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
@@ -413,6 +414,30 @@ func TestResponsesStreamRejectsChatCompletionDoneSentinel(t *testing.T) {
 	)
 	_, _, err := decoder.Push([]byte("data: [DONE]\n\n"))
 	assertProtocolError(t, err, llmprotocol.ErrorUpstreamUnavailable, "invalid_responses_stream_sentinel")
+}
+
+func TestResponsesStreamDoneSentinelEndsACompletedStream(t *testing.T) {
+	// A whole turn ending in response.completed (sequence 0-7).
+	completed := strings.Join(keepaliveSourceFrames(t, "002-responses-text-in.json"), "")
+	for _, after := range []string{
+		"data: [DONE]\n\n",
+		"event: response.in_progress\ndata: {\"type\":\"response.in_progress\",\"sequence_number\":8}\n\n",
+	} {
+		decoder := OpenAIResponsesCodec{}.NewDecoder(
+			llmprotocol.StreamContext{Context: context.Background()}, llmprotocol.DefaultPolicy(),
+		)
+		if _, _, err := decoder.Push([]byte(completed)); err != nil {
+			t.Fatal(err)
+		}
+		events, diagnostics, err := decoder.Push([]byte("data: [DONE]\n\n"))
+		if err != nil || len(events) != 0 || len(diagnostics) != 0 {
+			t.Fatalf("[DONE] after the terminal event: events=%+v diagnostics=%+v err=%v", events, diagnostics, err)
+		}
+		// The sentinel ended the stream: nothing may follow it, not even
+		// another [DONE].
+		_, _, err = decoder.Push([]byte(after))
+		assertProtocolError(t, err, llmprotocol.ErrorUpstreamUnavailable, "stream_event_after_terminal")
+	}
 }
 
 func TestOfficialResponsesStreamMetadataAndStructuralEventsAreAccepted(t *testing.T) {
