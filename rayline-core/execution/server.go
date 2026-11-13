@@ -24,7 +24,6 @@ import (
 	"github.com/atlasfutures/semantic-router/rayline-core/protocolcodec"
 	"github.com/atlasfutures/semantic-router/rayline-core/reasoning"
 	"github.com/atlasfutures/semantic-router/rayline-core/thinkingcontrol"
-	"github.com/atlasfutures/semantic-router/rayline-core/tokencount"
 )
 
 type admittedAction struct {
@@ -96,13 +95,6 @@ func NewServer(config Config, registry *thinkingcontrol.Registry, provider Decis
 		}
 		if overflow := deployment.ContextOverflow; overflow != "" && overflow != ContextOverflowRefuses && overflow != ContextOverflowTruncates {
 			return nil, fmt.Errorf("deployment %s: context_overflow must be %q or %q", deployment.ID, ContextOverflowRefuses, ContextOverflowTruncates)
-		}
-		if isQwen38Deployment(deployment) {
-			// Build the embedded counter now, so a corrupt embed fails at
-			// startup rather than on a turn.
-			if _, err := tokencount.Qwen38(); err != nil {
-				return nil, fmt.Errorf("deployment %s: qwen3.8 counter: %w", deployment.ID, err)
-			}
 		}
 		if deployment.Kind == "local" && deployment.AuthEnv != "" &&
 			(deployment.AuthEnv == config.Decisions.AuthEnv || (os.Getenv(deployment.AuthEnv) != "" && os.Getenv(deployment.AuthEnv) == os.Getenv(config.Decisions.AuthEnv))) {

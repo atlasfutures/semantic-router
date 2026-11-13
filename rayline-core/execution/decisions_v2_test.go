@@ -305,7 +305,7 @@ func TestV2ExplicitEventIsStrippedAndPrecedesMarkers(t *testing.T) {
 	local, cloud := &upstreamFixture{}, &upstreamFixture{}
 	config := hybridV2Config(t, chatUpstream(t, local, false).URL, chatUpstream(t, cloud, true).URL+"/v1/chat/completions")
 	fixture := &v2Decisions{choose: func(contextV2) string { return localActionID }}
-	_, httpServer := v2Server(t, config, fixture)
+	_, httpServer := v2Server(t, config, fixture, 300)
 	if status, response := executeHTTP(t, httpServer.URL, "/v1/chat/completions", chatTurn(userTask), "explicit"); status != 200 {
 		t.Fatalf("status %d: %s", status, response)
 	}
@@ -475,7 +475,7 @@ func TestV2SidecallDoesNotAdvanceBranchState(t *testing.T) {
 	local, cloud := &upstreamFixture{}, &upstreamFixture{}
 	config := hybridV2Config(t, chatUpstream(t, local, false).URL, chatUpstream(t, cloud, true).URL+"/v1/chat/completions")
 	fixture := &v2Decisions{choose: func(contextV2) string { return localActionID }}
-	server, httpServer := v2Server(t, config, fixture)
+	server, httpServer := v2Server(t, config, fixture, 300)
 	if status, response := executeHTTP(t, httpServer.URL, "/v1/chat/completions", chatTurn(userTask), "side"); status != 200 {
 		t.Fatalf("status %d: %s", status, response)
 	}
@@ -507,7 +507,7 @@ func TestV2CompactionCarriesRetainedAttribution(t *testing.T) {
 	local, cloud := &upstreamFixture{}, &upstreamFixture{}
 	config := hybridV2Config(t, chatUpstream(t, local, false).URL, chatUpstream(t, cloud, true).URL+"/v1/chat/completions")
 	fixture := &v2Decisions{choose: func(contextV2) string { return localActionID }}
-	_, httpServer := v2Server(t, config, fixture)
+	_, httpServer := v2Server(t, config, fixture, 300)
 	for _, body := range []string{chatTurn(userTask), chatTurn(userTask, toolCall, toolResult)} {
 		if status, response := executeHTTP(t, httpServer.URL, "/v1/chat/completions", body, "compact"); status != 200 {
 			t.Fatalf("status %d: %s", status, response)
@@ -610,7 +610,7 @@ func TestV2CompactionRetryAfterFailureKeepsRetainedAttribution(t *testing.T) {
 	local, cloud := &upstreamFixture{}, &upstreamFixture{}
 	config := hybridV2Config(t, chatUpstream(t, local, false).URL, chatUpstream(t, cloud, true).URL+"/v1/chat/completions")
 	fixture := &v2Decisions{choose: func(contextV2) string { return localActionID }}
-	_, httpServer := v2Server(t, config, fixture)
+	_, httpServer := v2Server(t, config, fixture, 300)
 	for _, body := range []string{chatTurn(userTask), chatTurn(userTask, toolCall, toolResult)} {
 		if status, response := executeHTTP(t, httpServer.URL, "/v1/chat/completions", body, "compact-retry"); status != 200 {
 			t.Fatalf("status %d: %s", status, response)
@@ -641,7 +641,7 @@ func TestV2OptionalExplicitEventDoesNotStopWireInference(t *testing.T) {
 	local, cloud := &upstreamFixture{}, &upstreamFixture{}
 	config := hybridV2Config(t, chatUpstream(t, local, false).URL, chatUpstream(t, cloud, true).URL+"/v1/chat/completions")
 	fixture := &v2Decisions{choose: func(contextV2) string { return localActionID }}
-	server, httpServer := v2Server(t, config, fixture)
+	server, httpServer := v2Server(t, config, fixture, 300)
 	explicit := `{"rayline_event":{"kind":"task_start"},` + chatTurn(userTask)[1:]
 	if status, response := executeHTTP(t, httpServer.URL, "/v1/chat/completions", explicit, "optional"); status != 200 {
 		t.Fatalf("status %d: %s", status, response)
@@ -678,7 +678,7 @@ func TestV2HeaderlessHermesSummaryRunsAsSidecall(t *testing.T) {
 	local, cloud := &upstreamFixture{}, &upstreamFixture{}
 	config := hybridV2Config(t, chatUpstream(t, local, false).URL, chatUpstream(t, cloud, true).URL+"/v1/chat/completions")
 	fixture := &v2Decisions{choose: func(contextV2) string { return localActionID }}
-	server, httpServer := v2Server(t, config, fixture)
+	server, httpServer := v2Server(t, config, fixture, 300)
 	if status, response := executeHTTP(t, httpServer.URL, "/v1/chat/completions", chatTurn(userTask), "hermes"); status != 200 {
 		t.Fatalf("status %d: %s", status, response)
 	}

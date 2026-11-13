@@ -74,7 +74,7 @@ func TestLocalServerErrorBeforeOutputReselectsCloud(t *testing.T) {
 	cloud := &upstreamFixture{}
 	config := hybridV2Config(t, local.URL, chatUpstream(t, cloud, true).URL+"/v1/chat/completions")
 	fixture := &v2Decisions{choose: unavailableFirst}
-	_, httpServer := v2Server(t, config, fixture)
+	_, httpServer := v2Server(t, config, fixture, 300)
 	status, header, response := executeWithHeaders(t, httpServer.URL, chatTurn(userTask), "local-500")
 	if status != 200 || header.Get("X-Rayline-Executed-Action-Id") != cloudActionID {
 		t.Fatalf("status %d executed %q: %s", status, header.Get("X-Rayline-Executed-Action-Id"), response)
@@ -134,7 +134,7 @@ func TestUnreachableLocalRuntimeReselectsCloud(t *testing.T) {
 	cloud := &upstreamFixture{}
 	config := hybridV2Config(t, closed, chatUpstream(t, cloud, true).URL+"/v1/chat/completions")
 	fixture := &v2Decisions{choose: unavailableFirst}
-	_, httpServer := v2Server(t, config, fixture)
+	_, httpServer := v2Server(t, config, fixture, 300)
 	status, header, response := executeWithHeaders(t, httpServer.URL, chatTurn(userTask), "local-down")
 	if status != 200 || header.Get("X-Rayline-Executed-Action-Id") != cloudActionID || cloud.count() != 1 {
 		t.Fatalf("status %d executed %q: %s", status, header.Get("X-Rayline-Executed-Action-Id"), response)
@@ -172,7 +172,10 @@ func TestLocalFallbackRunsOncePerTurn(t *testing.T) {
 		}
 		return cloudActionID
 	}}
-	_, httpServer := v2Server(t, config, fixture)
+	server, httpServer := v2Server(t, config, fixture, 300)
+	if err := server.RegisterPromptCounter(deployment.ID, &fixedCounter{identity: promptIdentity(deployment), counts: []int{300}}); err != nil {
+		t.Fatal(err)
+	}
 	status, _, response := executeWithHeaders(t, httpServer.URL, chatTurn(userTask), "twice")
 	if status != http.StatusServiceUnavailable {
 		t.Fatalf("status %d: %s", status, response)
@@ -188,7 +191,7 @@ func TestLocalClientErrorIsForwardedNotReselected(t *testing.T) {
 	cloud := &upstreamFixture{}
 	config := hybridV2Config(t, local.URL, chatUpstream(t, cloud, true).URL+"/v1/chat/completions")
 	fixture := &v2Decisions{choose: unavailableFirst}
-	_, httpServer := v2Server(t, config, fixture)
+	_, httpServer := v2Server(t, config, fixture, 300)
 	if status, _, response := executeWithHeaders(t, httpServer.URL, chatTurn(userTask), "local-400"); status != http.StatusBadRequest {
 		t.Fatalf("status %d: %s", status, response)
 	}
@@ -238,7 +241,7 @@ func TestLocalFailureExcludesEverySiblingOnThatDeployment(t *testing.T) {
 		}
 		return cloudActionID
 	}}
-	_, httpServer := v2Server(t, config, fixture)
+	_, httpServer := v2Server(t, config, fixture, 300)
 	if status, _, response := executeWithHeaders(t, httpServer.URL, chatTurn(userTask), "sibling"); status != 200 {
 		t.Fatalf("status %d: %s", status, response)
 	}
