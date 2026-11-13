@@ -150,17 +150,32 @@ func NewHTTPDecisions(config Config) (*HTTPDecisions, error) {
 	if config.Decisions.Result == "custom" && provider.valueUSD == nil {
 		return nil, fmt.Errorf("custom Decisions result requires explicit routing v_value")
 	}
+	bound := make(map[llmprotocol.WireFormat]map[string]bool)
 	for protocol, actions := range config.actionsByProtocol() {
 		provider.actions[protocol] = make(map[string]Action, len(actions))
-		executable := 0
 		for _, action := range actions {
 			provider.actions[protocol][action.ID] = action
 			if action.DeploymentID != "" {
-				executable++
+				if bound[protocol] == nil {
+					bound[protocol] = make(map[string]bool)
+				}
+				bound[protocol][action.ID] = true
 			}
 		}
-		if mode == DecisionsExecutionContextV2 && executable > maxTargetsV2 {
-			return nil, fmt.Errorf("execution_context_v2 carries at most %d executable bindings per protocol; %s has %d", maxTargetsV2, protocol, executable)
+		if mode == DecisionsExecutionContextV2 && len(bound[protocol]) > maxTargetsV2 {
+			return nil, fmt.Errorf("execution_context_v2 carries at most %d executable bindings per protocol; %s has %d", maxTargetsV2, protocol, len(bound[protocol]))
+		}
+	}
+	// Only execution_context_v2 sends ARC the request's own targets. The other
+	// modes offer every action whatever the request's protocol, so each
+	// protocol served must bind the same actions.
+	if mode != DecisionsExecutionContextV2 {
+		for _, action := range config.Actions {
+			for _, protocol := range wireProtocols {
+				if action.DeploymentID != "" && len(bound[protocol]) > 0 && !bound[protocol][action.ID] {
+					return nil, fmt.Errorf("%s Decisions offers every action to every protocol: action %s has no %s deployment; bind it on every protocol served, or use execution_context_v2", mode, action.ID, protocol)
+				}
+			}
 		}
 	}
 	for _, deployment := range config.Deployments {

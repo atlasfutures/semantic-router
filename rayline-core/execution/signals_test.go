@@ -130,6 +130,15 @@ func TestConfiguredRoutingSignalsAreAccepted(t *testing.T) {
 		}
 		config.Decisions.Routing = json.RawMessage(`{"policy":{"preset":"arc-policy.hybrid-default.v1"},"signals":["topic.domain"]}`)
 		if mode == "current" {
+			// current offers every action to every protocol: serve one.
+			config.Deployments = config.Deployments[:1]
+			actions := config.Actions[:0:0]
+			for _, action := range config.Actions {
+				if action.DeploymentID == "local" {
+					actions = append(actions, action)
+				}
+			}
+			config.Actions = actions
 			config.Decisions.APIMode = mode
 			config.Decisions.Routing = json.RawMessage(`{"signals":["topic.domain"]}`)
 		}

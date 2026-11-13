@@ -297,3 +297,17 @@ func TestProtocolBindingErrorsFailAtLoad(t *testing.T) {
 		})
 	}
 }
+
+// Only execution_context_v2 offers ARC the request's own targets, so the
+// other modes refuse at load an action some served protocol cannot execute.
+func TestOfferWideModesRefuseProtocolSpecificActions(t *testing.T) {
+	t.Setenv("TEST_DECISIONS_KEY", "fixture")
+	config, _, err := LoadConfig(writeDerivedConfig(t, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.Decisions.APIMode, config.Decisions.Routing = DecisionsCurrent, json.RawMessage(`{}`)
+	if _, err := NewHTTPDecisions(config); err == nil || !strings.Contains(err.Error(), "current Decisions offers every action to every protocol: action ") {
+		t.Fatalf("protocol-specific actions under current: %v", err)
+	}
+}

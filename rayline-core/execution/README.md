@@ -63,7 +63,10 @@ opt-in. The core reports facts and never picks or ranks a model.
   action whose deployments name different workers or reported models, and a
   deployment whose cell admits no controls. A request in a protocol with no
   bound deployment is refused (`protocol_not_bound`) with the configured
-  models and the protocol named.
+  models and the protocol named. Only `execution_context_v2` sends the
+  per-protocol targets; `current` and `execution_context_v1` offer every
+  action, so they refuse at load an action that a served protocol has no
+  deployment for.
 - **Envelope.** Each decision sends `routing.execution` version
   `arc-execution-context.v2`: `turn` (`id`, `attempt`, `epoch`, `retry_of`,
   `reconsult`), `event`, `last_served`, `history`, `hold` (null: the core has no
