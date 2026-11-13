@@ -72,6 +72,12 @@ const (
 	// session already held and tokens it encoded. A service without it
 	// refuses the field, so a cell asks only a service that lists it.
 	PolicyCapabilitySessionReuse = "session_reuse"
+	// PolicyCapabilityLookupSessions: the service serves a decide's
+	// session_scope "lookup" (PolicySessionScopeLookup): the call appends to
+	// the episode's lookup-scoped encoder session and records nothing. A
+	// service without it ignores the field and would run the call as a
+	// strict episode, so a cell sends it only to a service that lists it.
+	PolicyCapabilityLookupSessions = "lookup_sessions"
 )
 
 // Readiness classes for a service that cannot serve what the cell sends.

@@ -851,6 +851,21 @@ def test_rayline_arc_cli_mirrors_routes_max_encode_tokens():
         type(artifact).model_validate({**artifact.model_dump(), **bounded})
 
 
+def test_rayline_arc_cli_mirrors_routes_lookup_sessions():
+    """routes_api.lookup_sessions (Go RaylineARCRoutesAPIConfig.LookupSessions)."""
+    assert RaylineARCRoutesAPIConfig().lookup_sessions is False
+    with pytest.raises(ValidationError):
+        RaylineARCRoutesAPIConfig(enabled=False, lookup_sessions=True)
+    arc = _policy_service_decision().algorithm.rayline_arc
+    sessions = {"routes_api": {"enabled": True, "lookup_sessions": True}}
+    parsed = type(arc).model_validate({**arc.model_dump(), **sessions})
+    assert parsed.routes_api.lookup_sessions is True
+    # An artifact cell has no policy service to keep the sessions.
+    artifact = _valid_decision().algorithm.rayline_arc
+    with pytest.raises(ValidationError):
+        type(artifact).model_validate({**artifact.model_dump(), **sessions})
+
+
 def test_rayline_arc_cli_mirrors_generation_routing():
     """policy_service.generation_routing (Go RaylineARCGenerationRoutingConfig, #305)."""
     policy = _policy_service_decision().algorithm.rayline_arc.policy_service

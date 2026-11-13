@@ -305,6 +305,16 @@ type RaylineARCRoutesAPIConfig struct {
 	// nor is one with routing controls, or one on a package with no bound
 	// fallback. Policy-service cells only. Zero, the default, bounds nothing.
 	MaxEncodeTokens int `yaml:"max_encode_tokens,omitempty"`
+	// LookupSessions lets a throwaway lookup that names a conversation
+	// (x-rayline-session) append to that conversation's warm lookup encoder
+	// session on the policy service, instead of encoding its transcript
+	// from token 0. The lookup still commits nothing: the service records no
+	// turn and holds no arm on that session, and the conversation's routed
+	// episode is never touched. Used only when the service advertises
+	// lookup_sessions; a lookup the service cannot serve on the session is
+	// decided one-shot, as with this off. Policy-service cells only. Off by
+	// default.
+	LookupSessions bool `yaml:"lookup_sessions,omitempty"`
 }
 
 // RaylineARCRoutesAdmissionConfig bounds concurrent route lookups.
@@ -558,6 +568,9 @@ func validateRaylineARCAlgorithmConfig(cfg *RaylineARCAlgorithmConfig) error {
 	if cfg.RoutesAPI.MaxEncodeTokens != 0 {
 		return fmt.Errorf("routes_api: max_encode_tokens is served by a policy-service cell; an artifact cell bounds its context with max_context_tokens")
 	}
+	if cfg.RoutesAPI.LookupSessions {
+		return fmt.Errorf("routes_api: lookup_sessions is served by a policy-service cell, whose service keeps the lookup encoder sessions")
+	}
 	if err := validateRaylineARCThinkingLeverConfig(cfg.ThinkingLever, false); err != nil {
 		return fmt.Errorf("thinking_lever: %w", err)
 	}
@@ -627,6 +640,9 @@ func validateRaylineARCRoutesAPIConfig(cfg RaylineARCRoutesAPIConfig) error {
 	}
 	if cfg.MaxEncodeTokens != 0 && !cfg.Enabled {
 		return fmt.Errorf("max_encode_tokens needs the endpoint enabled")
+	}
+	if cfg.LookupSessions && !cfg.Enabled {
+		return fmt.Errorf("lookup_sessions needs the endpoint enabled")
 	}
 	if len(cfg.CheckpointLabel) > maxRaylineARCConfigStringLength {
 		return fmt.Errorf(
