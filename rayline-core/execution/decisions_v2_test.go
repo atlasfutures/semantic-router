@@ -565,7 +565,7 @@ func TestV2ResponseChecksRefuseUnappliedOrUnexplainedDecisions(t *testing.T) {
 	}
 }
 
-func TestV2ConfigRequiresAnExplicitPublishedPolicy(t *testing.T) {
+func TestV2ConfigRequiresAnExplicitPolicy(t *testing.T) {
 	t.Setenv("TEST_DECISIONS_KEY", "fixture")
 	base := hybridV2Config(t, "http://127.0.0.1:1/v1/chat/completions", "http://127.0.0.1:2")
 	base.Decisions.URL = "http://127.0.0.1:3/v1/routes"
@@ -583,7 +583,9 @@ func TestV2ConfigRequiresAnExplicitPublishedPolicy(t *testing.T) {
 		"absent policy":              {DecisionsExecutionContextV2, `{}`, false},
 		"policy forwarded in v1":     {DecisionsExecutionContextV1, `{"policy":{"preset":"arc-policy.hybrid-default.v1"}}`, true},
 		"policy refused in current":  {DecisionsCurrent, `{"policy":{"preset":"arc-policy.hybrid-default.v1"}}`, false},
-		"unpublished preset":         {DecisionsExecutionContextV2, `{"policy":{"preset":"arc-policy.always-local.v1"}}`, false},
+		"preset sent to ARC as is":   {DecisionsExecutionContextV2, `{"policy":{"preset":"arc-policy.always-local.v1"}}`, true},
+		"missing preset":             {DecisionsExecutionContextV2, `{"policy":{}}`, false},
+		"empty preset":               {DecisionsExecutionContextV2, `{"policy":{"preset":""}}`, false},
 		"unknown class":              {DecisionsExecutionContextV2, `{"policy":{"preset":"arc-policy.hybrid-default.v1","overrides":{"schedule":{"model":["every_5"]}}}}`, false},
 		"selection override":         {DecisionsExecutionContextV2, `{"policy":{"preset":"arc-policy.hybrid-default.v1","overrides":{"selection":{"min_p_pass":0.5}}}}`, false},
 		"unknown override":           {DecisionsExecutionContextV2, `{"policy":{"preset":"arc-policy.hybrid-default.v1","overrides":{"selector":"utility"}}}`, false},

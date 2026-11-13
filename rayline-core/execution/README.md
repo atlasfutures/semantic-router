@@ -23,9 +23,8 @@ opt-in. The core reports facts and never picks or ranks a model.
 - **Policy.** `decisions.routing.policy` is required: `{"preset": ...}` with an
   optional `overrides.schedule` (`model`/`thinking` sets of `cache_boundaries`,
   `user_messages`, `all_turns`) and, for `arc-policy.prefer-local.v1` only,
-  `overrides.selection.min_p_pass` in (0, 1). Served presets:
-  `arc-policy.hybrid-default.v1`, `arc-policy.prefer-local.v1` (pathfinder
-  #5913) and `arc-policy.package-default.v1`. At most 16 executable bindings fit
+  `overrides.selection.min_p_pass` in (0, 1). The preset id is sent to the
+  service unchanged and the service validates it. At most 16 executable bindings fit
   `targets[]`. Raydock writes
   `arc-policy.hybrid-default.v1` when its user sets no override; the core never
   sends an absent policy in this mode. Allowed routing keys are `policy`,

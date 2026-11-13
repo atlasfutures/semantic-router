@@ -19,14 +19,6 @@ const executionContextV2 = "arc-execution-context.v2"
 // maxTargetsV2 is the contract's targets[] bound (pathfinder #5904 schema).
 const maxTargetsV2 = 16
 
-// policyPresets are the presets the policy service serves (pathfinder #5904;
-// arc-policy.prefer-local.v1 since #5913).
-var policyPresets = map[string]bool{
-	"arc-policy.hybrid-default.v1":  true,
-	"arc-policy.prefer-local.v1":    true,
-	"arc-policy.package-default.v1": true,
-}
-
 var scheduleClasses = map[string]bool{"cache_boundaries": true, "user_messages": true, "all_turns": true}
 
 type policyOverrides struct {
@@ -44,8 +36,9 @@ type routingPolicy struct {
 	Overrides *policyOverrides `json:"overrides,omitempty"`
 }
 
-// validateRoutingPolicy admits only the published shape: a known preset and
-// optional schedule and prefer-local threshold overrides. Package
+// validateRoutingPolicy admits only the published shape: a preset and
+// optional schedule and prefer-local threshold overrides. The preset id is
+// sent to the service unchanged and the service validates it. Package
 // admission of a class is the service's refusal, not a local guess.
 func validateRoutingPolicy(raw json.RawMessage) (routingPolicy, error) {
 	var policy routingPolicy
@@ -54,8 +47,8 @@ func validateRoutingPolicy(raw json.RawMessage) (routingPolicy, error) {
 	if err := decoder.Decode(&policy); err != nil {
 		return policy, fmt.Errorf("routing.policy must contain only preset and overrides.{schedule,selection}: %v", err)
 	}
-	if !policyPresets[policy.Preset] {
-		return policy, fmt.Errorf("routing.policy.preset %q is not a published preset", policy.Preset)
+	if policy.Preset == "" {
+		return policy, fmt.Errorf("routing.policy.preset is required")
 	}
 	if overrides := policy.Overrides; overrides != nil {
 		if schedule := overrides.Schedule; schedule != nil {
