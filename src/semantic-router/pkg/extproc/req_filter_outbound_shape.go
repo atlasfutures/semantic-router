@@ -315,7 +315,7 @@ var outboundKeyValues = map[string]map[string]bool{
 	"verbosity":        enumSet("low", "medium", "high"),
 	"summary":          enumSet("auto", "concise", "detailed", "none"),
 	"generate_summary": enumSet("auto", "concise", "detailed", "none"),
-	"display":          enumSet("summarized", "omitted"),
+	"display":          enumSet("summarized", "omitted", "updates"),
 	"thinking_mode":    enumSet("enabled", "disabled", "adaptive", "auto"),
 	"type": enumSet("enabled", "disabled", "adaptive", "auto", "text", "json_object", "json_schema", "none",
 		"required", "any", "tool", "function", "allowed_tools", "custom", "ephemeral",

@@ -330,7 +330,7 @@ func enumSet(values ...string) map[string]bool {
 var (
 	knownEfforts         = enumSet("none", "minimal", "low", "medium", "high", "xhigh", "max")
 	knownThinkingTypes   = enumSet("enabled", "disabled", "adaptive", "auto")
-	knownThinkingDisplay = enumSet("summarized", "omitted")
+	knownThinkingDisplay = enumSet("summarized", "omitted", "updates")
 	knownOutputFormats   = enumSet("text", "json_object", "json_schema")
 	knownToolChoices     = enumSet("auto", "none", "required", "any", "tool", "function", "allowed_tools", "custom")
 	knownCacheTypes      = enumSet("ephemeral")

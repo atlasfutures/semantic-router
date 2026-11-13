@@ -453,7 +453,11 @@ func validateReasoningEffort(request Request, limits Limits) error {
 
 func validateReasoningDisplay(request Request) error {
 	switch request.ReasoningDisplay {
-	case "", "summarized", "omitted":
+	// "updates" (beta thinking-display-updates-2026-08-18) hides reasoning
+	// like "omitted" but returns the between-tool progress notes. Claude Code
+	// 2.1.322 sends it with that beta; the beta header travels through Envoy
+	// untouched, so the value is forwarded as the client wrote it.
+	case "", "summarized", "omitted", "updates":
 	default:
 		return NewFieldError(ErrorInvalidRequest, "invalid_reasoning_display",
 			"reasoning display mode is invalid", "", "reasoning_display")

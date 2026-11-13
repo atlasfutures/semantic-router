@@ -23,6 +23,13 @@ func TestAnthropicThinkingDisplaySurvivesSemanticMutation(t *testing.T) {
 			body: `{"model":"source-model","max_tokens":64,"messages":[{"role":"user","content":"hello"}],"thinking":{"type":"adaptive","display":"omitted"}}`,
 			mode: llmprotocol.ReasoningModeAdaptive,
 		},
+		{
+			// Claude Code 2.1.322 sends this shape; the cell refused it as
+			// invalid_reasoning_display and the client retried without it.
+			name: "adaptive updates",
+			body: `{"model":"source-model","max_tokens":64,"messages":[{"role":"user","content":"hello"}],"thinking":{"type":"adaptive","display":"updates"}}`,
+			mode: llmprotocol.ReasoningModeAdaptive,
+		},
 	}
 	engine := NewBuiltinEngine()
 	for _, test := range tests {
