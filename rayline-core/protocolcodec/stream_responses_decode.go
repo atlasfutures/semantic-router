@@ -1,7 +1,6 @@
 package protocolcodec
 
 import (
-	"bytes"
 	"encoding/json"
 
 	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
@@ -349,10 +348,10 @@ func applyResponsesTransportFailure(event *llmprotocol.Event, wire responsesEven
 }
 
 func (decoder *responsesStreamDecoder) Finalize(reason error) ([]llmprotocol.Event, llmprotocol.Diagnostics, error) {
-	// The [DONE] after the terminal event ended the stream, so an unfinished
-	// frame after it is rejected too, before the framer's end-of-stream
-	// cleanup drops or reclassifies it.
-	if decoder.doneAfterTerminal && len(bytes.Trim(decoder.framer.buffer, "\r\n")) != 0 {
+	// The [DONE] after the terminal event ended the stream, so any unfinished
+	// input after it is rejected too, as pushFrame rejects a whole frame,
+	// before the framer's end-of-stream cleanup drops or reclassifies it.
+	if decoder.doneAfterTerminal && len(decoder.framer.buffer) != 0 {
 		return nil, nil, invalidProviderResponse("stream_event_after_terminal", "Responses stream sent a frame after its [DONE] sentinel")
 	}
 	events, diagnostics, frameErr := finalizeDecoderFrames(decoder.framer.Finalize, decoder.pushFrame, decoder.policy.Limits.Diagnostics)

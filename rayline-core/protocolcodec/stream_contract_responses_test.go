@@ -490,7 +490,10 @@ func TestResponsesStreamCRLFSplitAcrossReadsIsOneLineEnding(t *testing.T) {
 func TestResponsesStreamRejectsAnUnfinishedFrameAfterTheDoneSentinel(t *testing.T) {
 	completed := strings.Join(keepaliveSourceFrames(t, "002-responses-text-in.json"), "") + "data: [DONE]\n\n"
 	cut := llmprotocol.NewError(llmprotocol.ErrorUpstreamUnavailable, "caller_cut", "the caller ended the stream", nil)
-	for _, trailer := range []string{" ", "\t", "data:", "data: x"} {
+	// Nothing may follow the sentinel's frame, not even a blank line: an
+	// unfinished trailer fails at Finalize, and a line ending, which is a
+	// whole frame, fails at Push.
+	for _, trailer := range []string{" ", "\t", "data:", "data: x", "\n", "\r\n"} {
 		for _, reason := range []error{nil, cut} {
 			decoder := OpenAIResponsesCodec{}.NewDecoder(
 				llmprotocol.StreamContext{Context: context.Background()}, llmprotocol.DefaultPolicy(),
@@ -498,15 +501,15 @@ func TestResponsesStreamRejectsAnUnfinishedFrameAfterTheDoneSentinel(t *testing.
 			if _, _, err := decoder.Push([]byte(completed)); err != nil {
 				t.Fatal(err)
 			}
-			if _, _, err := decoder.Push([]byte(trailer)); err != nil {
-				t.Fatalf("unfinished %q: %v", trailer, err)
+			_, _, err := decoder.Push([]byte(trailer))
+			if err == nil {
+				_, _, err = decoder.Finalize(reason)
 			}
-			_, _, err := decoder.Finalize(reason)
 			assertProtocolError(t, err, llmprotocol.ErrorUpstreamUnavailable, "stream_event_after_terminal")
 		}
 	}
-	// Line endings alone are not a frame: a stream ending on the [DONE]'s
-	// own CRLF, split across reads, finalizes cleanly.
+	// Only the LF that completes the [DONE]'s own CRLF, split across reads,
+	// may follow it: that stream finalizes cleanly.
 	decoder := OpenAIResponsesCodec{}.NewDecoder(
 		llmprotocol.StreamContext{Context: context.Background()}, llmprotocol.DefaultPolicy(),
 	)
