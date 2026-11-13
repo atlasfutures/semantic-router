@@ -96,11 +96,8 @@ func validateModelPinControl(deployment Deployment, control thinkingcontrol.Cont
 // to refuse. Any normalization the serving gateway performs applies equally to
 // the paths that reach it without this check.
 //
-// An in-band system row is not refused. Folding one is opt-in per deployment
-// (`inband_system`), applies only to a local Chat deployment
-// (validateInbandSystem) and is the single caller of FoldInbandSystem, so no
-// fold can reach a model_pin Messages dispatch: the row is forwarded as the
-// client sent it.
+// An in-band system row is not refused: the execution core never folds one,
+// so the row is forwarded as the client sent it.
 //
 // A developer row is still refused, because Messages has no developer
 // authority to carry it (codec_anthropic_content.go). That role is read from

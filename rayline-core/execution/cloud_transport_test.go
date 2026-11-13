@@ -34,45 +34,37 @@ func modelPinHeaders(header http.Header) {
 	header.Set("X-Rayline-Decider-Reason", "pin")
 }
 
-func TestModelPinTransportsPrivateAppendAcrossIngressFormats(t *testing.T) {
-	for _, path := range []string{"/v1/messages", "/v1/chat/completions", "/v1/responses"} {
-		t.Run(path, func(t *testing.T) {
-			calls := 0
-			gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				calls++
-				if r.URL.Path != "/v1/chat/completions" || r.Header.Get("Authorization") != "Bearer synthetic-router-key" || r.Header.Get("X-Workshop-Required-Model") != "moonshotai/kimi-k3" {
-					t.Error("model pin transport identity changed")
-				}
-				for _, header := range []string{"X-Rayline-Dispatch-Profile", "X-Rayline-Action-Id", "X-Rayline-Worker"} {
-					if r.Header.Get(header) != "" {
-						t.Errorf("model pin claimed exact receipt header %s", header)
-					}
-				}
-				body, _ := io.ReadAll(r.Body)
-				var wire map[string]json.RawMessage
-				if err := json.Unmarshal(body, &wire); err != nil {
-					t.Fatal(err)
-				}
-				if string(wire["model"]) != `"moonshotai/kimi-k3"` || wire["provider"] != nil || wire["reasoning"] != nil || wire["reasoning_effort"] != nil {
-					t.Errorf("default control or catalog provider ownership changed: %s", body)
-				}
-				if bytes.Count(body, []byte("reason more thoroughly before acting")) != 1 {
-					t.Errorf("private append was absent or duplicated: %s", body)
-				}
-				modelPinHeaders(w.Header())
-				_, _ = io.WriteString(w, `{"id":"chat1","object":"chat.completion","created":1,"model":"moonshotai/kimi-k3","choices":[{"index":0,"message":{"role":"assistant","content":"ready"},"finish_reason":"stop"}],"usage":{"prompt_tokens":40,"completion_tokens":8,"total_tokens":48}}`)
-			}))
-			defer gateway.Close()
-			_, server := executorWithHTTPDecisions(t, modelPinConfig(t, gateway.URL), &decisionCapture{})
-			body := `{"model":"arc-1.0","max_tokens":64,"messages":[{"role":"user","content":"hello"}]}`
-			if path == "/v1/responses" {
-				body = strings.ReplaceAll(strings.ReplaceAll(body, "messages", "input"), "max_tokens", "max_output_tokens")
+func TestModelPinTransportsPrivateAppend(t *testing.T) {
+	calls := 0
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if r.URL.Path != "/v1/chat/completions" || r.Header.Get("Authorization") != "Bearer synthetic-router-key" || r.Header.Get("X-Workshop-Required-Model") != "moonshotai/kimi-k3" {
+			t.Error("model pin transport identity changed")
+		}
+		for _, header := range []string{"X-Rayline-Dispatch-Profile", "X-Rayline-Action-Id", "X-Rayline-Worker"} {
+			if r.Header.Get(header) != "" {
+				t.Errorf("model pin claimed exact receipt header %s", header)
 			}
-			status, answer := executeHTTP(t, server.URL, path, body, "model-pin")
-			if status != 200 || !bytes.Contains(answer, []byte("ready")) || bytes.Contains(answer, []byte("reason more thoroughly")) || calls != 1 {
-				t.Fatalf("model pin failed: %d %s (calls=%d)", status, answer, calls)
-			}
-		})
+		}
+		body, _ := io.ReadAll(r.Body)
+		var wire map[string]json.RawMessage
+		if err := json.Unmarshal(body, &wire); err != nil {
+			t.Fatal(err)
+		}
+		if string(wire["model"]) != `"moonshotai/kimi-k3"` || wire["provider"] != nil || wire["reasoning"] != nil || wire["reasoning_effort"] != nil {
+			t.Errorf("default control or catalog provider ownership changed: %s", body)
+		}
+		if bytes.Count(body, []byte("reason more thoroughly before acting")) != 1 {
+			t.Errorf("private append was absent or duplicated: %s", body)
+		}
+		modelPinHeaders(w.Header())
+		_, _ = io.WriteString(w, `{"id":"chat1","object":"chat.completion","created":1,"model":"moonshotai/kimi-k3","choices":[{"index":0,"message":{"role":"assistant","content":"ready"},"finish_reason":"stop"}],"usage":{"prompt_tokens":40,"completion_tokens":8,"total_tokens":48}}`)
+	}))
+	defer gateway.Close()
+	_, server := executorWithHTTPDecisions(t, modelPinConfig(t, gateway.URL), &decisionCapture{})
+	status, answer := executeHTTP(t, server.URL, "/v1/chat/completions", `{"model":"arc-1.0","max_tokens":64,"messages":[{"role":"user","content":"hello"}]}`, "model-pin")
+	if status != 200 || !bytes.Contains(answer, []byte("ready")) || bytes.Contains(answer, []byte("reason more thoroughly")) || calls != 1 {
+		t.Fatalf("model pin failed: %d %s (calls=%d)", status, answer, calls)
 	}
 }
 
@@ -88,7 +80,7 @@ func TestModelPinRejectsMissingOrContradictoryReceiptWithoutRetry(t *testing.T) 
 			}))
 			defer gateway.Close()
 			_, server := executorWithHTTPDecisions(t, modelPinConfig(t, gateway.URL), &decisionCapture{})
-			status, _ := executeHTTP(t, server.URL, "/v1/messages", `{"model":"arc-1.0","max_tokens":64,"messages":[{"role":"user","content":"hello"}]}`, "receipt")
+			status, _ := executeHTTP(t, server.URL, "/v1/chat/completions", `{"model":"arc-1.0","max_tokens":64,"messages":[{"role":"user","content":"hello"}]}`, "receipt")
 			if status != 502 || calls != 1 {
 				t.Fatalf("invalid receipt accepted or retried: status=%d calls=%d", status, calls)
 			}
@@ -142,7 +134,7 @@ func TestModelPinDropsUnverifiedReasoningDetailsKeepsToolsAndText(t *testing.T) 
 		t.Fatal(err)
 	}
 	deployment := modelPinConfig(t, "https://gateway.example").Deployments[0]
-	prepareReasoning(&request, envelope.Format, deployment, &branchState{})
+	prepareReasoning(&request, deployment, &branchState{})
 	request.Generation++
 	encoded, err := engine.EncodeRequest(llmprotocol.OpenAIChatV1, request, envelope)
 	if err != nil {
@@ -189,9 +181,8 @@ func TestModelPinMessagesControlAndTranscriptBoundaries(t *testing.T) {
 			}
 		})
 	}
-	// An in-band system row reaches the gateway as the client sent it: no fold
-	// can run on this transport (inband_system is local Chat only), so there is
-	// no transcript mutation to refuse.
+	// An in-band system row reaches the gateway as the client sent it: the
+	// core never folds one, so there is no transcript mutation to refuse.
 	forwarded := []byte(`{"messages":[{"role":"user","content":"Read the file."},{"role":"system","content":"later reminder"}]}`)
 	body, err := applyDeploymentWireBody(forwarded, nil, deployment)
 	if err != nil {
@@ -409,9 +400,7 @@ func TestModelPinMessagesRefusesDeveloperRowThroughDispatch(t *testing.T) {
 func TestCloudMessagesDispatchForwardsTheClientBeta(t *testing.T) {
 	const (
 		messagesBody = `{"model":"arc-1.0","max_tokens":64,"context_management":{"edits":[]},"messages":[{"role":"user","content":"hello"}]}`
-		chatBody     = `{"model":"arc-1.0","max_tokens":64,"messages":[{"role":"user","content":"hello"}]}`
 		messagesOut  = `{"id":"msg_fixture","type":"message","role":"assistant","model":"claude-sonnet-5-5","content":[{"type":"text","text":"ready"}],"stop_reason":"end_turn","stop_sequence":null,"usage":{"input_tokens":30,"output_tokens":1}}`
-		chatOut      = `{"id":"chatcmpl-fixture","object":"chat.completion","model":"moonshotai/kimi-k3","choices":[{"index":0,"message":{"role":"assistant","content":"ready"},"finish_reason":"stop"}],"usage":{"prompt_tokens":30,"completion_tokens":1,"total_tokens":31}}`
 		cm           = "context-management-2025-06-27"
 		thinking     = "interleaved-thinking-2025-05-14"
 	)
@@ -433,8 +422,6 @@ func TestCloudMessagesDispatchForwardsTheClientBeta(t *testing.T) {
 		{"one beta per line", "/v1/messages", messagesBody, messagesOut, "claude-sonnet-5-5", cm + "," + thinking, []string{cm, thinking}, cloudMessages},
 		{"fallback beta removed", "/v1/messages", messagesBody, messagesOut, "claude-sonnet-5-5", cm, []string{cm + ", Server-Side-Fallback-2026-06-01"}, cloudMessages},
 		{"only a fallback beta", "/v1/messages", messagesBody, messagesOut, "claude-sonnet-5-5", "", []string{"server-side-fallback-2026-06-01"}, cloudMessages},
-		{"chat client", "/v1/chat/completions", chatBody, messagesOut, "claude-sonnet-5-5", "", []string{cm}, cloudMessages},
-		{"messages to cloud chat", "/v1/messages", chatBody, chatOut, "moonshotai/kimi-k3", "", []string{cm}, modelPinConfig},
 		{"messages to local messages", "/v1/messages", messagesBody, messagesOut, "", "", []string{cm}, func(t *testing.T, url string) Config {
 			return testConfig(t, url+"/v1/messages", true)
 		}},

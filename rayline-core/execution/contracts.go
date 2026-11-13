@@ -48,9 +48,6 @@ type Deployment struct {
 	// caller's, so refusing is what a deployment does until its operator
 	// opts out.
 	ClampOutputAllowance bool `json:"clamp_output_allowance,omitempty"`
-	// InbandSystem is an explicitly qualified role-changing compatibility
-	// rule, separate from the action's exact thinking-control identity.
-	InbandSystem string `json:"inband_system,omitempty"`
 	// CapacityMarginTokens is an explicit counting margin added to the exact
 	// prepared prompt and output limit in capacity admission (v2 only).
 	CapacityMarginTokens int64 `json:"capacity_margin_tokens,omitempty"`

@@ -2,8 +2,9 @@
 
 `cmd/rayline-core` is the HTTP transport for the shared VSR implementation.
 Raydock's `rld` owns the process, credentials, and harness gateway. The executor owns
-protocol conversion, ARC decisions, exact deployment binding, thinking controls,
-private append, and completed-execution evidence.
+wire decoding and encoding, ARC decisions, exact deployment binding, thinking controls,
+private append, and completed-execution evidence. It never translates between
+protocols: a request is served only by deployments of its own protocol (below).
 
 The default `decisions.api_mode: "current"` uses the deployed Decisions API and
 keeps execution/cache evidence in this process. It sends no `routing.execution`
@@ -22,8 +23,8 @@ opt-in. The core reports facts and never picks or ranks a model.
 
 - **Policy.** `decisions.routing.policy` is required: `{"preset": ...}` with
   optional `overrides`. The preset id and the overrides are sent to the
-  service unchanged and the service validates them. At most 16 executable bindings fit
-  `targets[]`. Raydock writes
+  service unchanged and the service validates them. At most 16 executable bindings
+  per protocol fit `targets[]`. Raydock writes
   `arc-policy.hybrid-default.v1` when its user sets no override; the core never
   sends an absent policy in this mode. Allowed routing keys are `policy`,
   `v_value`, `prices`, `price_profile`, `models`, `excluded_models` and
@@ -51,6 +52,18 @@ opt-in. The core reports facts and never picks or ranks a model.
   lacks, or whose `history`, `last_served` or `hold` names an action it lacks.
   `bases` narrows the targets when fewer are wanted. Raydock builds one by
   default, so a user needs no profile file.
+- **One action, one deployment per protocol.** A request's protocol comes from
+  its route (`/v1/messages`, `/v1/chat/completions`, `/v1/responses`), and ARC
+  is offered only the actions bound to a deployment of that protocol, so each
+  protocol sees its own subset of targets. A model served on several protocols
+  has one `derived_actions` entry per deployment, all with the same `worker`;
+  a control that several of those deployments admit is one action (one action
+  id) bound once per protocol, and a control only some admit is offered only
+  there. Load refuses an action bound to two deployments of one protocol, an
+  action whose deployments name different workers or reported models, and a
+  deployment whose cell admits no controls. A request in a protocol with no
+  bound deployment is refused (`protocol_not_bound`) with the configured
+  models and the protocol named.
 - **Envelope.** Each decision sends `routing.execution` version
   `arc-execution-context.v2`: `turn` (`id`, `attempt`, `epoch`, `retry_of`,
   `reconsult`), `event`, `last_served`, `history`, `hold` (null: the core has no
@@ -399,13 +412,6 @@ model, runtime, template and tokenizer checks are described in the module README
 Other external inference servers can execute without this counter, but their
 current prefix counts remain unknown. Compatibility of a model name or HTTP
 format does not qualify thinking controls or establish KV residency.
-A local Chat deployment under the native default control folds a later
-system message into the turn before it (`fold_before_unit_v1`), so the runtime
-receives one leading system message. The explicit
-`inband_system: "fold_before_unit_v1"` setting is restricted to the same
-deployments with a matching runtime identity suffix and makes a refused fold
-fail the plan; see the [module README](../README.md#qualified-local-token-counting)
-for its role semantics and refusal conditions.
 
 An explicit `test_alias` such as `{"selected_model":"gpt-6-luna",
 "execution_action_id":"<neutral Qwen package action ID>"}` can exercise local

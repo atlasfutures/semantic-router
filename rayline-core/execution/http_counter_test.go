@@ -71,8 +71,8 @@ func TestTokenCounterMeasuresTheLocalTargetWithItsImages(t *testing.T) {
 		t.Fatal(err)
 	}
 	png := "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
-	body := `{"model":"arc-1.0","max_tokens":100,"messages":[{"role":"user","content":[{"type":"text","text":"what is this"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"` + png + `"}}]}]}`
-	status, response := executeHTTP(t, httpServer.URL, "/v1/messages", body, "counted-image")
+	body := `{"model":"arc-1.0","max_tokens":100,"messages":[{"role":"user","content":[{"type":"text","text":"what is this"},{"type":"image_url","image_url":{"url":"data:image/png;base64,` + png + `"}}]}]}`
+	status, response := executeHTTP(t, httpServer.URL, "/v1/chat/completions", body, "counted-image")
 	if status != http.StatusOK {
 		t.Fatalf("status %d: %.300s", status, response)
 	}
@@ -108,7 +108,7 @@ func TestTokenCounterOverTheWindowExcludesLocalAsMeasured(t *testing.T) {
 	if err := server.RegisterConfiguredPromptCounters(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	status, response := executeHTTP(t, httpServer.URL, "/v1/messages", `{"model":"arc-1.0","max_tokens":100,"messages":[{"role":"user","content":"hi"}]}`, "counted-over")
+	status, response := executeHTTP(t, httpServer.URL, "/v1/chat/completions", `{"model":"arc-1.0","max_tokens":100,"messages":[{"role":"user","content":"hi"}]}`, "counted-over")
 	if status != http.StatusOK {
 		t.Fatalf("status %d: %.300s", status, response)
 	}
@@ -198,14 +198,14 @@ func TestTokenCounterFailureAfterALocalTurnHandsOff(t *testing.T) {
 		t.Fatal(err)
 	}
 	first := `{"model":"arc-1.0","max_tokens":100,"messages":[{"role":"user","content":"hi"}]}`
-	if status, response := executeHTTP(t, httpServer.URL, "/v1/messages", first, "counter-fails"); status != http.StatusOK {
+	if status, response := executeHTTP(t, httpServer.URL, "/v1/chat/completions", first, "counter-fails"); status != http.StatusOK {
 		t.Fatalf("first turn %d: %.300s", status, response)
 	}
 	counter.mu.Lock()
 	counter.units = "hf-tokenizer:changed"
 	counter.mu.Unlock()
 	next := `{"model":"arc-1.0","max_tokens":100,"messages":[{"role":"user","content":"hi"},{"role":"assistant","content":"hello"},{"role":"user","content":"again"}]}`
-	status, response := executeHTTP(t, httpServer.URL, "/v1/messages", next, "counter-fails")
+	status, response := executeHTTP(t, httpServer.URL, "/v1/chat/completions", next, "counter-fails")
 	if status != http.StatusOK {
 		t.Fatalf("second turn %d: %.300s", status, response)
 	}
@@ -230,11 +230,11 @@ func TestTokenCounterWorkerThatCannotPrepareLeavesThePrefixUnknown(t *testing.T)
 		t.Fatal(err)
 	}
 	first := `{"model":"arc-1.0","max_tokens":100,"messages":[{"role":"user","content":"hi"}]}`
-	if status, response := executeHTTP(t, httpServer.URL, "/v1/messages", first, "counter-prepare"); status != http.StatusOK {
+	if status, response := executeHTTP(t, httpServer.URL, "/v1/chat/completions", first, "counter-prepare"); status != http.StatusOK {
 		t.Fatalf("first turn %d: %.300s", status, response)
 	}
 	next := `{"model":"arc-1.0","max_tokens":400,"messages":[{"role":"user","content":"hi"},{"role":"assistant","content":"hello"},{"role":"user","content":"again"}]}`
-	if status, response := executeHTTP(t, httpServer.URL, "/v1/messages", next, "counter-prepare"); status != http.StatusOK {
+	if status, response := executeHTTP(t, httpServer.URL, "/v1/chat/completions", next, "counter-prepare"); status != http.StatusOK {
 		t.Fatalf("second turn %d: %.300s", status, response)
 	}
 	if lookups := fixture.snapshot(); len(lookups) != 2 {

@@ -114,7 +114,7 @@ func TestAClampedTurnReportsItOnceAndSizesCapacityWithTheClampedAllowance(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	selected := server.actions[config.Actions[0].ID]
+	selected := server.actions[config.Deployments[0].Protocol][config.Actions[0].ID]
 	prepared, err := server.prepare(request, envelope, selected, nil, newBranchState())
 	if err != nil {
 		t.Fatalf("prepare: %v", err)
@@ -163,10 +163,10 @@ func TestAThinkingBudgetJustBelowTheLimitStillClamps(t *testing.T) {
 	server, httpServer := executorWithHTTPDecisions(t, config, &decisionCapture{})
 
 	// Admit the action's control with a budget one token below the limit.
-	for id, action := range server.actions {
+	for id, action := range server.actions[config.Deployments[0].Protocol] {
 		budget := int64(24575)
 		action.control.BudgetTokens = &budget
-		server.actions[id] = action
+		server.actions[config.Deployments[0].Protocol][id] = action
 	}
 
 	status, raw := executeHTTP(t, httpServer.URL, "/v1/messages",

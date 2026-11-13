@@ -54,6 +54,32 @@ func testConfig(t *testing.T, endpoint string, privateAppend bool) Config {
 		Actions:     []Action{{ID: strings.Repeat("c", 64), Worker: "fixture-qwen", Model: "qwen3.8-27b", DeploymentID: "fixture-worker", ControlID: controlID, Control: publicControl(t, controlID)}}}
 }
 
+// onProtocol moves a fixture's deployments to protocol, on registry cells that
+// admit the fixture's controls: the core serves a request only from
+// deployments of the request's protocol.
+func onProtocol(t *testing.T, config Config, protocol llmprotocol.WireFormat) Config {
+	t.Helper()
+	config.Deployments = append([]Deployment(nil), config.Deployments...)
+	for index := range config.Deployments {
+		deployment := &config.Deployments[index]
+		if deployment.Protocol == protocol {
+			continue
+		}
+		switch {
+		case deployment.Kind == "cloud" && protocol == llmprotocol.AnthropicMessagesV1:
+			deployment.URL = strings.TrimSuffix(deployment.URL, "/v1/chat/completions") + "/v1/messages"
+		case deployment.Kind == "cloud":
+			t.Fatalf("model_pin fixture %s has no %s endpoint", deployment.ID, protocol)
+		case protocol == llmprotocol.AnthropicMessagesV1:
+			deployment.RegistryProvider = "anthropic"
+		default:
+			deployment.RegistryProvider = "openai"
+		}
+		deployment.Protocol = protocol
+	}
+	return config
+}
+
 type decisionCapture struct {
 	mu       sync.Mutex
 	contexts []externalContext
@@ -156,11 +182,16 @@ func executeHTTP(t *testing.T, url, path, body, session string) (int, []byte) {
 	return response.StatusCode, raw
 }
 
-func TestExecutionUsesSharedCodecAcrossThreeIngressFormats(t *testing.T) {
+// TestExecutionServesOnlyItsDeploymentsProtocol: a chat deployment serves
+// chat requests; a Messages or Responses request has no bound action and
+// fails before anything is sent, naming its protocol and the models.
+func TestExecutionServesOnlyItsDeploymentsProtocol(t *testing.T) {
 	for _, stream := range []bool{false, true} {
 		for _, path := range []string{"/v1/messages", "/v1/chat/completions", "/v1/responses"} {
 			t.Run(fmt.Sprintf("%s/stream=%v", path, stream), func(t *testing.T) {
+				calls := 0
 				upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					calls++
 					if r.Header.Get("Authorization") != "" {
 						t.Error("hosted credential reached external inference")
 					}
@@ -186,8 +217,15 @@ func TestExecutionUsesSharedCodecAcrossThreeIngressFormats(t *testing.T) {
 					body = fmt.Sprintf(`{"model":"arc-1.0","max_output_tokens":64,"stream":%v,"input":[{"role":"user","content":"hello"}]}`, stream)
 				}
 				status, response := executeHTTP(t, httpServer.URL, path, body, "session-matrix")
+				if path != "/v1/chat/completions" {
+					protocol := map[string]string{"/v1/messages": "anthropic.messages.v1", "/v1/responses": "openai.responses.v1"}[path]
+					if status != http.StatusBadRequest || calls != 0 || len(capture.contexts) != 0 || !bytes.Contains(response, []byte("no deployment serves "+protocol+" requests for models qwen3.8-27b")) {
+						t.Fatalf("unbound protocol: status %d calls %d consults %d: %s", status, calls, len(capture.contexts), response)
+					}
+					return
+				}
 				if status != 200 || !bytes.Contains(response, []byte("ready")) {
-					t.Fatalf("translation failed: status %d", status)
+					t.Fatalf("chat execution failed: status %d", status)
 				}
 				state, err := server.states.acquire(t.Context(), "session-matrix", "main")
 				if err != nil {

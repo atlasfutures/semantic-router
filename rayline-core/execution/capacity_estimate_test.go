@@ -3,6 +3,7 @@ package execution
 import (
 	"compress/gzip"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -194,27 +195,27 @@ func TestEstimatedShortfallRelaxesOnlyOnARefusingRuntime(t *testing.T) {
 		server, _ := v2Server(t, config, &v2Decisions{choose: fitPolicy})
 		// Cloud targets unknown: the local estimate hands off either way.
 		facts := map[string]*CapacityFact{localActionID: short(capacityProvenanceEstimated)}
-		server.relaxEstimatedShortfalls(facts)
+		server.relaxEstimatedShortfalls(config.Deployments[0].Protocol, facts)
 		if facts[localActionID] == nil {
 			t.Fatalf("%q: an estimated shortfall with a cloud to hand off to was dropped", overflow)
 		}
 		// Every target short, the local one estimated.
 		facts = map[string]*CapacityFact{localActionID: short(capacityProvenanceEstimated), cloudActionID: short(capacityProvenanceMeasured), secondCloudActionID: short(capacityProvenanceMeasured)}
-		server.relaxEstimatedShortfalls(facts)
+		server.relaxEstimatedShortfalls(config.Deployments[0].Protocol, facts)
 		relaxed := facts[localActionID] == nil
-		if relaxed != (overflow == ContextOverflowRefuses) || server.exceedsAllDeployments(facts) == relaxed {
+		if relaxed != (overflow == ContextOverflowRefuses) || server.exceedsAllDeployments(config.Deployments[0].Protocol, facts) == relaxed {
 			t.Fatalf("%q: relaxed=%v facts %s", overflow, relaxed, mustJSON(facts))
 		}
 		// A bounded local shortfall is as uncertain as an estimated one.
 		facts = map[string]*CapacityFact{localActionID: short(capacityProvenanceBounded), cloudActionID: short(capacityProvenanceMeasured), secondCloudActionID: short(capacityProvenanceMeasured)}
-		server.relaxEstimatedShortfalls(facts)
+		server.relaxEstimatedShortfalls(config.Deployments[0].Protocol, facts)
 		if relaxed := facts[localActionID] == nil; relaxed != (overflow == ContextOverflowRefuses) {
 			t.Fatalf("%q: bounded relaxed=%v facts %s", overflow, relaxed, mustJSON(facts))
 		}
 		// Every target short and measured: the 400 stands.
 		facts = map[string]*CapacityFact{localActionID: short(capacityProvenanceMeasured), cloudActionID: short(capacityProvenanceMeasured), secondCloudActionID: short("provider_reported")}
-		server.relaxEstimatedShortfalls(facts)
-		if len(facts) != 3 || !server.exceedsAllDeployments(facts) {
+		server.relaxEstimatedShortfalls(config.Deployments[0].Protocol, facts)
+		if len(facts) != 3 || !server.exceedsAllDeployments(config.Deployments[0].Protocol, facts) {
 			t.Fatalf("%q: measured shortfalls were relaxed: %s", overflow, mustJSON(facts))
 		}
 	}
@@ -416,9 +417,9 @@ func TestCapacityEstimateRoutesRealContentByLocalWindow(t *testing.T) {
 
 func TestCapacityEstimateNeverRefusesACloudConversation(t *testing.T) {
 	// Over 1M estimated tokens: local is excluded, cloud stays unknown and is
-	// selected. The provider's own OpenAI-style refusal reaches the caller; on
-	// the Messages wire it starts with "prompt is too long:" so Claude Code
-	// compacts, followed by the provider's text.
+	// selected. The provider's own refusal reaches the caller; on the Messages
+	// wire it starts with "prompt is too long:" so Claude Code compacts,
+	// followed by the provider's text.
 	local := &upstreamFixture{}
 	cloudCalls := 0
 	cloud := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -426,24 +427,37 @@ func TestCapacityEstimateNeverRefusesACloudConversation(t *testing.T) {
 		_, _ = io.Copy(io.Discard, r.Body)
 		modelPinHeaders(w.Header())
 		w.WriteHeader(http.StatusBadRequest)
-		_, _ = io.WriteString(w, `{"error":{"message":"This endpoint's maximum context length is 1000000 tokens. However, you requested about 1180000 tokens.","type":"invalid_request_error","code":"context_length_exceeded"}}`)
+		refusal := "This endpoint's maximum context length is 1000000 tokens. However, you requested about 1180000 tokens."
+		if strings.HasSuffix(r.URL.Path, "/v1/messages") {
+			_, _ = io.WriteString(w, `{"type":"error","error":{"type":"invalid_request_error","message":"`+refusal+`"}}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"error":{"message":"`+refusal+`","type":"invalid_request_error","code":"context_length_exceeded"}}`)
 	}))
 	defer cloud.Close()
 	config := capacityEstimateConfig(t, chatUpstream(t, local, false).URL, cloud.URL+"/v1/chat/completions")
-	fixture := &v2Decisions{choose: fitPolicy}
-	_, httpServer := v2Server(t, config, fixture)
 	huge := bigTurn(jsonMessage(t, "user", strings.Repeat(loadCapacityFixtures(t)["prose"].text, 36)))
-	for _, tc := range []struct{ path, want string }{
-		{"/v1/chat/completions", `"code":"context_length_exceeded","message":"This endpoint's maximum context length is 1000000 tokens.`},
-		{"/v1/messages", `"message":"prompt is too long: This endpoint's maximum context length is 1000000 tokens.`},
+	var fixture *v2Decisions
+	var httpServer *httptest.Server
+	for _, tc := range []struct {
+		protocol   llmprotocol.WireFormat
+		path, want string
+	}{
+		{llmprotocol.AnthropicMessagesV1, "/v1/messages", `"message":"prompt is too long: This endpoint's maximum context length is 1000000 tokens.`},
+		{llmprotocol.OpenAIChatV1, "/v1/chat/completions", `"code":"context_length_exceeded","message":"This endpoint's maximum context length is 1000000 tokens.`},
 	} {
+		fixture = &v2Decisions{choose: fitPolicy}
+		_, httpServer = v2Server(t, onProtocol(t, config, tc.protocol), fixture)
 		status, response := executeHTTP(t, httpServer.URL, tc.path, huge, "cloud-refuses"+tc.path)
 		if status != http.StatusBadRequest || !strings.Contains(string(response), tc.want) || strings.Contains(string(response), CodeContextExceedsAllDeployments) {
 			t.Fatalf("%s status %d: %.400s", tc.path, status, response)
 		}
+		if len(fixture.snapshot()) != 1 {
+			t.Fatalf("%s lookups=%d", tc.path, len(fixture.snapshot()))
+		}
 	}
-	if len(fixture.snapshot()) != 2 || local.count() != 0 || cloudCalls != 2 {
-		t.Fatalf("lookups=%d local=%d cloud=%d", len(fixture.snapshot()), local.count(), cloudCalls)
+	if local.count() != 0 || cloudCalls != 2 {
+		t.Fatalf("local=%d cloud=%d", local.count(), cloudCalls)
 	}
 	// A shortfall on local alone never maps a service refusal to the 400
 	// while a cloud target is unknown.
@@ -490,8 +504,9 @@ func TestCapacityShortfallOnEveryTargetRefusesWhateverItsProvenance(t *testing.T
 		config := capacityEstimateConfig(t, chatUpstream(t, local, false).URL, "http://127.0.0.1:9/v1/chat/completions")
 		config.Deployments, config.Actions = config.Deployments[:1], config.Actions[:1]
 		fixture := &v2Decisions{choose: fitPolicy}
-		_, httpServer := v2Server(t, config, fixture)
-		status, response := executeHTTP(t, httpServer.URL, "/v1/messages", over, "local-only")
+		_, httpServer := v2Server(t, onProtocol(t, config, llmprotocol.AnthropicMessagesV1), fixture)
+		messagesOver := strings.Replace(over, v2Tools, `"tools":[{"name":"read","input_schema":{"type":"object","properties":{}}}]`, 1)
+		status, response := executeHTTP(t, httpServer.URL, "/v1/messages", messagesOver, "local-only")
 		if status != http.StatusBadRequest || !strings.Contains(string(response), `"message":"prompt is too long: about `) || !strings.Contains(string(response), "prompt tokens (upper bound)") || !strings.Contains(string(response), "the largest maximum context length is 98304 tokens (qwen3.8-27b)") {
 			t.Fatalf("status %d: %s", status, response)
 		}
@@ -527,15 +542,15 @@ func TestCapacityShortfallOnEveryTargetRefusesWhateverItsProvenance(t *testing.T
 			cloudActionID:       runtimeContextRejection(config.Deployments[1], nil),
 			secondCloudActionID: runtimeContextRejection(config.Deployments[2], nil),
 		}
-		if !server.exceedsAllDeployments(facts) {
+		if !server.exceedsAllDeployments(config.Deployments[0].Protocol, facts) {
 			t.Fatal("every target reported a shortfall")
 		}
-		message := server.contextExceededMessage(facts)
+		message := server.contextExceededMessage(config.Deployments[0].Protocol, facts)
 		if !strings.Contains(message, "the largest maximum context length is 1000000 tokens (kimi-k3)") {
 			t.Fatalf("message %q", message)
 		}
 		delete(facts, secondCloudActionID)
-		if server.exceedsAllDeployments(facts) {
+		if server.exceedsAllDeployments(config.Deployments[0].Protocol, facts) {
 			t.Fatal("an unknown target must block the refusal")
 		}
 	})
@@ -544,30 +559,41 @@ func TestCapacityShortfallOnEveryTargetRefusesWhateverItsProvenance(t *testing.T
 func TestCapacityMeasuredShortfallEverywhereRefusesInEachWireFormat(t *testing.T) {
 	local, cloud := &upstreamFixture{}, &upstreamFixture{}
 	config := capacityEstimateConfig(t, chatUpstream(t, local, false).URL, chatUpstream(t, cloud, true).URL+"/v1/chat/completions")
-	fixture := &v2Decisions{choose: fitPolicy}
-	server, httpServer := v2Server(t, config, fixture, 1_100_000)
-	for _, deployment := range config.Deployments[1:] {
-		if err := server.RegisterPromptCounter(deployment.ID, &fixedCounter{identity: promptIdentity(deployment), counts: []int{1_100_000}}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	for _, tc := range []struct{ path, body, code string }{
-		{"/v1/chat/completions", chatTurn(userTask), `"code":"context_exceeds_all_deployments"`},
-		{"/v1/responses", `{"model":"arc-1.0","max_output_tokens":64,"input":[{"role":"user","content":"Read the file."}]}`, `"code":"context_exceeds_all_deployments"`},
-		{"/v1/messages", `{"model":"arc-1.0","max_tokens":64,"messages":[{"role":"user","content":"Read the file."}]}`, `"type":"invalid_request_error"`},
+	lookups := 0
+	for _, tc := range []struct {
+		protocol                  llmprotocol.WireFormat
+		path, body, code, largest string
+	}{
+		{llmprotocol.OpenAIChatV1, "/v1/chat/completions", chatTurn(userTask), `"code":"context_exceeds_all_deployments"`, "1000000 tokens (kimi-k3)"},
+		// The model_pin fixture has no Responses endpoint: local alone serves it.
+		{llmprotocol.OpenAIResponsesV1, "/v1/responses", `{"model":"arc-1.0","max_output_tokens":64,"input":[{"role":"user","content":"Read the file."}]}`, `"code":"context_exceeds_all_deployments"`, fmt.Sprintf("%d tokens (qwen3.8-27b)", estimateLocalWindow)},
+		{llmprotocol.AnthropicMessagesV1, "/v1/messages", `{"model":"arc-1.0","max_tokens":64,"messages":[{"role":"user","content":"Read the file."}]}`, `"type":"invalid_request_error"`, "1000000 tokens (kimi-k3)"},
 	} {
+		served := config
+		if tc.protocol == llmprotocol.OpenAIResponsesV1 {
+			served.Deployments, served.Actions = config.Deployments[:1], config.Actions[:1]
+		}
+		served = onProtocol(t, served, tc.protocol)
+		fixture := &v2Decisions{choose: fitPolicy}
+		server, httpServer := v2Server(t, served, fixture, 1_100_000)
+		for _, deployment := range served.Deployments[1:] {
+			if err := server.RegisterPromptCounter(deployment.ID, &fixedCounter{identity: promptIdentity(deployment), counts: []int{1_100_000}}); err != nil {
+				t.Fatal(err)
+			}
+		}
 		status, response := executeHTTP(t, httpServer.URL, tc.path, tc.body, "measured"+tc.path)
 		if status != http.StatusBadRequest || !strings.Contains(string(response), tc.code) {
 			t.Fatalf("%s status %d: %s", tc.path, status, response)
 		}
-		for _, part := range []string{`"message":"prompt is too long: about 1100000 prompt tokens (measured)`, "the largest maximum context length is 1000000 tokens (kimi-k3)", "Compact or shorten the conversation"} {
+		for _, part := range []string{`"message":"prompt is too long: about 1100000 prompt tokens (measured)`, "the largest maximum context length is " + tc.largest, "Compact or shorten the conversation"} {
 			if !strings.Contains(string(response), part) {
 				t.Fatalf("%s: %s lacks %q", tc.path, response, part)
 			}
 		}
+		lookups += len(fixture.snapshot())
 	}
-	if len(fixture.snapshot()) != 0 || local.count() != 0 || cloud.count() != 0 {
-		t.Fatalf("refusal contacted Decisions=%d local=%d cloud=%d", len(fixture.snapshot()), local.count(), cloud.count())
+	if lookups != 0 || local.count() != 0 || cloud.count() != 0 {
+		t.Fatalf("refusal contacted Decisions=%d local=%d cloud=%d", lookups, local.count(), cloud.count())
 	}
 }
 
@@ -718,7 +744,7 @@ func TestContextExceededMessageNeverUnderstatesTheRequest(t *testing.T) {
 		cloudActionID:       runtimeContextRejection(config.Deployments[1], nil),
 		secondCloudActionID: runtimeContextRejection(config.Deployments[2], nil),
 	}
-	message := server.contextExceededMessage(facts)
+	message := server.contextExceededMessage(config.Deployments[0].Protocol, facts)
 	if strings.Contains(message, "114000") || !strings.HasPrefix(message, "prompt is too long: ") || !strings.Contains(message, "the largest maximum context length is 1000000 tokens (kimi-k3)") {
 		t.Fatalf("message %q", message)
 	}

@@ -138,7 +138,7 @@ func TestAliasIsOptInAndCannotReuseSourceControl(t *testing.T) {
 		t.Fatal(err)
 	}
 	source := config.Actions[0]
-	selected, execution, reason, err := core.executionFor(Decision{ActionID: source.ID, Worker: source.Worker, Model: source.Model, ControlID: source.ControlID, PackageSHA256: config.PackageSHA256})
+	selected, execution, reason, err := core.executionFor(config.Deployments[0].Protocol, Decision{ActionID: source.ID, Worker: source.Worker, Model: source.Model, ControlID: source.ControlID, PackageSHA256: config.PackageSHA256})
 	if err != nil || reason != "" || execution.ActionID != source.ID || selected.deployment.Kind != "cloud" {
 		t.Fatal("omitted alias silently substituted a model")
 	}

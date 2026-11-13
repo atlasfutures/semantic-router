@@ -59,7 +59,7 @@ func (server *Server) measureExecutionContext(ctx context.Context, body []byte, 
 		if server.counters[worker.DeploymentID] == nil {
 			continue
 		}
-		selected, exists := server.actions[worker.Call.ActionID]
+		selected, exists := server.actions[format][worker.Call.ActionID]
 		if !exists || selected.deployment.ID != worker.DeploymentID {
 			return ExecutionContext{}, nil, fmt.Errorf("cached worker no longer matches its admitted action")
 		}

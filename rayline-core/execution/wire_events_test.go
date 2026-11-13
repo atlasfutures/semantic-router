@@ -214,19 +214,19 @@ func TestV2CoreReplaysStockPiCompaction(t *testing.T) {
 		mu.Unlock()
 		if call == 3 { // Pi's third request overflowed at the provider.
 			w.WriteHeader(400)
-			_, _ = io.WriteString(w, `{"error":{"code":400,"message":"prompt is too long","type":"invalid_request_error"}}`)
+			_, _ = io.WriteString(w, `{"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long"}}`)
 			return
 		}
 		if body.Stream {
 			w.Header().Set("Content-Type", "text/event-stream")
-			_, _ = io.WriteString(w, "data: {\"id\":\"chat1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"fixture\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"ok\"},\"finish_reason\":null}]}\n\ndata: {\"id\":\"chat1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"fixture\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":20,\"completion_tokens\":1,\"total_tokens\":21}}\n\ndata: [DONE]\n\n")
+			_, _ = io.WriteString(w, messagesStreamReady)
 			return
 		}
-		_, _ = io.WriteString(w, `{"id":"chat1","object":"chat.completion","created":1,"model":"fixture","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":20,"completion_tokens":1,"total_tokens":21}}`)
+		_, _ = io.WriteString(w, messagesReady)
 	}))
 	defer upstream.Close()
-	cloud := &upstreamFixture{}
-	config := hybridV2Config(t, upstream.URL, chatUpstream(t, cloud, true).URL+"/v1/chat/completions")
+	cloud := &upstreamFixture{messages: true}
+	config := onProtocol(t, hybridV2Config(t, upstream.URL, chatUpstream(t, cloud, true).URL+"/v1/chat/completions"), llmprotocol.AnthropicMessagesV1)
 	config.Deployments[0].ContextWindow, config.Deployments[0].MaxOutputTokens = 65536, 4096 // Pi sends max_tokens 2048
 	fixture := &v2Decisions{choose: func(contextV2) string { return localActionID }}
 	server, httpServer := v2Server(t, config, fixture)
@@ -308,11 +308,11 @@ func TestV2InferredCompactionSurvivesAFailedConsult(t *testing.T) {
 		mu.Lock()
 		defer mu.Unlock()
 		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = io.WriteString(w, "data: {\"id\":\"c\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"f\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"ok\"},\"finish_reason\":null}]}\n\ndata: {\"id\":\"c\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":20,\"completion_tokens\":1,\"total_tokens\":21}}\n\ndata: [DONE]\n\n")
+		_, _ = io.WriteString(w, messagesStreamReady)
 	}))
 	defer upstream.Close()
-	cloud := &upstreamFixture{}
-	config := hybridV2Config(t, upstream.URL, chatUpstream(t, cloud, true).URL+"/v1/chat/completions")
+	cloud := &upstreamFixture{messages: true}
+	config := onProtocol(t, hybridV2Config(t, upstream.URL, chatUpstream(t, cloud, true).URL+"/v1/chat/completions"), llmprotocol.AnthropicMessagesV1)
 	config.Deployments[0].ContextWindow, config.Deployments[0].MaxOutputTokens = 65536, 4096
 	fixture := &v2Decisions{choose: func(contextV2) string { return localActionID }}
 	_, httpServer := v2Server(t, config, fixture)

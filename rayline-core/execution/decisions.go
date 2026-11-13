@@ -17,14 +17,17 @@ import (
 	"time"
 
 	"github.com/atlasfutures/semantic-router/rayline-core/cachecontext"
+	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
 )
 
 // HTTPDecisions supports the current public API and an explicitly selected
 // execution-context contract. An unsupported request never changes API modes.
 type HTTPDecisions struct {
-	config       Config
-	client       *http.Client
-	actions      map[string]Action
+	config Config
+	client *http.Client
+	// actions is each request protocol's actions by id
+	// (Config.actionsByProtocol): a request is offered only its own.
+	actions      map[llmprotocol.WireFormat]map[string]Action
 	deployments  map[string]Deployment
 	now          func() time.Time
 	valueUSD     *float64
@@ -96,7 +99,7 @@ func NewHTTPDecisions(config Config) (*HTTPDecisions, error) {
 			return nil, err
 		}
 	}
-	provider := &HTTPDecisions{config: config, client: &http.Client{Timeout: 90 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, actions: make(map[string]Action), deployments: make(map[string]Deployment), now: time.Now, policyPreset: policyPreset}
+	provider := &HTTPDecisions{config: config, client: &http.Client{Timeout: 90 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, actions: make(map[llmprotocol.WireFormat]map[string]Action), deployments: make(map[string]Deployment), now: time.Now, policyPreset: policyPreset}
 	var err error
 	if raw, exists := routing["prices"]; exists {
 		if provider.prices, err = parseCallerPrices(raw); err != nil {
@@ -147,22 +150,21 @@ func NewHTTPDecisions(config Config) (*HTTPDecisions, error) {
 	if config.Decisions.Result == "custom" && provider.valueUSD == nil {
 		return nil, fmt.Errorf("custom Decisions result requires explicit routing v_value")
 	}
-	for _, action := range config.Actions {
-		provider.actions[action.ID] = action
-	}
-	for _, deployment := range config.Deployments {
-		provider.deployments[deployment.ID] = deployment
-	}
-	if mode == DecisionsExecutionContextV2 {
+	for protocol, actions := range config.actionsByProtocol() {
+		provider.actions[protocol] = make(map[string]Action, len(actions))
 		executable := 0
-		for _, action := range config.Actions {
+		for _, action := range actions {
+			provider.actions[protocol][action.ID] = action
 			if action.DeploymentID != "" {
 				executable++
 			}
 		}
-		if executable > maxTargetsV2 {
-			return nil, fmt.Errorf("execution_context_v2 carries at most %d executable bindings", maxTargetsV2)
+		if mode == DecisionsExecutionContextV2 && executable > maxTargetsV2 {
+			return nil, fmt.Errorf("execution_context_v2 carries at most %d executable bindings per protocol; %s has %d", maxTargetsV2, protocol, executable)
 		}
+	}
+	for _, deployment := range config.Deployments {
+		provider.deployments[deployment.ID] = deployment
 	}
 	return provider, nil
 }
@@ -228,7 +230,7 @@ func (provider *HTTPDecisions) project(input DecisionInput) externalContext {
 	arms := make(map[string]int)
 	byAction := make(map[string]WorkerEvidence)
 	for index, evidence := range workers {
-		if _, bound := provider.actions[evidence.Call.ActionID]; !bound {
+		if _, bound := provider.actions[input.Format][evidence.Call.ActionID]; !bound {
 			continue
 		}
 		call := evidence.Call
@@ -239,7 +241,7 @@ func (provider *HTTPDecisions) project(input DecisionInput) externalContext {
 	cache := cachecontext.BuildPolicyCacheContext(warmth, provider.now(), func(action string) (int, bool) { index, ok := arms[action]; return index, ok })
 	for _, entry := range cache.Actions {
 		evidence := byAction[entry.ActionID]
-		action := provider.actions[entry.ActionID]
+		action := provider.actions[input.Format][entry.ActionID]
 		deployment := provider.deployments[evidence.DeploymentID]
 		worker := externalWorker{ActionID: entry.ActionID, Worker: action.Worker, Placement: deployment.Kind, ContextEpoch: entry.ContextEpoch, Gap: entry.GapS, Residency: evidence.Residency}
 		if entry.TTLS != nil && entry.TTLSource != nil {
@@ -457,7 +459,7 @@ func (provider *HTTPDecisions) Decide(ctx context.Context, input DecisionInput) 
 		}
 		var decision Decision
 		if provider.config.Decisions.Result != "top" {
-			decision, err = provider.currentTierDecision(result, selected, preferences != 0)
+			decision, err = provider.currentTierDecision(input.Format, result, selected, preferences != 0)
 		} else {
 			// Candidates are acknowledged from their own echoes, which the
 			// top result carries; prices and a profile need a receipt it lacks.
@@ -467,7 +469,7 @@ func (provider *HTTPDecisions) Decide(ctx context.Context, input DecisionInput) 
 					priced--
 				}
 			}
-			decision, err = provider.currentTopDecision(result, selected, priced != 0)
+			decision, err = provider.currentTopDecision(input.Format, result, selected, priced != 0)
 		}
 		decision.Signals = result.Signals
 		return decision, err
@@ -481,7 +483,7 @@ func (provider *HTTPDecisions) Decide(ctx context.Context, input DecisionInput) 
 	if identity == nil || (pinned && identity.PackageSHA256 != provider.config.PackageSHA256) || (pinned && identity.RegistrySHA256 != provider.config.RegistrySHA256) || (provider.config.Decisions.OfferSHA256 != "" && identity.OfferSHA256 != provider.config.Decisions.OfferSHA256) || identity.ActionID != identity.PolicyActionID || (selected.ActionID != "" && selected.ActionID != identity.ActionID) {
 		return Decision{}, fmt.Errorf("Decisions identity does not match the pinned execution package, registry and offer")
 	}
-	action, ok := provider.actions[identity.ActionID]
+	action, ok := provider.actions[input.Format][identity.ActionID]
 	if !ok || identity.ControlID != action.ControlID || selected.Worker != action.Worker || !provider.matchesActionModel(selected.Model, action) || result.RouteID == "" {
 		return Decision{}, fmt.Errorf("Decisions selected an unbound action or control")
 	}
@@ -530,11 +532,11 @@ func (provider *HTTPDecisions) Decide(ctx context.Context, input DecisionInput) 
 // registry, offer or prices. It can be used explicitly with candidate
 // members only (no price world, which it has no receipt for); the local
 // manifest supplies control identity, clearly labeled in evidence.
-func (provider *HTTPDecisions) currentTopDecision(result decisionsResponse, selected publicDecision, priced bool) (Decision, error) {
+func (provider *HTTPDecisions) currentTopDecision(format llmprotocol.WireFormat, result decisionsResponse, selected publicDecision, priced bool) (Decision, error) {
 	if provider.config.Decisions.Result != "top" || priced || provider.config.Decisions.OfferSHA256 != "" {
 		return Decision{}, fmt.Errorf("this Decisions response only supports top with candidate-only routing and no returned identity pins")
 	}
-	action, err := provider.bindCurrentAction(result.RouteID, selected)
+	action, err := provider.bindCurrentAction(format, result.RouteID, selected)
 	if err != nil {
 		return Decision{}, err
 	}
@@ -546,8 +548,8 @@ func (provider *HTTPDecisions) currentTopDecision(result decisionsResponse, sele
 	return decision, nil
 }
 
-func (provider *HTTPDecisions) bindCurrentAction(routeID string, selected publicDecision) (Action, error) {
-	action, ok := provider.actions[selected.ActionID]
+func (provider *HTTPDecisions) bindCurrentAction(format llmprotocol.WireFormat, routeID string, selected publicDecision) (Action, error) {
+	action, ok := provider.actions[format][selected.ActionID]
 	reason := ""
 	switch {
 	case !ok:

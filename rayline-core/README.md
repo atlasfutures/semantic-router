@@ -136,21 +136,3 @@ and [Chat parameter parser](https://github.com/ggml-org/llama.cpp/blob/36e36e63a
 with unchanged pins therefore does not prove residency; local cache TTL and
 residency remain unknown. Sidecar restart creates a fresh execution instance and
 clears all checkpoints. Transcript rewrites clear the branch epoch and checkpoints.
-
-Claude Code can send a system message after the current user message or tool
-result. Qwen's template accepts a system message only at the beginning. Every
-local Chat deployment under the native default control (no steering instruction
-or budget) therefore applies VSR's existing fold rule to a request that has
-such a message; a request without one is sent unchanged, and a request the rule
-refuses is sent as the client ordered it. A deployment may instead explicitly set
-`"inband_system": "fold_before_unit_v1"` and append `:fold_before_unit_v1` to its
-qualified `runtime_identity`; the rule then applies to every request and a
-refusal fails the plan. The rule: the trailing text and cache blocks stay at that turn,
-after its input, as user content. Leading instructions are unchanged. It does
-change the trailing block's role; it is a qualified compatibility choice, not
-lossless preservation of system priority or an admitted thinking capability.
-The rule refuses blocks after an answered turn, inside a tool-result run, or
-with unsupported fields/content. It is currently allowed only with the native
-default control without a steering instruction or budget. Both token counting
-and inference consume the identical normalized, rendered body. The action and
-control IDs remain unchanged; use a new runtime identity when enabling the rule.
