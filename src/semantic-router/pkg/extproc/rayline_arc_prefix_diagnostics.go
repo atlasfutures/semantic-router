@@ -200,14 +200,19 @@ func addPolicyRequestShapeFields(
 
 // policyTokenSplit is a policy-service decision's encoded tokens split into
 // those its encoder session already held and those it encoded, as far as the
-// decide response says: it reports only the token count and the session
-// action. A created or rebuilt session encoded every token and a reused one
-// none; an appended session's split is not reported, so both are nil. The
-// trace's own counters stay as they were, because the decision service
-// meters cache reads from them.
+// decide response says. A service asked for session_reuse states the split
+// and the trace carries it (the decision service meters cache reads from
+// it). Otherwise the response reports only the token count and the session
+// action: a created or rebuilt session encoded every token and a reused one
+// none; an appended session's split is unknown, so both are nil, and the
+// trace's own counters stay at zero.
 func policyTokenSplit(trace *selection.RaylineARCTrace) (interface{}, interface{}) {
 	if trace.TokenCountsUnknown {
 		return nil, nil
+	}
+	// The service stated its split (session_reuse): the counts are its own.
+	if trace.SerializedTokens > 0 && trace.RetainedPrefixTokens+trace.AppendedTokens == trace.SerializedTokens {
+		return trace.RetainedPrefixTokens, trace.AppendedTokens
 	}
 	switch trace.SessionAction {
 	case "created", "rebuilt":

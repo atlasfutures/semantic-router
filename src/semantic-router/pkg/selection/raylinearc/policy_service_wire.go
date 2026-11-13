@@ -849,7 +849,13 @@ type PolicyEncoding struct {
 	// sent only when the request's response_fields asked for it; nil
 	// otherwise.
 	ToolDefinitionsStatus *string `json:"tool_definitions_status,omitempty"`
-	EngineBuildID         string  `json:"engine_build_id"`
+	// RetainedPrefixTokens and AppendedTokens split TokenCount into the
+	// tokens the service's retained encoder session already held and the
+	// tokens it encoded, sent only when the request's response_fields asked
+	// for session_reuse and the encoder reported its reuse; nil otherwise.
+	RetainedPrefixTokens *int   `json:"retained_prefix_tokens,omitempty"`
+	AppendedTokens       *int   `json:"appended_tokens,omitempty"`
+	EngineBuildID        string `json:"engine_build_id"`
 }
 
 type PolicyTiming struct {

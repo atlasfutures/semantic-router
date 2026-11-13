@@ -66,6 +66,12 @@ const (
 	// decision.stage_one.tool_free_override. Proposed name: a cell asks only
 	// a service that lists it.
 	PolicyCapabilityToolFreeOverride = "tool_free_override"
+	// PolicyCapabilitySessionReuse: the service answers response_fields
+	// ["session_reuse"] with encoding.retained_prefix_tokens and
+	// appended_tokens, the encode's split into tokens its retained encoder
+	// session already held and tokens it encoded. A service without it
+	// refuses the field, so a cell asks only a service that lists it.
+	PolicyCapabilitySessionReuse = "session_reuse"
 )
 
 // Readiness classes for a service that cannot serve what the cell sends.

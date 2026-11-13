@@ -807,6 +807,12 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		!slices.Contains(request.ResponseFields, raylinearc.PolicyCapabilityToolDefinitionsStatus) {
 		request.ResponseFields = append(append([]string(nil), request.ResponseFields...), raylinearc.PolicyCapabilityToolDefinitionsStatus)
 	}
+	// How much of the encode the service's retained session already held,
+	// for the lookup's cache_read_tokens; asked under the same rule.
+	if arcContext.RoutesLookup && scorer.advertises(raylinearc.PolicyCapabilitySessionReuse) &&
+		!slices.Contains(request.ResponseFields, raylinearc.PolicyCapabilitySessionReuse) {
+		request.ResponseFields = append(append([]string(nil), request.ResponseFields...), raylinearc.PolicyCapabilitySessionReuse)
+	}
 	var execution *selection.RaylineARCRouteExecution
 	if routeControls != nil {
 		execution = routeControls.Execution
@@ -1247,6 +1253,9 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		SessionAction:     boundedPolicySessionAction(response.Encoding.SessionAction),
 		SessionRevision:   policySessionRevision(response.Encoding.SessionRevision),
 		EngineBuildID:     response.Encoding.EngineBuildID,
+	}
+	if retained, appended, ok := policyEncodeSplit(response.Encoding); ok {
+		encoded.RetainedPrefixTokens, encoded.AppendedTokens = retained, appended
 	}
 	// encoder_latency keeps its artifact-mode meaning, the encode alone, as
 	// the service timed it; the round trip is policy_latency.
@@ -1824,4 +1833,20 @@ func policyArmActions(scorer *policyServiceScorer, response *raylinearc.PolicyDe
 		}
 	}
 	return actions
+}
+
+// policyEncodeSplit is the service's split of its encode (session_reuse):
+// the tokens its retained encoder session already held and the tokens it
+// encoded. ok only when both are stated and split token_count exactly; a
+// service that was not asked, or predates the field, states neither, and the
+// selection keeps reporting no reuse as before.
+func policyEncodeSplit(encoding raylinearc.PolicyEncoding) (retained, appended int, ok bool) {
+	if encoding.RetainedPrefixTokens == nil || encoding.AppendedTokens == nil {
+		return 0, 0, false
+	}
+	retained, appended = *encoding.RetainedPrefixTokens, *encoding.AppendedTokens
+	if retained < 0 || appended < 0 || retained+appended != encoding.TokenCount {
+		return 0, 0, false
+	}
+	return retained, appended, true
 }

@@ -37,6 +37,12 @@ type fakePolicyService struct {
 	// encodeUnreported answers timing_ms.encode null, as the reference
 	// service does.
 	encodeUnreported bool
+	// sessionReuse, when set, is the encoding a request asking
+	// response_fields ["session_reuse"] is answered with: its session
+	// action, and its retained and appended tokens (token_count is their
+	// sum); a nil split answers the action alone, as a service whose
+	// encoder reports no reuse.
+	sessionReuse *fakeSessionReuse
 	// cold lists no loaded package, as a service still loading its package.
 	cold   atomic.Bool
 	choose func(raylinearc.PolicyDecisionRequest) string
@@ -717,6 +723,14 @@ func (fake *fakePolicyService) decision(request raylinearc.PolicyDecisionRequest
 		}
 		response.Encoding.ToolDefinitionsStatus = &status
 	}
+	if fake.sessionReuse != nil && slices.Contains(request.ResponseFields, raylinearc.PolicyCapabilitySessionReuse) {
+		response.Encoding.SessionAction = fake.sessionReuse.action
+		if split := fake.sessionReuse.split; split != nil {
+			retained, appended := split[0], split[1]
+			response.Encoding.TokenCount = retained + appended
+			response.Encoding.RetainedPrefixTokens, response.Encoding.AppendedTokens = &retained, &appended
+		}
+	}
 	// A relaxed call advances no session (pathfinder#3068).
 	if (request.EpisodeMode == raylinearc.PolicyEpisodeModeRelaxed && !ignoreEpisodeMode) || nullRevision {
 		response.Encoding.SessionRevision = nil
@@ -808,4 +822,11 @@ func (fake *fakePolicyService) writeJSON(writer http.ResponseWriter, status int,
 func fakeContentDigest(t *testing.T, request raylinearc.PolicyClientRequest) []byte {
 	sum := sha256.Sum256([]byte(fakeCanonicalRequest(t, request)))
 	return sum[:]
+}
+
+// fakeSessionReuse is the fake's answer to response_fields
+// ["session_reuse"].
+type fakeSessionReuse struct {
+	action string
+	split  *[2]int
 }
