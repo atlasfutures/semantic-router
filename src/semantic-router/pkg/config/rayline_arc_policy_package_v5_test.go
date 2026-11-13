@@ -295,10 +295,9 @@ func TestRaylineARCPolicyPackageV5Refusals(t *testing.T) {
 	}
 }
 
-// An episode keeps a bounded number of placers, one per worker and control
-// shape; bindings that could need more are refused rather than evicting a
-// placer whose instructions still need replaying. The bound admits the 19
-// shapes ARC 0.4's twelve-worker package (b92edaf5) puts on its workers.
+// An episode keeps a bounded number of placers, one per worker and wire
+// format; bindings that could need more are refused rather than evicting a
+// placer whose instructions still need replaying.
 func TestRaylineARCPolicyPackageV5BoundsControlShapes(t *testing.T) {
 	for _, test := range []struct {
 		shapes int
@@ -312,14 +311,14 @@ func TestRaylineARCPolicyPackageV5BoundsControlShapes(t *testing.T) {
 		if test.loads && err != nil {
 			t.Fatalf("%d control shapes refused: %v", test.shapes, err)
 		}
-		if !test.loads && (err == nil || !strings.Contains(err.Error(), "control shapes")) {
+		if !test.loads && (err == nil || !strings.Contains(err.Error(), "transcripts on their workers")) {
 			t.Fatalf("%d control shapes loaded: %v", test.shapes, err)
 		}
 	}
 }
 
 // validatePolicyDispatchWithShapes validates a v5 decision whose bindings put
-// exactly shapes control shapes on their workers: one action a worker, one
+// exactly shapes transcripts on their workers: one action a worker, one
 // format each.
 func validatePolicyDispatchWithShapes(t *testing.T, shapes int) error {
 	t.Helper()
