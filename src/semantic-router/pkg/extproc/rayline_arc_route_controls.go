@@ -138,7 +138,11 @@ func routeServicePrices(scorer *policyServiceScorer, prices *raylinearc.PolicyRo
 // routeServicePriceArm is one bound action's two price ids: the provider id
 // of the worker it is served on (the caller's key) and the one its arm reads
 // at the service.
-type routeServicePriceArm struct{ served, service string }
+type routeServicePriceArm struct {
+	served, service string
+	// dispatch is the index of the worker the action is sent on.
+	dispatch int
+}
 
 // routeServicePriceArms resolves each bound action's ids. An action's arm
 // reads its bound worker's id, except on a dispatch_model_overrides
@@ -174,7 +178,7 @@ func routeServicePriceArms(scorer *policyServiceScorer) []routeServicePriceArm {
 		if !ok || !valid(binding.arm) || !valid(binding.dispatchArm) {
 			continue
 		}
-		arm := routeServicePriceArm{served: scorer.workers[binding.dispatchArm].Model, service: scorer.workers[binding.arm].Model}
+		arm := routeServicePriceArm{served: scorer.workers[binding.dispatchArm].Model, service: scorer.workers[binding.arm].Model, dispatch: binding.dispatchArm}
 		key := twin{binding.arm, binding.model}
 		if own, ok := standIn[key]; ok && binding.arm == binding.dispatchArm && !ambiguous[key] {
 			arm.service = own

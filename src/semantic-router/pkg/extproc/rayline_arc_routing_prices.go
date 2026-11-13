@@ -22,6 +22,7 @@ package extproc
 // sent, since the echo becomes the decision's price audit.
 
 import (
+	"reflect"
 	"time"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
@@ -209,4 +210,85 @@ func policySelectedPredictedCost(response *raylinearc.PolicyDecisionResponse) *f
 		}
 	}
 	return nil
+}
+
+// routeFeedPrices keys the live feed's rates the way the service reads them
+// (memex-desktop#8209). The feed lists each catalog endpoint by the
+// OpenRouter id VSR dispatches to, tagged "<id>@<endpoint>" when the id has
+// several endpoints. The service looks an arm up by its own package model id
+// (bare, or tagged at a single pinned endpoint). Two arms therefore missed
+// their live rate and kept the package's:
+//
+//   - a remapped arm (dispatch_model_overrides, e.g. flash served on its 1017
+//     twin), whose own id is not the served one; and
+//   - an arm whose model the feed lists only at tagged endpoints, and whose
+//     worker may fall back, so the service reads the bare id.
+//
+// For every bound arm this adds its own id, priced at the served model's
+// bare entry, or else at its entry for the dispatch worker's first-preference
+// endpoint (OpenRouterProviderOrder[0]): the rate the cell's pricing block
+// assumes for a worker that may fall back. A remapped arm takes its served
+// rate even over an entry under its own id, as routeServicePrices gives a
+// caller's dispatched price precedence, whatever the action order; any other arm's id is only added
+// where the feed has none, and no other entry changes. Between two
+// dispatched workers whose arms read one id, the first bound action's wins.
+// The feed is copied, never changed in place: the cache shares it.
+func routeFeedPrices(scorer *policyServiceScorer, prices *raylinearc.PolicyRoutingPrices) *raylinearc.PolicyRoutingPrices {
+	if scorer == nil || prices == nil || prices.Basis != "" {
+		return prices
+	}
+	add := map[string]raylinearc.PolicyRoutingRate{}
+	arms := routeServicePriceArms(scorer)
+	// Remapped arms first, so their dispatched rate wins over an unremapped
+	// arm reading the same id, whatever the action order.
+	for _, remapped := range []bool{true, false} {
+		for _, arm := range arms {
+			if (arm.service != arm.served) != remapped {
+				continue
+			}
+			if _, set := add[arm.service]; set {
+				continue
+			}
+			if _, listed := prices.Rates[arm.service]; listed && !remapped {
+				continue
+			}
+			if rate, ok := feedServedRate(prices, arm.served, scorer.workers[arm.dispatch].OpenRouterProviderOrder); ok {
+				add[arm.service] = rate
+			}
+		}
+	}
+	changed := false
+	for key, rate := range add {
+		// Compare the whole row, a null leg included: absent is not zero.
+		if existing, listed := prices.Rates[key]; !listed || !reflect.DeepEqual(existing, rate) {
+			changed = true
+			break
+		}
+	}
+	if !changed {
+		return prices
+	}
+	rates := make(map[string]raylinearc.PolicyRoutingRate, len(prices.Rates)+len(add))
+	for key, rate := range prices.Rates {
+		rates[key] = rate
+	}
+	for key, rate := range add {
+		rates[key] = rate
+	}
+	sent := *prices
+	sent.Rates = rates
+	return &sent
+}
+
+// feedServedRate is the feed's rate for a served model: its untagged entry,
+// else its entry at the worker's first-preference endpoint.
+func feedServedRate(prices *raylinearc.PolicyRoutingPrices, served string, order []string) (raylinearc.PolicyRoutingRate, bool) {
+	if rate, ok := prices.Rates[served]; ok {
+		return rate, true
+	}
+	if len(order) == 0 || order[0] == "" {
+		return raylinearc.PolicyRoutingRate{}, false
+	}
+	rate, ok := prices.Rates[raylinearc.RoutingPriceRateKey(served, order[0])]
+	return rate, ok
 }
