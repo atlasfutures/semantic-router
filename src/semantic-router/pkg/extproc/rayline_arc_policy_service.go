@@ -790,6 +790,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	}
 	explorationExcluded := scorer.exploration.apply(&request, arcContext.PolicySignalHeaders, sideCall)
 	pricesStatus := attachRoutingPrices(armed.prices, &request)
+	request.RoutingPrices = routeFeedPrices(scorer, request.RoutingPrices)
 	applyRouteControls(&request, scorer, routeControls)
 	request.Signals = turnSignals(arcContext)
 	predictionsAsked := false
