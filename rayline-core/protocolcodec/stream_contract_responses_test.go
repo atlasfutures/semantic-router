@@ -430,7 +430,10 @@ func TestResponsesStreamDoneSentinelEndsACompletedStream(t *testing.T) {
 			t.Fatal(err)
 		}
 		events, diagnostics, err := decoder.Push([]byte("data: [DONE]\n\n"))
-		if err != nil || len(events) != 0 || len(diagnostics) != 0 {
+		if err != nil || len(events) != 0 || len(diagnostics) != 1 ||
+			diagnostics[0].Source != llmprotocol.OpenAIResponsesV1 ||
+			diagnostics[0].Field != "stream.after_terminal_event" ||
+			diagnostics[0].Action != llmprotocol.DiagnosticDropped {
 			t.Fatalf("[DONE] after the terminal event: events=%+v diagnostics=%+v err=%v", events, diagnostics, err)
 		}
 		// The sentinel ended the stream: nothing may follow it, not even

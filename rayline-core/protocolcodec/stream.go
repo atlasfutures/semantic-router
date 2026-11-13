@@ -129,6 +129,15 @@ func (framer *sseFramer) Finalize() ([][]byte, error) {
 // value would begin.
 const upstreamFrameCutCode = "upstream_frame_cut"
 
+// afterTerminalDiagnostic records a frame dropped because it came after the
+// stream's terminal event, when the message was already complete.
+func afterTerminalDiagnostic(source llmprotocol.WireFormat, terminal, frame string) llmprotocol.Diagnostics {
+	return llmprotocol.Diagnostics{{
+		Source: source, Field: "stream.after_" + terminal, Action: llmprotocol.DiagnosticDropped,
+		Reason: "the provider sent " + frame + " after " + terminal + "; the message was already complete",
+	}}
+}
+
 // sentinelCutShort reports data that is a proper prefix of the OpenAI SSE
 // convention's terminal sentinel: a read that stopped partway through
 // "[DONE]". Anything else, including a complete sentinel, is left alone.

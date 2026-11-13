@@ -262,10 +262,11 @@ func (decoder *responsesStreamDecoder) pushFrame(frame []byte) ([]llmprotocol.Ev
 			)
 		}
 		// OpenRouter's /v1/responses sends [DONE] after the terminal event.
-		// The turn is complete by then; the sentinel ends the stream.
+		// The turn is complete by then; the sentinel ends the stream, and is
+		// dropped with a diagnostic as the Anthropic decoder drops it.
 		if !decoder.doneAfterTerminal {
 			decoder.doneAfterTerminal = true
-			return nil, nil, nil
+			return nil, afterTerminalDiagnostic(llmprotocol.OpenAIResponsesV1, "terminal_event", "[DONE]"), nil
 		}
 	}
 	if decoder.terminal {
