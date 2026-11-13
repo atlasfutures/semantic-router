@@ -73,6 +73,10 @@ func (indexes *streamWireIndexes) translate(event llmprotocol.Event) int {
 type sseFramer struct {
 	buffer []byte
 	limit  int
+	// skipLF is set when a frame ended on a CR that was the last byte read:
+	// that CR may be the first half of a CRLF split across reads, so a LF
+	// that opens the next chunk completes it and is not a line of its own.
+	skipLF bool
 }
 
 func newSSEFramer(limit int) sseFramer { return sseFramer{limit: limit} }
@@ -81,6 +85,10 @@ func (framer *sseFramer) Push(chunk []byte) ([][]byte, error) {
 	if len(chunk) == 0 {
 		return nil, nil
 	}
+	if framer.skipLF && chunk[0] == '\n' {
+		chunk = chunk[1:]
+	}
+	framer.skipLF = false
 	framer.buffer = append(framer.buffer, chunk...)
 	frames := make([][]byte, 0, 1)
 	for {
@@ -92,6 +100,7 @@ func (framer *sseFramer) Push(chunk []byte) ([][]byte, error) {
 			return nil, llmprotocol.NewError(llmprotocol.ErrorUpstreamUnavailable, "sse_frame_limit", "SSE frame is too large", nil)
 		}
 		frames = append(frames, append([]byte(nil), framer.buffer[:end]...))
+		framer.skipLF = end == len(framer.buffer) && framer.buffer[end-1] == '\r'
 		framer.buffer = append(framer.buffer[:0], framer.buffer[end:]...)
 	}
 	if len(framer.buffer) > framer.limit {

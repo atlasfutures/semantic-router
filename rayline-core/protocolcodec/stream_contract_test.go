@@ -155,6 +155,33 @@ func TestSSEFramerAcceptsCROnlyAndSplitCRLF(t *testing.T) {
 	}
 }
 
+func TestSSEFramerPairsAFrameEndingCRWithTheNextChunksLF(t *testing.T) {
+	// The blank line that ends the frame is a CRLF split across reads: the
+	// frame ends on its CR, and the LF that opens the next chunk completes
+	// that line instead of being one of its own.
+	framer := newSSEFramer(64)
+	frames, err := framer.Push([]byte("data: one\r\n\r"))
+	if err != nil || len(frames) != 1 || string(frames[0]) != "data: one\r\n\r" {
+		t.Fatalf("frame ending on CR = %q, %v", frames, err)
+	}
+	if frames, err = framer.Push([]byte("\n")); err != nil || len(frames) != 0 {
+		t.Fatalf("LF completing the split CRLF = %q, %v", frames, err)
+	}
+	frames, err = framer.Push([]byte("data: two\r\n\r"))
+	if err != nil || len(frames) != 1 || string(frames[0]) != "data: two\r\n\r" {
+		t.Fatalf("second frame ending on CR = %q, %v", frames, err)
+	}
+	frames, err = framer.Push([]byte("\ndata: three\n\n"))
+	if err != nil || len(frames) != 1 || string(frames[0]) != "data: three\n\n" {
+		t.Fatalf("frame after a split CRLF = %q, %v", frames, err)
+	}
+	// Only the chunk right after the CR pairs with it.
+	frames, err = framer.Push([]byte("\n"))
+	if err != nil || len(frames) != 1 || string(frames[0]) != "\n" {
+		t.Fatalf("LF after a CRLF = %q, %v", frames, err)
+	}
+}
+
 func TestSSEParserHandlesCommentsMetadataAndMultilineData(t *testing.T) {
 	framer := newSSEFramer(256)
 	frames, err := framer.Push([]byte(
