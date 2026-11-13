@@ -22,11 +22,9 @@ import (
 )
 
 // The Messages effort item (pathfinder ADR 0143, placed after_new_input_v1
-// per ADR 0147) and the every_turn_v1 emit rule are rule sets of their own.
-// VSR reads them so the registry and pathfinder's ids load, and refuses them
-// at admission and placement, where rendering them as text would write the
-// wrong bytes at the wrong turns.
-var unimplementedRuleSetCells = []struct {
+// per ADR 0147) is a rule set of its own that VSR places: its controls load
+// under pathfinder's ids and admit on their experimental cells.
+var effortItemCells = []struct {
 	model, format string
 	ids           []string
 }{
@@ -40,6 +38,15 @@ var unimplementedRuleSetCells = []struct {
 		"8becd4c8d1ab1ecf86c667212ae543be644c6335d25d3034ae4b98e675b06aa0",
 		"f7c965779815ce7eb2092cd91ccb81b05ba456dd4eec5863980f1873b83735c9",
 	}},
+}
+
+// The every_turn_v1 emit rule loads so pathfinder's ids do, and is refused at
+// admission and placement, where rendering it as on-change text would write
+// the wrong bytes at the wrong turns.
+var unimplementedRuleSetCells = []struct {
+	model, format string
+	ids           []string
+}{
 	{"meta/muse-spark-1.3-contributor", FormatMessages, []string{
 		"5fb4c9692b6953a0cecd9702ffd17bfa5b0bc2e5dccef60d383d058929cffeec",
 		"897bab23ec521e0acf1563a25aad9a326e8e680359811cad807d2b9059a2766e",
@@ -52,7 +59,39 @@ var unimplementedRuleSetCells = []struct {
 	}},
 }
 
-func TestEffortItemAndEveryTurnControlsLoadUnderPathfindersIDsAndAreNotAdmitted(t *testing.T) {
+func TestEffortItemControlsLoadUnderPathfindersIDsAndAdmitOnlyAsExperimental(t *testing.T) {
+	reg, err := Embedded()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range effortItemCells {
+		for _, id := range tc.ids {
+			control, ok := reg.Control(id)
+			if !ok {
+				t.Fatalf("control %s is not in the registry", prefix12(id))
+			}
+			if control.ID() != id || control.Instruction == nil || control.Instruction.Unit != UnitMessagesEffortItem ||
+				!control.Instruction.Implemented() {
+				t.Fatalf("control %s does not load as an effort item VSR places", prefix12(id))
+			}
+			if _, err := reg.Admit(tc.model, "openrouter", tc.format, control, true); err != nil {
+				t.Fatalf("control %s on %s %s: %v", prefix12(id), tc.model, tc.format, err)
+			}
+			if _, err := reg.Admit(tc.model, "openrouter", tc.format, control, false); err == nil {
+				t.Fatalf("control %s admitted on %s %s without allowExperimental", prefix12(id), tc.model, tc.format)
+			}
+			placer, err := NewPlacer(tc.format)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := placer.check(&control); err != nil {
+				t.Fatalf("the placer refused control %s: %v", prefix12(id), err)
+			}
+		}
+	}
+}
+
+func TestEveryTurnControlsLoadUnderPathfindersIDsAndAreNotAdmitted(t *testing.T) {
 	reg, err := Embedded()
 	if err != nil {
 		t.Fatal(err)

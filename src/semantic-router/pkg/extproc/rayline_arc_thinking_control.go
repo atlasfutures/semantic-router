@@ -256,8 +256,18 @@ func (planned *plannedThinkingControl) render(body []byte, ctx *RequestContext) 
 	}
 	ctx.RaylineARCTransaction.stageControlPlacement(raylinearc.ControlPlacement{Key: planned.key, State: planned.placer.State()})
 	ctx.RaylineARCThinking = thinkingControlTrace(planned.cell, planned.control, receipt)
+	ctx.RaylineARCThinking.EffortItemHeader = planned.effortItemBeta()
 	recordThinkingLeverTurn(ctx.RaylineARCThinking)
 	return rendered, nil
+}
+
+// effortItemBeta is the anthropic-beta this dispatch's effort-item control
+// sends on its cell (ADR 0143), or "".
+func (planned *plannedThinkingControl) effortItemBeta() string {
+	if planned.control.Instruction == nil || planned.control.Instruction.Unit != thinkingcontrol.UnitMessagesEffortItem {
+		return ""
+	}
+	return planned.cell.EffortItemHeader
 }
 
 // thinkingControlTrace attributes the call with the drawn control and what

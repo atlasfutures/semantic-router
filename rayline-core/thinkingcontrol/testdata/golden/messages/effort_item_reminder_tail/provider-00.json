@@ -1,0 +1,1 @@
+{"model":"anthropic/claude-opus-5.5","max_tokens":32000,"system":[{"type":"text","text":"You are Claude Code."}],"messages":[{"role":"user","content":"Start."}],"stream":true,"output_config":{"effort":"high"},"thinking":{"display":"summarized","type":"adaptive"}}

@@ -1,0 +1,43 @@
+{
+ "description": "a tool_result tail that also carries text (a harness reminder) is new input: the item alone",
+ "format": "messages",
+ "provider": "openrouter",
+ "model": "anthropic/claude-opus-5.5",
+ "wire_model": "anthropic/claude-opus-5.5",
+ "admission": "enforced",
+ "allow_experimental": true,
+ "registry_pin": "9450ce173270ec8ed55d8d1bf29d706f3fc409daf06654a03724544eb9abf609",
+ "calls": [
+  {
+   "client_body": "client-00.json",
+   "control_id": "382b5a7fd7543311f73cc135fad21a303c4e301fb363a3696146ac707406d1bc",
+   "expected_body": "provider-00.json",
+   "receipt": {
+    "call": 0,
+    "control_id": "382b5a7fd7543311f73cc135fad21a303c4e301fb363a3696146ac707406d1bc",
+    "level_in_force": "none",
+    "instruction_state": "never",
+    "written": null,
+    "epoch": 0,
+    "epoch_reset_reason": null,
+    "retry": false
+   }
+  },
+  {
+   "client_body": "client-01.json",
+   "control_id": "4d90550d326886b21d6bed20a0dc15a63a1c590765c3e769e48646a47c3cb7e7",
+   "expected_body": "provider-01.json",
+   "receipt": {
+    "call": 1,
+    "control_id": "4d90550d326886b21d6bed20a0dc15a63a1c590765c3e769e48646a47c3cb7e7",
+    "level_in_force": "low",
+    "instruction_state": "steered",
+    "written": "instruction",
+    "epoch": 0,
+    "epoch_reset_reason": null,
+    "retry": false
+   }
+  }
+ ],
+ "refusal": null
+}

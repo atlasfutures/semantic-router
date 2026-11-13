@@ -1,0 +1,19 @@
+{
+ "description": "an item that would sit beside a trailing in-band system message is refused (unmeasured, ADR 0143)",
+ "format": "messages",
+ "provider": "openrouter",
+ "model": "anthropic/claude-opus-5.5",
+ "wire_model": "anthropic/claude-opus-5.5",
+ "admission": "enforced",
+ "allow_experimental": true,
+ "registry_pin": "9450ce173270ec8ed55d8d1bf29d706f3fc409daf06654a03724544eb9abf609",
+ "calls": [
+  {
+   "client_body": "client-00.json",
+   "control_id": "4d90550d326886b21d6bed20a0dc15a63a1c590765c3e769e48646a47c3cb7e7"
+  }
+ ],
+ "refusal": {
+  "error": "a messages effort item adjacent to another item or an in-band system message; that position is unmeasured (ADR 0143)"
+ }
+}

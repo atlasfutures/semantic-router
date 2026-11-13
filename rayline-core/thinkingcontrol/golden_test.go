@@ -40,6 +40,12 @@ import (
 // (placement_only_not_admitted), so the renderer's placement keeps its byte
 // coverage; it is never a router oracle.
 //
+// The messages effort_item_* cases (ADR 0143, 0147) are rendered by
+// pathfinder's own renderer (thinking_control_render.render_admitted and the
+// golden writer's _write_placement, at 17ade8c2bc) on anthropic/claude-opus-5.5
+// x openrouter x messages against this registry, since pathfinder's corpus has
+// no effort-item cases yet.
+//
 // The image tool-tail cases are pathfinder#3996 (28844ee61a, ADR 0129), their
 // registry_pin set to this registry, which that tree predates.
 

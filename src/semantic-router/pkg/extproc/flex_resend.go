@@ -222,7 +222,7 @@ func (r *OpenAIRouter) buildResendCall(
 	// after the credential and the path, and before the cache beta is merged
 	// into whatever anthropic-beta it set.
 	r.applyDecisionHeaderMutations(state, ctx)
-	declareAutoCacheBeta(&state.setHeaders, ctx)
+	declareDispatchBetas(&state.setHeaders, ctx)
 	target, headers, err := flexResendRequestTarget(dispatch, state.setHeaders, state.removeHeaders, ctx)
 	if err != nil {
 		return nil, "address_invalid"

@@ -1,0 +1,19 @@
+{
+ "description": "a client transcript that carries a message-level output_config is refused: only placement writes items",
+ "format": "messages",
+ "provider": "openrouter",
+ "model": "anthropic/claude-opus-5.5",
+ "wire_model": "anthropic/claude-opus-5.5",
+ "admission": "enforced",
+ "allow_experimental": true,
+ "registry_pin": "9450ce173270ec8ed55d8d1bf29d706f3fc409daf06654a03724544eb9abf609",
+ "calls": [
+  {
+   "client_body": "client-00.json",
+   "control_id": "4d90550d326886b21d6bed20a0dc15a63a1c590765c3e769e48646a47c3cb7e7"
+  }
+ ],
+ "refusal": {
+  "error": "call 0: the client transcript carries a message-level output_config; only placement writes effort items (ADR 0143)"
+ }
+}

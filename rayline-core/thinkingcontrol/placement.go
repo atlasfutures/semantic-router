@@ -33,7 +33,70 @@ const (
 	// PlacementAppendToTool appends the unit as a text part to a Chat tool
 	// run's last tool message (ADR 0131), on a cell that states it.
 	PlacementAppendToTool = "append_to_tool"
+	// PlacementInsertAfterEffortItem inserts a Messages effort item directly
+	// after a governed tail user message that carries new input (ADR 0147).
+	PlacementInsertAfterEffortItem = "insert_after_effort_item"
+	// PlacementAppendNewInputEffortItem appends NewInputText to a tail with
+	// no new input (tool results alone), then inserts the effort item after
+	// it (ADR 0147).
+	PlacementAppendNewInputEffortItem = "append_new_input_effort_item"
 )
+
+// NewInputText is the constant text block that makes a tool_result-only
+// turn new input for an effort item (ADR 0147); pathfinder's
+// NEW_INPUT_TEXT.
+const NewInputText = "Continue."
+
+// MessagesEffortItemEfforts are the efforts a Messages effort item may set
+// (pathfinder's MESSAGES_EFFORT_ITEM_EFFORTS).
+var MessagesEffortItemEfforts = map[string]bool{"low": true, "medium": true, "high": true, "xhigh": true, "max": true}
+
+// messagesEffortItem is the mid-conversation system message that sets the
+// effort for the turns after it (ADR 0143).
+func messagesEffortItem(effort string) *value {
+	return objectValue(
+		member{"role", stringValue("system")},
+		member{"content", arrayValue()},
+		member{"output_config", objectValue(member{"effort", stringValue(effort)})},
+	)
+}
+
+// isMessagesEffortItem is a unit with the effort item's exact shape.
+func isMessagesEffortItem(unit *value) bool {
+	if unit == nil || unit.kind != kindObject || len(unit.members) != 3 {
+		return false
+	}
+	role, content, config := unit.get("role"), unit.get("content"), unit.get("output_config")
+	if !role.isString() || role.str != "system" || content == nil || content.kind != kindArray ||
+		len(content.items) != 0 || config == nil || config.kind != kindObject || len(config.members) != 1 {
+		return false
+	}
+	effort := config.get("effort")
+	return effort.isString() && MessagesEffortItemEfforts[effort.str]
+}
+
+// hasNewInput reports whether a Messages user message counts as new input
+// for an effort item: non-empty text, as a string or as any text block.
+// tool_result and image blocks do not.
+func hasNewInput(unit *value) bool {
+	content := unit.get("content")
+	if content.isString() {
+		return pythonStrip(content.str) != ""
+	}
+	if content == nil || content.kind != kindArray {
+		return false
+	}
+	for _, block := range content.items {
+		if block.kind != kindObject {
+			continue
+		}
+		typ, text := block.get("type"), block.get("text")
+		if typ.isString() && typ.str == "text" && text.isString() && pythonStrip(text.str) != "" {
+			return true
+		}
+	}
+	return false
+}
 
 // EpochResetTranscriptRewrite is the reason an epoch restarts when a ledger
 // item's anchor no longer matches the client's transcript.
@@ -176,8 +239,14 @@ func ResumePlacer(state PlacerState) (*Placer, error) {
 		if index > 0 && item.Anchor <= state.Ledger[index-1].Anchor {
 			return nil, malformed
 		}
-		if item.Anchor < 0 || (item.Placement != PlacementAppend && item.Placement != PlacementInsertAfter &&
-			item.Placement != PlacementAppendToTool) ||
+		// An effort-item episode writes only effort items, and a text episode
+		// only text: either spelling replayed on the other is wrong bytes.
+		effortItem := item.Placement == PlacementInsertAfterEffortItem ||
+			item.Placement == PlacementAppendNewInputEffortItem
+		textItem := item.Placement == PlacementAppend || item.Placement == PlacementInsertAfter ||
+			item.Placement == PlacementAppendToTool
+		if item.Anchor < 0 || !(textItem || effortItem) ||
+			effortItem != (state.First.Instruction.Unit == UnitMessagesEffortItem) ||
 			(item.Kind != WrittenInstruction && item.Kind != WrittenNeutralMarker) {
 			return nil, malformed
 		}
@@ -204,10 +273,10 @@ func (p *Placer) check(control *Control) error {
 	if control == nil {
 		return refuse("call %d: no control; absence is not the 'none' level", index)
 	}
-	if control.Instruction != nil && (control.Instruction.Unit == UnitMessagesEffortItem || control.Instruction.Emit != "") {
+	if control.Instruction != nil && (control.Instruction.Unit == UnitConfigurationUpdate || control.Instruction.Emit != "") {
 		// Rendered as text, either would be the wrong bytes at the wrong
 		// turns; the episode store keeps neither.
-		return refuse("call %d: VSR does not place the effort item unit or the every_turn_v1 emit rule", index)
+		return refuse("call %d: VSR does not place the configuration_update unit or the every_turn_v1 emit rule", index)
 	}
 	first := p.state.First
 	if control.Instruction != nil && first != nil && first.Instruction != nil &&
@@ -281,6 +350,20 @@ func (p *Placer) place(body *value, control *Control, rules tailRules) (*value, 
 	}
 	var written, refused *string
 	instruction := control.Instruction
+	effortItem := instruction != nil && instruction.Unit == UnitMessagesEffortItem
+	if effortItem {
+		if format != FormatMessages {
+			return nil, Receipt{}, refuse("call %d: a messages effort item is a Messages unit, not a %s one (ADR 0143)", index, format)
+		}
+		for _, unit := range units {
+			if unit.has("output_config") {
+				// Only placement writes effort items: a client's would govern
+				// turns the ledger and the receipt never recorded.
+				return nil, Receipt{}, refuse("call %d: the client transcript carries a message-level output_config; "+
+					"only placement writes effort items (ADR 0143)", index)
+			}
+		}
+	}
 	if instruction != nil && retry && next.PreviousRefused != nil {
 		// The retried send is the same bytes: what its first send refused,
 		// it refuses again.
@@ -299,7 +382,7 @@ func (p *Placer) place(body *value, control *Control, rules tailRules) (*value, 
 		}
 		wouldWrite := (level != InstructionNone && (next.InForce == nil || *next.InForce != level)) ||
 			(level == InstructionNone && next.InForce != nil)
-		if wouldWrite && instruction.Unit != UnitConfigurationUpdate && !rules.imageToolTailAdmitted &&
+		if wouldWrite && instruction.Unit == "" && !rules.imageToolTailAdmitted &&
 			imageToolTail(units, tail, format) {
 			// ADR 0129: no unproven steering after an image tool result.
 			reason := RefusedImageToolTail
@@ -312,6 +395,12 @@ func (p *Placer) place(body *value, control *Control, rules tailRules) (*value, 
 			}
 			if placement == PlacementInsertAfter && appendToTool {
 				placement = PlacementAppendToTool
+			}
+			if effortItem {
+				placement = PlacementAppendNewInputEffortItem
+				if hasNewInput(units[tail]) {
+					placement = PlacementInsertAfterEffortItem
+				}
 			}
 			next.Ledger = append(next.Ledger, LedgerItem{
 				Anchor: anchor.Index, PrefixDigest: anchor.Digest, Placement: placement, Text: text, Kind: kind,
@@ -354,6 +443,16 @@ func (p *Placer) place(body *value, control *Control, rules tailRules) (*value, 
 	} else {
 		for _, group := range rendered {
 			applied = append(applied, group...)
+		}
+	}
+	if format == FormatMessages {
+		for position := 1; position < len(applied); position++ {
+			first, second := applied[position-1], applied[position]
+			if (isMessagesEffortItem(first) || isMessagesEffortItem(second)) && isSystem(first) && isSystem(second) {
+				// ADR 0143: unmeasured.
+				return nil, Receipt{}, refuse("a messages effort item adjacent to another item or an in-band system " +
+					"message; that position is unmeasured (ADR 0143)")
+			}
 		}
 	}
 	placed := body.clone()
@@ -664,8 +763,21 @@ func renderedUnits(units []*value, ledger []LedgerItem, format string) ([][]*val
 			out = append(out, []*value{placed})
 			continue
 		}
+		if len(items) == 1 && items[0].Placement == PlacementAppendNewInputEffortItem {
+			// ADR 0147: the constant text block makes the tail new input; the
+			// item after it governs the reply.
+			placed, err := appended(unit, format, NewInputText)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, []*value{placed, messagesEffortItem(items[0].Text)})
+			continue
+		}
 		group := []*value{unit.clone()}
-		if len(items) == 1 {
+		switch {
+		case len(items) == 1 && items[0].Placement == PlacementInsertAfterEffortItem:
+			group = append(group, messagesEffortItem(items[0].Text))
+		case len(items) == 1:
 			group = append(group, inserted(format, items[0].Text))
 		}
 		out = append(out, group)

@@ -40,6 +40,13 @@ func (r *OpenAIRouter) adaptProviderRequest(
 	// and the router's own reasoning mutations are skipped; the provider's
 	// routing members still apply.
 	if planned := ctx.RaylineARCThinkingControl; planned != nil {
+		// Claude Code's per-turn output_config goes before placement, so the
+		// only message-level output_config left is an effort item placement
+		// wrote (ADR 0143), which must reach the provider.
+		body, err = stripMessageOutputConfig(body, dispatch)
+		if err != nil {
+			return nil, err
+		}
 		rendered, err := planned.render(body, ctx)
 		if err != nil {
 			return nil, err
@@ -47,6 +54,10 @@ func (r *OpenAIRouter) adaptProviderRequest(
 		return r.adaptMessagesProviderRequest(rendered, dispatch, ctx)
 	}
 	if dispatch.targetFormat == llmprotocol.AnthropicMessagesV1 {
+		body, err = stripMessageOutputConfig(body, dispatch)
+		if err != nil {
+			return nil, err
+		}
 		return r.adaptMessagesProviderRequest(body, dispatch, ctx)
 	}
 	if dispatch.targetFormat != llmprotocol.OpenAIChatV1 {
@@ -110,19 +121,16 @@ func (r *OpenAIRouter) applyPrivateProviderPreferences(
 // provider pin and session_id as its Chat API. Both self-gate on OpenRouter,
 // so a body bound for Anthropic itself is left as the codec rendered it, as
 // is the fold of Claude Code's mid-conversation tool changes, which
-// OpenRouter refuses as content blocks, the strip of its per-turn
-// message-level output_config, and the removal of its billing line's per-turn
-// fields for a worker Anthropic does not publish.
+// OpenRouter refuses as content blocks, and the removal of its billing line's
+// per-turn fields for a worker Anthropic does not publish. Its callers strip
+// Claude Code's per-turn message-level output_config before this, and a v5
+// control's before placement.
 func (r *OpenAIRouter) adaptMessagesProviderRequest(
 	body []byte,
 	dispatch *providerDispatch,
 	ctx *RequestContext,
 ) ([]byte, error) {
 	body, err := foldMidConversationToolChanges(body, dispatch, ctx)
-	if err != nil {
-		return nil, err
-	}
-	body, err = stripMessageOutputConfig(body, dispatch)
 	if err != nil {
 		return nil, err
 	}

@@ -113,6 +113,14 @@ func v5Turn(t *testing.T, router *OpenAIRouter, fake *fakePolicyService, action,
 // v5TurnWithChooser is v5Turn with the fake's chooser already set.
 func v5TurnWithChooser(t *testing.T, router *OpenAIRouter, episode, client string) ([]byte, *RequestContext) {
 	t.Helper()
+	dispatched, ctx := v5Dispatch(t, router, episode, client)
+	return dispatched.GetBodyMutation().GetBody(), ctx
+}
+
+// v5Dispatch is v5TurnWithChooser returning the whole provider dispatch, its
+// header mutation included.
+func v5Dispatch(t *testing.T, router *OpenAIRouter, episode, client string) (*ext_proc.CommonResponse, *RequestContext) {
+	t.Helper()
 	ctx := &RequestContext{
 		Headers: map[string]string{}, RequestID: fmt.Sprintf("v5-%s-%d", episode, time.Now().UnixNano()),
 		StartTime: time.Now(), TraceContext: context.Background(),
@@ -135,8 +143,8 @@ func v5TurnWithChooser(t *testing.T, router *OpenAIRouter, episode, client strin
 	if immediate := response.GetImmediateResponse(); immediate != nil {
 		t.Fatalf("request refused: %d %s", immediate.GetStatus().GetCode(), immediate.GetBody())
 	}
-	mutation := response.GetRequestBody().GetResponse().GetBodyMutation()
-	if mutation == nil {
+	dispatched := response.GetRequestBody().GetResponse()
+	if dispatched.GetBodyMutation() == nil {
 		t.Fatal("no provider body was written")
 	}
 	if _, err := router.handleResponseHeaders(arcResponseHeaders("200"), ctx); err != nil {
@@ -144,7 +152,7 @@ func v5TurnWithChooser(t *testing.T, router *OpenAIRouter, episode, client strin
 	}
 	completeTestResponse(t, ctx)
 	finalizeSelectionProcessTerminal(ctx)
-	return mutation.GetBody(), ctx
+	return dispatched, ctx
 }
 
 // A v5 action dispatched on Messages renders exactly what pathfinder's

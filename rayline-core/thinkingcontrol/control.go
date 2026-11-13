@@ -43,10 +43,13 @@ var Rules = map[string]string{"placement": "turn_tail_v2", "emit": "on_change_v1
 
 // UnitMessagesEffortItem is pathfinder's Messages mid-conversation effort
 // item unit (ADR 0143). Its rule set is the text rules with the unit and
-// placement PlacementAfterNewInput (ADR 0147). VSR reads controls that use
-// it, so that the registry and their ids load, and refuses to admit or place
-// them: it does not implement the unit.
+// placement PlacementAfterNewInput (ADR 0147): a level's text is a native
+// effort and its neutral text the base effort.
 const UnitMessagesEffortItem = "messages_effort_item_v1"
+
+// EffortItemBeta is the anthropic-beta value that enables the effort item on
+// Anthropic (pathfinder's EFFORT_ITEM_HEADER_VALUES).
+const EffortItemBeta = "mid-conversation-output-config-2026-07-01"
 
 // PlacementAfterNewInput is the placement the effort item's rule set names
 // in place of turn_tail_v2 (ADR 0147).
@@ -118,11 +121,11 @@ func (in *Instruction) rules() map[string]string {
 }
 
 // Implemented reports whether VSR places this instruction's rule set: the
-// text rules, alone or with the in-band system fold. The configuration_update
-// unit (ADR 0114), the Messages effort item (ADR 0143, 0147) and the
+// text rules, alone or with the in-band system fold, or the Messages effort
+// item (ADR 0143, 0147). The configuration_update unit (ADR 0114) and the
 // every_turn_v1 emit rule load, and are refused at admission and placement.
 func (in *Instruction) Implemented() bool {
-	return in.Unit == "" && in.Emit == ""
+	return (in.Unit == "" || in.Unit == UnitMessagesEffortItem) && in.Emit == ""
 }
 
 // Error is a control, artifact, admission or placement that cannot be used

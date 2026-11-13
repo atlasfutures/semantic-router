@@ -172,7 +172,8 @@ func autoCacheTTL(retention json.RawMessage, ctx *RequestContext) string {
 	}
 }
 
-// declareAutoCacheBeta adds extended-cache-ttl-2025-04-11 to the dispatched
+// declareDispatchBetas declares the betas the dispatched body depends on. It
+// adds extended-cache-ttl-2025-04-11 to the dispatched
 // anthropic-beta header when the Router generated a 1h ttl, since Anthropic
 // gates that ttl on the beta. It runs in finalizeProviderDispatchResponse,
 // which every dispatch path reaches with a header mutation to carry it, so a
@@ -181,10 +182,20 @@ func autoCacheTTL(retention json.RawMessage, ctx *RequestContext) string {
 // a provider profile's, else the client's own -- comma-separated, with no
 // value repeated, and never replaces it. A client's own 1h ttl is left
 // alone: it comes from a Messages client that sends its own headers.
-func declareAutoCacheBeta(setHeaders *[]*core.HeaderValueOption, ctx *RequestContext) {
-	if auto := ctx.DispatchAutoCache; auto == nil || auto.ttl != anthropicLongestCacheTTL {
-		return
+func declareDispatchBetas(setHeaders *[]*core.HeaderValueOption, ctx *RequestContext) {
+	if auto := ctx.DispatchAutoCache; auto != nil && auto.ttl == anthropicLongestCacheTTL {
+		declareAnthropicBeta(setHeaders, ctx, extendedCacheTTLBeta)
 	}
+	// ADR 0143: every call of an effort-item episode sends the beta its cell
+	// states, so the item governs the reply on every endpoint.
+	if planned := ctx.RaylineARCThinkingControl; planned != nil && planned.effortItemBeta() != "" {
+		declareAnthropicBeta(setHeaders, ctx, planned.effortItemBeta())
+	}
+}
+
+// declareAnthropicBeta merges beta into the dispatched anthropic-beta: the
+// dispatch's own value if it set one, else the client's.
+func declareAnthropicBeta(setHeaders *[]*core.HeaderValueOption, ctx *RequestContext, beta string) {
 	// A dispatch header overwrites the client's, so the last one set is
 	// what would be sent.
 	var dispatched *core.HeaderValueOption
@@ -200,7 +211,7 @@ func declareAutoCacheBeta(setHeaders *[]*core.HeaderValueOption, ctx *RequestCon
 			current = dispatched.Header.Value
 		}
 	}
-	merged := mergeAnthropicBetas(current, extendedCacheTTLBeta)
+	merged := mergeAnthropicBetas(current, beta)
 	if dispatched != nil {
 		dispatched.Header.RawValue, dispatched.Header.Value = []byte(merged), ""
 		return
