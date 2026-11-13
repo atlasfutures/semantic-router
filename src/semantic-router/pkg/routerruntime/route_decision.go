@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"time"
 
 	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
 
@@ -76,6 +77,13 @@ type RouteDecisionRequest struct {
 	// trusts its gateway's turn-signal headers, so a private consult is
 	// masked as a routed turn is.
 	Headers map[string]string
+	// LookupScope is a POST /v1/routes lookup's conversation scope
+	// ("lookup:<user>:<conversation>") when the cell keeps lookup sessions
+	// (routes_api.lookup_sessions), or empty. A lookup decided ephemerally
+	// may then append to the scope's warm encoder session instead of
+	// encoding from scratch; it still commits nothing. Ignored on a lookup
+	// that joins its episode.
+	LookupScope string
 }
 
 // RouteDecisionSurface names which endpoint a consult came from.
@@ -179,6 +187,22 @@ type RouteDecision struct {
 	// Signals is the service's signals block, opaque and keyed by signal
 	// name, for a lookup that sent routing.signals; nil otherwise.
 	Signals json.RawMessage
+	// Encode is how the decision's encode ran, for the lookup's own log.
+	// Record-only: it never reaches the wire.
+	Encode RouteEncode
+}
+
+// RouteEncode is how a decision's encode ran.
+type RouteEncode struct {
+	// LookupSession marks a lookup decided on its conversation's lookup
+	// scope (RouteDecisionRequest.LookupScope).
+	LookupSession bool
+	// SessionAction is the encoder's bounded session action (created,
+	// appended, rebuilt, reused), empty when it reported none.
+	SessionAction string
+	// Latency is the encode alone, as the encoder timed it; zero when not
+	// measured.
+	Latency time.Duration
 }
 
 // RouteIdentity is a Decisions answer's identity.

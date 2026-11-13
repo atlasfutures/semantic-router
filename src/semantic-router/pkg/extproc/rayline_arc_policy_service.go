@@ -615,6 +615,11 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	turn, attribution, transition := raylinearc.PolicyTurnFrom(state.Policy, digests, roles, state.TurnIndex, signals)
 	prefixShape := observePolicyPrefix(arcContext, clientRequest, digests, state.Policy, signals, transition)
 	sideCall := signals.CallKind == raylinearc.PolicyCallSide
+	if arcContext.RoutesLookupSession {
+		if reason := scorer.policyLookupSessionUnservable(arcContext, sideCall); reason != "" {
+			return nil, raylineRoutesLookupSessionFallback(arcContext, reason)
+		}
+	}
 	scheduled := scorer.schedule != "" && !sideCall
 	// A two-stage package's service owns the model choice: it decides at the
 	// package's stage-one boundaries, a typed user message among them, which
@@ -780,6 +785,11 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	}
 	if sideCall {
 		request.EpisodeMode = scorer.sideCallEpisodeMode(selector.now())
+	}
+	// A lookup scope is strict whatever the cell's mode: the service keeps
+	// its encoder session, and records nothing on it.
+	if arcContext.RoutesLookupSession {
+		request.EpisodeMode, request.SessionScope = "", raylinearc.PolicySessionScopeLookup
 	}
 	scorer.decisionsV2.apply(&request)
 	if weight := arcContext.TurnCostWeight; weight != nil {
@@ -960,7 +970,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		staged := true
 		request.Stage = &staged
 	}
-	if scorer.delta && !sideCall && !ephemeral {
+	if scorer.delta && !sideCall && !ephemeral && !arcContext.RoutesLookupSession {
 		scorer.hydratePolicyStagedTurn(ctx, arcContext, state.TurnIndex)
 	}
 	var deltaBase policyStagedTurn
@@ -981,7 +991,8 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		})
 	}
 	decisionMode := policyStagedFullMode(staging)
-	firstBusyWait := policyFirstBusyWait(scorer.busyWait, scorer.policyAppendUnsettled(arcContext.EpisodeIDHash, state.TurnIndex))
+	busyWait := policyLookupSessionBusyWait(scorer, arcContext)
+	firstBusyWait := policyFirstBusyWait(busyWait, scorer.policyAppendUnsettled(arcContext.EpisodeIDHash, state.TurnIndex))
 	var response *raylinearc.PolicyDecisionResponse
 	if deltaOutcome == policyDecisionModeDelta {
 		deltaRequest := request
@@ -1001,7 +1012,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 			logging.ComponentWarnEvent("extproc", "rayline_arc_policy_delta_resent", map[string]interface{}{
 				"request_id": arcContext.RequestID, "episode_id_hash": arcContext.EpisodeIDHash, "class": refusal.Class,
 			})
-			response, err = decidePolicyThroughBusy(ctx, decider, request, scorer.busyWait, admit, withCacheContext)
+			response, err = decidePolicyThroughBusy(ctx, decider, request, busyWait, admit, withCacheContext)
 		} else {
 			decisionMode = policyDecisionModeDelta
 		}
@@ -1011,19 +1022,26 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		// (rayline_arc_policy_start_retry.go); nothing else is.
 		response, err = retryPolicyStartOnce(ctx, transition, arcContext.EpisodeIDHash, response, err,
 			func() (*raylinearc.PolicyDecisionResponse, error) {
-				return decidePolicyThroughBusy(ctx, decider, request, scorer.busyWait, admit, withCacheContext)
+				return decidePolicyThroughBusy(ctx, decider, request, busyWait, admit, withCacheContext)
 			})
 	}
 	// A strict cell's relaxed side call that the service refused as
 	// unsupported is decided strict instead, as it was before side calls
 	// went relaxed.
 	var refused *raylinearc.PolicyServiceError
-	if request.EpisodeMode != scorer.episodeMode && errors.As(err, &refused) &&
+	if request.SessionScope == "" && request.EpisodeMode != scorer.episodeMode && errors.As(err, &refused) &&
 		refused.Class == raylinearc.PolicyRelaxedUnsupportedClass {
 		scorer.sideCallsRelaxedUnsupported(selector.now(), "refused")
 		request.EpisodeMode = scorer.episodeMode
 		decisionMode = policyStagedFullMode(staging)
-		response, err = decidePolicyThroughBusy(ctx, decider, request, scorer.busyWait, admit, withCacheContext)
+		response, err = decidePolicyThroughBusy(ctx, decider, request, busyWait, admit, withCacheContext)
+	}
+	// A lookup scope held by a concurrent lookup, or refused, is decided
+	// again one-shot (rayline_routes_lookup_scope.go).
+	if arcContext.RoutesLookupSession {
+		if reason, refused := policyLookupSessionRefused(err); refused {
+			return nil, raylineRoutesLookupSessionFallback(arcContext, reason)
+		}
 	}
 	var cold *raylinearc.PolicyServiceError
 	switch {
@@ -1043,7 +1061,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		narrow(derived.offer)
 		logRaylineARCDerivedHold(arcContext, derived, "re-ask")
 		decisionMode = policyStagedFullMode(staging)
-		response, err = decidePolicyThroughBusy(ctx, decider, request, scorer.busyWait, admit, withCacheContext)
+		response, err = decidePolicyThroughBusy(ctx, decider, request, busyWait, admit, withCacheContext)
 	case derived.model == "" && held < 0 && execution == nil && executionV2 == nil &&
 		errors.As(err, &cold) && cold.Class == raylinearc.PolicyStageOneHeldUnknownClass:
 		// A refusal the first ask did not anticipate: the recorded model is
@@ -1067,7 +1085,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 			logRaylineARCDerivedHold(arcContext, derived, "re-ask")
 			narrow(derived.offer)
 			decisionMode = policyStagedFullMode(staging)
-			response, err = decidePolicyThroughBusy(ctx, decider, request, scorer.busyWait, admit, withCacheContext)
+			response, err = decidePolicyThroughBusy(ctx, decider, request, busyWait, admit, withCacheContext)
 		}
 	}
 	// A refusal of the caller's routing.signals answers the service's own

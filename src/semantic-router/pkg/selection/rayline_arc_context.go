@@ -155,6 +155,13 @@ type RaylineARCSelectionContext struct {
 	// one): it commits nothing, so a policy session it starts is recorded
 	// nowhere and is ended once the lookup is decided.
 	RoutesThrowaway bool
+	// RoutesLookupSession is a throwaway lookup decided on its
+	// conversation's lookup-scoped encoder session (routes_api
+	// lookup_sessions): EpisodeIDHash is that scope's stable hash, the
+	// decide is sent strict with session_scope "lookup", and it still
+	// commits nothing. The policy service is asked only when it advertises
+	// the capability; any other answer falls back to a one-shot lookup.
+	RoutesLookupSession bool
 	// RoutesEncodeLimit is a throwaway POST /v1/routes lookup's
 	// routes_api.max_encode_tokens: over it (ContextTokens), the lookup is
 	// answered without an encode. Zero, as on every tracked lookup and
