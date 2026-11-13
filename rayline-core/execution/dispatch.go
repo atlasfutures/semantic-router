@@ -90,7 +90,7 @@ func (server *Server) prepare(request llmprotocol.Request, envelope llmprotocol.
 	if err != nil {
 		return nil, err
 	}
-	key := thinkingcontrol.PlacementKey(deployment.ID+"|"+deployment.RuntimeIdentity, selected.format, selected.control)
+	key := thinkingcontrol.PlacementKey(deployment.ID+"|"+deployment.RuntimeIdentity, selected.format)
 	placer, err := thinkingcontrol.NewPlacer(selected.format)
 	if previous, ok := state.placements[key]; ok {
 		placer, err = thinkingcontrol.ResumePlacer(previous)

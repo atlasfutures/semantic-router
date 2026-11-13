@@ -35,9 +35,8 @@ type ClampAllowance struct {
 // ClampMessagesAllowance lowers an allowance above limit to limit, for a
 // caller that cannot state a smaller one. It reports whether it clamped.
 //
-// The admitted control's thinking budget is read, never lowered: it is part of
-// PlacementKey, so a lowered one would start a new placer mid-episode and
-// serve a control the policy did not choose.
+// The admitted control's thinking budget is read, never lowered: a lowered one
+// would serve a control the policy did not choose.
 func ClampMessagesAllowance(request *llmprotocol.Request, budget *int64, limit int64) (ClampAllowance, bool) {
 	if request == nil || request.Sampling.MaxOutputTokens == nil || limit <= 0 {
 		return ClampAllowance{}, false
