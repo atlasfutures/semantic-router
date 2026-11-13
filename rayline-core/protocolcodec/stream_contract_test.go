@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -620,5 +622,68 @@ func TestResponsesFailedReadsNestedResponseError(t *testing.T) {
 	events, _, err := decoder.Push(payload)
 	if err != nil || len(events) != 1 || events[0].Error == nil || events[0].Error.Code != "provider_overloaded" {
 		t.Fatalf("nested response error = %+v, %v", events, err)
+	}
+}
+
+func TestPassthroughFiltersKeepEveryByteOfACRLFSplitAcrossReads(t *testing.T) {
+	// Each read stops between the CR and the LF of the blank line that ends a
+	// frame. The filters forward the upstream's frames as they came, so the
+	// output does not depend on where the reads stopped.
+	//
+	// The Chat [DONE] frame is read whole. Follow-up, pre-existing on the
+	// base: ChatUsageStreamFilter holds [DONE] until Finalize and writes the
+	// LF that completes its split CRLF, a frame without data, ahead of it.
+	// No byte is lost, but that LF moves before [DONE].
+	for _, test := range []struct {
+		fixture   string
+		filter    func() PublicStreamFilter
+		splitDone bool
+	}{
+		{"026-chat-crlf-keepalive-in.json", func() PublicStreamFilter { return NewChatUsageStreamFilter(1 << 20) }, false},
+		{"026-chat-crlf-keepalive-in.json", func() PublicStreamFilter { return NewChatPassthroughStreamFilter(1 << 20) }, false},
+		{"028-anthropic-crlf-keepalive-in.json", func() PublicStreamFilter { return NewAnthropicPublicStreamFilter(1<<20, "") }, true},
+	} {
+		body, err := os.ReadFile(filepath.Join("testdata", "golden", "stream", test.fixture))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var input goldenStreamInput
+		if err := json.Unmarshal(body, &input); err != nil {
+			t.Fatal(err)
+		}
+		stream := strings.Join(input.Chunks, "")
+		var split []string
+		for _, frame := range strings.SplitAfter(stream, "\r\n\r\n") {
+			switch {
+			case frame == "":
+			case !test.splitDone && strings.Contains(frame, "[DONE]"):
+				split = append(split, frame)
+			default:
+				split = append(split, frame[:len(frame)-1], frame[len(frame)-1:])
+			}
+		}
+		passthrough := func(chunks []string) string {
+			filter := test.filter()
+			var output []byte
+			for _, chunk := range chunks {
+				pushed, err := filter.Push([]byte(chunk))
+				if err != nil {
+					t.Fatalf("%s: %v", test.fixture, err)
+				}
+				output = append(output, pushed...)
+			}
+			final, err := filter.Finalize()
+			if err != nil {
+				t.Fatalf("%s: %v", test.fixture, err)
+			}
+			return string(append(output, final...))
+		}
+		whole := passthrough([]string{stream})
+		if !strings.Contains(whole, "\r\n\r\n") {
+			t.Fatalf("%s: passthrough output is not CRLF: %q", test.fixture, whole)
+		}
+		if got := passthrough(split); got != whole {
+			t.Fatalf("%s: CRLF split across reads changed the bytes:\n%q\nwant\n%q", test.fixture, got, whole)
+		}
 	}
 }

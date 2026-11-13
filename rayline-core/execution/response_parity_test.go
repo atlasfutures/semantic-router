@@ -13,29 +13,38 @@ import (
 	"github.com/atlasfutures/semantic-router/rayline-core/protocolcodec"
 )
 
-func TestExecutionRestoresNamespacedToolCallsBufferedAndStreamed(t *testing.T) {
+// A Responses namespace tool reaches the Responses deployment as a namespace,
+// and the call it returns keeps its namespace, buffered and streamed.
+func TestExecutionCarriesNamespacedToolsOnResponses(t *testing.T) {
 	for _, stream := range []bool{false, true} {
 		t.Run(fmt.Sprintf("stream=%v", stream), func(t *testing.T) {
-			body := `{"id":"chat1","object":"chat.completion","created":1,"model":"qwen-fixture","choices":[{"index":0,"message":{"role":"assistant","content":null,"tool_calls":[{"id":"call-1","type":"function","function":{"name":"multi_agent_v1__spawn_agent","arguments":"{}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":20,"completion_tokens":1,"total_tokens":21}}`
+			body := `{"id":"resp1","object":"response","created_at":1,"status":"completed","model":"qwen-fixture","output":[{"type":"function_call","id":"fc_1","call_id":"call-1","namespace":"multi_agent_v1","name":"spawn_agent","arguments":"{}","status":"completed"}],"usage":{"input_tokens":20,"output_tokens":1,"total_tokens":21}}`
 			engine := protocolcodec.NewBuiltinEngine()
 			wire := []byte(body)
 			if stream {
-				response, _, _, err := engine.DecodeResponse(llmprotocol.OpenAIChatV1, wire)
+				response, _, _, err := engine.DecodeResponse(llmprotocol.OpenAIResponsesV1, wire)
 				if err != nil {
 					t.Fatal(err)
 				}
-				wire, _, err = engine.EncodeResponseStream(llmprotocol.OpenAIChatV1, response, llmprotocol.StreamContext{})
+				wire, _, err = engine.EncodeResponseStream(llmprotocol.OpenAIResponsesV1, response, llmprotocol.StreamContext{})
 				if err != nil {
 					t.Fatal(err)
 				}
 			}
-			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write(wire) }))
+			var dispatched []byte
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				dispatched, _ = io.ReadAll(r.Body)
+				_, _ = w.Write(wire)
+			}))
 			defer upstream.Close()
-			_, executor := executorWithHTTPDecisions(t, testConfig(t, upstream.URL, false), &decisionCapture{})
+			_, executor := executorWithHTTPDecisions(t, onProtocol(t, testConfig(t, upstream.URL, false), llmprotocol.OpenAIResponsesV1), &decisionCapture{})
 			request := fmt.Sprintf(`{"model":"arc-1.0","stream":%v,"input":[{"role":"user","content":"spawn helper"}],"tools":[{"type":"namespace","name":"multi_agent_v1","tools":[{"type":"function","name":"spawn_agent","parameters":{"type":"object"}}]}]}`, stream)
 			status, output := executeHTTP(t, executor.URL, "/v1/responses", request, "namespaces")
 			if status != 200 {
 				t.Fatalf("status %d: %s", status, output)
+			}
+			if !bytes.Contains(dispatched, []byte(`"type":"namespace"`)) || bytes.Contains(dispatched, []byte("multi_agent_v1__spawn_agent")) {
+				t.Fatalf("namespace tool was not dispatched as a namespace: %s", dispatched)
 			}
 			if !bytes.Contains(output, []byte(`"namespace":"multi_agent_v1"`)) || !bytes.Contains(output, []byte(`"name":"spawn_agent"`)) || bytes.Contains(output, []byte("multi_agent_v1__spawn_agent")) {
 				t.Fatalf("namespace lost on returned call: %s", output)

@@ -135,7 +135,7 @@ func (provider *HTTPDecisions) projectV2(input DecisionInput) contextV2 {
 	if held := input.State.HeldActionID; held != "" {
 		served := &lastServedV2{ActionID: held, Worker: input.State.HeldWorker}
 		if served.Worker == "" {
-			served.Worker = provider.actions[held].Worker
+			served.Worker = provider.actions[input.Format][held].Worker
 		}
 		for _, entry := range external.History {
 			if entry.ActionID == held && (served.Message == nil || entry.Message > *served.Message) {
@@ -150,15 +150,18 @@ func (provider *HTTPDecisions) projectV2(input DecisionInput) contextV2 {
 	for _, worker := range v1.Workers {
 		cache[worker.ActionID] = &cacheV2{ContextEpoch: worker.ContextEpoch, Gap: worker.Gap, TTL: worker.TTL, Residency: worker.Residency, Usage: worker.Usage, CurrentPrefix: worker.CurrentPrefix}
 	}
-	ids := make([]string, 0, len(provider.actions))
-	for id, action := range provider.actions {
+	// ARC is offered only the actions bound to a deployment of the
+	// request's protocol: the core does not translate between protocols.
+	actions := provider.actions[input.Format]
+	ids := make([]string, 0, len(actions))
+	for id, action := range actions {
 		if action.DeploymentID != "" {
 			ids = append(ids, id)
 		}
 	}
 	sort.Strings(ids)
 	for _, id := range ids {
-		action := provider.actions[id]
+		action := actions[id]
 		external.Targets = append(external.Targets, targetV2{ActionID: id, Worker: action.Worker, Placement: provider.deployments[action.DeploymentID].Kind, Cache: cache[id], Capacity: input.Capacity[id]})
 	}
 	return external

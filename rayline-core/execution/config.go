@@ -31,8 +31,10 @@ type Config struct {
 	DerivedActions        []DerivedActions `json:"derived_actions,omitempty"`
 	TestAlias             *TestAlias       `json:"test_alias,omitempty"`
 	MaxGenerationAttempts int64            `json:"max_generation_attempts,omitempty"`
-	Actions               []Action         `json:"-"`
-	PackageID             string           `json:"-"`
+	// Actions holds one entry per binding: an action bound to deployments of
+	// several protocols appears once for each, at most once per protocol.
+	Actions   []Action `json:"-"`
+	PackageID string   `json:"-"`
 }
 
 // DerivedActions binds every registry-admitted control of one model on one
@@ -221,13 +223,14 @@ func (config *Config) loadActions(directory string) error {
 }
 
 // deriveActions lists each deployment's registry-admitted controls as actions
-// with ARC's v5 identity, sha256 of JCS {"control_id","model"}.
+// with ARC's v5 identity, sha256 of JCS {"control_id","model"}. Entries for
+// one model on deployments of different protocols bind a control both admit
+// as one action, with one deployment per protocol (NewServer).
 func (config *Config) deriveActions(registry *thinkingcontrol.Registry) error {
 	deployments := make(map[string]Deployment, len(config.Deployments))
 	for _, deployment := range config.Deployments {
 		deployments[deployment.ID] = deployment
 	}
-	seen := map[string]bool{}
 	for _, entry := range config.DerivedActions {
 		deployment, ok := deployments[entry.DeploymentID]
 		if !ok || entry.Model == "" || entry.Worker == "" {
@@ -265,12 +268,7 @@ func (config *Config) deriveActions(registry *thinkingcontrol.Registry) error {
 			if err != nil {
 				return err
 			}
-			action := Action{ID: fingerprint(identity), Worker: entry.Worker, Model: entry.Model, DeploymentID: entry.DeploymentID, ControlID: controlID, Control: raw}
-			if seen[action.ID] {
-				return fmt.Errorf("derived_actions bind action %s twice", action.ID)
-			}
-			seen[action.ID] = true
-			config.Actions = append(config.Actions, action)
+			config.Actions = append(config.Actions, Action{ID: fingerprint(identity), Worker: entry.Worker, Model: entry.Model, DeploymentID: entry.DeploymentID, ControlID: controlID, Control: raw})
 			count++
 		}
 		if count == 0 {
@@ -307,6 +305,32 @@ func registryFormat(format llmprotocol.WireFormat) (string, error) {
 	default:
 		return "", fmt.Errorf("unsupported wire protocol %q", format)
 	}
+}
+
+// wireProtocols are the request protocols the core serves (routeFormat).
+var wireProtocols = []llmprotocol.WireFormat{llmprotocol.AnthropicMessagesV1, llmprotocol.OpenAIChatV1, llmprotocol.OpenAIResponsesV1}
+
+// actionsByProtocol lists, per request protocol, the actions a request in it
+// is offered and may execute: each action bound to a deployment speaking that
+// protocol, and every selection-only action. The core never translates a
+// request to another protocol, so an action is offered only where it has a
+// deployment, under the same identity in every protocol.
+func (config Config) actionsByProtocol() map[llmprotocol.WireFormat][]Action {
+	protocols := make(map[string]llmprotocol.WireFormat, len(config.Deployments))
+	for _, deployment := range config.Deployments {
+		protocols[deployment.ID] = deployment.Protocol
+	}
+	byProtocol := make(map[llmprotocol.WireFormat][]Action)
+	for _, action := range config.Actions {
+		served := wireProtocols
+		if action.DeploymentID != "" {
+			served = []llmprotocol.WireFormat{protocols[action.DeploymentID]}
+		}
+		for _, protocol := range served {
+			byProtocol[protocol] = append(byProtocol[protocol], action)
+		}
+	}
+	return byProtocol
 }
 
 func routeFormat(path string) (llmprotocol.WireFormat, bool) {

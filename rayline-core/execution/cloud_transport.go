@@ -24,6 +24,14 @@ func cloudTransport(deployment Deployment) string {
 	return deployment.CloudTransport
 }
 
+// modelPinPaths is the gateway endpoint that serves a model_pin deployment of
+// each protocol it qualifies.
+var modelPinPaths = map[llmprotocol.WireFormat]string{
+	llmprotocol.AnthropicMessagesV1: "/v1/messages",
+	llmprotocol.OpenAIChatV1:        "/v1/chat/completions",
+	llmprotocol.OpenAIResponsesV1:   "/v1/responses",
+}
+
 func validateCloudTransport(deployment Deployment) error {
 	if deployment.Kind != "cloud" {
 		if deployment.CloudTransport != "" {
@@ -42,8 +50,9 @@ func validateCloudTransport(deployment Deployment) error {
 		if deployment.DispatchProfileSHA256 != "" || deployment.IssuerSHA256 != "" || deployment.ProviderPin != nil {
 			return fmt.Errorf("model_pin cannot claim an exact dispatch profile, issuer or provider pin")
 		}
-		if (deployment.Protocol != llmprotocol.OpenAIChatV1 && deployment.Protocol != llmprotocol.AnthropicMessagesV1) || deployment.RegistryProvider != "openrouter" {
-			return fmt.Errorf("model_pin currently qualifies OpenRouter Chat Completions and Messages only")
+		path, qualified := modelPinPaths[deployment.Protocol]
+		if !qualified || deployment.RegistryProvider != "openrouter" {
+			return fmt.Errorf("model_pin currently qualifies OpenRouter Chat Completions, Messages and Responses only")
 		}
 		// registry_model names the registry cell whose controls were measured;
 		// wire_model is the gateway's id for that same model. The echo check
@@ -52,10 +61,6 @@ func validateCloudTransport(deployment Deployment) error {
 			return fmt.Errorf("model_pin requires a concrete registry model and wire_model naming it: the registry id, or its gateway id")
 		}
 		endpoint, err := url.Parse(deployment.URL)
-		path := "/v1/chat/completions"
-		if deployment.Protocol == llmprotocol.AnthropicMessagesV1 {
-			path = "/v1/messages"
-		}
 		if err != nil || !strings.HasSuffix(endpoint.Path, path) {
 			return fmt.Errorf("model_pin requires the gateway %s endpoint", path)
 		}
@@ -96,11 +101,8 @@ func validateModelPinControl(deployment Deployment, control thinkingcontrol.Cont
 // to refuse. Any normalization the serving gateway performs applies equally to
 // the paths that reach it without this check.
 //
-// An in-band system row is not refused. Folding one is opt-in per deployment
-// (`inband_system`), applies only to a local Chat deployment
-// (validateInbandSystem) and is the single caller of FoldInbandSystem, so no
-// fold can reach a model_pin Messages dispatch: the row is forwarded as the
-// client sent it.
+// An in-band system row is not refused: the execution core never folds one,
+// so the row is forwarded as the client sent it.
 //
 // A developer row is still refused, because Messages has no developer
 // authority to carry it (codec_anthropic_content.go). That role is read from

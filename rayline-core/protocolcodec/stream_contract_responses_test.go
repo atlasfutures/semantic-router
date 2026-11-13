@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
@@ -413,6 +415,127 @@ func TestResponsesStreamRejectsChatCompletionDoneSentinel(t *testing.T) {
 	)
 	_, _, err := decoder.Push([]byte("data: [DONE]\n\n"))
 	assertProtocolError(t, err, llmprotocol.ErrorUpstreamUnavailable, "invalid_responses_stream_sentinel")
+}
+
+func TestResponsesStreamDoneSentinelEndsACompletedStream(t *testing.T) {
+	// A whole turn ending in response.completed (sequence 0-7).
+	completed := strings.Join(keepaliveSourceFrames(t, "002-responses-text-in.json"), "")
+	for _, after := range []string{
+		"data: [DONE]\n\n",
+		"event: response.in_progress\ndata: {\"type\":\"response.in_progress\",\"sequence_number\":8}\n\n",
+		": keepalive\n\n",
+		"event: response.in_progress\n\n",
+	} {
+		decoder := OpenAIResponsesCodec{}.NewDecoder(
+			llmprotocol.StreamContext{Context: context.Background()}, llmprotocol.DefaultPolicy(),
+		)
+		if _, _, err := decoder.Push([]byte(completed)); err != nil {
+			t.Fatal(err)
+		}
+		events, diagnostics, err := decoder.Push([]byte("data: [DONE]\n\n"))
+		if err != nil || len(events) != 0 || len(diagnostics) != 1 ||
+			diagnostics[0].Source != llmprotocol.OpenAIResponsesV1 ||
+			diagnostics[0].Field != "stream.after_terminal_event" ||
+			diagnostics[0].Action != llmprotocol.DiagnosticDropped {
+			t.Fatalf("[DONE] after the terminal event: events=%+v diagnostics=%+v err=%v", events, diagnostics, err)
+		}
+		// The sentinel ended the stream: nothing may follow it, not even
+		// another [DONE], an SSE comment or a data-less event.
+		_, _, err = decoder.Push([]byte(after))
+		assertProtocolError(t, err, llmprotocol.ErrorUpstreamUnavailable, "stream_event_after_terminal")
+	}
+}
+
+func TestResponsesStreamCRLFSplitAcrossReadsIsOneLineEnding(t *testing.T) {
+	// The 002 turn in CRLF, then the [DONE] OpenRouter sends after it.
+	var frames []string
+	for _, frame := range keepaliveSourceFrames(t, "002-responses-text-in.json") {
+		frames = append(frames, strings.ReplaceAll(frame, "\n", "\r\n"))
+	}
+	frames = append(frames, "data: [DONE]\r\n\r\n")
+	decode := func(chunks []string) ([]llmprotocol.Event, error) {
+		decoder := OpenAIResponsesCodec{}.NewDecoder(
+			llmprotocol.StreamContext{Context: context.Background()}, llmprotocol.DefaultPolicy(),
+		)
+		var events []llmprotocol.Event
+		for _, chunk := range chunks {
+			decoded, _, err := decoder.Push([]byte(chunk))
+			events = append(events, decoded...)
+			if err != nil {
+				return events, err
+			}
+		}
+		decoded, _, err := decoder.Finalize(nil)
+		return append(events, decoded...), err
+	}
+	whole, err := decode(frames)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Every read stops between the CR and the LF of the blank line that ends
+	// a frame, before the terminal event and after the [DONE] alike.
+	var split []string
+	for _, frame := range frames {
+		split = append(split, frame[:len(frame)-1], frame[len(frame)-1:])
+	}
+	events, err := decode(split)
+	if err != nil {
+		t.Fatalf("CRLF split across reads: %v", err)
+	}
+	if !reflect.DeepEqual(events, whole) {
+		t.Fatalf("CRLF split across reads changed the events:\n%+v\nwant\n%+v", events, whole)
+	}
+}
+
+func TestResponsesStreamRejectsAnUnfinishedFrameAfterTheDoneSentinel(t *testing.T) {
+	completed := strings.Join(keepaliveSourceFrames(t, "002-responses-text-in.json"), "") + "data: [DONE]\n\n"
+	cut := llmprotocol.NewError(llmprotocol.ErrorUpstreamUnavailable, "caller_cut", "the caller ended the stream", nil)
+	// Nothing may follow the sentinel's frame, not even a blank line: an
+	// unfinished trailer fails at Finalize, and a line ending, which is a
+	// whole frame, fails at Push.
+	for _, trailer := range []string{" ", "\t", "data:", "data: x", "\n", "\r\n"} {
+		for _, reason := range []error{nil, cut} {
+			decoder := OpenAIResponsesCodec{}.NewDecoder(
+				llmprotocol.StreamContext{Context: context.Background()}, llmprotocol.DefaultPolicy(),
+			)
+			if _, _, err := decoder.Push([]byte(completed)); err != nil {
+				t.Fatal(err)
+			}
+			_, _, err := decoder.Push([]byte(trailer))
+			if err == nil {
+				_, _, err = decoder.Finalize(reason)
+			}
+			assertProtocolError(t, err, llmprotocol.ErrorUpstreamUnavailable, "stream_event_after_terminal")
+		}
+	}
+	// Only the LF that completes the [DONE]'s own CRLF, split across reads,
+	// may follow it: that stream finalizes cleanly.
+	decoder := OpenAIResponsesCodec{}.NewDecoder(
+		llmprotocol.StreamContext{Context: context.Background()}, llmprotocol.DefaultPolicy(),
+	)
+	if _, _, err := decoder.Push([]byte(strings.TrimSuffix(completed, "data: [DONE]\n\n") + "data: [DONE]\r\n\r")); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := decoder.Push([]byte("\n")); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := decoder.Finalize(nil); err != nil {
+		t.Fatalf("finalize after the [DONE]: %v", err)
+	}
+	// That LF is the one byte allowed: a blank line after it, a CR in its
+	// place, or a LF in a later read is still a frame after the sentinel.
+	for _, after := range [][]string{{"\n\n"}, {"\r\n"}, {"\n", "\n"}, {"", "\n", "\n"}} {
+		decoder := OpenAIResponsesCodec{}.NewDecoder(
+			llmprotocol.StreamContext{Context: context.Background()}, llmprotocol.DefaultPolicy(),
+		)
+		_, _, err := decoder.Push([]byte(strings.TrimSuffix(completed, "data: [DONE]\n\n") + "data: [DONE]\r\n\r"))
+		for _, chunk := range after {
+			if err == nil {
+				_, _, err = decoder.Push([]byte(chunk))
+			}
+		}
+		assertProtocolError(t, err, llmprotocol.ErrorUpstreamUnavailable, "stream_event_after_terminal")
+	}
 }
 
 func TestOfficialResponsesStreamMetadataAndStructuralEventsAreAccepted(t *testing.T) {

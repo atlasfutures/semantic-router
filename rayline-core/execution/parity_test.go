@@ -72,29 +72,29 @@ func TestDispatchCacheTTLRequiresAnthropicModel(t *testing.T) {
 	}
 }
 
-func TestClaudeSignedHistorySurvivesBothProtocolDirections(t *testing.T) {
+func TestClaudeSignedHistorySurvivesInEachProtocol(t *testing.T) {
 	cases := []struct {
 		name           string
-		source, target llmprotocol.WireFormat
+		protocol       llmprotocol.WireFormat
 		body, expected string
 	}{
-		{"messages to chat", llmprotocol.AnthropicMessagesV1, llmprotocol.OpenAIChatV1,
+		{"messages", llmprotocol.AnthropicMessagesV1,
 			`{"model":"claude","max_tokens":1024,"messages":[{"role":"user","content":"question"},{"role":"assistant","content":[{"type":"thinking","thinking":"consider","signature":"sig-claude"},{"type":"text","text":"answer"}]},{"role":"user","content":"next"}]}`,
-			`"format":"anthropic-claude-v1"`},
-		{"chat to messages", llmprotocol.OpenAIChatV1, llmprotocol.AnthropicMessagesV1,
-			`{"model":"claude","max_tokens":1024,"messages":[{"role":"user","content":"question"},{"role":"assistant","content":"answer","reasoning":"consider","reasoning_details":[{"type":"reasoning.text","text":"consider","signature":"sig-claude","format":"anthropic-claude-v1","index":0}]},{"role":"user","content":"next"}]}`,
 			`"type":"thinking"`},
+		{"chat", llmprotocol.OpenAIChatV1,
+			`{"model":"claude","max_tokens":1024,"messages":[{"role":"user","content":"question"},{"role":"assistant","content":"answer","reasoning":"consider","reasoning_details":[{"type":"reasoning.text","text":"consider","signature":"sig-claude","format":"anthropic-claude-v1","index":0}]},{"role":"user","content":"next"}]}`,
+			`"format":"anthropic-claude-v1"`},
 	}
 	engine := protocolcodec.NewBuiltinEngine()
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			request, envelope, _, err := engine.DecodeRequestForMutation(tc.source, []byte(tc.body))
+			request, envelope, _, err := engine.DecodeRequestForMutation(tc.protocol, []byte(tc.body))
 			if err != nil {
 				t.Fatal(err)
 			}
-			prepareReasoning(&request, tc.source, Deployment{Kind: "cloud", ID: "claude", RegistryModel: "claude-opus-4-6", Protocol: tc.target}, &branchState{})
+			prepareReasoning(&request, Deployment{Kind: "cloud", ID: "claude", RegistryModel: "claude-opus-4-6", Protocol: tc.protocol}, &branchState{})
 			request.Generation++
-			encoded, err := engine.EncodeRequest(tc.target, request, envelope)
+			encoded, err := engine.EncodeRequest(tc.protocol, request, envelope)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -105,36 +105,17 @@ func TestClaudeSignedHistorySurvivesBothProtocolDirections(t *testing.T) {
 	}
 }
 
-func TestRestoredOpaqueChatReasoningIsFilteredAfterRestoration(t *testing.T) {
-	engine := protocolcodec.NewBuiltinEngine()
-	body := []byte(`{"model":"claude","max_tokens":1024,"messages":[{"role":"user","content":"question"},{"role":"assistant","content":"answer","reasoning_details":[{"type":"reasoning.encrypted","data":"foreign-blob","format":"anthropic-claude-v1","index":0}]},{"role":"user","content":"next"}]}`)
-	request, envelope, _, err := engine.DecodeRequestForMutation(llmprotocol.OpenAIChatV1, body)
-	if err != nil {
-		t.Fatal(err)
-	}
-	state := &branchState{provenance: reasoning.WithReasoningProvenance(nil, "another-issuer", []string{"foreign-blob"})}
-	prepareReasoning(&request, envelope.Format, Deployment{Kind: "cloud", ID: "claude", RegistryModel: "claude-opus-4-6", Protocol: llmprotocol.AnthropicMessagesV1}, state)
-	request.Generation++
-	encoded, err := engine.EncodeRequest(llmprotocol.AnthropicMessagesV1, request, envelope)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(encoded.Body), "foreign-blob") || !strings.Contains(string(encoded.Body), "answer") {
-		t.Fatalf("restored foreign reasoning was replayed or visible text removed: %s", encoded.Body)
-	}
-}
-
 func TestEncryptedIssuerIsStagedBeforeHistoryMutation(t *testing.T) {
 	engine := protocolcodec.NewBuiltinEngine()
 	body := []byte(`{"model":"auto","input":[{"id":"rs_1","type":"reasoning","summary":[],"encrypted_content":"encrypted-blob"},{"role":"user","content":"next"}]}`)
-	request, envelope, _, err := engine.DecodeRequestForMutation(llmprotocol.OpenAIResponsesV1, body)
+	request, _, _, err := engine.DecodeRequestForMutation(llmprotocol.OpenAIResponsesV1, body)
 	if err != nil {
 		t.Fatal(err)
 	}
 	previous := []string{"aaaaaaaaaaaaaaaa"}
 	state := &branchState{issuers: append([]string(nil), previous...)}
 	deployment := Deployment{Kind: "cloud", ID: "responses", URL: "https://provider.example/v1/responses", WireModel: "gpt", IssuerSHA256: "approved-profile", Protocol: llmprotocol.OpenAIResponsesV1}
-	staged, _ := prepareReasoning(&request, envelope.Format, deployment, state)
+	staged, _ := prepareReasoning(&request, deployment, state)
 	if !reflect.DeepEqual(state.issuers, previous) || len(staged) != 2 || staged[0] != previous[0] || staged[1] != encryptedDeploymentIssuer(deployment) {
 		t.Fatalf("staging changed committed history or lost held provenance: old=%v next=%v", state.issuers, staged)
 	}

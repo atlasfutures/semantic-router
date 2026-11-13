@@ -36,12 +36,11 @@ type preparedDispatch struct {
 type responseMetadata struct {
 	publicModel   string
 	streamOptions llmprotocol.StreamOptions
-	namespaces    map[string][2]string
 	workerFamily  string
 }
 
 func responseMetadataFor(request llmprotocol.Request, deployment Deployment) responseMetadata {
-	metadata := responseMetadata{publicModel: request.Model, streamOptions: request.StreamOptions, namespaces: llmprotocol.ToolNamespaces(request.Tools)}
+	metadata := responseMetadata{publicModel: request.Model, streamOptions: request.StreamOptions}
 	if isAnthropicDeployment(deployment) {
 		metadata.workerFamily = "anthropic"
 	}
@@ -54,7 +53,7 @@ func (server *Server) prepare(request llmprotocol.Request, envelope llmprotocol.
 	}
 	deployment := selected.deployment
 	response := responseMetadataFor(request, deployment)
-	nextIssuers, opaqueIssuer := prepareReasoning(&request, envelope.Format, deployment, state)
+	nextIssuers, opaqueIssuer := prepareReasoning(&request, deployment, state)
 	request.Model = deployment.WireModel
 	// The admitted v5 control owns native thinking. Clear the caller's neutral
 	// settings before cross-format capability checks; Render writes the exact
@@ -91,10 +90,6 @@ func (server *Server) prepare(request llmprotocol.Request, envelope llmprotocol.
 	if err != nil {
 		return nil, err
 	}
-	encoded.Body, err = foldInbandSystem(encoded.Body, deployment, selected)
-	if err != nil {
-		return nil, err
-	}
 	key := thinkingcontrol.PlacementKey(deployment.ID+"|"+deployment.RuntimeIdentity, selected.format, selected.control)
 	placer, err := thinkingcontrol.NewPlacer(selected.format)
 	if previous, ok := state.placements[key]; ok {
@@ -117,9 +112,9 @@ func (server *Server) prepare(request llmprotocol.Request, envelope llmprotocol.
 }
 
 // prepareReasoning stages provenance before any codec drops or rewrites history.
-// Its ordering matches cloud carryReasoningForDispatch, including filtering
-// opaque blocks after Chat reasoning_details have been restored to Messages.
-func prepareReasoning(request *llmprotocol.Request, source llmprotocol.WireFormat, deployment Deployment, state *branchState) ([]string, string) {
+// The request arrived in its deployment's protocol: the core does not
+// translate between protocols.
+func prepareReasoning(request *llmprotocol.Request, deployment Deployment, state *branchState) ([]string, string) {
 	nextIssuers := reasoning.ApplyEncryptedReasoning(request, state.issuers, encryptedDeploymentIssuer(deployment), deployment.Protocol)
 	opaqueIssuer := opaqueDeploymentIssuer(deployment)
 	foreignDropped := 0
@@ -127,13 +122,7 @@ func prepareReasoning(request *llmprotocol.Request, source llmprotocol.WireForma
 		foreignDropped = stripModelPinReasoning(request)
 	}
 	if isAnthropicDeployment(deployment) {
-		foreignDropped += protocolcodec.DropReasoningNotFromAnthropic(request, source)
-		switch deployment.Protocol {
-		case llmprotocol.OpenAIChatV1:
-			protocolcodec.SignedThinkingAsReasoningDetails(request)
-		case llmprotocol.AnthropicMessagesV1:
-			protocolcodec.ClaudeThinkingFromReasoningDetails(request)
-		}
+		foreignDropped += protocolcodec.DropReasoningNotFromAnthropic(request, deployment.Protocol)
 	}
 	carry := protocolcodec.CarryReasoningTo(request, deployment.Protocol)
 	opaqueDropped := reasoning.DropOpaqueReasoning(request, state.provenance, opaqueIssuer)
@@ -235,17 +224,17 @@ func dispatchEchoMatches(header http.Header, selected admittedAction, decision D
 		header.Get("X-Rayline-Dispatch-Issuer") == selected.deployment.IssuerSHA256
 }
 
-// forwardError translates an upstream refusal received before any output. A
+// forwardError normalizes an upstream refusal received before any output. A
 // provider's context-length refusal delivered on the Messages wire starts with
 // Anthropic's "prompt is too long:", on which Claude Code compacts; the
 // provider's own text follows.
-func (server *Server) forwardError(writer http.ResponseWriter, target, source llmprotocol.WireFormat, upstream *http.Response, contextRefusal bool) {
+func (server *Server) forwardError(writer http.ResponseWriter, target llmprotocol.WireFormat, upstream *http.Response, contextRefusal bool) {
 	body, err := readBounded(upstream.Body, 1<<20)
 	if err != nil {
 		server.writeError(writer, target, http.StatusBadGateway, "upstream_error", "selected endpoint returned an unreadable error")
 		return
 	}
-	translated, err := server.engine.TranslateTransportError(source, target, body, nil)
+	translated, err := server.engine.TranslateTransportError(target, target, body, nil)
 	if err != nil {
 		server.writeError(writer, target, http.StatusBadGateway, "upstream_error", "selected endpoint returned an invalid error body")
 		return
@@ -339,7 +328,6 @@ func (server *Server) forwardBuffered(writer http.ResponseWriter, upstream *http
 	}
 	result, err := server.engine.TranslateResponse(selected.deployment.Protocol, target, body, func(response *llmprotocol.Response) error {
 		response.Model = metadata.publicModel
-		llmprotocol.RestoreResponseToolNamespaces(response, metadata.namespaces)
 		return nil
 	})
 	if err != nil {
@@ -356,12 +344,9 @@ func (server *Server) forwardBuffered(writer http.ResponseWriter, upstream *http
 }
 
 func (server *Server) forwardStream(writer http.ResponseWriter, incoming *http.Request, upstream *http.Response, target llmprotocol.WireFormat, selected admittedAction, metadata responseMetadata, pending *pendingTurn) (llmprotocol.Response, error) {
-	stream, err := server.engine.NewStreamWithMutation(selected.deployment.Protocol, target, llmprotocol.StreamContext{
+	stream, err := server.engine.NewStream(selected.deployment.Protocol, target, llmprotocol.StreamContext{
 		Context: incoming.Context(), PublicModel: metadata.publicModel, ProviderModel: selected.deployment.WireModel,
 		Options: metadata.streamOptions, WorkerFamily: metadata.workerFamily,
-	}, func(event *llmprotocol.Event) error {
-		llmprotocol.RestoreToolNamespace(event.ToolCall, metadata.namespaces)
-		return nil
 	})
 	if err != nil {
 		server.writeError(writer, target, http.StatusBadGateway, "stream_translation_failed", err.Error())

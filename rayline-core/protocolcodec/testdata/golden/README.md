@@ -85,8 +85,9 @@ success terminal is published only
 after the HTTP body reaches a clean end-of-stream; malformed trailing bytes can
 therefore never escape behind an already-visible success sentinel. Responses streams
 also reject missing or non-contiguous `sequence_number` values, a non-zero
-initial sequence, null/non-integer/overflowed sequence values, and the
-Chat Completions-only `[DONE]` sentinel. Stream response and model identities
+initial sequence, null/non-integer/overflowed sequence values, and a `[DONE]`
+sentinel before the terminal event. One `[DONE]` after the terminal event, as
+OpenRouter sends, ends the stream; anything after it is rejected. Stream response and model identities
 are immutable after the first provider event for all three protocols. Exact
 allowed values and one-step-outside boundary cases cover
 sampling probabilities, penalties, candidate counts, stop sequences, output

@@ -3,17 +3,19 @@ package execution
 import (
 	"fmt"
 	"math"
+
+	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
 )
 
 // The current public contract identifies each preset/custom result by its
 // policy action, model and worker. It reports that result's V and price world,
 // but does not attest a package, registry, offer or control identity. Those
 // remain the configured manifest's provenance; no identity is synthesized.
-func (provider *HTTPDecisions) currentTierDecision(result decisionsResponse, selected publicDecision, routingRequested bool) (Decision, error) {
+func (provider *HTTPDecisions) currentTierDecision(format llmprotocol.WireFormat, result decisionsResponse, selected publicDecision, routingRequested bool) (Decision, error) {
 	if provider.config.Decisions.OfferSHA256 != "" {
 		return Decision{}, fmt.Errorf("Decisions did not attest the configured offer pin")
 	}
-	action, err := provider.bindCurrentAction(result.RouteID, selected)
+	action, err := provider.bindCurrentAction(format, result.RouteID, selected)
 	if err != nil {
 		return Decision{}, err
 	}
