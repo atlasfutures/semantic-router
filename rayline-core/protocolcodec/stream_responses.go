@@ -28,6 +28,10 @@ type responsesStreamDecoder struct {
 	// doneAfterTerminal is set by the [DONE] sentinel that followed the
 	// terminal event; it ends the stream, so nothing may follow it.
 	doneAfterTerminal bool
+	// doneCRLFOpen is set while the [DONE] frame's blank line ends on a CR
+	// that was the last byte read: the LF of that CRLF may still arrive, as
+	// the next read's first frame, and is the one byte allowed after it.
+	doneCRLFOpen bool
 }
 
 type responsesOutputKind string
@@ -240,6 +244,12 @@ func (decoder *responsesStreamDecoder) Push(chunk []byte) ([]llmprotocol.Event, 
 			return events, diagnostics, decodeErr
 		}
 	}
+	if len(chunk) != 0 {
+		// The framer ends a frame on a lone CR when it is the last byte read,
+		// and frames the LF that completes it on its own in the next read.
+		decoder.doneCRLFOpen = decoder.doneAfterTerminal && len(frames) != 0 &&
+			bytes.HasSuffix(frames[len(frames)-1], []byte("\r")) && len(decoder.framer.buffer) == 0
+	}
 	return events, diagnostics, nil
 }
 
@@ -249,8 +259,13 @@ func (decoder *responsesStreamDecoder) pushFrame(frame []byte) ([]llmprotocol.Ev
 		return nil, nil, err
 	}
 	// The [DONE] after the terminal event ended the stream: any frame after
-	// it, a comment or a data-less event included, is rejected.
+	// it, a comment or a data-less event included, is rejected -- except the
+	// LF completing the CRLF that ended the [DONE] frame across reads.
 	if decoder.doneAfterTerminal {
+		if decoder.doneCRLFOpen && bytes.Equal(frame, []byte("\n")) {
+			decoder.doneCRLFOpen = false
+			return nil, nil, nil
+		}
 		return nil, nil, invalidProviderResponse("stream_event_after_terminal", "Responses stream sent a frame after its [DONE] sentinel")
 	}
 	if parsed.commentOnly() {

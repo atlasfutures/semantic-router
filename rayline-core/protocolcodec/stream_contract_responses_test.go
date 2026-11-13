@@ -522,6 +522,20 @@ func TestResponsesStreamRejectsAnUnfinishedFrameAfterTheDoneSentinel(t *testing.
 	if _, _, err := decoder.Finalize(nil); err != nil {
 		t.Fatalf("finalize after the [DONE]: %v", err)
 	}
+	// That LF is the one byte allowed: a blank line after it, a CR in its
+	// place, or a LF in a later read is still a frame after the sentinel.
+	for _, after := range [][]string{{"\n\n"}, {"\r\n"}, {"\n", "\n"}, {"", "\n", "\n"}} {
+		decoder := OpenAIResponsesCodec{}.NewDecoder(
+			llmprotocol.StreamContext{Context: context.Background()}, llmprotocol.DefaultPolicy(),
+		)
+		_, _, err := decoder.Push([]byte(strings.TrimSuffix(completed, "data: [DONE]\n\n") + "data: [DONE]\r\n\r"))
+		for _, chunk := range after {
+			if err == nil {
+				_, _, err = decoder.Push([]byte(chunk))
+			}
+		}
+		assertProtocolError(t, err, llmprotocol.ErrorUpstreamUnavailable, "stream_event_after_terminal")
+	}
 }
 
 func TestOfficialResponsesStreamMetadataAndStructuralEventsAreAccepted(t *testing.T) {
