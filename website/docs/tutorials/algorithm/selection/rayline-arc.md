@@ -744,9 +744,17 @@ older replica that would run it as a strict episode. A lookup the scope
 cannot serve is decided one-shot within the same deadline, as with the
 setting off: a service without the capability, a replica pool, a call
 classified as a side call, a zdr turn, a concurrent lookup on the same
-conversation (`session_busy`) and a refused scope. On a cell with policy
-sessions, each lookup still ends the Modal session it started, so the next
-one may land on another container and encode from scratch. The cell never closes a
+conversation (`session_busy`) and a refused scope.
+
+On a cell with policy sessions (a Modal Server with sticky sessions), each
+lookup scope keeps one Modal session, so every lookup on the conversation
+reaches the container that holds its warm encoder session. The session is
+pinned per scope beside the episodes (in Redis with a Redis episode store,
+so every router instance shares it; per process otherwise), never in the
+episode state. Both the session and its pin idle out after 600 s, the
+service's default lookup-session TTL, or the cell's own session idle timeout
+when that is shorter. A pinned session that is gone moves the lookup once, to
+a new session it pins; the session it left is then ended. The cell never closes a
 lookup session: the service ends it on its own idle TTL, and evicts lookup
 sessions before live ones when its cache is full. A throwaway lookup over
 `max_encode_tokens` is still answered without an encode.

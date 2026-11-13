@@ -278,12 +278,17 @@ func idempotencyKey() (string, error) {
 // Start starts one session, bounded by the start timeout. Any failure is a
 // PolicyServiceError of class session_start.
 func (backend *PolicySessionBackend) Start(ctx context.Context) (PolicySession, error) {
+	return backend.startIdle(ctx, backend.config.IdleTimeout)
+}
+
+// startIdle starts one session that Modal ends after idle without a request.
+func (backend *PolicySessionBackend) startIdle(ctx context.Context, idle time.Duration) (PolicySession, error) {
 	key, err := backend.newKey()
 	if err != nil {
 		return PolicySession{}, &PolicyServiceError{Class: PolicySessionStartClass}
 	}
 	header := http.Header{}
-	header.Set("x-modal-server-session-idle-timeout", strconv.Itoa(int(backend.config.IdleTimeout/time.Second)))
+	header.Set("x-modal-server-session-idle-timeout", strconv.Itoa(int(idle/time.Second)))
 	header.Set("x-idempotency-key", key)
 	header.Set("x-modal-timestamp", strconv.FormatFloat(float64(backend.now().UnixNano())/1e9, 'f', 6, 64))
 	status, body, err := backend.control(ctx, policySessionStartPath, header, backend.config.StartTimeout)
@@ -388,6 +393,27 @@ func (backend *PolicySessionBackend) Bind(persisted *PolicySession, ephemeral bo
 	return &PolicySessionBinding{backend: backend, persisted: clonePolicySession(persisted), ephemeral: ephemeral}
 }
 
+// BindLookup starts one lookup's routing on a lookup scope (session_scope
+// "lookup"). pinned is the scope's pinned session (nil for none). It routes
+// as a persisting turn does -- on the pinned session, moving once when that
+// is lost -- but the session it ends on is the scope's pin, never episode
+// state (Session answers it for the caller to pin). A session it starts
+// idles out after PolicyLookupSessionIdleTimeout, or the backend's own idle
+// timeout when that is shorter, so it never outlives the service's lookup
+// session it routes to.
+func (backend *PolicySessionBackend) BindLookup(pinned *PolicySession) *PolicySessionBinding {
+	return &PolicySessionBinding{
+		backend: backend, persisted: clonePolicySession(pinned),
+		idleTimeout: backend.LookupIdleTimeout(),
+	}
+}
+
+// LookupIdleTimeout is how long a lookup scope's pin lives after its last
+// lookup: the idle timeout BindLookup starts its sessions with.
+func (backend *PolicySessionBackend) LookupIdleTimeout() time.Duration {
+	return min(PolicyLookupSessionIdleTimeout, backend.config.IdleTimeout)
+}
+
 // BindPrivate starts a private (privacy or zdr) turn's routing: ephemeral,
 // on sessions of its own only, never the episode's. Every session it starts
 // stays routable until ReleaseEpisode has reached it, a stale one included,
@@ -422,7 +448,10 @@ type PolicySessionBinding struct {
 	// holdUntilRelease keeps every started session, a stale one included,
 	// for ReleaseEpisode to reach before Release ends it (BindPrivate).
 	holdUntilRelease bool
-	current          *PolicySession
+	// idleTimeout, when set, is the idle timeout of the sessions the turn
+	// starts in place of the backend's (BindLookup).
+	idleTimeout time.Duration
+	current     *PolicySession
 	// owned are the sessions this turn started; an ephemeral turn ends them.
 	owned    []PolicySession
 	sessions int
@@ -579,7 +608,11 @@ func (binding *PolicySessionBinding) Replaces() bool {
 }
 
 func (binding *PolicySessionBinding) start(ctx context.Context) error {
-	session, err := binding.backend.Start(ctx)
+	idle := binding.backend.config.IdleTimeout
+	if binding.idleTimeout > 0 {
+		idle = binding.idleTimeout
+	}
+	session, err := binding.backend.startIdle(ctx, idle)
 	if err != nil {
 		return err
 	}

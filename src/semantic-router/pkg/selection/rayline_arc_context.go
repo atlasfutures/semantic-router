@@ -162,6 +162,10 @@ type RaylineARCSelectionContext struct {
 	// commits nothing. The policy service is asked only when it advertises
 	// the capability; any other answer falls back to a one-shot lookup.
 	RoutesLookupSession bool
+	// PolicyLookupSessions pins a lookup scope's Modal session on a
+	// sessioned policy Server, so its lookups reach the container holding
+	// the scope's warm encoder session; nil off a lookup scope.
+	PolicyLookupSessions raylinearc.PolicyLookupSessionPins
 	// RoutesEncodeLimit is a throwaway POST /v1/routes lookup's
 	// routes_api.max_encode_tokens: over it (ContextTokens), the lookup is
 	// answered without an encode. Zero, as on every tracked lookup and

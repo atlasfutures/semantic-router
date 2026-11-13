@@ -139,6 +139,10 @@ func (service *raylineARCDecisionService) routeDecision(
 	if lookupScoped {
 		lookupScoped = applyRaylineRoutesLookupScope(selectionContext.RaylineARC, request.LookupScope)
 	}
+	if lookupScoped {
+		selectionContext.RaylineARC.PolicyLookupSessions = raylineRoutesLookupSessionPinsFor(
+			service.router.raylineARCEpisodeStoreFor(requestContext))
+	}
 	if failure := selectionContext.RaylineARC.PreparationFailure; failure != "" {
 		// Counted here because this path returns before Select(), whose
 		// failure constructor is where the routed path counts the same

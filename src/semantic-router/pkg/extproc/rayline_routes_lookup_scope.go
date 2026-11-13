@@ -170,6 +170,71 @@ func raylineRoutesCallerWaits(ctx context.Context, request routerruntime.RouteDe
 	return request.CallerDeadline.IsZero() || time.Now().Before(request.CallerDeadline)
 }
 
+// raylineRoutesLookupSessionPinsLocal pins lookup scopes' sessions for a
+// cell whose episode store shares nothing: each router instance pins its own.
+var raylineRoutesLookupSessionPinsLocal = raylinearc.NewMemoryPolicyLookupSessionPins()
+
+// raylineRoutesLookupSessionPinsFor is where a lookup scope's Modal session
+// is pinned: beside the cell's episodes when its store is shared (Redis), so
+// every router instance routes a conversation's lookups to one container;
+// in this process otherwise.
+func raylineRoutesLookupSessionPinsFor(store raylinearc.EpisodeStore) raylinearc.PolicyLookupSessionPins {
+	if shared, ok := store.(raylinearc.PolicyLookupSessionPins); ok {
+		return shared
+	}
+	return raylineRoutesLookupSessionPinsLocal
+}
+
+// raylineRoutesLookupSessionPinTimeout bounds a pin's read and its write.
+const raylineRoutesLookupSessionPinTimeout = time.Second
+
+// bindPolicyLookupSession binds a lookup-scoped decide to its scope's pinned
+// Modal session, or to one it starts when there is none (or the pin cannot
+// be read: the lookup then starts a session, and pins it).
+func bindPolicyLookupSession(
+	ctx context.Context,
+	backend *raylinearc.PolicySessionBackend,
+	arcContext *selection.RaylineARCSelectionContext,
+) *raylinearc.PolicySessionBinding {
+	var pinned *raylinearc.PolicySession
+	if pins := arcContext.PolicyLookupSessions; pins != nil {
+		readCtx, cancel := context.WithTimeout(ctx, raylineRoutesLookupSessionPinTimeout)
+		session, err := pins.LoadLookupSession(readCtx, arcContext.EpisodeIDHash)
+		cancel()
+		if err != nil {
+			logging.ComponentWarnEvent("extproc", "rayline_routes_lookup_session_pin_failed", map[string]interface{}{
+				"request_id": arcContext.RequestID, "stage": "read",
+			})
+		}
+		pinned = session
+	}
+	return backend.BindLookup(pinned)
+}
+
+// pinPolicyLookupSession pins the session a decided lookup ended on, for the
+// scope's idle timeout from now, and ends a pinned session it moved off once
+// the new one is pinned. The scope's session is never episode state.
+func pinPolicyLookupSession(
+	ctx context.Context,
+	arcContext *selection.RaylineARCSelectionContext,
+	binding *raylinearc.PolicySessionBinding,
+	idle time.Duration,
+) {
+	session, _ := binding.Session()
+	if session == nil || arcContext.PolicyLookupSessions == nil {
+		return
+	}
+	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), raylineRoutesLookupSessionPinTimeout)
+	defer cancel()
+	if err := arcContext.PolicyLookupSessions.StoreLookupSession(writeCtx, arcContext.EpisodeIDHash, *session, idle); err != nil {
+		logging.ComponentWarnEvent("extproc", "rayline_routes_lookup_session_pin_failed", map[string]interface{}{
+			"request_id": arcContext.RequestID, "stage": "write",
+		})
+		return
+	}
+	binding.TerminateReplaced(ctx)
+}
+
 // isRaylineRoutesLookupSessionFallback reports whether a decision failed only
 // because its lookup scope could not be served.
 func isRaylineRoutesLookupSessionFallback(err error) bool {

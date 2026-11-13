@@ -18,6 +18,7 @@ package extproc
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -183,6 +184,9 @@ func TestRouteDecisionClassifiesLookupScopedLookups(t *testing.T) {
 			}
 			if decision.Encode.LookupSession != tc.scoped || decision.Encode.SessionAction != "appended" {
 				t.Fatalf("encode = %+v, want lookup session %t", decision.Encode, tc.scoped)
+			}
+			if (arcContext.PolicyLookupSessions != nil) != tc.scoped {
+				t.Fatalf("lookup session pins set %t, want %t", arcContext.PolicyLookupSessions != nil, tc.scoped)
 			}
 			// Still ephemeral: the scoped lookup committed no episode turn.
 			if tc.scoped && decision.Episode != nil {
@@ -475,5 +479,153 @@ func TestRouteDecisionSkipsTheFallbackPastTheCallersDeadline(t *testing.T) {
 	})
 	if !isRaylineRoutesLookupSessionFallback(err) || len(fixture.selector.contexts) != 1 {
 		t.Fatalf("err = %v after %d selections, want the scoped attempt alone", err, len(fixture.selector.contexts))
+	}
+}
+
+// scopedLookupWithPins selects a lookup on scope with its sessions pinned in
+// pins, on a sessioned fixture whose containers advertise lookup sessions.
+func scopedLookupWithPins(
+	t *testing.T,
+	fixture *policySelectorFixture,
+	pins raylinearc.PolicyLookupSessionPins,
+	scope string,
+) (*selection.SelectionResult, error) {
+	t.Helper()
+	state, _ := raylinearc.NewEpisodeState(2)
+	arcContext := &selection.RaylineARCSelectionContext{
+		RequestID: "req-lookup-pin", State: state, RawRequest: lookupBody(t), RequestFormat: policyFormatAnthropic,
+		RoutesLookup: true, RoutesThrowaway: true,
+	}
+	if !applyRaylineRoutesLookupScope(arcContext, scope) {
+		t.Fatal("the lookup was not placed on its scope")
+	}
+	arcContext.PolicyLookupSessions = pins
+	return fixture.selector.Select(context.Background(), &selection.SelectionContext{
+		DecisionName: fixture.decision.Name, CandidateModels: fixture.decision.ModelRefs, RaylineARC: arcContext,
+	})
+}
+
+func newLookupSessionsFixture(t *testing.T) (*policySelectorFixture, *fakeSessionedServer) {
+	t.Helper()
+	fixture, front := newPolicySessionFixture(t)
+	advertiseLookupSessions(fixture)
+	return fixture, front
+}
+
+// On a sessioned policy Server, a lookup scope keeps one Modal session,
+// pinned per scope, so every lookup on the conversation reaches the
+// container that holds its warm encoder session; the session idles out with
+// the service's lookup TTL, and another scope gets its own.
+func TestLookupScopeKeepsItsModalSession(t *testing.T) {
+	fixture, front := newLookupSessionsFixture(t)
+	pins := raylinearc.NewMemoryPolicyLookupSessionPins()
+	scopeHash := raylinearc.HashEpisodeID(lookupScopeTestScope)
+	for lookup := 0; lookup < 3; lookup++ {
+		result, err := scopedLookupWithPins(t, fixture, pins, lookupScopeTestScope)
+		if err != nil {
+			t.Fatalf("lookup %d: %v", lookup, err)
+		}
+		if result.RaylineARC.PolicySessionMoved {
+			t.Fatalf("lookup %d moved sessions", lookup)
+		}
+	}
+	pinned, _ := pins.LoadLookupSession(context.Background(), scopeHash)
+	if pinned == nil || front.containerOf(pinned.Token) < 0 {
+		t.Fatalf("pin = %v, want the scope's live session", pinned)
+	}
+	front.mu.Lock()
+	starts, terminates, idle := front.starts, front.terminates, append([]string(nil), front.idleTimeouts...)
+	front.mu.Unlock()
+	if starts != 1 || terminates != 0 {
+		t.Fatalf("starts %d terminates %d, want one session kept", starts, terminates)
+	}
+	if want := fmt.Sprint(int(raylinearc.PolicyLookupSessionIdleTimeout / time.Second)); idle[0] != want {
+		t.Fatalf("session idle timeout %q, want the lookup TTL %s", idle[0], want)
+	}
+	container := front.containerOf(pinned.Token)
+	decides := len(front.containers[container].received())
+	if decides != 3 {
+		t.Fatalf("the scope's container decided %d lookups, want 3", decides)
+	}
+	if _, err := scopedLookupWithPins(t, fixture, pins, "lookup:user-2:conv-9"); err != nil {
+		t.Fatal(err)
+	}
+	if other, _ := pins.LoadLookupSession(context.Background(), raylinearc.HashEpisodeID("lookup:user-2:conv-9")); other == nil || *other == *pinned {
+		t.Fatalf("another scope shares the session: %v", other)
+	}
+}
+
+// A pinned session whose container is gone moves the lookup once, to a new
+// session it pins; the session it left is ended after the pin.
+func TestLookupScopeMovesOffALostSessionAndRepins(t *testing.T) {
+	fixture, front := newLookupSessionsFixture(t)
+	pins := raylinearc.NewMemoryPolicyLookupSessionPins()
+	scopeHash := raylinearc.HashEpisodeID(lookupScopeTestScope)
+	if _, err := scopedLookupWithPins(t, fixture, pins, lookupScopeTestScope); err != nil {
+		t.Fatal(err)
+	}
+	first, _ := pins.LoadLookupSession(context.Background(), scopeHash)
+	front.mu.Lock()
+	front.dead[front.sessions[first.Token]] = true
+	front.mu.Unlock()
+	result, err := scopedLookupWithPins(t, fixture, pins, lookupScopeTestScope)
+	if err != nil {
+		t.Fatalf("moved lookup: %v", err)
+	}
+	second, _ := pins.LoadLookupSession(context.Background(), scopeHash)
+	if !result.RaylineARC.PolicySessionMoved || second == nil || *second == *first {
+		t.Fatalf("pin %v after a move from %v, want a new session", second, first)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for front.containerOf(first.Token) >= 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if front.containerOf(first.Token) >= 0 {
+		t.Fatal("the session the lookup moved off was not ended")
+	}
+}
+
+// A lookup that falls back (a concurrent lookup holds the scope) pins
+// nothing and ends the session it started; a pinned session stays.
+func TestLookupScopeFallbackLeavesThePinAlone(t *testing.T) {
+	fixture, front := newLookupSessionsFixture(t)
+	pins := raylinearc.NewMemoryPolicyLookupSessionPins()
+	for _, container := range front.containers {
+		container.failNext("session_busy")
+	}
+	if _, err := scopedLookupWithPins(t, fixture, pins, lookupScopeTestScope); !isRaylineRoutesLookupSessionFallback(err) {
+		t.Fatalf("err = %v, want the fallback", err)
+	}
+	if pinned, _ := pins.LoadLookupSession(context.Background(), raylinearc.HashEpisodeID(lookupScopeTestScope)); pinned != nil {
+		t.Fatal("a lookup that fell back pinned its session")
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		front.mu.Lock()
+		terminates := front.terminates
+		front.mu.Unlock()
+		if terminates == 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("terminates = %d, want the started session ended", terminates)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// The pin lives for its idle timeout from the last lookup, and no longer.
+func TestMemoryLookupSessionPinsExpire(t *testing.T) {
+	pins := raylinearc.NewMemoryPolicyLookupSessionPins()
+	session := raylinearc.PolicySession{ID: "sd-1", Token: "tok.1.secret"}
+	if err := pins.StoreLookupSession(context.Background(), "scope", session, 10*time.Millisecond); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := pins.LoadLookupSession(context.Background(), "scope"); got == nil || *got != session {
+		t.Fatalf("pin = %v", got)
+	}
+	time.Sleep(20 * time.Millisecond)
+	if got, _ := pins.LoadLookupSession(context.Background(), "scope"); got != nil {
+		t.Fatal("the pin outlived its idle timeout")
 	}
 }

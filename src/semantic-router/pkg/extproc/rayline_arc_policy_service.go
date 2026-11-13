@@ -948,6 +948,17 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	// one: a session it starts is ended once it is decided, never left to
 	// hold a container's session slot until Modal's idle timeout.
 	sessionBinding := armed.policySessionBindingFor(state, sideCall || arcContext.RoutesThrowaway, ephemeral)
+	if arcContext.RoutesLookupSession && armed.policySessions != nil {
+		// A lookup scope keeps one Modal session, pinned per scope, so each
+		// lookup reaches the container that holds its warm encoder session
+		// (rayline_routes_lookup_scope.go).
+		sessionBinding = bindPolicyLookupSession(ctx, armed.policySessions, arcContext)
+		defer func() {
+			if decided != nil {
+				pinPolicyLookupSession(ctx, arcContext, sessionBinding, armed.policySessions.LookupIdleTimeout())
+			}
+		}()
+	}
 	if sessionBinding != nil {
 		decider = sessionBinding
 	}
