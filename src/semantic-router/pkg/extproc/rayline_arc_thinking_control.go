@@ -261,13 +261,19 @@ func (planned *plannedThinkingControl) render(body []byte, ctx *RequestContext) 
 	return rendered, nil
 }
 
-// effortItemBeta is the anthropic-beta this dispatch's effort-item control
-// sends on its cell (ADR 0143), or "".
+// effortItemBeta is the anthropic-beta an effort-item episode sends on its
+// cell (ADR 0143), or "". The episode is the placer's: a native-only call on
+// it still replays the items earlier calls wrote, so it still needs the beta.
 func (planned *plannedThinkingControl) effortItemBeta() string {
-	if planned.control.Instruction == nil || planned.control.Instruction.Unit != thinkingcontrol.UnitMessagesEffortItem {
-		return ""
+	if isEffortItem(&planned.control) || isEffortItem(planned.placer.State().First) {
+		return planned.cell.EffortItemHeader
 	}
-	return planned.cell.EffortItemHeader
+	return ""
+}
+
+func isEffortItem(control *thinkingcontrol.Control) bool {
+	return control != nil && control.Instruction != nil &&
+		control.Instruction.Unit == thinkingcontrol.UnitMessagesEffortItem
 }
 
 // thinkingControlTrace attributes the call with the drawn control and what
