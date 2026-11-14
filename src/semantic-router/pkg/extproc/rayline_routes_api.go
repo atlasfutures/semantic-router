@@ -445,11 +445,19 @@ func (r *OpenAIRouter) handleRaylineRoutesAPI(
 		ephemeral = true
 	}
 	started := time.Now()
+	consult := raylineRoutesConsultWithControls(body, routeID, episode, ephemeral, wireFormat, controls, ctx.Headers, recipe.Name)
+	// A lookup that is decided ephemerally, here or by the service (caller
+	// prices, exclusive, exploration), may append to its conversation's
+	// lookup session (rayline_routes_lookup_scope.go).
+	consult.LookupScope = raylineRoutesLookupScope(authHeaderUserID(ctx), episode)
+	if deadline, bounded := lookupContext.Deadline(); bounded {
+		consult.CallerDeadline = deadline
+	}
 	decision, err := raylineRoutesDecide(
 		lookupContext,
 		&r.background,
 		runtime.RouteDecision,
-		raylineRoutesConsultWithControls(body, routeID, episode, ephemeral, wireFormat, controls, ctx.Headers, recipe.Name),
+		consult,
 		ticket,
 		settings.Admission.EffectiveAbandonedHoldTokensPerSecond(),
 		// The service also decides these ephemerally (see RouteDecision);
@@ -461,13 +469,15 @@ func (r *OpenAIRouter) handleRaylineRoutesAPI(
 		return r.raylineRoutesFailure(ctx, lookupContext, routeID, err)
 	}
 
-	logging.ComponentEvent("extproc", "routing_decision", map[string]interface{}{
+	decisionFields := map[string]interface{}{
 		"routing_decision_id": routeID,
 		"selected_worker":     decision.SelectedWorker,
 		"worker_model":        decision.WorkerModel,
 		"interface":           "routes",
 		"recipe":              string(recipe.Name),
-	})
+	}
+	addRaylineRoutesEncodeFields(decisionFields, decision.Encode)
+	logging.ComponentEvent("extproc", "routing_decision", decisionFields)
 	if ctx != nil && ctx.RaylineARCIdentity != nil {
 		ctx.RaylineARCIdentity.arm, ctx.RaylineARCIdentity.model = decision.SelectedWorker, decision.WorkerModel
 	}

@@ -88,6 +88,8 @@ func (service *raylineARCDecisionService) RouteDecision(
 		}
 	}
 
+	lookupScoped := raylineRoutesLookupSessionEligible(request, algorithm)
+
 	requestContext, err := service.decisionOnlyRequestContext(ctx, algorithm, request)
 	if err != nil {
 		return routerruntime.RouteDecision{}, err
@@ -114,6 +116,16 @@ func (service *raylineARCDecisionService) RouteDecision(
 	selectionContext.RaylineARC.RoutesLookup = true
 	selectionContext.RaylineARC.RoutesThrowaway = request.Ephemeral
 	selectionContext.RaylineARC.RoutesEncodeLimit = requestContext.RaylineRoutesEncodeLimit
+	if lookupScoped {
+		lookupScoped = applyRaylineRoutesLookupScope(selectionContext.RaylineARC, request.LookupScope)
+	}
+	if lookupScoped {
+		selectionContext.RaylineARC.RoutesLookupDeadline = request.CallerDeadline
+		selectionContext.RaylineARC.PolicyLookupSessions = raylineRoutesLookupSessionPinsFor(
+			service.router.raylineARCEpisodeStoreFor(requestContext))
+		selectionContext.RaylineARC.PolicyLookupSessionKey = raylineRoutesLookupSessionPinKey(
+			algorithm.RaylineARC.PolicyService, selectionContext.RaylineARC.EpisodeIDHash)
+	}
 	if failure := selectionContext.RaylineARC.PreparationFailure; failure != "" {
 		// Counted here because this path returns before Select(), whose
 		// failure constructor is where the routed path counts the same
@@ -130,6 +142,12 @@ func (service *raylineARCDecisionService) RouteDecision(
 	// on the routed path. Left open, every lookup strands one retained
 	// session on the encoder until eviction, and sustained lookup traffic
 	// then evicts the live conversations it shares the card with.
+	// A lookup-scoped lookup keeps its session warm on purpose: the next
+	// lookup on the conversation appends to it, and the service's own idle
+	// TTL and lookup budget end it, whether the lookup succeeded or not (the
+	// session may be a concurrent lookup's). Whether it stayed on its scope
+	// is read once the selection ran: one read as a side call left it, and
+	// its minted session is closed as any one-shot lookup's is.
 	if request.Ephemeral {
 		// Detached from response delivery on purpose. Run inline, this close
 		// blocked the answer and was granted a fresh deadline of its own, so
@@ -139,8 +157,11 @@ func (service *raylineARCDecisionService) RouteDecision(
 		// waiting for.
 		// Counted in the router's background work, so a reload does not
 		// close the encoder pool before the session it retained is closed.
-		service.router.background.Add(1)
 		defer func() {
+			if selectionContext.RaylineARC.RoutesLookupSession {
+				return
+			}
+			service.router.background.Add(1)
 			go func() {
 				defer service.router.background.Done()
 				service.closeEphemeralEncoderSession(
@@ -157,13 +178,15 @@ func (service *raylineARCDecisionService) RouteDecision(
 	if err != nil {
 		return routerruntime.RouteDecision{}, err
 	}
+	lookupScoped = selectionContext.RaylineARC.RoutesLookupSession
 	// A tracked lookup that left a retained encoder session holds a slot of
 	// the container's session budget until the encoder evicts it. An
 	// ephemeral lookup closes its own; a zdr turn retains nothing. A decision
 	// that failed (its caller's deadline cancelled the encode) is not
 	// counted, though the encoder may have kept its session.
+	// A lookup-scoped lookup leaves its session on purpose, and is counted.
 	if request.Surface == routerruntime.RouteDecisionSurfaceRoutes && selected.result.RaylineARC != nil &&
-		!request.Ephemeral && !selectionContext.RaylineARC.EphemeralTurn && algorithm.RaylineARC != nil {
+		(!request.Ephemeral || lookupScoped) && !selectionContext.RaylineARC.EphemeralTurn && algorithm.RaylineARC != nil {
 		recordRaylineRoutesLookupSession(
 			request.DecisionID,
 			raylineRoutesLookupSessionBackend(algorithm.RaylineARC),
@@ -194,6 +217,11 @@ func (service *raylineARCDecisionService) RouteDecision(
 		decisionFacts.Warnings = append(decisionFacts.Warnings, raylineRoutesPricesUntracked)
 	}
 	trace := selected.result.RaylineARC
+	decisionFacts.Encode = routerruntime.RouteEncode{
+		LookupSession: lookupScoped,
+		SessionAction: boundedPolicySessionAction(trace.SessionAction),
+		Latency:       trace.EncoderLatency,
+	}
 	decisionFacts.ThinkingLevel = trace.ThinkingLevel
 	decisionFacts.PolicyActionID = trace.PolicyActionID
 	decisionFacts.Checkpoint = trace.ArtifactRevision

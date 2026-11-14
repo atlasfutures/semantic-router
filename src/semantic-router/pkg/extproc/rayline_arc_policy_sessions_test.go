@@ -35,6 +35,8 @@ type fakeSessionedServer struct {
 	reset      map[int]bool
 	starts     int
 	terminates int
+	// idleTimeouts are the idle timeouts the session starts asked for.
+	idleTimeouts []string
 }
 
 func newFakeSessionedServer(t *testing.T, containers []*fakePolicyService) *fakeSessionedServer {
@@ -51,6 +53,7 @@ func newFakeSessionedServer(t *testing.T, containers []*fakePolicyService) *fake
 				return
 			}
 			front.starts++
+			front.idleTimeouts = append(front.idleTimeouts, r.Header.Get("x-modal-server-session-idle-timeout"))
 			container := front.starts % len(front.containers)
 			for front.dead[container] {
 				container = (container + 1) % len(front.containers)
