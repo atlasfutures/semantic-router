@@ -232,13 +232,13 @@ func (decoder *responsesStreamDecoder) validateResponsesContentStart(
 	switch wire.Type {
 	case "response.content_part.added":
 		if responsesReasoningTextPart(wire) {
-			return true, decoder.startResponsesContent(key, "reasoning_text", wire.Part.Text)
+			return true, decoder.startResponsesContentPart(key, "reasoning_text", wire.Part.Text)
 		}
 		kind, text, err := responsesMessagePartEvidence(wire.Part)
 		if err != nil {
 			return true, err
 		}
-		return true, decoder.startResponsesContent(key, kind, text)
+		return true, decoder.startResponsesContentPart(key, kind, text)
 	case "response.reasoning_summary_part.added":
 		return true, decoder.startResponsesReasoningSummary(key, wire.Part)
 	default:
@@ -302,7 +302,7 @@ func (decoder *responsesStreamDecoder) startResponsesReasoningSummary(
 	if part == nil || part.Type != "summary_text" {
 		return invalidProviderResponse("stream_reasoning_part_kind", "Responses reasoning summary part must use summary_text")
 	}
-	return decoder.startResponsesContent(key, "summary_text", part.Text)
+	return decoder.startResponsesContentPart(key, "summary_text", part.Text)
 }
 
 func (decoder *responsesStreamDecoder) appendResponsesAnnotation(
@@ -377,6 +377,23 @@ func (decoder *responsesStreamDecoder) startResponsesContent(
 	return nil
 }
 
+// startResponsesContentPart starts content that a part event opens, which a
+// part event must then close: content_part.added for a message part or a
+// reasoning_text part, reasoning_summary_part.added for a summary part.
+// Reasoning text may also start implicitly with its first delta, and only then
+// does it complete without a part done event.
+func (decoder *responsesStreamDecoder) startResponsesContentPart(
+	key responsesWireContentKey,
+	kind string,
+	initial string,
+) error {
+	if err := decoder.startResponsesContent(key, kind, initial); err != nil {
+		return err
+	}
+	decoder.contentLifecycle[key].partStarted = true
+	return nil
+}
+
 func (decoder *responsesStreamDecoder) requireResponsesContent(
 	key responsesWireContentKey,
 	kind string,
@@ -447,6 +464,9 @@ func (decoder *responsesStreamDecoder) finishResponsesContentPart(
 	state, err := decoder.requireResponsesContent(key, kind)
 	if err != nil {
 		return err
+	}
+	if !state.partStarted {
+		return invalidProviderResponse("stream_content_part_start_missing", "Responses content part completed without its part start event")
 	}
 	if !state.textDone {
 		return invalidProviderResponse("stream_content_text_incomplete", "Responses content part completed before its text done event")
@@ -527,7 +547,7 @@ func (decoder *responsesStreamDecoder) validateResponsesFinalPart(
 	requirePartDone bool,
 ) error {
 	state := decoder.contentLifecycle[responsesWireContentKey{item: itemIndex, scope: scope, index: index}]
-	if state == nil || !state.textDone || requirePartDone && !state.partDone {
+	if state == nil || !state.textDone || (requirePartDone || state.partStarted) && !state.partDone {
 		return invalidProviderResponse("stream_item_content_incomplete", "Responses output item completed with unfinished content")
 	}
 	kind, text, err := responsesFinalPartEvidence(scope, part)

@@ -68,30 +68,47 @@ func TestOpenRouterClaudeReasoningStreamReachesEveryClient(t *testing.T) {
 	}
 }
 
-// A reasoning_text part may open with text of its own, which is the first
-// reasoning delta and reaches every client like the deltas after it.
-func TestOpenRouterClaudeReasoningInitialPartTextReachesEveryClient(t *testing.T) {
-	body := string(loadProviderFixture(t, openRouterClaudeReasoningStream))
-	mutated := body
-	for _, rewrite := range [][2]string{
-		{`"part":{"type":"reasoning_text","text":""}`, `"part":{"type":"reasoning_text","text":"The user wants "}`},
-		{`data: {"type":"response.reasoning_text.delta","output_index":0,"item_id":"rs_fixture_1",` +
-			`"content_index":0,"delta":"The user wants ","sequence_number":4}` + "\n\n", ""},
-	} {
-		next := strings.Replace(mutated, rewrite[0], rewrite[1], 1)
-		if next == mutated {
-			t.Fatalf("the fixture no longer has %s", rewrite[0])
+var responsesSequenceNumber = regexp.MustCompile(`"sequence_number":(\d+)`)
+
+// dropResponsesStreamEvent removes the event with sequence number `sequence`
+// from an SSE body and renumbers the events after it, since the decoder
+// requires contiguous sequence numbers.
+func dropResponsesStreamEvent(t *testing.T, body string, sequence int) string {
+	t.Helper()
+	events := strings.SplitAfter(body, "\n\n")
+	kept := events[:0]
+	for _, event := range events {
+		match := responsesSequenceNumber.FindStringSubmatch(event)
+		if match != nil && match[1] == strconv.Itoa(sequence) && strings.HasPrefix(event, "data: ") {
+			continue
 		}
-		mutated = next
+		kept = append(kept, event)
 	}
-	// Close the gap the dropped delta leaves: sequence numbers are contiguous.
-	mutated = regexp.MustCompile(`"sequence_number":(\d+)`).ReplaceAllStringFunc(mutated, func(field string) string {
-		number, _ := strconv.Atoi(strings.TrimPrefix(field, `"sequence_number":`))
-		if number > 4 {
+	if len(kept) != len(events)-1 {
+		t.Fatalf("the fixture has no single event with sequence number %d", sequence)
+	}
+	return responsesSequenceNumber.ReplaceAllStringFunc(strings.Join(kept, ""), func(field string) string {
+		number, _ := strconv.Atoi(responsesSequenceNumber.FindStringSubmatch(field)[1])
+		if number > sequence {
 			number--
 		}
 		return `"sequence_number":` + strconv.Itoa(number)
 	})
+}
+
+// A reasoning_text part may open with text of its own, which is the first
+// reasoning delta and reaches every client like the deltas after it.
+func TestOpenRouterClaudeReasoningInitialPartTextReachesEveryClient(t *testing.T) {
+	body := string(loadProviderFixture(t, openRouterClaudeReasoningStream))
+	if !strings.Contains(body, `"delta":"The user wants ","sequence_number":4}`) {
+		t.Fatal("the fixture's first reasoning delta is no longer event 4")
+	}
+	mutated := strings.Replace(body,
+		`"part":{"type":"reasoning_text","text":""}`, `"part":{"type":"reasoning_text","text":"The user wants "}`, 1)
+	if mutated == body {
+		t.Fatal("the fixture no longer opens an empty reasoning_text part")
+	}
+	mutated = dropResponsesStreamEvent(t, mutated, 4)
 	for _, client := range []llmprotocol.WireFormat{
 		llmprotocol.OpenAIResponsesV1, llmprotocol.OpenAIChatV1, llmprotocol.AnthropicMessagesV1,
 	} {
@@ -102,6 +119,35 @@ func TestOpenRouterClaudeReasoningInitialPartTextReachesEveryClient(t *testing.T
 			}
 			if !bytes.Contains(routed, []byte(`"The user wants "`)) {
 				t.Fatalf("routed stream lost the part's initial text:\n%s", routed)
+			}
+		})
+	}
+}
+
+// A reasoning_text part that content_part.added opened must be closed by its
+// content_part.done, and a content_part.done must close a part that
+// content_part.added opened, not reasoning text that started with a delta.
+func TestResponsesReasoningTextPartMustCloseAsItOpened(t *testing.T) {
+	body := string(loadProviderFixture(t, openRouterClaudeReasoningStream))
+	for _, check := range []struct {
+		name     string
+		sequence int
+		event    string
+		code     string
+	}{
+		{"part opened and never closed", 9, "response.content_part.done", "stream_item_content_incomplete"},
+		{"part closed and never opened", 3, "response.content_part.added", "stream_content_part_start_missing"},
+	} {
+		t.Run(check.name, func(t *testing.T) {
+			event := regexp.MustCompile(`(?m)^data: \{"type":"` + regexp.QuoteMeta(check.event) +
+				`",.*"sequence_number":` + strconv.Itoa(check.sequence) + `\}$`)
+			if !event.MatchString(body) {
+				t.Fatalf("the fixture's event %d is no longer %s", check.sequence, check.event)
+			}
+			_, err := pushResponsesStream([]byte(dropResponsesStreamEvent(t, body, check.sequence)), llmprotocol.OpenAIResponsesV1)
+			var protocolErr *llmprotocol.ProtocolError
+			if !errors.As(err, &protocolErr) || protocolErr.Code != check.code {
+				t.Fatalf("got %v, want %s", err, check.code)
 			}
 		})
 	}

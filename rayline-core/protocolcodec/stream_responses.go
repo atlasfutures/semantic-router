@@ -79,6 +79,9 @@ type responsesDecodedContentLifecycle struct {
 	annotations []responsesAnnotationWire
 	textDone    bool
 	partDone    bool
+	// partStarted is set when a part event opened the content; such content
+	// must be closed by its part done event too.
+	partStarted bool
 }
 
 type responsesStreamEncoder struct {
