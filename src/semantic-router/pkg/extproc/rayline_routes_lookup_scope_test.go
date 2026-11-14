@@ -938,3 +938,45 @@ func awaitPin(t *testing.T, pins raylinearc.PolicyLookupSessionPins, key string)
 	}
 	t.Fatal("the lookup's session was never pinned")
 }
+
+// busyDecider answers every decide session_busy and records when each began.
+type busyDecider struct {
+	mu    sync.Mutex
+	calls []time.Time
+}
+
+func (decider *busyDecider) Decide(context.Context, raylinearc.PolicyDecisionRequest) (*raylinearc.PolicyDecisionResponse, error) {
+	decider.mu.Lock()
+	defer decider.mu.Unlock()
+	decider.calls = append(decider.calls, time.Now())
+	return nil, &raylinearc.PolicyServiceError{Class: "session_busy", Status: 409}
+}
+
+// On a context that outlives the caller (a detached lookup), a scope busy
+// until the deadline starts no decide at or past it, and its failure comes
+// back once the deadline has passed.
+func TestLookupBusyWaitStartsNoDecidePastTheDeadline(t *testing.T) {
+	decider := &busyDecider{}
+	deadline := time.Now().Add(300 * time.Millisecond)
+	admit := func() (func(), error) { return func() {}, nil }
+	_, err := decidePolicyThroughBusyUntil(context.Background(), decider, raylinearc.PolicyDecisionRequest{}, deadline, true, admit, nil)
+	returned := time.Now()
+	var failure *raylinearc.PolicyServiceError
+	if !errors.As(err, &failure) || failure.Class != "session_busy" {
+		t.Fatalf("err = %v, want session_busy", err)
+	}
+	if returned.Before(deadline) || returned.Sub(deadline) > 100*time.Millisecond {
+		t.Fatalf("returned %s from the deadline, want just after it", returned.Sub(deadline))
+	}
+	decider.mu.Lock()
+	defer decider.mu.Unlock()
+	if len(decider.calls) < 3 {
+		t.Fatalf("%d decides, want the scope retried", len(decider.calls))
+	}
+	if last := decider.calls[len(decider.calls)-1]; !last.Before(deadline) {
+		t.Fatalf("a decide started %s past the deadline", last.Sub(deadline))
+	}
+	if last := decider.calls[len(decider.calls)-1]; deadline.Sub(last) > policyBusyRetryMax {
+		t.Fatalf("the last decide was %s before the deadline, want the wait used", deadline.Sub(last))
+	}
+}

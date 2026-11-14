@@ -1656,10 +1656,14 @@ func decidePolicyThroughBusy(
 	return decidePolicyThroughBusyUntil(ctx, client, request, time.Now().Add(wait), false, admit, prepare)
 }
 
-// decidePolicyThroughBusyUntil retries session_busy until deadline. With
-// lastTry, a backoff that would pass the deadline is cut to it and the call
-// is tried once more there, so a wait bounded by a caller's deadline uses
-// all of it; without, the retries stop at the last backoff that fits.
+// decidePolicyThroughBusyUntil retries session_busy until deadline; without
+// lastTry, the retries stop at the last backoff that fits. With lastTry (a
+// wait bounded by a caller's deadline), a backoff that would pass the
+// deadline is cut so the call is tried once more just before it, and a call
+// still busy then is held until the deadline and returned without another
+// try: no decide starts once the caller has stopped waiting, even on a
+// context that outlives the caller, and the caller's deadline has passed
+// when the failure arrives, so it answers as any lookup out of time does.
 func decidePolicyThroughBusyUntil(
 	ctx context.Context,
 	client policyDecider,
@@ -1689,7 +1693,8 @@ func decidePolicyThroughBusyUntil(
 			if !lastTry {
 				return response, err
 			}
-			if wait = time.Until(deadline); wait <= 0 {
+			if wait = time.Until(deadline) - policyBusyRetryFirst; wait <= 0 {
+				holdUntil(ctx, deadline)
 				return response, err
 			}
 		}
@@ -1703,6 +1708,16 @@ func decidePolicyThroughBusyUntil(
 		if backoff *= 2; backoff > policyBusyRetryMax {
 			backoff = policyBusyRetryMax
 		}
+	}
+}
+
+// holdUntil waits until deadline or until ctx ends, whichever is first.
+func holdUntil(ctx context.Context, deadline time.Time) {
+	timer := time.NewTimer(time.Until(deadline))
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+	case <-timer.C:
 	}
 }
 
