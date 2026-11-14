@@ -148,9 +148,6 @@ type policyServiceScorer struct {
 	// optional work and never takes a slot a turn's decide could need.
 	appendAdmission  *raylinearc.AdmissionGate
 	deltaUnsupported atomic.Bool
-	// lookupSessionsServable is a cell that may send session_scope at all:
-	// one policy service, no replica pool (rayline_routes_lookup_scope.go).
-	lookupSessionsServable bool
 }
 
 // policySideCallStrictFor is how long a strict cell keeps its side calls
@@ -237,11 +234,6 @@ func newPolicyServiceScorer(
 	// Only a strict cell stages turns, and only one whose episodes stay on
 	// one service (no replica pool). A delta decides on the same tokens as a
 	// full request, so an eval cell may send them too.
-	// Lookup sessions need every service the cell decides on to advertise
-	// them, and the capability list is the cell's, not each replica's: a
-	// replica pool may fail a lookup over to an older replica, which would
-	// run it as a strict episode on its lookup scope.
-	scorer.lookupSessionsServable = len(policy.Replicas) == 0
 	if policy.SendsTurnDeltas() && scorer.episodeMode == "" && len(policy.Replicas) == 0 {
 		scorer.delta = true
 		scorer.appendTimeout = policyAppendTimeout(time.Duration(policy.TotalTimeoutSeconds)*time.Second, scorer.busyWait)
@@ -473,6 +465,9 @@ func createRaylineARCPolicySelector(
 		if err := requireRaylineARCPolicyServing(ctx, client, policy, arcConfig.RoutesAPI.Routing, advertised); err != nil {
 			return err
 		}
+		if err := requireRaylineRoutesLookupSessions(arcConfig, scorer); err != nil {
+			return err
+		}
 		if scorer.episodeMode == raylinearc.PolicyEpisodeModeRelaxed {
 			return probeRelaxedPolicyDecide(ctx, client, scorer)
 		}
@@ -624,8 +619,11 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	prefixShape := observePolicyPrefix(arcContext, clientRequest, digests, state.Policy, signals, transition)
 	sideCall := signals.CallKind == raylinearc.PolicyCallSide
 	if arcContext.RoutesLookupSession {
-		if reason := scorer.policyLookupSessionUnservable(arcContext, sideCall); reason != "" {
-			return nil, raylineRoutesLookupSessionFallback(arcContext, reason)
+		switch {
+		case sideCall:
+			leaveRaylineRoutesLookupScope(arcContext)
+		case !scorer.advertises(raylinearc.PolicyCapabilityLookupSessions):
+			return nil, failRaylineRoutesLookupScope(arcContext, arcFailureLookupSessionsUnadvertised)
 		}
 	}
 	scheduled := scorer.schedule != "" && !sideCall
@@ -1011,7 +1009,15 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		})
 	}
 	decisionMode := policyStagedFullMode(staging)
-	busyWait := policyLookupSessionBusyWait(scorer, arcContext)
+	busyWait := scorer.busyWait
+	// A lookup scope's session_busy is a concurrent lookup on the same
+	// conversation: it is waited out until the lookup's deadline.
+	throughBusy := func(request raylinearc.PolicyDecisionRequest, wait time.Duration) (*raylinearc.PolicyDecisionResponse, error) {
+		if deadline, scoped := policyLookupSessionDeadline(arcContext); scoped {
+			return decidePolicyThroughBusyUntil(ctx, decider, request, deadline, true, admit, withCacheContext)
+		}
+		return decidePolicyThroughBusy(ctx, decider, request, wait, admit, withCacheContext)
+	}
 	firstBusyWait := policyFirstBusyWait(busyWait, scorer.policyAppendUnsettled(arcContext.EpisodeIDHash, state.TurnIndex))
 	var response *raylinearc.PolicyDecisionResponse
 	if deltaOutcome == policyDecisionModeDelta {
@@ -1020,7 +1026,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		deltaRequest.TurnDelta = &raylinearc.PolicyTurnDelta{
 			BasePrefixDigest: deltaBase.prefixDigest, Messages: messages[deltaBase.count:],
 		}
-		response, err = decidePolicyThroughBusy(ctx, decider, deltaRequest, firstBusyWait, admit, withCacheContext)
+		response, err = throughBusy(deltaRequest, firstBusyWait)
 		if policyDeltaRefused(err) {
 			// The service holds no staged turn this delta extends, or cannot
 			// read one: the turn is sent in full, as a sync cell sends it.
@@ -1032,17 +1038,17 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 			logging.ComponentWarnEvent("extproc", "rayline_arc_policy_delta_resent", map[string]interface{}{
 				"request_id": arcContext.RequestID, "episode_id_hash": arcContext.EpisodeIDHash, "class": refusal.Class,
 			})
-			response, err = decidePolicyThroughBusy(ctx, decider, request, busyWait, admit, withCacheContext)
+			response, err = throughBusy(request, busyWait)
 		} else {
 			decisionMode = policyDecisionModeDelta
 		}
 	} else {
-		response, err = decidePolicyThroughBusy(ctx, decider, request, firstBusyWait, admit, withCacheContext)
+		response, err = throughBusy(request, firstBusyWait)
 		// An episode's start shed at the service's edge is asked once more
 		// (rayline_arc_policy_start_retry.go); nothing else is.
 		response, err = retryPolicyStartOnce(ctx, transition, arcContext.EpisodeIDHash, response, err,
 			func() (*raylinearc.PolicyDecisionResponse, error) {
-				return decidePolicyThroughBusy(ctx, decider, request, busyWait, admit, withCacheContext)
+				return throughBusy(request, busyWait)
 			})
 	}
 	// A strict cell's relaxed side call that the service refused as
@@ -1054,14 +1060,12 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		scorer.sideCallsRelaxedUnsupported(selector.now(), "refused")
 		request.EpisodeMode = scorer.episodeMode
 		decisionMode = policyStagedFullMode(staging)
-		response, err = decidePolicyThroughBusy(ctx, decider, request, busyWait, admit, withCacheContext)
+		response, err = throughBusy(request, busyWait)
 	}
-	// A lookup scope held by a concurrent lookup, or refused, is decided
-	// again one-shot (rayline_routes_lookup_scope.go).
-	if arcContext.RoutesLookupSession {
-		if reason, refused := policyLookupSessionRefused(err); refused {
-			return nil, raylineRoutesLookupSessionFallback(arcContext, reason)
-		}
+	// A service that refuses the lookup scope fails the lookup loudly
+	// (rayline_routes_lookup_scope.go).
+	if arcContext.RoutesLookupSession && policyLookupScopeRefused(err) {
+		return nil, failRaylineRoutesLookupScope(arcContext, arcFailureLookupScopeRefused)
 	}
 	var cold *raylinearc.PolicyServiceError
 	switch {
@@ -1081,7 +1085,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		narrow(derived.offer)
 		logRaylineARCDerivedHold(arcContext, derived, "re-ask")
 		decisionMode = policyStagedFullMode(staging)
-		response, err = decidePolicyThroughBusy(ctx, decider, request, busyWait, admit, withCacheContext)
+		response, err = throughBusy(request, busyWait)
 	case derived.model == "" && held < 0 && execution == nil && executionV2 == nil &&
 		errors.As(err, &cold) && cold.Class == raylinearc.PolicyStageOneHeldUnknownClass:
 		// A refusal the first ask did not anticipate: the recorded model is
@@ -1105,7 +1109,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 			logRaylineARCDerivedHold(arcContext, derived, "re-ask")
 			narrow(derived.offer)
 			decisionMode = policyStagedFullMode(staging)
-			response, err = decidePolicyThroughBusy(ctx, decider, request, busyWait, admit, withCacheContext)
+			response, err = throughBusy(request, busyWait)
 		}
 	}
 	// A refusal of the caller's routing.signals answers the service's own
@@ -1649,7 +1653,22 @@ func decidePolicyThroughBusy(
 	admit func() (func(), error),
 	prepare func(*raylinearc.PolicyDecisionRequest),
 ) (*raylinearc.PolicyDecisionResponse, error) {
-	deadline := time.Now().Add(wait)
+	return decidePolicyThroughBusyUntil(ctx, client, request, time.Now().Add(wait), false, admit, prepare)
+}
+
+// decidePolicyThroughBusyUntil retries session_busy until deadline. With
+// lastTry, a backoff that would pass the deadline is cut to it and the call
+// is tried once more there, so a wait bounded by a caller's deadline uses
+// all of it; without, the retries stop at the last backoff that fits.
+func decidePolicyThroughBusyUntil(
+	ctx context.Context,
+	client policyDecider,
+	request raylinearc.PolicyDecisionRequest,
+	deadline time.Time,
+	lastTry bool,
+	admit func() (func(), error),
+	prepare func(*raylinearc.PolicyDecisionRequest),
+) (*raylinearc.PolicyDecisionResponse, error) {
 	backoff := policyBusyRetryFirst
 	for {
 		release, admitErr := admit()
@@ -1662,11 +1681,19 @@ func decidePolicyThroughBusy(
 		response, err := client.Decide(ctx, request)
 		release()
 		var failure *raylinearc.PolicyServiceError
-		if err == nil || !errors.As(err, &failure) || failure.Class != "session_busy" ||
-			time.Now().Add(backoff).After(deadline) {
+		if err == nil || !errors.As(err, &failure) || failure.Class != "session_busy" {
 			return response, err
 		}
-		timer := time.NewTimer(backoff)
+		wait := backoff
+		if time.Now().Add(backoff).After(deadline) {
+			if !lastTry {
+				return response, err
+			}
+			if wait = time.Until(deadline); wait <= 0 {
+				return response, err
+			}
+		}
+		timer := time.NewTimer(wait)
 		select {
 		case <-ctx.Done():
 			timer.Stop()

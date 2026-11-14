@@ -449,7 +449,7 @@ func (r *OpenAIRouter) handleRaylineRoutesAPI(
 	// A lookup that is decided ephemerally, here or by the service (caller
 	// prices, exclusive, exploration), may append to its conversation's
 	// lookup session (rayline_routes_lookup_scope.go).
-	consult.LookupScope = raylineRoutesLookupScope(settings, authHeaderUserID(ctx), episode)
+	consult.LookupScope = raylineRoutesLookupScope(authHeaderUserID(ctx), episode)
 	if deadline, bounded := lookupContext.Deadline(); bounded {
 		consult.CallerDeadline = deadline
 	}

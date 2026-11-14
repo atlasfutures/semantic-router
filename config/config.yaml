@@ -1772,13 +1772,6 @@ routing:
             # from artifact_revision because that pin is deployment-private.
             # Empty publishes the hash alone.
             checkpoint_label: ""
-            # lookup_sessions (policy-service cells only) lets a throwaway
-            # lookup that names a conversation append to that conversation's
-            # warm lookup encoder session instead of encoding from token 0.
-            # It still commits nothing. Used only when the policy service
-            # advertises lookup_sessions; otherwise, or when the session is
-            # busy, the lookup is decided one-shot as with this off.
-            lookup_sessions: false
             # routing (policy-service cells only; absent here) serves the
             # public Decisions controls (pathfinder#5664): every answer
             # carries presets.swift (V 0.1) and presets.sage (V 4.5), and a

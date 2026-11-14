@@ -59,26 +59,6 @@ func (service *raylineARCDecisionService) RouteDecision(
 	ctx context.Context,
 	request routerruntime.RouteDecisionRequest,
 ) (routerruntime.RouteDecision, error) {
-	decided, err := service.routeDecision(ctx, request, true)
-	// A lookup whose scope could not be served is decided again one-shot,
-	// inside the same deadline (rayline_routes_lookup_scope.go). Only a
-	// failure the scope itself caused does this; nothing was committed or
-	// left open by the scoped attempt. A lookup its caller already gave up
-	// on starts no second encode: a detached decision outlives that
-	// deadline, and its answer would be discarded.
-	if err != nil && isRaylineRoutesLookupSessionFallback(err) && raylineRoutesCallerWaits(ctx, request) {
-		return service.routeDecision(ctx, request, false)
-	}
-	return decided, err
-}
-
-// routeDecision decides one consult. tryLookupScope lets a throwaway lookup
-// that names a conversation decide on its lookup scope.
-func (service *raylineARCDecisionService) routeDecision(
-	ctx context.Context,
-	request routerruntime.RouteDecisionRequest,
-	tryLookupScope bool,
-) (routerruntime.RouteDecision, error) {
 	if service == nil || service.router == nil {
 		return routerruntime.RouteDecision{}, errors.New("router is unavailable")
 	}
@@ -108,7 +88,7 @@ func (service *raylineARCDecisionService) routeDecision(
 		}
 	}
 
-	lookupScoped := tryLookupScope && raylineRoutesLookupSessionEligible(request, algorithm)
+	lookupScoped := raylineRoutesLookupSessionEligible(request, algorithm)
 
 	requestContext, err := service.decisionOnlyRequestContext(ctx, algorithm, request)
 	if err != nil {
@@ -140,6 +120,7 @@ func (service *raylineARCDecisionService) routeDecision(
 		lookupScoped = applyRaylineRoutesLookupScope(selectionContext.RaylineARC, request.LookupScope)
 	}
 	if lookupScoped {
+		selectionContext.RaylineARC.RoutesLookupDeadline = request.CallerDeadline
 		selectionContext.RaylineARC.PolicyLookupSessions = raylineRoutesLookupSessionPinsFor(
 			service.router.raylineARCEpisodeStoreFor(requestContext))
 		selectionContext.RaylineARC.PolicyLookupSessionKey = raylineRoutesLookupSessionPinKey(
@@ -163,9 +144,11 @@ func (service *raylineARCDecisionService) routeDecision(
 	// then evicts the live conversations it shares the card with.
 	// A lookup-scoped lookup keeps its session warm on purpose: the next
 	// lookup on the conversation appends to it, and the service's own idle
-	// TTL and lookup budget end it. A scoped attempt that fell back closes
-	// nothing either: the session it names may be a concurrent lookup's.
-	if request.Ephemeral && !lookupScoped {
+	// TTL and lookup budget end it, whether the lookup succeeded or not (the
+	// session may be a concurrent lookup's). Whether it stayed on its scope
+	// is read once the selection ran: one read as a side call left it, and
+	// its minted session is closed as any one-shot lookup's is.
+	if request.Ephemeral {
 		// Detached from response delivery on purpose. Run inline, this close
 		// blocked the answer and was granted a fresh deadline of its own, so
 		// a lookup that spent most of its budget selecting could take nearly
@@ -174,8 +157,11 @@ func (service *raylineARCDecisionService) routeDecision(
 		// waiting for.
 		// Counted in the router's background work, so a reload does not
 		// close the encoder pool before the session it retained is closed.
-		service.router.background.Add(1)
 		defer func() {
+			if selectionContext.RaylineARC.RoutesLookupSession {
+				return
+			}
+			service.router.background.Add(1)
 			go func() {
 				defer service.router.background.Done()
 				service.closeEphemeralEncoderSession(
@@ -192,6 +178,7 @@ func (service *raylineARCDecisionService) routeDecision(
 	if err != nil {
 		return routerruntime.RouteDecision{}, err
 	}
+	lookupScoped = selectionContext.RaylineARC.RoutesLookupSession
 	// A tracked lookup that left a retained encoder session holds a slot of
 	// the container's session budget until the encoder evicts it. An
 	// ephemeral lookup closes its own; a zdr turn retains nothing. A decision

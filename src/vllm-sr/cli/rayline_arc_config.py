@@ -240,10 +240,6 @@ class RaylineARCRoutesAPIConfig(BaseModel):
     # an encode (the package fallback). 0 bounds nothing; policy-service
     # cells only.
     max_encode_tokens: int = Field(default=0, ge=0, le=1 << 24)
-    # Throwaway lookups that name a conversation append to its warm lookup
-    # encoder session on the policy service (when it advertises
-    # lookup_sessions) and still commit nothing. Policy-service cells only.
-    lookup_sessions: bool = False
 
     @model_validator(mode="after")
     def _routing_needs_the_endpoint(self):
@@ -251,8 +247,6 @@ class RaylineARCRoutesAPIConfig(BaseModel):
             raise ValueError("routes_api.routing needs the endpoint enabled")
         if self.max_encode_tokens and not self.enabled:
             raise ValueError("routes_api.max_encode_tokens needs the endpoint enabled")
-        if self.lookup_sessions and not self.enabled:
-            raise ValueError("routes_api.lookup_sessions needs the endpoint enabled")
         return self
 
     @model_validator(mode="after")
@@ -792,14 +786,6 @@ class RaylineARCAlgorithmConfig(BaseModel):
         ):
             raise ValueError(
                 "routes_api.max_encode_tokens is served by a policy-service cell only"
-            )
-        if (
-            self.policy_service is None
-            and self.routes_api is not None
-            and self.routes_api.lookup_sessions
-        ):
-            raise ValueError(
-                "routes_api.lookup_sessions is served by a policy-service cell only"
             )
         return self
 

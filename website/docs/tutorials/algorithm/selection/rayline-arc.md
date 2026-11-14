@@ -714,19 +714,14 @@ a container for, not from the encoder's capacity.
 
 ### Lookup sessions
 
-A throwaway lookup that names a conversation (`x-rayline-session`) still
-encodes its transcript from token 0, because it decides under a minted
-episode id. That covers every lookup with `routing.execution`, caller
-`routing.prices`, `exclusive` or exploration, and every lookup on a cell with
-`episode_writes` off. On a policy-service cell,
-`routes_api.lookup_sessions` lets such a lookup append to a warm encoder
-session kept per conversation instead:
-
-```yaml
-routes_api:
-  enabled: true
-  lookup_sessions: true   # default false
-```
+A throwaway lookup decides under a minted episode id. That covers every
+lookup with `routing.execution`, caller `routing.prices`, `exclusive` or
+exploration, and every lookup on a cell with `episode_writes` off. On a
+policy-service cell with the routes API on and a single
+`policy_service.base_url`, a throwaway lookup that names a conversation
+(`x-rayline-session`) appends to a warm encoder session kept per
+conversation instead of encoding its transcript from token 0. There is no
+setting.
 
 The session belongs to the conversation's lookup scope, an episode id
 derived from the authenticated user and the conversation, never the
@@ -737,14 +732,23 @@ commits nothing and still carries its `prices_untracked` or
 `exploration_untracked` warning. Exploration draws on the scope are
 deterministic per conversation, as on a tracked episode.
 
-The cell sends the scope only to a service that advertises
-`lookup_sessions`, and never from a cell with `policy_service.replicas`: the
-capability is read once for the cell, and a lookup could fail over to an
-older replica that would run it as a strict episode. A lookup the scope
-cannot serve is decided one-shot within the same deadline, as with the
-setting off: a service without the capability, a replica pool, a call
-classified as a side call, a zdr turn, a concurrent lookup on the same
-conversation (`session_busy`) and a refused scope.
+The policy service must advertise `lookup_sessions`: such a cell is not ready
+until it does (`rayline_arc_policy_service_unsupported` names the
+capability), so the service is deployed first. There is no one-shot fallback:
+
+- A concurrent lookup on the same conversation (`session_busy`) is waited out
+  until the lookup's deadline. A lookup still waiting there answers `504
+  deadline_exceeded`, as any lookup that ran out of time does.
+- A service that refuses the scope, or stopped advertising it, fails the
+  lookup with `503`, logged as `rayline_routes_lookup_session_failed` with
+  its class.
+
+Lookups the scope does not apply to are decided one-shot, as before: one that
+names no conversation, a zdr turn, a call classified as a side call (logged
+`rayline_routes_lookup_scope_skipped`), and every lookup on a cell with
+`policy_service.replicas`. A replica pool's capability list is the cell's,
+not each replica's, and a lookup could fail over to an older replica that
+would run it as a strict episode.
 
 On a cell with policy sessions (a Modal Server with sticky sessions), each
 lookup scope keeps one Modal session, so every lookup on the conversation
@@ -760,8 +764,7 @@ sessions before live ones when its cache is full. A throwaway lookup over
 `max_encode_tokens` is still answered without an encode.
 
 Each lookup's `routing_decision` event carries `lookup_session`,
-`session_action` and `encode_ms`, and a lookup that left its scope logs
-`rayline_routes_lookup_session_fallback` with the reason.
+`session_action` and `encode_ms`.
 
 ### Episodes
 

@@ -234,20 +234,3 @@ func TestRoutesAPIMaxEncodeTokens(t *testing.T) {
 		t.Fatal("an artifact cell accepted max_encode_tokens")
 	}
 }
-
-// lookup_sessions defaults off, needs the endpoint, and is refused on an
-// artifact cell, which has no policy service to keep the sessions.
-func TestRoutesAPILookupSessions(t *testing.T) {
-	t.Parallel()
-	if err := validateRaylineARCRoutesAPIConfig(RaylineARCRoutesAPIConfig{Enabled: true, LookupSessions: true}); err != nil {
-		t.Fatalf("rejected: %v", err)
-	}
-	if err := validateRaylineARCRoutesAPIConfig(RaylineARCRoutesAPIConfig{LookupSessions: true}); err == nil {
-		t.Fatal("accepted lookup_sessions with the endpoint disabled")
-	}
-	decision := validRaylineARCDecision()
-	decision.Algorithm.RaylineARC.RoutesAPI = RaylineARCRoutesAPIConfig{Enabled: true, LookupSessions: true}
-	if err := validateRaylineARCAlgorithmConfig(decision.Algorithm.RaylineARC); err == nil {
-		t.Fatal("an artifact cell accepted lookup_sessions")
-	}
-}

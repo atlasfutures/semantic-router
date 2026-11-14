@@ -78,17 +78,17 @@ type RouteDecisionRequest struct {
 	// masked as a routed turn is.
 	Headers map[string]string
 	// LookupScope is a POST /v1/routes lookup's conversation scope
-	// ("lookup:<user>:<conversation>") when the cell keeps lookup sessions
-	// (routes_api.lookup_sessions), or empty. A lookup decided ephemerally
-	// may then append to the scope's warm encoder session instead of
-	// encoding from scratch; it still commits nothing. Ignored on a lookup
-	// that joins its episode.
+	// ("lookup:<user>:<conversation>"), or empty when it names no
+	// conversation. A lookup decided ephemerally on a policy-service cell
+	// appends to the scope's warm encoder session instead of encoding from
+	// scratch; it still commits nothing. Ignored on a lookup that joins its
+	// episode.
 	LookupScope string
 	// CallerDeadline is when the lookup's caller stops waiting, or zero.
 	// A lookup can be decided on a context detached from its caller (the
 	// backend keeps encoding after the caller leaves), so the caller's own
-	// deadline travels here: work that only serves the caller, such as a
-	// lookup scope's one-shot fallback, is not started past it.
+	// deadline travels here: a lookup scope held by a concurrent lookup is
+	// waited for until it, and no longer.
 	CallerDeadline time.Time
 }
 

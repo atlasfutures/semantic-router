@@ -32,41 +32,33 @@ import (
 )
 
 // The scope is the user and the conversation, namespaced away from the
-// conversation's routed episode; there is none with the setting off or no
-// conversation named.
+// conversation's routed episode; there is none when no conversation is named.
 func TestRaylineRoutesLookupScopeDerivation(t *testing.T) {
-	on := &config.RaylineARCRoutesAPIConfig{Enabled: true, LookupSessions: true}
-	off := &config.RaylineARCRoutesAPIConfig{Enabled: true}
-	if got := raylineRoutesLookupScope(on, "user-1", "conv-1"); got != "lookup:user-1:conv-1" {
+	if got := raylineRoutesLookupScope("user-1", "conv-1"); got != "lookup:user-1:conv-1" {
 		t.Fatalf("scope = %q", got)
 	}
-	if got := raylineRoutesLookupScope(on, "", "conv-1"); got != "lookup::conv-1" {
+	if got := raylineRoutesLookupScope("", "conv-1"); got != "lookup::conv-1" {
 		t.Fatalf("scope without an authenticated user = %q", got)
 	}
-	for name, got := range map[string]string{
-		"setting off":     raylineRoutesLookupScope(off, "user-1", "conv-1"),
-		"no conversation": raylineRoutesLookupScope(on, "user-1", ""),
-		"no settings":     raylineRoutesLookupScope(nil, "user-1", "conv-1"),
-	} {
-		if got != "" {
-			t.Fatalf("%s: scope = %q, want none", name, got)
-		}
+	if got := raylineRoutesLookupScope("user-1", ""); got != "" {
+		t.Fatalf("no conversation: scope = %q, want none", got)
 	}
-	scoped := raylinearc.HashEpisodeID(raylineRoutesLookupScope(on, "user-1", "conv-1"))
+	scoped := raylinearc.HashEpisodeID(raylineRoutesLookupScope("user-1", "conv-1"))
 	if scoped == raylinearc.HashEpisodeID("conv-1") {
 		t.Fatal("the lookup scope hashes to the conversation's routed episode")
 	}
-	if scoped == raylinearc.HashEpisodeID(raylineRoutesLookupScope(on, "user-2", "conv-1")) {
+	if scoped == raylinearc.HashEpisodeID(raylineRoutesLookupScope("user-2", "conv-1")) {
 		t.Fatal("two users share a lookup scope")
 	}
 }
 
-// lookupScopeSelector is a stub selector that, when failScoped is set,
-// answers a lookup-scoped selection as one its scope cannot serve.
+// lookupScopeSelector is a stub selector that, when sideCall is set, reads
+// a lookup-scoped selection as a side call, as the policy selection does
+// on a positive reading of the materialized request.
 type lookupScopeSelector struct {
 	*stubARCSelector
-	mu         sync.Mutex
-	failScoped bool
+	mu       sync.Mutex
+	sideCall bool
 }
 
 func (selector *lookupScopeSelector) Select(
@@ -75,9 +67,8 @@ func (selector *lookupScopeSelector) Select(
 ) (*selection.SelectionResult, error) {
 	selector.mu.Lock()
 	defer selector.mu.Unlock()
-	if selector.failScoped && selCtx.RaylineARC != nil && selCtx.RaylineARC.RoutesLookupSession {
-		selector.contexts = append(selector.contexts, selCtx)
-		return nil, &raylineARCSelectionFailure{class: arcFailureRoutesLookupSessionFallback}
+	if selector.sideCall && selCtx.RaylineARC != nil && selCtx.RaylineARC.RoutesLookupSession {
+		leaveRaylineRoutesLookupScope(selCtx.RaylineARC)
 	}
 	return selector.stubARCSelector.Select(ctx, selCtx)
 }
@@ -102,7 +93,6 @@ func newLookupScopeFixture(t *testing.T) *lookupScopeFixture {
 	router.ModelSelector = registry
 	arc := router.Config.Decisions[0].Algorithm.RaylineARC
 	arc.RoutesAPI.Enabled = true
-	arc.RoutesAPI.LookupSessions = true
 	arc.PolicyService = &config.RaylineARCPolicyServiceConfig{BaseURL: "https://policy.example"}
 	fixture := &lookupScopeFixture{router: router, selector: selector}
 	router.raylineARCSessionClose = func(_ context.Context, episode string, _ []string) (raylinearc.EncoderCloseReport, error) {
@@ -155,6 +145,7 @@ func TestRouteDecisionClassifiesLookupScopedLookups(t *testing.T) {
 		name     string
 		request  routerruntime.RouteDecisionRequest
 		artifact bool
+		replicas bool
 		scoped   bool
 		closes   bool
 	}{
@@ -171,11 +162,17 @@ func TestRouteDecisionClassifiesLookupScopedLookups(t *testing.T) {
 			request: routerruntime.RouteDecisionRequest{Surface: consult, Ephemeral: true, LookupScope: lookupScopeTestScope}},
 		{name: "artifact cell", artifact: true, closes: true,
 			request: routerruntime.RouteDecisionRequest{Surface: routes, Ephemeral: true, LookupScope: lookupScopeTestScope}},
+		{name: "replica pool", replicas: true, closes: true,
+			request: routerruntime.RouteDecisionRequest{Surface: routes, Ephemeral: true, LookupScope: lookupScopeTestScope}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fixture := newLookupScopeFixture(t)
 			if tc.artifact {
 				fixture.router.Config.Decisions[0].Algorithm.RaylineARC.PolicyService = nil
+			}
+			if tc.replicas {
+				fixture.router.Config.Decisions[0].Algorithm.RaylineARC.PolicyService.Replicas =
+					[]config.RaylineARCEncoderReplicaConfig{{}}
 			}
 			decision := fixture.decide(t, tc.request)
 			arcContext := fixture.lastContext()
@@ -206,48 +203,62 @@ func TestRouteDecisionClassifiesLookupScopedLookups(t *testing.T) {
 	}
 }
 
-// A lookup whose scope cannot be served is decided again one-shot, under a
-// minted id it closes; the scope's session, which a concurrent lookup may
-// hold, is never closed.
-func TestRouteDecisionFallsBackToAOneShotLookup(t *testing.T) {
+// A lookup the selection reads as a side call leaves its scope inside the
+// one selection: it is decided on its minted episode, which it closes, and
+// the scope's session is never closed.
+func TestRouteDecisionSideCallLeavesTheScope(t *testing.T) {
 	fixture := newLookupScopeFixture(t)
-	fixture.selector.failScoped = true
+	fixture.selector.sideCall = true
 	decision := fixture.decide(t, routerruntime.RouteDecisionRequest{
 		Surface: routerruntime.RouteDecisionSurfaceRoutes, Ephemeral: true, SessionID: "conv-1", LookupScope: lookupScopeTestScope,
 	})
 	contexts := fixture.selector.contexts
-	if len(contexts) != 2 || !contexts[0].RaylineARC.RoutesLookupSession || contexts[1].RaylineARC.RoutesLookupSession {
-		t.Fatalf("selections = %d, want a scoped attempt then a one-shot one", len(contexts))
+	if len(contexts) != 1 || contexts[0].RaylineARC.RoutesLookupSession {
+		t.Fatalf("selections = %d, want one, off the scope", len(contexts))
 	}
-	scopeHash := raylinearc.HashEpisodeID(lookupScopeTestScope)
-	oneShot := contexts[1].RaylineARC.EpisodeIDHash
-	if oneShot == scopeHash || oneShot == "" {
-		t.Fatalf("the fallback decided on %q, want a minted episode", oneShot)
+	minted := contexts[0].RaylineARC.EpisodeIDHash
+	if minted == raylinearc.HashEpisodeID(lookupScopeTestScope) || minted == "" {
+		t.Fatalf("the side call decided on %q, want its minted episode", minted)
 	}
-	if closed := fixture.closedEpisodes(); len(closed) != 1 || closed[0] != oneShot {
-		t.Fatalf("closed %v, want only the one-shot episode", closed)
+	if closed := fixture.closedEpisodes(); len(closed) != 1 || closed[0] != minted {
+		t.Fatalf("closed %v, want only the minted episode", closed)
 	}
-	if decision.Encode.LookupSession || decision.SelectedWorker != "worker-a" {
-		t.Fatalf("decision = %+v, want the one-shot answer", decision)
+	if decision.Encode.LookupSession {
+		t.Fatalf("decision = %+v, want it off the scope", decision.Encode)
 	}
 }
 
-// A selection the scope's own refusal ended is the only one decided again:
-// any other failure of a scoped lookup is the lookup's.
-func TestRouteDecisionDoesNotRetryOtherScopedFailures(t *testing.T) {
+// A scoped lookup that fails is the lookup's failure: it is not decided
+// again one-shot, and closes nothing (the scope's session may be a
+// concurrent lookup's).
+func TestRouteDecisionDoesNotRetryAScopedFailure(t *testing.T) {
 	fixture := newLookupScopeFixture(t)
-	fixture.selector.err = &raylineARCSelectionFailure{class: "policy_service_transport"}
+	fixture.selector.err = &raylineARCSelectionFailure{class: arcFailureLookupScopeRefused}
 	_, err := fixture.router.routeDecisionRuntimeState().RouteDecision(context.Background(), routerruntime.RouteDecisionRequest{
 		Body: anthropicBody("hello"), DecisionID: "rt_scope_err",
 		Surface: routerruntime.RouteDecisionSurfaceRoutes, Ephemeral: true, LookupScope: lookupScopeTestScope,
 	})
+	fixture.router.background.Wait()
 	if err == nil || len(fixture.selector.contexts) != 1 {
 		t.Fatalf("err = %v after %d selections, want one failed selection", err, len(fixture.selector.contexts))
+	}
+	if closed := fixture.closedEpisodes(); len(closed) != 0 {
+		t.Fatalf("a failed scoped lookup closed %v", closed)
+	}
+	if errors.Is(err, routerruntime.ErrRouteDecisionContended) || errors.Is(err, routerruntime.ErrRouteDecisionInvalidBody) {
+		t.Fatalf("err = %v, want a plain failure (503)", err)
 	}
 }
 
 // scopedLookupOn selects as a lookup-scoped throwaway lookup.
 func (fixture *policySelectorFixture) scopedLookupOn(t *testing.T, scope string) (*selection.SelectionResult, error) {
+	t.Helper()
+	return fixture.scopedLookupBy(t, scope, time.Time{})
+}
+
+// scopedLookupBy selects as a lookup-scoped throwaway lookup whose caller
+// waits until deadline (zero: unbounded).
+func (fixture *policySelectorFixture) scopedLookupBy(t *testing.T, scope string, deadline time.Time) (*selection.SelectionResult, error) {
 	t.Helper()
 	state, _ := raylinearc.NewEpisodeState(2)
 	arcContext := &selection.RaylineARCSelectionContext{
@@ -261,6 +272,7 @@ func (fixture *policySelectorFixture) scopedLookupOn(t *testing.T, scope string)
 	if !applyRaylineRoutesLookupScope(arcContext, scope) {
 		t.Fatal("the lookup was not placed on its scope")
 	}
+	arcContext.RoutesLookupDeadline = deadline
 	return fixture.selector.Select(context.Background(), &selection.SelectionContext{
 		DecisionName:    fixture.decision.Name,
 		CandidateModels: fixture.decision.ModelRefs,
@@ -301,7 +313,7 @@ func TestScopedLookupSendsTheLookupSessionScope(t *testing.T) {
 }
 
 // An unscoped decide carries no session_scope member at all, so a request
-// from a cell with the setting off is byte-identical to one from before it.
+// from a lookup off its scope is byte-identical to one from before it.
 func TestUnscopedDecideOmitsSessionScope(t *testing.T) {
 	fixture := newPolicySelectorFixture(t, "")
 	actionID := fixture.decision.Algorithm.RaylineARC.PolicyService.Bindings[0].ActionID
@@ -318,22 +330,21 @@ func TestUnscopedDecideOmitsSessionScope(t *testing.T) {
 	}
 }
 
-// Every way the scope cannot be served falls back without a 429 or 5xx: no
-// capability (no decide is sent at all), a concurrent lookup holding the
-// scope (one decide, never retried through the busy backoff) and a refused
-// scope.
-func TestScopedLookupFallsBackWhenTheScopeCannotBeServed(t *testing.T) {
+// A scope the service cannot serve fails the lookup loudly, with a logged
+// class, never as a one-shot lookup: no capability (no decide is sent) and
+// a refused scope.
+func TestScopedLookupFailsWhenTheScopeCannotBeServed(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
 		advertise bool
 		failWith  string
 		detail    map[string]any
+		class     string
 		decides   int
 	}{
-		{name: "capability unadvertised", decides: 0},
-		{name: "session busy", advertise: true, failWith: "session_busy", decides: 1},
+		{name: "capability unadvertised", class: arcFailureLookupSessionsUnadvertised, decides: 0},
 		{name: "scope refused", advertise: true, failWith: "invalid_request",
-			detail: map[string]any{"field": raylinearc.PolicySessionScopeField}, decides: 1},
+			detail: map[string]any{"field": raylinearc.PolicySessionScopeField}, class: arcFailureLookupScopeRefused, decides: 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fixture := newPolicySelectorFixture(t, "")
@@ -345,34 +356,150 @@ func TestScopedLookupFallsBackWhenTheScopeCannotBeServed(t *testing.T) {
 				fixture.fake.failNext(tc.failWith)
 			}
 			logs := captureLogs(t)
-			started := time.Now()
 			_, err := fixture.scopedLookupOn(t, lookupScopeTestScope)
-			if !isRaylineRoutesLookupSessionFallback(err) {
-				t.Fatalf("err = %v, want the lookup-session fallback", err)
+			var failure *raylineARCSelectionFailure
+			if !errors.As(err, &failure) || failure.class != tc.class {
+				t.Fatalf("err = %v, want %s", err, tc.class)
 			}
-			if line := findLogEvent(t, logs, "rayline_routes_lookup_session_fallback"); line["reason"] == nil {
-				t.Fatalf("fallback line = %v, want its reason", line)
+			if line := findLogEvent(t, logs, "rayline_routes_lookup_session_failed"); line["class"] != tc.class {
+				t.Fatalf("failure line = %v", line)
 			}
 			if got := len(fixture.fake.received()); got != tc.decides {
 				t.Fatalf("%d decides, want %d", got, tc.decides)
-			}
-			if elapsed := time.Since(started); elapsed > time.Second {
-				t.Fatalf("the fallback waited %s", elapsed)
 			}
 		})
 	}
 }
 
+// A concurrent lookup holding the scope (session_busy) is waited out within
+// the lookup's deadline, and the lookup then appends on the scope.
+func TestScopedLookupWaitsOutABusyScope(t *testing.T) {
+	fixture := newPolicySelectorFixture(t, "")
+	actionID := fixture.decision.Algorithm.RaylineARC.PolicyService.Bindings[0].ActionID
+	fixture.fake.chooseWith(func(raylinearc.PolicyDecisionRequest) string { return actionID })
+	advertiseLookupSessions(fixture)
+	fixture.selector.armedComponents().scorer.(*policyServiceScorer).busyWait = 0
+	fixture.fake.failFirstCalls("session_busy", 3)
+	if _, err := fixture.scopedLookupBy(t, lookupScopeTestScope, time.Now().Add(5*time.Second)); err != nil {
+		t.Fatalf("a busy scope was not waited out: %v", err)
+	}
+	received := fixture.fake.received()
+	if len(received) != 4 {
+		t.Fatalf("%d decides, want 3 busy and the append", len(received))
+	}
+	for _, sent := range received {
+		if sent.SessionScope != raylinearc.PolicySessionScopeLookup {
+			t.Fatalf("a retry left the scope: %q", sent.SessionScope)
+		}
+	}
+}
+
+// A scope still busy at the lookup's deadline is tried up to the deadline,
+// not past it, and fails the lookup there; it is never decided one-shot.
+func TestScopedLookupBusyUntilItsDeadline(t *testing.T) {
+	fixture := newPolicySelectorFixture(t, "")
+	advertiseLookupSessions(fixture)
+	fixture.fake.failNext("session_busy")
+	deadline := time.Now().Add(300 * time.Millisecond)
+	_, err := fixture.scopedLookupBy(t, lookupScopeTestScope, deadline)
+	if err == nil {
+		t.Fatal("a scope busy past the deadline was decided")
+	}
+	if late := time.Since(deadline); late < 0 || late > 250*time.Millisecond {
+		t.Fatalf("the busy wait ended %s from the deadline", late)
+	}
+	for _, sent := range fixture.fake.received() {
+		if sent.SessionScope != raylinearc.PolicySessionScopeLookup {
+			t.Fatal("a busy lookup was decided off its scope")
+		}
+	}
+}
+
+// busyScopeSelector answers every lookup-scoped selection as the policy
+// selection does when the scope stays busy: it waits for the lookup's
+// deadline, then fails session_busy.
+type busyScopeSelector struct {
+	stubARCSelector
+	deadlines []time.Time
+}
+
+func (selector *busyScopeSelector) Select(ctx context.Context, selCtx *selection.SelectionContext) (*selection.SelectionResult, error) {
+	if !selCtx.RaylineARC.RoutesLookupSession {
+		return selector.stubARCSelector.Select(ctx, selCtx)
+	}
+	selector.deadlines = append(selector.deadlines, selCtx.RaylineARC.RoutesLookupDeadline)
+	<-ctx.Done()
+	return nil, &raylineARCSelectionFailure{class: "policy_service_session_busy"}
+}
+
+// Through the endpoint, a scope busy for the whole lookup answers the same
+// 504 deadline_exceeded any lookup that ran out of time answers, never the
+// 429 a contended session would.
+func TestRaylineRoutesBusyScopeAnswersTheDeadline(t *testing.T) {
+	router, _ := oneCellRouter(t, "main")
+	arc := router.Config.Decisions[0].Algorithm.RaylineARC
+	arc.RoutesAPI.EpisodeWrites = false
+	arc.RoutesAPI.DeadlineMS = 200
+	arc.PolicyService = &config.RaylineARCPolicyServiceConfig{BaseURL: "https://policy.example"}
+	selector := &busyScopeSelector{stubARCSelector: stubARCSelector{workers: oneCellWorkers()}}
+	registry := selection.NewRegistry()
+	registry.Register(selection.MethodRaylineARC, selector)
+	router.RecipeModelSelectors[config.DefaultRecipeName] = registry
+	router.ModelSelector = registry
+	started := time.Now()
+	response := router.handleRaylineRoutesAPI(
+		[]byte(`{"model":"rayline/arc-dev","max_tokens":64,"messages":[{"role":"user","content":"hi"}]}`),
+		routesContext(map[string]string{raylineRoutesSessionHeader: "conv-1", "x-authz-user-id": "user-1"}),
+	)
+	router.background.Wait()
+	if code := immediateStatusCode(t, response); code != 504 {
+		t.Fatalf("status %d, want 504", code)
+	}
+	if len(selector.deadlines) != 1 || selector.deadlines[0].Sub(started) > 250*time.Millisecond ||
+		selector.deadlines[0].Before(started) {
+		t.Fatalf("scoped selections %v, want one bounded by the lookup deadline", selector.deadlines)
+	}
+}
+
 // A refusal that is not the scope's -- an invalid request naming another
-// field -- is the lookup's own failure, not a fallback.
+// field -- is the lookup's own failure, as on any lookup.
 func TestScopedLookupKeepsOtherRefusals(t *testing.T) {
 	fixture := newPolicySelectorFixture(t, "")
 	advertiseLookupSessions(fixture)
 	fixture.fake.failDetail = map[string]any{"field": "selection"}
 	fixture.fake.failNext("invalid_request")
 	_, err := fixture.scopedLookupOn(t, lookupScopeTestScope)
-	if err == nil || isRaylineRoutesLookupSessionFallback(err) {
+	var failure *raylineARCSelectionFailure
+	if err == nil || errors.As(err, &failure) && failure.class == arcFailureLookupScopeRefused {
 		t.Fatalf("err = %v, want the lookup's own failure", err)
+	}
+}
+
+// A call the selection reads as a side call after it was placed on the scope
+// is sent as today's throwaway side call: on its minted episode, without
+// session_scope.
+func TestScopedLookupReadAsASideCallLeavesTheScope(t *testing.T) {
+	fixture := newPolicySelectorFixture(t, "")
+	actionID := fixture.decision.Algorithm.RaylineARC.PolicyService.Bindings[0].ActionID
+	fixture.fake.chooseWith(func(raylinearc.PolicyDecisionRequest) string { return actionID })
+	advertiseLookupSessions(fixture)
+	state, _ := raylinearc.NewEpisodeState(2)
+	arcContext := &selection.RaylineARCSelectionContext{
+		RequestID: "req-lookup-side", State: state, RawRequest: lookupBody(t), RequestFormat: policyFormatAnthropic,
+		RoutesLookup: true, RoutesThrowaway: true, EpisodeIDHash: "minted",
+	}
+	if !applyRaylineRoutesLookupScope(arcContext, lookupScopeTestScope) {
+		t.Fatal("the lookup was not placed on its scope")
+	}
+	arcContext.PolicyCallKind, arcContext.PolicyCallKindSource = raylinearc.PolicyCallSide, "header"
+	if _, err := fixture.selector.Select(context.Background(), &selection.SelectionContext{
+		DecisionName: fixture.decision.Name, CandidateModels: fixture.decision.ModelRefs, RaylineARC: arcContext,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	sent := fixture.fake.received()[0]
+	if sent.SessionScope != "" || sent.EpisodeIDHash != "minted" || arcContext.RoutesLookupSession {
+		t.Fatalf("side call sent scope %q on %s", sent.SessionScope, sent.EpisodeIDHash)
 	}
 }
 
@@ -391,35 +518,35 @@ func TestLookupScopeSkipsSideCallsAndPrivateTurns(t *testing.T) {
 	}
 }
 
-// End to end through the endpoint: with lookup_sessions on, a lookup that
-// names a conversation decides on the scope of the authenticated user and
-// that conversation, and its routing_decision event says so; with it off the
-// same lookup decides one-shot, as before, and logs lookup_session false.
+// End to end through the endpoint: a lookup that names a conversation
+// decides on the scope of the authenticated user and that conversation, and
+// its routing_decision event says so; one that names none decides one-shot,
+// as before, and logs lookup_session false.
 func TestRaylineRoutesLookupSessionsEndToEnd(t *testing.T) {
 	body := []byte(`{"model":"rayline/arc-dev","max_tokens":64,"messages":[{"role":"user","content":"hi"}]}`)
-	for _, on := range []bool{true, false} {
+	for _, named := range []bool{true, false} {
 		router, selectors := oneCellRouter(t, "main")
 		arc := router.Config.Decisions[0].Algorithm.RaylineARC
 		arc.RoutesAPI.EpisodeWrites = false
-		arc.RoutesAPI.LookupSessions = on
 		arc.PolicyService = &config.RaylineARCPolicyServiceConfig{BaseURL: "https://policy.example"}
+		headers := map[string]string{"x-authz-user-id": "user-1"}
+		if named {
+			headers[raylineRoutesSessionHeader] = "conv 1"
+		}
 		logs := captureLogs(t)
-		response := router.handleRaylineRoutesAPI(body, routesContext(map[string]string{
-			raylineRoutesSessionHeader: "conv 1",
-			"x-authz-user-id":          "user-1",
-		}))
+		response := router.handleRaylineRoutesAPI(body, routesContext(headers))
 		if code := immediateStatusCode(t, response); code != 200 {
-			t.Fatalf("on=%t: status %d", on, code)
+			t.Fatalf("named=%t: status %d", named, code)
 		}
 		router.background.Wait()
 		contexts := selectors[config.DefaultRecipeName].contexts
 		arcContext := contexts[len(contexts)-1].RaylineARC
 		scopeHash := raylinearc.HashEpisodeID("lookup:user-1:conv+1")
-		if arcContext.RoutesLookupSession != on || (arcContext.EpisodeIDHash == scopeHash) != on {
-			t.Fatalf("on=%t: lookup session %t on %s", on, arcContext.RoutesLookupSession, arcContext.EpisodeIDHash)
+		if arcContext.RoutesLookupSession != named || (arcContext.EpisodeIDHash == scopeHash) != named {
+			t.Fatalf("named=%t: lookup session %t on %s", named, arcContext.RoutesLookupSession, arcContext.EpisodeIDHash)
 		}
-		if line := findLogEvent(t, logs, "routing_decision"); line["lookup_session"] != on {
-			t.Fatalf("on=%t: routing_decision = %v", on, line)
+		if line := findLogEvent(t, logs, "routing_decision"); line["lookup_session"] != named {
+			t.Fatalf("named=%t: routing_decision = %v", named, line)
 		}
 	}
 }
@@ -448,38 +575,39 @@ func TestScopedExecutionLookupIsSentStrict(t *testing.T) {
 	}
 }
 
-// A cell with a replica pool never sends the scope: the capability is read
-// once for the cell, and a lookup may fail over to an older replica.
-func TestScopedLookupFallsBackOnAReplicaPool(t *testing.T) {
-	fixture := newPolicySelectorFixture(t, "")
-	advertiseLookupSessions(fixture)
-	fixture.selector.armedComponents().scorer.(*policyServiceScorer).lookupSessionsServable = false
-	if _, err := fixture.scopedLookupOn(t, lookupScopeTestScope); !isRaylineRoutesLookupSessionFallback(err) {
-		t.Fatalf("err = %v, want the lookup-session fallback", err)
-	}
-	if got := len(fixture.fake.received()); got != 0 {
-		t.Fatalf("%d decides sent from a replica pool", got)
-	}
-	pooled := policyTestDecision("")
-	pooled.Algorithm.RaylineARC.PolicyService.Replicas = []config.RaylineARCEncoderReplicaConfig{{}}
-	if newPolicyServiceScorer(&config.RouterConfig{}, pooled).lookupSessionsServable {
-		t.Fatal("a replica-pool cell may send session_scope")
-	}
-	if !newPolicyServiceScorer(&config.RouterConfig{}, policyTestDecision("")).lookupSessionsServable {
-		t.Fatal("a single-service cell may not send session_scope")
-	}
-}
-
-// A scoped lookup whose caller has already gone starts no one-shot encode.
-func TestRouteDecisionSkipsTheFallbackPastTheCallersDeadline(t *testing.T) {
-	fixture := newLookupScopeFixture(t)
-	fixture.selector.failScoped = true
-	_, err := fixture.router.routeDecisionRuntimeState().RouteDecision(context.Background(), routerruntime.RouteDecisionRequest{
-		Body: anthropicBody("hello"), DecisionID: "rt_scope_late", Surface: routerruntime.RouteDecisionSurfaceRoutes,
-		Ephemeral: true, LookupScope: lookupScopeTestScope, CallerDeadline: time.Now().Add(-time.Millisecond),
-	})
-	if !isRaylineRoutesLookupSessionFallback(err) || len(fixture.selector.contexts) != 1 {
-		t.Fatalf("err = %v after %d selections, want the scoped attempt alone", err, len(fixture.selector.contexts))
+// Only a policy-service cell with the routes API on and a single service
+// decides on lookup scopes, and only such a cell needs the service to
+// advertise lookup_sessions to be ready. A replica pool keeps one-shot
+// lookups: its capability list is the cell's, not each replica's.
+func TestLookupSessionsServedAndRequired(t *testing.T) {
+	single := policyTestDecision("").Algorithm.RaylineARC
+	single.RoutesAPI.Enabled = true
+	pooled := policyTestDecision("").Algorithm.RaylineARC
+	pooled.RoutesAPI.Enabled = true
+	pooled.PolicyService.Replicas = []config.RaylineARCEncoderReplicaConfig{{}}
+	routesOff := policyTestDecision("").Algorithm.RaylineARC
+	for name, tc := range map[string]struct {
+		arc    *config.RaylineARCAlgorithmConfig
+		served bool
+	}{
+		"single service": {single, true}, "replica pool": {pooled, false}, "routes off": {routesOff, false},
+		"artifact cell": {&config.RaylineARCAlgorithmConfig{RoutesAPI: config.RaylineARCRoutesAPIConfig{Enabled: true}}, false},
+	} {
+		if got := raylineRoutesLookupSessionsServed(tc.arc); got != tc.served {
+			t.Fatalf("%s: served %t, want %t", name, got, tc.served)
+		}
+		scorer := &policyServiceScorer{}
+		scorer.setAdvertised([]string{raylinearc.PolicyCapabilityDecisionsV2})
+		err := requireRaylineRoutesLookupSessions(tc.arc, scorer)
+		var failure *raylinearc.PolicyServiceError
+		if tc.served != (errors.As(err, &failure) && failure.Class == raylinearc.PolicyCapabilityUnsupportedClass &&
+			failure.Detail["capability"] == raylinearc.PolicyCapabilityLookupSessions) {
+			t.Fatalf("%s: readiness without the capability = %v", name, err)
+		}
+		scorer.setAdvertised([]string{raylinearc.PolicyCapabilityLookupSessions})
+		if err := requireRaylineRoutesLookupSessions(tc.arc, scorer); err != nil {
+			t.Fatalf("%s: readiness with the capability = %v", name, err)
+		}
 	}
 }
 
@@ -608,33 +736,22 @@ func TestLookupScopeMovesOffALostSessionAndRepins(t *testing.T) {
 	}
 }
 
-// A lookup that falls back (a concurrent lookup holds the scope) pins
-// nothing and ends the session it started; a pinned session stays.
-func TestLookupScopeFallbackLeavesThePinAlone(t *testing.T) {
+// A lookup that fails on its scope (the service refused it) pins nothing
+// and ends the session it started.
+func TestLookupScopeFailureLeavesThePinAlone(t *testing.T) {
 	fixture, front := newLookupSessionsFixture(t)
 	pins := raylinearc.NewMemoryPolicyLookupSessionPins()
 	for _, container := range front.containers {
-		container.failNext("session_busy")
+		container.failDetail = map[string]any{"field": raylinearc.PolicySessionScopeField}
+		container.failNext("invalid_request")
 	}
-	if _, err := scopedLookupWithPins(t, fixture, pins, lookupScopeTestScope); !isRaylineRoutesLookupSessionFallback(err) {
-		t.Fatalf("err = %v, want the fallback", err)
+	if _, err := scopedLookupWithPins(t, fixture, pins, lookupScopeTestScope); err == nil {
+		t.Fatal("a refused scope was decided")
 	}
 	if pinned, _ := pins.LoadLookupSession(context.Background(), lookupPinKey(fixture, lookupScopeTestScope)); pinned != nil {
-		t.Fatal("a lookup that fell back pinned its session")
+		t.Fatal("a failed lookup pinned its session")
 	}
-	deadline := time.Now().Add(2 * time.Second)
-	for {
-		front.mu.Lock()
-		terminates := front.terminates
-		front.mu.Unlock()
-		if terminates == 1 {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("terminates = %d, want the started session ended", terminates)
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
+	awaitTerminates(t, front, 1)
 }
 
 // The pin lives for its idle timeout from the last lookup, and no longer.
