@@ -61,6 +61,9 @@ type raylineARCThinkingTrace struct {
 	// ToolTailSpelling is the worker cell's spelling of an item after a tool
 	// run, "append_to_tool" (ADR 0131), when it states one.
 	ToolTailSpelling string
+	// EffortItemHeader is the anthropic-beta an effort-item episode's call
+	// sends (ADR 0143), recorded on every row.
+	EffortItemHeader string
 	Replayed         int
 	Epoch            uint32
 	ResetReason      string
@@ -293,6 +296,9 @@ func appendRaylineARCThinkingFields(record map[string]interface{}, ctx *RequestC
 	}
 	if trace.ToolTailSpelling != "" {
 		record["thinking_tool_tail_spelling"] = trace.ToolTailSpelling
+	}
+	if trace.EffortItemHeader != "" {
+		record["thinking_effort_item_header"] = trace.EffortItemHeader
 	}
 	if trace.ResetReason != "" {
 		record["thinking_epoch_reset_reason"] = trace.ResetReason

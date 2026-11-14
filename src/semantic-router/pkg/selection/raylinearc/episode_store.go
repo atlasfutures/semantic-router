@@ -265,6 +265,10 @@ var (
 		thinkingcontrol.PlacementAppend: "a", thinkingcontrol.PlacementInsertAfter: "i",
 		// ADR 0131. A reader without it refuses the record as malformed.
 		thinkingcontrol.PlacementAppendToTool: "t",
+		// ADR 0147's Messages effort item, alone or after the new-input block.
+		// A reader without them refuses the record: rolling back past them
+		// drops the episode's stored placement, never replays it as text.
+		thinkingcontrol.PlacementInsertAfterEffortItem: "e", thinkingcontrol.PlacementAppendNewInputEffortItem: "n",
 	}
 	controlKindCodes = map[string]string{
 		thinkingcontrol.WrittenInstruction: "i", thinkingcontrol.WrittenNeutralMarker: "m",
@@ -342,7 +346,8 @@ func knownControlRules(first *episodeControlFirstWire) bool {
 	if !first.Lever {
 		return first.Unit == "" && first.InbandSystem == ""
 	}
-	unitOK := first.Unit == "" || first.Unit == thinkingcontrol.UnitConfigurationUpdate
+	unitOK := first.Unit == "" || first.Unit == thinkingcontrol.UnitConfigurationUpdate ||
+		first.Unit == thinkingcontrol.UnitMessagesEffortItem
 	inbandOK := first.InbandSystem == "" || first.InbandSystem == thinkingcontrol.InbandSystemFold
 	return unitOK && inbandOK && (first.Unit == "" || first.InbandSystem == "")
 }

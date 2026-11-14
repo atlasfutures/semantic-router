@@ -92,9 +92,12 @@ type Cell struct {
 	// a Chat tool run is appended as a text part to the run's last tool
 	// message rather than written as a user message after it.
 	TextToolTailAppendToTool bool
-	baseWire                 map[string]*value
-	baseEndpoints            map[string]*value
-	controls                 map[string]bool
+	// EffortItemHeader is the anthropic-beta value every call of an
+	// effort-item episode on this cell sends (ADR 0143), or "".
+	EffortItemHeader string
+	baseWire         map[string]*value
+	baseEndpoints    map[string]*value
+	controls         map[string]bool
 }
 
 // Load reads a compiled artifact. Its bytes must be canonical JCS and every
@@ -208,6 +211,16 @@ func loadCell(raw *value, controls map[string]Control) (*Cell, error) {
 		}
 		cell.TextToolTailAppendToTool = true
 	}
+	if header := raw.get("effort_item_header"); header != nil {
+		// Pathfinder compiles it only beside an effort-item ladder, with the
+		// one beta value it knows; another value is refused, never sent.
+		if cell.Format != FormatMessages || !header.isString() || header.str != EffortItemBeta ||
+			raw.get("effort_item_ladder") == nil {
+			return nil, refuse("%s: effort_item_header must be %q on a messages cell with an effort-item ladder",
+				where, EffortItemBeta)
+		}
+		cell.EffortItemHeader = header.str
+	}
 	ids := raw.get("controls")
 	wire := raw.get("base_wire")
 	endpoints := raw.get("base_endpoints")
@@ -296,10 +309,9 @@ func (r *Registry) Admit(model, provider, format string, control Control, allowE
 	if !cell.controls[id] {
 		return nil, refuse("control %s is not admitted for %s on %sx%s", prefix12(id), model, provider, format)
 	}
-	if control.Instruction != nil && control.Instruction.Unit != "" {
+	if control.Instruction != nil && control.Instruction.Unit == UnitConfigurationUpdate {
 		// ADR 0114: VSR does not implement the configuration_update unit
-		// until it serves a Responses cell; nor the Messages effort item
-		// (ADR 0143, 0147).
+		// until it serves a Responses cell.
 		return nil, refuse("control %s writes a %s unit, which VSR does not implement", prefix12(id), control.Instruction.Unit)
 	}
 	if control.Instruction != nil && !control.Instruction.Implemented() {

@@ -146,15 +146,33 @@ func TestEpisodeStateWireCarriesControlRulesAndRefusalsUnderV5(t *testing.T) {
 	}
 }
 
-// A stored ADR 0131 item keeps its spelling, so a kimi-k3 Chat episode
-// reloaded from the store replays its steer on the tool message it joined.
-func TestStoredControlPlacementKeepsTheAppendToToolSpelling(t *testing.T) {
+// A stored item keeps its spelling: a kimi-k3 Chat episode reloaded from the
+// store replays its steer on the tool message it joined (ADR 0131), and an
+// Opus Messages episode its effort item, with or without the new-input block
+// (ADR 0147).
+func TestStoredControlPlacementKeepsItsSpelling(t *testing.T) {
+	for _, tc := range []struct{ format, placement string }{
+		{thinkingcontrol.FormatChat, thinkingcontrol.PlacementAppendToTool},
+		{thinkingcontrol.FormatMessages, thinkingcontrol.PlacementInsertAfterEffortItem},
+		{thinkingcontrol.FormatMessages, thinkingcontrol.PlacementAppendNewInputEffortItem},
+	} {
+		storedPlacementRoundTrips(t, tc.format, tc.placement)
+	}
+}
+
+func storedPlacementRoundTrips(t *testing.T, format, placement string) {
+	t.Helper()
 	anchor, previous, inForce := thinkingcontrol.Anchor{Index: 2, Digest: "d"}, "c", "up"
 	first := thinkingcontrol.Control{Native: "default", Instruction: &thinkingcontrol.Instruction{}}
+	if format == thinkingcontrol.FormatMessages {
+		first = thinkingcontrol.Control{Native: "high", Instruction: &thinkingcontrol.Instruction{
+			Unit: thinkingcontrol.UnitMessagesEffortItem,
+		}}
+	}
 	placements := []ControlPlacement{{Key: "k", State: thinkingcontrol.PlacerState{
-		Format: thinkingcontrol.FormatChat, First: &first, InForce: &inForce,
+		Format: format, First: &first, InForce: &inForce,
 		Ledger: []thinkingcontrol.LedgerItem{{
-			Anchor: 2, PrefixDigest: "d", Placement: thinkingcontrol.PlacementAppendToTool, Text: "steer",
+			Anchor: 2, PrefixDigest: "d", Placement: placement, Text: "steer",
 			Kind: thinkingcontrol.WrittenInstruction,
 		}},
 		PreviousAnchor: &anchor, PreviousControl: &previous, Calls: 1,
@@ -171,13 +189,21 @@ func TestStoredControlPlacementKeepsTheAppendToToolSpelling(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := back[0].State.Ledger; len(got) != 1 || got[0].Placement != thinkingcontrol.PlacementAppendToTool {
-		t.Fatalf("stored spelling came back as %+v", got)
+	if got := back[0].State.Ledger; len(got) != 1 || got[0].Placement != placement {
+		t.Fatalf("stored %s came back as %+v", placement, got)
 	}
 	// A reader that does not know the code refuses the record, never
 	// replays the steer somewhere else.
 	wires[0].Ledger[0].Placement = "z"
 	if _, err := controlPlacementsFromWire(wires); err == nil || !strings.Contains(err.Error(), "malformed") {
 		t.Fatalf("an unknown stored placement loaded: %v", err)
+	}
+	// Nor replays one rule set's spelling on an episode of the other.
+	wires[0].Ledger[0].Placement = "a"
+	if format == thinkingcontrol.FormatChat {
+		wires[0].Ledger[0].Placement = "e"
+	}
+	if _, err := controlPlacementsFromWire(wires); err == nil || !strings.Contains(err.Error(), "malformed") {
+		t.Fatalf("a %s episode loaded the other rule set's spelling: %v", placement, err)
 	}
 }

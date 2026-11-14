@@ -256,8 +256,24 @@ func (planned *plannedThinkingControl) render(body []byte, ctx *RequestContext) 
 	}
 	ctx.RaylineARCTransaction.stageControlPlacement(raylinearc.ControlPlacement{Key: planned.key, State: planned.placer.State()})
 	ctx.RaylineARCThinking = thinkingControlTrace(planned.cell, planned.control, receipt)
+	ctx.RaylineARCThinking.EffortItemHeader = planned.effortItemBeta()
 	recordThinkingLeverTurn(ctx.RaylineARCThinking)
 	return rendered, nil
+}
+
+// effortItemBeta is the anthropic-beta an effort-item episode sends on its
+// cell (ADR 0143), or "". The episode is the placer's: a native-only call on
+// it still replays the items earlier calls wrote, so it still needs the beta.
+func (planned *plannedThinkingControl) effortItemBeta() string {
+	if isEffortItem(&planned.control) || isEffortItem(planned.placer.State().First) {
+		return planned.cell.EffortItemHeader
+	}
+	return ""
+}
+
+func isEffortItem(control *thinkingcontrol.Control) bool {
+	return control != nil && control.Instruction != nil &&
+		control.Instruction.Unit == thinkingcontrol.UnitMessagesEffortItem
 }
 
 // thinkingControlTrace attributes the call with the drawn control and what
