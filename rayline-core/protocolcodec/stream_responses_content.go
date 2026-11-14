@@ -136,6 +136,7 @@ func applyResponsesContentPart(event *llmprotocol.Event, part *responsesContentW
 	event.Type = llmprotocol.EventOutputTextDelta
 	switch part.Type {
 	case "reasoning_text":
+		event.Delta = part.Text
 		setResponsesReasoningDelta(event, part.Text, llmprotocol.ReasoningScopeText)
 	case "output_text":
 		event.Delta = part.Text

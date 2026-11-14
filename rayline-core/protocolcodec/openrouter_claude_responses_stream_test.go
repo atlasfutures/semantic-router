@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -61,6 +63,45 @@ func TestOpenRouterClaudeReasoningStreamReachesEveryClient(t *testing.T) {
 				if !bytes.Contains(routed, []byte(want)) {
 					t.Fatalf("routed stream lost %q:\n%s", want, routed)
 				}
+			}
+		})
+	}
+}
+
+// A reasoning_text part may open with text of its own, which is the first
+// reasoning delta and reaches every client like the deltas after it.
+func TestOpenRouterClaudeReasoningInitialPartTextReachesEveryClient(t *testing.T) {
+	body := string(loadProviderFixture(t, openRouterClaudeReasoningStream))
+	mutated := body
+	for _, rewrite := range [][2]string{
+		{`"part":{"type":"reasoning_text","text":""}`, `"part":{"type":"reasoning_text","text":"The user wants "}`},
+		{`data: {"type":"response.reasoning_text.delta","output_index":0,"item_id":"rs_fixture_1",` +
+			`"content_index":0,"delta":"The user wants ","sequence_number":4}` + "\n\n", ""},
+	} {
+		next := strings.Replace(mutated, rewrite[0], rewrite[1], 1)
+		if next == mutated {
+			t.Fatalf("the fixture no longer has %s", rewrite[0])
+		}
+		mutated = next
+	}
+	// Close the gap the dropped delta leaves: sequence numbers are contiguous.
+	mutated = regexp.MustCompile(`"sequence_number":(\d+)`).ReplaceAllStringFunc(mutated, func(field string) string {
+		number, _ := strconv.Atoi(strings.TrimPrefix(field, `"sequence_number":`))
+		if number > 4 {
+			number--
+		}
+		return `"sequence_number":` + strconv.Itoa(number)
+	})
+	for _, client := range []llmprotocol.WireFormat{
+		llmprotocol.OpenAIResponsesV1, llmprotocol.OpenAIChatV1, llmprotocol.AnthropicMessagesV1,
+	} {
+		t.Run(string(client), func(t *testing.T) {
+			routed, err := pushResponsesStream([]byte(mutated), client)
+			if err != nil {
+				t.Fatalf("stream failed: %v", err)
+			}
+			if !bytes.Contains(routed, []byte(`"The user wants "`)) {
+				t.Fatalf("routed stream lost the part's initial text:\n%s", routed)
 			}
 		})
 	}
