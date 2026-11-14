@@ -1192,7 +1192,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		// its bounded sub_reason.
 		if class == raylinearc.PolicyMediaRefusedClass {
 			class = "unsupported_request"
-			fields["class"], fields["reason"], fields["sub_reason"] = class, raylinearc.PolicyMediaRefusedClass, failure.Detail["sub_reason"]
+			fields["class"], fields["reason"], fields["sub_reason"] = class, failure.Detail["reason"], failure.Detail["sub_reason"]
 		}
 		// The cell's decisions_v2 against its package: every turn fails so,
 		// so the log names the reason.

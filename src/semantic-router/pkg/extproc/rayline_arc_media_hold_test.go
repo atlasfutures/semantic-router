@@ -90,10 +90,54 @@ func TestMediaRefusalWithNothingHeldIsARequestShapeFailure(t *testing.T) {
 	}
 }
 
+// ADR 0122 decision 1 (memex-desktop#8272): an encoder input over the
+// engine's image limit and a remote image the service could not fetch take
+// the media hold too, and a first call with nothing held fails as
+// request_shape with the service's own reason in its log line.
+func TestImageRefusalsHoldTheEpisodesServedAction(t *testing.T) {
+	for _, detail := range []map[string]any{
+		{"reason": "encoder_refused", "sub_reason": "too_many_images"},
+		{"reason": "remote_image_fetch_failed", "sub_reason": "timeout"},
+	} {
+		fixture := newPolicySelectorFixture(t, "")
+		bindings := fixture.decision.Algorithm.RaylineARC.PolicyService.Bindings
+		state, _ := raylinearc.NewEpisodeState(2)
+		servedTurn(t, fixture, state, bindings[1].ActionID)
+		fixture.fake.mu.Lock()
+		fixture.fake.failWith, fixture.fake.failDetail = "unsupported_request", detail
+		fixture.fake.mu.Unlock()
+		logs := captureLogs(t)
+		result, err := fixture.selectOn(t, state, nextTurn(t))
+		if err != nil || result.RaylineARC.OfferKind != "media_hold" || result.RaylineARC.PolicyActionID != bindings[1].ActionID {
+			t.Fatalf("detail %v: err %v, want a media_hold on the held action", detail, err)
+		}
+		if hold := findLogEvent(t, logs, "rayline_arc_media_hold"); hold["sub_reason"] != detail["sub_reason"] {
+			t.Fatalf("detail %v: media hold line = %v, want its sub_reason", detail, hold)
+		}
+
+		first := newPolicySelectorFixture(t, "")
+		first.fake.mu.Lock()
+		first.fake.failWith, first.fake.failDetail = "unsupported_request", detail
+		first.fake.mu.Unlock()
+		logs = captureLogs(t)
+		fresh, _ := raylinearc.NewEpisodeState(2)
+		_, err = first.selectOn(t, fresh, policyTestRequest(t, map[string]any{"role": "user", "content": "go"}))
+		var failure *raylineARCSelectionFailure
+		if !errors.As(err, &failure) || publicSelectionFailureClass(failure.class) != selectionFailureRequestShape {
+			t.Fatalf("detail %v, first call: error = %v, want request_shape", detail, err)
+		}
+		if failed := findLogEvent(t, logs, "rayline_arc_policy_service_failed"); failed["reason"] != detail["reason"] {
+			t.Fatalf("detail %v: failure line = %v, want the service's reason", detail, failed)
+		}
+	}
+}
+
 // Every other unsupported_request -- runtime_refused from a service that
-// predates the typed reason among them -- still fails a held episode's turn.
+// predates the typed reason among them, and encoder refusals that are client
+// or contract bugs -- still fails a held episode's turn.
 func TestOtherUnsupportedRequestsStillFailAHeldEpisode(t *testing.T) {
-	for _, detail := range []map[string]any{{"reason": "runtime_refused"}, {"reason": "projection_refused"}, {}} {
+	for _, detail := range []map[string]any{{"reason": "runtime_refused"}, {"reason": "projection_refused"}, {},
+		{"reason": "encoder_refused", "sub_reason": "invalid_images"}, {"reason": "encoder_refused"}} {
 		fixture := newPolicySelectorFixture(t, "")
 		bindings := fixture.decision.Algorithm.RaylineARC.PolicyService.Bindings
 		state, _ := raylinearc.NewEpisodeState(2)
