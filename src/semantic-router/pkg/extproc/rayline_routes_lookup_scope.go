@@ -230,10 +230,12 @@ func bindPolicyLookupSession(
 // lookup that already pinned another session (it moved first, or started
 // the scope's first session) keeps its pin, and a lookup still finishing on
 // a retired session cannot restore it. A session this lookup started that
-// it could not pin -- it lost that race, or the write failed -- is ended, so
-// it does not hold a container's slot until its idle timeout; the session
-// it read is left to whoever pinned past it. The write is bounded by the
-// lookup's own context, so it never holds the answer past the deadline.
+// it did not pin is ended, so it does not hold a container's slot until its
+// idle timeout; the session it read is left to whoever pinned past it.
+//
+// It runs off the answer's path: the episode store's Redis client does not
+// bound a call by its context, so a stalled write would otherwise hold an
+// already-decided answer past the lookup deadline.
 func pinPolicyLookupSession(
 	ctx context.Context,
 	arcContext *selection.RaylineARCSelectionContext,
@@ -242,25 +244,38 @@ func pinPolicyLookupSession(
 	idle time.Duration,
 ) {
 	session, _ := binding.Session()
-	if session == nil || arcContext.PolicyLookupSessions == nil {
+	pins := arcContext.PolicyLookupSessions
+	if session == nil || pins == nil {
 		return
 	}
-	writeCtx, cancel := context.WithTimeout(ctx, raylineRoutesLookupSessionPinTimeout)
-	pinned, err := arcContext.PolicyLookupSessions.StoreLookupSession(
-		writeCtx, arcContext.PolicyLookupSessionKey, previous, *session, idle)
-	cancel()
-	if err != nil || !pinned {
-		stage := "superseded"
+	key, requestID := arcContext.PolicyLookupSessionKey, arcContext.RequestID
+	detached := context.WithoutCancel(ctx)
+	go func() {
+		writeCtx, cancel := context.WithTimeout(detached, raylineRoutesLookupSessionPinTimeout)
+		pinned, err := pins.StoreLookupSession(writeCtx, key, previous, *session, idle)
+		cancel()
 		if err != nil {
-			stage = "write"
+			// A failed write may still have landed (its reply was lost): the
+			// pin says which, so a session other lookups may already be
+			// routed to is never ended.
+			readCtx, cancel := context.WithTimeout(detached, raylineRoutesLookupSessionPinTimeout)
+			current, readErr := pins.LoadLookupSession(readCtx, key)
+			cancel()
+			pinned = readErr == nil && current != nil && *current == *session
 		}
-		logging.ComponentWarnEvent("extproc", "rayline_routes_lookup_session_pin_failed", map[string]interface{}{
-			"request_id": arcContext.RequestID, "stage": stage,
-		})
-		go binding.EndUnrecorded(context.WithoutCancel(ctx))
-		return
-	}
-	binding.TerminateReplaced(ctx)
+		if !pinned {
+			stage := "superseded"
+			if err != nil {
+				stage = "write"
+			}
+			logging.ComponentWarnEvent("extproc", "rayline_routes_lookup_session_pin_failed", map[string]interface{}{
+				"request_id": requestID, "stage": stage,
+			})
+			binding.EndUnrecorded(detached)
+			return
+		}
+		binding.TerminateReplaced(detached)
+	}()
 }
 
 // isRaylineRoutesLookupSessionFallback reports whether a decision failed only

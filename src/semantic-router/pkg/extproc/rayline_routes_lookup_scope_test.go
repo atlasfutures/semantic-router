@@ -541,6 +541,7 @@ func TestLookupScopeKeepsItsModalSession(t *testing.T) {
 		if err != nil {
 			t.Fatalf("lookup %d: %v", lookup, err)
 		}
+		awaitPin(t, pins, lookupPinKey(fixture, lookupScopeTestScope))
 		if result.RaylineARC.PolicySessionMoved {
 			t.Fatalf("lookup %d moved sessions", lookup)
 		}
@@ -566,6 +567,7 @@ func TestLookupScopeKeepsItsModalSession(t *testing.T) {
 	if _, err := scopedLookupWithPins(t, fixture, pins, "lookup:user-2:conv-9"); err != nil {
 		t.Fatal(err)
 	}
+	awaitPin(t, pins, lookupPinKey(fixture, "lookup:user-2:conv-9"))
 	if other, _ := pins.LoadLookupSession(context.Background(), lookupPinKey(fixture, "lookup:user-2:conv-9")); other == nil || *other == *pinned {
 		t.Fatalf("another scope shares the session: %v", other)
 	}
@@ -579,6 +581,7 @@ func TestLookupScopeMovesOffALostSessionAndRepins(t *testing.T) {
 	if _, err := scopedLookupWithPins(t, fixture, pins, lookupScopeTestScope); err != nil {
 		t.Fatal(err)
 	}
+	awaitPin(t, pins, lookupPinKey(fixture, lookupScopeTestScope))
 	first, _ := pins.LoadLookupSession(context.Background(), lookupPinKey(fixture, lookupScopeTestScope))
 	front.mu.Lock()
 	front.dead[front.sessions[first.Token]] = true
@@ -587,7 +590,12 @@ func TestLookupScopeMovesOffALostSessionAndRepins(t *testing.T) {
 	if err != nil {
 		t.Fatalf("moved lookup: %v", err)
 	}
-	second, _ := pins.LoadLookupSession(context.Background(), lookupPinKey(fixture, lookupScopeTestScope))
+	var second *raylinearc.PolicySession
+	for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
+		if second, _ = pins.LoadLookupSession(context.Background(), lookupPinKey(fixture, lookupScopeTestScope)); second != nil && *second != *first {
+			break
+		}
+	}
 	if !result.RaylineARC.PolicySessionMoved || second == nil || *second == *first {
 		t.Fatalf("pin %v after a move from %v, want a new session", second, first)
 	}
@@ -700,24 +708,35 @@ func TestLookupSessionPinKeyIsPerBackend(t *testing.T) {
 	}
 }
 
-// lookupPinsStub answers every load with nothing and every store with
-// pinned/err; block holds a store until its context ends.
+// lookupPinsStub answers every store with pinned/err (landing it when
+// landed is set, as a write whose reply was lost), and every load with what
+// landed; block holds a store until release closes.
 type lookupPinsStub struct {
-	pinned bool
-	err    error
-	block  bool
+	mu      sync.Mutex
+	pinned  bool
+	err     error
+	landed  bool
+	current *raylinearc.PolicySession
+	block   bool
+	release chan struct{}
 }
 
 func (stub *lookupPinsStub) LoadLookupSession(context.Context, string) (*raylinearc.PolicySession, error) {
-	return nil, nil
+	stub.mu.Lock()
+	defer stub.mu.Unlock()
+	return stub.current, nil
 }
 
 func (stub *lookupPinsStub) StoreLookupSession(
-	ctx context.Context, _ string, _ *raylinearc.PolicySession, _ raylinearc.PolicySession, _ time.Duration,
+	_ context.Context, _ string, _ *raylinearc.PolicySession, session raylinearc.PolicySession, _ time.Duration,
 ) (bool, error) {
 	if stub.block {
-		<-ctx.Done()
-		return false, ctx.Err()
+		<-stub.release
+	}
+	stub.mu.Lock()
+	defer stub.mu.Unlock()
+	if stub.landed {
+		stub.current = &session
 	}
 	return stub.pinned, stub.err
 }
@@ -757,15 +776,48 @@ func TestLookupSessionUnpinnedIsEnded(t *testing.T) {
 	}
 }
 
-// The pin write is bounded by the lookup's own context: a stalled store
-// does not hold the answer for the pin timeout.
+// A write that failed but landed (its reply was lost) is read back, and the
+// session it pinned is kept.
+func TestLookupSessionLandedPinIsKept(t *testing.T) {
+	fixture, front := newLookupSessionsFixture(t)
+	stub := &lookupPinsStub{err: errors.New("reply lost"), landed: true}
+	if _, err := scopedLookupWithPins(t, fixture, stub, lookupScopeTestScope); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(50 * time.Millisecond)
+	front.mu.Lock()
+	terminates := front.terminates
+	front.mu.Unlock()
+	stub.mu.Lock()
+	current := stub.current
+	stub.mu.Unlock()
+	if terminates != 0 || current == nil || front.containerOf(current.Token) < 0 {
+		t.Fatalf("terminates %d, pin %v: the landed session was ended", terminates, current)
+	}
+}
+
+// The pin is written off the answer's path: a stalled store (the episode
+// store's Redis client ignores context deadlines) never holds the answer.
 func TestLookupSessionPinWriteKeepsTheLookupDeadline(t *testing.T) {
 	fixture, _ := newLookupSessionsFixture(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
-	defer cancel()
+	stub := &lookupPinsStub{block: true, pinned: true, release: make(chan struct{})}
+	defer close(stub.release)
 	started := time.Now()
-	_, _ = scopedLookupWithPinsIn(ctx, t, fixture, &lookupPinsStub{block: true}, lookupScopeTestScope)
-	if elapsed := time.Since(started); elapsed >= raylineRoutesLookupSessionPinTimeout {
-		t.Fatalf("the pin write held the lookup %s, past its deadline", elapsed)
+	if _, err := scopedLookupWithPins(t, fixture, stub, lookupScopeTestScope); err != nil {
+		t.Fatal(err)
 	}
+	if elapsed := time.Since(started); elapsed >= 500*time.Millisecond {
+		t.Fatalf("a stalled pin write held the lookup %s", elapsed)
+	}
+}
+
+// awaitPin waits for the background pin write of a decided lookup.
+func awaitPin(t *testing.T, pins raylinearc.PolicyLookupSessionPins, key string) {
+	t.Helper()
+	for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
+		if pinned, _ := pins.LoadLookupSession(context.Background(), key); pinned != nil {
+			return
+		}
+	}
+	t.Fatal("the lookup's session was never pinned")
 }
