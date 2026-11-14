@@ -306,7 +306,7 @@ func buildAnthropicRequestWire(
 	if messagesErr := appendAnthropicMessages(&wire, request.Messages, request.Trusted.SourceFormat); messagesErr != nil {
 		return anthropicRequestWire{}, diagnostics, messagesErr
 	}
-	if toolsErr := appendAnthropicTools(&wire, request, policy, &diagnostics); toolsErr != nil {
+	if toolsErr := appendAnthropicTools(&wire, request); toolsErr != nil {
 		return anthropicRequestWire{}, diagnostics, toolsErr
 	}
 	// Gated on the tools this target encoded, as on Chat and Responses: a
@@ -532,26 +532,12 @@ func appendAnthropicMessages(
 	return nil
 }
 
-func appendAnthropicTools(
-	wire *anthropicRequestWire,
-	request llmprotocol.Request,
-	policy llmprotocol.Policy,
-	diagnostics *llmprotocol.Diagnostics,
-) error {
+func appendAnthropicTools(wire *anthropicRequestWire, request llmprotocol.Request) error {
 	encoded := make([]json.RawMessage, 0, len(request.Tools))
 	for _, tool := range request.Tools {
-		schema, folded := anthropicInputSchema(tool.InputSchema)
-		if folded {
-			if err := appendLossy(
-				diagnostics, policy, request.Trusted.SourceFormat, llmprotocol.AnthropicMessagesV1, "tools.input_schema.combinator",
-				"Messages refuses a top-level oneOf, anyOf or allOf; its branches were folded into the object",
-			); err != nil {
-				return err
-			}
-		}
 		body, err := json.Marshal(anthropicToolWire{
 			Name: llmprotocol.QualifiedToolName(tool.Namespace, tool.Name), Description: llmprotocol.FlattenedToolDescription(tool),
-			InputSchema: schema,
+			InputSchema: tool.InputSchema,
 			Strict:      tool.Strict, Type: tool.Type, CacheControl: encodeAnthropicCacheControl(tool.Cache),
 		})
 		if err != nil {
