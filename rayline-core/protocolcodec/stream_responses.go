@@ -423,6 +423,9 @@ func (decoder *responsesStreamDecoder) validateResponsesEventItemType(wire respo
 		"response.output_text.delta", "response.output_text.done", "response.output_text.annotation.added",
 		"response.refusal.delta", "response.refusal.done":
 		expected = "message"
+		if responsesReasoningTextPart(wire) {
+			expected = "reasoning"
+		}
 	case "response.reasoning_summary_part.added", "response.reasoning_summary_part.done",
 		"response.reasoning_summary_text.delta", "response.reasoning_summary_text.done",
 		"response.reasoning_text.delta", "response.reasoning_text.done":

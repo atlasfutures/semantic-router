@@ -135,6 +135,8 @@ func applyResponsesContentPart(event *llmprotocol.Event, part *responsesContentW
 	}
 	event.Type = llmprotocol.EventOutputTextDelta
 	switch part.Type {
+	case "reasoning_text":
+		setResponsesReasoningDelta(event, part.Text, llmprotocol.ReasoningScopeText)
 	case "output_text":
 		event.Delta = part.Text
 		event.Content = &llmprotocol.Content{Kind: llmprotocol.ContentText, Text: part.Text}
@@ -172,6 +174,9 @@ func responsesEventWireContentKey(wire responsesEventWire) (responsesWireContent
 			return responsesWireContentKey{}, false
 		}
 		key.scope, key.index = responsesContentMessage, *wire.ContentIndex
+		if responsesReasoningTextPart(wire) {
+			key.scope = responsesContentReasoningText
+		}
 	case "response.reasoning_summary_part.added", "response.reasoning_summary_part.done",
 		"response.reasoning_summary_text.delta", "response.reasoning_summary_text.done":
 		if wire.SummaryIndex == nil {
@@ -225,6 +230,9 @@ func (decoder *responsesStreamDecoder) validateResponsesContentStart(
 ) (bool, error) {
 	switch wire.Type {
 	case "response.content_part.added":
+		if responsesReasoningTextPart(wire) {
+			return true, decoder.startResponsesContent(key, "reasoning_text", wire.Part.Text)
+		}
 		kind, text, err := responsesMessagePartEvidence(wire.Part)
 		if err != nil {
 			return true, err
@@ -271,6 +279,9 @@ func (decoder *responsesStreamDecoder) validateResponsesContentDone(
 	case "response.reasoning_text.done":
 		return true, decoder.finishResponsesContentText(key, "reasoning_text", wire.Text, true)
 	case "response.content_part.done":
+		if responsesReasoningTextPart(wire) {
+			return true, decoder.finishResponsesContentPart(key, "reasoning_text", wire.Part.Text, wire.Part)
+		}
 		kind, text, err := responsesMessagePartEvidence(wire.Part)
 		if err != nil {
 			return true, err
@@ -316,6 +327,12 @@ func (decoder *responsesStreamDecoder) finishResponsesReasoningSummary(
 		return invalidProviderResponse("stream_reasoning_part_kind", "Responses reasoning summary part must use summary_text")
 	}
 	return decoder.finishResponsesContentPart(key, "summary_text", part.Text, part)
+}
+
+// responsesReasoningTextPart reports whether a content_part event carries
+// reasoning text, which belongs to a reasoning item rather than a message.
+func responsesReasoningTextPart(wire responsesEventWire) bool {
+	return wire.Part != nil && wire.Part.Type == "reasoning_text"
 }
 
 func responsesMessagePartEvidence(part *responsesContentWire) (string, string, error) {
