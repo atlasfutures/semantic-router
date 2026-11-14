@@ -955,7 +955,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		sessionBinding = bindPolicyLookupSession(ctx, armed.policySessions, arcContext)
 		defer func() {
 			if decided != nil {
-				pinPolicyLookupSession(ctx, arcContext, sessionBinding, armed.policySessions.LookupIdleTimeout())
+				pinPolicyLookupSession(ctx, arcContext, sessionBinding, sessionBinding.Pinned(), armed.policySessions.LookupIdleTimeout())
 			}
 		}()
 	}

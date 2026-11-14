@@ -166,6 +166,9 @@ type RaylineARCSelectionContext struct {
 	// sessioned policy Server, so its lookups reach the container holding
 	// the scope's warm encoder session; nil off a lookup scope.
 	PolicyLookupSessions raylinearc.PolicyLookupSessionPins
+	// PolicyLookupSessionKey names the scope's pin on this cell's policy
+	// backend: two recipes on different Modal apps never share a pin.
+	PolicyLookupSessionKey string
 	// RoutesEncodeLimit is a throwaway POST /v1/routes lookup's
 	// routes_api.max_encode_tokens: over it (ContextTokens), the lookup is
 	// answered without an encode. Zero, as on every tracked lookup and

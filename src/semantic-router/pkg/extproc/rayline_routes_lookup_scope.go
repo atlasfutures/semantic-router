@@ -185,6 +185,17 @@ func raylineRoutesLookupSessionPinsFor(store raylinearc.EpisodeStore) raylinearc
 	return raylineRoutesLookupSessionPinsLocal
 }
 
+// raylineRoutesLookupSessionPinKey names a scope's pin on one policy
+// backend (its URL and package), so recipes on different Modal apps, which
+// may share a pin table or a Redis prefix, never send each other's tokens.
+func raylineRoutesLookupSessionPinKey(policy *config.RaylineARCPolicyServiceConfig, scopeHash string) string {
+	backend := ""
+	if policy != nil {
+		backend = policy.BaseURL + "\x00" + policy.PackageSHA256
+	}
+	return raylinearc.HashEpisodeID("lookup-session:" + backend + "\x00" + scopeHash)
+}
+
 // raylineRoutesLookupSessionPinTimeout bounds a pin's read and its write.
 const raylineRoutesLookupSessionPinTimeout = time.Second
 
@@ -199,7 +210,7 @@ func bindPolicyLookupSession(
 	var pinned *raylinearc.PolicySession
 	if pins := arcContext.PolicyLookupSessions; pins != nil {
 		readCtx, cancel := context.WithTimeout(ctx, raylineRoutesLookupSessionPinTimeout)
-		session, err := pins.LoadLookupSession(readCtx, arcContext.EpisodeIDHash)
+		session, err := pins.LoadLookupSession(readCtx, arcContext.PolicyLookupSessionKey)
 		cancel()
 		if err != nil {
 			logging.ComponentWarnEvent("extproc", "rayline_routes_lookup_session_pin_failed", map[string]interface{}{
@@ -214,22 +225,39 @@ func bindPolicyLookupSession(
 // pinPolicyLookupSession pins the session a decided lookup ended on, for the
 // scope's idle timeout from now, and ends a pinned session it moved off once
 // the new one is pinned. The scope's session is never episode state.
+//
+// The pin changes only from the session this lookup read: a concurrent
+// lookup that already pinned another session (it moved first, or started
+// the scope's first session) keeps its pin, and a lookup still finishing on
+// a retired session cannot restore it. A session this lookup started that
+// it could not pin -- it lost that race, or the write failed -- is ended, so
+// it does not hold a container's slot until its idle timeout; the session
+// it read is left to whoever pinned past it. The write is bounded by the
+// lookup's own context, so it never holds the answer past the deadline.
 func pinPolicyLookupSession(
 	ctx context.Context,
 	arcContext *selection.RaylineARCSelectionContext,
 	binding *raylinearc.PolicySessionBinding,
+	previous *raylinearc.PolicySession,
 	idle time.Duration,
 ) {
 	session, _ := binding.Session()
 	if session == nil || arcContext.PolicyLookupSessions == nil {
 		return
 	}
-	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), raylineRoutesLookupSessionPinTimeout)
-	defer cancel()
-	if err := arcContext.PolicyLookupSessions.StoreLookupSession(writeCtx, arcContext.EpisodeIDHash, *session, idle); err != nil {
+	writeCtx, cancel := context.WithTimeout(ctx, raylineRoutesLookupSessionPinTimeout)
+	pinned, err := arcContext.PolicyLookupSessions.StoreLookupSession(
+		writeCtx, arcContext.PolicyLookupSessionKey, previous, *session, idle)
+	cancel()
+	if err != nil || !pinned {
+		stage := "superseded"
+		if err != nil {
+			stage = "write"
+		}
 		logging.ComponentWarnEvent("extproc", "rayline_routes_lookup_session_pin_failed", map[string]interface{}{
-			"request_id": arcContext.RequestID, "stage": "write",
+			"request_id": arcContext.RequestID, "stage": stage,
 		})
+		go binding.EndUnrecorded(context.WithoutCancel(ctx))
 		return
 	}
 	binding.TerminateReplaced(ctx)

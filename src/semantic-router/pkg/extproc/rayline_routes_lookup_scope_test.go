@@ -18,6 +18,7 @@ package extproc
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -491,6 +492,21 @@ func scopedLookupWithPins(
 	scope string,
 ) (*selection.SelectionResult, error) {
 	t.Helper()
+	return scopedLookupWithPinsIn(context.Background(), t, fixture, pins, scope)
+}
+
+func lookupPinKey(fixture *policySelectorFixture, scope string) string {
+	return raylineRoutesLookupSessionPinKey(fixture.decision.Algorithm.RaylineARC.PolicyService, raylinearc.HashEpisodeID(scope))
+}
+
+func scopedLookupWithPinsIn(
+	ctx context.Context,
+	t *testing.T,
+	fixture *policySelectorFixture,
+	pins raylinearc.PolicyLookupSessionPins,
+	scope string,
+) (*selection.SelectionResult, error) {
+	t.Helper()
 	state, _ := raylinearc.NewEpisodeState(2)
 	arcContext := &selection.RaylineARCSelectionContext{
 		RequestID: "req-lookup-pin", State: state, RawRequest: lookupBody(t), RequestFormat: policyFormatAnthropic,
@@ -500,7 +516,8 @@ func scopedLookupWithPins(
 		t.Fatal("the lookup was not placed on its scope")
 	}
 	arcContext.PolicyLookupSessions = pins
-	return fixture.selector.Select(context.Background(), &selection.SelectionContext{
+	arcContext.PolicyLookupSessionKey = lookupPinKey(fixture, scope)
+	return fixture.selector.Select(ctx, &selection.SelectionContext{
 		DecisionName: fixture.decision.Name, CandidateModels: fixture.decision.ModelRefs, RaylineARC: arcContext,
 	})
 }
@@ -519,7 +536,6 @@ func newLookupSessionsFixture(t *testing.T) (*policySelectorFixture, *fakeSessio
 func TestLookupScopeKeepsItsModalSession(t *testing.T) {
 	fixture, front := newLookupSessionsFixture(t)
 	pins := raylinearc.NewMemoryPolicyLookupSessionPins()
-	scopeHash := raylinearc.HashEpisodeID(lookupScopeTestScope)
 	for lookup := 0; lookup < 3; lookup++ {
 		result, err := scopedLookupWithPins(t, fixture, pins, lookupScopeTestScope)
 		if err != nil {
@@ -529,7 +545,7 @@ func TestLookupScopeKeepsItsModalSession(t *testing.T) {
 			t.Fatalf("lookup %d moved sessions", lookup)
 		}
 	}
-	pinned, _ := pins.LoadLookupSession(context.Background(), scopeHash)
+	pinned, _ := pins.LoadLookupSession(context.Background(), lookupPinKey(fixture, lookupScopeTestScope))
 	if pinned == nil || front.containerOf(pinned.Token) < 0 {
 		t.Fatalf("pin = %v, want the scope's live session", pinned)
 	}
@@ -550,7 +566,7 @@ func TestLookupScopeKeepsItsModalSession(t *testing.T) {
 	if _, err := scopedLookupWithPins(t, fixture, pins, "lookup:user-2:conv-9"); err != nil {
 		t.Fatal(err)
 	}
-	if other, _ := pins.LoadLookupSession(context.Background(), raylinearc.HashEpisodeID("lookup:user-2:conv-9")); other == nil || *other == *pinned {
+	if other, _ := pins.LoadLookupSession(context.Background(), lookupPinKey(fixture, "lookup:user-2:conv-9")); other == nil || *other == *pinned {
 		t.Fatalf("another scope shares the session: %v", other)
 	}
 }
@@ -560,11 +576,10 @@ func TestLookupScopeKeepsItsModalSession(t *testing.T) {
 func TestLookupScopeMovesOffALostSessionAndRepins(t *testing.T) {
 	fixture, front := newLookupSessionsFixture(t)
 	pins := raylinearc.NewMemoryPolicyLookupSessionPins()
-	scopeHash := raylinearc.HashEpisodeID(lookupScopeTestScope)
 	if _, err := scopedLookupWithPins(t, fixture, pins, lookupScopeTestScope); err != nil {
 		t.Fatal(err)
 	}
-	first, _ := pins.LoadLookupSession(context.Background(), scopeHash)
+	first, _ := pins.LoadLookupSession(context.Background(), lookupPinKey(fixture, lookupScopeTestScope))
 	front.mu.Lock()
 	front.dead[front.sessions[first.Token]] = true
 	front.mu.Unlock()
@@ -572,7 +587,7 @@ func TestLookupScopeMovesOffALostSessionAndRepins(t *testing.T) {
 	if err != nil {
 		t.Fatalf("moved lookup: %v", err)
 	}
-	second, _ := pins.LoadLookupSession(context.Background(), scopeHash)
+	second, _ := pins.LoadLookupSession(context.Background(), lookupPinKey(fixture, lookupScopeTestScope))
 	if !result.RaylineARC.PolicySessionMoved || second == nil || *second == *first {
 		t.Fatalf("pin %v after a move from %v, want a new session", second, first)
 	}
@@ -596,7 +611,7 @@ func TestLookupScopeFallbackLeavesThePinAlone(t *testing.T) {
 	if _, err := scopedLookupWithPins(t, fixture, pins, lookupScopeTestScope); !isRaylineRoutesLookupSessionFallback(err) {
 		t.Fatalf("err = %v, want the fallback", err)
 	}
-	if pinned, _ := pins.LoadLookupSession(context.Background(), raylinearc.HashEpisodeID(lookupScopeTestScope)); pinned != nil {
+	if pinned, _ := pins.LoadLookupSession(context.Background(), lookupPinKey(fixture, lookupScopeTestScope)); pinned != nil {
 		t.Fatal("a lookup that fell back pinned its session")
 	}
 	deadline := time.Now().Add(2 * time.Second)
@@ -618,8 +633,8 @@ func TestLookupScopeFallbackLeavesThePinAlone(t *testing.T) {
 func TestMemoryLookupSessionPinsExpire(t *testing.T) {
 	pins := raylinearc.NewMemoryPolicyLookupSessionPins()
 	session := raylinearc.PolicySession{ID: "sd-1", Token: "tok.1.secret"}
-	if err := pins.StoreLookupSession(context.Background(), "scope", session, 10*time.Millisecond); err != nil {
-		t.Fatal(err)
+	if pinned, err := pins.StoreLookupSession(context.Background(), "scope", nil, session, 10*time.Millisecond); err != nil || !pinned {
+		t.Fatal(pinned, err)
 	}
 	if got, _ := pins.LoadLookupSession(context.Background(), "scope"); got == nil || *got != session {
 		t.Fatalf("pin = %v", got)
@@ -627,5 +642,130 @@ func TestMemoryLookupSessionPinsExpire(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 	if got, _ := pins.LoadLookupSession(context.Background(), "scope"); got != nil {
 		t.Fatal("the pin outlived its idle timeout")
+	}
+}
+
+// A pin changes only from the session the writer read: a first pin when
+// there was none, a refresh of the same session, or a move off the one it
+// read. A lookup that read a session another lookup has since replaced, or
+// that raced another first pin, does not overwrite it.
+func TestMemoryLookupSessionPinsCompareAndSwap(t *testing.T) {
+	ctx := context.Background()
+	pins := raylinearc.NewMemoryPolicyLookupSessionPins()
+	a := raylinearc.PolicySession{ID: "sd-a", Token: "tok.a.secret"}
+	b := raylinearc.PolicySession{ID: "sd-b", Token: "tok.b.secret"}
+	c := raylinearc.PolicySession{ID: "sd-c", Token: "tok.c.secret"}
+	store := func(previous *raylinearc.PolicySession, session raylinearc.PolicySession) bool {
+		t.Helper()
+		pinned, err := pins.StoreLookupSession(ctx, "key", previous, session, time.Minute)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return pinned
+	}
+	if !store(nil, a) {
+		t.Fatal("the first pin was refused")
+	}
+	if store(nil, c) {
+		t.Fatal("a racing first pin replaced the scope's pin")
+	}
+	if !store(&a, a) {
+		t.Fatal("a refresh was refused")
+	}
+	if !store(&a, b) {
+		t.Fatal("a move off the pinned session was refused")
+	}
+	if store(&a, a) {
+		t.Fatal("a lookup finishing on a retired session restored it")
+	}
+	if store(&a, c) {
+		t.Fatal("a stale move replaced the newer pin")
+	}
+	if got, _ := pins.LoadLookupSession(ctx, "key"); got == nil || *got != b {
+		t.Fatalf("pin = %v, want the moved-to session", got)
+	}
+}
+
+// Pins are per policy backend: recipes on different Modal apps (or another
+// package) never read each other's session for one conversation.
+func TestLookupSessionPinKeyIsPerBackend(t *testing.T) {
+	scope := raylinearc.HashEpisodeID(lookupScopeTestScope)
+	app := &config.RaylineARCPolicyServiceConfig{BaseURL: "https://a.example", PackageSHA256: "p1"}
+	otherApp := &config.RaylineARCPolicyServiceConfig{BaseURL: "https://b.example", PackageSHA256: "p1"}
+	otherPackage := &config.RaylineARCPolicyServiceConfig{BaseURL: "https://a.example", PackageSHA256: "p2"}
+	key := raylineRoutesLookupSessionPinKey(app, scope)
+	if key == raylineRoutesLookupSessionPinKey(otherApp, scope) || key == raylineRoutesLookupSessionPinKey(otherPackage, scope) ||
+		key == scope || key != raylineRoutesLookupSessionPinKey(app, scope) {
+		t.Fatal("the pin key does not name the scope on one backend")
+	}
+}
+
+// lookupPinsStub answers every load with nothing and every store with
+// pinned/err; block holds a store until its context ends.
+type lookupPinsStub struct {
+	pinned bool
+	err    error
+	block  bool
+}
+
+func (stub *lookupPinsStub) LoadLookupSession(context.Context, string) (*raylinearc.PolicySession, error) {
+	return nil, nil
+}
+
+func (stub *lookupPinsStub) StoreLookupSession(
+	ctx context.Context, _ string, _ *raylinearc.PolicySession, _ raylinearc.PolicySession, _ time.Duration,
+) (bool, error) {
+	if stub.block {
+		<-ctx.Done()
+		return false, ctx.Err()
+	}
+	return stub.pinned, stub.err
+}
+
+func awaitTerminates(t *testing.T, front *fakeSessionedServer, want int) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		front.mu.Lock()
+		terminates := front.terminates
+		front.mu.Unlock()
+		if terminates == want {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("terminates = %d, want %d", terminates, want)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// A session a decided lookup started but could not pin -- another lookup
+// pinned first, or the write failed -- is ended rather than left holding a
+// container's slot until its idle timeout. The lookup's answer stands.
+func TestLookupSessionUnpinnedIsEnded(t *testing.T) {
+	for name, stub := range map[string]*lookupPinsStub{
+		"superseded":   {pinned: false},
+		"write failed": {err: errors.New("redis down")},
+	} {
+		t.Run(name, func(t *testing.T) {
+			fixture, front := newLookupSessionsFixture(t)
+			if _, err := scopedLookupWithPins(t, fixture, stub, lookupScopeTestScope); err != nil {
+				t.Fatalf("the lookup failed on its pin: %v", err)
+			}
+			awaitTerminates(t, front, 1)
+		})
+	}
+}
+
+// The pin write is bounded by the lookup's own context: a stalled store
+// does not hold the answer for the pin timeout.
+func TestLookupSessionPinWriteKeepsTheLookupDeadline(t *testing.T) {
+	fixture, _ := newLookupSessionsFixture(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	_, _ = scopedLookupWithPinsIn(ctx, t, fixture, &lookupPinsStub{block: true}, lookupScopeTestScope)
+	if elapsed := time.Since(started); elapsed >= raylineRoutesLookupSessionPinTimeout {
+		t.Fatalf("the pin write held the lookup %s, past its deadline", elapsed)
 	}
 }

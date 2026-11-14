@@ -40,7 +40,17 @@ func TestRedisEpisodeStoreLookupSessionPin(t *testing.T) {
 		t.Fatalf("absent pin: %v %v", pinned, err)
 	}
 	session := PolicySession{ID: "sd-1", Token: "tok.1.secret"}
-	requireARCNoError(t, store.StoreLookupSession(ctx, scope, session, 600*time.Second))
+	pinnedNow, err := store.StoreLookupSession(ctx, scope, nil, session, 600*time.Second)
+	if err != nil || !pinnedNow {
+		t.Fatalf("first pin: %v %v", pinnedNow, err)
+	}
+	other := PolicySession{ID: "sd-2", Token: "tok.2.secret"}
+	if raced, err := store.StoreLookupSession(ctx, scope, nil, other, 600*time.Second); err != nil || raced {
+		t.Fatalf("a racing first pin: %v %v", raced, err)
+	}
+	if refreshed, err := store.StoreLookupSession(ctx, scope, &session, session, 600*time.Second); err != nil || !refreshed {
+		t.Fatalf("refresh: %v %v", refreshed, err)
+	}
 	pinned, err := store.LoadLookupSession(ctx, scope)
 	if err != nil || pinned == nil || *pinned != session {
 		t.Fatalf("stored pin: %v %v", pinned, err)
@@ -53,7 +63,16 @@ func TestRedisEpisodeStoreLookupSessionPin(t *testing.T) {
 	if exists, _ := store.client.Exists(ctx, prefix+scope).Result(); exists != 0 {
 		t.Fatal("pinning a lookup session wrote episode state")
 	}
-	if err := store.StoreLookupSession(ctx, scope, PolicySession{}, time.Second); err == nil {
+	if moved, err := store.StoreLookupSession(ctx, scope, &session, other, 600*time.Second); err != nil || !moved {
+		t.Fatalf("move: %v %v", moved, err)
+	}
+	if stale, err := store.StoreLookupSession(ctx, scope, &session, session, 600*time.Second); err != nil || stale {
+		t.Fatalf("a retired session was restored: %v %v", stale, err)
+	}
+	if pinned, _ := store.LoadLookupSession(ctx, scope); pinned == nil || *pinned != other {
+		t.Fatalf("pin after the move = %v", pinned)
+	}
+	if _, err := store.StoreLookupSession(ctx, scope, nil, PolicySession{}, time.Second); err == nil {
 		t.Fatal("an invalid session was pinned")
 	}
 }

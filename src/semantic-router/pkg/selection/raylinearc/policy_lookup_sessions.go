@@ -33,29 +33,46 @@ import (
 // sooner would move it off a container that still does.
 const PolicyLookupSessionIdleTimeout = 600 * time.Second
 
-// PolicyLookupSessionPins keeps, per lookup scope, the Modal session its
-// lookups are decided on (a sessioned policy Server), so each lookup on a
-// conversation reaches the container that holds the scope's warm encoder
-// session. It is not episode state: a lookup scope has no episode, and the
-// pin holds nothing but the session. The token is a credential, as the one
-// the episode state persists is; it is never logged.
+// PolicyLookupSessionPins keeps, per lookup scope and policy backend, the
+// Modal session its lookups are decided on (a sessioned policy Server), so
+// each lookup on a conversation reaches the container that holds the scope's
+// warm encoder session. It is not episode state: a lookup scope has no
+// episode, and the pin holds nothing but the session. The token is a
+// credential, as the one the episode state persists is; it is never logged.
+// pinKey is a 64-hex hash naming the scope on one backend.
 type PolicyLookupSessionPins interface {
-	// LoadLookupSession answers the scope's pinned session, or nil.
-	LoadLookupSession(ctx context.Context, scopeHash string) (*PolicySession, error)
-	// StoreLookupSession pins session for the scope until idle from now.
-	StoreLookupSession(ctx context.Context, scopeHash string, session PolicySession, idle time.Duration) error
+	// LoadLookupSession answers the pinned session, or nil.
+	LoadLookupSession(ctx context.Context, pinKey string) (*PolicySession, error)
+	// StoreLookupSession pins session until idle from now, but only when the
+	// pin is still previous (nil: no pin) or already session (a refresh).
+	// It reports whether it pinned: false means a concurrent lookup pinned
+	// another session first, and this one's must not replace it.
+	StoreLookupSession(ctx context.Context, pinKey string, previous *PolicySession, session PolicySession, idle time.Duration) (bool, error)
 }
 
-func (store *RedisEpisodeStore) lookupSessionKey(scopeHash string) string {
-	return store.keyPrefix + scopeHash + ":lookup-session"
+// lookupPinReplaces reports whether a pin holding current may be set to
+// session by a lookup that read previous.
+func lookupPinReplaces(current, previous *PolicySession, session PolicySession) bool {
+	switch {
+	case current == nil:
+		return previous == nil
+	case *current == session:
+		return true
+	default:
+		return previous != nil && *current == *previous
+	}
 }
 
-// LoadLookupSession reads the scope's pin, shared by every cell instance.
-func (store *RedisEpisodeStore) LoadLookupSession(ctx context.Context, scopeHash string) (*PolicySession, error) {
-	if store == nil || store.client == nil || !validEpisodeIDHash(scopeHash) {
+func (store *RedisEpisodeStore) lookupSessionKey(pinKey string) string {
+	return store.keyPrefix + pinKey + ":lookup-session"
+}
+
+// LoadLookupSession reads the pin, shared by every cell instance.
+func (store *RedisEpisodeStore) LoadLookupSession(ctx context.Context, pinKey string) (*PolicySession, error) {
+	if store == nil || store.client == nil || !validEpisodeIDHash(pinKey) {
 		return nil, errors.New("invalid ARC Redis lookup session request")
 	}
-	fields, err := store.client.HMGet(ctx, store.lookupSessionKey(scopeHash), "id", "token").Result()
+	fields, err := store.client.HMGet(ctx, store.lookupSessionKey(pinKey), "id", "token").Result()
 	if errors.Is(err, redis.Nil) {
 		return nil, nil
 	}
@@ -74,25 +91,50 @@ func (store *RedisEpisodeStore) LoadLookupSession(ctx context.Context, scopeHash
 	return &session, nil
 }
 
-// StoreLookupSession writes the scope's pin with its idle expiry.
+// redisLookupSessionStoreScript sets the pin (id, token) with its expiry
+// only when it is absent and the writer read none, already the new session,
+// or still the session the writer read (ARGV[1] "1" with ARGV[2], ARGV[3]).
+var redisLookupSessionStoreScript = redis.NewScript(`
+local id = redis.call("HGET", KEYS[1], "id")
+local token = redis.call("HGET", KEYS[1], "token")
+local allowed = false
+if not id then
+  allowed = ARGV[1] == "0"
+elseif id == ARGV[4] and token == ARGV[5] then
+  allowed = true
+else
+  allowed = ARGV[1] == "1" and id == ARGV[2] and token == ARGV[3]
+end
+if not allowed then
+  return 0
+end
+redis.call("HSET", KEYS[1], "id", ARGV[4], "token", ARGV[5])
+redis.call("PEXPIRE", KEYS[1], ARGV[6])
+return 1
+`)
+
+// StoreLookupSession writes the pin with its idle expiry, conditionally.
 func (store *RedisEpisodeStore) StoreLookupSession(
 	ctx context.Context,
-	scopeHash string,
+	pinKey string,
+	previous *PolicySession,
 	session PolicySession,
 	idle time.Duration,
-) error {
-	if store == nil || store.client == nil || !validEpisodeIDHash(scopeHash) ||
+) (bool, error) {
+	if store == nil || store.client == nil || !validEpisodeIDHash(pinKey) ||
 		ValidatePolicySession(session) != nil || idle <= 0 {
-		return errors.New("invalid ARC Redis lookup session write")
+		return false, errors.New("invalid ARC Redis lookup session write")
 	}
-	key := store.lookupSessionKey(scopeHash)
-	pipe := store.client.TxPipeline()
-	pipe.HSet(ctx, key, "id", session.ID, "token", session.Token)
-	pipe.PExpire(ctx, key, idle)
-	if _, err := pipe.Exec(ctx); err != nil {
-		return boundedRedisEpisodeError("lookup session write", err)
+	read, previousID, previousToken := "0", "", ""
+	if previous != nil {
+		read, previousID, previousToken = "1", previous.ID, previous.Token
 	}
-	return nil
+	pinned, err := redisLookupSessionStoreScript.Run(ctx, store.client, []string{store.lookupSessionKey(pinKey)},
+		read, previousID, previousToken, session.ID, session.Token, idle.Milliseconds()).Int()
+	if err != nil {
+		return false, boundedRedisEpisodeError("lookup session write", err)
+	}
+	return pinned == 1, nil
 }
 
 // MemoryPolicyLookupSessionPins is a process-local PolicyLookupSessionPins,
@@ -115,40 +157,48 @@ func NewMemoryPolicyLookupSessionPins() *MemoryPolicyLookupSessionPins {
 }
 
 // LoadLookupSession answers the scope's live pin, or nil.
-func (pins *MemoryPolicyLookupSessionPins) LoadLookupSession(_ context.Context, scopeHash string) (*PolicySession, error) {
+func (pins *MemoryPolicyLookupSessionPins) LoadLookupSession(_ context.Context, pinKey string) (*PolicySession, error) {
 	pins.mu.Lock()
 	defer pins.mu.Unlock()
-	pin, found := pins.entries[scopeHash]
+	pin, found := pins.entries[pinKey]
 	if !found {
 		return nil, nil
 	}
 	if !pins.now().Before(pin.expiry) {
-		delete(pins.entries, scopeHash)
+		delete(pins.entries, pinKey)
 		return nil, nil
 	}
 	session := pin.session
 	return &session, nil
 }
 
-// StoreLookupSession pins session for the scope; expired pins are dropped
+// StoreLookupSession pins session, conditionally; expired pins are dropped
 // on the way, so the table is bounded by the scopes live within one idle.
 func (pins *MemoryPolicyLookupSessionPins) StoreLookupSession(
 	_ context.Context,
-	scopeHash string,
+	pinKey string,
+	previous *PolicySession,
 	session PolicySession,
 	idle time.Duration,
-) error {
+) (bool, error) {
 	if ValidatePolicySession(session) != nil || idle <= 0 {
-		return errors.New("invalid ARC lookup session write")
+		return false, errors.New("invalid ARC lookup session write")
 	}
 	pins.mu.Lock()
 	defer pins.mu.Unlock()
 	now := pins.now()
-	for scope, pin := range pins.entries {
+	for key, pin := range pins.entries {
 		if !now.Before(pin.expiry) {
-			delete(pins.entries, scope)
+			delete(pins.entries, key)
 		}
 	}
-	pins.entries[scopeHash] = memoryLookupSessionPin{session: session, expiry: now.Add(idle)}
-	return nil
+	var current *PolicySession
+	if pin, found := pins.entries[pinKey]; found {
+		current = &pin.session
+	}
+	if !lookupPinReplaces(current, previous, session) {
+		return false, nil
+	}
+	pins.entries[pinKey] = memoryLookupSessionPin{session: session, expiry: now.Add(idle)}
+	return true, nil
 }

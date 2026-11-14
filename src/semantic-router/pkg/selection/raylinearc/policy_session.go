@@ -408,6 +408,15 @@ func (backend *PolicySessionBackend) BindLookup(pinned *PolicySession) *PolicySe
 	}
 }
 
+// Pinned is the session BindLookup was given, the one the lookup read from
+// its scope's pin (nil for none).
+func (binding *PolicySessionBinding) Pinned() *PolicySession {
+	if binding == nil {
+		return nil
+	}
+	return clonePolicySession(binding.persisted)
+}
+
 // LookupIdleTimeout is how long a lookup scope's pin lives after its last
 // lookup: the idle timeout BindLookup starts its sessions with.
 func (backend *PolicySessionBackend) LookupIdleTimeout() time.Duration {
