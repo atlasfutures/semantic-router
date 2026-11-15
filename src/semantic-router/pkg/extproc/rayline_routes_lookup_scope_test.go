@@ -1079,3 +1079,96 @@ func TestScopedLookupBusyPastTheDeadlineIsTheDeadline(t *testing.T) {
 		t.Fatalf("status %d, want 504", code)
 	}
 }
+
+// failingDecider fails every decide with err once delay has passed.
+type failingDecider struct {
+	delay time.Duration
+	err   error
+	calls int
+}
+
+func (decider *failingDecider) Decide(context.Context, raylinearc.PolicyDecisionRequest) (*raylinearc.PolicyDecisionResponse, error) {
+	decider.calls++
+	time.Sleep(decider.delay)
+	return nil, decider.err
+}
+
+// Any failure that lands at or past a lookup's deadline -- a session start
+// or transport error from a call that began in time, or an admission refusal
+// -- is the lookup deadline, wrapping its cause; one before it keeps its own
+// class.
+func TestLookupFailuresPastTheDeadlineAreTheDeadline(t *testing.T) {
+	admit := func() (func(), error) { return func() {}, nil }
+	start := &raylinearc.PolicyServiceError{Class: "session_start"}
+	late := &failingDecider{delay: 80 * time.Millisecond, err: start}
+	_, err := decidePolicyThroughBusyUntil(context.Background(), late, raylinearc.PolicyDecisionRequest{},
+		time.Now().Add(40*time.Millisecond), true, admit, nil)
+	if !errors.Is(err, raylinearc.ErrPolicyLookupDeadline) || !errors.Is(err, start) {
+		t.Fatalf("late failure = %v, want the deadline wrapping session_start", err)
+	}
+	early := &failingDecider{err: start}
+	if _, err := decidePolicyThroughBusyUntil(context.Background(), early, raylinearc.PolicyDecisionRequest{},
+		time.Now().Add(time.Second), true, admit, nil); errors.Is(err, raylinearc.ErrPolicyLookupDeadline) || !errors.Is(err, start) {
+		t.Fatalf("early failure = %v, want session_start alone", err)
+	}
+	refused := func() (func(), error) {
+		time.Sleep(60 * time.Millisecond)
+		return nil, errors.New("admission full")
+	}
+	if _, err := decidePolicyThroughBusyUntil(context.Background(), early, raylinearc.PolicyDecisionRequest{},
+		time.Now().Add(30*time.Millisecond), true, refused, nil); !errors.Is(err, raylinearc.ErrPolicyLookupDeadline) {
+		t.Fatalf("admission refused past the deadline = %v, want the deadline", err)
+	}
+	// Without a caller's deadline nothing changes: the failure is its own.
+	if _, err := decidePolicyThroughBusy(context.Background(), late, raylinearc.PolicyDecisionRequest{}, 0, admit, nil); errors.Is(err, raylinearc.ErrPolicyLookupDeadline) {
+		t.Fatalf("an unscoped failure became a lookup deadline: %v", err)
+	}
+}
+
+// Admission or preparation that uses up the time left starts no decide, and
+// frees its admission slot.
+func TestLookupDeadlineRecheckedBeforeDispatch(t *testing.T) {
+	decider := &busyDecider{}
+	released := 0
+	admit := func() (func(), error) { return func() { released++ }, nil }
+	prepare := func(*raylinearc.PolicyDecisionRequest) { time.Sleep(60 * time.Millisecond) }
+	_, err := decidePolicyThroughBusyUntil(context.Background(), decider, raylinearc.PolicyDecisionRequest{},
+		time.Now().Add(30*time.Millisecond), true, admit, prepare)
+	if !errors.Is(err, raylinearc.ErrPolicyLookupDeadline) || len(decider.calls) != 0 || released != 1 {
+		t.Fatalf("err = %v, %d decides, %d releases: want the deadline, none, one", err, len(decider.calls), released)
+	}
+}
+
+// wrappedEpisodeStore wraps a store as the readiness gate's unready wrapper does.
+type wrappedEpisodeStore struct{ raylinearc.EpisodeStore }
+
+func (store wrappedEpisodeStore) UnwrapEpisodeStore() raylinearc.EpisodeStore {
+	return store.EpisodeStore
+}
+
+// sharedPinsStore is an episode store that shares its lookup pins, as the
+// Redis store does.
+type sharedPinsStore struct {
+	raylinearc.EpisodeStore
+	*raylinearc.MemoryPolicyLookupSessionPins
+}
+
+// A wrapped store is followed to the store beneath before the pin backend is
+// chosen: a relaxed cell whose Redis was unready at startup still shares its
+// pins once Redis recovers.
+func TestLookupSessionPinsFollowAWrappedStore(t *testing.T) {
+	memory, err := raylinearc.NewMemoryEpisodeStore(raylinearc.MemoryEpisodeStoreConfig{MaxEpisodes: 4, IdleTTL: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	shared := sharedPinsStore{EpisodeStore: memory, MemoryPolicyLookupSessionPins: raylinearc.NewMemoryPolicyLookupSessionPins()}
+	if got := raylineRoutesLookupSessionPinsFor(wrappedEpisodeStore{wrappedEpisodeStore{shared}}); got != raylinearc.PolicyLookupSessionPins(shared) {
+		t.Fatal("a wrapped shared store fell back to process-local pins")
+	}
+	if got := raylineRoutesLookupSessionPinsFor(wrappedEpisodeStore{memory}); got != raylinearc.PolicyLookupSessionPins(raylineRoutesLookupSessionPinsLocal) {
+		t.Fatal("a store without shared pins did not use process-local pins")
+	}
+	if got := raylineRoutesLookupSessionPinsFor(nil); got != raylinearc.PolicyLookupSessionPins(raylineRoutesLookupSessionPinsLocal) {
+		t.Fatal("no store did not use process-local pins")
+	}
+}

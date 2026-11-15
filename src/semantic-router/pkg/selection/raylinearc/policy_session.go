@@ -539,6 +539,11 @@ func (binding *PolicySessionBinding) Decide(
 		defer cancel()
 	}
 	if startErr := binding.moveOff(moveCtx); startErr != nil {
+		// A lookup whose deadline passed before the move fails as out of
+		// time, not on the first answer the move would have replaced.
+		if errors.Is(startErr, ErrPolicyLookupDeadline) {
+			return nil, startErr
+		}
 		if stale || transport {
 			// The turn fails (or is refused) on its first answer, as it would
 			// have without the move.

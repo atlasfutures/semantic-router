@@ -24,6 +24,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"slices"
 	"strconv"
 	"strings"
@@ -1709,22 +1710,45 @@ func decidePolicyThroughBusyUntil(
 	backoff := policyBusyRetryFirst
 	var response *raylinearc.PolicyDecisionResponse
 	var err error
+	// past reports, for a wait bounded by a caller's deadline, that the
+	// deadline has passed.
+	past := func() bool { return lastTry && !time.Now().Before(deadline) }
+	// expired is a failure at or past the caller's deadline, whatever its
+	// cause (a session start, a transport error, an admission refusal): the
+	// lookup ran out of time, and answers as one that did.
+	expired := func(cause error) error {
+		if cause == nil || errors.Is(cause, raylinearc.ErrPolicyLookupDeadline) {
+			return raylinearc.ErrPolicyLookupDeadline
+		}
+		return fmt.Errorf("%w: %w", raylinearc.ErrPolicyLookupDeadline, cause)
+	}
 	for {
 		// A wait bounded by a caller's deadline starts no call at or past
 		// it, the first included: the caller is no longer waiting, and the
 		// context may outlive it (a detached lookup).
-		if lastTry && !time.Now().Before(deadline) {
-			return nil, raylinearc.ErrPolicyLookupDeadline
+		if past() {
+			return nil, expired(nil)
 		}
 		release, admitErr := admit()
 		if admitErr != nil {
+			if past() {
+				return nil, expired(admitErr)
+			}
 			return nil, &policyAdmissionError{err: admitErr}
 		}
 		if prepare != nil {
 			prepare(&request)
 		}
+		// Admission and preparation may have used the time left.
+		if past() {
+			release()
+			return nil, expired(nil)
+		}
 		response, err = client.Decide(ctx, request)
 		release()
+		if err != nil && past() {
+			return nil, expired(err)
+		}
 		var failure *raylinearc.PolicyServiceError
 		if err == nil || !errors.As(err, &failure) || failure.Class != "session_busy" {
 			return response, err
@@ -1743,6 +1767,9 @@ func decidePolicyThroughBusyUntil(
 		select {
 		case <-ctx.Done():
 			timer.Stop()
+			if past() {
+				return nil, expired(err)
+			}
 			return response, err
 		case <-timer.C:
 		}

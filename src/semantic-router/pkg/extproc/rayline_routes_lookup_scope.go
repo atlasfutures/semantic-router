@@ -198,9 +198,22 @@ var raylineRoutesLookupSessionPinsLocal = raylinearc.NewMemoryPolicyLookupSessio
 // is pinned: beside the cell's episodes when its store is shared (Redis), so
 // every router instance routes a conversation's lookups to one container;
 // in this process otherwise.
+//
+// A wrapped store (a relaxed cell's store while Redis was unready at
+// startup) is followed to the store beneath, as the lookup admission gate
+// does, so a recovered Redis store still shares its pins.
 func raylineRoutesLookupSessionPinsFor(store raylinearc.EpisodeStore) raylinearc.PolicyLookupSessionPins {
-	if shared, ok := store.(raylinearc.PolicyLookupSessionPins); ok {
-		return shared
+	for store != nil {
+		if shared, ok := store.(raylinearc.PolicyLookupSessionPins); ok {
+			return shared
+		}
+		wrapped, ok := store.(interface {
+			UnwrapEpisodeStore() raylinearc.EpisodeStore
+		})
+		if !ok {
+			break
+		}
+		store = wrapped.UnwrapEpisodeStore()
 	}
 	return raylineRoutesLookupSessionPinsLocal
 }
