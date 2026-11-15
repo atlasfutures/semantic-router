@@ -243,9 +243,8 @@ func bindPolicyLookupSession(
 // it did not pin is ended, so it does not hold a container's slot until its
 // idle timeout; the session it read is left to whoever pinned past it.
 //
-// It runs off the answer's path: the episode store's Redis client does not
-// bound a call by its context, so a stalled write would otherwise hold an
-// already-decided answer past the lookup deadline.
+// It runs off the answer's path: an already-decided answer never waits on
+// the pin store, whose calls are bounded to raylineRoutesLookupSessionPinTimeout.
 func pinPolicyLookupSession(
 	ctx context.Context,
 	arcContext *selection.RaylineARCSelectionContext,

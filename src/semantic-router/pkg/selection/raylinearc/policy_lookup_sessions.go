@@ -63,6 +63,35 @@ func lookupPinReplaces(current, previous *PolicySession, session PolicySession) 
 	}
 }
 
+// lookupPinClient is the client the lookup session pins use, on the store's
+// Redis with its address, credentials and TLS. It is not the store's client:
+// that one is configured for the episode lease and does not apply a call's
+// context deadline to socket I/O, so a stalled Redis would hold a pin call
+// for its socket timeout (seconds) past the pin's own bound. Here each call
+// ends with its context, and nothing is retried (a retried write could
+// replay one whose reply was lost; the caller reads the pin back instead).
+// Made on the first pin call, so a cell that never pins opens no pool.
+func (store *RedisEpisodeStore) lookupPinClient() (*redis.Client, error) {
+	store.pinsMu.Lock()
+	defer store.pinsMu.Unlock()
+	if store.pinsClosed {
+		return nil, redis.ErrClosed
+	}
+	if store.pins == nil {
+		options := *store.client.Options()
+		options.ContextTimeoutEnabled = true
+		options.MaxRetries = -1
+		options.PoolSize = lookupPinPoolSize
+		options.MinIdleConns = 0
+		store.pins = redis.NewClient(&options)
+	}
+	return store.pins, nil
+}
+
+// lookupPinPoolSize bounds the pins' connections: one read and one write
+// per lookup, each bounded to a second.
+const lookupPinPoolSize = 8
+
 func (store *RedisEpisodeStore) lookupSessionKey(pinKey string) string {
 	return store.keyPrefix + pinKey + ":lookup-session"
 }
@@ -72,7 +101,11 @@ func (store *RedisEpisodeStore) LoadLookupSession(ctx context.Context, pinKey st
 	if store == nil || store.client == nil || !validEpisodeIDHash(pinKey) {
 		return nil, errors.New("invalid ARC Redis lookup session request")
 	}
-	fields, err := store.client.HMGet(ctx, store.lookupSessionKey(pinKey), "id", "token").Result()
+	client, err := store.lookupPinClient()
+	if err != nil {
+		return nil, boundedRedisEpisodeError("lookup session read", err)
+	}
+	fields, err := client.HMGet(ctx, store.lookupSessionKey(pinKey), "id", "token").Result()
 	if errors.Is(err, redis.Nil) {
 		return nil, nil
 	}
@@ -129,7 +162,11 @@ func (store *RedisEpisodeStore) StoreLookupSession(
 	if previous != nil {
 		read, previousID, previousToken = "1", previous.ID, previous.Token
 	}
-	pinned, err := redisLookupSessionStoreScript.Run(ctx, store.client, []string{store.lookupSessionKey(pinKey)},
+	client, err := store.lookupPinClient()
+	if err != nil {
+		return false, boundedRedisEpisodeError("lookup session write", err)
+	}
+	pinned, err := redisLookupSessionStoreScript.Run(ctx, client, []string{store.lookupSessionKey(pinKey)},
 		read, previousID, previousToken, session.ID, session.Token, idle.Milliseconds()).Int()
 	if err != nil {
 		return false, boundedRedisEpisodeError("lookup session write", err)

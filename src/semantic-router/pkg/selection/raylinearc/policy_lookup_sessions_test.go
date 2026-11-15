@@ -18,6 +18,7 @@ package raylinearc
 
 import (
 	"context"
+	"net"
 	"os"
 	"testing"
 	"time"
@@ -74,5 +75,64 @@ func TestRedisEpisodeStoreLookupSessionPin(t *testing.T) {
 	}
 	if _, err := store.StoreLookupSession(ctx, scope, nil, PolicySession{}, time.Second); err == nil {
 		t.Fatal("an invalid session was pinned")
+	}
+}
+
+// A pin call ends with its own context on a Redis that accepts and never
+// answers: the store's client would hold it for its socket timeout
+// (seconds). The episode store's own client is left as it was.
+func TestRedisLookupSessionPinHonoursItsDeadline(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			defer conn.Close()
+		}
+	}()
+	store, err := NewRedisEpisodeStore(RedisEpisodeStoreConfig{
+		Address: listener.Addr().String(), KeyPrefix: "test:", LeaseTTL: time.Second, IdleTTL: time.Minute,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	key := HashEpisodeID("lookup-session:scope")
+	session := PolicySession{ID: "sd-1", Token: "tok.1.secret"}
+	for name, call := range map[string]func(context.Context) error{
+		"read": func(ctx context.Context) error {
+			_, err := store.LoadLookupSession(ctx, key)
+			return err
+		},
+		"write": func(ctx context.Context) error {
+			_, err := store.StoreLookupSession(ctx, key, nil, session, time.Minute)
+			return err
+		},
+	} {
+		ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+		started := time.Now()
+		err := call(ctx)
+		cancel()
+		if err == nil {
+			t.Fatalf("%s: a silent Redis answered", name)
+		}
+		if elapsed := time.Since(started); elapsed > time.Second {
+			t.Fatalf("%s: the pin call took %s past its 150ms deadline", name, elapsed)
+		}
+	}
+	if store.client.Options().ContextTimeoutEnabled {
+		t.Fatal("the episode store's own client was changed")
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.LoadLookupSession(context.Background(), key); err == nil {
+		t.Fatal("a closed store's pin client answered")
 	}
 }

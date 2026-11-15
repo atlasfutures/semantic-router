@@ -24,6 +24,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -138,6 +139,11 @@ type RedisEpisodeStore struct {
 	leaseTTL  time.Duration
 	idleTTL   time.Duration
 	now       func() time.Time
+	// pins is the lookup session pins' own client (lookupPinClient),
+	// made on the first pin call and closed with the store.
+	pinsMu     sync.Mutex
+	pins       *redis.Client
+	pinsClosed bool
 }
 
 func NewRedisEpisodeStore(
@@ -339,6 +345,13 @@ func (store *RedisEpisodeStore) Ready(ctx context.Context) error {
 func (store *RedisEpisodeStore) Close() error {
 	if store == nil || store.client == nil {
 		return nil
+	}
+	store.pinsMu.Lock()
+	pins := store.pins
+	store.pins, store.pinsClosed = nil, true
+	store.pinsMu.Unlock()
+	if pins != nil {
+		_ = pins.Close()
 	}
 	return store.client.Close()
 }

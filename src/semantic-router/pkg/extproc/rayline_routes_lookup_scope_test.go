@@ -913,8 +913,8 @@ func TestLookupSessionLandedPinIsKept(t *testing.T) {
 	}
 }
 
-// The pin is written off the answer's path: a stalled store (the episode
-// store's Redis client ignores context deadlines) never holds the answer.
+// The pin is written off the answer's path: a stalled store never holds the
+// answer.
 func TestLookupSessionPinWriteKeepsTheLookupDeadline(t *testing.T) {
 	fixture, _ := newLookupSessionsFixture(t)
 	stub := &lookupPinsStub{block: true, pinned: true, release: make(chan struct{})}
