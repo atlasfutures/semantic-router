@@ -32,6 +32,10 @@ type responsesStreamDecoder struct {
 	// that was the last byte read: the LF of that CRLF may still arrive, as
 	// the next read's first frame, and is the one byte allowed after it.
 	doneCRLFOpen bool
+	// heldEvents are normalized events that go out before the next emitted
+	// one: a reasoning item's start until the item shows what it is
+	// (holdResponsesItemStart), and the signature its done event carries.
+	heldEvents []llmprotocol.Event
 }
 
 type responsesOutputKind string

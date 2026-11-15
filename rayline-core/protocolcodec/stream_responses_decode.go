@@ -183,14 +183,56 @@ func (decoder *responsesStreamDecoder) applyUnknownResponsesEvent(event *llmprot
 func (decoder *responsesStreamDecoder) emitResponsesEvent(
 	event llmprotocol.Event,
 ) ([]llmprotocol.Event, llmprotocol.Diagnostics, error) {
-	if event.UpstreamServiceTier == "" && event.Type != llmprotocol.EventKeepalive {
-		event.UpstreamServiceTier = decoder.upstreamServiceTier
-	}
-	normalized, err := decoder.next(event)
+	normalized, err := decoder.normalizeResponsesEvent(event)
 	if err != nil {
 		return nil, nil, err
 	}
-	return []llmprotocol.Event{normalized}, nil, nil
+	return append(decoder.releaseHeldEvents(), normalized), nil, nil
+}
+
+// normalizeResponsesEvent runs an event through the stream state without
+// emitting it.
+func (decoder *responsesStreamDecoder) normalizeResponsesEvent(event llmprotocol.Event) (llmprotocol.Event, error) {
+	if event.UpstreamServiceTier == "" && event.Type != llmprotocol.EventKeepalive {
+		event.UpstreamServiceTier = decoder.upstreamServiceTier
+	}
+	return decoder.next(event)
+}
+
+// holdResponsesItemStart keeps a reasoning item's start until the item shows
+// what it is: its first content event, or its done event. OpenRouter streams
+// one of Claude's redacted_thinking blocks as a reasoning item with no
+// content whose done event carries the block's data as encrypted_content
+// (responsesAnthropicReasoning), and that item is the carried block from its
+// start, as an Anthropic stream's is, or a Messages client would already
+// hold an open thinking block for it. The state has seen the start, so the
+// stream's bookkeeping is unchanged; only its emission waits. Items are
+// sequential, so the held start goes out before the next event of any kind.
+func (decoder *responsesStreamDecoder) holdResponsesItemStart(event llmprotocol.Event) ([]llmprotocol.Event, error) {
+	normalized, err := decoder.normalizeResponsesEvent(event)
+	if err != nil {
+		return nil, err
+	}
+	released := decoder.releaseHeldEvents()
+	decoder.heldEvents = append(decoder.heldEvents, normalized)
+	return released, nil
+}
+
+func (decoder *responsesStreamDecoder) releaseHeldEvents() []llmprotocol.Event {
+	held := decoder.heldEvents
+	decoder.heldEvents = nil
+	return held
+}
+
+// heldItemStart is the held start of an item that has shown nothing yet.
+func (decoder *responsesStreamDecoder) heldItemStart(itemIndex int) *llmprotocol.Event {
+	for index := range decoder.heldEvents {
+		held := &decoder.heldEvents[index]
+		if held.Type == llmprotocol.EventOutputItemStarted && held.ItemIndex == itemIndex {
+			return held
+		}
+	}
+	return nil
 }
 
 func (decoder *responsesStreamDecoder) applyResponseAnnotation(
@@ -229,7 +271,12 @@ func (decoder *responsesStreamDecoder) applyCompletedResponseItem(
 	if len(wire.Item) == 0 {
 		return nil
 	}
-	item, err := decoder.validateCompletedResponseItem(wire)
+	// The members a Claude reasoning item carries beyond the Responses
+	// contract are split off as on the buffered path (decodeResponsesOutput):
+	// the ordinary decoder would prune them as unknown. The terminal output
+	// is checked against the item as the provider sent it.
+	body, anthropic, _ := splitResponsesAnthropicReasoning(wire.Item)
+	item, err := decoder.validateCompletedResponseItem(wire, body)
 	if err != nil {
 		return err
 	}
@@ -237,16 +284,64 @@ func (decoder *responsesStreamDecoder) applyCompletedResponseItem(
 	if err := decoder.applyCompletedResponseItemKind(event, wire, item); err != nil {
 		return err
 	}
+	if err := decoder.applyResponsesAnthropicReasoning(event, anthropic); err != nil {
+		return err
+	}
 	decoder.completedOutput[responsesWireOutputIndex(wire)] = append(json.RawMessage(nil), wire.Item...)
 	return nil
 }
 
-func (decoder *responsesStreamDecoder) validateCompletedResponseItem(wire responsesEventWire) (responsesItemWire, error) {
-	item, err := decodeResponsesItemWire(wire.Item, decoder.policy, true)
+// applyResponsesAnthropicReasoning is the streaming twin of
+// responsesAnthropicReasoning.applyTo. The signature goes out, before the
+// completion, as the signature-only reasoning delta an Anthropic stream's
+// signature_delta decodes to, on the item's reasoning_text content, so every
+// encoder carries it as it carries Claude's own: a Responses client gets it
+// with the format on output_item.done, a Chat client in reasoning_details, a
+// Messages client as a signature_delta. Opaque reasoning makes the item the
+// carried redacted_thinking block, start and completion, as the Anthropic
+// decoder emits one; its start is still held (holdResponsesItemStart), since
+// OpenRouter streams nothing for such an item before its done event. A
+// reasoning item that streamed content, or that is signed, and then names
+// encrypted_content has no streaming shape: one Anthropic block is one item.
+func (decoder *responsesStreamDecoder) applyResponsesAnthropicReasoning(
+	event *llmprotocol.Event, members responsesAnthropicReasoning,
+) error {
+	if members.redacted != "" {
+		held := decoder.heldItemStart(event.ItemIndex)
+		if held == nil || members.signature != "" {
+			return invalidProviderResponse(
+				"stream_reasoning_item_shape",
+				"Responses reasoning item with encrypted_content must carry no reasoning content or signature",
+			)
+		}
+		started, completed := redactedThinkingContent(members.redacted), redactedThinkingContent(members.redacted)
+		held.Content, event.Content = &started, &completed
+		return nil
+	}
+	if members.signature == "" {
+		return nil
+	}
+	key := responsesWireContentKey{item: event.ItemIndex, scope: responsesContentReasoningText}
+	signature, err := decoder.normalizeResponsesEvent(llmprotocol.Event{
+		Type: llmprotocol.EventReasoningDelta, ResponseID: event.ResponseID, Model: event.Model,
+		ItemIndex: event.ItemIndex, ItemID: event.ItemID, ContentIndex: decoder.neutralContentIndex(key),
+		Content: &llmprotocol.Content{
+			Kind: llmprotocol.ContentReasoning, Signature: members.signature, Reasoning: llmprotocol.ReasoningScopeText,
+		},
+	})
+	if err != nil {
+		return err
+	}
+	decoder.heldEvents = append(decoder.heldEvents, signature)
+	return nil
+}
+
+func (decoder *responsesStreamDecoder) validateCompletedResponseItem(wire responsesEventWire, body json.RawMessage) (responsesItemWire, error) {
+	item, err := decodeResponsesItemWire(body, decoder.policy, true)
 	if err != nil {
 		return responsesItemWire{}, err
 	}
-	if err := validateResponsesOutputItemResource(wire.Item, item, decoder.policy.Limits); err != nil {
+	if err := validateResponsesOutputItemResource(body, item, decoder.policy.Limits); err != nil {
 		return responsesItemWire{}, err
 	}
 	if item.Type == "image_generation_call" && item.Status != "completed" && item.Status != "failed" {
@@ -358,6 +453,9 @@ func (decoder *responsesStreamDecoder) Finalize(reason error) ([]llmprotocol.Eve
 	if frameErr != nil {
 		return events, diagnostics, frameErr
 	}
+	// A start still held when the stream is cut reaches the encoder before
+	// the state ends the item it opened.
+	events = append(events, decoder.releaseHeldEvents()...)
 	terminalEvents, err := decoder.finalize(reason)
 	// A tier stated on a lifecycle event that emitted nothing still reaches
 	// a cut turn.

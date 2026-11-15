@@ -51,6 +51,10 @@ func (decoder *responsesStreamDecoder) decodeResponsesContentEvent(
 	if err != nil {
 		return true, nil, nil, err
 	}
+	if wire.Type == "response.output_item.added" && event.Content != nil && event.Content.Kind == llmprotocol.ContentReasoning {
+		events, err := decoder.holdResponsesItemStart(*event)
+		return true, events, nil, err
+	}
 	events, diagnostics, err := decoder.emitResponsesEvent(*event)
 	return true, events, diagnostics, err
 }
@@ -489,7 +493,8 @@ func (decoder *responsesStreamDecoder) finishResponsesContentPart(
 }
 
 func (decoder *responsesStreamDecoder) validateCompletedResponsesItemLifecycle(wire responsesEventWire) error {
-	item, err := decodeResponsesItemWire(wire.Item, decoder.policy, true)
+	body, _, _ := splitResponsesAnthropicReasoning(wire.Item)
+	item, err := decodeResponsesItemWire(body, decoder.policy, true)
 	if err != nil {
 		return err
 	}

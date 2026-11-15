@@ -3,6 +3,7 @@ package protocolcodec
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"regexp"
 	"strconv"
@@ -175,5 +176,273 @@ func TestResponsesContentPartMustMatchItsItem(t *testing.T) {
 				t.Fatalf("got %v, want stream_item_kind_mismatch", err)
 			}
 		})
+	}
+}
+
+// The fixture's reasoning item is signed, as a Claude thinking block is, and
+// its done event names the signature and format OpenRouter gives Claude's
+// thinking over Responses (responsesAnthropicReasoning).
+const openRouterClaudeReasoningSignature = "RXJmaXh0dXJlLXNpZ25hdHVyZS1ub3QtYS1yZWFsLW9uZQ=="
+
+const openRouterClaudeReasoningItem = `{"id":"rs_fixture_1","type":"reasoning","status":"completed",` +
+	`"content":[{"type":"reasoning_text","text":"` + openRouterClaudeReasoningText + `"}],"summary":[],` +
+	`"signature":"` + openRouterClaudeReasoningSignature + `","format":"anthropic-claude-v1"}`
+
+// openRouterClaudeRedactedStream is the fixture with its thinking redacted: the
+// reasoning item streams no content, and its done event carries the block's
+// data as encrypted_content under the same format, the shape OpenRouter's
+// buffered /responses gives a redacted_thinking block. No stream of one has
+// been captured; this is the streamed form of that item.
+func openRouterClaudeRedactedStream(t *testing.T) string {
+	t.Helper()
+	body := string(loadProviderFixture(t, openRouterClaudeReasoningStream))
+	for range 7 { // content_part.added through content_part.done, events 3 to 9
+		body = dropResponsesStreamEvent(t, body, 3)
+	}
+	redacted := `{"id":"rs_fixture_1","type":"reasoning","status":"completed","summary":[],` +
+		`"encrypted_content":"` + claudeRedactedThinkingData + `","format":"anthropic-claude-v1"}`
+	if strings.Count(body, openRouterClaudeReasoningItem) != 2 {
+		t.Fatal("the fixture's reasoning item is no longer on its done event and the completed output")
+	}
+	return strings.ReplaceAll(body, openRouterClaudeReasoningItem, redacted)
+}
+
+func sseFrames(routed []byte) [][]byte {
+	var frames [][]byte
+	for _, frame := range bytes.Split(routed, []byte("\n\n")) {
+		if len(bytes.TrimSpace(frame)) > 0 {
+			frames = append(frames, frame)
+		}
+	}
+	return frames
+}
+
+// responsesStreamReasoning returns the reasoning items a Responses client got
+// on output_item.done, and those in the completed response's output.
+func responsesStreamReasoning(t *testing.T, routed []byte) (done, completed []responsesReasoningItemWire) {
+	t.Helper()
+	for _, event := range responsesStreamEvents(t, sseFrames(routed)) {
+		switch event.Type {
+		case "response.output_item.done":
+			var item responsesReasoningItemWire
+			if err := json.Unmarshal(event.Item, &item); err != nil {
+				t.Fatalf("done item: %v\n%s", err, event.Item)
+			}
+			if item.Type == "reasoning" {
+				done = append(done, item)
+			}
+		case "response.completed":
+			completed = reasoningItemsOf(t, event.Response.Output)
+		}
+	}
+	return done, completed
+}
+
+type anthropicStreamEventWire struct {
+	Type         string              `json:"type"`
+	Index        int                 `json:"index"`
+	ContentBlock *anthropicBlockWire `json:"content_block"`
+	Delta        *struct {
+		Type      string `json:"type"`
+		Thinking  string `json:"thinking"`
+		Signature string `json:"signature"`
+	} `json:"delta"`
+}
+
+func anthropicStreamEvents(t *testing.T, routed []byte) []anthropicStreamEventWire {
+	t.Helper()
+	var events []anthropicStreamEventWire
+	for _, frame := range sseFrames(routed) {
+		text := string(frame)
+		start := strings.Index(text, "data: ")
+		if start < 0 {
+			continue
+		}
+		var event anthropicStreamEventWire
+		if err := json.Unmarshal([]byte(strings.TrimSpace(text[start+len("data: "):])), &event); err != nil {
+			t.Fatalf("frame is not JSON: %v\n%s", err, text)
+		}
+		events = append(events, event)
+	}
+	return events
+}
+
+// replayStreamToMessagesWorker resends the items a Responses client got from
+// the stream, as codex does on its next turn, and returns the assistant blocks
+// a Messages worker is then sent.
+func replayStreamToMessagesWorker(t *testing.T, routed []byte) []anthropicBlockWire {
+	t.Helper()
+	var items []string
+	for _, event := range responsesStreamEvents(t, sseFrames(routed)) {
+		if event.Type == "response.output_item.done" {
+			items = append(items, string(event.Item))
+		}
+	}
+	items = append(items, `{"type":"function_call_output","call_id":"toolu_fixture_1","output":"42"}`)
+	_, body := dispatchResponsesRequest(t, replayedTurn(items), llmprotocol.AnthropicMessagesV1)
+	return anthropicAssistantBlocks(t, body)
+}
+
+// The signature and format on the item's done event reach each client the
+// way a Messages arm's signature_delta does, and the client's replay reaches
+// a Messages worker as signed thinking. The decoder dropped both as unknown
+// members (memex-desktop#8316: upstream_response_field_dropped for signature
+// and format), so codex resent unsigned reasoning and Claude ignored its own
+// thinking on every turn after the first.
+func TestOpenRouterClaudeReasoningSignatureReachesEveryClient(t *testing.T) {
+	body := loadProviderFixture(t, openRouterClaudeReasoningStream)
+	t.Run(string(llmprotocol.OpenAIResponsesV1), func(t *testing.T) {
+		routed, err := pushResponsesStream(body, llmprotocol.OpenAIResponsesV1)
+		if err != nil {
+			t.Fatalf("stream failed: %v", err)
+		}
+		done, completed := responsesStreamReasoning(t, routed)
+		for label, items := range map[string][]responsesReasoningItemWire{"output_item.done": done, "response.completed": completed} {
+			if len(items) != 1 {
+				t.Fatalf("%s: %d reasoning items, want 1:\n%s", label, len(items), routed)
+			}
+			item := items[0]
+			if item.Signature == nil || *item.Signature != openRouterClaudeReasoningSignature ||
+				item.Format == nil || *item.Format != "anthropic-claude-v1" || item.EncryptedContent != nil ||
+				!bytes.Contains(item.Content, []byte(openRouterClaudeReasoningText)) {
+				t.Fatalf("%s: reasoning item = %+v, want the fixture's text, signature and format", label, item)
+			}
+		}
+		blocks := replayStreamToMessagesWorker(t, routed)
+		if len(blocks) == 0 || blocks[0].Type != "thinking" || blocks[0].Signature != openRouterClaudeReasoningSignature ||
+			blocks[0].Thinking != openRouterClaudeReasoningText {
+			t.Fatalf("a Messages worker is sent %+v, want the signed thinking first", blocks)
+		}
+	})
+	t.Run(string(llmprotocol.OpenAIChatV1), func(t *testing.T) {
+		routed, err := pushResponsesStream(body, llmprotocol.OpenAIChatV1)
+		if err != nil {
+			t.Fatalf("stream failed: %v", err)
+		}
+		merged, _, _ := chatStreamReasoningDetails(t, string(routed))
+		assertEqualReasoningJSON(t, "reasoning_details", merged, json.RawMessage(`[{"type":"reasoning.text",`+
+			`"text":"`+openRouterClaudeReasoningText+`","signature":"`+openRouterClaudeReasoningSignature+`",`+
+			`"format":"anthropic-claude-v1","index":0}]`))
+	})
+	t.Run(string(llmprotocol.AnthropicMessagesV1), func(t *testing.T) {
+		routed, err := pushResponsesStream(body, llmprotocol.AnthropicMessagesV1)
+		if err != nil {
+			t.Fatalf("stream failed: %v", err)
+		}
+		var thinking, signatures []string
+		for _, event := range anthropicStreamEvents(t, routed) {
+			switch {
+			case event.Type == "content_block_start" && event.ContentBlock != nil && event.ContentBlock.Type == "thinking":
+				thinking = append(thinking, event.ContentBlock.Signature)
+			case event.Type == "content_block_delta" && event.Delta != nil && event.Delta.Type == "signature_delta":
+				signatures = append(signatures, event.Delta.Signature)
+			}
+		}
+		if len(thinking) != 1 || len(signatures) != 1 || signatures[0] != openRouterClaudeReasoningSignature {
+			t.Fatalf("thinking blocks %q, signature deltas %q; want one block and the fixture's signature:\n%s", thinking, signatures, routed)
+		}
+	})
+}
+
+// A redacted item is the carried redacted_thinking block to every client, as
+// it is from a Messages arm and on the buffered path, and replays as one. A
+// Messages client gets no thinking block for it: the item's start is held
+// until the item shows what it is.
+func TestOpenRouterClaudeRedactedThinkingStreamReachesEveryClient(t *testing.T) {
+	body := []byte(openRouterClaudeRedactedStream(t))
+	t.Run(string(llmprotocol.OpenAIResponsesV1), func(t *testing.T) {
+		routed, err := pushResponsesStream(body, llmprotocol.OpenAIResponsesV1)
+		if err != nil {
+			t.Fatalf("stream failed: %v", err)
+		}
+		done, completed := responsesStreamReasoning(t, routed)
+		for label, items := range map[string][]responsesReasoningItemWire{"output_item.done": done, "response.completed": completed} {
+			if len(items) != 1 {
+				t.Fatalf("%s: %d reasoning items, want 1:\n%s", label, len(items), routed)
+			}
+			item := items[0]
+			if item.EncryptedContent == nil || *item.EncryptedContent != claudeRedactedThinkingData ||
+				item.Format == nil || *item.Format != "anthropic-claude-v1" || item.Signature != nil {
+				t.Fatalf("%s: reasoning item = %+v, want the block's data under the Anthropic format", label, item)
+			}
+		}
+		blocks := replayStreamToMessagesWorker(t, routed)
+		if len(blocks) == 0 || blocks[0].Type != "redacted_thinking" || blocks[0].Data != claudeRedactedThinkingData {
+			t.Fatalf("a Messages worker is sent %+v, want the redacted_thinking block first", blocks)
+		}
+	})
+	t.Run(string(llmprotocol.OpenAIChatV1), func(t *testing.T) {
+		routed, err := pushResponsesStream(body, llmprotocol.OpenAIChatV1)
+		if err != nil {
+			t.Fatalf("stream failed: %v", err)
+		}
+		merged, _, _ := chatStreamReasoningDetails(t, string(routed))
+		assertEqualReasoningJSON(t, "reasoning_details", merged, json.RawMessage(`[{"type":"reasoning.encrypted",`+
+			`"data":"`+claudeRedactedThinkingData+`","format":"anthropic-claude-v1","index":0}]`))
+	})
+	t.Run(string(llmprotocol.AnthropicMessagesV1), func(t *testing.T) {
+		routed, err := pushResponsesStream(body, llmprotocol.AnthropicMessagesV1)
+		if err != nil {
+			t.Fatalf("stream failed: %v", err)
+		}
+		var blocks []anthropicBlockWire
+		for _, event := range anthropicStreamEvents(t, routed) {
+			if event.Type == "content_block_start" && event.ContentBlock != nil {
+				blocks = append(blocks, *event.ContentBlock)
+			}
+		}
+		if len(blocks) != 2 || blocks[0].Type != "redacted_thinking" || blocks[0].Data != claudeRedactedThinkingData || blocks[1].Type != "tool_use" {
+			t.Fatalf("content blocks = %+v, want the redacted_thinking block and the tool call:\n%s", blocks, routed)
+		}
+	})
+}
+
+// One Anthropic block is one item: a reasoning item that streamed its text, or
+// that is signed, has no encrypted_content. Its start has gone out as thinking,
+// so the stream is refused rather than losing either member.
+func TestResponsesReasoningItemWithContentRefusesEncryptedContent(t *testing.T) {
+	body := string(loadProviderFixture(t, openRouterClaudeReasoningStream))
+	mutated := strings.Replace(body, `"summary":[],"signature":"`, `"summary":[],"encrypted_content":"`+claudeRedactedThinkingData+`","signature":"`, 1)
+	if mutated == body {
+		t.Fatal("the fixture's done event no longer has the item this case rewrites")
+	}
+	_, err := pushResponsesStream([]byte(mutated), llmprotocol.OpenAIResponsesV1)
+	var protocolErr *llmprotocol.ProtocolError
+	if !errors.As(err, &protocolErr) || protocolErr.Code != "stream_reasoning_item_shape" {
+		t.Fatalf("got %v, want stream_reasoning_item_shape", err)
+	}
+}
+
+// A reasoning item's held start still reaches the client when the stream is
+// cut before the item shows anything.
+func TestResponsesReasoningItemStartReachesAClientWhenCut(t *testing.T) {
+	body := string(loadProviderFixture(t, openRouterClaudeReasoningStream))
+	added := strings.Index(body, `data: {"type":"response.content_part.added"`)
+	if added < 0 {
+		t.Fatal("the fixture no longer opens a reasoning_text part")
+	}
+	stream, err := NewBuiltinEngine().NewStream(llmprotocol.OpenAIResponsesV1, llmprotocol.OpenAIResponsesV1, llmprotocol.StreamContext{
+		Context: context.Background(), PublicModel: "anthropic/claude-sonnet-5.5", ProviderModel: "anthropic/claude-sonnet-5.5",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	frames, _, _, err := stream.Push([]byte(body[:added]))
+	if err != nil {
+		t.Fatalf("push: %v", err)
+	}
+	if bytes.Contains(bytes.Join(frames, nil), []byte("response.output_item.added")) {
+		t.Fatalf("the reasoning item's start went out before the item showed what it is:\n%s", bytes.Join(frames, nil))
+	}
+	final, _, _, err := stream.Finalize(errors.New("upstream closed"))
+	if err != nil {
+		t.Fatalf("finalize: %v", err)
+	}
+	var types []string
+	for _, event := range responsesStreamEvents(t, final) {
+		types = append(types, event.Type)
+	}
+	if len(types) != 2 || types[0] != "response.output_item.added" || types[1] != "error" {
+		t.Fatalf("final events = %v, want the item's start and then the error", types)
 	}
 }
