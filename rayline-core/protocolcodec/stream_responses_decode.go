@@ -207,7 +207,9 @@ func (decoder *responsesStreamDecoder) normalizeResponsesEvent(event llmprotocol
 // start, as an Anthropic stream's is, or a Messages client would already
 // hold an open thinking block for it. The state has seen the start, so the
 // stream's bookkeeping is unchanged; only its emission waits. Items are
-// sequential, so the held start goes out before the next event of any kind.
+// sequential, so the held start goes out before the next content event. A
+// keepalive goes out at once, ahead of the held start: it carries no order,
+// and its timing is its point.
 func (decoder *responsesStreamDecoder) holdResponsesItemStart(event llmprotocol.Event) ([]llmprotocol.Event, error) {
 	normalized, err := decoder.normalizeResponsesEvent(event)
 	if err != nil {
@@ -303,6 +305,9 @@ func (decoder *responsesStreamDecoder) applyCompletedResponseItem(
 // OpenRouter streams nothing for such an item before its done event. A
 // reasoning item that streamed content, or that is signed, and then names
 // encrypted_content has no streaming shape: one Anthropic block is one item.
+// Nor has a signed item with several reasoning_text parts: a signature proves
+// one thinking block, and the parts have already gone out as separate
+// contents, where the buffered path merges them (withThinkingSignature).
 func (decoder *responsesStreamDecoder) applyResponsesAnthropicReasoning(
 	event *llmprotocol.Event, members responsesAnthropicReasoning,
 ) error {
@@ -320,6 +325,12 @@ func (decoder *responsesStreamDecoder) applyResponsesAnthropicReasoning(
 	}
 	if members.signature == "" {
 		return nil
+	}
+	if decoder.nextWireContentIndex[responsesWireContentScopeKey{item: event.ItemIndex, scope: responsesContentReasoningText}] > 1 {
+		return invalidProviderResponse(
+			"stream_reasoning_item_shape",
+			"Responses signed reasoning item must carry one reasoning_text part",
+		)
 	}
 	key := responsesWireContentKey{item: event.ItemIndex, scope: responsesContentReasoningText}
 	signature, err := decoder.normalizeResponsesEvent(llmprotocol.Event{

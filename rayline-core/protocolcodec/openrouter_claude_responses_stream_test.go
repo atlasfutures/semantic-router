@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -444,5 +445,107 @@ func TestResponsesReasoningItemStartReachesAClientWhenCut(t *testing.T) {
 	}
 	if len(types) != 2 || types[0] != "response.output_item.added" || types[1] != "error" {
 		t.Fatalf("final events = %v, want the item's start and then the error", types)
+	}
+}
+
+// A signature proves one thinking block. A signed reasoning item with two
+// reasoning_text parts is refused: its parts have already gone out as separate
+// contents, and signing the first alone would replay thinking the provider
+// rejects. The same item unsigned streams, as reasoning text with several parts
+// has nothing to prove.
+func TestResponsesSignedReasoningItemHasOneTextPart(t *testing.T) {
+	body := string(loadProviderFixture(t, openRouterClaudeReasoningStream))
+	const second = "Then I report the result."
+	events := strings.SplitAfter(body, "\n\n")
+	var mutated []string
+	for _, event := range events {
+		mutated = append(mutated, event)
+		if strings.Contains(event, `"type":"response.content_part.done"`) && strings.Contains(event, `"content_index":0`) {
+			mutated = append(mutated,
+				"event: response.content_part.added\ndata: "+`{"type":"response.content_part.added","output_index":0,"item_id":"rs_fixture_1","content_index":1,"part":{"type":"reasoning_text","text":""},"sequence_number":0}`+"\n\n",
+				"event: response.reasoning_text.delta\ndata: "+`{"type":"response.reasoning_text.delta","output_index":0,"item_id":"rs_fixture_1","content_index":1,"delta":"`+second+`","sequence_number":0}`+"\n\n",
+				"event: response.reasoning_text.done\ndata: "+`{"type":"response.reasoning_text.done","output_index":0,"item_id":"rs_fixture_1","content_index":1,"text":"`+second+`","sequence_number":0}`+"\n\n",
+				"event: response.content_part.done\ndata: "+`{"type":"response.content_part.done","output_index":0,"item_id":"rs_fixture_1","content_index":1,"part":{"type":"reasoning_text","text":"`+second+`"},"sequence_number":0}`+"\n\n",
+			)
+		}
+	}
+	if len(mutated) != len(events)+4 {
+		t.Fatal("the fixture no longer closes its reasoning_text part with content_part.done")
+	}
+	sequence := 0
+	twoParts := responsesSequenceNumber.ReplaceAllStringFunc(strings.Join(mutated, ""), func(string) string {
+		field := `"sequence_number":` + strconv.Itoa(sequence)
+		sequence++
+		return field
+	})
+	onePart := `"content":[{"type":"reasoning_text","text":"` + openRouterClaudeReasoningText + `"}]`
+	if strings.Count(twoParts, onePart) != 2 {
+		t.Fatal("the fixture's reasoning item is no longer on its done event and the completed output")
+	}
+	twoParts = strings.ReplaceAll(twoParts, onePart,
+		`"content":[{"type":"reasoning_text","text":"`+openRouterClaudeReasoningText+`"},{"type":"reasoning_text","text":"`+second+`"}]`)
+
+	_, err := pushResponsesStream([]byte(twoParts), llmprotocol.OpenAIResponsesV1)
+	var protocolErr *llmprotocol.ProtocolError
+	if !errors.As(err, &protocolErr) || protocolErr.Code != "stream_reasoning_item_shape" {
+		t.Fatalf("signed: got %v, want stream_reasoning_item_shape", err)
+	}
+
+	tag := `,"signature":"` + openRouterClaudeReasoningSignature + `","format":"anthropic-claude-v1"`
+	unsigned := strings.ReplaceAll(twoParts, tag, "")
+	if unsigned == twoParts {
+		t.Fatal("the fixture's reasoning item is no longer signed")
+	}
+	routed, err := pushResponsesStream([]byte(unsigned), llmprotocol.AnthropicMessagesV1)
+	if err != nil {
+		t.Fatalf("unsigned: %v", err)
+	}
+	var thinking []string
+	for _, event := range anthropicStreamEvents(t, routed) {
+		if event.Type == "content_block_start" && event.ContentBlock != nil && event.ContentBlock.Type == "thinking" {
+			thinking = append(thinking, event.ContentBlock.Type)
+		}
+	}
+	if len(thinking) != 2 {
+		t.Fatalf("unsigned: %d thinking blocks, want one per part:\n%s", len(thinking), routed)
+	}
+}
+
+// A keepalive between a reasoning item's held start and its first content
+// reaches the client at once, as every keepalive does (stream_keepalive_test);
+// the held start follows with the content, and the content frames are those of
+// the stream without the keepalive. Holding the keepalive would delay it for
+// nothing, and releasing the start on it would make a redacted item's done
+// event find no start to become the carried block.
+func TestKeepaliveBetweenAHeldReasoningStartAndItsContentGoesOutAtOnce(t *testing.T) {
+	frames := strings.SplitAfter(string(loadProviderFixture(t, openRouterClaudeReasoningStream)), "\n\n")
+	added := -1
+	for index, frame := range frames {
+		if strings.Contains(frame, `"type":"response.output_item.added"`) && strings.Contains(frame, `"type":"reasoning"`) {
+			added = index
+		}
+	}
+	if added < 0 {
+		t.Fatal("the fixture no longer starts a reasoning item")
+	}
+	withKeepalive := append(append(append([]string{}, frames[:added+1]...), openRouterCommentFrame), frames[added+1:]...)
+	for _, client := range builtinFormats {
+		t.Run(string(client), func(t *testing.T) {
+			plain := runKeepaliveStream(t, llmprotocol.OpenAIResponsesV1, client, frames)
+			kept := runKeepaliveStream(t, llmprotocol.OpenAIResponsesV1, client, withKeepalive)
+			if len(plain.pushed[added]) != 0 {
+				t.Fatalf("the reasoning item's start went out before the item showed what it is:\n%q", plain.pushed[added])
+			}
+			if pushed := kept.pushed[added+1]; len(pushed) != 1 || !isTargetKeepalive(pushed[0]) {
+				t.Fatalf("the keepalive became %q, want one keepalive frame at once", pushed)
+			}
+			content := append(append([][][]byte{}, kept.pushed[:added+1]...), kept.pushed[added+2:]...)
+			if !reflect.DeepEqual(content, plain.pushed) {
+				t.Fatalf("content frames changed around the keepalive:\n got %q\nwant %q", content, plain.pushed)
+			}
+			if !reflect.DeepEqual(kept.final, plain.final) {
+				t.Fatalf("terminal frames changed:\n got %q\nwant %q", kept.final, plain.final)
+			}
+		})
 	}
 }
