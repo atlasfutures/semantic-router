@@ -379,25 +379,20 @@ func validateRaylineARCPolicyPackageV5Dispatch(cfg *RouterConfig, decision Decis
 	}
 	bound := make(map[string]bool, len(policy.Bindings))
 	overridable := make(map[string]bool, len(policy.DispatchEffortOverrides))
-	// An episode keeps one placer per worker, wire format and control shape,
-	// up to a bound; more than that would evict a placer whose instructions
-	// still need replaying.
-	shapes := map[string]bool{}
+	// An episode keeps one placer per worker and wire format (one per
+	// transcript), up to a bound; more than that would evict a placer whose
+	// instructions still need replaying.
+	transcripts := map[string]bool{}
 	for _, binding := range policy.Bindings {
-		if action, ok := pkg.actions[binding.ActionID]; ok {
-			control := action.Control
-			budget := int64(0)
-			if control.BudgetTokens != nil {
-				budget = *control.BudgetTokens
-			}
+		if _, ok := pkg.actions[binding.ActionID]; ok {
 			for _, format := range cfg.GetModelAcceptedFormats(binding.Worker) {
-				shapes[fmt.Sprintf("%s|%s|%s|%d|%t", binding.Worker, format, control.Native, budget, control.Instruction != nil)] = true
+				transcripts[binding.Worker+"|"+format] = true
 			}
 		}
 	}
-	if len(shapes) > raylinearc.MaxControlPlacements {
-		return fmt.Errorf("the bindings put %d control shapes on their workers' formats, and an episode keeps %d",
-			len(shapes), raylinearc.MaxControlPlacements)
+	if len(transcripts) > raylinearc.MaxControlPlacements {
+		return fmt.Errorf("the bindings put %d transcripts on their workers' formats, and an episode keeps %d",
+			len(transcripts), raylinearc.MaxControlPlacements)
 	}
 	for _, binding := range policy.Bindings {
 		action, ok := pkg.actions[binding.ActionID]

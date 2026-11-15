@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/atlasfutures/semantic-router/rayline-core/cachecontext"
@@ -96,7 +97,10 @@ const MaxControlPlacements = 64
 const legacyMaxControlPlacements = 16
 
 // ControlPlacementFor returns the placer state for key, if the episode has
-// one.
+// one. An episode recorded before placers were keyed per transcript holds
+// one per control shape under key+"|<shape>"; the most recently dispatched
+// of them is the ledger the transcript's last request was rendered from, so
+// it resumes the transcript.
 func (state *EpisodeState) ControlPlacementFor(key string) (thinkingcontrol.PlacerState, bool) {
 	if state == nil {
 		return thinkingcontrol.PlacerState{}, false
@@ -106,16 +110,22 @@ func (state *EpisodeState) ControlPlacementFor(key string) (thinkingcontrol.Plac
 			return placement.State, true
 		}
 	}
+	for index := len(state.Controls) - 1; index >= 0; index-- {
+		if strings.HasPrefix(state.Controls[index].Key, key+"|") {
+			return state.Controls[index].State, true
+		}
+	}
 	return thinkingcontrol.PlacerState{}, false
 }
 
 // WithControlPlacement returns the placements with placement as the most
-// recent, replacing its key's previous state and dropping the oldest beyond
-// the bound.
+// recent, replacing its key's previous state (and the per-shape states an
+// older record kept for the same transcript, which it resumed) and dropping
+// the oldest beyond the bound.
 func WithControlPlacement(placements []ControlPlacement, placement ControlPlacement) []ControlPlacement {
 	next := make([]ControlPlacement, 0, len(placements)+1)
 	for _, existing := range placements {
-		if existing.Key != placement.Key {
+		if existing.Key != placement.Key && !strings.HasPrefix(existing.Key, placement.Key+"|") {
 			next = append(next, existing)
 		}
 	}

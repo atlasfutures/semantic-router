@@ -210,7 +210,7 @@ func planRaylineARCThinkingControl(
 	if err != nil {
 		return nil, false, err
 	}
-	key := thinkingcontrol.PlacementKey(worker, format, action.Control)
+	key := thinkingcontrol.PlacementKey(worker, format)
 	committed, found, hasEpisode := ctx.RaylineARCTransaction.committedControlPlacement(key)
 	if !hasEpisode {
 		return nil, false, errThinkingControlEpisode

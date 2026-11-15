@@ -112,8 +112,13 @@ type PlacerState struct {
 	Calls           int     `json:"calls"`
 }
 
-// Placer is one episode's placement state on one wire format, advanced one
-// call at a time. Base, budget and lever presence are fixed for the episode.
+// Placer is one transcript's placement state on one wire format, advanced one
+// call at a time. Every call replays the whole ledger, whatever its control:
+// the items are part of the transcript the provider has cached, so a call
+// whose base, budget or lever presence differs from the last still sends
+// them, and only writes new ones if it carries an instruction. The rule set
+// of the first instruction is fixed for the transcript, since a switch would
+// render earlier units differently.
 //
 // A refused call leaves the state as it was. (Pathfinder's placer keeps an
 // epoch reset it made before refusing; no corpus case reaches that.)
@@ -192,8 +197,8 @@ func knownFormat(format string) bool {
 	return format == FormatMessages || format == FormatChat || format == FormatResponses
 }
 
-// check refuses a missing control, or one that changes the episode's base,
-// budget or lever presence.
+// check refuses a missing control, or an instruction whose rule set differs
+// from the transcript's.
 func (p *Placer) check(control *Control) error {
 	index := p.state.Calls
 	if control == nil {
@@ -205,12 +210,9 @@ func (p *Placer) check(control *Control) error {
 		return refuse("call %d: VSR does not place the effort item unit or the every_turn_v1 emit rule", index)
 	}
 	first := p.state.First
-	if first == nil {
-		first = control
-	}
-	if control.Native != first.Native || !sameBudget(control.BudgetTokens, first.BudgetTokens) ||
-		(control.Instruction == nil) != (first.Instruction == nil) ||
-		(control.Instruction != nil && !sameRules(control.Instruction, first.Instruction)) {
+	if control.Instruction != nil && first != nil && first.Instruction != nil &&
+		!sameRules(control.Instruction, first.Instruction) {
+		// The text is pathfinder's, pinned by the golden corpora.
 		return refuse("call %d: base, budget, lever presence and rules are fixed per episode", index)
 	}
 	return nil
@@ -220,13 +222,6 @@ func (p *Placer) check(control *Control) error {
 // text rules, plus its unit, in-band system rule and emit rule.
 func sameRules(a, b *Instruction) bool {
 	return a.Unit == b.Unit && a.InbandSystem == b.InbandSystem && a.Emit == b.Emit
-}
-
-func sameBudget(a, b *int64) bool {
-	if a == nil || b == nil {
-		return a == b
-	}
-	return *a == *b
 }
 
 // tailRules is what a cell states about the tail a unit follows: its ADR
@@ -256,7 +251,9 @@ func (p *Placer) place(body *value, control *Control, rules tailRules) (*value, 
 	next := p.State()
 	index := next.Calls
 	format := next.Format
-	if next.First == nil {
+	// First records the transcript's rule set: the first call's control,
+	// until the first call that carries an instruction.
+	if next.First == nil || (next.First.Instruction == nil && control.Instruction != nil) {
 		first := *control
 		next.First = &first
 	}
@@ -270,10 +267,9 @@ func (p *Placer) place(body *value, control *Control, rules tailRules) (*value, 
 	}
 	anchor := Anchor{Index: tail, Digest: prefixDigest(units, tail)}
 	id := control.ID()
+	// A retried turn writes nothing, so it resends the bytes its first send
+	// wrote even when the policy decided it again with another control.
 	retry := next.PreviousAnchor != nil && *next.PreviousAnchor == anchor
-	if retry && (next.PreviousControl == nil || *next.PreviousControl != id) {
-		return nil, Receipt{}, refuse("call %d: a retried turn carries the control it was first sent with", index)
-	}
 	var reset *string
 	for _, item := range next.Ledger {
 		if item.Anchor >= len(units) || prefixDigest(units, item.Anchor) != item.PrefixDigest {
@@ -348,7 +344,10 @@ func (p *Placer) place(body *value, control *Control, rules tailRules) (*value, 
 		return nil, Receipt{}, err
 	}
 	var applied []*value
-	if instruction != nil && instruction.InbandSystem == InbandSystemFold {
+	// The fold is the transcript's rule, not this call's: a native-only call
+	// renders the earlier units as the instruction calls did.
+	lever := next.First.Instruction
+	if lever != nil && lever.InbandSystem == InbandSystemFold {
 		if applied, err = foldInbandSystem(units, rendered, format); err != nil {
 			return nil, Receipt{}, err
 		}
@@ -363,9 +362,10 @@ func (p *Placer) place(body *value, control *Control, rules tailRules) (*value, 
 		Call: index, ControlID: id, Written: written, Epoch: next.Epoch, EpochResetReason: reset, Retry: retry,
 		Refused: refused,
 	}
-	if instruction != nil {
+	if lever != nil {
 		// What the provider sees, never the drawn level: a refused write (or
-		// its retry) leaves the earlier one.
+		// its retry) leaves the earlier one, and a native-only call the items
+		// it replays.
 		level := InstructionNone
 		if next.InForce != nil {
 			level = *next.InForce
