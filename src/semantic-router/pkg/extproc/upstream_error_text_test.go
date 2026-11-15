@@ -51,6 +51,69 @@ func TestUpstream4xxTextIsLoggedOnTurnFailedAndUsage(t *testing.T) {
 	}
 }
 
+// prod 2026-11-15: OpenRouter's 5xx before any content named its provider
+// only in the error's metadata, and the cell's llm_usage line named none.
+const openRouterProvider502 = `{"error":{"code":502,"message":"Provider returned error",` +
+	`"metadata":{"raw":"{\"error\":\"upstream echoed my secret prompt\"}","provider_name":"DeepInfra"}},"user_id":"user_1"}`
+
+// A 5xx before any content names its code, category and provider on
+// turn_failed and llm_usage, and the usage line keeps the requested provider
+// order; neither its message nor its raw body is logged.
+func TestUpstream5xxNamesItsProviderOnTurnFailedAndUsage(t *testing.T) {
+	logs := captureLogs(t)
+	ctx := &RequestContext{
+		SourceFormat: llmprotocol.AnthropicMessagesV1, TargetFormat: llmprotocol.OpenAIChatV1,
+		UpstreamStatusCode: 502, RequestID: "request_502", RequestModel: "deepseek/deepseek-v4.1-flash-1017",
+		DispatchedProviderOrder: []string{"deepinfra", "novita"},
+	}
+	(&OpenAIRouter{}).handleUpstreamTransportError([]byte(openRouterProvider502), ctx)
+
+	for _, event := range []string{"turn_failed", "llm_usage"} {
+		fields := findLogEvent(t, logs, event)
+		if fields["failure_class"] != turnFailureUpstream5xx {
+			t.Fatalf("%s failure_class = %v", event, fields["failure_class"])
+		}
+		if fields["upstream_error_provider_name"] != "DeepInfra" {
+			t.Fatalf("%s upstream_error_provider_name = %v", event, fields["upstream_error_provider_name"])
+		}
+		if fields["upstream_error_code"] != "502" {
+			t.Fatalf("%s upstream_error_code = %v", event, fields["upstream_error_code"])
+		}
+		if errorType, _ := fields["upstream_error_type"].(string); errorType == "" {
+			t.Fatalf("%s upstream_error_type is empty", event)
+		}
+		if message := fields["upstream_error_message"]; message != nil {
+			t.Fatalf("%s logged a 5xx message: %v", event, message)
+		}
+	}
+	if got := fmt.Sprint(findLogEvent(t, logs, "llm_usage")["provider_order"]); got != "[deepinfra novita]" {
+		t.Fatalf("llm_usage provider_order = %s", got)
+	}
+	for _, entry := range logs.All() {
+		if line := fmt.Sprint(entry.ContextMap()); strings.Contains(line, "my secret prompt") || strings.Contains(line, "user_1") {
+			t.Fatalf("the raw body reached the log: %s", line)
+		}
+	}
+}
+
+// A code is kept only as a status or a documented provider code, and a
+// provider name only in a provider name's shape; the type is the Router's
+// category, never the body's.
+func TestUpstreamErrorCodeAndProviderKeepOnlyTheirShape(t *testing.T) {
+	for _, code := range []string{`"sk-or-v1-0123456789abcdef"`, `"customer_private_input"`, `"9999"`} {
+		body := []byte(`{"error":{"code":` + code + `,"type":"server_error","message":"m",` +
+			`"metadata":{"provider_name":"` + strings.Repeat("A", 60) + `"}}}`)
+		if text := readUpstreamErrorText(503, body, nil); text.code != "" || text.errorType != "" || text.providerName != "" {
+			t.Fatalf("code %s kept %q %q %q", code, text.code, text.errorType, text.providerName)
+		}
+	}
+	body := []byte(`{"error":{"code":"server_error","message":"m","metadata":{"provider_name":"Google AI Studio"}}}`)
+	if text := readUpstreamErrorText(500, body, nil); text.code != "server_error" ||
+		text.providerName != "Google AI Studio" || text.message != "" {
+		t.Fatalf("read %+v", text)
+	}
+}
+
 func TestUpstreamErrorTextIsBoundedAndKeepsOnlySlugs(t *testing.T) {
 	long := strings.Repeat("é", 400)
 	body := []byte(`{"error":{"message":"` + long + `","metadata":{"pinned_provider_slug":"bad slug with spaces",` +
@@ -70,12 +133,13 @@ func TestUpstreamErrorTextIsBoundedAndKeepsOnlySlugs(t *testing.T) {
 	}
 }
 
-// A failure without a 4xx states no text: the fields are null.
+// A failure without a 4xx or 5xx states no text: the fields are null.
 func TestUsageLineStatesNoUpstreamErrorTextByDefault(t *testing.T) {
 	logs := captureLogs(t)
 	usageRecordRouter().reportNonStreamingUsage(&RequestContext{RequestID: "r", RequestModel: "priced-model"}, 0, responseUsageMetrics{invalid: true})
 	fields := findLogEvent(t, logs, "llm_usage")
-	for _, name := range []string{"upstream_error_message", "upstream_error_pinned_provider_slug", "upstream_error_accepting_provider_slugs"} {
+	for _, name := range []string{"upstream_error_message", "upstream_error_pinned_provider_slug", "upstream_error_accepting_provider_slugs",
+		"upstream_error_code", "upstream_error_type", "upstream_error_provider_name"} {
 		if value, present := fields[name]; !present || value != nil {
 			t.Fatalf("%s = %v (present %v), want null", name, value, present)
 		}
