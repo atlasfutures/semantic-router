@@ -96,16 +96,19 @@ func TestUpstream5xxNamesItsProviderOnTurnFailedAndUsage(t *testing.T) {
 	}
 }
 
-// A code, type or provider name that is not a short word of its shape is
-// dropped.
-func TestUpstreamErrorWordsKeepOnlyTheirShape(t *testing.T) {
-	body := []byte(`{"error":{"code":"sk-or-v1-0123456789abcdef","type":"bad type!","message":"m",` +
-		`"metadata":{"provider_name":"` + strings.Repeat("A", 60) + `"}}}`)
-	if text := readUpstreamErrorText(503, body, nil); text.code != "" || text.errorType != "" || text.providerName != "" {
-		t.Fatalf("kept %q %q %q", text.code, text.errorType, text.providerName)
+// A code is kept only as a status or a documented provider code, and a
+// provider name only in a provider name's shape; the type is the Router's
+// category, never the body's.
+func TestUpstreamErrorCodeAndProviderKeepOnlyTheirShape(t *testing.T) {
+	for _, code := range []string{`"sk-or-v1-0123456789abcdef"`, `"customer_private_input"`, `"9999"`} {
+		body := []byte(`{"error":{"code":` + code + `,"type":"server_error","message":"m",` +
+			`"metadata":{"provider_name":"` + strings.Repeat("A", 60) + `"}}}`)
+		if text := readUpstreamErrorText(503, body, nil); text.code != "" || text.errorType != "" || text.providerName != "" {
+			t.Fatalf("code %s kept %q %q %q", code, text.code, text.errorType, text.providerName)
+		}
 	}
-	body = []byte(`{"error":{"code":"server_error","type":"server_error","message":"m","metadata":{"provider_name":"Google AI Studio"}}}`)
-	if text := readUpstreamErrorText(500, body, nil); text.code != "server_error" || text.errorType != "server_error" ||
+	body := []byte(`{"error":{"code":"server_error","message":"m","metadata":{"provider_name":"Google AI Studio"}}}`)
+	if text := readUpstreamErrorText(500, body, nil); text.code != "server_error" ||
 		text.providerName != "Google AI Studio" || text.message != "" {
 		t.Fatalf("read %+v", text)
 	}

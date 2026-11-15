@@ -34,24 +34,25 @@ import (
 //
 // A 5xx states no message: OpenRouter's "Provider returned error" says
 // nothing, and a provider's own text can echo the request. Every 4xx and 5xx
-// keeps the error's code, its neutral category (or the body's error.type) and
-// the provider OpenRouter's metadata names (provider_name), so a failure
-// before any content says which provider failed. The metadata's raw body is
-// never read.
+// keeps the error's code when it is a status number or a documented provider
+// code (knownProviderStreamErrorCodes), the Router's neutral category for it
+// when the error was decoded, and the provider OpenRouter's metadata names
+// (provider_name), so a failure before any content says which provider
+// failed. Any other code is the provider's own text and is dropped. The
+// metadata's raw body is never read.
 
 const (
-	upstreamErrorTextMax  = 300
-	upstreamErrorSlugMax  = 48
-	upstreamErrorSlugsMax = 16
-	upstreamErrorCodeMax  = 48
+	upstreamErrorTextMax     = 300
+	upstreamErrorSlugMax     = 48
+	upstreamErrorSlugsMax    = 16
+	upstreamErrorProviderMax = 48
 )
 
 var (
 	upstreamErrorLinkPattern = regexp.MustCompile(`https?://\S+`)
 	upstreamErrorSlugPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9.-]*(/[a-z0-9][a-z0-9.-]*)*$`)
-	// upstreamErrorCodePattern is an error code or type: a status number or
-	// a protocol word (server_error, upstream_unavailable).
-	upstreamErrorCodePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*$`)
+	// upstreamErrorStatusPattern is an error code that is an HTTP status.
+	upstreamErrorStatusPattern = regexp.MustCompile(`^[1-5][0-9][0-9]$`)
 	// upstreamErrorProviderPattern is a provider's display name as
 	// OpenRouter's metadata gives it (DeepInfra, Google AI Studio).
 	upstreamErrorProviderPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9 ._()/-]*$`)
@@ -83,7 +84,6 @@ func readUpstreamErrorText(status int, body []byte, protocolError *llmprotocol.P
 	var wire struct {
 		Error struct {
 			Code     json.RawMessage `json:"code"`
-			Type     string          `json:"type"`
 			Message  string          `json:"message"`
 			Metadata struct {
 				PinnedProviderSlug     string   `json:"pinned_provider_slug"`
@@ -93,19 +93,20 @@ func readUpstreamErrorText(status int, body []byte, protocolError *llmprotocol.P
 		} `json:"error"`
 	}
 	_ = json.Unmarshal(body, &wire)
-	code, errorType := strings.Trim(string(wire.Error.Code), `"`), wire.Error.Type
+	code, errorType := strings.Trim(string(wire.Error.Code), `"`), ""
 	if protocolError != nil {
 		if protocolError.Code != "" {
 			code = protocolError.Code
 		}
-		if protocolError.Category != "" {
-			errorType = string(protocolError.Category)
-		}
+		errorType = string(protocolError.Category)
+	}
+	if !upstreamErrorStatusPattern.MatchString(code) && !knownProviderStreamErrorCodes[code] {
+		code = ""
 	}
 	text := upstreamErrorText{
-		code:         loggableErrorWord(code, upstreamErrorCodePattern),
-		errorType:    loggableErrorWord(errorType, upstreamErrorCodePattern),
-		providerName: loggableErrorWord(wire.Error.Metadata.ProviderName, upstreamErrorProviderPattern),
+		code:         code,
+		errorType:    errorType,
+		providerName: loggableProviderName(wire.Error.Metadata.ProviderName),
 	}
 	if status >= 500 {
 		return text
@@ -246,15 +247,15 @@ func loggableSlug(slug string) string {
 	return slug
 }
 
-// loggableErrorWord is a short code, type or provider name of the given
-// shape, or "" for anything else.
-func loggableErrorWord(word string, shape *regexp.Regexp) string {
-	word = strings.TrimSpace(word)
-	if len(word) > upstreamErrorCodeMax || !shape.MatchString(word) ||
-		upstreamErrorSecretPattern.MatchString(word) || llmprotocol.RedactProviderText(word) != word {
+// loggableProviderName is a provider's display name as OpenRouter's error
+// metadata gives it, or "" for anything that is not one.
+func loggableProviderName(name string) string {
+	name = strings.TrimSpace(name)
+	if len(name) > upstreamErrorProviderMax || !upstreamErrorProviderPattern.MatchString(name) ||
+		upstreamErrorSecretPattern.MatchString(name) || llmprotocol.RedactProviderText(name) != name {
 		return ""
 	}
-	return word
+	return name
 }
 
 // addUpstreamErrorTextFields writes a 4xx's or 5xx's text into a log record, leaving
