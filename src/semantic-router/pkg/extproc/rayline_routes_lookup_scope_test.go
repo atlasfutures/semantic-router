@@ -1172,3 +1172,18 @@ func TestLookupSessionPinsFollowAWrappedStore(t *testing.T) {
 		t.Fatal("no store did not use process-local pins")
 	}
 }
+
+// A scope refusal that lands past the lookup's deadline fails the lookup as
+// the deadline (504), not as the refusal (503): the deadline is the outcome.
+func TestScopedLookupLateRefusalIsTheDeadline(t *testing.T) {
+	fixture := newPolicySelectorFixture(t, "")
+	advertiseLookupSessions(fixture)
+	fixture.fake.decideDelay = 120 * time.Millisecond
+	fixture.fake.failDetail = map[string]any{"field": raylinearc.PolicySessionScopeField}
+	fixture.fake.failNext("invalid_request")
+	_, err := fixture.scopedLookupBy(t, lookupScopeTestScope, time.Now().Add(40*time.Millisecond))
+	var failure *raylineARCSelectionFailure
+	if !errors.As(err, &failure) || failure.class != arcFailureLookupDeadline {
+		t.Fatalf("err = %v, want %s", err, arcFailureLookupDeadline)
+	}
+}

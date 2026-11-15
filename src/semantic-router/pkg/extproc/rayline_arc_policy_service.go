@@ -1091,15 +1091,17 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		decisionMode = policyStagedFullMode(staging)
 		response, err = throughBusy(request, busyWait)
 	}
+	// A lookup whose deadline passed undecided (its scope busy until then,
+	// no time left to start a call, or any failure that landed past it)
+	// answers as any lookup out of time. Checked first: a late failure wraps
+	// its cause, a scope refusal included, and the deadline is the outcome.
+	if arcContext.RoutesLookupSession && errors.Is(err, raylinearc.ErrPolicyLookupDeadline) {
+		return nil, failRaylineRoutesLookupScope(arcContext, arcFailureLookupDeadline)
+	}
 	// A service that refuses the lookup scope fails the lookup loudly
 	// (rayline_routes_lookup_scope.go).
 	if arcContext.RoutesLookupSession && policyLookupScopeRefused(err) {
 		return nil, failRaylineRoutesLookupScope(arcContext, arcFailureLookupScopeRefused)
-	}
-	// A lookup whose deadline passed undecided (its scope busy until then,
-	// or no time left to start a call) answers as any lookup out of time.
-	if arcContext.RoutesLookupSession && errors.Is(err, raylinearc.ErrPolicyLookupDeadline) {
-		return nil, failRaylineRoutesLookupScope(arcContext, arcFailureLookupDeadline)
 	}
 	var cold *raylinearc.PolicyServiceError
 	switch {
