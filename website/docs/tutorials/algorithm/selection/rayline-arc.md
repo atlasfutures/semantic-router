@@ -763,8 +763,13 @@ lookup session: the service ends it on its own idle TTL, and evicts lookup
 sessions before live ones when its cache is full. A throwaway lookup over
 `max_encode_tokens` is still answered without an encode.
 
-Each lookup's `routing_decision` event carries `lookup_session`,
-`session_action` and `encode_ms`.
+Each lookup's `routing_decision` event carries `lookup_session` and
+`session_action`, `encode_ms` when the encoder timed the encode, and on a
+policy-service cell `policy_ms` (the decide's round trip as the cell timed
+it) and `service_ms` (the service's own `timing_ms.total`). A two-stage
+package reports no encode time (`timing_ms.encode` is null; its encode is
+inside stage one), so there `service_ms` is the time that includes the
+encode, and `encode_ms` is absent.
 
 ### Episodes
 

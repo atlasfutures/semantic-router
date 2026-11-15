@@ -1344,6 +1344,9 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	}
 	result := selector.selectionResult(armed, selCtx, arcContext, state, encoded, decision, encodeLatency)
 	result.RaylineARC.PolicyLatency = latency
+	if total := response.TimingMillis.Total; total > 0 {
+		result.RaylineARC.PolicyServiceTotal = time.Duration(total * float64(time.Millisecond))
+	}
 	result.RaylineARC.PolicyHTTP = response.HTTPTiming
 	result.RaylineARC.EncoderLatencyUnknown = response.TimingMillis.Encode == nil
 	result.RaylineARC.PolicyDecisionMode = decisionMode

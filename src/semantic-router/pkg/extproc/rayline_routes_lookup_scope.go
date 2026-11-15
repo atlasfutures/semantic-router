@@ -321,7 +321,10 @@ func pinPolicyLookupSession(
 // addRaylineRoutesEncodeFields records how a lookup's encode ran on its
 // routing_decision event, so a cell's lookup encode cost reads the same way
 // before and after lookup sessions: lookup_session, the
-// encoder's session_action and the encode's milliseconds.
+// encoder's session_action, the encode's milliseconds when the encoder
+// reported them, and on a policy-service decide its round trip (policy_ms)
+// and the service's own total (service_ms). A two-stage package reports no
+// encode time, so service_ms is then the measure that includes the encode.
 func addRaylineRoutesEncodeFields(fields map[string]interface{}, encode routerruntime.RouteEncode) {
 	fields["lookup_session"] = encode.LookupSession
 	if encode.SessionAction != "" {
@@ -329,5 +332,11 @@ func addRaylineRoutesEncodeFields(fields map[string]interface{}, encode routerru
 	}
 	if encode.Latency > 0 {
 		fields["encode_ms"] = encode.Latency.Milliseconds()
+	}
+	if encode.PolicyRoundTrip > 0 {
+		fields["policy_ms"] = encode.PolicyRoundTrip.Milliseconds()
+	}
+	if encode.ServiceTotal > 0 {
+		fields["service_ms"] = encode.ServiceTotal.Milliseconds()
 	}
 }

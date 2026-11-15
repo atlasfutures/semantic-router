@@ -207,8 +207,14 @@ type RouteEncode struct {
 	// appended, rebuilt, reused), empty when it reported none.
 	SessionAction string
 	// Latency is the encode alone, as the encoder timed it; zero when not
-	// measured.
+	// measured (a policy service's two-stage package reports no encode
+	// time).
 	Latency time.Duration
+	// PolicyRoundTrip is the policy service decide as the cell timed it, and
+	// ServiceTotal the same decide as the service timed it, its encode
+	// included; zero outside a policy-service decide.
+	PolicyRoundTrip time.Duration
+	ServiceTotal    time.Duration
 }
 
 // RouteIdentity is a Decisions answer's identity.
