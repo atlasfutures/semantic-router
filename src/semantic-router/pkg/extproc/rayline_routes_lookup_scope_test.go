@@ -832,6 +832,7 @@ type lookupPinsStub struct {
 	mu      sync.Mutex
 	pinned  bool
 	err     error
+	loadErr error
 	landed  bool
 	current *raylinearc.PolicySession
 	block   bool
@@ -841,6 +842,9 @@ type lookupPinsStub struct {
 func (stub *lookupPinsStub) LoadLookupSession(context.Context, string) (*raylinearc.PolicySession, error) {
 	stub.mu.Lock()
 	defer stub.mu.Unlock()
+	if stub.loadErr != nil {
+		return nil, stub.loadErr
+	}
 	return stub.current, nil
 }
 
@@ -978,5 +982,60 @@ func TestLookupBusyWaitStartsNoDecidePastTheDeadline(t *testing.T) {
 	}
 	if last := decider.calls[len(decider.calls)-1]; deadline.Sub(last) > policyBusyRetryMax {
 		t.Fatalf("the last decide was %s before the deadline, want the wait used", deadline.Sub(last))
+	}
+}
+
+// A pin write that failed and whose pin cannot be read back has an unknown
+// outcome: the session may be pinned, so it is left to its idle timeout.
+func TestLookupSessionUnknownPinIsKept(t *testing.T) {
+	fixture, front := newLookupSessionsFixture(t)
+	stub := &lookupPinsStub{err: errors.New("reply lost"), loadErr: errors.New("redis down")}
+	if _, err := scopedLookupWithPins(t, fixture, stub, lookupScopeTestScope); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(50 * time.Millisecond)
+	front.mu.Lock()
+	defer front.mu.Unlock()
+	if front.terminates != 0 {
+		t.Fatalf("terminates %d: a session whose pin is unknown was ended", front.terminates)
+	}
+}
+
+// A lookup whose deadline passed before its decide starts no decide at all,
+// on a context that outlives the caller.
+func TestLookupBusyWaitStartsNoDecidePastAnExpiredDeadline(t *testing.T) {
+	decider := &busyDecider{}
+	admit := func() (func(), error) { return func() {}, nil }
+	_, err := decidePolicyThroughBusyUntil(context.Background(), decider, raylinearc.PolicyDecisionRequest{},
+		time.Now().Add(-time.Millisecond), true, admit, nil)
+	if !errors.Is(err, context.DeadlineExceeded) || len(decider.calls) != 0 {
+		t.Fatalf("err = %v after %d decides, want none", err, len(decider.calls))
+	}
+}
+
+// On a sessioned policy Server, a lookup past its deadline starts no Modal
+// session and sends no decide.
+func TestLookupSessionStartsNothingPastTheDeadline(t *testing.T) {
+	fixture, front := newLookupSessionsFixture(t)
+	state, _ := raylinearc.NewEpisodeState(2)
+	arcContext := &selection.RaylineARCSelectionContext{
+		RequestID: "req-lookup-late", State: state, RawRequest: lookupBody(t), RequestFormat: policyFormatAnthropic,
+		RoutesLookup: true, RoutesThrowaway: true,
+	}
+	if !applyRaylineRoutesLookupScope(arcContext, lookupScopeTestScope) {
+		t.Fatal("the lookup was not placed on its scope")
+	}
+	arcContext.RoutesLookupDeadline = time.Now().Add(-time.Millisecond)
+	arcContext.PolicyLookupSessions = raylinearc.NewMemoryPolicyLookupSessionPins()
+	arcContext.PolicyLookupSessionKey = lookupPinKey(fixture, lookupScopeTestScope)
+	if _, err := fixture.selector.Select(context.Background(), &selection.SelectionContext{
+		DecisionName: fixture.decision.Name, CandidateModels: fixture.decision.ModelRefs, RaylineARC: arcContext,
+	}); err == nil {
+		t.Fatal("a lookup past its deadline was decided")
+	}
+	front.mu.Lock()
+	defer front.mu.Unlock()
+	if front.starts != 0 {
+		t.Fatalf("%d sessions started past the deadline", front.starts)
 	}
 }

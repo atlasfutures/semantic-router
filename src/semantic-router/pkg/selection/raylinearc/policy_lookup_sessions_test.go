@@ -136,3 +136,47 @@ func TestRedisLookupSessionPinHonoursItsDeadline(t *testing.T) {
 		t.Fatal("a closed store's pin client answered")
 	}
 }
+
+// Close lets a pin call in flight finish on its own deadline rather than
+// failing it with the client closed, and refuses calls after it.
+func TestRedisLookupSessionPinCloseWaitsForCallsInFlight(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			defer conn.Close()
+		}
+	}()
+	store, err := NewRedisEpisodeStore(RedisEpisodeStoreConfig{
+		Address: listener.Addr().String(), KeyPrefix: "test:", LeaseTTL: time.Second, IdleTTL: time.Minute,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := HashEpisodeID("lookup-session:scope")
+	finished := make(chan error, 1)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+		defer cancel()
+		_, err := store.LoadLookupSession(ctx, key)
+		finished <- err
+	}()
+	time.Sleep(50 * time.Millisecond)
+	started := time.Now()
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if waited := time.Since(started); waited < 150*time.Millisecond {
+		t.Fatalf("Close returned after %s, before the call in flight", waited)
+	}
+	if err := <-finished; err == nil {
+		t.Fatal("a silent Redis answered")
+	}
+}

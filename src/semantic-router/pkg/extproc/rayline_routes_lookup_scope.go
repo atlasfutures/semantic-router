@@ -229,7 +229,7 @@ func bindPolicyLookupSession(
 		}
 		pinned = session
 	}
-	return backend.BindLookup(pinned)
+	return backend.BindLookup(pinned, arcContext.RoutesLookupDeadline)
 }
 
 // pinPolicyLookupSession pins the session a decided lookup ended on, for the
@@ -266,11 +266,19 @@ func pinPolicyLookupSession(
 		if err != nil {
 			// A failed write may still have landed (its reply was lost): the
 			// pin says which, so a session other lookups may already be
-			// routed to is never ended.
+			// routed to is never ended. When the pin cannot be read either,
+			// the outcome is unknown and the session is left to its idle
+			// timeout.
 			readCtx, cancel := context.WithTimeout(detached, raylineRoutesLookupSessionPinTimeout)
 			current, readErr := pins.LoadLookupSession(readCtx, key)
 			cancel()
-			pinned = readErr == nil && current != nil && *current == *session
+			if readErr != nil {
+				logging.ComponentWarnEvent("extproc", "rayline_routes_lookup_session_pin_failed", map[string]interface{}{
+					"request_id": requestID, "stage": "unknown",
+				})
+				return
+			}
+			pinned = current != nil && *current == *session
 		}
 		if !pinned {
 			stage := "superseded"

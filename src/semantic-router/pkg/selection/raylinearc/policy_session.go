@@ -401,11 +401,24 @@ func (backend *PolicySessionBackend) Bind(persisted *PolicySession, ephemeral bo
 // idles out after PolicyLookupSessionIdleTimeout, or the backend's own idle
 // timeout when that is shorter, so it never outlives the service's lookup
 // session it routes to.
-func (backend *PolicySessionBackend) BindLookup(pinned *PolicySession) *PolicySessionBinding {
+//
+// notAfter is the lookup's deadline (zero: none). A lookup may decide on a
+// context that outlives its caller, so no session is started and no decide
+// sent at or past it: the caller is no longer waiting for the answer.
+func (backend *PolicySessionBackend) BindLookup(pinned *PolicySession, notAfter time.Time) *PolicySessionBinding {
 	return &PolicySessionBinding{
 		backend: backend, persisted: clonePolicySession(pinned),
-		idleTimeout: backend.LookupIdleTimeout(),
+		idleTimeout: backend.LookupIdleTimeout(), notAfter: notAfter,
 	}
+}
+
+// ErrPolicyLookupDeadline is a lookup's call not made because the lookup's
+// deadline had passed. It wraps context.DeadlineExceeded.
+var ErrPolicyLookupDeadline = fmt.Errorf("ARC lookup deadline passed before the call: %w", context.DeadlineExceeded)
+
+// pastDeadline reports whether a lookup binding's deadline has passed.
+func (binding *PolicySessionBinding) pastDeadline() bool {
+	return !binding.notAfter.IsZero() && !time.Now().Before(binding.notAfter)
 }
 
 // Pinned is the session BindLookup was given, the one the lookup read from
@@ -460,7 +473,10 @@ type PolicySessionBinding struct {
 	// idleTimeout, when set, is the idle timeout of the sessions the turn
 	// starts in place of the backend's (BindLookup).
 	idleTimeout time.Duration
-	current     *PolicySession
+	// notAfter, when set, is the lookup's deadline: no session is started
+	// and no decide sent at or past it (BindLookup).
+	notAfter time.Time
+	current  *PolicySession
 	// owned are the sessions this turn started; an ephemeral turn ends them.
 	owned    []PolicySession
 	sessions int
@@ -556,6 +572,9 @@ func (binding *PolicySessionBinding) decide(
 	ctx context.Context,
 	request PolicyDecisionRequest,
 ) (*PolicyDecisionResponse, error) {
+	if binding.pastDeadline() {
+		return nil, ErrPolicyLookupDeadline
+	}
 	response, err := binding.backend.client.WithSessionToken(binding.current.Token).Decide(ctx, request)
 	if policySessionUncertain(err) && !errors.Is(ctx.Err(), context.Canceled) {
 		binding.backend.suspect.mark(*binding.current)
@@ -617,6 +636,9 @@ func (binding *PolicySessionBinding) Replaces() bool {
 }
 
 func (binding *PolicySessionBinding) start(ctx context.Context) error {
+	if binding.pastDeadline() {
+		return ErrPolicyLookupDeadline
+	}
 	idle := binding.backend.config.IdleTimeout
 	if binding.idleTimeout > 0 {
 		idle = binding.idleTimeout

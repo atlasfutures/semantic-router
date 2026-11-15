@@ -144,6 +144,8 @@ type RedisEpisodeStore struct {
 	pinsMu     sync.Mutex
 	pins       *redis.Client
 	pinsClosed bool
+	// pinCalls are the pin calls in flight, which Close waits for.
+	pinCalls sync.WaitGroup
 }
 
 func NewRedisEpisodeStore(
@@ -350,6 +352,10 @@ func (store *RedisEpisodeStore) Close() error {
 	pins := store.pins
 	store.pins, store.pinsClosed = nil, true
 	store.pinsMu.Unlock()
+	// A pin write runs after its lookup answered (off the answer's path):
+	// a reload's Close lets it finish, each call bounded to its context,
+	// rather than failing it with the client closed.
+	store.pinCalls.Wait()
 	if pins != nil {
 		_ = pins.Close()
 	}

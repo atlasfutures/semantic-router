@@ -1702,7 +1702,18 @@ func decidePolicyThroughBusyUntil(
 	prepare func(*raylinearc.PolicyDecisionRequest),
 ) (*raylinearc.PolicyDecisionResponse, error) {
 	backoff := policyBusyRetryFirst
+	var response *raylinearc.PolicyDecisionResponse
+	var err error
 	for {
+		// A wait bounded by a caller's deadline starts no call at or past
+		// it, the first included: the caller is no longer waiting, and the
+		// context may outlive it (a detached lookup).
+		if lastTry && !time.Now().Before(deadline) {
+			if err == nil {
+				err = raylinearc.ErrPolicyLookupDeadline
+			}
+			return response, err
+		}
 		release, admitErr := admit()
 		if admitErr != nil {
 			return nil, &policyAdmissionError{err: admitErr}
@@ -1710,7 +1721,7 @@ func decidePolicyThroughBusyUntil(
 		if prepare != nil {
 			prepare(&request)
 		}
-		response, err := client.Decide(ctx, request)
+		response, err = client.Decide(ctx, request)
 		release()
 		var failure *raylinearc.PolicyServiceError
 		if err == nil || !errors.As(err, &failure) || failure.Class != "session_busy" {
