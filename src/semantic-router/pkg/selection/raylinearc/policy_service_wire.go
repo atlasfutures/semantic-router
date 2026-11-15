@@ -327,6 +327,7 @@ type policyDecisionEnvelope struct {
 	Evaluation    *PolicyEvaluation                `json:"evaluation"`
 	Shadow        []PolicyPackageRef               `json:"shadow"`
 	EpisodeMode   string                           `json:"episode_mode,omitempty"`
+	SessionScope  string                           `json:"session_scope,omitempty"`
 	RoutingPrices *PolicyRoutingPrices             `json:"routing_prices,omitempty"`
 	CacheContext  *cachecontext.PolicyCacheContext `json:"cache_context,omitempty"`
 	// ResponseFields mirrors PolicyDecisionRequest.ResponseFields.
@@ -473,6 +474,13 @@ type PolicyDecisionRequest struct {
 	// served. Strict is the field's absence, the form every caller sent
 	// before it existed (pathfinder#3068).
 	EpisodeMode string `json:"episode_mode,omitempty"`
+	// SessionScope is "lookup" on a POST /v1/routes lookup that appends to
+	// its conversation's lookup encoder session (PolicySessionScopeLookup):
+	// strict, with no recorded turn, no held arm read and the busy lock on
+	// the lookup scope alone. Sent only to a service that advertises
+	// PolicyCapabilityLookupSessions; omitted otherwise, so every other
+	// request is byte-identical to one from before it.
+	SessionScope string `json:"session_scope,omitempty"`
 	// RoutingPrices are live per-model rates from the routing price feed.
 	// Absent, the service scores with the package's prices; it is omitted
 	// rather than null so a request without it is byte-identical to one
@@ -651,6 +659,14 @@ func DecodePolicyAppendResponse(body []byte) (*PolicyAppendResponse, error) {
 // PolicyEpisodeModeRelaxed is the decide request's episode_mode for a relaxed
 // cell.
 const PolicyEpisodeModeRelaxed = "relaxed"
+
+// PolicySessionScopeLookup is the decide request's session_scope for a lookup
+// that keeps a warm encoder session per conversation and commits nothing.
+const PolicySessionScopeLookup = "lookup"
+
+// PolicySessionScopeField is the decide request's member a refusal names in
+// detail.field when it refuses session_scope.
+const PolicySessionScopeField = "session_scope"
 
 // PolicyPredictedUsage is an action's predicted tokens per billed leg from
 // the stage-two usage head (pathfinder#5443). A leg the head has no fit

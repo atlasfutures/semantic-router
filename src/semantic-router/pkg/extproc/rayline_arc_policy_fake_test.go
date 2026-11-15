@@ -59,6 +59,8 @@ type fakePolicyService struct {
 	// echo, when set, answers routing_prices_used.
 	echo     func(raylinearc.PolicyDecisionRequest) *raylinearc.PolicyRoutingPricesUsed
 	failWith string
+	// decideDelay holds every decide answer this long.
+	decideDelay time.Duration
 	// failDetail is the detail failWith answers with ({} when nil).
 	failDetail map[string]any
 	// failFirst answers the next failFirstLeft decide calls with this code.
@@ -452,6 +454,11 @@ func (fake *fakePolicyService) serve(writer http.ResponseWriter, request *http.R
 		choose, failWith, failDetail, relaxedUnsupported := fake.choose, fake.failWith, fake.failDetail, fake.relaxedUnsupported
 		refuseCold, rejectAttested, refuseAttestedWith := fake.refuseCold, fake.rejectAttested, fake.refuseAttestedWith
 		dropAttested := fake.dropAttested
+		if delay := fake.decideDelay; delay > 0 {
+			fake.mu.Unlock()
+			time.Sleep(delay)
+			fake.mu.Lock()
+		}
 		if fake.failFirstLeft > 0 {
 			fake.failFirstLeft--
 			failWith = fake.failFirst

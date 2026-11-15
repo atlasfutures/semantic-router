@@ -674,6 +674,12 @@ func (client *PolicyServiceClient) exchange(
 				if reason, _ := failure.Detail["reason"].(string); policyCallerPricesRefusalReasons[reason] {
 					refusal.Detail = map[string]any{"reason": reason}
 				}
+			case "invalid_request":
+				// A refused session_scope keeps the field it names, so a
+				// lookup can tell its scope was refused and decide without it.
+				if field, _ := failure.Detail["field"].(string); field == PolicySessionScopeField {
+					refusal.Detail = map[string]any{"field": field}
+				}
 			case PolicyMediaRefusedClass:
 				refusal.Detail = map[string]any{"sub_reason": PolicyMediaRefusalSubReason(failure.Detail)}
 			case PolicyDecisionsV2RefusedClass, PolicyExplorationRefusedClass, PolicySignalRefusedClass:

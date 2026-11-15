@@ -278,12 +278,17 @@ func idempotencyKey() (string, error) {
 // Start starts one session, bounded by the start timeout. Any failure is a
 // PolicyServiceError of class session_start.
 func (backend *PolicySessionBackend) Start(ctx context.Context) (PolicySession, error) {
+	return backend.startIdle(ctx, backend.config.IdleTimeout)
+}
+
+// startIdle starts one session that Modal ends after idle without a request.
+func (backend *PolicySessionBackend) startIdle(ctx context.Context, idle time.Duration) (PolicySession, error) {
 	key, err := backend.newKey()
 	if err != nil {
 		return PolicySession{}, &PolicyServiceError{Class: PolicySessionStartClass}
 	}
 	header := http.Header{}
-	header.Set("x-modal-server-session-idle-timeout", strconv.Itoa(int(backend.config.IdleTimeout/time.Second)))
+	header.Set("x-modal-server-session-idle-timeout", strconv.Itoa(int(idle/time.Second)))
 	header.Set("x-idempotency-key", key)
 	header.Set("x-modal-timestamp", strconv.FormatFloat(float64(backend.now().UnixNano())/1e9, 'f', 6, 64))
 	status, body, err := backend.control(ctx, policySessionStartPath, header, backend.config.StartTimeout)
@@ -388,6 +393,49 @@ func (backend *PolicySessionBackend) Bind(persisted *PolicySession, ephemeral bo
 	return &PolicySessionBinding{backend: backend, persisted: clonePolicySession(persisted), ephemeral: ephemeral}
 }
 
+// BindLookup starts one lookup's routing on a lookup scope (session_scope
+// "lookup"). pinned is the scope's pinned session (nil for none). It routes
+// as a persisting turn does -- on the pinned session, moving once when that
+// is lost -- but the session it ends on is the scope's pin, never episode
+// state (Session answers it for the caller to pin). A session it starts
+// idles out after PolicyLookupSessionIdleTimeout, or the backend's own idle
+// timeout when that is shorter, so it never outlives the service's lookup
+// session it routes to.
+//
+// notAfter is the lookup's deadline (zero: none). A lookup may decide on a
+// context that outlives its caller, so no session is started and no decide
+// sent at or past it: the caller is no longer waiting for the answer.
+func (backend *PolicySessionBackend) BindLookup(pinned *PolicySession, notAfter time.Time) *PolicySessionBinding {
+	return &PolicySessionBinding{
+		backend: backend, persisted: clonePolicySession(pinned),
+		idleTimeout: backend.LookupIdleTimeout(), notAfter: notAfter,
+	}
+}
+
+// ErrPolicyLookupDeadline is a lookup's call not made because the lookup's
+// deadline had passed. It wraps context.DeadlineExceeded.
+var ErrPolicyLookupDeadline = fmt.Errorf("ARC lookup deadline passed before the call: %w", context.DeadlineExceeded)
+
+// pastDeadline reports whether a lookup binding's deadline has passed.
+func (binding *PolicySessionBinding) pastDeadline() bool {
+	return !binding.notAfter.IsZero() && !time.Now().Before(binding.notAfter)
+}
+
+// Pinned is the session BindLookup was given, the one the lookup read from
+// its scope's pin (nil for none).
+func (binding *PolicySessionBinding) Pinned() *PolicySession {
+	if binding == nil {
+		return nil
+	}
+	return clonePolicySession(binding.persisted)
+}
+
+// LookupIdleTimeout is how long a lookup scope's pin lives after its last
+// lookup: the idle timeout BindLookup starts its sessions with.
+func (backend *PolicySessionBackend) LookupIdleTimeout() time.Duration {
+	return min(PolicyLookupSessionIdleTimeout, backend.config.IdleTimeout)
+}
+
 // BindPrivate starts a private (privacy or zdr) turn's routing: ephemeral,
 // on sessions of its own only, never the episode's. Every session it starts
 // stays routable until ReleaseEpisode has reached it, a stale one included,
@@ -422,7 +470,13 @@ type PolicySessionBinding struct {
 	// holdUntilRelease keeps every started session, a stale one included,
 	// for ReleaseEpisode to reach before Release ends it (BindPrivate).
 	holdUntilRelease bool
-	current          *PolicySession
+	// idleTimeout, when set, is the idle timeout of the sessions the turn
+	// starts in place of the backend's (BindLookup).
+	idleTimeout time.Duration
+	// notAfter, when set, is the lookup's deadline: no session is started
+	// and no decide sent at or past it (BindLookup).
+	notAfter time.Time
+	current  *PolicySession
 	// owned are the sessions this turn started; an ephemeral turn ends them.
 	owned    []PolicySession
 	sessions int
@@ -485,6 +539,11 @@ func (binding *PolicySessionBinding) Decide(
 		defer cancel()
 	}
 	if startErr := binding.moveOff(moveCtx); startErr != nil {
+		// A lookup whose deadline passed before the move fails as out of
+		// time, not on the first answer the move would have replaced.
+		if errors.Is(startErr, ErrPolicyLookupDeadline) {
+			return nil, startErr
+		}
 		if stale || transport {
 			// The turn fails (or is refused) on its first answer, as it would
 			// have without the move.
@@ -518,6 +577,9 @@ func (binding *PolicySessionBinding) decide(
 	ctx context.Context,
 	request PolicyDecisionRequest,
 ) (*PolicyDecisionResponse, error) {
+	if binding.pastDeadline() {
+		return nil, ErrPolicyLookupDeadline
+	}
 	response, err := binding.backend.client.WithSessionToken(binding.current.Token).Decide(ctx, request)
 	if policySessionUncertain(err) && !errors.Is(ctx.Err(), context.Canceled) {
 		binding.backend.suspect.mark(*binding.current)
@@ -579,7 +641,14 @@ func (binding *PolicySessionBinding) Replaces() bool {
 }
 
 func (binding *PolicySessionBinding) start(ctx context.Context) error {
-	session, err := binding.backend.Start(ctx)
+	if binding.pastDeadline() {
+		return ErrPolicyLookupDeadline
+	}
+	idle := binding.backend.config.IdleTimeout
+	if binding.idleTimeout > 0 {
+		idle = binding.idleTimeout
+	}
+	session, err := binding.backend.startIdle(ctx, idle)
 	if err != nil {
 		return err
 	}

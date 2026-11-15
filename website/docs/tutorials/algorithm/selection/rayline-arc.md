@@ -712,6 +712,60 @@ lookups over the bound by outcome (`fallback`, `encoded`), and
 `max_encode_tokens`. Choose the bound from the encode time a lookup may hold
 a container for, not from the encoder's capacity.
 
+### Lookup sessions
+
+A throwaway lookup decides under a minted episode id. That covers every
+lookup with `routing.execution`, caller `routing.prices`, `exclusive` or
+exploration, and every lookup on a cell with `episode_writes` off. On a
+policy-service cell with the routes API on and a single
+`policy_service.base_url`, a throwaway lookup that names a conversation
+(`x-rayline-session`) appends to a warm encoder session kept per
+conversation instead of encoding its transcript from token 0. There is no
+setting.
+
+The session belongs to the conversation's lookup scope, an episode id
+derived from the authenticated user and the conversation, never the
+conversation's routed episode. The decide is sent strict with
+`session_scope: "lookup"`, so the service keeps the encoder session and
+records nothing on it: no turn, no held arm, no staging. The lookup still
+commits nothing and still carries its `prices_untracked` or
+`exploration_untracked` warning. Exploration draws on the scope are
+deterministic per conversation, as on a tracked episode.
+
+The policy service must advertise `lookup_sessions`: such a cell is not ready
+until it does (`rayline_arc_policy_service_unsupported` names the
+capability), so the service is deployed first. There is no one-shot fallback:
+
+- A concurrent lookup on the same conversation (`session_busy`) is waited out
+  until the lookup's deadline. A lookup still waiting there answers `504
+  deadline_exceeded`, as any lookup that ran out of time does.
+- A service that refuses the scope, or stopped advertising it, fails the
+  lookup with `503`, logged as `rayline_routes_lookup_session_failed` with
+  its class.
+
+Lookups the scope does not apply to are decided one-shot, as before: one that
+names no conversation, a zdr turn, a call classified as a side call (logged
+`rayline_routes_lookup_scope_skipped`), and every lookup on a cell with
+`policy_service.replicas`. A replica pool's capability list is the cell's,
+not each replica's, and a lookup could fail over to an older replica that
+would run it as a strict episode.
+
+On a cell with policy sessions (a Modal Server with sticky sessions), each
+lookup scope keeps one Modal session, so every lookup on the conversation
+reaches the container that holds its warm encoder session. The session is
+pinned per scope beside the episodes (in Redis with a Redis episode store,
+so every router instance shares it; per process otherwise), never in the
+episode state. Both the session and its pin idle out after 600 s, the
+service's default lookup-session TTL, or the cell's own session idle timeout
+when that is shorter. A pinned session that is gone moves the lookup once, to
+a new session it pins; the session it left is then ended. The cell never closes a
+lookup session: the service ends it on its own idle TTL, and evicts lookup
+sessions before live ones when its cache is full. A throwaway lookup over
+`max_encode_tokens` is still answered without an encode.
+
+Each lookup's `routing_decision` event carries `lookup_session`,
+`session_action` and `encode_ms`.
+
 ### Episodes
 
 Three optional request headers shape continuity:

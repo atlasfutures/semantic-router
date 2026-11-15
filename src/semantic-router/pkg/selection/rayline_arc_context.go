@@ -155,6 +155,24 @@ type RaylineARCSelectionContext struct {
 	// one): it commits nothing, so a policy session it starts is recorded
 	// nowhere and is ended once the lookup is decided.
 	RoutesThrowaway bool
+	// RoutesLookupSession is a throwaway lookup decided on its
+	// conversation's lookup-scoped encoder session: EpisodeIDHash is that
+	// scope's stable hash, the decide is sent strict with session_scope
+	// "lookup", and it still commits nothing.
+	RoutesLookupSession bool
+	// RoutesLookupMintedEpisode is the minted episode hash a lookup-scoped
+	// lookup was prepared on, which a call read as a side call returns to.
+	RoutesLookupMintedEpisode string
+	// RoutesLookupDeadline is when a lookup-scoped lookup's caller stops
+	// waiting: session_busy on its scope is waited out until then.
+	RoutesLookupDeadline time.Time
+	// PolicyLookupSessions pins a lookup scope's Modal session on a
+	// sessioned policy Server, so its lookups reach the container holding
+	// the scope's warm encoder session; nil off a lookup scope.
+	PolicyLookupSessions raylinearc.PolicyLookupSessionPins
+	// PolicyLookupSessionKey names the scope's pin on this cell's policy
+	// backend: two recipes on different Modal apps never share a pin.
+	PolicyLookupSessionKey string
 	// RoutesEncodeLimit is a throwaway POST /v1/routes lookup's
 	// routes_api.max_encode_tokens: over it (ContextTokens), the lookup is
 	// answered without an encode. Zero, as on every tracked lookup and

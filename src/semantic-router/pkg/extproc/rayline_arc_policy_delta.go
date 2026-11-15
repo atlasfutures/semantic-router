@@ -208,9 +208,11 @@ type policyStaging struct {
 // delta cell's strict main turn, without exploration, in a format the
 // append can carry, on a service that advertises staged turns. An
 // ephemeral (zdr) turn never stages: the service would keep its messages
-// for the next turn, and its reply would be appended to them.
+// for the next turn, and its reply would be appended to them. Nor does a
+// lookup-scoped decide: the service refuses stage with session_scope.
 func (scorer *policyServiceScorer) policyDeltaEligible(request *raylinearc.PolicyDecisionRequest, sideCall bool, ephemeral bool) bool {
 	return scorer.delta && scorer.stagedTurnsServed.Load() && !sideCall && !ephemeral && request.EpisodeMode == "" &&
+		request.SessionScope == "" &&
 		request.Selection.Exploration == nil && policyAppendFormat(request.RequestFormat)
 }
 
