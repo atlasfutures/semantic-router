@@ -34,11 +34,17 @@ import (
 // The scope is the user and the conversation, namespaced away from the
 // conversation's routed episode; there is none when no conversation is named.
 func TestRaylineRoutesLookupScopeDerivation(t *testing.T) {
-	if got := raylineRoutesLookupScope("user-1", "conv-1"); got != "lookup:user-1:conv-1" {
+	if got := raylineRoutesLookupScope("user-1", "conv-1"); got != "lookup:6:user-1:conv-1" {
 		t.Fatalf("scope = %q", got)
 	}
-	if got := raylineRoutesLookupScope("", "conv-1"); got != "lookup::conv-1" {
+	if got := raylineRoutesLookupScope("", "conv-1"); got != "lookup:0::conv-1" {
 		t.Fatalf("scope without an authenticated user = %q", got)
+	}
+	// A ':' in the user cannot move the boundary between the user and the
+	// conversation (session:branch): user "a:b" on "c" is not user "a" on
+	// session "b", branch "c".
+	if raylineRoutesLookupScope("a:b", "c") == raylineRoutesLookupScope("a", "b:c") {
+		t.Fatal("two users share a lookup scope through a ':' in the user")
 	}
 	if got := raylineRoutesLookupScope("user-1", ""); got != "" {
 		t.Fatalf("no conversation: scope = %q, want none", got)
@@ -541,7 +547,7 @@ func TestRaylineRoutesLookupSessionsEndToEnd(t *testing.T) {
 		router.background.Wait()
 		contexts := selectors[config.DefaultRecipeName].contexts
 		arcContext := contexts[len(contexts)-1].RaylineARC
-		scopeHash := raylinearc.HashEpisodeID("lookup:user-1:conv+1")
+		scopeHash := raylinearc.HashEpisodeID(raylineRoutesLookupScope("user-1", "conv+1"))
 		if arcContext.RoutesLookupSession != named || (arcContext.EpisodeIDHash == scopeHash) != named {
 			t.Fatalf("named=%t: lookup session %t on %s", named, arcContext.RoutesLookupSession, arcContext.EpisodeIDHash)
 		}
@@ -958,16 +964,15 @@ func (decider *busyDecider) Decide(context.Context, raylinearc.PolicyDecisionReq
 
 // On a context that outlives the caller (a detached lookup), a scope busy
 // until the deadline starts no decide at or past it, and its failure comes
-// back once the deadline has passed.
+// back, as the lookup deadline, once the deadline has passed.
 func TestLookupBusyWaitStartsNoDecidePastTheDeadline(t *testing.T) {
 	decider := &busyDecider{}
 	deadline := time.Now().Add(300 * time.Millisecond)
 	admit := func() (func(), error) { return func() {}, nil }
 	_, err := decidePolicyThroughBusyUntil(context.Background(), decider, raylinearc.PolicyDecisionRequest{}, deadline, true, admit, nil)
 	returned := time.Now()
-	var failure *raylinearc.PolicyServiceError
-	if !errors.As(err, &failure) || failure.Class != "session_busy" {
-		t.Fatalf("err = %v, want session_busy", err)
+	if !errors.Is(err, raylinearc.ErrPolicyLookupDeadline) {
+		t.Fatalf("err = %v, want the lookup deadline", err)
 	}
 	if returned.Before(deadline) || returned.Sub(deadline) > 100*time.Millisecond {
 		t.Fatalf("returned %s from the deadline, want just after it", returned.Sub(deadline))
@@ -1037,5 +1042,40 @@ func TestLookupSessionStartsNothingPastTheDeadline(t *testing.T) {
 	defer front.mu.Unlock()
 	if front.starts != 0 {
 		t.Fatalf("%d sessions started past the deadline", front.starts)
+	}
+}
+
+// A scoped lookup still busy at its deadline fails with the lookup deadline,
+// not session_busy: the routes handler answers it 504 even before the
+// lookup's own context has registered the expiry.
+func TestScopedLookupBusyPastTheDeadlineIsTheDeadline(t *testing.T) {
+	decider := &busyDecider{}
+	admit := func() (func(), error) { return func() {}, nil }
+	_, err := decidePolicyThroughBusyUntil(context.Background(), decider, raylinearc.PolicyDecisionRequest{},
+		time.Now().Add(100*time.Millisecond), true, admit, nil)
+	if !errors.Is(err, raylinearc.ErrPolicyLookupDeadline) || len(decider.calls) == 0 {
+		t.Fatalf("err = %v after %d decides, want the lookup deadline after busy replies", err, len(decider.calls))
+	}
+
+	fixture := newPolicySelectorFixture(t, "")
+	advertiseLookupSessions(fixture)
+	fixture.fake.failNext("session_busy")
+	_, err = fixture.scopedLookupBy(t, lookupScopeTestScope, time.Now().Add(100*time.Millisecond))
+	var failure *raylineARCSelectionFailure
+	if !errors.As(err, &failure) || failure.class != arcFailureLookupDeadline {
+		t.Fatalf("selection err = %v, want %s", err, arcFailureLookupDeadline)
+	}
+	mapped := selectionFailureError(err)
+	if !errors.Is(mapped, errRaylineRoutesLookupDeadline) || errors.Is(mapped, routerruntime.ErrRouteDecisionContended) {
+		t.Fatalf("mapped = %v, want the lookup deadline and not contention", mapped)
+	}
+
+	// The handler answers it 504 on a lookup context that has not expired.
+	router, _ := oneCellRouter(t, "main")
+	lookupContext, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	response := router.raylineRoutesFailure(routesContext(nil), lookupContext, "rt_deadline", mapped)
+	if code := immediateStatusCode(t, response); code != 504 {
+		t.Fatalf("status %d, want 504", code)
 	}
 }

@@ -1050,6 +1050,9 @@ func selectionFailureError(err error) error {
 			return fmt.Errorf("%w: %w: %w",
 				routerruntime.ErrRouteDecisionInvalidBody, errRaylineRoutesCallerPricesInconsistent, err)
 		}
+		if failure.class == arcFailureLookupDeadline {
+			return fmt.Errorf("%w: %w", errRaylineRoutesLookupDeadline, err)
+		}
 		if routesInconsistentClasses[failure.class] {
 			return fmt.Errorf("%w: %w", routerruntime.ErrRouteDecisionInconsistent, err)
 		}

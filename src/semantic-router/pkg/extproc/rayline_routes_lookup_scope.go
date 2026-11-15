@@ -19,6 +19,7 @@ package extproc
 import (
 	"context"
 	"errors"
+	"strconv"
 	"time"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
@@ -61,20 +62,29 @@ const raylineRoutesLookupScopePrefix = "lookup:"
 // it after the cell armed.
 const arcFailureLookupSessionsUnadvertised = "policy_lookup_sessions_unadvertised"
 
+// arcFailureLookupDeadline fails a lookup-scoped decision whose deadline
+// passed before it was decided (a scope busy until then, or no time left to
+// start the call): the lookup answers 504 deadline_exceeded, as any lookup
+// out of time does (errRaylineRoutesLookupDeadline).
+const arcFailureLookupDeadline = "routes_lookup_deadline"
+
 // arcFailureLookupScopeRefused fails a lookup the service refused
 // session_scope on (invalid_request naming the field): a cell and a service
 // that disagree on the contract, never the caller's request.
 const arcFailureLookupScopeRefused = "policy_lookup_scope_refused"
 
 // raylineRoutesLookupScope is the lookup scope a lookup may decide on, or ""
-// when the caller named no conversation. The authenticated user is folded
-// in although the gateway's conversation identity already carries it, so
-// two users can never share a scope even if a caller's identity does not.
+// when the caller named no conversation. It is the authenticated user and
+// the conversation identity as an unambiguous pair: the user is
+// length-prefixed, because both it and the identity (session, then branch,
+// joined by ':') may contain ':', and a plain join would let user "a:b" on
+// conversation "c" share user "a"'s scope on conversation "b", branch "c":
+// one encoder session, busy lock and Modal pin across two accounts.
 func raylineRoutesLookupScope(authzUserID, episode string) string {
 	if episode == "" {
 		return ""
 	}
-	return raylineRoutesLookupScopePrefix + authzUserID + ":" + episode
+	return raylineRoutesLookupScopePrefix + strconv.Itoa(len(authzUserID)) + ":" + authzUserID + ":" + episode
 }
 
 // raylineRoutesLookupSessionsServed reports whether a cell decides its

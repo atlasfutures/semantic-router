@@ -636,6 +636,10 @@ var errRaylineRoutesRequestShape = errors.New("the routing decision cannot repre
 // statelessPathMessage and edited to match it.
 var errRaylineRoutesStatelessPath = errors.New("route does not continue a stored conversation by id")
 
+// errRaylineRoutesLookupDeadline tags a lookup-scoped decision whose
+// deadline passed undecided, answered 504 deadline_exceeded.
+var errRaylineRoutesLookupDeadline = errors.New("route lookup deadline passed before its decision")
+
 // errRaylineRoutesUnknownPriceModel tags the service's refusal of a priced
 // model its package does not offer (pathfinder#5668), answered 400
 // unknown_price_model.
@@ -679,7 +683,10 @@ func (r *OpenAIRouter) raylineRoutesFailure(
 	if errors.As(err, &signalRefusal) {
 		return r.createRaylineRoutesCodedError(ctx, signalRefusal.contract())
 	}
-	expired := errors.Is(lookupContext.Err(), context.DeadlineExceeded)
+	// A lookup-scoped decision that found its deadline passed says so itself:
+	// on a detached lookup its answer can arrive before the lookup's own
+	// context has registered the expiry.
+	expired := errors.Is(lookupContext.Err(), context.DeadlineExceeded) || errors.Is(err, errRaylineRoutesLookupDeadline)
 	logging.ComponentErrorEvent("extproc", "routing_decision_failed", map[string]interface{}{
 		"routing_decision_id": routeID,
 		"error":               err.Error(),

@@ -1095,6 +1095,11 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	if arcContext.RoutesLookupSession && policyLookupScopeRefused(err) {
 		return nil, failRaylineRoutesLookupScope(arcContext, arcFailureLookupScopeRefused)
 	}
+	// A lookup whose deadline passed undecided (its scope busy until then,
+	// or no time left to start a call) answers as any lookup out of time.
+	if arcContext.RoutesLookupSession && errors.Is(err, raylinearc.ErrPolicyLookupDeadline) {
+		return nil, failRaylineRoutesLookupScope(arcContext, arcFailureLookupDeadline)
+	}
 	var cold *raylinearc.PolicyServiceError
 	switch {
 	case attestedFirst != "" && err == nil:
@@ -1709,10 +1714,7 @@ func decidePolicyThroughBusyUntil(
 		// it, the first included: the caller is no longer waiting, and the
 		// context may outlive it (a detached lookup).
 		if lastTry && !time.Now().Before(deadline) {
-			if err == nil {
-				err = raylinearc.ErrPolicyLookupDeadline
-			}
-			return response, err
+			return nil, raylinearc.ErrPolicyLookupDeadline
 		}
 		release, admitErr := admit()
 		if admitErr != nil {
@@ -1734,7 +1736,7 @@ func decidePolicyThroughBusyUntil(
 			}
 			if wait = time.Until(deadline) - policyBusyRetryFirst; wait <= 0 {
 				holdUntil(ctx, deadline)
-				return response, err
+				return nil, raylinearc.ErrPolicyLookupDeadline
 			}
 		}
 		timer := time.NewTimer(wait)
