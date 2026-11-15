@@ -215,7 +215,28 @@ func PolicyRefusalReason(detail map[string]any) string {
 // is refused the same way; a caller holds the episode's last served action
 // rather than failing each of them. A service that predates the typed reason
 // answers runtime_refused, which stays unsupported_request.
+//
+// Two other image refusals take the same hold (ADR 0122 decision 1: "a refused
+// image takes the hold path that capacity refusals take today";
+// memex-desktop#8272): an encoder input carrying more images than the engine
+// admits (encoder_refused, sub_reason too_many_images) and a remote image URL
+// the service would not or could not fetch (remote_image_fetch_failed). Every
+// other encoder_refused sub_reason is a client or contract bug and keeps
+// failing the turn.
 const PolicyMediaRefusedClass = "media_refused"
+
+// policyImageRefusal reports whether an unsupported_request reason (and its
+// sub_reason) is an image refusal held like media_refused.
+func policyImageRefusal(reason string, detail map[string]any) bool {
+	switch reason {
+	case PolicyMediaRefusedClass, "remote_image_fetch_failed":
+		return true
+	case "encoder_refused":
+		subReason, _ := detail["sub_reason"].(string)
+		return subReason == "too_many_images"
+	}
+	return false
+}
 
 // policyMediaRefusalSubReasons are the media refusal reasons the projection
 // states (pathfinder curation/canonical_media.py RefusalReason). A sub_reason
@@ -235,6 +256,19 @@ var policyMediaRefusalSubReasons = map[string]bool{
 	"audio_unsupported":              true,
 	"malformed_redacted_thinking":    true,
 	"vision_token_in_text":           true,
+	// encoder_refused (the encoder server's image limit, vllm_encoder.REFUSAL_CODES).
+	"too_many_images": true,
+	// remote_image_fetch_failed (pathfinder deploy/arc-policy-service/remote_images.py).
+	"scheme_not_https":     true,
+	"host_not_allowlisted": true,
+	"address_blocked":      true,
+	"redirect_limit":       true,
+	"too_large":            true,
+	"timeout":              true,
+	"connection":           true,
+	"http_status":          true,
+	"pinned_bytes_missing": true,
+	// unsupported_image_media_type, listed above, is also a fetch sub_reason.
 }
 
 // PolicyMediaRefusalSubReason is a media refusal's bounded sub_reason.
@@ -327,7 +361,7 @@ func policyFailureClass(failure PolicyErrorResponse) string {
 		if strings.HasPrefix(reason, "relaxed_") {
 			return PolicyRelaxedUnsupportedClass
 		}
-		if reason == PolicyMediaRefusedClass {
+		if policyImageRefusal(reason, failure.Detail) {
 			return PolicyMediaRefusedClass
 		}
 		switch reason {
@@ -675,7 +709,10 @@ func (client *PolicyServiceClient) exchange(
 					refusal.Detail = map[string]any{"reason": reason}
 				}
 			case PolicyMediaRefusedClass:
-				refusal.Detail = map[string]any{"sub_reason": PolicyMediaRefusalSubReason(failure.Detail)}
+				// The reason is one of the image refusals policyImageRefusal
+				// admits (media_refused, encoder_refused,
+				// remote_image_fetch_failed), so it stays bounded.
+				refusal.Detail = map[string]any{"reason": failure.Detail["reason"], "sub_reason": PolicyMediaRefusalSubReason(failure.Detail)}
 			case PolicyDecisionsV2RefusedClass, PolicyExplorationRefusedClass, PolicySignalRefusedClass:
 				refusal.Detail = map[string]any{"reason": failure.Detail["reason"]}
 			}

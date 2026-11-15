@@ -52,8 +52,8 @@ func TestPolicyServiceClassifiesMediaRefusalWithABoundedSubReason(t *testing.T) 
 		if !errors.As(err, &failure) || failure.Class != PolicyMediaRefusedClass {
 			t.Fatalf("sub_reason %v: err = %v, want class %s", tc.subReason, err, PolicyMediaRefusedClass)
 		}
-		if len(failure.Detail) != 1 || failure.Detail["sub_reason"] != tc.want {
-			t.Fatalf("sub_reason %v: detail = %v, want only sub_reason %s", tc.subReason, failure.Detail, tc.want)
+		if len(failure.Detail) != 2 || failure.Detail["reason"] != "media_refused" || failure.Detail["sub_reason"] != tc.want {
+			t.Fatalf("sub_reason %v: detail = %v, want only the reason and sub_reason %s", tc.subReason, failure.Detail, tc.want)
 		}
 	}
 }
