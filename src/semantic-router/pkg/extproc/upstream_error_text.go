@@ -31,16 +31,30 @@ import (
 // caught; the cut bounds it. An account refusal (401, 402) is left out: its
 // text names the cell's provider account. A slug is kept only when it has a
 // provider slug's shape and the redactor leaves it as it is.
+//
+// A 5xx states no message: OpenRouter's "Provider returned error" says
+// nothing, and a provider's own text can echo the request. Every 4xx and 5xx
+// keeps the error's code, its neutral category (or the body's error.type) and
+// the provider OpenRouter's metadata names (provider_name), so a failure
+// before any content says which provider failed. The metadata's raw body is
+// never read.
 
 const (
 	upstreamErrorTextMax  = 300
 	upstreamErrorSlugMax  = 48
 	upstreamErrorSlugsMax = 16
+	upstreamErrorCodeMax  = 48
 )
 
 var (
 	upstreamErrorLinkPattern = regexp.MustCompile(`https?://\S+`)
 	upstreamErrorSlugPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9.-]*(/[a-z0-9][a-z0-9.-]*)*$`)
+	// upstreamErrorCodePattern is an error code or type: a status number or
+	// a protocol word (server_error, upstream_unavailable).
+	upstreamErrorCodePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*$`)
+	// upstreamErrorProviderPattern is a provider's display name as
+	// OpenRouter's metadata gives it (DeepInfra, Google AI Studio).
+	upstreamErrorProviderPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9 ._()/-]*$`)
 	// upstreamErrorSecretPattern is a credential-shaped token anywhere in a
 	// word (sk-..., rk_..., or any long unbroken token), which the shared
 	// redactor's word boundary can miss.
@@ -48,37 +62,60 @@ var (
 	upstreamErrorQuoteClosers  = map[rune]rune{'"': '"', '`': '`', '\'': '\'', '“': '”', '‘': '’'}
 )
 
-// upstreamErrorText is what a provider's 4xx said, as the logs may carry it.
+// upstreamErrorText is what a provider's 4xx or 5xx said, as the logs may
+// carry it.
 type upstreamErrorText struct {
 	message        string
 	pinnedSlug     string
 	acceptingSlugs []string
+	code           string
+	errorType      string
+	providerName   string
 }
 
-// readUpstreamErrorText takes the loggable text of a 4xx: the decoded error's
-// message, else the body's error.message, and the metadata's provider slugs.
+// readUpstreamErrorText takes the loggable text of a 4xx or 5xx: its code,
+// category and named provider, and for a 4xx the decoded error's message,
+// else the body's error.message, and the metadata's provider slugs.
 func readUpstreamErrorText(status int, body []byte, protocolError *llmprotocol.ProtocolError) upstreamErrorText {
-	if status < 400 || status >= 500 || status == http.StatusUnauthorized || status == http.StatusPaymentRequired {
+	if status < 400 || status >= 600 || status == http.StatusUnauthorized || status == http.StatusPaymentRequired {
 		return upstreamErrorText{}
 	}
 	var wire struct {
 		Error struct {
-			Message  string `json:"message"`
+			Code     json.RawMessage `json:"code"`
+			Type     string          `json:"type"`
+			Message  string          `json:"message"`
 			Metadata struct {
 				PinnedProviderSlug     string   `json:"pinned_provider_slug"`
 				AcceptingProviderSlugs []string `json:"accepting_provider_slugs"`
+				ProviderName           string   `json:"provider_name"`
 			} `json:"metadata"`
 		} `json:"error"`
 	}
 	_ = json.Unmarshal(body, &wire)
+	code, errorType := strings.Trim(string(wire.Error.Code), `"`), wire.Error.Type
+	if protocolError != nil {
+		if protocolError.Code != "" {
+			code = protocolError.Code
+		}
+		if protocolError.Category != "" {
+			errorType = string(protocolError.Category)
+		}
+	}
+	text := upstreamErrorText{
+		code:         loggableErrorWord(code, upstreamErrorCodePattern),
+		errorType:    loggableErrorWord(errorType, upstreamErrorCodePattern),
+		providerName: loggableErrorWord(wire.Error.Metadata.ProviderName, upstreamErrorProviderPattern),
+	}
+	if status >= 500 {
+		return text
+	}
 	message := wire.Error.Message
 	if protocolError != nil && protocolError.Message != "" {
 		message = protocolError.Message
 	}
-	text := upstreamErrorText{
-		message:    loggableUpstreamMessage(message),
-		pinnedSlug: loggableSlug(wire.Error.Metadata.PinnedProviderSlug),
-	}
+	text.message = loggableUpstreamMessage(message)
+	text.pinnedSlug = loggableSlug(wire.Error.Metadata.PinnedProviderSlug)
 	for _, slug := range wire.Error.Metadata.AcceptingProviderSlugs {
 		if len(text.acceptingSlugs) == upstreamErrorSlugsMax {
 			break
@@ -209,7 +246,18 @@ func loggableSlug(slug string) string {
 	return slug
 }
 
-// addUpstreamErrorTextFields writes a 4xx's text into a log record, leaving
+// loggableErrorWord is a short code, type or provider name of the given
+// shape, or "" for anything else.
+func loggableErrorWord(word string, shape *regexp.Regexp) string {
+	word = strings.TrimSpace(word)
+	if len(word) > upstreamErrorCodeMax || !shape.MatchString(word) ||
+		upstreamErrorSecretPattern.MatchString(word) || llmprotocol.RedactProviderText(word) != word {
+		return ""
+	}
+	return word
+}
+
+// addUpstreamErrorTextFields writes a 4xx's or 5xx's text into a log record, leaving
 // out what it did not say.
 func addUpstreamErrorTextFields(fields map[string]interface{}, text upstreamErrorText) {
 	if text.message != "" {
@@ -220,5 +268,14 @@ func addUpstreamErrorTextFields(fields map[string]interface{}, text upstreamErro
 	}
 	if len(text.acceptingSlugs) > 0 {
 		fields["upstream_error_accepting_provider_slugs"] = text.acceptingSlugs
+	}
+	if text.code != "" {
+		fields["upstream_error_code"] = text.code
+	}
+	if text.errorType != "" {
+		fields["upstream_error_type"] = text.errorType
+	}
+	if text.providerName != "" {
+		fields["upstream_error_provider_name"] = text.providerName
 	}
 }

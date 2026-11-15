@@ -512,7 +512,7 @@ type RequestContext struct {
 	// ContentSentBeforeFailure says whether the client had received model
 	// output when a classed turn failure arrived; nil when the turn did not fail.
 	ContentSentBeforeFailure *bool
-	// UpstreamErrorText is what a provider's 4xx said, as the logs carry it
+	// UpstreamErrorText is what a provider's 4xx or 5xx said, as the logs carry it
 	// (upstream_error_text.go).
 	UpstreamErrorText upstreamErrorText
 	// ResponseFailureDetail is the specific cause behind a bounded failure
