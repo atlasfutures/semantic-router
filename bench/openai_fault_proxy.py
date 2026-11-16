@@ -524,8 +524,13 @@ def sse_line_has_content(line: bytes) -> bool:
         delta = choice.get("delta") if isinstance(choice, dict) else None
         if not isinstance(delta, dict):
             continue
-        for field in ("content", "reasoning", "reasoning_content"):
+        for field in ("content", "reasoning", "reasoning_content", "refusal"):
             if delta.get(field):
+                return True
+        for detail in delta.get("reasoning_details") or []:
+            if isinstance(detail, dict) and (
+                detail.get("text") or detail.get("summary")
+            ):
                 return True
         if any(tool_call_has_arguments(call) for call in delta.get("tool_calls") or []):
             return True

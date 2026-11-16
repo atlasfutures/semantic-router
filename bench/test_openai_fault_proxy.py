@@ -394,6 +394,13 @@ def test_sse_line_has_content_by_wire():
     )
     assert not fault.sse_line_has_content(bare_tool_start)
     assert fault.sse_line_has_content(
+        b'data: {"choices":[{"delta":{"refusal":"no"}}]}\n'
+    )
+    assert fault.sse_line_has_content(
+        b'data: {"choices":[{"delta":{"reasoning_details":'
+        b'[{"type":"reasoning.text","text":"t"}]}}]}\n'
+    )
+    assert fault.sse_line_has_content(
         b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,'
         b'"function":{"arguments":"{\\"a\\""}}]}}]}\n'
     )
