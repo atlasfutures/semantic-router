@@ -22,10 +22,13 @@ HTTP_BAD_GATEWAY = 502
 HTTP_UNAVAILABLE = 503
 SESSION_HEADER = "x-session-id"
 # Stream faults (--stream-fault) act on streamed calls ("stream": true) only.
-# Each is keyed by the call's conversation: a digest of its "messages" (Chat,
-# Messages) or "input" (Responses). A re-send of the same turn carries the
-# same conversation, so it is the key's second call; the next turn adds a
-# message, so it is a new key whose first call is faulted again.
+# Each is keyed by the call's conversation: a digest of its model, system,
+# previous_response_id and "messages" (Chat, Messages) or "input" (Responses).
+# A re-send of the same turn carries the same conversation, so it is the key's
+# second call; the next turn adds a message, so it is a new key whose first
+# call is faulted again. Headers are not read: a router's re-send drops them.
+# Two sessions that send byte-identical first turns share a key, so give each
+# test session a distinct first prompt.
 STREAM_FAULT_STALL_ONCE = "stall-once"
 STREAM_FAULT_STALL_TWICE = "stall-twice"
 STREAM_FAULT_CUT_AFTER_CONTENT = "cut-after-content"
@@ -185,7 +188,7 @@ class FaultProxyHandler(BaseHTTPRequestHandler):
             return
         payload = parse_json_body(body)
         if self.fault_policy.stream_fault and payload.get("stream") is True:
-            key = stream_fault_key(payload, self.headers.get(SESSION_HEADER, ""))
+            key = stream_fault_key(payload)
             with self.seen_lock:
                 call = self.stream_calls.get(key, 0) + 1
                 self.stream_calls[key] = call
@@ -469,12 +472,12 @@ def phase_from_text(text: str) -> str:
     return "user_turn"
 
 
-def stream_fault_key(payload: dict[str, Any], session: str = "") -> str:
-    """Name a streamed call's conversation: a digest of its session header,
-    model, system prompt, Responses parent and messages (or input). A
-    re-send changes none of these; it may change only provider routing."""
+def stream_fault_key(payload: dict[str, Any]) -> str:
+    """Name a streamed call's conversation: a digest of its model, system
+    prompt, Responses parent and messages (or input). A router's re-send
+    changes none of these (only provider routing) and drops client headers,
+    so the key reads the body alone."""
     conversation = {
-        "session": session,
         "model": payload.get("model"),
         "system": payload.get("system"),
         "previous_response_id": payload.get("previous_response_id"),

@@ -372,7 +372,6 @@ def test_stream_fault_key_follows_the_conversation():
     }
     assert fault.stream_fault_key(first) == fault.stream_fault_key(resent)
     assert fault.stream_fault_key(first) != fault.stream_fault_key(next_turn)
-    assert fault.stream_fault_key(first, "s1") != fault.stream_fault_key(first, "s2")
     responses_a = {"input": "hi", "previous_response_id": "resp_a"}
     responses_b = {"input": "hi", "previous_response_id": "resp_b"}
     assert fault.stream_fault_key(responses_a) != fault.stream_fault_key(responses_b)
