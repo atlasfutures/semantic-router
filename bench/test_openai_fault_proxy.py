@@ -372,6 +372,10 @@ def test_stream_fault_key_follows_the_conversation():
     }
     assert fault.stream_fault_key(first) == fault.stream_fault_key(resent)
     assert fault.stream_fault_key(first) != fault.stream_fault_key(next_turn)
+    assert fault.stream_fault_key(first, "s1") != fault.stream_fault_key(first, "s2")
+    responses_a = {"input": "hi", "previous_response_id": "resp_a"}
+    responses_b = {"input": "hi", "previous_response_id": "resp_b"}
+    assert fault.stream_fault_key(responses_a) != fault.stream_fault_key(responses_b)
 
 
 def test_sse_line_has_content_by_wire():
@@ -384,6 +388,18 @@ def test_sse_line_has_content_by_wire():
         b'data: {"type":"content_block_delta","delta":{"text":"x"}}\n'
     )
     assert not fault.sse_line_has_content(b'data: {"type":"message_start"}\n')
+    bare_tool_start = (
+        b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1",'
+        b'"function":{"name":"f","arguments":""}}]}}]}\n'
+    )
+    assert not fault.sse_line_has_content(bare_tool_start)
+    assert fault.sse_line_has_content(
+        b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,'
+        b'"function":{"arguments":"{\\"a\\""}}]}}]}\n'
+    )
+    assert not fault.sse_line_has_content(
+        b'data: {"type":"content_block_delta","delta":{"partial_json":""}}\n'
+    )
     assert fault.sse_line_has_content(
         b'data: {"type":"response.output_text.delta","delta":"x"}\n'
     )

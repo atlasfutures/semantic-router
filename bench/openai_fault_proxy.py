@@ -185,7 +185,7 @@ class FaultProxyHandler(BaseHTTPRequestHandler):
             return
         payload = parse_json_body(body)
         if self.fault_policy.stream_fault and payload.get("stream") is True:
-            key = stream_fault_key(payload)
+            key = stream_fault_key(payload, self.headers.get(SESSION_HEADER, ""))
             with self.seen_lock:
                 call = self.stream_calls.get(key, 0) + 1
                 self.stream_calls[key] = call
@@ -469,9 +469,17 @@ def phase_from_text(text: str) -> str:
     return "user_turn"
 
 
-def stream_fault_key(payload: dict[str, Any]) -> str:
-    """Name a streamed call's conversation: a digest of its messages."""
-    conversation = payload.get("messages", payload.get("input"))
+def stream_fault_key(payload: dict[str, Any], session: str = "") -> str:
+    """Name a streamed call's conversation: a digest of its session header,
+    model, system prompt, Responses parent and messages (or input). A
+    re-send changes none of these; it may change only provider routing."""
+    conversation = {
+        "session": session,
+        "model": payload.get("model"),
+        "system": payload.get("system"),
+        "previous_response_id": payload.get("previous_response_id"),
+        "messages": payload.get("messages", payload.get("input")),
+    }
     raw = json.dumps(conversation, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:12]
 
@@ -502,21 +510,33 @@ def sse_line_has_content(line: bytes) -> bool:
         return False
     kind = event.get("type")
     if kind == "content_block_delta":
-        return True
+        delta = event.get("delta")
+        return isinstance(delta, dict) and any(
+            delta.get(field) for field in ("text", "thinking", "partial_json")
+        )
     if (
         isinstance(kind, str)
         and kind.startswith("response.")
         and kind.endswith(".delta")
     ):
-        return True
+        return bool(event.get("delta"))
     for choice in event.get("choices") or []:
         delta = choice.get("delta") if isinstance(choice, dict) else None
         if not isinstance(delta, dict):
             continue
-        for field in ("content", "reasoning", "reasoning_content", "tool_calls"):
+        for field in ("content", "reasoning", "reasoning_content"):
             if delta.get(field):
                 return True
+        if any(tool_call_has_arguments(call) for call in delta.get("tool_calls") or []):
+            return True
     return False
+
+
+def tool_call_has_arguments(call: Any) -> bool:
+    """A tool call delta counts as content once it carries arguments; its
+    bare start (id and name only) does not."""
+    function = call.get("function") if isinstance(call, dict) else None
+    return isinstance(function, dict) and bool(function.get("arguments"))
 
 
 def should_inject_fault(
