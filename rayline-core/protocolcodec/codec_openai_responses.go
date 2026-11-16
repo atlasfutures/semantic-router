@@ -17,8 +17,9 @@ func (OpenAIResponsesCodec) Capabilities() llmprotocol.CapabilitySet {
 		llmprotocol.CapabilityText, llmprotocol.CapabilityImageInput, llmprotocol.CapabilityFileInput,
 		llmprotocol.CapabilityImageGeneration,
 		llmprotocol.CapabilityTools, llmprotocol.CapabilityParallelTools, llmprotocol.CapabilityReasoning,
-		// A signed reasoning item rides OpenRouter's signature member; see
-		// responses_anthropic_reasoning.go.
+		// A signed reasoning item reaches a client in a minted
+		// encrypted_content and a Claude worker in OpenRouter's signature
+		// member; see responses_anthropic_reasoning.go.
 		llmprotocol.CapabilityReasoningSignature,
 		llmprotocol.CapabilityStructuredJSON, llmprotocol.CapabilityStrictJSONSchema, llmprotocol.CapabilityStrictToolSchema,
 		llmprotocol.CapabilityStreaming, llmprotocol.CapabilityCacheAccounting,

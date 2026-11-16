@@ -67,8 +67,7 @@
       {
         "data": {
           "item": {
-            "encrypted_content": "encrypted-reasoning",
-            "format": "anthropic-claude-v1",
+            "encrypted_content": "vsr.reasoning_details.v1.W3siZGF0YSI6ImVuY3J5cHRlZC1yZWFzb25pbmciLCJmb3JtYXQiOiJhbnRocm9waWMtY2xhdWRlLXYxIiwiaW5kZXgiOjAsInR5cGUiOiJyZWFzb25pbmcuZW5jcnlwdGVkIn1d",
             "id": "item_2ed757d5b010b923372c1501",
             "status": "completed",
             "summary": [],
@@ -181,8 +180,7 @@
             "object": "response",
             "output": [
               {
-                "encrypted_content": "encrypted-reasoning",
-                "format": "anthropic-claude-v1",
+                "encrypted_content": "vsr.reasoning_details.v1.W3siZGF0YSI6ImVuY3J5cHRlZC1yZWFzb25pbmciLCJmb3JtYXQiOiJhbnRocm9waWMtY2xhdWRlLXYxIiwiaW5kZXgiOjAsInR5cGUiOiJyZWFzb25pbmcuZW5jcnlwdGVkIn1d",
                 "id": "item_2ed757d5b010b923372c1501",
                 "status": "completed",
                 "summary": [],

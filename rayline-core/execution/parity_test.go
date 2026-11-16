@@ -84,6 +84,9 @@ func TestClaudeSignedHistorySurvivesInEachProtocol(t *testing.T) {
 		{"chat", llmprotocol.OpenAIChatV1,
 			`{"model":"claude","max_tokens":1024,"messages":[{"role":"user","content":"question"},{"role":"assistant","content":"answer","reasoning":"consider","reasoning_details":[{"type":"reasoning.text","text":"consider","signature":"sig-claude","format":"anthropic-claude-v1","index":0}]},{"role":"user","content":"next"}]}`,
 			`"format":"anthropic-claude-v1"`},
+		{"responses", llmprotocol.OpenAIResponsesV1,
+			`{"model":"claude","input":[{"role":"user","content":"question"},{"type":"reasoning","summary":[],"content":[{"type":"reasoning_text","text":"consider"}],"signature":"sig-claude","format":"anthropic-claude-v1"},{"role":"assistant","content":[{"type":"output_text","text":"answer"}]},{"role":"user","content":"next"}]}`,
+			`"format":"anthropic-claude-v1"`},
 	}
 	engine := protocolcodec.NewBuiltinEngine()
 	for _, tc := range cases {
@@ -102,6 +105,59 @@ func TestClaudeSignedHistorySurvivesInEachProtocol(t *testing.T) {
 				t.Fatalf("own-model signed reasoning was lost: %s", encoded.Body)
 			}
 		})
+	}
+}
+
+// The reasoning items a Responses client got for Claude's turn, resent as
+// codex resends them (type, summary, content and the minted
+// encrypted_content), reach the next Claude worker over Responses with the
+// signature and format OpenRouter's /responses takes back, and no minted blob.
+func TestClaudeReasoningResentByCodexReachesAResponsesWorkerSigned(t *testing.T) {
+	engine := protocolcodec.NewBuiltinEngine()
+	answer := `{"id":"msg_1","type":"message","role":"assistant","model":"claude-opus-4-6",` +
+		`"content":[{"type":"thinking","thinking":"consider","signature":"sig-claude"},{"type":"redacted_thinking","data":"opaque-blob"},{"type":"text","text":"answer"}],` +
+		`"stop_reason":"end_turn","stop_sequence":null,"usage":{"input_tokens":3,"output_tokens":5}}`
+	translated, err := engine.TranslateResponse(llmprotocol.AnthropicMessagesV1, llmprotocol.OpenAIResponsesV1, []byte(answer), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response struct {
+		Output []map[string]json.RawMessage `json:"output"`
+	}
+	if err := json.Unmarshal(translated.Body, &response); err != nil {
+		t.Fatal(err)
+	}
+	items := []json.RawMessage{json.RawMessage(`{"role":"user","content":"question"}`)}
+	for _, item := range response.Output {
+		if string(item["type"]) == `"reasoning"` {
+			resent := map[string]json.RawMessage{}
+			for _, name := range []string{"type", "id", "summary", "content", "encrypted_content"} {
+				if value, present := item[name]; present {
+					resent[name] = value
+				}
+			}
+			item = resent
+		}
+		raw, _ := json.Marshal(item)
+		items = append(items, raw)
+	}
+	items = append(items, json.RawMessage(`{"role":"user","content":"next"}`))
+	input, _ := json.Marshal(items)
+	body := `{"model":"claude","store":false,"include":["reasoning.encrypted_content"],"input":` + string(input) + `}`
+	request, envelope, _, err := engine.DecodeRequestForMutation(llmprotocol.OpenAIResponsesV1, []byte(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepareReasoning(&request, Deployment{Kind: "cloud", ID: "claude", RegistryModel: "claude-opus-4-6", Protocol: llmprotocol.OpenAIResponsesV1}, &branchState{})
+	request.Generation++
+	encoded, err := engine.EncodeRequest(llmprotocol.OpenAIResponsesV1, request, envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	worker := string(encoded.Body)
+	if !strings.Contains(worker, `"signature":"sig-claude"`) || !strings.Contains(worker, `"format":"anthropic-claude-v1"`) ||
+		!strings.Contains(worker, `"encrypted_content":"opaque-blob"`) || strings.Contains(worker, "vsr.reasoning_details") {
+		t.Fatalf("the resent turn did not reach the Claude worker signed: %s", worker)
 	}
 }
 

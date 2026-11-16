@@ -13,8 +13,9 @@ import (
 // thinking text as reasoning_content and the signature in the
 // anthropic-claude-v1 reasoning_details item OpenRouter would have sent
 // (atlasfutures/semantic-router#278) -- not as a refusal
-// (atlasfutures/semantic-router#212). A Responses client keeps the signature
-// in the reasoning item's OpenRouter members, as before.
+// (atlasfutures/semantic-router#212). A Responses client gets the same
+// reasoning_details item in the reasoning item's minted encrypted_content,
+// the one member codex resends.
 const anthropicSignedThinkingResponse = `{"id":"msg_1","type":"message","role":"assistant","model":"claude-opus-5.5",` +
 	`"content":[{"type":"thinking","thinking":"Check the tool.","signature":"EqQBsigclaude"},{"type":"text","text":"Done."}],` +
 	`"stop_reason":"end_turn","stop_sequence":null,"usage":{"input_tokens":3,"output_tokens":5}}`
@@ -34,8 +35,19 @@ func assertSignedThinkingTranslated(t *testing.T, target llmprotocol.WireFormat,
 			t.Fatalf("a Chat client was sent a Messages signature_delta: %s", body)
 		}
 	case llmprotocol.OpenAIResponsesV1:
-		if !strings.Contains(body, "EqQBsigclaude") {
+		if strings.Contains(body, "EqQBsigclaude") {
+			t.Fatalf("a Responses client was given Claude's signature in a member codex drops: %s", body)
+		}
+		// A stream carries the item twice, on output_item.done and in the
+		// completed response.
+		signatures := mintedSignaturesIn(t, body)
+		if len(signatures) == 0 {
 			t.Fatalf("a Responses client lost Claude's signature: %s", body)
+		}
+		for _, signature := range signatures {
+			if signature != "EqQBsigclaude" {
+				t.Fatalf("a Responses client's minted encrypted_content carries signature %q, want Claude's: %s", signature, body)
+			}
 		}
 	}
 }

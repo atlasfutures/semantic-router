@@ -27,6 +27,11 @@ type ReasoningCarry struct {
 	// first, so a Claude worker on Messages counts its drops here rather than
 	// as UnsignedDropped.
 	ForeignDropped int
+	// ClaudeThinking is Claude's thinking put in the shape its worker reads
+	// it signed in (CarryReasoningToClaude): blocks rebuilt from
+	// anthropic-claude-v1 reasoning_details for a Messages or Responses
+	// worker, or signed blocks carried as such items for a Chat worker.
+	ClaudeThinking int
 }
 
 // Changed reports whether the request was changed.
@@ -63,6 +68,53 @@ func (carry *ReasoningCarry) count(path string) {
 // message left with no content is removed. Visible text, tool calls and tool
 // results are never touched.
 func CarryReasoningTo(request *llmprotocol.Request, target llmprotocol.WireFormat) ReasoningCarry {
+	return carryReasoningTo(request, target, dispositionFor)
+}
+
+// CarryReasoningToClaude is CarryReasoningTo for a Claude worker, whose host
+// verifies Anthropic's thinking signature whatever the wire format. The
+// caller has already kept only reasoning with Anthropic provenance
+// (DropReasoningNotFromAnthropic). Claude's thinking first takes the shape
+// the worker reads it signed in: for a Messages or Responses worker the
+// anthropic-claude-v1 reasoning_details a Chat client replays, or a Responses
+// client resends as the Router's minted encrypted_content, become the signed
+// thinking and redacted_thinking blocks again
+// (ClaudeThinkingFromReasoningDetails); for a Chat worker each signed block
+// becomes the reasoning_details item OpenRouter asks for back
+// (SignedThinkingAsReasoningDetails). Then the table applies, except that a
+// Responses worker is sent signed thinking and redacted_thinking as they are:
+// OpenRouter's /responses takes both back on a reasoning item
+// (responses_anthropic_reasoning.go), where the table's rows strip and drop
+// them for a Responses host that cannot verify a signature.
+func CarryReasoningToClaude(request *llmprotocol.Request, target llmprotocol.WireFormat) ReasoningCarry {
+	if request == nil {
+		return ReasoningCarry{}
+	}
+	var shaped int
+	if target == llmprotocol.OpenAIChatV1 {
+		shaped = SignedThinkingAsReasoningDetails(request)
+	} else {
+		shaped = ClaudeThinkingFromReasoningDetails(request)
+	}
+	carry := carryReasoningTo(request, target, claudeHostDispositionFor)
+	carry.ClaudeThinking = shaped
+	return carry
+}
+
+// claudeHostDispositionFor is dispositionFor with the Responses rows a Claude
+// host verifies for itself carried.
+func claudeHostDispositionFor(path string, target llmprotocol.WireFormat) targetDisposition {
+	if target == llmprotocol.OpenAIResponsesV1 && (path == fieldReasoningSigned || path == fieldRedactedThinking) {
+		return targetDisposition{Action: dispositionCarry}
+	}
+	return dispositionFor(path, target)
+}
+
+func carryReasoningTo(
+	request *llmprotocol.Request,
+	target llmprotocol.WireFormat,
+	disposition func(path string, target llmprotocol.WireFormat) targetDisposition,
+) ReasoningCarry {
 	var carry ReasoningCarry
 	if request == nil {
 		return carry
@@ -78,7 +130,7 @@ func CarryReasoningTo(request *llmprotocol.Request, target llmprotocol.WireForma
 		contents := make([]llmprotocol.Content, 0, len(message.Content))
 		for _, content := range message.Content {
 			if path := reasoningProvenance(content); path != "" {
-				switch dispositionFor(path, target).Action {
+				switch disposition(path, target).Action {
 				case dispositionDrop:
 					carry.count(path)
 					continue

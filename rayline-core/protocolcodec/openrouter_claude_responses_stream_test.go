@@ -280,16 +280,15 @@ func replayStreamToMessagesWorker(t *testing.T, routed []byte) []anthropicBlockW
 		}
 	}
 	items = append(items, `{"type":"function_call_output","call_id":"toolu_fixture_1","output":"42"}`)
-	_, body := dispatchResponsesRequest(t, replayedTurn(items), llmprotocol.AnthropicMessagesV1)
+	_, body := dispatchResponsesRequestToClaude(t, replayedTurn(items), llmprotocol.AnthropicMessagesV1)
 	return anthropicAssistantBlocks(t, body)
 }
 
 // The signature and format on the item's done event reach each client the
-// way a Messages arm's signature_delta does, and the client's replay reaches
-// a Messages worker as signed thinking. The decoder dropped both as unknown
-// members (memex-desktop#8316: upstream_response_field_dropped for signature
-// and format), so codex resent unsigned reasoning and Claude ignored its own
-// thinking on every turn after the first.
+// way a Messages arm's signature_delta does: a Responses client gets the
+// signed thinking as a minted encrypted_content, the one member codex resends
+// (memex-desktop#8316: codex drops signature and format on replay), and the
+// client's replay reaches a Messages worker as signed thinking.
 func TestOpenRouterClaudeReasoningSignatureReachesEveryClient(t *testing.T) {
 	body := loadProviderFixture(t, openRouterClaudeReasoningStream)
 	t.Run(string(llmprotocol.OpenAIResponsesV1), func(t *testing.T) {
@@ -303,10 +302,14 @@ func TestOpenRouterClaudeReasoningSignatureReachesEveryClient(t *testing.T) {
 				t.Fatalf("%s: %d reasoning items, want 1:\n%s", label, len(items), routed)
 			}
 			item := items[0]
-			if item.Signature == nil || *item.Signature != openRouterClaudeReasoningSignature ||
-				item.Format == nil || *item.Format != "anthropic-claude-v1" || item.EncryptedContent != nil ||
-				!bytes.Contains(item.Content, []byte(openRouterClaudeReasoningText)) {
-				t.Fatalf("%s: reasoning item = %+v, want the fixture's text, signature and format", label, item)
+			if item.Signature != nil || item.Format != nil || !bytes.Contains(item.Content, []byte(openRouterClaudeReasoningText)) {
+				t.Fatalf("%s: reasoning item = %+v, want the fixture's text and no member codex drops", label, item)
+			}
+			if carried := mintedClaudeItems(t, item.EncryptedContent); len(carried) != 1 || carried[0] != (claudeReasoningItemWire{
+				Type: "reasoning.text", Text: openRouterClaudeReasoningText,
+				Signature: openRouterClaudeReasoningSignature, Format: "anthropic-claude-v1",
+			}) {
+				t.Fatalf("%s: encrypted_content carries %+v, want the fixture's text and signature as one reasoning.text item", label, carried)
 			}
 		}
 		blocks := replayStreamToMessagesWorker(t, routed)
@@ -362,9 +365,13 @@ func TestOpenRouterClaudeRedactedThinkingStreamReachesEveryClient(t *testing.T) 
 				t.Fatalf("%s: %d reasoning items, want 1:\n%s", label, len(items), routed)
 			}
 			item := items[0]
-			if item.EncryptedContent == nil || *item.EncryptedContent != claudeRedactedThinkingData ||
-				item.Format == nil || *item.Format != "anthropic-claude-v1" || item.Signature != nil {
-				t.Fatalf("%s: reasoning item = %+v, want the block's data under the Anthropic format", label, item)
+			if item.Signature != nil || item.Format != nil {
+				t.Fatalf("%s: reasoning item = %+v, want no member codex drops", label, item)
+			}
+			if carried := mintedClaudeItems(t, item.EncryptedContent); len(carried) != 1 || carried[0] != (claudeReasoningItemWire{
+				Type: "reasoning.encrypted", Data: claudeRedactedThinkingData, Format: "anthropic-claude-v1",
+			}) {
+				t.Fatalf("%s: encrypted_content carries %+v, want the block's data as one reasoning.encrypted item", label, carried)
 			}
 		}
 		blocks := replayStreamToMessagesWorker(t, routed)

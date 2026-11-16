@@ -20,10 +20,20 @@ import (
 // silently ignores the thinking, and a corrupted one is a 400. So such an item
 // decodes to signed thinking (and opaque reasoning to the carried Anthropic
 // redacted_thinking block), which a Messages worker is sent as
-// thinking{thinking, signature} and redacted_thinking{data}. Whether a worker
-// may see the signature at all is decided at dispatch, by CarryReasoningTo
-// and the opaque-reasoning provenance, exactly as for a Messages client's
-// Claude thinking.
+// thinking{thinking, signature} and redacted_thinking{data}, and a Claude
+// worker over Responses in this same shape (CarryReasoningToClaude). Whether a
+// worker may see the signature at all is decided at dispatch, by
+// CarryReasoningTo and the opaque-reasoning provenance, exactly as for a
+// Messages client's Claude thinking.
+//
+// A client gets the item differently: codex keeps only type, id, summary,
+// content and encrypted_content of a reasoning item when it resends it
+// (memex-desktop#8316), so the signature or data goes to a client as the
+// anthropic-claude-v1 reasoning_details item in a Router-minted
+// encrypted_content (mintedClaudeReasoning), with no signature or format
+// member. Resent, the minted item decodes to the same reasoning_details
+// carrier a Chat client's reasoning_details does, and
+// CarryReasoningToClaude rebuilds the signed block from it.
 const responsesAnthropicReasoningFormat = "anthropic-claude-v1"
 
 // responsesAnthropicReasoning holds the members a format-tagged reasoning item

@@ -31,7 +31,7 @@ func (OpenAIResponsesCodec) EncodeRequest(request llmprotocol.Request, envelope 
 	appendCarriedToolDrops(&diagnostics, request, llmprotocol.OpenAIResponsesV1, policy)
 	for _, message := range request.Messages {
 		appendContentExtensionDrops(&diagnostics, message.Content, llmprotocol.OpenAIResponsesV1, policy)
-		appendCarriedBlockDrops(&diagnostics, message.Content, llmprotocol.OpenAIResponsesV1, policy)
+		appendCarriedBlockDrops(&diagnostics, withoutRedactedThinking(message.Content), llmprotocol.OpenAIResponsesV1, policy)
 		if dropsEncryptedReasoning(request, message) {
 			appendUnmodeledDrop(&diagnostics, policy, llmprotocol.OpenAIResponsesV1, llmprotocol.OpenAIResponsesV1, "content.reasoning")
 		}
@@ -401,22 +401,22 @@ func (state *responsesMessageEncodingState) appendContent(content llmprotocol.Co
 
 // appendCarriedBlock handles a block belonging to the contract it came from.
 // Responses names no Anthropic block, so it is dropped here and the drop is
-// recorded beside the encoded request. The table's transform row is the one
-// exception: a document whose source is text becomes a text part, because the
-// block holds the text the turn is about.
+// recorded beside the encoded request. Two exceptions: a redacted_thinking
+// block is a reasoning item of its own (responsesRedactedThinkingItem), and
+// the table's transform row turns a document whose source is text into a
+// text part, because the block holds the text the turn is about.
 func (state *responsesMessageEncodingState) appendCarriedBlock(content llmprotocol.Content) error {
-	// Redacted thinking goes to a Responses client as OpenRouter writes it,
-	// so the client can resend it to Claude. A request is never sent it: a
-	// Responses provider cannot read Anthropic's opaque reasoning.
-	if state.textDirection == "output" {
-		if _, redacted := OpaqueReasoningData(content); redacted {
-			if err := state.flushPending(); err != nil {
-				return err
-			}
-			item, _ := responsesRedactedThinkingItem(content, state.itemID("reasoning"))
-			state.items = append(state.items, item)
-			return nil
+	// Redacted thinking reaches a client minted, so the client can resend it,
+	// and a Claude worker as OpenRouter writes it. Only CarryReasoningToClaude
+	// lets one through to a worker: no other Responses provider can read
+	// Anthropic's opaque reasoning.
+	if _, redacted := OpaqueReasoningData(content); redacted {
+		if err := state.flushPending(); err != nil {
+			return err
 		}
+		item, _ := responsesRedactedThinkingItem(content, state.itemID("reasoning"), state.textDirection == "output")
+		state.items = append(state.items, item)
+		return nil
 	}
 	text, transformed := carriedDocumentText(content)
 	if !transformed {
@@ -429,6 +429,18 @@ func (state *responsesMessageEncodingState) appendCarriedBlock(content llmprotoc
 		Kind: llmprotocol.ContentText, Text: text,
 	})
 	return nil
+}
+
+// withoutRedactedThinking is contents less the redacted_thinking blocks,
+// which appendCarriedBlock encodes rather than drops.
+func withoutRedactedThinking(contents []llmprotocol.Content) []llmprotocol.Content {
+	kept := make([]llmprotocol.Content, 0, len(contents))
+	for _, content := range contents {
+		if !redactedThinkingBlock(content) {
+			kept = append(kept, content)
+		}
+	}
+	return kept
 }
 
 func (state *responsesMessageEncodingState) flushPending() error {
@@ -539,7 +551,19 @@ func (state *responsesMessageEncodingState) flushReasoning() error {
 			}
 		}
 		if content.Signature != "" {
-			item.Signature, item.ReasoningFormat = content.Signature, responsesAnthropicReasoningFormat
+			if state.textDirection == "output" {
+				// A client gets Claude's signature in a minted
+				// encrypted_content, the one member it resends; a Claude
+				// worker gets OpenRouter's members
+				// (responses_anthropic_reasoning.go).
+				joined, err := appendClaudeReasoningItem(details, claudeReasoningTextItem(content.Text, content.Signature, 0))
+				if err != nil {
+					return err
+				}
+				details = joined
+			} else {
+				item.Signature, item.ReasoningFormat = content.Signature, responsesAnthropicReasoningFormat
+			}
 		}
 		if content.Reasoning == llmprotocol.ReasoningScopeSummary {
 			summaries = append(summaries, map[string]string{"type": "summary_text", "text": content.Text})

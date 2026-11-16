@@ -249,6 +249,12 @@ func messageDropsWhole(contents []llmprotocol.Content, target llmprotocol.WireFo
 		if _, kept := carriedBlockBytes(content, target); kept {
 			return false
 		}
+		if target == llmprotocol.OpenAIResponsesV1 && redactedThinkingBlock(content) {
+			// A redacted_thinking block is a reasoning item of its own
+			// (appendCarriedBlock); dispatch has dropped the ones no
+			// Responses worker reads.
+			return false
+		}
 		if _, transformed := carriedDocumentText(content); transformed {
 			return false
 		}

@@ -863,8 +863,15 @@ func (encoder *responsesStreamEncoder) encodeCompletedResponsesContent(
 			item.EncryptedContent = mintReasoningDetails(details)
 		}
 	}
-	if signature := encoder.reasoningSignatures[event.ItemIndex]; outputKey.kind == responsesOutputReasoning && signature != "" {
-		item.Signature, item.ReasoningFormat = signature, responsesAnthropicReasoningFormat
+	if signature := encoder.reasoningSignatures[event.ItemIndex]; outputKey.kind == responsesOutputReasoning &&
+		signature != "" && len(item.EncryptedContent) == 0 {
+		// Claude's signature rides a minted encrypted_content, the one
+		// member a client resends (responses_anthropic_reasoning.go).
+		var text string
+		for _, part := range parts.reasoningText {
+			text += part.Text
+		}
+		item.EncryptedContent = mintedClaudeReasoning(claudeReasoningTextItem(text, signature, 0))
 	}
 	wire := responsesEventWire{
 		Type: "response.output_item.done", Sequence: encoder.nextWireSequence(),

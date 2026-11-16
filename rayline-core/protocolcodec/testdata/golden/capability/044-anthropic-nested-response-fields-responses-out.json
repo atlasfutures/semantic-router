@@ -21,9 +21,8 @@
                   "type": "reasoning_text"
                 }
               ],
-              "format": "anthropic-claude-v1",
+              "encrypted_content": "vsr.reasoning_details.v1.W3siZm9ybWF0IjoiYW50aHJvcGljLWNsYXVkZS12MSIsImluZGV4IjowLCJzaWduYXR1cmUiOiJzaWduZWQtcmVhc29uaW5nIiwidGV4dCI6Imluc3BlY3QgdGhlIGV2aWRlbmNlIiwidHlwZSI6InJlYXNvbmluZy50ZXh0In1d",
               "id": "item_0f0f671df3c7589398acc08e",
-              "signature": "signed-reasoning",
               "summary": [],
               "type": "reasoning"
             },

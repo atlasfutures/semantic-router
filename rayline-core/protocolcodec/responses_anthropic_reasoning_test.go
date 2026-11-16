@@ -36,16 +36,33 @@ func replayedTurn(items []string) string {
 }
 
 // dispatchResponsesRequest prepares a Responses client's request for a worker
-// of target as the router does: decode for mutation, make history reasoning
-// carriable by the target, encode.
+// of target that is not Claude, as the router does: decode for mutation, make
+// history reasoning carriable by the target, encode.
 func dispatchResponsesRequest(t *testing.T, body string, target llmprotocol.WireFormat) (llmprotocol.Request, []byte) {
+	t.Helper()
+	return dispatchResponsesRequestWith(t, body, target, CarryReasoningTo)
+}
+
+// dispatchResponsesRequestToClaude is dispatchResponsesRequest for a Claude
+// worker of target (CarryReasoningToClaude).
+func dispatchResponsesRequestToClaude(t *testing.T, body string, target llmprotocol.WireFormat) (llmprotocol.Request, []byte) {
+	t.Helper()
+	return dispatchResponsesRequestWith(t, body, target, CarryReasoningToClaude)
+}
+
+func dispatchResponsesRequestWith(
+	t *testing.T,
+	body string,
+	target llmprotocol.WireFormat,
+	carry func(*llmprotocol.Request, llmprotocol.WireFormat) ReasoningCarry,
+) (llmprotocol.Request, []byte) {
 	t.Helper()
 	engine := NewBuiltinEngine()
 	request, envelope, _, err := engine.DecodeRequestForMutation(llmprotocol.OpenAIResponsesV1, []byte(body))
 	if err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	CarryReasoningTo(&request, target)
+	carry(&request, target)
 	request.Model = "provider-model"
 	request.Generation++
 	encoded, err := engine.EncodeRequest(target, request, envelope)
@@ -137,7 +154,8 @@ func TestUntaggedReasoningItemInventsNoSignature(t *testing.T) {
 
 // A worker that is not Claude is never sent the signature or the redacted
 // data, and the turn is not failed for them: a Chat worker keeps the thinking
-// text, as it does for a Messages client's Claude thinking.
+// text, as it does for a Messages client's Claude thinking. A Claude worker
+// over Responses is sent both (TestClaudeTurnRoundTripsThroughAResponsesClient).
 func TestReplayedClaudeReasoningToAnotherWorkerDropsTheSignature(t *testing.T) {
 	for _, target := range []llmprotocol.WireFormat{llmprotocol.OpenAIChatV1, llmprotocol.OpenAIResponsesV1} {
 		request, body := dispatchResponsesRequest(t, replayedTurn(claudeTurnItems()), target)

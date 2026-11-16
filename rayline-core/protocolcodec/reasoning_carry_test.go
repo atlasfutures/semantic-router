@@ -120,6 +120,58 @@ func TestCarryReasoningToDropsRedactedThinkingForForeignTargets(t *testing.T) {
 	}
 }
 
+// A Claude worker reads its own thinking signed in every protocol. Over
+// Responses, signed and redacted thinking are carried as they are, in the
+// shape OpenRouter's /responses takes back, while unsigned thinking from
+// another model follows the table; over Chat the signed block becomes an
+// anthropic-claude-v1 reasoning_details item; over Messages the blocks a
+// Responses client resent as minted reasoning_details are rebuilt.
+func TestCarryReasoningToClaudeKeepsItsThinkingSigned(t *testing.T) {
+	t.Run("responses", func(t *testing.T) {
+		request := reasoningHistory()
+		request.Messages[1].Content = append(request.Messages[1].Content, redactedBlock("blob"))
+		carry := CarryReasoningToClaude(&request, llmprotocol.OpenAIResponsesV1)
+		if carry != (ReasoningCarry{}) || carry.Changed() {
+			t.Fatalf("carry = %+v, want the signed and redacted blocks kept and nothing counted", carry)
+		}
+		if signed, unsigned := reasoningOf(request); signed != 1 || unsigned != 2 {
+			t.Fatalf("%d signed, %d unsigned; want 1, 2", signed, unsigned)
+		}
+		if first := request.Messages[1].Content; len(first) != 3 || first[0].Signature != "sig-1" || !redactedThinkingBlock(first[2]) {
+			t.Fatalf("the signed message became %+v, want its thinking signed, its text and the redacted block", first)
+		}
+	})
+	t.Run("chat", func(t *testing.T) {
+		request := reasoningHistory()
+		carry := CarryReasoningToClaude(&request, llmprotocol.OpenAIChatV1)
+		if carry != (ReasoningCarry{ClaudeThinking: 1}) {
+			t.Fatalf("carry = %+v, want the signed block shaped as a reasoning_details item", carry)
+		}
+		details, _ := reasoningDetailsOf(request.Messages[1].Content[0])
+		if !strings.Contains(string(details), `"signature":"sig-1"`) || !strings.Contains(string(details), `"format":"anthropic-claude-v1"`) {
+			t.Fatalf("the signed message became %+v, want its signature in reasoning_details", request.Messages[1].Content)
+		}
+	})
+	t.Run("messages", func(t *testing.T) {
+		details, err := appendClaudeReasoningItem(nil, claudeReasoningTextItem("claude thought", "sig-1", 0))
+		if err != nil {
+			t.Fatal(err)
+		}
+		request := llmprotocol.Request{Messages: []llmprotocol.Message{
+			{Role: llmprotocol.RoleUser, Content: []llmprotocol.Content{{Kind: llmprotocol.ContentText, Text: "q"}}},
+			{Role: llmprotocol.RoleAssistant, Content: attachReasoningDetails(
+				[]llmprotocol.Content{{Kind: llmprotocol.ContentReasoning, Text: "claude thought", Reasoning: llmprotocol.ReasoningScopeText}}, details)},
+		}}
+		carry := CarryReasoningToClaude(&request, llmprotocol.AnthropicMessagesV1)
+		if carry != (ReasoningCarry{ClaudeThinking: 1}) {
+			t.Fatalf("carry = %+v, want one thinking block rebuilt", carry)
+		}
+		if signed, unsigned := reasoningOf(request); signed != 1 || unsigned != 0 {
+			t.Fatalf("%d signed, %d unsigned; want the thinking block signed", signed, unsigned)
+		}
+	})
+}
+
 // Every reasoning kind the table names has the disposition CarryReasoningTo
 // applies, and nothing a row drops is left behind.
 func TestCarryReasoningFollowsTheDispositionTable(t *testing.T) {

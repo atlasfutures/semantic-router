@@ -6,19 +6,53 @@ import (
 	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
 )
 
+// appendClaudeReasoningItem adds one of Claude's blocks, as its
+// anthropic-claude-v1 reasoning_details item, after the items details already
+// holds, numbered in order as OpenRouter numbers them.
+func appendClaudeReasoningItem(details json.RawMessage, item map[string]any) (json.RawMessage, error) {
+	var items []json.RawMessage
+	if hasJSONValue(details) {
+		if err := json.Unmarshal(details, &items); err != nil {
+			return nil, err
+		}
+	}
+	item["index"] = len(items)
+	raw, err := json.Marshal(item)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(append(items, raw))
+}
+
+// mintedClaudeReasoning is the encrypted_content a Responses client gets for
+// one of Claude's blocks: a Router-minted anthropic-claude-v1 reasoning_details
+// array holding the single item (see responses_anthropic_reasoning.go).
+func mintedClaudeReasoning(item map[string]any) json.RawMessage {
+	details, err := appendClaudeReasoningItem(nil, item)
+	if err != nil {
+		return nil
+	}
+	return mintReasoningDetails(details)
+}
+
 // responsesRedactedThinkingItem is the reasoning item a carried Anthropic
-// redacted_thinking block becomes for a Responses client, or false when the
-// content is not one. See responses_anthropic_reasoning.go for the shape.
-func responsesRedactedThinkingItem(content llmprotocol.Content, id string) (responsesItemWire, bool) {
+// redacted_thinking block becomes, or false when the content is not one. For
+// a client (minted) the block's data rides a minted encrypted_content as a
+// reasoning.encrypted item; for a Claude worker it is OpenRouter's shape, the
+// data as encrypted_content under the Anthropic format.
+func responsesRedactedThinkingItem(content llmprotocol.Content, id string, minted bool) (responsesItemWire, bool) {
 	data, ok := OpaqueReasoningData(content)
 	if !ok {
 		return responsesItemWire{}, false
 	}
-	encrypted, _ := json.Marshal(data)
-	return responsesItemWire{
-		Type: "reasoning", ID: id, EncryptedContent: encrypted,
-		ReasoningFormat: responsesAnthropicReasoningFormat,
-	}, true
+	item := responsesItemWire{Type: "reasoning", ID: id}
+	if minted {
+		item.EncryptedContent = mintedClaudeReasoning(claudeReasoningEncryptedItem(data, 0))
+		return item, true
+	}
+	item.EncryptedContent, _ = json.Marshal(data)
+	item.ReasoningFormat = responsesAnthropicReasoningFormat
+	return item, true
 }
 
 // recordReasoningSignature keeps a reasoning event's signature for the item it
@@ -40,7 +74,7 @@ func (encoder *responsesStreamEncoder) encodeResponsesRedactedThinking(
 	if err != nil {
 		return nil, nil, err
 	}
-	item, _ := responsesRedactedThinkingItem(*event.Content, encoder.outputIDs[key])
+	item, _ := responsesRedactedThinkingItem(*event.Content, encoder.outputIDs[key], true)
 	item.Status = "completed"
 	index := encoder.outputIndexes[key]
 	wire := responsesEventWire{

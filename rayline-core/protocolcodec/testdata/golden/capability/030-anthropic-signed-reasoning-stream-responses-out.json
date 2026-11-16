@@ -95,9 +95,8 @@
                 "type": "reasoning_text"
               }
             ],
-            "format": "anthropic-claude-v1",
+            "encrypted_content": "vsr.reasoning_details.v1.W3siZm9ybWF0IjoiYW50aHJvcGljLWNsYXVkZS12MSIsImluZGV4IjowLCJzaWduYXR1cmUiOiJzaWduZWQtcmVhc29uaW5nIiwidGV4dCI6Imluc3BlY3QgdGhlIGV2aWRlbmNlIiwidHlwZSI6InJlYXNvbmluZy50ZXh0In1d",
             "id": "item_2ed757d5b010b923372c1501",
-            "signature": "signed-reasoning",
             "status": "completed",
             "summary": [],
             "type": "reasoning"
@@ -127,9 +126,8 @@
                     "type": "reasoning_text"
                   }
                 ],
-                "format": "anthropic-claude-v1",
+                "encrypted_content": "vsr.reasoning_details.v1.W3siZm9ybWF0IjoiYW50aHJvcGljLWNsYXVkZS12MSIsImluZGV4IjowLCJzaWduYXR1cmUiOiJzaWduZWQtcmVhc29uaW5nIiwidGV4dCI6Imluc3BlY3QgdGhlIGV2aWRlbmNlIiwidHlwZSI6InJlYXNvbmluZy50ZXh0In1d",
                 "id": "item_2ed757d5b010b923372c1501",
-                "signature": "signed-reasoning",
                 "status": "completed",
                 "summary": [],
                 "type": "reasoning"

@@ -121,14 +121,18 @@ func prepareReasoning(request *llmprotocol.Request, deployment Deployment, state
 	if deployment.Kind == "cloud" && cloudTransport(deployment) == cloudModelPin {
 		foreignDropped = stripModelPinReasoning(request)
 	}
+	var carry protocolcodec.ReasoningCarry
 	if isAnthropicDeployment(deployment) {
 		foreignDropped += protocolcodec.DropReasoningNotFromAnthropic(request, deployment.Protocol)
+		carry = protocolcodec.CarryReasoningToClaude(request, deployment.Protocol)
+	} else {
+		carry = protocolcodec.CarryReasoningTo(request, deployment.Protocol)
 	}
-	carry := protocolcodec.CarryReasoningTo(request, deployment.Protocol)
 	opaqueDropped := reasoning.DropOpaqueReasoning(request, state.provenance, opaqueIssuer)
-	if foreignDropped+opaqueDropped+carry.Dropped()+carry.SignaturesStripped > 0 {
+	if foreignDropped+opaqueDropped+carry.Dropped()+carry.SignaturesStripped+carry.ClaudeThinking > 0 {
 		slog.Info("reasoning disposition", "deployment", deployment.ID,
-			"removed", foreignDropped+opaqueDropped+carry.Dropped(), "signatures_removed", carry.SignaturesStripped)
+			"removed", foreignDropped+opaqueDropped+carry.Dropped(), "signatures_removed", carry.SignaturesStripped,
+			"claude_thinking", carry.ClaudeThinking)
 	}
 	return nextIssuers, opaqueIssuer
 }
