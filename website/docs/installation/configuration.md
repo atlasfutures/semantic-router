@@ -448,8 +448,22 @@ global:
   re-send waits 2 s first (the error's own delay when one is reported, at most
   10 s); its first-content limit starts when it dials. It applies only where
   host retry is on for the model. Off by default.
+- Where host retry does not apply (it is off for the model, or the model is
+  unpinned), an OpenRouter model's streamed turn is still re-sent once,
+  automatically, when its call fails before any content reached the client:
+  the first-content limit fires, or the stream ends without its terminal event
+  (`stream_incomplete`). If the response named one of the model's pinned
+  hosts, the re-send leaves that host out as host retry does; otherwise it is
+  the dispatched body unchanged. There is never a second re-send, none after
+  content reached the client, and none when less of `deadline_sec` is left
+  than the first-content limit. A model pinned to a single host is left to
+  `single_host_resend`. The usage lines carry `host_retry_reason` and
+  `host_retry_excluded`. Like host retry, it holds the stream's opening frames
+  until the first content. A model that sets `host_retry: false` itself gets
+  no re-send of either kind.
 - A model may set `providers.models[].host_retry` to turn the re-send on or
-  off for itself; absent, the global flag applies. Host retry targets a
+  off for itself; absent, the global flag applies to host retry, and the
+  automatic one-time re-send above stays on. Host retry targets a
   provider that stalls before any content. It does not help a model whose
   silence is its own thinking: Claude 5.x thinks natively with its display
   omitted and streams nothing until it answers, sometimes past 90 s, and a

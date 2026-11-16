@@ -213,6 +213,8 @@ providers:
       # absent follows the global flag. Set false on the Claude arms
       # (claude-haiku-5.5, claude-sonnet-5.5, claude-opus-5.5): their silence
       # is the thinking itself, which another host would only restart.
+      # Set false, it also turns off the one no-content re-send an
+      # OpenRouter arm gets without host retry; absent or true leaves it on.
       host_retry: false
       backend_refs:
         - name: openrouter-standard
