@@ -202,6 +202,14 @@ func servedThinkingFingerprints(response *llmprotocol.Response) ([]map[string]in
 // a Claude turn served (thinking_signature_served), so a later refusal's
 // refused_sig_sha256 can be joined to the turn that served the block. A
 // turn that served none logs nothing.
+//
+// It reads the decoded response, as the run's anchor does
+// (observeOpaqueReasoning), so it covers what the anchor covers: a turn
+// that commits once its reply is complete (a policy-service cell), on a
+// dispatch whose decoded reply holds the signature (Messages). An
+// artifact-mode turn commits at its headers, before the reply is decoded,
+// and a Chat dispatch carries Claude's signature in reasoning_details the
+// decoded reply does not hold: neither logs served fingerprints.
 func (transaction *raylineARCEpisodeTransaction) logServedThinkingFingerprints(requestContext *RequestContext) {
 	if transaction == nil || requestContext == nil || transaction.thinkingWorker == "" {
 		return
