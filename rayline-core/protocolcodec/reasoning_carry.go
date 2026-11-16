@@ -188,35 +188,44 @@ func ResponseOpaqueReasoning(response *llmprotocol.Response) []string {
 
 // DropOpaqueReasoning removes, on fresh slices, every opaque reasoning block
 // drop selects from a request's history, and any message it leaves empty. A
-// message that loses an opaque block loses its other reasoning too, thinking
-// and redacted alike: Anthropic accepts an assistant turn with every thinking
+// turn that loses an opaque block loses its other reasoning too, thinking and
+// redacted alike: Anthropic accepts an assistant turn with every thinking
 // block removed and rejects one with some removed, so a turn this cannot
-// forward whole is not forwarded in part. Visible text and tool calls are
-// never touched. It returns how many blocks it removed.
+// forward whole is not forwarded in part. A turn is a run of consecutive
+// assistant messages: Anthropic joins consecutive messages of one role into
+// one turn, and a Responses history holds a turn's reasoning items, message
+// and function calls as a message each (regroupAnthropicMessages). Visible
+// text and tool calls are never touched. It returns how many blocks it
+// removed.
 func DropOpaqueReasoning(request *llmprotocol.Request, drop func(data string) bool) int {
 	if request == nil {
 		return 0
 	}
 	dropped := 0
 	messages := make([]llmprotocol.Message, 0, len(request.Messages))
-	for _, message := range request.Messages {
-		if !holdsOpaqueReasoning(message, drop) {
-			messages = append(messages, message)
+	for start := 0; start < len(request.Messages); {
+		end := assistantTurnEnd(request.Messages, start)
+		turn := request.Messages[start:end]
+		start = end
+		if !holdsOpaqueReasoning(turn, drop) {
+			messages = append(messages, turn...)
 			continue
 		}
-		contents := make([]llmprotocol.Content, 0, len(message.Content))
-		for _, content := range message.Content {
-			if content.Kind == llmprotocol.ContentReasoning || redactedThinkingBlock(content) {
-				dropped++
+		for _, message := range turn {
+			contents := make([]llmprotocol.Content, 0, len(message.Content))
+			for _, content := range message.Content {
+				if content.Kind == llmprotocol.ContentReasoning || redactedThinkingBlock(content) {
+					dropped++
+					continue
+				}
+				contents = append(contents, content)
+			}
+			if len(contents) == 0 {
 				continue
 			}
-			contents = append(contents, content)
+			message.Content = contents
+			messages = append(messages, message)
 		}
-		if len(contents) == 0 {
-			continue
-		}
-		message.Content = contents
-		messages = append(messages, message)
 	}
 	if dropped > 0 {
 		request.Messages = messages
@@ -224,12 +233,27 @@ func DropOpaqueReasoning(request *llmprotocol.Request, drop func(data string) bo
 	return dropped
 }
 
-// holdsOpaqueReasoning reports whether a message holds an opaque reasoning
-// block that drop selects.
-func holdsOpaqueReasoning(message llmprotocol.Message, drop func(data string) bool) bool {
-	for _, content := range message.Content {
-		if data, ok := OpaqueReasoningData(content); ok && drop(data) {
-			return true
+// assistantTurnEnd returns the index after the turn that starts at start: the
+// run of assistant messages from it, or the one message of another role.
+func assistantTurnEnd(messages []llmprotocol.Message, start int) int {
+	end := start + 1
+	if messages[start].Role != llmprotocol.RoleAssistant {
+		return end
+	}
+	for end < len(messages) && messages[end].Role == llmprotocol.RoleAssistant {
+		end++
+	}
+	return end
+}
+
+// holdsOpaqueReasoning reports whether a turn holds an opaque reasoning block
+// that drop selects.
+func holdsOpaqueReasoning(turn []llmprotocol.Message, drop func(data string) bool) bool {
+	for _, message := range turn {
+		for _, content := range message.Content {
+			if data, ok := OpaqueReasoningData(content); ok && drop(data) {
+				return true
+			}
 		}
 	}
 	return false

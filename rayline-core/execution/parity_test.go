@@ -108,11 +108,12 @@ func TestClaudeSignedHistorySurvivesInEachProtocol(t *testing.T) {
 	}
 }
 
-// The reasoning items a Responses client got for Claude's turn, resent as
-// codex resends them (type, summary, content and the minted
-// encrypted_content), reach the next Claude worker over Responses with the
-// signature and format OpenRouter's /responses takes back, and no minted blob.
-func TestClaudeReasoningResentByCodexReachesAResponsesWorkerSigned(t *testing.T) {
+// codex resends Claude's turn with its thinking in the minted
+// encrypted_content alone. The same Claude issuer gets the turn signed; a
+// Claude deployment that did not issue the redacted block gets the turn with
+// no thinking at all, text kept, since Anthropic rejects a turn with some of
+// its thinking removed and the signed block alone would be that.
+func TestClaudeReasoningResentByCodexReachesAResponsesWorker(t *testing.T) {
 	engine := protocolcodec.NewBuiltinEngine()
 	answer := `{"id":"msg_1","type":"message","role":"assistant","model":"claude-opus-4-6",` +
 		`"content":[{"type":"thinking","thinking":"consider","signature":"sig-claude"},{"type":"redacted_thinking","data":"opaque-blob"},{"type":"text","text":"answer"}],` +
@@ -144,21 +145,34 @@ func TestClaudeReasoningResentByCodexReachesAResponsesWorkerSigned(t *testing.T)
 	items = append(items, json.RawMessage(`{"role":"user","content":"next"}`))
 	input, _ := json.Marshal(items)
 	body := `{"model":"claude","store":false,"include":["reasoning.encrypted_content"],"input":` + string(input) + `}`
-	request, envelope, _, err := engine.DecodeRequestForMutation(llmprotocol.OpenAIResponsesV1, []byte(body))
-	if err != nil {
-		t.Fatal(err)
+	deployment := Deployment{Kind: "cloud", ID: "claude", RegistryModel: "claude-opus-4-6", Protocol: llmprotocol.OpenAIResponsesV1}
+	workerBody := func(t *testing.T, state *branchState) string {
+		request, envelope, _, err := engine.DecodeRequestForMutation(llmprotocol.OpenAIResponsesV1, []byte(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		prepareReasoning(&request, deployment, state)
+		request.Generation++
+		encoded, err := engine.EncodeRequest(llmprotocol.OpenAIResponsesV1, request, envelope)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(encoded.Body)
 	}
-	prepareReasoning(&request, Deployment{Kind: "cloud", ID: "claude", RegistryModel: "claude-opus-4-6", Protocol: llmprotocol.OpenAIResponsesV1}, &branchState{})
-	request.Generation++
-	encoded, err := engine.EncodeRequest(llmprotocol.OpenAIResponsesV1, request, envelope)
-	if err != nil {
-		t.Fatal(err)
-	}
-	worker := string(encoded.Body)
-	if !strings.Contains(worker, `"signature":"sig-claude"`) || !strings.Contains(worker, `"format":"anthropic-claude-v1"`) ||
-		!strings.Contains(worker, `"encrypted_content":"opaque-blob"`) || strings.Contains(worker, "vsr.reasoning_details") {
-		t.Fatalf("the resent turn did not reach the Claude worker signed: %s", worker)
-	}
+	t.Run("same issuer", func(t *testing.T) {
+		worker := workerBody(t, &branchState{provenance: reasoning.WithReasoningProvenance(nil, opaqueDeploymentIssuer(deployment), []string{"opaque-blob"})})
+		if !strings.Contains(worker, `"signature":"sig-claude"`) || !strings.Contains(worker, `"format":"anthropic-claude-v1"`) ||
+			!strings.Contains(worker, `"encrypted_content":"opaque-blob"`) || strings.Contains(worker, "vsr.reasoning_details") {
+			t.Fatalf("the resent turn did not reach the Claude worker signed: %s", worker)
+		}
+	})
+	t.Run("other issuer", func(t *testing.T) {
+		worker := workerBody(t, &branchState{provenance: reasoning.WithReasoningProvenance(nil, "other-claude", []string{"opaque-blob"})})
+		if strings.Contains(worker, `"type":"reasoning"`) || strings.Contains(worker, "sig-claude") || strings.Contains(worker, "opaque-blob") ||
+			!strings.Contains(worker, `"text":"answer"`) {
+			t.Fatalf("a turn with a foreign redacted block kept part of its thinking: %s", worker)
+		}
+	})
 }
 
 func TestEncryptedIssuerIsStagedBeforeHistoryMutation(t *testing.T) {

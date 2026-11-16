@@ -1,6 +1,7 @@
 package protocolcodec
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -236,14 +237,17 @@ func TestOpaqueReasoningIsFoundAndDropped(t *testing.T) {
 	if blocks := ResponseOpaqueReasoning(response); len(blocks) != 1 || blocks[0] != "blob-a" {
 		t.Fatalf("response opaque reasoning = %v", blocks)
 	}
+	user := llmprotocol.Message{Role: llmprotocol.RoleUser, Content: []llmprotocol.Content{{Kind: llmprotocol.ContentText, Text: "go on"}}}
 	request := llmprotocol.Request{Messages: []llmprotocol.Message{
 		{Role: llmprotocol.RoleAssistant, Content: []llmprotocol.Content{redactedBlock("blob-a"), {Kind: llmprotocol.ContentText, Text: "a1"}}},
+		user,
 		{Role: llmprotocol.RoleAssistant, Content: []llmprotocol.Content{redactedBlock("blob-a")}},
+		user,
 		{Role: llmprotocol.RoleAssistant, Content: []llmprotocol.Content{redactedBlock("blob-b")}},
 	}}
 	dropped := DropOpaqueReasoning(&request, func(data string) bool { return data == "blob-a" })
-	if dropped != 2 || len(request.Messages) != 2 || len(request.Messages[0].Content) != 1 ||
-		request.Messages[0].Content[0].Text != "a1" {
+	if dropped != 2 || len(request.Messages) != 4 || len(request.Messages[0].Content) != 1 ||
+		request.Messages[0].Content[0].Text != "a1" || len(request.Messages[3].Content) != 1 {
 		t.Fatalf("dropped %d, messages %+v", dropped, request.Messages)
 	}
 }
@@ -253,23 +257,65 @@ func TestOpaqueReasoningIsFoundAndDropped(t *testing.T) {
 // rejects one with some removed, so the signed block beside a dropped
 // redacted block would turn a safe arm change into a 400
 // (atlasfutures/semantic-router#278, Codex P1). A turn whose opaque blocks
-// all stay keeps its thinking.
+// all stay keeps its thinking. The turn is the run of assistant messages up
+// to the next tool result or user message: a Responses client's history
+// holds the signed thinking, the redacted block, the text and the call of
+// one turn as a message each (decodeResponsesReasoningItem), and Anthropic
+// joins them into one turn.
 func TestOpaqueDropTakesTheTurnsThinkingWithIt(t *testing.T) {
 	call := llmprotocol.Content{Kind: llmprotocol.ContentToolCall, ToolCall: &llmprotocol.ToolCall{ID: "call_1", Name: "bash"}}
+	result := llmprotocol.Message{Role: llmprotocol.RoleTool, Content: []llmprotocol.Content{{Kind: llmprotocol.ContentToolResult, ToolResult: &llmprotocol.ToolResult{CallID: "call_1"}}}}
 	signed := llmprotocol.Content{Kind: llmprotocol.ContentReasoning, Text: "think", Signature: "sig", Reasoning: llmprotocol.ReasoningScopeText}
-	request := llmprotocol.Request{Messages: []llmprotocol.Message{
-		{Role: llmprotocol.RoleAssistant, Content: []llmprotocol.Content{signed, redactedBlock("blob-a"), call}},
-		{Role: llmprotocol.RoleAssistant, Content: []llmprotocol.Content{signed, redactedBlock("blob-b"), call}},
-	}}
-	dropped := DropOpaqueReasoning(&request, func(data string) bool { return data == "blob-a" })
-	if dropped != 2 || len(request.Messages) != 2 {
-		t.Fatalf("dropped %d, messages %+v", dropped, request.Messages)
+	text := llmprotocol.Content{Kind: llmprotocol.ContentText, Text: "answer"}
+	assistant := func(content ...llmprotocol.Content) llmprotocol.Message {
+		return llmprotocol.Message{Role: llmprotocol.RoleAssistant, Content: content}
 	}
-	if first := request.Messages[0].Content; len(first) != 1 || first[0].Kind != llmprotocol.ContentToolCall {
-		t.Fatalf("the turn that lost its redacted block kept thinking beside the call: %+v", first)
-	}
-	if second := request.Messages[1].Content; len(second) != 3 || second[0].Signature != "sig" {
-		t.Fatalf("a turn whose opaque block stays lost its thinking: %+v", second)
+	for name, layout := range map[string]struct {
+		messages []llmprotocol.Message
+		dropped  int
+		kept     int
+	}{
+		"messages client": {
+			messages: []llmprotocol.Message{assistant(signed, redactedBlock("blob-a"), call), result, assistant(signed, redactedBlock("blob-b"), call)},
+			dropped:  2, kept: 3,
+		},
+		"responses client": {
+			messages: []llmprotocol.Message{
+				assistant(signed), assistant(redactedBlock("blob-a")), assistant(text), assistant(call), result,
+				assistant(signed), assistant(redactedBlock("blob-b")), assistant(text), assistant(call),
+			},
+			dropped: 2, kept: 7,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			request := llmprotocol.Request{Messages: layout.messages}
+			dropped := DropOpaqueReasoning(&request, func(data string) bool { return data == "blob-a" })
+			if dropped != layout.dropped || len(request.Messages) != layout.kept {
+				t.Fatalf("dropped %d, messages %+v", dropped, request.Messages)
+			}
+			var first, second []llmprotocol.Content
+			for _, message := range request.Messages {
+				if message.Role != llmprotocol.RoleAssistant {
+					first, second = second, nil
+					continue
+				}
+				second = append(second, message.Content...)
+			}
+			var visible []llmprotocol.Content
+			for _, message := range layout.messages[:len(layout.messages)/2] {
+				for _, content := range message.Content {
+					if content.Kind != llmprotocol.ContentReasoning && !redactedThinkingBlock(content) {
+						visible = append(visible, content)
+					}
+				}
+			}
+			if !reflect.DeepEqual(first, visible) {
+				t.Fatalf("the turn that lost its redacted block keeps %+v, want its visible content %+v", first, visible)
+			}
+			if len(second) < 3 || second[0].Signature != "sig" || !redactedThinkingBlock(second[1]) {
+				t.Fatalf("a turn whose opaque block stays lost its thinking: %+v", second)
+			}
+		})
 	}
 }
 
