@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import random
 import re
@@ -20,6 +21,21 @@ HTTP_OK = 200
 HTTP_BAD_GATEWAY = 502
 HTTP_UNAVAILABLE = 503
 SESSION_HEADER = "x-session-id"
+# Stream faults (--stream-fault) act on streamed calls ("stream": true) only.
+# Each is keyed by the call's conversation: a digest of its "messages" (Chat,
+# Messages) or "input" (Responses). A re-send of the same turn carries the
+# same conversation, so it is the key's second call; the next turn adds a
+# message, so it is a new key whose first call is faulted again.
+STREAM_FAULT_STALL_ONCE = "stall-once"
+STREAM_FAULT_STALL_TWICE = "stall-twice"
+STREAM_FAULT_CUT_AFTER_CONTENT = "cut-after-content"
+STREAM_FAULTS = (
+    STREAM_FAULT_STALL_ONCE,
+    STREAM_FAULT_STALL_TWICE,
+    STREAM_FAULT_CUT_AFTER_CONTENT,
+)
+STALL_POLL_SECONDS = 0.25
+STREAM_UPSTREAM_TIMEOUT_SECONDS = 600
 HOP_BY_HOP_HEADERS = {
     "connection",
     "content-length",
@@ -44,6 +60,8 @@ class FaultPolicy:
     fail_once_per_session: bool
     delay_ms: int = 0
     delay_jitter_ms: int = 0
+    stream_fault: str = ""
+    stall_seconds: float = 120.0
 
 
 @dataclass(frozen=True)
@@ -67,6 +85,23 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--repeat-failures", action="store_true")
     parser.add_argument("--delay-ms", type=int, default=0)
     parser.add_argument("--delay-jitter-ms", type=int, default=0)
+    parser.add_argument(
+        "--stream-fault",
+        choices=("", *STREAM_FAULTS),
+        default="",
+        help=(
+            "fault streamed calls per conversation: stall-once (first call "
+            "answers 200 and SSE headers, then no bytes for --stall-seconds), "
+            "stall-twice (first two calls stall), cut-after-content (first "
+            "call relays its first content event, then closes before the end)"
+        ),
+    )
+    parser.add_argument(
+        "--stall-seconds",
+        type=float,
+        default=120.0,
+        help="how long a stalled call stays silent; set it above the first-content limit",
+    )
     parser.add_argument("--log-jsonl", type=Path, default=None)
     return parser.parse_args()
 
@@ -81,6 +116,8 @@ def parse_policy(args: argparse.Namespace) -> FaultPolicy:
         fail_once_per_session=not args.repeat_failures,
         delay_ms=args.delay_ms,
         delay_jitter_ms=args.delay_jitter_ms,
+        stream_fault=args.stream_fault,
+        stall_seconds=args.stall_seconds,
     )
 
 
@@ -113,6 +150,7 @@ class FaultProxyHandler(BaseHTTPRequestHandler):
     fault_policy: ClassVar[FaultPolicy]
     seen_failures: ClassVar[set[str]]
     seen_lock: ClassVar[threading.Lock]
+    stream_calls: ClassVar[dict[str, int]]
     log_path: ClassVar[Path | None]
     log_lock: ClassVar[threading.Lock]
 
@@ -145,7 +183,98 @@ class FaultProxyHandler(BaseHTTPRequestHandler):
                 {"x-vsr-fault-injected": "true"},
             )
             return
+        payload = parse_json_body(body)
+        if self.fault_policy.stream_fault and payload.get("stream") is True:
+            key = stream_fault_key(payload)
+            with self.seen_lock:
+                call = self.stream_calls.get(key, 0) + 1
+                self.stream_calls[key] = call
+            fault = stream_fault_for_call(self.fault_policy.stream_fault, call)
+            extra = {"key": key, "call": call}
+            if fault == "stall":
+                self.stall(shape, extra)
+                return
+            self.forward_stream(body, shape, extra, cut_after_content=fault == "cut")
+            return
         self.forward(body, shape)
+
+    def stall(self, shape: RequestShape, extra: dict[str, Any]) -> None:
+        """Answer 200 and SSE headers, then send nothing and close."""
+        self.close_connection = True
+        self.send_response(HTTP_OK)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "close")
+        self.send_header("x-vsr-fault-injected", "stall")
+        self.end_headers()
+        self.wfile.flush()
+        self.record_event("stalled", shape, HTTP_OK, extra)
+        deadline = time.monotonic() + self.fault_policy.stall_seconds
+        while time.monotonic() < deadline:
+            time.sleep(STALL_POLL_SECONDS)
+
+    def forward_stream(
+        self,
+        body: bytes,
+        shape: RequestShape,
+        extra: dict[str, Any],
+        cut_after_content: bool = False,
+    ) -> None:
+        """Relay a streamed call line by line; with cut_after_content, close it
+        right after its first content event, before any terminal event."""
+        target = join_url(self.upstream, self.path)
+        headers = {
+            name: value
+            for name, value in filtered_headers(self.headers).items()
+            if name.lower() != "accept-encoding"
+        }
+        request = urllib.request.Request(
+            target, data=body, headers=headers, method=self.command
+        )
+        try:
+            response = urllib.request.urlopen(
+                request, timeout=STREAM_UPSTREAM_TIMEOUT_SECONDS
+            )
+        except urllib.error.HTTPError as exc:
+            payload = exc.read()
+            self.send_response(exc.code)
+            self.forward_headers(dict(exc.headers), len(payload))
+            self.end_headers()
+            self.wfile.write(payload)
+            self.record_event("upstream_error", shape, exc.code, extra)
+            return
+        except Exception as exc:  # pragma: no cover - network errors vary
+            self.record_event("proxy_error", shape, HTTP_BAD_GATEWAY, extra)
+            self.send_json(
+                HTTP_BAD_GATEWAY,
+                {"error": {"message": str(exc), "type": "fault_proxy_error"}},
+            )
+            return
+        with response:
+            self.close_connection = True
+            self.send_response(response.status)
+            for name, value in response.headers.items():
+                if name.lower() not in HOP_BY_HOP_HEADERS:
+                    self.send_header(name, value)
+            self.send_header("Connection", "close")
+            if cut_after_content:
+                self.send_header("x-vsr-fault-injected", "cut-after-content")
+            self.end_headers()
+            content_seen = False
+            for line in response:
+                self.wfile.write(line)
+                self.wfile.flush()
+                if not cut_after_content:
+                    continue
+                content_seen = content_seen or sse_line_has_content(line)
+                # Cut once the content event is complete (its blank line),
+                # so the client has parsed it.
+                if content_seen and not line.strip():
+                    self.record_event(
+                        "cut_after_content", shape, response.status, extra
+                    )
+                    return
+        self.record_event("forwarded_stream", shape, response.status, extra)
 
     def forward(self, body: bytes, shape: RequestShape | None = None) -> None:
         target = join_url(self.upstream, self.path)
@@ -202,10 +331,17 @@ class FaultProxyHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(raw)
 
-    def record_event(self, action: str, shape: RequestShape, status: int) -> None:
+    def record_event(
+        self,
+        action: str,
+        shape: RequestShape,
+        status: int,
+        extra: dict[str, Any] | None = None,
+    ) -> None:
         if self.log_path is None:
             return
         event = {
+            **(extra or {}),
             "action": action,
             "session_id": shape.session_id,
             "session_index": shape.session_index,
@@ -232,6 +368,7 @@ def make_handler(
         fault_policy: ClassVar[FaultPolicy] = policy
         seen_failures: ClassVar[set[str]] = set()
         seen_lock: ClassVar[threading.Lock] = threading.Lock()
+        stream_calls: ClassVar[dict[str, int]] = {}
         log_path: ClassVar[Path | None] = log_jsonl
         log_lock: ClassVar[threading.Lock] = threading.Lock()
 
@@ -332,6 +469,56 @@ def phase_from_text(text: str) -> str:
     return "user_turn"
 
 
+def stream_fault_key(payload: dict[str, Any]) -> str:
+    """Name a streamed call's conversation: a digest of its messages."""
+    conversation = payload.get("messages", payload.get("input"))
+    raw = json.dumps(conversation, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:12]
+
+
+def stream_fault_for_call(mode: str, call: int) -> str:
+    """The fault for a conversation's nth streamed call: "stall", "cut" or ""."""
+    if mode == STREAM_FAULT_STALL_ONCE and call == 1:
+        return "stall"
+    if mode == STREAM_FAULT_STALL_TWICE and call <= 2:
+        return "stall"
+    if mode == STREAM_FAULT_CUT_AFTER_CONTENT and call == 1:
+        return "cut"
+    return ""
+
+
+def sse_line_has_content(line: bytes) -> bool:
+    """Report whether an SSE data line carries content: text, reasoning or a
+    tool call (Chat), a content block delta (Messages), or an output delta
+    (Responses)."""
+    text = line.decode("utf-8", errors="replace").strip()
+    if not text.startswith("data:"):
+        return False
+    try:
+        event = json.loads(text[len("data:") :].strip())
+    except json.JSONDecodeError:
+        return False
+    if not isinstance(event, dict):
+        return False
+    kind = event.get("type")
+    if kind == "content_block_delta":
+        return True
+    if (
+        isinstance(kind, str)
+        and kind.startswith("response.")
+        and kind.endswith(".delta")
+    ):
+        return True
+    for choice in event.get("choices") or []:
+        delta = choice.get("delta") if isinstance(choice, dict) else None
+        if not isinstance(delta, dict):
+            continue
+        for field in ("content", "reasoning", "reasoning_content", "tool_calls"):
+            if delta.get(field):
+                return True
+    return False
+
+
 def should_inject_fault(
     shape: RequestShape, policy: FaultPolicy, seen_failures: set[str]
 ) -> bool:
@@ -371,6 +558,8 @@ def main() -> int:
                 "fail_once_per_session": policy.fail_once_per_session,
                 "delay_ms": policy.delay_ms,
                 "delay_jitter_ms": policy.delay_jitter_ms,
+                "stream_fault": policy.stream_fault,
+                "stall_seconds": policy.stall_seconds,
             },
             sort_keys=True,
         ),

@@ -5,7 +5,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 from pathlib import Path
 from typing import ClassVar
 
@@ -227,3 +227,163 @@ def test_fault_proxy_phase_inference_targets_tool_loops():
         "provider_state"
     )
     assert fault.phase_from_text("This follows an idle pause") == "idle_boundary"
+
+
+SSE_EVENTS = [
+    b'data: {"choices":[{"delta":{"role":"assistant"}}]}\n\n',
+    b'data: {"choices":[{"delta":{"content":"hel"}}]}\n\n',
+    b'data: {"choices":[{"delta":{"content":"lo"}}]}\n\n',
+    b"data: [DONE]\n\n",
+]
+STALL_SECONDS = 0.6
+READ_TIMEOUT_SECONDS = 0.3
+
+
+class UpstreamSSEHandler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+    calls: ClassVar[int] = 0
+
+    def do_POST(self):
+        content_length = int(self.headers.get("Content-Length", "0"))
+        self.rfile.read(content_length)
+        UpstreamSSEHandler.calls += 1
+        self.close_connection = True
+        self.send_response(HTTP_OK)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        for event in SSE_EVENTS:
+            self.wfile.write(event)
+            self.wfile.flush()
+
+    def log_message(self, _fmt, *_args):
+        return
+
+
+def stream_proxy(tmp_path, mode):
+    fault = load_fault_proxy_module()
+    UpstreamSSEHandler.calls = 0
+    upstream, upstream_thread = start_server(UpstreamSSEHandler)
+    policy = fault.FaultPolicy(
+        fail_turns=frozenset(),
+        fail_phases=frozenset(),
+        fail_status=HTTP_UNAVAILABLE,
+        fail_session_mod=1,
+        fail_session_remainder=0,
+        fail_once_per_session=True,
+        stream_fault=mode,
+        stall_seconds=STALL_SECONDS,
+    )
+    handler = fault.make_handler(
+        f"http://127.0.0.1:{upstream.server_port}", policy, tmp_path / "faults.jsonl"
+    )
+    proxy = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    proxy_thread = threading.Thread(target=proxy.serve_forever, daemon=True)
+    proxy_thread.start()
+    return (upstream, upstream_thread), (proxy, proxy_thread)
+
+
+def post_stream(base_url, messages):
+    payload = {"model": "auto", "stream": True, "messages": messages}
+    request = urllib.request.Request(
+        f"{base_url}/api/v1/chat/completions",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    response = urllib.request.urlopen(request, timeout=READ_TIMEOUT_SECONDS)
+    status = response.status
+    try:
+        body = response.read()
+        timed_out = False
+    except (TimeoutError, OSError):
+        body, timed_out = b"", True
+    response.close()
+    return status, body, timed_out
+
+
+def stream_events(tmp_path):
+    return [
+        json.loads(line)
+        for line in (tmp_path / "faults.jsonl").read_text().splitlines()
+    ]
+
+
+def run_stream_turns(tmp_path, mode, calls):
+    upstream, proxy = stream_proxy(tmp_path, mode)
+    turn = [{"role": "user", "content": "Session 0, turn 1."}]
+    try:
+        base_url = f"http://127.0.0.1:{proxy[0].server_port}"
+        results = [post_stream(base_url, turn) for _ in range(calls)]
+    finally:
+        stop_server(*proxy)
+        stop_server(*upstream)
+    return results
+
+
+def test_stream_fault_stall_once_stalls_first_call_then_passes(tmp_path):
+    results = run_stream_turns(tmp_path, "stall-once", 2)
+    status, body, timed_out = results[0]
+    assert (status, body, timed_out) == (HTTP_OK, b"", True)
+    assert results[1] == (HTTP_OK, b"".join(SSE_EVENTS), False)
+    assert UpstreamSSEHandler.calls == 1
+    events = stream_events(tmp_path)
+    assert [(e["action"], e["call"]) for e in events] == [
+        ("stalled", 1),
+        ("forwarded_stream", 2),
+    ]
+    assert events[0]["key"] == events[1]["key"]
+
+
+def test_stream_fault_stall_twice_stalls_first_two_calls(tmp_path):
+    results = run_stream_turns(tmp_path, "stall-twice", 3)
+    assert [r[2] for r in results] == [True, True, False]
+    assert UpstreamSSEHandler.calls == 1
+    assert [e["action"] for e in stream_events(tmp_path)] == [
+        "stalled",
+        "stalled",
+        "forwarded_stream",
+    ]
+
+
+def test_stream_fault_cut_after_content_ends_before_done(tmp_path):
+    results = run_stream_turns(tmp_path, "cut-after-content", 2)
+    assert results[0] == (HTTP_OK, b"".join(SSE_EVENTS[:2]), False)
+    assert results[1] == (HTTP_OK, b"".join(SSE_EVENTS), False)
+    assert [e["action"] for e in stream_events(tmp_path)] == [
+        "cut_after_content",
+        "forwarded_stream",
+    ]
+
+
+def test_stream_fault_key_follows_the_conversation():
+    fault = load_fault_proxy_module()
+    first = {"messages": [{"role": "user", "content": "a"}], "provider": {}}
+    resent = {
+        "messages": [{"role": "user", "content": "a"}],
+        "provider": {"ignore": ["x"]},
+    }
+    next_turn = {
+        "messages": [
+            {"role": "user", "content": "a"},
+            {"role": "assistant", "content": "b"},
+            {"role": "user", "content": "c"},
+        ]
+    }
+    assert fault.stream_fault_key(first) == fault.stream_fault_key(resent)
+    assert fault.stream_fault_key(first) != fault.stream_fault_key(next_turn)
+
+
+def test_sse_line_has_content_by_wire():
+    fault = load_fault_proxy_module()
+    assert not fault.sse_line_has_content(SSE_EVENTS[0])
+    assert fault.sse_line_has_content(SSE_EVENTS[1])
+    assert not fault.sse_line_has_content(b"data: [DONE]\n")
+    assert not fault.sse_line_has_content(b": keep-alive\n")
+    assert fault.sse_line_has_content(
+        b'data: {"type":"content_block_delta","delta":{"text":"x"}}\n'
+    )
+    assert not fault.sse_line_has_content(b'data: {"type":"message_start"}\n')
+    assert fault.sse_line_has_content(
+        b'data: {"type":"response.output_text.delta","delta":"x"}\n'
+    )
