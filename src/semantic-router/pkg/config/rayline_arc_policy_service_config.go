@@ -58,6 +58,12 @@ type RaylineARCPolicyServiceConfig struct {
 	// ConnectTimeoutSeconds bounds the dial and TLS handshake to the
 	// service; zero selects 5 s, the encoder's.
 	ConnectTimeoutSeconds int `yaml:"connect_timeout_seconds,omitempty"`
+	// StartDeadlineSeconds bounds a routed turn that starts its episode on
+	// the service: one still undecided by then (or whose Modal session start
+	// failed) is served the package's fallback action instead of failing.
+	// Zero selects 8 s; it is never longer than total_timeout_seconds. A
+	// package that names no fallback action keeps the old behaviour.
+	StartDeadlineSeconds int `yaml:"start_deadline_seconds,omitempty"`
 	// MaxInflightCalls caps concurrent decide calls per router process and
 	// sheds the surplus with a retryable 429, as max_inflight_encoder_calls
 	// does in the artifact mode. Zero disables the cap.
@@ -357,6 +363,24 @@ func (cfg *RaylineARCPolicyServiceConfig) CellExclusionTTL() time.Duration {
 	return time.Duration(seconds) * time.Second
 }
 
+// DefaultRaylineARCStartDeadlineSeconds is the start deadline when none is
+// configured: well past a warm start (about a second), well short of a
+// policy container's cold start (about a minute on a scale-up).
+const DefaultRaylineARCStartDeadlineSeconds = 8
+
+// StartDeadline is how long a routed turn that starts its episode waits for
+// the service before it is served the package's fallback action.
+func (cfg *RaylineARCPolicyServiceConfig) StartDeadline() time.Duration {
+	seconds := DefaultRaylineARCStartDeadlineSeconds
+	if cfg != nil && cfg.StartDeadlineSeconds > 0 {
+		seconds = cfg.StartDeadlineSeconds
+	}
+	if cfg != nil && cfg.TotalTimeoutSeconds > 0 && seconds > cfg.TotalTimeoutSeconds {
+		seconds = cfg.TotalTimeoutSeconds
+	}
+	return time.Duration(seconds) * time.Second
+}
+
 // RaylineARCMaxFallbackModels is how many distinct models a fallback-enabled
 // package may serve: an episode holds at most this many exclusions
 // (raylinearc.MaxPolicyExclusions), and a package with more models could
@@ -614,6 +638,9 @@ func validateRaylineARCPolicyServiceConfig(cfg *RaylineARCPolicyServiceConfig) e
 	}
 	if cfg.ConnectTimeoutSeconds < 0 || cfg.ConnectTimeoutSeconds > cfg.TotalTimeoutSeconds {
 		return fmt.Errorf("connect_timeout_seconds must be between 0 and total_timeout_seconds")
+	}
+	if cfg.StartDeadlineSeconds < 0 || cfg.StartDeadlineSeconds > cfg.TotalTimeoutSeconds {
+		return fmt.Errorf("start_deadline_seconds must be between 0 and total_timeout_seconds")
 	}
 	if cfg.MaxInflightCalls < 0 || cfg.MaxInflightCalls > maxRaylineARCInflightEncoderCalls {
 		return fmt.Errorf("max_inflight_calls must be between 0 and %d", maxRaylineARCInflightEncoderCalls)
