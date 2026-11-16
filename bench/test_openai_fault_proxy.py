@@ -293,13 +293,14 @@ def post_stream(base_url, messages):
     )
     response = urllib.request.urlopen(request, timeout=READ_TIMEOUT_SECONDS)
     status = response.status
+    chunks, timed_out = [], False
     try:
-        body = response.read()
-        timed_out = False
+        while chunk := response.read1(65536):
+            chunks.append(chunk)
     except (TimeoutError, OSError):
-        body, timed_out = b"", True
+        timed_out = True
     response.close()
-    return status, body, timed_out
+    return status, b"".join(chunks), timed_out
 
 
 def stream_events(tmp_path):
@@ -324,7 +325,10 @@ def run_stream_turns(tmp_path, mode, calls):
 def test_stream_fault_stall_once_stalls_first_call_then_passes(tmp_path):
     results = run_stream_turns(tmp_path, "stall-once", 2)
     status, body, timed_out = results[0]
-    assert (status, body, timed_out) == (HTTP_OK, b"", True)
+    fault = load_fault_proxy_module()
+    # One SSE comment, then silence: the comment starts a router's
+    # first-content timer, and no content ever follows.
+    assert (status, body, timed_out) == (HTTP_OK, fault.STALL_COMMENT, True)
     assert results[1] == (HTTP_OK, b"".join(SSE_EVENTS), False)
     assert UpstreamSSEHandler.calls == 1
     events = stream_events(tmp_path)

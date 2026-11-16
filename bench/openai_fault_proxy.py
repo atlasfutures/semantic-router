@@ -38,6 +38,7 @@ STREAM_FAULTS = (
     STREAM_FAULT_CUT_AFTER_CONTENT,
 )
 STALL_POLL_SECONDS = 0.25
+STALL_COMMENT = b": OPENROUTER PROCESSING\n\n"
 STREAM_UPSTREAM_TIMEOUT_SECONDS = 600
 HOP_BY_HOP_HEADERS = {
     "connection",
@@ -202,7 +203,9 @@ class FaultProxyHandler(BaseHTTPRequestHandler):
         self.forward(body, shape)
 
     def stall(self, shape: RequestShape, extra: dict[str, Any]) -> None:
-        """Answer 200 and SSE headers, then send nothing and close."""
+        """Answer 200, SSE headers and one SSE comment (as OpenRouter sends
+        while a host has not started), then nothing more, and close. The
+        comment is a body byte, so a router's first-content timer starts."""
         self.close_connection = True
         self.send_response(HTTP_OK)
         self.send_header("Content-Type", "text/event-stream")
@@ -210,6 +213,7 @@ class FaultProxyHandler(BaseHTTPRequestHandler):
         self.send_header("Connection", "close")
         self.send_header("x-vsr-fault-injected", "stall")
         self.end_headers()
+        self.wfile.write(STALL_COMMENT)
         self.wfile.flush()
         self.record_event("stalled", shape, HTTP_OK, extra)
         deadline = time.monotonic() + self.fault_policy.stall_seconds
