@@ -326,6 +326,11 @@ type RaylineARCTrace struct {
 	// PolicyLatency is the decide call's round trip as the router timed it;
 	// EncoderLatency stays the encode alone.
 	PolicyLatency time.Duration
+	// PolicyServiceTotal is the decide as the service timed it (timing_ms
+	// total): on a two-stage package, whose timing_ms.encode is null, the
+	// only service-side time that includes the encode. Zero when the service
+	// did not answer a decide.
+	PolicyServiceTotal time.Duration
 	// PolicyHTTP is the decide call's client-side httptrace: connection reuse
 	// and idle time, and the dial, write and first-byte phases. Nil outside
 	// the policy-service mode and on a decision no decide call answered.
