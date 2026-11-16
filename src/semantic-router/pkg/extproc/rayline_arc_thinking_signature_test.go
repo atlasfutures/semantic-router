@@ -578,7 +578,87 @@ func TestSignatureRefusalIsResentOnceWithoutEarlierThinking(t *testing.T) {
 	event := findLogEvent(t, logs, "thinking_signature_retry")
 	assertFields(t, "thinking_signature_retry", event, map[string]interface{}{
 		"refused_status": http.StatusBadRequest, "resend_status": http.StatusOK, "stripped": 2,
+		// The refused block by fingerprint: the run's anchor, which the
+		// episode recorded as served.
+		"history_thinking_blocks": 2,
+		"refused_message_index":   1,
+		"refused_block_index":     0,
+		"refused_block_kind":      "thinking",
+		"refused_sig_sha256":      thinkingDigest("sig-earlier"),
+		"refused_sig_len":         len("sig-earlier"),
+		"refused_thinking_sha256": thinkingDigest("thought sig-earlier"),
+		"refused_thinking_len":    len("thought sig-earlier"),
+		"refused_recorded_anchor": true,
 	})
+	for name, value := range event {
+		if text, ok := value.(string); ok && strings.Contains(text, "thought sig-") {
+			t.Fatalf("%s logged thinking text: %q", name, text)
+		}
+	}
+}
+
+// A refusal of a block the episode never recorded says so, and a refusal
+// that names a non-thinking block names only its kind.
+func TestRefusedThinkingFieldsNameTheBlock(t *testing.T) {
+	dispatched := []byte(toolLoopHistory("sig-a", "sig-b"))
+	fields := map[string]interface{}{}
+	refusedThinkingFields(dispatched, llmprotocol.AnthropicMessagesV1, []byte(signatureRefusal), nil, fields)
+	assertFields(t, "unrecorded", fields, map[string]interface{}{
+		"refused_sig_sha256": thinkingDigest("sig-a"), "refused_recorded_anchor": false, "history_thinking_blocks": 2,
+	})
+
+	fields = map[string]interface{}{}
+	refusal := strings.Replace(signatureRefusal, "messages.1.content.0", "messages.1.content.1", 1)
+	refusedThinkingFields(dispatched, llmprotocol.AnthropicMessagesV1, []byte(refusal), nil, fields)
+	if fields["refused_block_kind"] != "text" || fields["refused_sig_sha256"] != nil {
+		t.Fatalf("a text block's fields = %v", fields)
+	}
+
+	fields = map[string]interface{}{}
+	refusedThinkingFields(dispatched, llmprotocol.OpenAIChatV1, []byte(signatureRefusal), nil, fields)
+	if len(fields) != 0 {
+		t.Fatalf("a Chat dispatch's fields = %v", fields)
+	}
+}
+
+// A committed Claude turn logs the fingerprints of the thinking it served,
+// the same digests a later refusal logs, and never the text.
+func TestServedThinkingIsFingerprinted(t *testing.T) {
+	logs := captureLogs(t)
+	store, err := raylinearc.NewMemoryEpisodeStore(raylinearc.MemoryEpisodeStoreConfig{MaxEpisodes: 4, IdleTTL: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	episode := raylinearc.HashEpisodeID(t.Name())
+	lease, state, err := store.Prepare(context.Background(), episode, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	transaction := newRaylineARCEpisodeTransaction(store, lease, state, episode, time.Minute, nil)
+	transaction.markSelection(0, 10)
+	transaction.thinkingWorker = reasoning.ThinkingRunWorker("opus")
+	transaction.thinkingReplyIndex = 3
+	response := &llmprotocol.Response{Output: []llmprotocol.OutputItem{{Role: llmprotocol.RoleAssistant, Content: []llmprotocol.Content{
+		{Kind: llmprotocol.ContentReasoning, Text: "secret thought", Signature: "sig-served"},
+		{Kind: llmprotocol.ContentUnmodeled, Unmodeled: &llmprotocol.UnmodeledBlock{
+			Format: llmprotocol.AnthropicMessagesV1, Type: "redacted_thinking", Raw: []byte(`{"type":"redacted_thinking","data":"blob"}`),
+		}},
+		{Kind: llmprotocol.ContentText, Text: "answer"},
+	}}}}
+	if err := transaction.commit(context.Background(), &RequestContext{RequestID: "req-1", SemanticResponse: response}); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	event := findLogEvent(t, logs, "thinking_signature_served")
+	assertFields(t, "thinking_signature_served", event, map[string]interface{}{
+		"request_id": "req-1", "reply_index": 3, "thinking_blocks": 2,
+	})
+	encoded, _ := json.Marshal(event["blocks"])
+	if strings.Contains(string(encoded), "secret") || strings.Contains(string(encoded), "blob") ||
+		!strings.Contains(string(encoded), thinkingDigest("sig-served")) ||
+		!strings.Contains(string(encoded), thinkingDigest("secret thought")) ||
+		!strings.Contains(string(encoded), thinkingDigest("blob")) {
+		t.Fatalf("blocks = %s", encoded)
+	}
 }
 
 // A re-send refused again is the client's answer: there is no second.

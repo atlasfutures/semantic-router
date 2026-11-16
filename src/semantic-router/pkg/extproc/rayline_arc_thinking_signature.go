@@ -644,44 +644,63 @@ var refusedBlockPattern = regexp.MustCompile(`messages\.(\d+)\.content\.(\d+)`)
 // thinking block of the message it names. A refusal that names no block, or
 // one on another wire, names none.
 func refusedThinkingKeys(dispatched []byte, format llmprotocol.WireFormat, refusal []byte) []string {
-	match := refusedBlockPattern.FindSubmatch(refusal)
-	if format != llmprotocol.AnthropicMessagesV1 || match == nil {
+	messageIndex, blockIndex, named := refusedBlockIndex(refusal)
+	if format != llmprotocol.AnthropicMessagesV1 || !named {
 		return nil
 	}
-	messageIndex, errMessage := strconv.Atoi(string(match[1]))
-	blockIndex, errBlock := strconv.Atoi(string(match[2]))
-	var members map[string]json.RawMessage
-	var messages []map[string]json.RawMessage
-	if errMessage != nil || errBlock != nil || json.Unmarshal(dispatched, &members) != nil ||
-		json.Unmarshal(members["messages"], &messages) != nil || messageIndex >= len(messages) {
+	messages, ok := wireMessages(dispatched)
+	if !ok || messageIndex >= len(messages) {
 		return nil
 	}
-	var blocks []map[string]json.RawMessage
-	if json.Unmarshal(messages[messageIndex]["content"], &blocks) != nil {
-		return nil
-	}
-	anchorKey := func(block map[string]json.RawMessage) string {
-		key, thinking := wireThinkingKey(block)
-		if !thinking || key == "" {
-			return ""
-		}
-		if wireBlockType(block) == "redacted_thinking" {
-			return protocolcodec.RedactedAnchorKey(key)
-		}
-		return protocolcodec.SignatureAnchorKey(key)
-	}
+	blocks := wireContentBlocks(messages[messageIndex])
 	if blockIndex < len(blocks) {
-		if key := anchorKey(blocks[blockIndex]); key != "" {
+		if key := refusedAnchorKey(blocks[blockIndex]); key != "" {
 			return []string{key}
 		}
 	}
 	var keys []string
 	for _, block := range blocks {
-		if key := anchorKey(block); key != "" {
+		if key := refusedAnchorKey(block); key != "" {
 			keys = append(keys, key)
 		}
 	}
 	return keys
+}
+
+// refusedBlockIndex is the message and block index a Messages refusal
+// names ("messages.N.content.M"), and false when it names none.
+func refusedBlockIndex(refusal []byte) (int, int, bool) {
+	match := refusedBlockPattern.FindSubmatch(refusal)
+	if match == nil {
+		return 0, 0, false
+	}
+	messageIndex, errMessage := strconv.Atoi(string(match[1]))
+	blockIndex, errBlock := strconv.Atoi(string(match[2]))
+	if errMessage != nil || errBlock != nil {
+		return 0, 0, false
+	}
+	return messageIndex, blockIndex, true
+}
+
+// wireMessages is a Messages body's messages, and false when it has none
+// that decode.
+func wireMessages(body []byte) ([]map[string]json.RawMessage, bool) {
+	var members map[string]json.RawMessage
+	var messages []map[string]json.RawMessage
+	if json.Unmarshal(body, &members) != nil || json.Unmarshal(members["messages"], &messages) != nil {
+		return nil, false
+	}
+	return messages, true
+}
+
+// wireContentBlocks is a wire message's content blocks; a string content
+// has none.
+func wireContentBlocks(message map[string]json.RawMessage) []map[string]json.RawMessage {
+	var blocks []map[string]json.RawMessage
+	if json.Unmarshal(message["content"], &blocks) != nil {
+		return nil
+	}
+	return blocks
 }
 
 // thinkingRetryBody is the dispatched Messages body with the thinking of
@@ -977,6 +996,10 @@ func (r *OpenAIRouter) thinkingSignatureRetryOnResponseHeaders(
 		// The block the refusal named is never sent again.
 		transaction.thinkingRefused = refusedThinkingKeys(plan.dispatched, plan.dispatch.targetFormat, body)
 	}
+	var provenance []reasoning.ReasoningProvenance
+	if transaction := ctx.RaylineARCTransaction; transaction != nil && transaction.state != nil {
+		provenance = transaction.state.ReasoningProvenance
+	}
 	result := callFlexTwin(ctx, call, r.flexResendBodyLimit(), received.Add(budget))
 	fields := map[string]interface{}{
 		"request_id":        ctx.RequestID,
@@ -988,6 +1011,10 @@ func (r *OpenAIRouter) thinkingSignatureRetryOnResponseHeaders(
 		"resend_latency_ms": time.Since(received).Milliseconds(),
 	}
 	addUpstreamErrorTextFields(fields, refusedText)
+	// Which block was refused, by fingerprint only: joined to the turn that
+	// served it (thinking_signature_served), it tells a block changed on its
+	// way back from one replayed unchanged.
+	refusedThinkingFields(plan.dispatched, plan.dispatch.targetFormat, body, provenance, fields)
 	if result.err != nil {
 		fields["resend_error"] = result.err.Error()
 	}
