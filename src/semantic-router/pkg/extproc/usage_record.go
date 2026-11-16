@@ -206,6 +206,12 @@ type llmUsageRecord struct {
 	UpstreamHost         *string `json:"upstream_host"`
 	UpstreamHostSource   *string `json:"upstream_host_source"`
 	HostAttemptStartedMS *int64  `json:"host_attempt_started_ms"`
+	// HostRetryReason is what ended the call the turn's last re-send
+	// replaced (stream_first_content_timeout, stream_incomplete, ...), and
+	// HostRetryExcluded the hosts that re-send added to ignore, null when it
+	// sent the dispatched body unchanged. Null on every other call.
+	HostRetryReason   *string  `json:"host_retry_reason"`
+	HostRetryExcluded []string `json:"host_retry_excluded"`
 	// RefusalReserve marks the calls of a streamed ARC turn refused before
 	// any text or tool call and re-served in place on the policy's next
 	// choice (rayline_arc_refusal_reserve.go): refused_attempt on each

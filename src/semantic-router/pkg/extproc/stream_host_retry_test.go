@@ -431,21 +431,27 @@ func TestContentAlreadySentIsNeverRetried(t *testing.T) {
 	assert.Empty(t, upstream.calls())
 }
 
-// Flag off: nothing is staged or held, and the stall is cut as before.
+// Flag off: the turn never moves down the pin. Its one no-content re-send
+// (no host named) carries the pin unchanged, and when that fails too the
+// stall is cut as before.
 func TestHostRetryOffLeavesTheStallCutAsBefore(t *testing.T) {
 	upstream := newHostUpstream(t, map[string]string{hostRetryHostB: "content"})
 	router := hostRetryRouter(upstream.server.URL, false, 0)
 	stream := NewMockStream(nil)
 
 	ctx, transaction := startStalledTurn(t, router, stream, hostRetryPreContentChunk)
+	require.True(t, ctx.HostRetry.once)
+	drainSpliced(t, router, ctx, stream)
 
-	assert.Nil(t, ctx.HostRetry)
 	sent, ended := clientBytes(stream)
-	assert.Contains(t, sent, "gen-stalled", "a frame was held with the retry off")
+	assert.NotContains(t, sent, "served on "+hostRetryHostB, "the turn moved down the pin with host retry off")
 	assert.True(t, ended)
 	assert.Equal(t, turnFailureTimeout, ctx.ResponseFailureClass)
 	assert.Equal(t, 1, transaction.aborts)
-	assert.Empty(t, upstream.calls())
+	calls := upstream.calls()
+	require.Len(t, calls, 1)
+	assert.Equal(t, []string{hostRetryHostA, hostRetryHostB}, providerList(t, calls[0], "order"))
+	assert.Equal(t, []string{"anthropic/flex"}, providerList(t, calls[0], "ignore"))
 }
 
 // An arm's own first-content limit replaces the global one; an arm without

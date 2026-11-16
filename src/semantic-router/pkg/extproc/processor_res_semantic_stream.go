@@ -119,7 +119,8 @@ func (r *OpenAIRouter) handleSemanticStreamingResponseBody(
 		r.reserveRefusedTurn(ctx) {
 		return droppedHostChunk(ctx)
 	}
-	if held && !awaitingRefusalReserve(ctx) && r.retryAfterStreamFailure(ctx) {
+	if held && !awaitingRefusalReserve(ctx) && !ctx.HostRetry.once &&
+		r.retryAfterStreamFailure(ctx, turnFailureUpstreamError, "stream_error") {
 		// The call failed in-band before any content; the arm's next host
 		// takes the turn over, and its error never reaches the client.
 		return droppedHostChunk(ctx)
@@ -158,6 +159,11 @@ func (r *OpenAIRouter) handleSemanticStreamingResponseBody(
 		// A codec that states the stop only when its stream is finalized
 		// (Messages) shows the refusal here, still before anything was sent.
 		if !cut && r.reserveRefusedTurn(ctx) {
+			return droppedHostChunk(ctx)
+		}
+		// A stream that ended before any content without its terminal event
+		// is re-sent (stream_host_retry.go); nothing of it reaches the client.
+		if !cut && held && !awaitingRefusalReserve(ctx) && r.retryIncompleteStream(ctx) {
 			return droppedHostChunk(ctx)
 		}
 		r.finalizeSemanticStreamingResponse(ctx, buffers.streamErr)

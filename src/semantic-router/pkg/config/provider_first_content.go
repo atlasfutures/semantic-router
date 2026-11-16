@@ -40,3 +40,14 @@ func (c *RouterConfig) HostRetryForModel(modelName string) bool {
 	}
 	return c.ResponseStreamHostRetry
 }
+
+// HostRetryOffForModel reports that the arm itself sets host_retry: false,
+// which also keeps the cell's one no-content re-send off it
+// (pkg/extproc/stream_host_retry.go).
+func (c *RouterConfig) HostRetryOffForModel(modelName string) bool {
+	if c == nil {
+		return false
+	}
+	params, found := c.resolveModelConfig(modelName)
+	return found && params.HostRetry != nil && !*params.HostRetry
+}

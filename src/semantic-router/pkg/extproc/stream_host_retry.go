@@ -57,6 +57,16 @@ import (
 // Each stalled call writes its own usage line (host_retry: host_attempt),
 // settled as a timeout with nothing sent and no usage stated; the call that
 // took over writes the turn's ordinary line (host_retry: host_retry).
+//
+// Where host retry does not apply (it is off, or the arm is unpinned), an
+// OpenRouter turn is still re-sent once when its call fails before any
+// content: the first-content limit, or a stream that ended without its
+// terminal event (stream_incomplete). OpenRouter answered 200 there, so it
+// never fell back itself: deepseek-v4.1-flash and gpt-6-luna on the prod cell
+// 2026-11-15. The re-send leaves out the host that failed when the stream
+// named one of the pin's hosts (as host retry does), and is otherwise the
+// dispatched body unchanged. An arm that sets host_retry: false, and a
+// single-host pin (response_stream.single_host_resend), are left as they are.
 
 const (
 	hostRetryAttempt = "host_attempt"
@@ -115,6 +125,13 @@ type hostRetryPlan struct {
 	// once on that same host, with the dispatched body unchanged
 	// (response_stream.single_host_resend).
 	sameHost bool
+	// once says the turn may be re-sent once, without the failed host when
+	// the stream named one of hosts, else unchanged: the no-content re-send.
+	once bool
+	// reason is what ended the call the last re-send replaced, and excluded
+	// the hosts that re-send added to ignore; both are logged.
+	reason   string
+	excluded []string
 }
 
 type hostAttempt struct {
@@ -153,13 +170,14 @@ func (r *OpenAIRouter) stageHostRetry(ctx *RequestContext, dispatch *providerDis
 		return
 	}
 	ctx.HostRetry = nil
-	if r == nil || r.Config == nil || dispatch == nil || !r.Config.HostRetryForModel(dispatch.logicalModel) ||
+	if r == nil || r.Config == nil || dispatch == nil ||
 		ctx.LooperRequest || ctx.FlexResend != nil || !providerIsOpenRouter(dispatch.profile) {
 		return
 	}
 	hosts := pinnedHosts(body)
 	sameHost := len(hosts) == 1 && r.Config.ResponseStreamSingleHostResend
-	if len(hosts) < 2 && !sameHost {
+	hostRetry := r.Config.HostRetryForModel(dispatch.logicalModel) && (len(hosts) >= 2 || sameHost)
+	if !hostRetry && (len(hosts) == 1 || r.Config.HostRetryOffForModel(dispatch.logicalModel)) {
 		return
 	}
 	ctx.HostRetry = &hostRetryPlan{
@@ -167,7 +185,8 @@ func (r *OpenAIRouter) stageHostRetry(ctx *RequestContext, dispatch *providerDis
 		dispatched: body,
 		hosts:      hosts,
 		attempts:   []hostAttempt{{started: ctx.StartTime}},
-		sameHost:   sameHost,
+		sameHost:   hostRetry && sameHost,
+		once:       !hostRetry,
 	}
 }
 
@@ -229,7 +248,7 @@ func (plan *hostRetryPlan) tried() []string {
 // remaining are the hosts not yet tried, in order. A same-host plan's one
 // host is never used up: the re-send is attributed to it as well.
 func (plan *hostRetryPlan) remaining() []string {
-	if plan.sameHost {
+	if plan.sameHost || plan.once {
 		return slices.Clone(plan.hosts)
 	}
 	tried := plan.tried()
@@ -245,14 +264,15 @@ func (plan *hostRetryPlan) remaining() []string {
 // canReplace reports that the call in flight could still be replaced: by
 // another host, or once by its own when the plan is a same-host one.
 func (plan *hostRetryPlan) canReplace() bool {
-	if plan.sameHost {
+	if plan.sameHost || plan.once {
 		return len(plan.attempts) == 1
 	}
 	return len(plan.remaining()) > 1
 }
 
 // currentHost is the host the call in flight is attributed to: the one the
-// stream named among the hosts it may reach, else the first of them.
+// stream (or its error) named among the hosts it may reach, else the first
+// of them. A no-content re-send's call is attributed only to a named host.
 func (plan *hostRetryPlan) currentHost(ctx *RequestContext) (string, string) {
 	left := plan.remaining()
 	if len(left) == 0 {
@@ -262,6 +282,9 @@ func (plan *hostRetryPlan) currentHost(ctx *RequestContext) (string, string) {
 	if ctx.SemanticStreamState != nil {
 		named = raylinearc.ProviderSlugKey(ctx.SemanticStreamState.provider)
 	}
+	if named == "" {
+		named = raylinearc.ProviderSlugKey(ctx.UpstreamErrorText.providerName)
+	}
 	if named != "" {
 		for _, host := range left {
 			base, _, _ := strings.Cut(host, "/")
@@ -269,6 +292,9 @@ func (plan *hostRetryPlan) currentHost(ctx *RequestContext) (string, string) {
 				return host, hostSourceResponse
 			}
 		}
+	}
+	if plan.once {
+		return "", ""
 	}
 	return left[0], hostSourceOrder
 }
@@ -329,12 +355,22 @@ func (r *OpenAIRouter) retryOnNextHost(ctx *RequestContext, class, detail string
 		return false
 	}
 	host, source := plan.currentHost(ctx)
-	if host == "" {
+	if host == "" && !plan.once {
 		return false
 	}
 	current := &plan.attempts[len(plan.attempts)-1]
 	current.host, current.source = host, source
 	if !plan.canReplace() {
+		return false
+	}
+	if deadline := r.responseStreamDeadline(); plan.once && deadline > 0 && !ctx.StartTime.IsZero() &&
+		deadline-time.Since(ctx.StartTime) < r.streamSilenceLimit(ctx) {
+		// Too little of the turn is left for the re-send to reach its first
+		// content within its own limit: the turn ends now, as without it.
+		logging.ComponentWarnEvent("extproc", "stream_host_retry_unavailable", map[string]interface{}{
+			"request_id": ctx.RequestID, "model": plan.dispatch.logicalModel, "reason": "deadline_too_short",
+			"attempt": len(plan.attempts), "trigger": detail,
+		})
 		return false
 	}
 	if r.responseStreamOverran(ctx) {
@@ -373,7 +409,12 @@ func (r *OpenAIRouter) retryOnNextHost(ctx *RequestContext, class, detail string
 		}
 	}
 	body, ok := plan.dispatched, true
-	if plan.sameHost {
+	var excluded []string
+	if plan.once && host == "" {
+		// No host is known to have failed: the same bytes again, as the edge
+		// re-send sends them, so it can reach no host the first call could not.
+		next = plan.hosts
+	} else if plan.sameHost {
 		// The same host again, asked exactly as before: the pin is left whole,
 		// so the re-send can reach no host the first call could not.
 		//
@@ -390,6 +431,7 @@ func (r *OpenAIRouter) retryOnNextHost(ctx *RequestContext, class, detail string
 			return false
 		}
 		body, ok = withHostsRemoved(plan.dispatched, tried)
+		excluded = tried
 	}
 	fields := map[string]interface{}{
 		"request_id": ctx.RequestID, "model": plan.dispatch.logicalModel,
@@ -397,10 +439,14 @@ func (r *OpenAIRouter) retryOnNextHost(ctx *RequestContext, class, detail string
 		"attempt": len(plan.attempts), "trigger": detail,
 		"silent_ms": time.Since(ctx.StreamContentSince).Milliseconds(),
 		"limit_ms":  r.streamSilenceLimit(ctx).Milliseconds(),
+		"excluded":  excluded,
 	}
 	if plan.sameHost {
 		fields["same_host"] = true
 		fields["wait_ms"] = wait.Milliseconds()
+	}
+	if plan.once {
+		fields["once"] = true
 	}
 	if trace := ctx.VSRRaylineARC; trace != nil {
 		fields["episode_id_hash"] = trace.EpisodeIDHash
@@ -418,6 +464,7 @@ func (r *OpenAIRouter) retryOnNextHost(ctx *RequestContext, class, detail string
 	}
 	logging.ComponentEvent("extproc", "stream_host_retry", fields)
 
+	plan.reason, plan.excluded = detail, excluded
 	r.settleStalledHost(ctx, class, detail)
 	plan.stop()
 	plan.attempts = append(plan.attempts, hostAttempt{started: time.Now()})
@@ -588,18 +635,36 @@ func partialStreamUsage(usage llmprotocol.Usage) responseUsageMetrics {
 // error event) before any content to the arm's next host. The failure event
 // counts as content for the silence limits; here it is no content the client
 // needs, since a host is left to serve the turn.
-func (r *OpenAIRouter) retryAfterStreamFailure(ctx *RequestContext) bool {
+func (r *OpenAIRouter) retryAfterStreamFailure(ctx *RequestContext, class, detail string) bool {
 	state := ctx.SemanticStreamState
 	if state == nil || state.upstreamFailed == nil && state.failed == nil || state.carriesContent() {
 		return false
 	}
 	seen, first := ctx.StreamContentSeen, ctx.StreamFirstContentAt
 	ctx.StreamContentSeen, ctx.StreamFirstContentAt = false, time.Time{}
-	if r.retryOnNextHost(ctx, turnFailureUpstreamError, "stream_error") {
+	if r.retryOnNextHost(ctx, class, detail) {
 		return true
 	}
 	ctx.StreamContentSeen, ctx.StreamFirstContentAt = seen, first
 	return false
+}
+
+// retryIncompleteStream re-sends a turn whose stream ended before any
+// content without its terminal event: the codec's stream_incomplete, which
+// would otherwise fail the turn as upstream_5xx with nothing sent.
+func (r *OpenAIRouter) retryIncompleteStream(ctx *RequestContext) bool {
+	state := ctx.SemanticStreamState
+	if state == nil {
+		return false
+	}
+	failed := state.upstreamFailed
+	if failed == nil {
+		failed = state.failed
+	}
+	if failed == nil || failed.Code != "stream_incomplete" {
+		return false
+	}
+	return r.retryAfterStreamFailure(ctx, streamFailureClass(failed), failed.Code)
 }
 
 // carriesContent reports that the stream delivered model output: text,
@@ -831,7 +896,7 @@ func droppedHostChunk(ctx *RequestContext) *ext_proc.ProcessingResponse {
 // the host it is attributed to.
 func addHostRetryFields(record *llmUsageRecord, ctx *RequestContext) {
 	plan := ctx.HostRetry
-	if plan == nil || len(plan.attempts) < 2 && plan.attempts[0].host == "" {
+	if plan == nil || len(plan.attempts) < 2 && plan.attempts[0].host == "" && plan.reason == "" {
 		return
 	}
 	index := len(plan.attempts)
@@ -847,9 +912,25 @@ func addHostRetryFields(record *llmUsageRecord, ctx *RequestContext) {
 		startedMS := current.started.Sub(ctx.StartTime).Milliseconds()
 		record.HostAttemptStartedMS = &startedMS
 	}
-	tried := append(plan.tried(), host)
-	record.ProviderEndpointsTried = tried
+	tried := slices.DeleteFunc(append(plan.tried(), host), func(host string) bool { return host == "" })
+	if len(tried) > 0 {
+		record.ProviderEndpointsTried = tried
+	}
 	if index > 1 {
 		record.HostRetry = nonEmpty(hostRetryServed)
 	}
+	record.HostRetryReason = nonEmpty(plan.reason)
+	record.HostRetryExcluded = plan.excluded
+}
+
+// addHostRetryTurnFields puts a re-sent turn's attempts, the reason for its
+// last re-send and the hosts it excluded on the turn_failed line.
+func addHostRetryTurnFields(fields map[string]interface{}, ctx *RequestContext) {
+	plan := ctx.HostRetry
+	if plan == nil || plan.reason == "" {
+		return
+	}
+	fields["host_attempt"] = len(plan.attempts)
+	fields["host_retry_reason"] = plan.reason
+	fields["host_retry_excluded"] = plan.excluded
 }
