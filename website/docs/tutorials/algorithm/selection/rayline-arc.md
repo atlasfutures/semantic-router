@@ -765,8 +765,9 @@ sessions before live ones when its cache is full. A throwaway lookup over
 
 Each lookup's `routing_decision` event carries `lookup_session` and
 `session_action`, `encode_ms` when the encoder timed the encode, and on a
-policy-service cell `policy_ms` (the decide's round trip as the cell timed
-it) and `service_ms` (the service's own `timing_ms.total`). A two-stage
+policy-service cell `policy_ms` (the decide as the cell timed it, every
+attempt and busy wait included when the lookup asked again) and `service_ms`
+(the final answer's own `timing_ms.total`). A two-stage
 package reports no encode time (`timing_ms.encode` is null; its encode is
 inside stage one), so there `service_ms` is the time that includes the
 encode, and `encode_ms` is absent.
