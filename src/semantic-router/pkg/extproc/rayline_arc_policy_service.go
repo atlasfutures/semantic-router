@@ -1202,9 +1202,13 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		return nil, boundedARCEncoderFailure(shed.err)
 	}
 	latency := selector.now().Sub(started)
-	if err != nil && startFallback && policyStartLapsed(ctx, decideCtx, err) {
+	// The offer may have narrowed since (a derived hold's re-ask): the
+	// fallback is served only while the turn still offers it and no record
+	// holds the episode's model.
+	if err != nil && startFallback && derived.model == "" && slices.Contains(available, scorer.fallbackActionID) &&
+		policyStartLapsed(ctx, decideCtx, err) {
 		if served := selector.policyStartFallback(
-			armed, selCtx, arcContext, state, scorer, turn, messages, sideCall, atBoundary, retained, workerIDs,
+			armed, selCtx, arcContext, state, scorer, turn, messages, sideCall, retained, workerIDs,
 			policyStartLapseReason(decideCtx, err), latency,
 		); served != nil {
 			served.RaylineARC.SettlementPrices = armed.prices

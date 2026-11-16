@@ -51,12 +51,26 @@ func TestASlowStartIsServedThePackagesFallback(t *testing.T) {
 	if trace.PolicyActionID != bindings[1].ActionID || trace.OfferKind != policyStartFallbackOfferKind {
 		t.Fatalf("served %s (%s), want the fallback %s", trace.PolicyActionID, trace.OfferKind, bindings[1].ActionID)
 	}
-	if trace.PolicyNextState != nil || trace.RawScores != nil || !trace.TokenCountsUnknown {
-		t.Fatalf("a fallback committed policy state or reported scores: %+v", trace)
+	if trace.PolicyNextState != nil || !trace.PolicySideCall || trace.PolicyBoundary != nil ||
+		trace.RawScores != nil || !trace.TokenCountsUnknown {
+		t.Fatalf("a fallback would commit episode state or reported scores: %+v", trace)
 	}
 	line := findLogEvent(t, logs, "rayline_arc_start_deadline_fallback")
 	if line["reason"] != policyStartLapseDeadline || line["action_id"] != bindings[1].ActionID {
 		t.Fatalf("fallback line = %v", line)
+	}
+}
+
+// A start the service's edge sheds twice (its one retry included) is served
+// the fallback rather than failing.
+func TestAShedStartIsServedThePackagesFallback(t *testing.T) {
+	fixture, bindings := startFallbackFixture(t)
+	fixture.fake.failNext("backend_unavailable")
+	state, _ := raylinearc.NewEpisodeState(2)
+	result, err := fixture.selectOn(t, state, policyTestRequest(t, map[string]any{"role": "user", "content": "go"}))
+	if err != nil || result.RaylineARC.PolicyActionID != bindings[1].ActionID ||
+		result.RaylineARC.OfferKind != policyStartFallbackOfferKind {
+		t.Fatalf("shed start = %+v, %v; want the fallback", result, err)
 	}
 }
 
@@ -144,7 +158,8 @@ func TestPolicyStartLapseReason(t *testing.T) {
 	}{
 		{"deadline", lapsed, errors.New("context deadline exceeded"), policyStartLapseDeadline},
 		{"session start", live, sessionStart, policyStartLapseSessionStart},
-		{"another failure", live, &raylinearc.PolicyServiceError{Class: "backend_unavailable"}, ""},
+		{"shed", live, &raylinearc.PolicyServiceError{Class: "backend_unavailable", Status: 503}, policyStartLapseShed},
+		{"another failure", live, &raylinearc.PolicyServiceError{Class: "session_capacity", Status: 429}, ""},
 	} {
 		if got := policyStartLapseReason(tc.decideCtx, tc.err); got != tc.want {
 			t.Fatalf("%s: reason %q, want %q", tc.name, got, tc.want)

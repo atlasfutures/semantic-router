@@ -24,10 +24,10 @@ import (
 // Such a turn is bounded by the start deadline instead. A start still
 // undecided by then, or whose Modal session start failed, is served the
 // policy package's fallback action, as an over-limit lookup is
-// (rayline_routes_encode_bypass.go): the policy scores nothing and the
-// episode's policy state is left as it was, so its next turn starts the
-// episode again, by then most likely on a warm container. A session this
-// turn started is ended, since no commit records it.
+// (rayline_routes_encode_bypass.go): the policy scores nothing and the turn
+// commits nothing, as a side call does, so the episode's next turn starts it
+// again, by then most likely on a warm container. A session this turn
+// started is ended, since no commit records it.
 //
 // Only routed turns fall back. A /v1/routes lookup keeps its own deadline and
 // fails loudly (rayline_routes_lookup_scope.go): its caller asked for the
@@ -44,6 +44,10 @@ const policyStartFallbackOfferKind = "start_deadline_fallback"
 const (
 	policyStartLapseDeadline     = "deadline"
 	policyStartLapseSessionStart = "session_start"
+	// The service's edge shed the start (503 backend_unavailable), and its
+	// one retry (rayline_arc_policy_start_retry.go) was shed too or had no
+	// time left before the deadline.
+	policyStartLapseShed = "backend_unavailable"
 )
 
 // startFallbackEligible reports whether this turn is bounded by the start
@@ -63,8 +67,8 @@ func (scorer *policyServiceScorer) startFallbackEligible(
 }
 
 // policyStartLapsed reports whether a start failed because it ran out of the
-// start deadline (and not the turn's own time), or because its Modal session
-// could not be started.
+// start deadline (and not the turn's own time), because its Modal session
+// could not be started, or because the service's edge shed it.
 func policyStartLapsed(turnCtx, decideCtx context.Context, err error) bool {
 	return policyStartLapseReason(decideCtx, err) != "" && turnCtx.Err() == nil
 }
@@ -77,6 +81,9 @@ func policyStartLapseReason(decideCtx context.Context, err error) string {
 	var failure *raylinearc.PolicyServiceError
 	if errors.As(err, &failure) && failure.Class == raylinearc.PolicySessionStartClass {
 		return policyStartLapseSessionStart
+	}
+	if policyStartRetryable(err) {
+		return policyStartLapseShed
 	}
 	return ""
 }
@@ -93,18 +100,18 @@ func (selector *raylineARCSelector) policyStartFallback(
 	turn *raylinearc.PolicyEpisodeState,
 	messages []json.RawMessage,
 	sideCall bool,
-	atBoundary bool,
 	retained bool,
 	workerIDs []string,
 	reason string,
 	latency time.Duration,
 ) *selection.SelectionResult {
 	actionID := scorer.fallbackActionID
-	// No ledger: the episode's policy state is left as it was, so the next
-	// turn starts the episode again.
+	// Served as a side call is: the turn commits nothing (no turn count,
+	// previous arm, ledger, boundary or served-model record), so the
+	// episode's next turn is the same start this one was.
 	result := selector.policyUndecidedResult(
 		armed, selCtx, arcContext, state, scorer, &raylinearc.EncoderResult{}, actionID, "", false,
-		turn, messages, sideCall, atBoundary, retained, workerIDs,
+		turn, messages, true, false, retained, workerIDs,
 	)
 	if result == nil {
 		return nil
