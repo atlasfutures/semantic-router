@@ -154,6 +154,9 @@ type policyServiceScorer struct {
 	// optional work and never takes a slot a turn's decide could need.
 	appendAdmission  *raylinearc.AdmissionGate
 	deltaUnsupported atomic.Bool
+	// startDeadline bounds a routed turn that starts its episode
+	// (rayline_arc_start_fallback.go).
+	startDeadline time.Duration
 }
 
 // policySideCallStrictFor is how long a strict cell keeps its side calls
@@ -226,6 +229,7 @@ func newPolicyServiceScorer(
 		attestable:       policy.PackageTwoStage() && policy.PackageStageOneByModel(),
 		thinkingControls: policy.PackageThinkingControlsSHA256(),
 		busyWait:         time.Duration(decision.Algorithm.RaylineARC.Episode.AcquireTimeoutSeconds) * time.Second,
+		startDeadline:    policy.StartDeadline(),
 		alias:            policy.PackageAlias,
 		sha256:           policy.PackageSHA256,
 		bindings:         make(map[string]policyBinding, len(policy.Bindings)),
@@ -1041,11 +1045,21 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	busyWait := scorer.busyWait
 	// A lookup scope's session_busy is a concurrent lookup on the same
 	// conversation: it is waited out until the lookup's deadline.
+	// A routed turn that starts its episode is bounded by the start deadline
+	// and served the package's fallback action past it
+	// (rayline_arc_start_fallback.go); every other call keeps the turn's.
+	decideCtx := ctx
+	startFallback := scorer.startFallbackEligible(transition, arcContext, routeControls, execution, executionV2, available)
+	if startFallback {
+		var cancel context.CancelFunc
+		decideCtx, cancel = context.WithTimeout(ctx, scorer.startDeadline)
+		defer cancel()
+	}
 	throughBusy := func(request raylinearc.PolicyDecisionRequest, wait time.Duration) (*raylinearc.PolicyDecisionResponse, error) {
 		if deadline, scoped := policyLookupSessionDeadline(arcContext); scoped {
-			return decidePolicyThroughBusyUntil(ctx, decider, request, deadline, true, admit, withCacheContext)
+			return decidePolicyThroughBusyUntil(decideCtx, decider, request, deadline, true, admit, withCacheContext)
 		}
-		return decidePolicyThroughBusy(ctx, decider, request, wait, admit, withCacheContext)
+		return decidePolicyThroughBusy(decideCtx, decider, request, wait, admit, withCacheContext)
 	}
 	firstBusyWait := policyFirstBusyWait(busyWait, scorer.policyAppendUnsettled(arcContext.EpisodeIDHash, state.TurnIndex))
 	var response *raylinearc.PolicyDecisionResponse
@@ -1075,7 +1089,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		response, err = throughBusy(request, firstBusyWait)
 		// An episode's start shed at the service's edge is asked once more
 		// (rayline_arc_policy_start_retry.go); nothing else is.
-		response, err = retryPolicyStartOnce(ctx, transition, arcContext.EpisodeIDHash, response, err,
+		response, err = retryPolicyStartOnce(decideCtx, transition, arcContext.EpisodeIDHash, response, err,
 			func() (*raylinearc.PolicyDecisionResponse, error) {
 				return throughBusy(request, busyWait)
 			})
@@ -1188,6 +1202,27 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		return nil, boundedARCEncoderFailure(shed.err)
 	}
 	latency := selector.now().Sub(started)
+	// The offer may have narrowed since (a derived hold's re-ask): the
+	// fallback is served only while the turn still offers it and no record
+	// holds the episode's model.
+	if err != nil && startFallback && derived.model == "" && slices.Contains(available, scorer.fallbackActionID) &&
+		policyStartLapsed(ctx, decideCtx, err) {
+		if served := selector.policyStartFallback(
+			armed, selCtx, arcContext, state, scorer, turn, messages, sideCall, retained, workerIDs,
+			policyStartLapseReason(decideCtx, err), latency,
+		); served != nil {
+			served.RaylineARC.SettlementPrices = armed.prices
+			served.RaylineARC.EndpointFeed = arcContext.EndpointFeed
+			served.RaylineARC.MaskedArms = policyMaskedArms(scorer, workerIDs, excluded, fallback, turn, offeredRoutes)
+			// The fallback records no session: the episode starts again on
+			// its next turn, so any session this turn started is ended now
+			// rather than left to hold a container's slot.
+			if sessionBinding != nil && !sessionBinding.Ephemeral() {
+				go sessionBinding.EndUnrecorded(ctx)
+			}
+			return served, nil
+		}
+	}
 	if err != nil {
 		class := "transport"
 		var failure *raylinearc.PolicyServiceError
