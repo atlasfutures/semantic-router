@@ -92,12 +92,12 @@ func anthropicInputSchema(schema json.RawMessage) (json.RawMessage, bool) {
 		}
 		definitions[member] = table
 	}
-	branches, ok := foldableBranches(top[combinator], definitions)
+	branches, ok := foldableBranches(combinator, top[combinator], definitions)
 	if !ok {
 		return schema, false
 	}
 	names := branchPropertyNames(branches)
-	if (len(names)+len(properties))*len(branches) > maxFoldPairs || forbidsRootProperty(branches, properties) {
+	if (len(names)+len(properties))*len(branches) > maxFoldPairs || conflictsWithRoot(branches, properties, required) {
 		return schema, false
 	}
 	topAdditional := string(bytes.TrimSpace(top["additionalProperties"]))
@@ -166,7 +166,7 @@ type schemaBranch struct {
 // foldableBranches decodes the combinator's branches, resolving $ref
 // branches and dropping repeats. It reports false when the combinator is not
 // a non-empty array or a branch cannot be folded.
-func foldableBranches(raw json.RawMessage, definitions map[string]map[string]json.RawMessage) ([]schemaBranch, bool) {
+func foldableBranches(combinator string, raw json.RawMessage, definitions map[string]map[string]json.RawMessage) ([]schemaBranch, bool) {
 	var members []json.RawMessage
 	if json.Unmarshal(raw, &members) != nil || len(members) == 0 {
 		return nil, false
@@ -194,6 +194,11 @@ func foldableBranches(raw json.RawMessage, definitions map[string]map[string]jso
 			}
 		}
 		if seen[key] {
+			// An object matching a repeated oneOf branch matches it twice
+			// and so fails the oneOf; dropping the repeat would accept it.
+			if combinator == "oneOf" {
+				return nil, false
+			}
 			continue
 		}
 		seen[key] = true
@@ -233,14 +238,29 @@ func isObjectType(raw json.RawMessage) bool {
 	return json.Unmarshal(raw, &kinds) == nil && len(kinds) == 1 && kinds[0] == "object"
 }
 
-// forbidsRootProperty reports whether the branches refuse a property the root
-// declares: every branch is closed and none declares it.
-func forbidsRootProperty(branches []schemaBranch, properties map[string]json.RawMessage) bool {
-	if slices.ContainsFunc(branches, func(branch schemaBranch) bool { return !branch.closed }) {
-		return false
+// conflictsWithRoot reports whether the branches constrain the root's own
+// properties in a way the fold would drop: every branch is closed and none
+// declares a root property (so the original refuses it), a closed branch
+// leaves out a name the root requires (so that branch never matches), or a
+// branch gives a root property a schema other than the root's.
+func conflictsWithRoot(branches []schemaBranch, properties map[string]json.RawMessage, required []string) bool {
+	allClosed := !slices.ContainsFunc(branches, func(branch schemaBranch) bool { return !branch.closed })
+	for name, rootSchema := range properties {
+		declaredBySome := false
+		for _, branch := range branches {
+			if branchSchema, declared := branch.properties[name]; declared {
+				declaredBySome = true
+				if !bytes.Equal(compactJSON(branchSchema), compactJSON(rootSchema)) {
+					return true
+				}
+			}
+		}
+		if allClosed && !declaredBySome {
+			return true
+		}
 	}
-	for name := range properties {
-		if !slices.ContainsFunc(branches, func(branch schemaBranch) bool { _, declared := branch.properties[name]; return declared }) {
+	for _, branch := range branches {
+		if branch.closed && slices.ContainsFunc(required, func(name string) bool { _, declared := branch.properties[name]; return !declared }) {
 			return true
 		}
 	}

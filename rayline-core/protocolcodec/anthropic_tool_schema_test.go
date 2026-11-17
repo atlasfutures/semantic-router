@@ -52,7 +52,7 @@ func TestAnthropicInputSchemaFoldsTopLevelCombinators(t *testing.T) {
 			name: "a branch that leaves a property out and allows any other allows it with any value",
 			schema: `{"required": ["id"], "properties": {"id": {"type": "string"}}, "anyOf": [
 				{"required": ["path"], "properties": {"path": {"type": "string"}}},
-				{"required": ["url"], "properties": {"url": {"type": "string"}, "id": {"type": "integer"}}}]}`,
+				{"required": ["url"], "properties": {"url": {"type": "string"}}}]}`,
 			want: `{"type": "object", "required": ["id"], "properties": {
 				"id": {"type": "string"},
 				"path": {"anyOf": [{"type": "string"}, {}]},
@@ -71,7 +71,7 @@ func TestAnthropicInputSchemaFoldsTopLevelCombinators(t *testing.T) {
 			schema: `{"$defs": {
 					"run/code": {"type": "object", "additionalProperties": false, "required": ["code"], "properties": {"code": {"type": "string"}}},
 					"done~": {"type": "object", "additionalProperties": false, "properties": {"completion_summary": {"type": "string"}}}},
-				"oneOf": [{"$ref": "#/$defs/run~1code"}, {"$ref": "#/$defs/done~0"}, {"$ref": "#/$defs/done%7E0"}]}`,
+				"anyOf": [{"$ref": "#/$defs/run~1code"}, {"$ref": "#/$defs/done~0"}, {"$ref": "#/$defs/done%7E0"}]}`,
 			want: `{"additionalProperties": false, "type": "object", "$defs": {
 					"run/code": {"type": "object", "additionalProperties": false, "required": ["code"], "properties": {"code": {"type": "string"}}},
 					"done~": {"type": "object", "additionalProperties": false, "properties": {"completion_summary": {"type": "string"}}}},
@@ -80,14 +80,14 @@ func TestAnthropicInputSchemaFoldsTopLevelCombinators(t *testing.T) {
 		{
 			name: "references to the root and its definitions stay valid and fold",
 			schema: `{"$defs": {"Id": {"type": "string"}}, "properties": {"id": {"$ref": "#/$defs/Id"}},
-				"oneOf": [{"additionalProperties": false, "properties": {"id": {}, "parent": {"$ref": "#"}}}]}`,
+				"oneOf": [{"additionalProperties": false, "properties": {"id": {"$ref": "#/$defs/Id"}, "parent": {"$ref": "#"}}}]}`,
 			want: `{"additionalProperties": false, "type": "object", "$defs": {"Id": {"type": "string"}}, "properties": {
 				"id": {"$ref": "#/$defs/Id"}, "parent": {"$ref": "#"}}}`,
 		},
 		{
 			name:   "the client's strings keep their bytes",
-			schema: `{"properties": {"q": {"description": "a <b> & c"}}, "oneOf": [{"properties": {"q": {}}}]}`,
-			want:   `{"type": "object", "properties": {"q": {"description": "a <b> & c"}}}`,
+			schema: `{"properties": {"q": {"description": "a <b> & c"}}, "oneOf": [{"properties": {"r": {}}}]}`,
+			want:   `{"type": "object", "properties": {"q": {"description": "a <b> & c"}, "r": {}}}`,
 		},
 		{
 			name:   "a singleton object type array becomes the object type",
@@ -138,7 +138,7 @@ func TestAnthropicInputSchemaFoldCostStaysNearTheSchemaSize(t *testing.T) {
 		encoded, _ := json.Marshal(map[string]any{"properties": properties})
 		return string(encoded)
 	}
-	repeated := `{"$defs": {"Wide": ` + wide(500) + `}, "oneOf": [` +
+	repeated := `{"$defs": {"Wide": ` + wide(500) + `}, "anyOf": [` +
 		strings.TrimSuffix(strings.Repeat(`{"$ref": "#/$defs/Wide"},`, 1000), ",") + `]}`
 	if got, folded := anthropicInputSchema(json.RawMessage(repeated)); !folded || len(got) > len(repeated) {
 		t.Fatalf("one definition named by many branches: folded %v into %d bytes from %d", folded, len(got), len(repeated))
@@ -158,7 +158,7 @@ func TestAnthropicInputSchemaFoldCostStaysNearTheSchemaSize(t *testing.T) {
 		}
 		spellings = append(spellings, `{"$ref": "#/$defs/`+spelled.String()+`"}`)
 	}
-	respelled := json.RawMessage(`{"$defs": {"` + name + `": ` + wide(2000) + `}, "oneOf": [` + strings.Join(spellings, ", ") + `]}`)
+	respelled := json.RawMessage(`{"$defs": {"` + name + `": ` + wide(2000) + `}, "anyOf": [` + strings.Join(spellings, ", ") + `]}`)
 	var before, after runtime.MemStats
 	runtime.ReadMemStats(&before)
 	if _, folded := anthropicInputSchema(respelled); !folded {
@@ -210,7 +210,12 @@ func TestAnthropicInputSchemaLeavesSchemasItCannotFold(t *testing.T) {
 		"a root property every closed branch leaves out": `{"properties": {"x": {}}, "oneOf": [{"additionalProperties": false, "properties": {"y": {}}}]}`,
 		"a closed branch requiring a name it does not declare": `{"oneOf": [{"additionalProperties": false, "required": ["x"], "properties": {}},
 			{"additionalProperties": false, "required": ["y"], "properties": {"y": {}}}]}`,
-		"a reference to a root property":        `{"oneOf": [{"properties": {"x": {"type": "string"}, "y": {"$ref": "#/properties/x"}}}]}`,
+		"a reference to a root property": `{"oneOf": [{"properties": {"x": {"type": "string"}, "y": {"$ref": "#/properties/x"}}}]}`,
+		"a closed branch that leaves out a name the root requires": `{"required": ["x"], "oneOf": [{"additionalProperties": false},
+			{"additionalProperties": false, "required": ["y"], "properties": {"x": {}, "y": {}}}]}`,
+		"a repeated oneOf branch": `{"oneOf": [{"properties": {"a": {}}}, {"properties": {"a": {}}}]}`,
+		"a branch constraining a root property differently": `{"required": ["x"], "properties": {"x": {"type": "string"}},
+			"anyOf": [{"properties": {"x": {"maxLength": 1}}}]}`,
 		"an empty combinator":                   `{"oneOf": []}`,
 		"a branch with an empty type":           `{"oneOf": [{"type": "", "properties": {"a": {}}}]}`,
 		"a null combinator":                     `{"oneOf": null}`,
