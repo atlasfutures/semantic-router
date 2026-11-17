@@ -25,54 +25,38 @@ var foldableBranchMembers = []string{"type", "properties", "required", "addition
 var localDefinitionMembers = []string{"$defs", "definitions"}
 
 // keptReferencePrefixes are the local JSON Pointers whose targets the fold
-// keeps: the top level's own definitions, and its properties themselves (not
-// their insides, which a fold may wrap under allOf).
+// keeps in place: the top level's own definitions and properties.
 var keptReferencePrefixes = []string{"#/$defs/", "#/definitions/", "#/properties/"}
 
-// isKeptReference reports whether ref points at the root or at a target the
-// fold keeps in place.
-func isKeptReference(ref string) bool {
-	if ref == "#" {
-		return true
-	}
-	for _, prefix := range keptReferencePrefixes {
-		if rest, found := strings.CutPrefix(ref, prefix); found {
-			return prefix != "#/properties/" || !strings.Contains(rest, "/")
-		}
-	}
-	return false
-}
-
-// maxFoldPairs bounds the property-branch pairs a fold weighs (top-level and
-// branch properties, each against every branch), so a schema with very many
-// branches and properties is sent unchanged rather than folded at a cost far
-// beyond its size.
+// maxFoldPairs bounds the property-branch pairs a fold weighs, so a schema
+// with very many branches and properties is sent unchanged rather than
+// folded at a cost far beyond its size.
 const maxFoldPairs = 1 << 16
 
 // anthropicInputSchema returns schema in the form Messages accepts, and
-// whether it changed it. Only a schema with exactly one top-level combinator
-// is folded. Its branches are folded into the object:
+// whether it changed it. Only a schema with exactly one top-level oneOf or
+// anyOf is folded; what the fold drops is which branch applies:
 //
 //   - A property the top level declares keeps its own schema.
-//   - A property only branches declare gets the schemas the branches give
-//     it: under oneOf and anyOf, each declaring branch's schema, and any value
-//     from a branch that leaves it out but allows other properties; under
-//     allOf, each declaring branch's schema. Several schemas are combined by
-//     anyOf for oneOf and anyOf, and by allOf for allOf.
-//   - Every name an allOf branch requires stays required, and so does a name
-//     every oneOf/anyOf branch requires. What is lost is which oneOf/anyOf
-//     branch applies; the tool's own server still validates the arguments.
+//   - A property only branches declare gets each declaring branch's schema,
+//     and any value from a branch that leaves it out but allows other
+//     properties, combined under anyOf.
+//   - A name every branch requires stays required.
+//   - When every branch is closed (additionalProperties false), the folded
+//     object is closed too.
 //
 // A branch that is a "$ref" into the schema's own $defs or definitions is
 // that definition. Any other schema is returned as it came, since folding it
-// would change more than the choice of branch: more than one top-level
-// combinator, a top-level unevaluatedProperties, a branch that says more than
-// foldableBranchMembers or allows other properties through a schema, a $ref
-// branch that cannot be resolved, a closed allOf branch that leaves out a
-// property the top level or another branch declares, a reference the fold could leave pointing at
-// nothing, or a fold bigger than twice the schema. Messages refuses that
-// schema either way, and says why. A folded schema has no top-level
-// combinator, so folding it again changes nothing.
+// would change more than the choice of branch: a top-level allOf or more than
+// one combinator, a top-level unevaluatedProperties, a root type other than
+// object, a root whose additionalProperties is false or a schema while a
+// branch declares a property it does not, root patternProperties when every
+// branch is closed, a branch that says more than foldableBranchMembers or
+// allows other properties through a schema, a $ref branch that cannot be
+// resolved, a reference the fold could leave pointing at nothing, or a fold
+// bigger than twice the schema. Messages refuses that schema either way, and
+// says why. A folded schema has no top-level combinator, so folding it again
+// changes nothing; the tool's own server still validates the arguments.
 func anthropicInputSchema(schema json.RawMessage) (json.RawMessage, bool) {
 	var top map[string]json.RawMessage
 	if json.Unmarshal(schema, &top) != nil {
@@ -87,7 +71,10 @@ func anthropicInputSchema(schema json.RawMessage) (json.RawMessage, bool) {
 			combinator = name
 		}
 	}
-	if combinator == "" || hasReferenceTheFoldCouldBreak(schema) {
+	// allOf branches all apply, so folding them would have to merge every
+	// constraint they put on each property; only a union's choice of branch
+	// is something the fold can drop.
+	if combinator == "" || combinator == "allOf" || hasReferenceTheFoldCouldBreak(schema) {
 		return schema, false
 	}
 	if _, unevaluated := top["unevaluatedProperties"]; unevaluated {
@@ -110,22 +97,13 @@ func anthropicInputSchema(schema json.RawMessage) (json.RawMessage, bool) {
 		return schema, false
 	}
 	names := branchPropertyNames(branches)
-	if (len(names)+len(properties))*len(branches) > maxFoldPairs || (combinator == "allOf" && allOfBranchForbids(branches, properties, names)) {
+	if len(names)*len(branches) > maxFoldPairs {
 		return schema, false
 	}
 	topAdditional := string(bytes.TrimSpace(top["additionalProperties"]))
 	added := false
 	for _, name := range names {
-		if declared, ok := properties[name]; ok {
-			// Every allOf branch applies, so a branch that redeclares a
-			// top-level property still constrains it.
-			if combinator == "allOf" {
-				combined := combinatorPropertySchema(combinator, append([]schemaBranch{{properties: properties}}, branches...), name)
-				if !bytes.Equal(combined, declared) {
-					properties[name] = combined
-					added = true
-				}
-			}
+		if _, declared := properties[name]; declared {
 			continue
 		}
 		// The root's additionalProperties governs a property only branches
@@ -134,7 +112,7 @@ func anthropicInputSchema(schema json.RawMessage) (json.RawMessage, bool) {
 		if topAdditional != "" && topAdditional != "true" {
 			return schema, false
 		}
-		propertySchema := combinatorPropertySchema(combinator, branches, name)
+		propertySchema := unionPropertySchema(branches, name)
 		if properties == nil {
 			properties = map[string]json.RawMessage{}
 		}
@@ -145,15 +123,19 @@ func anthropicInputSchema(schema json.RawMessage) (json.RawMessage, bool) {
 	for _, name := range required {
 		isRequired[name] = true
 	}
-	for _, name := range requiredNames(combinator, branches) {
+	for _, name := range requiredByEveryBranch(branches) {
 		if !isRequired[name] {
 			isRequired[name] = true
 			required = append(required, name)
 		}
 	}
-	// Names no branch declares stay refused when the branches refuse them:
-	// every union branch is closed, or any allOf branch is.
-	if closesUnknownNames(combinator, branches) {
+	// When every branch is closed, a name none declares stays refused. Root
+	// patternProperties would let matching names past that, so such a schema
+	// is sent unchanged.
+	if !slices.ContainsFunc(branches, func(branch schemaBranch) bool { return !branch.closed }) {
+		if _, patterned := top["patternProperties"]; patterned {
+			return schema, false
+		}
 		top["additionalProperties"] = json.RawMessage(`false`)
 	}
 	delete(top, combinator)
@@ -231,17 +213,6 @@ func foldableBranches(raw json.RawMessage, definitions map[string]map[string]jso
 	return branches, true
 }
 
-// closesUnknownNames reports whether the branches refuse every property none
-// of them declares: all oneOf/anyOf branches are closed, or an allOf branch
-// is.
-func closesUnknownNames(combinator string, branches []schemaBranch) bool {
-	closed := func(branch schemaBranch) bool { return branch.closed }
-	if combinator == "allOf" {
-		return slices.ContainsFunc(branches, closed)
-	}
-	return !slices.ContainsFunc(branches, func(branch schemaBranch) bool { return !branch.closed })
-}
-
 // isObjectType reports whether a root type is absent or names only object,
 // as "object" or ["object"]; Messages takes only "object".
 func isObjectType(raw json.RawMessage) bool {
@@ -269,39 +240,15 @@ func isFoldableBranch(branch map[string]json.RawMessage) bool {
 	return !typed || (json.Unmarshal(raw, &kind) == nil && kind == "object")
 }
 
-// allOfBranchForbids reports whether a closed allOf branch (additionalProperties
-// false) leaves out a property the top level or another branch declares. Every
-// allOf branch applies, so that property can never be sent, which the fold
-// cannot keep.
-func allOfBranchForbids(branches []schemaBranch, properties map[string]json.RawMessage, names []string) bool {
-	for _, branch := range branches {
-		if !branch.closed {
-			continue
-		}
-		for name := range properties {
-			if _, declared := branch.properties[name]; !declared {
-				return true
-			}
-		}
-		for _, name := range names {
-			if _, declared := branch.properties[name]; !declared {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// combinatorPropertySchema is the schema the branches give the property name
-// (see anthropicInputSchema).
-func combinatorPropertySchema(combinator string, branches []schemaBranch, name string) json.RawMessage {
+// unionPropertySchema is the schema the branches give the property name:
+// each declaring branch's schema, and any value from a branch that leaves it
+// out but allows other properties, combined under anyOf.
+func unionPropertySchema(branches []schemaBranch, name string) json.RawMessage {
 	var alternatives []json.RawMessage
 	for _, branch := range branches {
 		if property, declared := branch.properties[name]; declared {
 			alternatives = append(alternatives, property)
-			continue
-		}
-		if combinator != "allOf" && !branch.closed {
+		} else if !branch.closed {
 			alternatives = append(alternatives, json.RawMessage(`{}`))
 		}
 	}
@@ -309,17 +256,12 @@ func combinatorPropertySchema(combinator string, branches []schemaBranch, name s
 	if len(alternatives) == 1 {
 		return alternatives[0]
 	}
-	nested := "anyOf"
-	if combinator == "allOf" {
-		nested = "allOf"
-	}
-	return encodeSchemaJSON(map[string][]json.RawMessage{nested: alternatives})
+	return encodeSchemaJSON(map[string][]json.RawMessage{"anyOf": alternatives})
 }
 
-// requiredNames is what the branches make required: every name an allOf
-// branch requires, and for oneOf and anyOf the names every branch requires,
-// which hold whichever branch applies.
-func requiredNames(combinator string, branches []schemaBranch) []string {
+// requiredByEveryBranch is the names every branch requires, which hold
+// whichever branch applies.
+func requiredByEveryBranch(branches []schemaBranch) []string {
 	var names []string
 	requiredBy := map[string]int{}
 	for _, branch := range branches {
@@ -329,9 +271,6 @@ func requiredNames(combinator string, branches []schemaBranch) []string {
 			}
 			requiredBy[name]++
 		}
-	}
-	if combinator == "allOf" {
-		return names
 	}
 	return slices.DeleteFunc(names, func(name string) bool { return requiredBy[name] < len(branches) })
 }
@@ -432,9 +371,8 @@ func localDefinition(raw json.RawMessage) (map[string]json.RawMessage, bool) {
 
 // hasReferenceTheFoldCouldBreak reports whether schema has a reference the
 // fold might leave pointing at nothing: a "$ref" other than the root ("#") or
-// a pointer under the top level's $defs or definitions or to one top-level
-// property (such as one into a removed branch, into a property's insides, or
-// to an anchor), or any "$dynamicRef".
+// a pointer under the top level's $defs, definitions or properties (such as
+// one into a removed branch, or to an anchor), or any "$dynamicRef".
 // Anything that only looks like a reference, inside an enum or a default, is
 // counted too; that schema is just sent unchanged.
 func hasReferenceTheFoldCouldBreak(schema json.RawMessage) bool {
@@ -453,7 +391,8 @@ func hasReferenceTheFoldCouldBreak(schema json.RawMessage) bool {
 			if _, dynamic := value["$dynamicRef"]; dynamic {
 				return true
 			}
-			if ref, isString := value["$ref"].(string); isString && !isKeptReference(ref) {
+			if ref, isString := value["$ref"].(string); isString && ref != "#" &&
+				!slices.ContainsFunc(keptReferencePrefixes, func(prefix string) bool { return strings.HasPrefix(ref, prefix) }) {
 				return true
 			}
 			for _, child := range value {
