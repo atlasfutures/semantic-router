@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -144,6 +145,31 @@ func TestAnthropicInputSchemaFoldCostStaysNearTheSchemaSize(t *testing.T) {
 		strings.TrimSuffix(strings.Repeat(`{"$ref": "#/$defs/Wide"},`, 1000), ",") + `]}`
 	if got, folded := anthropicInputSchema(json.RawMessage(repeated)); !folded || len(got) > len(repeated) {
 		t.Fatalf("one definition named by many branches: folded %v into %d bytes from %d", folded, len(got), len(repeated))
+	}
+	// The same definition named by references spelled differently is still
+	// decoded once.
+	const name = "WideDefinition"
+	var spellings []string
+	for i := range 512 {
+		var spelled strings.Builder
+		for bit, letter := range name {
+			if i&(1<<bit) != 0 {
+				fmt.Fprintf(&spelled, "%%%02X", letter)
+			} else {
+				spelled.WriteRune(letter)
+			}
+		}
+		spellings = append(spellings, `{"$ref": "#/$defs/`+spelled.String()+`"}`)
+	}
+	respelled := json.RawMessage(`{"$defs": {"` + name + `": ` + wide(2000) + `}, "oneOf": [` + strings.Join(spellings, ", ") + `]}`)
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	if _, folded := anthropicInputSchema(respelled); !folded {
+		t.Fatalf("one definition named by differently spelled references was not folded")
+	}
+	runtime.ReadMemStats(&after)
+	if allocated := after.TotalAlloc - before.TotalAlloc; allocated > 32<<20 {
+		t.Fatalf("folding a %d-byte schema allocated %d bytes", len(respelled), allocated)
 	}
 	var branches []string
 	for i := range 300 {

@@ -112,8 +112,13 @@ func anthropicInputSchema(schema json.RawMessage) (json.RawMessage, bool) {
 		properties[name] = propertySchema
 		added = true
 	}
+	isRequired := map[string]bool{}
+	for _, name := range required {
+		isRequired[name] = true
+	}
 	for _, name := range requiredNames(combinator, branches) {
-		if !slices.Contains(required, name) {
+		if !isRequired[name] {
+			isRequired[name] = true
 			required = append(required, name)
 		}
 	}
@@ -152,13 +157,30 @@ func foldableBranches(raw json.RawMessage, definitions map[string]map[string]jso
 	seen := map[string]bool{}
 	branches := make([]schemaBranch, 0, len(members))
 	for _, member := range members {
+		var branch map[string]json.RawMessage
+		if json.Unmarshal(member, &branch) != nil || branch == nil {
+			return nil, false
+		}
 		key := string(compactJSON(member))
+		if _, isReference := branch["$ref"]; isReference {
+			table, name, ok := localDefinitionReference(branch)
+			if !ok {
+				return nil, false
+			}
+			// Keyed by the definition, so each is decoded once however
+			// the references to it are spelled.
+			key = "$ref\x00" + table + "\x00" + name
+			if !seen[key] {
+				if branch, ok = localDefinition(definitions[table][name]); !ok {
+					return nil, false
+				}
+			}
+		}
 		if seen[key] {
 			continue
 		}
 		seen[key] = true
-		branch, ok := resolveSchemaBranch(definitions, member)
-		if !ok || !isFoldableBranch(branch) {
+		if !isFoldableBranch(branch) {
 			return nil, false
 		}
 		properties, required, ok := schemaObjectMembers(branch)
@@ -293,47 +315,40 @@ func schemaObjectMembers(schema map[string]json.RawMessage) (map[string]json.Raw
 	return properties, required, true
 }
 
-// resolveSchemaBranch decodes a combinator branch. A branch that is a "$ref"
+// localDefinitionReference is the definition a branch names with a "$ref"
 // into the schema's own $defs or definitions (how generated union schemas
-// spell their branches) is that definition. The reference is a URI fragment
-// holding a JSON Pointer, so it is percent-decoded and then "~1" becomes "/"
-// and "~0" becomes "~". It reports false for a branch that is not an object
-// and for a $ref it cannot resolve: one with sibling members, one outside the
-// schema or more than one segment deep, one naming no object definition, or
-// one whose definition is itself a $ref.
-func resolveSchemaBranch(definitions map[string]map[string]json.RawMessage, member json.RawMessage) (map[string]json.RawMessage, bool) {
-	var branch map[string]json.RawMessage
-	if json.Unmarshal(member, &branch) != nil || branch == nil {
-		return nil, false
-	}
-	raw, present := branch["$ref"]
-	if !present {
-		return branch, true
-	}
+// spell their branches): the table and the definition's name. The reference
+// is a URI fragment holding a JSON Pointer, so it is percent-decoded and then
+// "~1" becomes "/" and "~0" becomes "~". It reports false for a $ref with
+// sibling members, and for one outside the schema or more than one segment
+// deep.
+func localDefinitionReference(branch map[string]json.RawMessage) (string, string, bool) {
 	var ref string
-	if len(branch) > 1 || json.Unmarshal(raw, &ref) != nil {
-		return nil, false
+	if len(branch) > 1 || json.Unmarshal(branch["$ref"], &ref) != nil {
+		return "", "", false
 	}
 	pointer, err := url.PathUnescape(ref)
 	if err != nil {
-		return nil, false
+		return "", "", false
 	}
 	for _, table := range localDefinitionMembers {
 		segment, local := strings.CutPrefix(pointer, "#/"+table+"/")
-		if !local || strings.Contains(segment, "/") {
-			continue
+		if local && !strings.Contains(segment, "/") {
+			return table, strings.ReplaceAll(strings.ReplaceAll(segment, "~1", "/"), "~0", "~"), true
 		}
-		name := strings.ReplaceAll(strings.ReplaceAll(segment, "~1", "/"), "~0", "~")
-		var definition map[string]json.RawMessage
-		if json.Unmarshal(definitions[table][name], &definition) != nil || definition == nil {
-			return nil, false
-		}
-		if _, nested := definition["$ref"]; nested {
-			return nil, false
-		}
-		return definition, true
 	}
-	return nil, false
+	return "", "", false
+}
+
+// localDefinition decodes a definition a branch names. It reports false when
+// there is none, it is not an object, or it is itself a $ref.
+func localDefinition(raw json.RawMessage) (map[string]json.RawMessage, bool) {
+	var definition map[string]json.RawMessage
+	if json.Unmarshal(raw, &definition) != nil || definition == nil {
+		return nil, false
+	}
+	_, nested := definition["$ref"]
+	return definition, !nested
 }
 
 // hasReferenceTheFoldCouldBreak reports whether schema has a reference the
