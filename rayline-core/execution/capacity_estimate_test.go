@@ -779,6 +779,8 @@ func TestByteBoundIsBoundedOnlyOverAFullyKnownBody(t *testing.T) {
 		{"messages caching and context management", messages, `{"model":"m","max_tokens":64,"cache_control":{"type":"ephemeral"},"context_management":{"edits":[]},"messages":[{"role":"user","content":"hi"}]}`, ""},
 		{"responses codex members", responses, `{"model":"m","input":"hi","stream":true,"stream_options":{"include_obfuscation":false},"client_metadata":{"session_id":"s"}}`, ""},
 		{"messages system message with effort", messages, `{"model":"m","max_tokens":64,"output_config":{"effort":"medium"},"messages":[{"role":"user","content":"hi"},{"role":"system","content":[{"type":"text","text":"env"}],"output_config":{"effort":"medium"}}]}`, ""},
+		{"effort on a user message", messages, `{"model":"m","max_tokens":64,"messages":[{"role":"user","content":"hi","output_config":{"effort":"medium"}}]}`, "/messages/0/output_config"},
+		{"system message output format", messages, `{"model":"m","max_tokens":64,"messages":[{"role":"user","content":"hi"},{"role":"system","content":"env","output_config":{"effort":"low","format":{"type":"json_schema"}}}]}`, "/messages/1/output_config/format"},
 		{"messages diagnostics", messages, `{"model":"m","max_tokens":64,"diagnostics":{"previous_message_id":null},"messages":[{"role":"user","content":"hi"}]}`, ""},
 		{"responses cache retention", responses, `{"model":"m","prompt_cache_retention":"24h","input":[{"type":"reasoning","id":"rs","summary":[{"type":"summary_text","text":"t"}],"encrypted_content":"x"}]}`, ""},
 		{"call item carrying content", responses, `{"model":"m","input":[{"type":"custom_tool_call","call_id":"c","name":"f","input":"","role":"user","content":[{"type":"input_image","image_url":"http://127.0.0.1/a.png"}]}]}`, "/input/0/content"},
@@ -790,7 +792,7 @@ func TestByteBoundIsBoundedOnlyOverAFullyKnownBody(t *testing.T) {
 		{"namespace holding a server tool", responses, `{"model":"m","input":"hi","tools":[{"type":"namespace","name":"ns","tools":[{"type":"function","name":"f"},{"type":"web_search"}]}]}`, "/tools/0/tools/1/type=web_search"},
 		{"responses server tool", responses, `{"model":"m","input":"hi","tools":[{"type":"web_search"}]}`, "/tools/0/type=web_search"},
 
-		{"unknown protocol", "", `{"model":"m","messages":[{"role":"user","content":"hi"}]}`, "protocol "},
+		{"unknown protocol", "", `{"model":"m","messages":[{"role":"user","content":"hi"}]}`, "protocol <none>"},
 		{"not json", chat, `not json`, "body is not JSON"},
 		{"inline image charged", chat, `{"model":"m","messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"data:image/png;base64,` + blob + `"}}]}]}`, "inline images: 1"},
 		{"remote image", chat, `{"model":"m","messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"https://example.com/a.png"}}]}]}`, "/messages/0/content/0/type=image_url"},
@@ -808,7 +810,7 @@ func TestByteBoundIsBoundedOnlyOverAFullyKnownBody(t *testing.T) {
 		{"unknown message member", chat, `{"model":"m","messages":[{"role":"user","content":"hi","prefix":true}]}`, "/messages/0/prefix"},
 		{"unknown member named with free text", chat, `{"model":"m","messages":[{"role":"user","content":"hi"}],"my secret: do not log":1}`, "/<name>"},
 		{"unknown long type", responses, `{"model":"m","input":[{"type":"` + strings.Repeat("x", 65) + `"}]}`, "/input/0/type=<name>"},
-		{"unknown content part", chat, `{"model":"m","messages":[{"role":"user","content":[{"type":"text","text":"hi"},{"file_id":"file_1"}]}]}`, "/messages/0/content/1/type="},
+		{"unknown content part", chat, `{"model":"m","messages":[{"role":"user","content":[{"type":"text","text":"hi"},{"file_id":"file_1"}]}]}`, "/messages/0/content/1/type=<none>"},
 	} {
 		deployment := Deployment{ID: "local", Kind: "local", Protocol: test.protocol, RegistryModel: "z-ai/glm-5.3-flash", ContextWindow: 1_000_000}
 		want := map[bool]string{true: capacityProvenanceBounded, false: capacityProvenanceEstimated}[test.estimatedBy == ""]
@@ -852,9 +854,24 @@ func withoutServerTools(turn map[string]any) map[string]any {
 	return prepared
 }
 
-// flattenNamespaces declares each namespace member as its own function named
-// <namespace>__<name>, as vLLM renders it.
-func flattenNamespaces(turn map[string]any) map[string]any {
+// flatteners name a namespace member the way each runtime that flattens one
+// does, and say whether it repeats the namespace's description: vLLM,
+// Ollama, llama.cpp, and the core's own flattening for Chat and Messages
+// (llmprotocol.FlattenedToolDescription).
+var flatteners = map[string]struct {
+	name        func(namespace, member string) string
+	description bool
+}{
+	"vllm":      {func(namespace, member string) string { return namespace + "__" + member }, false},
+	"ollama":    {func(namespace, member string) string { return namespace + "." + member }, false},
+	"llama.cpp": {func(namespace, member string) string { return "ns_" + namespace + "___" + member }, false},
+	"core":      {func(namespace, member string) string { return namespace + "__" + member }, true},
+}
+
+// flattenNamespaces declares each namespace member as its own function, as
+// the named flattener renders it.
+func flattenNamespaces(turn map[string]any, flattener string) map[string]any {
+	flatten := flatteners[flattener]
 	flat := map[string]any{}
 	for key, value := range turn {
 		flat[key] = value
@@ -871,7 +888,11 @@ func flattenNamespaces(turn map[string]any) map[string]any {
 			for key, value := range member.(map[string]any) {
 				function[key] = value
 			}
-			function["name"] = tool["name"].(string) + "__" + function["name"].(string)
+			function["name"] = flatten.name(tool["name"].(string), function["name"].(string))
+			if description, _ := tool["description"].(string); flatten.description && description != "" {
+				own, _ := function["description"].(string)
+				function["description"] = description + "\n\n" + own
+			}
 			tools = append(tools, function)
 		}
 	}
@@ -886,17 +907,60 @@ func TestCodexResponsesTurnIsBoundedOverItsFlattenedNamespace(t *testing.T) {
 	if _, provenance, _, estimatedBy := localPromptSize(deployment, []byte(mustJSON(turn))); provenance != capacityProvenanceEstimated || estimatedBy != "/tools/8/type=web_search" {
 		t.Fatalf("client turn: %s by %q", provenance, estimatedBy)
 	}
-	// A long namespace name over bare members: there the repeated name
-	// outgrows what nesting the members adds to the worst-case spelling.
-	members := []any{map[string]any{"type": "function", "name": "a"}, map[string]any{"type": "function", "name": "b"}, map[string]any{"type": "function", "name": "c"}}
-	long := map[string]any{"model": "m", "input": "hi", "tools": []any{map[string]any{"type": "namespace", "name": strings.Repeat("n", 200), "tools": members}}}
-	for name, body := range map[string]map[string]any{"codex": withoutServerTools(turn), "long namespace": long} {
+	// Bare members under a long name, and many members under a long
+	// description: there what the flattening repeats outgrows what nesting
+	// the members adds to the worst-case spelling.
+	bare := func(count int) []any {
+		members := make([]any, count)
+		for index := range members {
+			members[index] = map[string]any{"type": "function", "name": fmt.Sprintf("f%d", index)}
+		}
+		return members
+	}
+	longName := map[string]any{"model": "m", "input": "hi", "tools": []any{map[string]any{"type": "namespace", "name": strings.Repeat("n", 200), "tools": bare(3)}}}
+	longDescription := map[string]any{"model": "m", "input": "hi", "tools": []any{map[string]any{"type": "namespace", "name": "mcp__server", "description": strings.Repeat("An MCP server's long description. ", 60), "tools": bare(20)}}}
+	for name, body := range map[string]map[string]any{"codex": withoutServerTools(turn), "long namespace name": longName, "long namespace description": longDescription} {
 		bound, provenance, _, estimatedBy := localPromptSize(deployment, []byte(mustJSON(body)))
 		if provenance != capacityProvenanceBounded || estimatedBy != "" {
 			t.Fatalf("%s: %s by %q", name, provenance, estimatedBy)
 		}
-		if flat, _, _, _ := localPromptSize(deployment, []byte(mustJSON(flattenNamespaces(body)))); bound < flat {
-			t.Errorf("%s: the namespaced bound %d is below the flattened %d", name, bound, flat)
+		for flattener := range flatteners {
+			if flat, _, _, _ := localPromptSize(deployment, []byte(mustJSON(flattenNamespaces(body, flattener)))); bound < flat {
+				t.Errorf("%s flattened as %s: the namespaced bound %d is below the flattened %d", name, flattener, bound, flat)
+			}
+		}
+	}
+}
+
+// TestClaudeCodeMessagesTurnIsBounded: a Claude Code 2.1.325 Messages turn
+// (testdata/capacity/claude_code_messages_turn.json: captured against a
+// local stub, its texts and tool descriptions shortened and its ids
+// replaced) carries a mid-conversation system message with its own effort.
+// It is bounded as sent; the same setting in any other shape is not.
+func TestClaudeCodeMessagesTurnIsBounded(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("testdata", "capacity", "claude_code_messages_turn.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	deployment := Deployment{ID: "local", Kind: "local", Protocol: llmprotocol.AnthropicMessagesV1, RegistryModel: "z-ai/glm-5.3-flash", ContextWindow: 1_000_000}
+	if _, provenance, _, estimatedBy := localPromptSize(deployment, raw); provenance != capacityProvenanceBounded || estimatedBy != "" {
+		t.Fatalf("captured turn: %s by %q", provenance, estimatedBy)
+	}
+	for name, mutate := range map[string]func(map[string]any){
+		"effort on the user message": func(turn map[string]any) {
+			turn["messages"].([]any)[0].(map[string]any)["output_config"] = map[string]any{"effort": "medium"}
+		},
+		"an output format beside the effort": func(turn map[string]any) {
+			turn["messages"].([]any)[1].(map[string]any)["output_config"] = map[string]any{"effort": "medium", "format": map[string]any{"type": "json_schema"}}
+		},
+	} {
+		var turn map[string]any
+		if err := json.Unmarshal(raw, &turn); err != nil {
+			t.Fatal(err)
+		}
+		mutate(turn)
+		if _, provenance, _, estimatedBy := localPromptSize(deployment, []byte(mustJSON(turn))); provenance != capacityProvenanceEstimated || estimatedBy == "" {
+			t.Errorf("%s: %s by %q", name, provenance, estimatedBy)
 		}
 	}
 }
@@ -909,6 +973,8 @@ func TestCodexResponsesTurnIsBoundedOverItsFlattenedNamespace(t *testing.T) {
 func TestCodexTurnIsSizedBoundedAndAnEstimateLogsWhy(t *testing.T) {
 	turn := codexTurn(t)
 	turn["model"] = "arc-1.0"
+	// Its first turn only: the core refuses tool history in a session it has
+	// no ledger for, and the whole captured turn is sized above.
 	turn["input"] = turn["input"].([]any)[:4]
 	withImage := map[string]any{}
 	for key, value := range turn {
