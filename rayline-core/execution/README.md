@@ -150,10 +150,10 @@ opt-in. The core reports facts and never picks or ranks a model.
     (Codex's sub-agent tools) is bounded: a runtime flattens it into one
     function per member (vLLM names each `<namespace>__<name>`), so each
     member is also charged the namespace's name and `__`. The "execution
-    context applied" log line names what made each estimated fact one in
-    `capacity_estimated_by`: the first such member as a path into the
-    prepared request (`/tools/3/type=web_search`), or the inline image count.
-    It is a log field only and is not sent to Decisions.
+    context applied" and "decisions lookup refused" log lines name what made
+    each estimated fact one in `capacity_estimated_by`: the first such member
+    as a path into the prepared request (`/tools/3/type=web_search`), or the
+    inline image count. It is a log field only and is not sent to Decisions.
   - **`context_overflow`** (local deployments, `"refuses"` or
     `"truncates"`, default `"truncates"`) states what the runtime does with a
     prompt over its window. On a `"truncates"` deployment (Ollama,

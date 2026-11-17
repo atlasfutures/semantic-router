@@ -901,7 +901,8 @@ func TestCodexResponsesTurnIsBoundedOverItsFlattenedNamespace(t *testing.T) {
 // TestCodexTurnIsSizedBoundedAndAnEstimateLogsWhy runs the first Codex turn
 // through the core to a local Responses deployment: the fact sent to
 // Decisions is caller_bounded and the runtime gets no server tool. A turn
-// with a remote image stays caller_estimated, and the log line names why.
+// with a remote image stays caller_estimated, and the log line names why,
+// also when the policy then refuses the turn.
 func TestCodexTurnIsSizedBoundedAndAnEstimateLogsWhy(t *testing.T) {
 	turn := codexTurn(t)
 	turn["model"] = "arc-1.0"
@@ -924,9 +925,11 @@ func TestCodexTurnIsSizedBoundedAndAnEstimateLogsWhy(t *testing.T) {
 		body        map[string]any
 		provenance  string
 		estimatedBy string
+		refused     bool
 	}{
-		{"codex turn", turn, capacityProvenanceBounded, ""},
-		{"codex turn with a remote image", withImage, capacityProvenanceEstimated, "/input/3/content/1/type=input_image"},
+		{"codex turn", turn, capacityProvenanceBounded, "", false},
+		{"codex turn with a remote image", withImage, capacityProvenanceEstimated, "/input/3/content/1/type=input_image", false},
+		{"refused codex turn with a remote image", withImage, capacityProvenanceEstimated, "/input/3/content/1/type=input_image", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var logs strings.Builder
@@ -938,6 +941,9 @@ func TestCodexTurnIsSizedBoundedAndAnEstimateLogsWhy(t *testing.T) {
 			config.Deployments, config.Actions = config.Deployments[:1], config.Actions[:1]
 			config.Deployments[0].InputModalities = []string{"text", "image"}
 			fixture := &v2Decisions{choose: fitPolicy}
+			if tc.refused {
+				fixture.refuse = func(contextV2) string { return "execution_no_feasible_target" }
+			}
 			_, httpServer := v2Server(t, onProtocol(t, config, llmprotocol.OpenAIResponsesV1), fixture)
 			executeHTTP(t, httpServer.URL, "/v1/responses", mustJSON(tc.body), "codex")
 			lookups := fixture.snapshot()
@@ -947,13 +953,14 @@ func TestCodexTurnIsSizedBoundedAndAnEstimateLogsWhy(t *testing.T) {
 			if fact := lookups[0].Execution.Targets[0].Capacity; fact == nil || fact.Provenance != tc.provenance || !fact.Fits {
 				t.Fatalf("fact %s", mustJSON(fact))
 			}
-			if local.count() != 1 || strings.Contains(mustJSON(local.bodies[0]["tools"]), "web_search") {
+			if dispatched := map[bool]int{false: 1, true: 0}[tc.refused]; local.count() != dispatched || dispatched == 1 && strings.Contains(mustJSON(local.bodies[0]["tools"]), "web_search") {
 				t.Fatalf("local runtime got %d requests, tools %s", local.count(), mustJSON(local.bodies))
 			}
+			message := map[bool]string{false: "execution context applied", true: "decisions lookup refused"}[tc.refused]
 			var applied map[string]any
 			for _, line := range strings.Split(strings.TrimSpace(logs.String()), "\n") {
 				var entry map[string]any
-				if json.Unmarshal([]byte(line), &entry) == nil && entry["msg"] == "execution context applied" {
+				if json.Unmarshal([]byte(line), &entry) == nil && entry["msg"] == message {
 					applied = entry
 				}
 			}
@@ -962,7 +969,7 @@ func TestCodexTurnIsSizedBoundedAndAnEstimateLogsWhy(t *testing.T) {
 				want = map[string]any{localActionID: tc.estimatedBy}
 			}
 			if applied == nil || mustJSON(applied["capacity_estimated_by"]) != mustJSON(want) {
-				t.Fatalf("execution context applied: %v", applied)
+				t.Fatalf("%s: %v", message, applied)
 			}
 		})
 	}
