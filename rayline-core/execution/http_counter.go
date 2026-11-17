@@ -197,7 +197,11 @@ func chatFormForCounting(engine *protocolcodec.Engine, protocol llmprotocol.Wire
 		return nil, 0, &uncountedRequest{reason: "the request carries a " + logName(kind) + " block whole"}
 	}
 	for _, diagnostic := range result.Diagnostics {
-		if member := anyIndex.ReplaceAllString(diagnostic.Field, ".*"); !countNeutralMembers[member] && !countChargedMembers[member] {
+		member := anyIndex.ReplaceAllString(diagnostic.Field, ".*")
+		if member == "messages.*.output_config" && !effortOnlyMessageSettings(body) {
+			return nil, 0, &uncountedRequest{reason: "a message carries output_config other than an effort on a system message"}
+		}
+		if !countNeutralMembers[member] && !countChargedMembers[member] {
 			return nil, 0, &uncountedRequest{reason: fmt.Sprintf("the Chat form %s %s", diagnostic.Action, diagnostic.Field)}
 		}
 	}
@@ -206,6 +210,28 @@ func chatFormForCounting(engine *protocolcodec.Engine, protocol llmprotocol.Wire
 		return nil, 0, &uncountedRequest{reason: "its dropped text cannot be read"}
 	}
 	return result.Body, charged, nil
+}
+
+// effortOnlyMessageSettings reports whether every message output_config in a
+// Messages request is Claude Code's: on a system message, holding effort
+// alone (the shape capacity_bounded.go bounds).
+func effortOnlyMessageSettings(body []byte) bool {
+	var request struct {
+		Messages []map[string]any `json:"messages"`
+	}
+	if json.Unmarshal(body, &request) != nil {
+		return false
+	}
+	for _, message := range request.Messages {
+		if message["output_config"] == nil {
+			continue
+		}
+		config, isObject := message["output_config"].(map[string]any)
+		if message["role"] != "system" || !isObject || membersIn("", config, boundedMessageOutputConfig) != "" {
+			return false
+		}
+	}
+	return true
 }
 
 // carriedBlock is the type of the first content block the request carries
