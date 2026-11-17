@@ -46,7 +46,10 @@ var (
 		"max_tokens", "temperature", "top_p", "top_k", "stop_sequences", "stream", "metadata",
 		"thinking", "output_config", "cache_control", "context_management", "diagnostics")
 	boundedMessagesDiagnostics = setOf("previous_message_id")
-	boundedMessagesParts       = setOf("text", "tool_use", "tool_result", "thinking", "redacted_thinking")
+	// Claude Code sends a mid-conversation system message with its own
+	// output_config (effort), a setting like the top-level one.
+	boundedMessagesMessageFields = setOf("role", "content", "output_config")
+	boundedMessagesParts         = setOf("text", "tool_use", "tool_result", "thinking", "redacted_thinking")
 
 	boundedResponsesFields = setOf("model", "input", "instructions", "tools", "tool_choice",
 		"parallel_tool_calls", "max_output_tokens", "temperature", "top_p", "stream", "reasoning",
@@ -130,7 +133,7 @@ func unboundedMember(protocol llmprotocol.WireFormat, body []byte) string {
 			func() string {
 				return eachObject("/messages", top["messages"], func(path string, message map[string]any) string {
 					return firstOf(
-						func() string { return membersIn(path, message, setOf("role", "content")) },
+						func() string { return membersIn(path, message, boundedMessagesMessageFields) },
 						func() string { return partsIn(path+"/content", message["content"], boundedMessagesParts) },
 						func() string {
 							return eachPart(path+"/content", message["content"], func(path string, part map[string]any) string {

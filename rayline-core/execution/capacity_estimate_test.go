@@ -778,6 +778,7 @@ func TestByteBoundIsBoundedOnlyOverAFullyKnownBody(t *testing.T) {
 		{"chat translated from responses", chat, `{"model":"m","store":false,"n":1,"prompt_cache_retention":"24h","messages":[{"role":"user","id":"msg_1","content":"hi"}]}`, ""},
 		{"messages caching and context management", messages, `{"model":"m","max_tokens":64,"cache_control":{"type":"ephemeral"},"context_management":{"edits":[]},"messages":[{"role":"user","content":"hi"}]}`, ""},
 		{"responses codex members", responses, `{"model":"m","input":"hi","stream":true,"stream_options":{"include_obfuscation":false},"client_metadata":{"session_id":"s"}}`, ""},
+		{"messages system message with effort", messages, `{"model":"m","max_tokens":64,"output_config":{"effort":"medium"},"messages":[{"role":"user","content":"hi"},{"role":"system","content":[{"type":"text","text":"env"}],"output_config":{"effort":"medium"}}]}`, ""},
 		{"messages diagnostics", messages, `{"model":"m","max_tokens":64,"diagnostics":{"previous_message_id":null},"messages":[{"role":"user","content":"hi"}]}`, ""},
 		{"responses cache retention", responses, `{"model":"m","prompt_cache_retention":"24h","input":[{"type":"reasoning","id":"rs","summary":[{"type":"summary_text","text":"t"}],"encrypted_content":"x"}]}`, ""},
 		{"call item carrying content", responses, `{"model":"m","input":[{"type":"custom_tool_call","call_id":"c","name":"f","input":"","role":"user","content":[{"type":"input_image","image_url":"http://127.0.0.1/a.png"}]}]}`, "/input/0/content"},
