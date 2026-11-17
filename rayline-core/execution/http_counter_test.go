@@ -4,18 +4,19 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
 
 	"github.com/atlasfutures/semantic-router/rayline-core/cachecontext"
 	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
-	"github.com/atlasfutures/semantic-router/rayline-core/protocolcodec"
 )
 
 // tokenCounterFixture is a same-host counter answering in fixed units with a
@@ -331,7 +332,8 @@ func TestTokenCounterCountsMessagesAndResponsesInTheChatForm(t *testing.T) {
 					t.Fatalf("status %d lookups %d: %.300s", status, len(lookups), response)
 				}
 				fact := lookups[0].Execution.Targets[0].Capacity
-				if want := int64(3000 + tc.charged + translatedCountAllowance(3000) + 100); fact == nil || !fact.Fits || fact.Provenance != capacityProvenanceMeasured || *fact.Required != want {
+				// 3000 counted, +150 (5%) +512 allowance, +100 output.
+				if want := int64(3762 + tc.charged); fact == nil || !fact.Fits || fact.Provenance != capacityProvenanceMeasured || *fact.Required != want {
 					t.Fatalf("fact %s, want required %d", mustJSON(fact), want)
 				}
 				sent := counter.counted()
@@ -390,7 +392,10 @@ func worstCaseText(text string) int {
 }
 
 func TestChatFormForCountingRefusesWhatItCannotCarry(t *testing.T) {
-	engine := protocolcodec.NewBuiltinEngine()
+	engine, err := newCountingEngine()
+	if err != nil {
+		t.Fatal(err)
+	}
 	const (
 		messages  = llmprotocol.AnthropicMessagesV1
 		responses = llmprotocol.OpenAIResponsesV1
@@ -405,7 +410,7 @@ func TestChatFormForCountingRefusesWhatItCannotCarry(t *testing.T) {
 		charged int
 	}{
 		{"signed thinking and cache markers", messages, `{"model":"m","max_tokens":64,"system":[{"type":"text","text":"s","cache_control":{"type":"ephemeral"}}],"context_management":{"edits":[]},"tools":[{"name":"Read","input_schema":{"type":"object"}}],"messages":[{"role":"user","content":"hi"},{"role":"assistant","content":[{"type":"thinking","thinking":"t","signature":"x"},{"type":"tool_use","id":"u","name":"Read","input":{}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"u","content":"ok"}]}]}`, "", 0},
-		{"readable reasoning and routing members", responses, `{"model":"m","prompt_cache_key":"k","client_metadata":{"a":"b"},"include":["reasoning.encrypted_content"],"reasoning":{"effort":"high","summary":"auto"},"input":[{"role":"user","content":"hi"},{"type":"reasoning","id":"rs","summary":[{"type":"summary_text","text":"s"}]},{"type":"function_call","call_id":"c","name":"f","arguments":"{}"},{"type":"function_call_output","call_id":"c","output":"ok"}],"tools":[{"type":"function","name":"f","parameters":{}}]}`, "", 0},
+		{"readable reasoning and routing members", responses, `{"model":"m","prompt_cache_key":"k","client_metadata":{"a":"b"},"include":["reasoning.encrypted_content"],"reasoning":{"effort":"high","summary":"auto"},"input":[{"role":"user","content":"hi"},{"type":"reasoning","id":"rs","summary":[{"type":"summary_text","text":"summary-sentinel"}]},{"type":"function_call","call_id":"c","name":"f","arguments":"{}"},{"type":"function_call_output","call_id":"c","output":"ok"}],"tools":[{"type":"function","name":"f","parameters":{}}]}`, "", 0},
 		{"claude code billing line and compaction instructions", messages, `{"model":"m","max_tokens":64,"system":[{"type":"text","text":"x-anthropic-billing-header: cc_version=2.1.325.382; cc_entrypoint=sdk-cli;"},{"type":"text","text":"s"}],"context_management":{"edits":[{"type":"clear_thinking_20251015","keep":"all"},{"type":"compact_20260112","instructions":"Summarise the work so far."}]},"messages":[{"role":"user","content":"hi"}]}`, "", worstCaseText("x-anthropic-billing-header: cc_version=2.1.325.382; cc_entrypoint=sdk-cli;") + worstCaseText("all") + worstCaseText("Summarise the work so far.")},
 		{"billing line as system and expanding instructions", messages, `{"model":"m","max_tokens":64,"system":"x-anthropic-billing-header: cc_version=2.1.325.382;","context_management":{"edits":[{"type":"compact_20260112","instructions":"` + strings.Repeat("\ufdfa", 100) + `"}]},"messages":[{"role":"user","content":"hi"}]}`, "", worstCaseText("x-anthropic-billing-header: cc_version=2.1.325.382;") + worstCaseText(strings.Repeat(string(rune(0xFDFA)), 100))},
 		{"claude code system message with effort", messages, `{"model":"m","max_tokens":64,"messages":[{"role":"user","content":"hi"},{"role":"system","content":[{"type":"text","text":"env"}],"output_config":{"effort":"medium"}}]}`, "", 0},
@@ -421,12 +426,144 @@ func TestChatFormForCountingRefusesWhatItCannotCarry(t *testing.T) {
 		{"no Chat form", messages, `not json`, "no Chat form", 0},
 	} {
 		chat, charged, err := chatFormForCounting(engine, tc.protocol, []byte(tc.body))
+		if strings.Contains(tc.body, "summary-sentinel") && !strings.Contains(string(chat), "summary-sentinel") {
+			t.Errorf("%s: the reasoning summary is not in the Chat form: %s", tc.name, chat)
+		}
 		var uncounted *uncountedRequest
 		switch {
 		case tc.uncounted == "" && (err != nil || len(chat) == 0 || charged != tc.charged):
 			t.Errorf("%s: not counted as expected: charged %d, want %d: %v", tc.name, charged, tc.charged, err)
 		case tc.uncounted != "" && (!errors.As(err, &uncounted) || !strings.HasPrefix(uncounted.reason, tc.uncounted)):
 			t.Errorf("%s: %v, want %q", tc.name, err, tc.uncounted)
+		}
+	}
+}
+
+// preparedFor is body as the core prepares it for the fixture's local
+// deployment on protocol: what a token counter is asked to count.
+func preparedFor(t *testing.T, protocol llmprotocol.WireFormat, body []byte) []byte {
+	t.Helper()
+	config := capacityEstimateConfig(t, "http://127.0.0.1:8/v1/chat/completions", "http://127.0.0.1:9/v1/chat/completions")
+	config.Deployments, config.Actions = config.Deployments[:1], config.Actions[:1]
+	config = onProtocol(t, config, protocol)
+	config.Deployments[0].MaxOutputTokens, config.Deployments[0].ContextWindow = 128000, 1_000_000
+	server, _ := v2Server(t, config, &v2Decisions{choose: fitPolicy})
+	request, envelope, _, err := server.engine.DecodeRequestForMutation(protocol, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	roles, err := wireMessageRoles(protocol, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := server.prepare(request, envelope, server.actions[protocol][localActionID], roles, &branchState{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return prepared.body
+}
+
+// Real Codex and Claude Code turns, prepared for a local deployment as the
+// core prepares them, are counted. Codex declares web_search, which the Chat
+// form cannot carry, but the core drops it for a local target before the
+// counter sees the request.
+func TestTokenCounterCountsRealHarnessTurns(t *testing.T) {
+	engine, err := newCountingEngine()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		file     string
+		protocol llmprotocol.WireFormat
+	}{
+		{"../protocolcodec/testdata/codex/turn1-request.json", llmprotocol.OpenAIResponsesV1},
+		{"../protocolcodec/testdata/codex/turn2-request.json", llmprotocol.OpenAIResponsesV1},
+		{"testdata/capacity/codex_responses_turn.json", llmprotocol.OpenAIResponsesV1},
+		{"../protocolcodec/testdata/claude-code/tool-turn-request.json", llmprotocol.AnthropicMessagesV1},
+		{"testdata/capacity/claude_code_messages_turn.json", llmprotocol.AnthropicMessagesV1},
+	} {
+		body, err := os.ReadFile(tc.file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		prepared := preparedFor(t, tc.protocol, body)
+		if strings.Contains(string(body), `"web_search"`) && strings.Contains(string(prepared), `"web_search"`) {
+			t.Errorf("%s: the prepared request still declares web_search", tc.file)
+		}
+		if _, _, err := chatFormForCounting(engine, tc.protocol, prepared); err != nil {
+			t.Errorf("%s: %v", tc.file, err)
+		}
+	}
+}
+
+// More deferred tools than the default diagnostics limit are still counted;
+// a list that does reach the counting limit is not, since a drop past it
+// may go unrecorded.
+func TestChatFormForCountingNeedsACompleteDropList(t *testing.T) {
+	tools := make([]any, 70)
+	for index := range tools {
+		tools[index] = map[string]any{"name": fmt.Sprintf("mcp_tool_%d", index), "input_schema": map[string]any{"type": "object"}, "defer_loading": true}
+	}
+	body := mustJSON(map[string]any{"model": "m", "max_tokens": 64, "tools": tools, "messages": []any{map[string]any{"role": "user", "content": "hi"}}})
+	engine, err := newCountingEngine()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err = chatFormForCounting(engine, llmprotocol.AnthropicMessagesV1, []byte(body)); err != nil {
+		t.Fatalf("70 deferred tools: %v", err)
+	}
+	previous := countDiagnostics
+	countDiagnostics = 64
+	defer func() { countDiagnostics = previous }()
+	small, err := newCountingEngine()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 64 neutral drops fill the list; the server tool's drop is then not
+	// recorded at all, which only the full list gives away.
+	full := map[string]any{"model": "m", "max_tokens": 64, "tools": append(append([]any(nil), tools[:64]...), map[string]any{"type": "web_search_20250305", "name": "web_search"}), "messages": []any{map[string]any{"role": "user", "content": "hi"}}}
+	var uncounted *uncountedRequest
+	if _, _, err := chatFormForCounting(small, llmprotocol.AnthropicMessagesV1, []byte(mustJSON(full))); !errors.As(err, &uncounted) || !strings.Contains(uncounted.reason, "too many") {
+		t.Fatalf("a full drop list was counted: %v", err)
+	}
+}
+
+// A count that would overflow the allowance is refused, and the reason for
+// an uncounted request never quotes the request.
+func TestTokenCounterRefusesAnImplausibleCountAndLogsNoRequestText(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			_, _ = io.WriteString(w, `{"units":"`+counterUnits+`"}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"prompt_tokens":9000000000000000000,"units":"`+counterUnits+`"}`)
+	}))
+	t.Cleanup(server.Close)
+	deployment := Deployment{ID: "local", Kind: "local", Protocol: llmprotocol.AnthropicMessagesV1, TokenUnits: counterUnits, RuntimeIdentity: "r", WireModel: "m", TokenCounter: &TokenCounterConfig{URL: server.URL}}
+	if _, err := newHTTPCounter(t.Context(), deployment, Config{Deployments: []Deployment{deployment}}, nil); err == nil {
+		t.Fatal("a Messages counter without a codec qualified")
+	}
+	engine, err := newCountingEngine()
+	if err != nil {
+		t.Fatal(err)
+	}
+	counter, err := newHTTPCounter(t.Context(), deployment, Config{Deployments: []Deployment{deployment}}, engine)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := []byte(`{"model":"m","max_tokens":64,"messages":[{"role":"user","content":"hi"}]}`)
+	if _, err := counter.Count(t.Context(), cachecontext.PreparedPrompt{Identity: counter.Identity(), ContextEpoch: "e1", Body: body}); err == nil || !strings.Contains(err.Error(), "implausible") {
+		t.Fatalf("huge count: %v", err)
+	}
+	secret := "secret-request-text-" + strings.Repeat("x", 80)
+	for _, request := range []string{
+		`{"model":"m","max_tokens":64,"` + secret + `":1,"messages":[{"role":"user","content":"hi"}]}`,
+		`{"model":"m","max_tokens":64,"tools":[{"name":"` + secret + `","input_schema":"not an object"}],"messages":[{"role":"user","content":"hi"}]}`,
+	} {
+		_, _, err := chatFormForCounting(engine, llmprotocol.AnthropicMessagesV1, []byte(request))
+		var uncounted *uncountedRequest
+		if errors.As(err, &uncounted) && strings.Contains(uncounted.reason, "secret-request-text") {
+			t.Errorf("the reason quotes the request: %q", uncounted.reason)
 		}
 	}
 }

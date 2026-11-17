@@ -103,6 +103,7 @@ func (server *Server) measureCapacity(ctx context.Context, body []byte, format l
 		provenance, units, estimatedBy string
 	}
 	sizes := map[string]promptSize{}
+	skipped := map[string]bool{}
 	for _, id := range ids {
 		selected := actions[id]
 		counted := server.counters[selected.deployment.ID] != nil
@@ -142,7 +143,10 @@ func (server *Server) measureCapacity(ctx context.Context, body []byte, format l
 			case errors.As(err, &uncounted):
 				// The Chat form a token_counter reads cannot carry part of
 				// this request: it is sized by its bytes as if uncounted.
-				slog.Info("token counter skipped", "action_id", id, "deployment", selected.deployment.ID, "reason", uncounted.reason)
+				if !skipped[selected.deployment.ID] {
+					skipped[selected.deployment.ID] = true
+					slog.Info("token counter skipped", "deployment", selected.deployment.ID, "reason", uncounted.reason)
+				}
 			default:
 				// A runtime that cannot count is a fact about that target
 				// only: it is unavailable, never a reason to refuse the turn.

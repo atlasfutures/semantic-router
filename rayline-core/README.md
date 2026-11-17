@@ -94,22 +94,16 @@ units makes that target `fits: false` (`runtime_unavailable`) for the turn. It
 returns no token IDs, so current-prefix overlap stays unknown; capacity uses its
 count. The URL must be loopback `http`, without credentials or a query.
 
-On a Messages or Responses deployment the counter still reads the OpenAI Chat
-form: the core translates the prepared request for counting only, carrying
-reasoning history as a Chat dispatch would (signatures removed, readable
-reasoning as `reasoning_content`). The request dispatched stays in its own
-protocol. The runtime converts its own protocol to the template's messages,
-which the Chat form only approximates, so such a count is raised by 5% plus 512
-tokens, the byte bound's own allowances. That default is not a measured drift;
-`capacity_margin_tokens` adds to it. Two Messages members the Chat form drops
-are charged by their worst-case bytes instead (as the byte bound spells them,
-normalization included), an upper bound on their tokens: Claude Code's
-billing line in `system`, and the strings in `context_management` (an edit
-may carry compaction instructions). A request
-whose Chat form would leave out anything else the runtime may render
-(redacted or encrypted reasoning, a server tool, a document or any other
-block carried whole) is not counted: the core logs "token counter skipped"
-with the reason and sizes that request by its bytes, as without a counter.
+On a Messages or Responses deployment (Claude Code, omp, Codex) the core
+translates the prepared request to the Chat form for counting only; the
+request sent to the model is unchanged. Such a count is raised by the
+deployment's `headroom_ratio` (5% by default) plus 512 tokens for the
+difference between the Chat form and the runtime's own rendering. That
+allowance is not measured; set `capacity_margin_tokens` to add more. A request
+the Chat form cannot fully carry (a server tool, a document, opaque reasoning)
+is sized by its bytes instead, as without a counter, and the core logs "token
+counter skipped" with the reason. A counter that fails or returns an
+implausible count makes the target unavailable for the turn, as on Chat.
 
 The surrounding deployment must already pin `runtime_identity`, `wire_model`,
 and `token_units`. The counter hashes the model file once before readiness, then

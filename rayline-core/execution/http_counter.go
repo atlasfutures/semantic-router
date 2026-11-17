@@ -49,7 +49,10 @@ type httpCounter struct {
 	identity cachecontext.PromptIdentity
 	// engine translates a Messages or Responses request to the Chat form;
 	// nil for a Chat deployment.
-	engine     *protocolcodec.Engine
+	engine *protocolcodec.Engine
+	// headroom is the deployment's capacity_estimate headroom_ratio, applied
+	// to a count over the Chat form (translatedCountAllowance).
+	headroom   float64
 	url        string
 	credential string
 	client     *http.Client
@@ -66,6 +69,9 @@ func newHTTPCounter(ctx context.Context, deployment Deployment, config Config, e
 	case llmprotocol.OpenAIChatV1:
 		engine = nil
 	case llmprotocol.AnthropicMessagesV1, llmprotocol.OpenAIResponsesV1:
+		if engine == nil {
+			return nil, fmt.Errorf("token_counter on a %s deployment needs a codec to translate", deployment.Protocol)
+		}
 	default:
 		return nil, fmt.Errorf("token_counter does not count %s requests", deployment.Protocol)
 	}
@@ -79,9 +85,11 @@ func newHTTPCounter(ctx context.Context, deployment Deployment, config Config, e
 	if endpoint.Scheme != "http" || (host != "localhost" && (ip == nil || !ip.IsLoopback())) || endpoint.User != nil || endpoint.RawQuery != "" || endpoint.Fragment != "" {
 		return nil, fmt.Errorf("token_counter url must be a same-host http URL without credentials or query")
 	}
+	headroom, _ := deployment.CapacityEstimate.settings()
 	counter := &httpCounter{
 		identity: promptIdentity(deployment),
 		engine:   engine,
+		headroom: headroom,
 		url:      endpoint.String(),
 		client:   &http.Client{Timeout: httpCounterTimeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
 	}
@@ -137,12 +145,15 @@ func (counter *httpCounter) Count(ctx context.Context, prompt cachecontext.Prepa
 	if result.PromptTokens == nil || *result.PromptTokens < 0 {
 		return cachecontext.PromptMeasurement{}, fmt.Errorf("token_counter returned no prompt_tokens")
 	}
+	if *result.PromptTokens > maxCountedTokens {
+		return cachecontext.PromptMeasurement{}, fmt.Errorf("token_counter returned an implausible prompt_tokens")
+	}
 	if result.Units != counter.identity.Units {
 		return cachecontext.PromptMeasurement{}, fmt.Errorf("token_counter changed units to %q", result.Units)
 	}
 	tokens := *result.PromptTokens
 	if counter.engine != nil {
-		tokens += charged + translatedCountAllowance(tokens)
+		tokens += charged + translatedCountAllowance(tokens, counter.headroom)
 	}
 	return cachecontext.PromptMeasurement{PromptTokens: tokens, Provenance: "local_measured"}, nil
 }
@@ -161,14 +172,15 @@ func (uncounted *uncountedRequest) Error() string {
 // output_config (effort), and a tool's defer_loading flag (the Chat form
 // keeps the tool, so it is counted). A message index reads as *.
 var countNeutralMembers = setOf("client_metadata", "include", "prompt_cache_key", "reasoning.summary",
-	"messages.*.output_config", "tools.defer_loading")
+	"messages.*.output_config", "tools.defer_loading", "content.cache_control", "content.caller")
 
 var anyIndex = regexp.MustCompile(`\.[0-9]+`)
 
-// countChargedMembers are Messages members the Chat form drops that a runtime
-// may render as text, charged by their bytes (droppedTextBytes) instead:
-// Claude Code's billing line in system, and context_management, whose edits
-// may carry compaction instructions.
+// countChargedMembers are Messages members the Chat form drops but a runtime
+// receives, charged by their bytes (droppedTextBytes) instead: Claude Code's
+// billing line in system, a system text block every runtime renders, and
+// context_management, which no local runtime is known to render but whose
+// edits can carry free text, so it is charged rather than trusted.
 var countChargedMembers = setOf("system.x-anthropic-billing-header", "context_management")
 
 // chatFormForCounting translates a prepared Messages or Responses request to
@@ -186,7 +198,16 @@ func chatFormForCounting(engine *protocolcodec.Engine, protocol llmprotocol.Wire
 		return nil
 	})
 	if err != nil {
-		return nil, 0, &uncountedRequest{reason: "no Chat form: " + err.Error()}
+		// The codec's error text may quote the request; log its code only.
+		code := "error"
+		var protocolError *llmprotocol.ProtocolError
+		if errors.As(err, &protocolError) {
+			code = protocolError.Code
+		}
+		return nil, 0, &uncountedRequest{reason: "no Chat form: " + logName(code)}
+	}
+	if len(result.Diagnostics) >= countDiagnostics {
+		return nil, 0, &uncountedRequest{reason: "too many members the Chat form drops to check"}
 	}
 	if carry.Dropped() > 0 {
 		return nil, 0, &uncountedRequest{reason: "the Chat form drops reasoning"}
@@ -202,7 +223,7 @@ func chatFormForCounting(engine *protocolcodec.Engine, protocol llmprotocol.Wire
 			return nil, 0, &uncountedRequest{reason: "a message carries output_config other than an effort on a system message"}
 		}
 		if !countNeutralMembers[member] && !countChargedMembers[member] {
-			return nil, 0, &uncountedRequest{reason: fmt.Sprintf("the Chat form %s %s", diagnostic.Action, diagnostic.Field)}
+			return nil, 0, &uncountedRequest{reason: fmt.Sprintf("the Chat form %s %s", diagnostic.Action, logName(member))}
 		}
 	}
 	charged, err := droppedTextBytes(body)
@@ -324,11 +345,32 @@ func droppedTextBytes(body []byte) (int, error) {
 }
 
 // translatedCountAllowance raises a count over the Chat form for what the
-// runtime's own conversion of its protocol may render beyond it: the byte
-// bound's headroom ratio and template margin. It is a default, not a
-// measured drift; a deployment adds capacity_margin_tokens on top.
-func translatedCountAllowance(tokens int) int {
-	return int(math.Ceil(float64(tokens)*defaultEstimateHeadroomRatio)) + estimateTemplateMarginTokens
+// runtime's own conversion of its protocol may render beyond it: the
+// deployment's headroom_ratio (5% by default) and the 512-token template
+// margin, as for the byte bound. It is a default, not a measured drift; a
+// deployment adds capacity_margin_tokens on top.
+func translatedCountAllowance(tokens int, headroom float64) int {
+	return int(math.Ceil(float64(tokens)*headroom)) + estimateTemplateMarginTokens
+}
+
+// maxCountedTokens is far above any context window; a larger count is a
+// broken counter, and adding the allowance to it could overflow.
+const maxCountedTokens = 1 << 31
+
+// countDiagnostics is the diagnostics limit of the engine that translates for
+// counting. The default limit (64) is filled by neutral members alone (one
+// per deferred tool or per message), after which some drops go unrecorded.
+// This one is above what a valid request can produce (its tools, messages
+// and content blocks are capped at about 21k), so the list that proves
+// nothing else was dropped is complete; a list that reaches it is uncounted.
+var countDiagnostics = 1 << 16
+
+// newCountingEngine is the codec the counter translates with: the built-in
+// one, with countDiagnostics.
+func newCountingEngine() (*protocolcodec.Engine, error) {
+	policy := llmprotocol.DefaultPolicy()
+	policy.Limits.Diagnostics = countDiagnostics
+	return protocolcodec.NewEngine(protocolcodec.NewBuiltinRegistry(), policy)
 }
 
 func (counter *httpCounter) exchange(ctx context.Context, method string, body []byte, result any) error {
