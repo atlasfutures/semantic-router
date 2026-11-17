@@ -63,7 +63,7 @@ func TestAnthropicInputSchemaFoldsTopLevelCombinators(t *testing.T) {
 			schema: `{"type": "object", "required": ["action"], "oneOf": [
 				{"additionalProperties": false, "properties": {"action": {"enum": ["run"]}, "code": {"type": "string"}}},
 				{"additionalProperties": false, "properties": {"action": {"enum": ["finish"]}, "code": {"type": "string"}}}]}`,
-			want: `{"type": "object", "required": ["action"], "properties": {
+			want: `{"additionalProperties": false, "type": "object", "required": ["action"], "properties": {
 				"action": {"anyOf": [{"enum": ["run"]}, {"enum": ["finish"]}]}, "code": {"type": "string"}}}`,
 		},
 		{
@@ -72,7 +72,7 @@ func TestAnthropicInputSchemaFoldsTopLevelCombinators(t *testing.T) {
 					"run/code": {"type": "object", "additionalProperties": false, "required": ["code"], "properties": {"code": {"type": "string"}}},
 					"done~": {"type": "object", "additionalProperties": false, "properties": {"completion_summary": {"type": "string"}}}},
 				"oneOf": [{"$ref": "#/$defs/run~1code"}, {"$ref": "#/$defs/done~0"}, {"$ref": "#/$defs/done%7E0"}]}`,
-			want: `{"type": "object", "$defs": {
+			want: `{"additionalProperties": false, "type": "object", "$defs": {
 					"run/code": {"type": "object", "additionalProperties": false, "required": ["code"], "properties": {"code": {"type": "string"}}},
 					"done~": {"type": "object", "additionalProperties": false, "properties": {"completion_summary": {"type": "string"}}}},
 				"properties": {"code": {"type": "string"}, "completion_summary": {"type": "string"}}}`,
@@ -81,7 +81,7 @@ func TestAnthropicInputSchemaFoldsTopLevelCombinators(t *testing.T) {
 			name: "references to the root, its definitions and its properties stay valid and fold",
 			schema: `{"$defs": {"Id": {"type": "string"}}, "properties": {"id": {"$ref": "#/$defs/Id"}},
 				"oneOf": [{"additionalProperties": false, "properties": {"parent": {"$ref": "#"}, "copy": {"$ref": "#/properties/id"}}}]}`,
-			want: `{"type": "object", "$defs": {"Id": {"type": "string"}}, "properties": {
+			want: `{"additionalProperties": false, "type": "object", "$defs": {"Id": {"type": "string"}}, "properties": {
 				"id": {"$ref": "#/$defs/Id"}, "parent": {"$ref": "#"}, "copy": {"$ref": "#/properties/id"}}}`,
 		},
 		{
@@ -90,11 +90,26 @@ func TestAnthropicInputSchemaFoldsTopLevelCombinators(t *testing.T) {
 			want:   `{"type": "object", "properties": {"q": {"description": "a <b> & c"}}}`,
 		},
 		{
+			name:   "an allOf branch that redeclares a top-level property still constrains it",
+			schema: `{"properties": {"x": {"type": "string"}}, "allOf": [{"properties": {"x": {"maxLength": 8}}}]}`,
+			want:   `{"type": "object", "properties": {"x": {"allOf": [{"type": "string"}, {"maxLength": 8}]}}}`,
+		},
+		{
+			name:   "a closed allOf branch keeps the object closed",
+			schema: `{"allOf": [{"additionalProperties": false, "properties": {"a": {}}}, {"properties": {"a": {"type": "string"}}}]}`,
+			want:   `{"type": "object", "additionalProperties": false, "properties": {"a": {"allOf": [{}, {"type": "string"}]}}}`,
+		},
+		{
+			name:   "a singleton object type array becomes the object type",
+			schema: `{"type": ["object"], "oneOf": [{"properties": {"a": {}}}]}`,
+			want:   `{"type": "object", "properties": {"a": {}}}`,
+		},
+		{
 			name: "a name every oneOf branch requires stays required",
 			schema: `{"oneOf": [
 				{"additionalProperties": false, "required": ["action", "code"], "properties": {"action": {"const": "run"}, "code": {"type": "string"}}},
 				{"additionalProperties": false, "required": ["action"], "properties": {"action": {"const": "finish"}}}]}`,
-			want: `{"type": "object", "required": ["action"], "properties": {
+			want: `{"additionalProperties": false, "type": "object", "required": ["action"], "properties": {
 				"action": {"anyOf": [{"const": "run"}, {"const": "finish"}]}, "code": {"type": "string"}}}`,
 		},
 		{
@@ -203,12 +218,15 @@ func TestAnthropicInputSchemaLeavesSchemasItCannotFold(t *testing.T) {
 		"null properties in a branch":                                    `{"oneOf": [{"properties": null}, {"properties": {"x": {}}}]}`,
 		"null required at the top":                                       `{"required": null, "oneOf": [{"properties": {"x": {}}}]}`,
 		"a null definitions table":                                       `{"$defs": null, "oneOf": [{"properties": {"x": {}}}]}`,
-		"an empty combinator":                                            `{"oneOf": []}`,
-		"a branch with an empty type":                                    `{"oneOf": [{"type": "", "properties": {"a": {}}}]}`,
-		"a null combinator":                                              `{"oneOf": null}`,
-		"properties that are not an object":                              `{"properties": [], "oneOf": [{"properties": {"a": {}}}]}`,
-		"a branch's required that is not names":                          `{"allOf": [{"required": [1], "properties": {"a": {}}}]}`,
-		"definitions that are not an object":                             `{"$defs": [], "oneOf": [{"properties": {"a": {}}}]}`,
+		"a top-level additionalProperties schema over a promoted property": `{"type": "object", "additionalProperties": {"type": "string"},
+			"anyOf": [{"properties": {"x": {}}}]}`,
+		"a root type other than object":         `{"type": ["object", "null"], "oneOf": [{"properties": {"a": {}}}]}`,
+		"an empty combinator":                   `{"oneOf": []}`,
+		"a branch with an empty type":           `{"oneOf": [{"type": "", "properties": {"a": {}}}]}`,
+		"a null combinator":                     `{"oneOf": null}`,
+		"properties that are not an object":     `{"properties": [], "oneOf": [{"properties": {"a": {}}}]}`,
+		"a branch's required that is not names": `{"allOf": [{"required": [1], "properties": {"a": {}}}]}`,
+		"definitions that are not an object":    `{"$defs": [], "oneOf": [{"properties": {"a": {}}}]}`,
 		"a malformed additionalProperties": `{"oneOf": [{"properties": {"a": {"type": "string"}}},
 			{"additionalProperties": "no", "properties": {"b": {}}}]}`,
 		"a $ref into a combinator branch": `{"oneOf": [{"$defs": {"Value": {"type": "string"}},

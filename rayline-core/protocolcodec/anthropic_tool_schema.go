@@ -98,10 +98,25 @@ func anthropicInputSchema(schema json.RawMessage) (json.RawMessage, bool) {
 	if (len(names)+len(properties))*len(branches) > maxFoldPairs || (combinator == "allOf" && allOfBranchForbids(branches, properties, names)) {
 		return schema, false
 	}
+	topAdditional := string(bytes.TrimSpace(top["additionalProperties"]))
 	added := false
 	for _, name := range names {
-		if _, declared := properties[name]; declared {
+		if declared, ok := properties[name]; ok {
+			// Every allOf branch applies, so a branch that redeclares a
+			// top-level property still constrains it.
+			if combinator == "allOf" {
+				combined := combinatorPropertySchema(combinator, append([]schemaBranch{{properties: properties}}, branches...), name)
+				if !bytes.Equal(combined, declared) {
+					properties[name] = combined
+					added = true
+				}
+			}
 			continue
+		}
+		// A top-level additionalProperties schema validates a property only
+		// branches declare; promoting it would drop that constraint.
+		if topAdditional != "" && topAdditional != "true" && topAdditional != "false" {
+			return schema, false
 		}
 		propertySchema := combinatorPropertySchema(combinator, branches, name)
 		if properties == nil {
@@ -120,10 +135,16 @@ func anthropicInputSchema(schema json.RawMessage) (json.RawMessage, bool) {
 			required = append(required, name)
 		}
 	}
-	delete(top, combinator)
-	if _, typed := top["type"]; !typed {
-		top["type"] = json.RawMessage(`"object"`)
+	// Names no branch declares stay refused when the branches refuse them:
+	// every union branch is closed, or any allOf branch is.
+	if closesUnknownNames(combinator, branches) {
+		top["additionalProperties"] = json.RawMessage(`false`)
 	}
+	delete(top, combinator)
+	if !isObjectType(top["type"]) {
+		return schema, false
+	}
+	top["type"] = json.RawMessage(`"object"`)
 	if added {
 		top["properties"] = encodeSchemaJSON(properties)
 	}
@@ -192,6 +213,31 @@ func foldableBranches(raw json.RawMessage, definitions map[string]map[string]jso
 		branches = append(branches, schemaBranch{properties: properties, required: required, closed: additional == "false"})
 	}
 	return branches, true
+}
+
+// closesUnknownNames reports whether the branches refuse every property none
+// of them declares: all oneOf/anyOf branches are closed, or an allOf branch
+// is.
+func closesUnknownNames(combinator string, branches []schemaBranch) bool {
+	closed := func(branch schemaBranch) bool { return branch.closed }
+	if combinator == "allOf" {
+		return slices.ContainsFunc(branches, closed)
+	}
+	return !slices.ContainsFunc(branches, func(branch schemaBranch) bool { return !branch.closed })
+}
+
+// isObjectType reports whether a root type is absent or names only object,
+// as "object" or ["object"]; Messages takes only "object".
+func isObjectType(raw json.RawMessage) bool {
+	if raw == nil {
+		return true
+	}
+	var kind string
+	if json.Unmarshal(raw, &kind) == nil {
+		return kind == "object"
+	}
+	var kinds []string
+	return json.Unmarshal(raw, &kinds) == nil && len(kinds) == 1 && kinds[0] == "object"
 }
 
 // isFoldableBranch reports whether branch says only foldableBranchMembers,
