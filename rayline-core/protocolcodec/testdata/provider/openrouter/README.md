@@ -21,6 +21,7 @@ route; everything else is byte-for-byte what the provider sent.
 | `chat-response-all-reasoning.json` | `z-ai/glm-5.2` | non-streamed | 2026-09-04T09:25Z | 19 / 64, reasoning 64, `finish_reason` length, empty content |
 | `anthropic-response-warm-prefix.json` | `deepseek/deepseek-v4-pro` | non-streamed, **cell output** | 2026-09-04T09:29Z | 166 / 25, cache_read 1536, thinking 22 |
 | `transport-error.json` | n/a | n/a | 2026-09-03 | none |
+| `responses-stream-claude-reasoning.sse` | `anthropic/claude-sonnet-5.5` | streamed, Responses | 2026-11-14 | 134013 / 109, reasoning 51; ids, reasoning text, signature, arguments and tools replaced with synthetic values |
 
 `anthropic-response-warm-prefix.json` is the only capture that is not a raw
 OpenRouter body: it is what the cell itself emitted, so it exercises the
