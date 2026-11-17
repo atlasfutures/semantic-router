@@ -13,7 +13,6 @@ import (
 	"net/url"
 	"os"
 	"regexp"
-	"strings"
 	"time"
 
 	"github.com/atlasfutures/semantic-router/rayline-core/cachecontext"
@@ -260,9 +259,13 @@ func droppedTextBytes(body []byte) (int, error) {
 		quoted, _ := json.Marshal(text)
 		total += int(worstCaseBytes(quoted))
 	}
+	// Only the line the codec drops: text that merely opens like it is kept
+	// in the Chat form and counted there.
 	billing := func(value any) {
-		if text, _ := value.(string); strings.HasPrefix(text, "x-anthropic-billing-header:") {
-			charge(text)
+		if text, isText := value.(string); isText {
+			if _, isLine := protocolcodec.StableBillingAttributionLine(text); isLine {
+				charge(text)
+			}
 		}
 	}
 	billing(request.System)
