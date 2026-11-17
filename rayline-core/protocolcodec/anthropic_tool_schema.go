@@ -28,8 +28,9 @@ var localDefinitionMembers = []string{"$defs", "definitions"}
 // keeps in place and never creates: the top level's own definitions.
 var keptReferencePrefixes = []string{"#/$defs/", "#/definitions/"}
 
-// maxFoldPairs bounds the property-branch pairs a fold weighs, so a schema
-// with very many branches and properties is sent unchanged rather than
+// maxFoldPairs bounds the name-branch pairs a fold weighs (branch and root
+// property names and root required names, each against every branch), so a
+// schema with very many branches and names is sent unchanged rather than
 // folded at a cost far beyond its size.
 const maxFoldPairs = 1 << 16
 
@@ -97,7 +98,7 @@ func anthropicInputSchema(schema json.RawMessage) (json.RawMessage, bool) {
 		return schema, false
 	}
 	names := branchPropertyNames(branches)
-	if (len(names)+len(properties))*len(branches) > maxFoldPairs || conflictsWithRoot(branches, properties, required) {
+	if (len(names)+len(properties)+len(required))*len(branches) > maxFoldPairs || conflictsWithRoot(branches, properties, required) {
 		return schema, false
 	}
 	topAdditional := string(bytes.TrimSpace(top["additionalProperties"]))

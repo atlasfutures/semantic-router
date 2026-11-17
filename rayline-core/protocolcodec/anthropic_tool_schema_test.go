@@ -173,6 +173,15 @@ func TestAnthropicInputSchemaFoldCostStaysNearTheSchemaSize(t *testing.T) {
 		branches = append(branches, fmt.Sprintf(`{"properties": {"p%03d": {}}}`, i))
 	}
 	many := `{"anyOf": [` + strings.Join(branches, ", ") + `]}`
+	var required, titled []string
+	for i := range 300 {
+		required = append(required, fmt.Sprintf(`"r%03d"`, i))
+		titled = append(titled, fmt.Sprintf(`{"title": "b%03d"}`, i))
+	}
+	requiredMany := `{"required": [` + strings.Join(required, ", ") + `], "anyOf": [` + strings.Join(titled, ", ") + `]}`
+	if got, folded := anthropicInputSchema(json.RawMessage(requiredMany)); folded || string(got) != requiredMany {
+		t.Fatalf("300 required names by 300 branches were folded")
+	}
 	if got, folded := anthropicInputSchema(json.RawMessage(many)); folded || string(got) != many {
 		t.Fatalf("300 branches by 300 properties were folded")
 	}
