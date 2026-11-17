@@ -202,6 +202,14 @@ func foldableBranches(combinator string, raw json.RawMessage, definitions map[st
 			continue
 		}
 		seen[key] = true
+		// Two definitions with the same content are the same branch.
+		if combinator == "oneOf" {
+			content := "content\x00" + string(encodeSchemaJSON(branch))
+			if seen[content] {
+				return nil, false
+			}
+			seen[content] = true
+		}
 		if !isFoldableBranch(branch) {
 			return nil, false
 		}
@@ -244,9 +252,10 @@ func isObjectType(raw json.RawMessage) bool {
 
 // conflictsWithRoot reports whether the branches constrain the root's own
 // properties in a way the fold would drop: every branch is closed and none
-// declares a root property (so the original refuses it), a closed branch
-// leaves out a name the root requires (so that branch never matches), or a
-// branch gives a root property a schema other than the root's.
+// declares a root property (so the original refuses it), a branch forbids a
+// name the root requires by leaving it out of a closed branch or declaring
+// it false (so that branch never matches), or a branch gives a root property
+// a schema other than the root's.
 func conflictsWithRoot(branches []schemaBranch, properties map[string]json.RawMessage, required []string) bool {
 	allClosed := !slices.ContainsFunc(branches, func(branch schemaBranch) bool { return !branch.closed })
 	for name, rootSchema := range properties {
@@ -264,7 +273,10 @@ func conflictsWithRoot(branches []schemaBranch, properties map[string]json.RawMe
 		}
 	}
 	for _, branch := range branches {
-		if branch.closed && slices.ContainsFunc(required, func(name string) bool { _, declared := branch.properties[name]; return !declared }) {
+		if slices.ContainsFunc(required, func(name string) bool {
+			property, declared := branch.properties[name]
+			return (branch.closed && !declared) || string(bytes.TrimSpace(property)) == "false"
+		}) {
 			return true
 		}
 	}
@@ -272,10 +284,16 @@ func conflictsWithRoot(branches []schemaBranch, properties map[string]json.RawMe
 }
 
 // isFoldableBranch reports whether branch says only foldableBranchMembers,
-// with an object type if it names one.
+// with an object type if it names one and string annotations.
 func isFoldableBranch(branch map[string]json.RawMessage) bool {
 	for member := range branch {
 		if !slices.Contains(foldableBranchMembers, member) {
+			return false
+		}
+	}
+	for _, annotation := range []string{"title", "description"} {
+		var text string
+		if !decodeSchemaMember(branch, annotation, &text) {
 			return false
 		}
 	}
