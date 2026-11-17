@@ -25,8 +25,23 @@ var foldableBranchMembers = []string{"type", "properties", "required", "addition
 var localDefinitionMembers = []string{"$defs", "definitions"}
 
 // keptReferencePrefixes are the local JSON Pointers whose targets the fold
-// keeps: the top level's own definitions and properties.
+// keeps: the top level's own definitions, and its properties themselves (not
+// their insides, which a fold may wrap under allOf).
 var keptReferencePrefixes = []string{"#/$defs/", "#/definitions/", "#/properties/"}
+
+// isKeptReference reports whether ref points at the root or at a target the
+// fold keeps in place.
+func isKeptReference(ref string) bool {
+	if ref == "#" {
+		return true
+	}
+	for _, prefix := range keptReferencePrefixes {
+		if rest, found := strings.CutPrefix(ref, prefix); found {
+			return prefix != "#/properties/" || !strings.Contains(rest, "/")
+		}
+	}
+	return false
+}
 
 // maxFoldPairs bounds the property-branch pairs a fold weighs (top-level and
 // branch properties, each against every branch), so a schema with very many
@@ -113,9 +128,10 @@ func anthropicInputSchema(schema json.RawMessage) (json.RawMessage, bool) {
 			}
 			continue
 		}
-		// A top-level additionalProperties schema validates a property only
-		// branches declare; promoting it would drop that constraint.
-		if topAdditional != "" && topAdditional != "true" && topAdditional != "false" {
+		// The root's additionalProperties governs a property only branches
+		// declare: false forbids it and a schema constrains it, and promoting
+		// it would drop either.
+		if topAdditional != "" && topAdditional != "true" {
 			return schema, false
 		}
 		propertySchema := combinatorPropertySchema(combinator, branches, name)
@@ -416,8 +432,9 @@ func localDefinition(raw json.RawMessage) (map[string]json.RawMessage, bool) {
 
 // hasReferenceTheFoldCouldBreak reports whether schema has a reference the
 // fold might leave pointing at nothing: a "$ref" other than the root ("#") or
-// a pointer under the top level's $defs, definitions or properties (such as
-// one into a removed branch, or to an anchor), or any "$dynamicRef".
+// a pointer under the top level's $defs or definitions or to one top-level
+// property (such as one into a removed branch, into a property's insides, or
+// to an anchor), or any "$dynamicRef".
 // Anything that only looks like a reference, inside an enum or a default, is
 // counted too; that schema is just sent unchanged.
 func hasReferenceTheFoldCouldBreak(schema json.RawMessage) bool {
@@ -436,8 +453,7 @@ func hasReferenceTheFoldCouldBreak(schema json.RawMessage) bool {
 			if _, dynamic := value["$dynamicRef"]; dynamic {
 				return true
 			}
-			if ref, isString := value["$ref"].(string); isString && ref != "#" &&
-				!slices.ContainsFunc(keptReferencePrefixes, func(prefix string) bool { return strings.HasPrefix(ref, prefix) }) {
+			if ref, isString := value["$ref"].(string); isString && !isKeptReference(ref) {
 				return true
 			}
 			for _, child := range value {
