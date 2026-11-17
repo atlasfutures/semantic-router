@@ -146,7 +146,10 @@ opt-in. The core reports facts and never picks or ranks a model.
     Media, content the body only references (`file_id`, `item_reference`,
     `previous_response_id`), a request's own `chat_template` or
     `role_mapping`, a server tool and any unknown or runtime-specific member
-    fall to `caller_estimated`. The "execution
+    fall to `caller_estimated`. A Responses `namespace` of function tools
+    (Codex's sub-agent tools) is bounded: a runtime flattens it into one
+    function per member (vLLM names each `<namespace>__<name>`), so each
+    member is also charged the namespace's name and `__`. The "execution
     context applied" log line names what made each estimated fact one in
     `capacity_estimated_by`: the first such member as a path into the
     prepared request (`/tools/3/type=web_search`), or the inline image count.

@@ -784,8 +784,9 @@ func TestByteBoundIsBoundedOnlyOverAFullyKnownBody(t *testing.T) {
 		{"text part carrying an image", responses, `{"model":"m","input":[{"type":"function_call_output","call_id":"c","output":[{"type":"input_text","text":"hi","uuid":"a","image_url":"https://example.com/a.png"}]}]}`, "/input/0/output/0/image_url"},
 		{"chat text part carrying an image", chat, `{"model":"m","messages":[{"role":"user","content":[{"type":"text","text":"hi","image_url":{"url":"https://example.com/a.png"}}]}]}`, "/messages/0/content/0/image_url"},
 		{"unknown diagnostics member", messages, `{"model":"m","diagnostics":{"x":1},"messages":[{"role":"user","content":"hi"}]}`, "/diagnostics/x"},
-		// vLLM flattens a namespace, repeating its name in every function's.
-		{"namespace tools", responses, `{"model":"m","input":"hi","tools":[{"type":"namespace","name":"ns","tools":[{"type":"function","name":"f","parameters":{}}]}]}`, "/tools/0/type=namespace"},
+		// A runtime flattens a namespace into its functions; namespaceFlatteningBytes charges that.
+		{"namespace tools", responses, `{"model":"m","input":"hi","tools":[{"type":"namespace","name":"ns","description":"d","tools":[{"type":"function","name":"f","parameters":{}}]}]}`, ""},
+		{"namespace holding a server tool", responses, `{"model":"m","input":"hi","tools":[{"type":"namespace","name":"ns","tools":[{"type":"function","name":"f"},{"type":"web_search"}]}]}`, "/tools/0/tools/1/type=web_search"},
 		{"responses server tool", responses, `{"model":"m","input":"hi","tools":[{"type":"web_search"}]}`, "/tools/0/type=web_search"},
 
 		{"unknown protocol", "", `{"model":"m","messages":[{"role":"user","content":"hi"}]}`, "protocol "},
@@ -831,9 +832,76 @@ func codexTurn(t *testing.T) map[string]any {
 	return turn
 }
 
+// withoutServerTools is the turn as the core prepares it for a target whose
+// arm has no hosted tools: the web_search tool is dropped.
+func withoutServerTools(turn map[string]any) map[string]any {
+	prepared := map[string]any{}
+	for key, value := range turn {
+		prepared[key] = value
+	}
+	var tools []any
+	for _, tool := range turn["tools"].([]any) {
+		if tool.(map[string]any)["type"] != "web_search" {
+			tools = append(tools, tool)
+		}
+	}
+	prepared["tools"] = tools
+	return prepared
+}
+
+// flattenNamespaces declares each namespace member as its own function named
+// <namespace>__<name>, as vLLM renders it.
+func flattenNamespaces(turn map[string]any) map[string]any {
+	flat := map[string]any{}
+	for key, value := range turn {
+		flat[key] = value
+	}
+	var tools []any
+	for _, entry := range turn["tools"].([]any) {
+		tool := entry.(map[string]any)
+		if tool["type"] != "namespace" {
+			tools = append(tools, tool)
+			continue
+		}
+		for _, member := range tool["tools"].([]any) {
+			function := map[string]any{}
+			for key, value := range member.(map[string]any) {
+				function[key] = value
+			}
+			function["name"] = tool["name"].(string) + "__" + function["name"].(string)
+			tools = append(tools, function)
+		}
+	}
+	flat["tools"] = tools
+	return flat
+}
+
+func TestCodexResponsesTurnIsBoundedOverItsFlattenedNamespace(t *testing.T) {
+	deployment := Deployment{ID: "local", Kind: "local", Protocol: llmprotocol.OpenAIResponsesV1, RegistryModel: "z-ai/glm-5.3-flash", ContextWindow: 1_000_000}
+	turn := codexTurn(t)
+	// Sent to a runtime as is, the server tool would keep the size estimated.
+	if _, provenance, _, estimatedBy := localPromptSize(deployment, []byte(mustJSON(turn))); provenance != capacityProvenanceEstimated || estimatedBy != "/tools/8/type=web_search" {
+		t.Fatalf("client turn: %s by %q", provenance, estimatedBy)
+	}
+	// A long namespace name over bare members: there the repeated name
+	// outgrows what nesting the members adds to the worst-case spelling.
+	members := []any{map[string]any{"type": "function", "name": "a"}, map[string]any{"type": "function", "name": "b"}, map[string]any{"type": "function", "name": "c"}}
+	long := map[string]any{"model": "m", "input": "hi", "tools": []any{map[string]any{"type": "namespace", "name": strings.Repeat("n", 200), "tools": members}}}
+	for name, body := range map[string]map[string]any{"codex": withoutServerTools(turn), "long namespace": long} {
+		bound, provenance, _, estimatedBy := localPromptSize(deployment, []byte(mustJSON(body)))
+		if provenance != capacityProvenanceBounded || estimatedBy != "" {
+			t.Fatalf("%s: %s by %q", name, provenance, estimatedBy)
+		}
+		if flat, _, _, _ := localPromptSize(deployment, []byte(mustJSON(flattenNamespaces(body)))); bound < flat {
+			t.Errorf("%s: the namespaced bound %d is below the flattened %d", name, bound, flat)
+		}
+	}
+}
+
 // TestCodexTurnIsSizedBoundedAndAnEstimateLogsWhy runs the first Codex turn
-// through the core to a local Responses deployment: the runtime gets no server
-// tool, and the log line names what keeps the fact caller_estimated.
+// through the core to a local Responses deployment: the fact sent to
+// Decisions is caller_bounded and the runtime gets no server tool. A turn
+// with a remote image stays caller_estimated, and the log line names why.
 func TestCodexTurnIsSizedBoundedAndAnEstimateLogsWhy(t *testing.T) {
 	turn := codexTurn(t)
 	turn["model"] = "arc-1.0"
@@ -857,8 +925,8 @@ func TestCodexTurnIsSizedBoundedAndAnEstimateLogsWhy(t *testing.T) {
 		provenance  string
 		estimatedBy string
 	}{
-		{"codex turn", turn, capacityProvenanceEstimated, "/tools/4/type=namespace"},
-		{"codex turn with a remote image", withImage, capacityProvenanceEstimated, "/tools/4/type=namespace"},
+		{"codex turn", turn, capacityProvenanceBounded, ""},
+		{"codex turn with a remote image", withImage, capacityProvenanceEstimated, "/input/3/content/1/type=input_image"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var logs strings.Builder

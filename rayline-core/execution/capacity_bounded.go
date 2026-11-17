@@ -150,7 +150,7 @@ func unboundedMember(protocol llmprotocol.WireFormat, body []byte) string {
 				}
 				return "/instructions"
 			},
-			func() string { return toolsOf(top["tools"], "function", "custom") },
+			func() string { return toolsOf(top["tools"], "function", "custom", "namespace") },
 			func() string {
 				if isString(top["input"]) {
 					return ""
@@ -261,7 +261,9 @@ func eachPart(path string, content any, ok func(string, map[string]any) string) 
 }
 
 // toolsOf checks that tools is absent or a list of tools of the given types
-// ("" for a tool without one).
+// ("" for a tool without one). A namespace may hold only function tools: a
+// runtime flattens it into one function per member (namespaceFlatteningBytes
+// charges what that adds).
 func toolsOf(tools any, kinds ...string) string {
 	if tools == nil {
 		return ""
@@ -272,6 +274,15 @@ func toolsOf(tools any, kinds ...string) string {
 		if !present && tool["type"] != nil || !allowed[kind] {
 			return path + "/type=" + kind
 		}
-		return ""
+		if kind != "namespace" {
+			return ""
+		}
+		return eachObject(path+"/tools", tool["tools"], func(path string, member map[string]any) string {
+			if member["type"] != "function" {
+				kind, _ := member["type"].(string)
+				return path + "/type=" + kind
+			}
+			return ""
+		})
 	})
 }

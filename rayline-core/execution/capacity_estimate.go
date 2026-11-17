@@ -2,6 +2,7 @@ package execution
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"math"
 
@@ -95,7 +96,7 @@ func sizedCapacityFact(deployment Deployment, prompt int64, provenance, units st
 // media_tokens; with none, the bound is an upper bound on the exact count.
 func byteBoundTokens(body []byte, estimate *CapacityEstimate) (int64, int) {
 	headroom, mediaTokens := estimate.settings()
-	text := worstCaseBytes(body)
+	text := worstCaseBytes(body) + namespaceFlatteningBytes(body)
 	blobs := inlineImages(body)
 	for _, blob := range blobs {
 		text -= int64(blob[1] - blob[0])
@@ -114,6 +115,30 @@ func worstCaseBytes(body []byte) int64 {
 		return 3 * int64(len(body))
 	}
 	return size
+}
+
+// namespaceFlatteningBytes is what a runtime adds by flattening each
+// Responses namespace tool into one function per member: vLLM names a member
+// <namespace>__<name>, repeating the namespace's name, so each member is
+// charged that prefix in its worst-case spelling.
+func namespaceFlatteningBytes(body []byte) int64 {
+	var request struct {
+		Tools []map[string]any `json:"tools"`
+	}
+	if json.Unmarshal(body, &request) != nil {
+		return 0
+	}
+	var total int64
+	for _, tool := range request.Tools {
+		members, _ := tool["tools"].([]any)
+		name, _ := tool["name"].(string)
+		if tool["type"] != "namespace" || len(members) == 0 {
+			continue
+		}
+		prefix, _ := json.Marshal(name + "__")
+		total += int64(len(members)) * worstCaseBytes(prefix)
+	}
+	return total
 }
 
 // inlineImages finds base64 images that are JSON structure, not text: an
