@@ -117,11 +117,20 @@ func worstCaseBytes(body []byte) int64 {
 	return size
 }
 
-// namespaceFlatteningBytes is what a runtime adds by flattening each
-// Responses namespace tool into one function per member: vLLM names a member
-// <namespace>__<name>, repeating the namespace's name, so each member is
-// charged that prefix in its worst-case spelling.
+// namespaceFlatteningBytes is what a runtime can add by flattening each
+// Responses namespace tool into one function per member. Runtimes repeat the
+// namespace's name in every member's name in different spellings: vLLM
+// <namespace>__<name>, Ollama <namespace>.<name>, llama.cpp
+// ns_<namespace>___<name>. A runtime that flattens as the core does for Chat
+// and Messages (llmprotocol.FlattenedToolDescription) also puts the
+// namespace's description and a blank line before each member's own. Each
+// member is charged the longest of these, "ns_" + name + "___" + description
+// + "\n\n", in its worst-case spelling, so the bound does not rely on how
+// a particular runtime flattens.
 func namespaceFlatteningBytes(body []byte) int64 {
+	if !bytes.Contains(body, []byte(`"namespace"`)) {
+		return 0
+	}
 	var request struct {
 		Tools []map[string]any `json:"tools"`
 	}
@@ -135,7 +144,8 @@ func namespaceFlatteningBytes(body []byte) int64 {
 		if tool["type"] != "namespace" || len(members) == 0 {
 			continue
 		}
-		prefix, _ := json.Marshal(name + "__")
+		description, _ := tool["description"].(string)
+		prefix, _ := json.Marshal("ns_" + name + "___" + description + "\n\n")
 		total += int64(len(members)) * worstCaseBytes(prefix)
 	}
 	return total
