@@ -206,6 +206,7 @@ func TestAnthropicInputSchemaLeavesSchemasItCannotFold(t *testing.T) {
 		"a top-level allOf": `{"allOf": [{"properties": {"a": {"type": "string"}}}]}`,
 		"root patternProperties when every branch is closed": `{"patternProperties": {"^x-": {}},
 			"oneOf": [{"additionalProperties": false, "properties": {"id": {}}}]}`,
+		"a $ref with an invalid pointer escape": `{"$defs": {"run~2code": {"properties": {"a": {}}}}, "oneOf": [{"$ref": "#/$defs/run~2code"}]}`,
 		"an empty combinator":                   `{"oneOf": []}`,
 		"a branch with an empty type":           `{"oneOf": [{"type": "", "properties": {"a": {}}}]}`,
 		"a null combinator":                     `{"oneOf": null}`,

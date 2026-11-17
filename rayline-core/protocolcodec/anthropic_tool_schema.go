@@ -338,8 +338,8 @@ func schemaObjectMembers(schema map[string]json.RawMessage) (map[string]json.Raw
 // spell their branches): the table and the definition's name. The reference
 // is a URI fragment holding a JSON Pointer, so it is percent-decoded and then
 // "~1" becomes "/" and "~0" becomes "~". It reports false for a $ref with
-// sibling members, and for one outside the schema or more than one segment
-// deep.
+// sibling members, one with any other "~" escape, and one outside the schema
+// or more than one segment deep.
 func localDefinitionReference(branch map[string]json.RawMessage) (string, string, bool) {
 	var ref string
 	if len(branch) > 1 || json.Unmarshal(branch["$ref"], &ref) != nil {
@@ -351,7 +351,9 @@ func localDefinitionReference(branch map[string]json.RawMessage) (string, string
 	}
 	for _, table := range localDefinitionMembers {
 		segment, local := strings.CutPrefix(pointer, "#/"+table+"/")
-		if local && !strings.Contains(segment, "/") {
+		// A "~" not followed by 0 or 1 makes the pointer invalid.
+		escapesValid := !strings.Contains(strings.NewReplacer("~0", "", "~1", "").Replace(segment), "~")
+		if local && !strings.Contains(segment, "/") && escapesValid {
 			return table, strings.ReplaceAll(strings.ReplaceAll(segment, "~1", "/"), "~0", "~"), true
 		}
 	}
