@@ -58,15 +58,6 @@ func TestAnthropicInputSchemaFoldsTopLevelCombinators(t *testing.T) {
 				"url": {"anyOf": [{}, {"type": "string"}]}}}`,
 		},
 		{
-			name: "a branch that leaves a property out allows it with its additionalProperties schema",
-			schema: `{"oneOf": [
-				{"additionalProperties": {"type": "number"}, "properties": {"a": {"type": "string"}}},
-				{"additionalProperties": true, "properties": {"b": {"type": "string"}}}]}`,
-			want: `{"type": "object", "properties": {
-				"a": {"anyOf": [{"type": "string"}, {}]},
-				"b": {"anyOf": [{"type": "number"}, {"type": "string"}]}}}`,
-		},
-		{
 			name: "oneOf branches that type one property differently keep every alternative",
 			schema: `{"type": "object", "required": ["action"], "oneOf": [
 				{"additionalProperties": false, "properties": {"action": {"enum": ["run"]}, "code": {"type": "string"}}},
@@ -75,11 +66,11 @@ func TestAnthropicInputSchemaFoldsTopLevelCombinators(t *testing.T) {
 				"action": {"anyOf": [{"enum": ["run"]}, {"enum": ["finish"]}]}, "code": {"type": "string"}}}`,
 		},
 		{
-			name: "branches that name definitions fold those definitions, JSON Pointer escapes decoded",
+			name: "branches that name definitions fold those definitions, URI and JSON Pointer escapes decoded",
 			schema: `{"$defs": {
 					"run/code": {"type": "object", "additionalProperties": false, "required": ["code"], "properties": {"code": {"type": "string"}}},
 					"done~": {"type": "object", "additionalProperties": false, "properties": {"completion_summary": {"type": "string"}}}},
-				"oneOf": [{"$ref": "#/$defs/run~1code"}, {"$ref": "#/$defs/done~0"}]}`,
+				"oneOf": [{"$ref": "#/$defs/run~1code"}, {"$ref": "#/$defs/done~0"}, {"$ref": "#/$defs/done%7E0"}]}`,
 			want: `{"type": "object", "$defs": {
 					"run/code": {"type": "object", "additionalProperties": false, "required": ["code"], "properties": {"code": {"type": "string"}}},
 					"done~": {"type": "object", "additionalProperties": false, "properties": {"completion_summary": {"type": "string"}}}},
@@ -91,6 +82,11 @@ func TestAnthropicInputSchemaFoldsTopLevelCombinators(t *testing.T) {
 				"oneOf": [{"additionalProperties": false, "properties": {"parent": {"$ref": "#"}, "copy": {"$ref": "#/properties/id"}}}]}`,
 			want: `{"type": "object", "$defs": {"Id": {"type": "string"}}, "properties": {
 				"id": {"$ref": "#/$defs/Id"}, "parent": {"$ref": "#"}, "copy": {"$ref": "#/properties/id"}}}`,
+		},
+		{
+			name:   "the client's strings keep their bytes",
+			schema: `{"properties": {"q": {"description": "a <b> & c"}}, "oneOf": [{"properties": {"q": {}}}]}`,
+			want:   `{"type": "object", "properties": {"q": {"description": "a <b> & c"}}}`,
 		},
 		{
 			name: "a name every oneOf branch requires stays required",
@@ -108,17 +104,6 @@ func TestAnthropicInputSchemaFoldsTopLevelCombinators(t *testing.T) {
 			want: `{"type": "object", "required": ["a", "b"], "properties": {
 				"a": {"allOf": [{"type": "string"}, {"maxLength": 8}]}, "b": {"type": "number"}}}`,
 		},
-		{
-			name:   "an allOf branch's additionalProperties schema constrains a property it leaves out",
-			schema: `{"allOf": [{"properties": {"name": {"type": "string"}}}, {"additionalProperties": {"maxLength": 8}}]}`,
-			want:   `{"type": "object", "properties": {"name": {"allOf": [{"type": "string"}, {"maxLength": 8}]}}}`,
-		},
-		{
-			name: "a property two combinators constrain gets both constraints",
-			schema: `{"anyOf": [{"additionalProperties": false, "properties": {"x": {"type": "string"}}}],
-				"allOf": [{"properties": {"x": {"pattern": "^a"}}}]}`,
-			want: `{"type": "object", "properties": {"x": {"allOf": [{"type": "string"}, {"pattern": "^a"}]}}}`,
-		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -134,11 +119,19 @@ func TestAnthropicInputSchemaFoldsTopLevelCombinators(t *testing.T) {
 	}
 }
 
-// A schema whose fold would cost or send many times what the client sent is
-// sent unchanged: a wide additionalProperties schema copied into every
-// property another branch declares, one wide definition named by many
-// branches, or many branches each weighed against many properties.
-func TestAnthropicInputSchemaLeavesSchemasThatWouldAmplifyUnchanged(t *testing.T) {
+// The fold re-encodes the schema without escaping <, > and &, so the
+// client's strings reach Messages as the client wrote them.
+func TestAnthropicInputSchemaKeepsTheClientsStringBytes(t *testing.T) {
+	schema := json.RawMessage(`{"properties": {"q": {"description": "a <b> & c"}}, "oneOf": [{"properties": {"r": {}}}]}`)
+	got, folded := anthropicInputSchema(schema)
+	if !folded || !strings.Contains(string(got), `"a <b> & c"`) {
+		t.Fatalf("anthropicInputSchema = %s (folded %v), want the description's bytes kept", got, folded)
+	}
+}
+
+// A fold costs about what the schema is: repeated branches are weighed once,
+// and a schema with very many branch-property pairs is sent unchanged.
+func TestAnthropicInputSchemaFoldCostStaysNearTheSchemaSize(t *testing.T) {
 	wide := func(count int) string {
 		properties := map[string]json.RawMessage{}
 		for i := range count {
@@ -147,21 +140,18 @@ func TestAnthropicInputSchemaLeavesSchemasThatWouldAmplifyUnchanged(t *testing.T
 		encoded, _ := json.Marshal(map[string]any{"properties": properties})
 		return string(encoded)
 	}
-	repeat := func(member string, count int) string {
-		return strings.TrimSuffix(strings.Repeat(member+",", count), ",")
+	repeated := `{"$defs": {"Wide": ` + wide(500) + `}, "oneOf": [` +
+		strings.TrimSuffix(strings.Repeat(`{"$ref": "#/$defs/Wide"},`, 1000), ",") + `]}`
+	if got, folded := anthropicInputSchema(json.RawMessage(repeated)); !folded || len(got) > len(repeated) {
+		t.Fatalf("one definition named by many branches: folded %v into %d bytes from %d", folded, len(got), len(repeated))
 	}
-	for name, schema := range map[string]string{
-		"an additionalProperties schema copied into many properties": `{"anyOf": [` + wide(200) + `,
-			{"additionalProperties": {"description": "` + strings.Repeat("x", 2000) + `"}}]}`,
-		"a wide definition named by many branches": `{"$defs": {"Wide": ` + wide(500) + `},
-			"oneOf": [` + repeat(`{"$ref": "#/$defs/Wide"}`, 1000) + `]}`,
-		"many branches weighed against many properties": `{"anyOf": [` + wide(2000) + `, ` + repeat(`{}`, 2000) + `]}`,
-	} {
-		t.Run(name, func(t *testing.T) {
-			if got, folded := anthropicInputSchema(json.RawMessage(schema)); folded || string(got) != schema {
-				t.Fatalf("a %d-byte schema was folded into %d bytes", len(schema), len(got))
-			}
-		})
+	var branches []string
+	for i := range 300 {
+		branches = append(branches, fmt.Sprintf(`{"properties": {"p%03d": {}}}`, i))
+	}
+	many := `{"anyOf": [` + strings.Join(branches, ", ") + `]}`
+	if got, folded := anthropicInputSchema(json.RawMessage(many)); folded || string(got) != many {
+		t.Fatalf("300 branches by 300 properties were folded")
 	}
 }
 
@@ -201,7 +191,11 @@ func TestAnthropicInputSchemaLeavesSchemasItCannotFold(t *testing.T) {
 		"a branch with a keyword the fold would drop": `{"anyOf": [{"properties": {"a": {}}, "minProperties": 1}]}`,
 		"a branch of another type":                    `{"oneOf": [{"type": "string"}, {"properties": {"a": {}}}]}`,
 		"a top-level unevaluatedProperties":           `{"type": "object", "unevaluatedProperties": false, "allOf": [{"additionalProperties": {"type": "string"}}]}`,
-		"not an object":                               `[{"oneOf": []}]`,
+		"two top-level combinators": `{"anyOf": [{"properties": {"x": {"type": "string"}}}],
+			"allOf": [{"properties": {"x": {"maxLength": 8}}}]}`,
+		"a branch that allows other properties through a schema": `{"oneOf": [{"properties": {"a": {"type": "string"}}},
+			{"additionalProperties": {"type": "number"}, "properties": {"b": {}}}]}`,
+		"not an object": `[{"oneOf": []}]`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			got, folded := anthropicInputSchema(json.RawMessage(schema))

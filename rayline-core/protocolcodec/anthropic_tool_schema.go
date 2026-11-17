@@ -3,6 +3,7 @@ package protocolcodec
 import (
 	"bytes"
 	"encoding/json"
+	"net/url"
 	"slices"
 	"strings"
 )
@@ -16,37 +17,61 @@ import (
 var anthropicSchemaCombinators = []string{"oneOf", "anyOf", "allOf"}
 
 // foldableBranchMembers are what a combinator branch may say for the fold to
-// keep its meaning: an object's properties, which names it requires, what it
-// allows beyond them, and its annotations.
+// keep its meaning: an object's properties, which names it requires, whether
+// it allows others, and its annotations.
 var foldableBranchMembers = []string{"type", "properties", "required", "additionalProperties", "title", "description"}
 
 // localDefinitionMembers hold the definitions a branch's "$ref" can name.
 var localDefinitionMembers = []string{"$defs", "definitions"}
 
+// keptReferencePrefixes are the local JSON Pointers whose targets the fold
+// keeps: the top level's own definitions and properties.
+var keptReferencePrefixes = []string{"#/$defs/", "#/definitions/", "#/properties/"}
+
+// maxFoldPairs bounds the branch-property pairs a fold weighs, so a schema
+// with very many branches and properties is sent unchanged rather than
+// folded at a cost far beyond its size.
+const maxFoldPairs = 1 << 16
+
 // anthropicInputSchema returns schema in the form Messages accepts, and
-// whether it changed it. A schema with no top-level combinator is returned as
-// it came, and so is one it cannot fold without changing what it means beyond
-// dropping the choice of branch: a member that is not the shape JSON Schema
-// gives it, a branch that says more than foldableBranchMembers (so a
-// non-object branch, a nested combinator, patternProperties, its own $id or
-// $defs), a $ref branch that cannot be resolved here, a top-level
-// unevaluatedProperties (which depends on the branches), or a reference
-// anywhere whose target the fold could remove (hasReferenceTheFoldCouldBreak).
-// Messages refuses that schema either way, and says why. A folded schema has
-// no top-level combinator, so folding it again changes nothing.
+// whether it changed it. Only a schema with exactly one top-level combinator
+// is folded. Its branches are folded into the object:
 //
-// A property the top level declares keeps its own schema. A property only
-// branches declare joins the top level with the schema each combinator's
-// branches give it (combinatorPropertySchema); one that several combinators
-// constrain gets all their schemas under allOf, since every top-level
-// combinator applies. Every name an allOf branch requires stays required, and
-// so does a name every oneOf/anyOf branch requires. What is lost is which
-// oneOf/anyOf branch applies, so names only some of them require are not
-// carried: requiring them all would refuse every valid call. The tool's own
-// server still validates the arguments.
+//   - A property the top level declares keeps its own schema.
+//   - A property only branches declare gets the schemas the branches give
+//     it: under oneOf and anyOf, each declaring branch's schema, and any value
+//     from a branch that leaves it out but allows other properties; under
+//     allOf, each declaring branch's schema. Several schemas are combined by
+//     anyOf for oneOf and anyOf, and by allOf for allOf.
+//   - Every name an allOf branch requires stays required, and so does a name
+//     every oneOf/anyOf branch requires. What is lost is which oneOf/anyOf
+//     branch applies; the tool's own server still validates the arguments.
+//
+// A branch that is a "$ref" into the schema's own $defs or definitions is
+// that definition. Any other schema is returned as it came, since folding it
+// would change more than the choice of branch: more than one top-level
+// combinator, a top-level unevaluatedProperties, a branch that says more than
+// foldableBranchMembers or allows other properties through a schema, a $ref
+// branch that cannot be resolved, an allOf branch that forbids a property
+// another branch declares, a reference the fold could leave pointing at
+// nothing, or a fold bigger than twice the schema. Messages refuses that
+// schema either way, and says why. A folded schema has no top-level
+// combinator, so folding it again changes nothing.
 func anthropicInputSchema(schema json.RawMessage) (json.RawMessage, bool) {
 	var top map[string]json.RawMessage
-	if json.Unmarshal(schema, &top) != nil || !hasAnthropicSchemaCombinator(top) || hasReferenceTheFoldCouldBreak(schema) {
+	if json.Unmarshal(schema, &top) != nil {
+		return schema, false
+	}
+	var combinator string
+	for _, name := range anthropicSchemaCombinators {
+		if _, present := top[name]; present {
+			if combinator != "" {
+				return schema, false
+			}
+			combinator = name
+		}
+	}
+	if combinator == "" || hasReferenceTheFoldCouldBreak(schema) {
 		return schema, false
 	}
 	if _, unevaluated := top["unevaluatedProperties"]; unevaluated {
@@ -56,10 +81,6 @@ func anthropicInputSchema(schema json.RawMessage) (json.RawMessage, bool) {
 	if !ok {
 		return schema, false
 	}
-	isRequired := map[string]bool{}
-	for _, name := range required {
-		isRequired[name] = true
-	}
 	definitions := map[string]map[string]json.RawMessage{}
 	for _, member := range localDefinitionMembers {
 		var table map[string]json.RawMessage
@@ -68,79 +89,89 @@ func anthropicInputSchema(schema json.RawMessage) (json.RawMessage, bool) {
 		}
 		definitions[member] = table
 	}
-	constraints := map[string][]json.RawMessage{}
-	// The fold's work and output are charged to a budget of four times the
-	// client's schema: each branch's bytes (a $ref branch costs its
-	// definition, however often it is named), each alternative a property
-	// gets from a branch, and each folded property. Past it the schema is
-	// sent unchanged, so a small schema cannot make the encoder do or send
-	// many times more than the client did.
-	budget := 4 * len(schema)
-	for _, combinator := range anthropicSchemaCombinators {
-		raw, present := top[combinator]
-		if !present {
+	branches, ok := foldableBranches(top[combinator], definitions)
+	if !ok {
+		return schema, false
+	}
+	names := branchPropertyNames(branches)
+	if len(names)*len(branches) > maxFoldPairs {
+		return schema, false
+	}
+	added := false
+	for _, name := range names {
+		if _, declared := properties[name]; declared {
 			continue
 		}
-		var members []json.RawMessage
-		if json.Unmarshal(raw, &members) != nil || len(members) == 0 {
+		propertySchema, ok := combinatorPropertySchema(combinator, branches, name)
+		if !ok {
 			return schema, false
 		}
-		branches := make([]schemaBranch, 0, len(members))
-		for _, member := range members {
-			branch, source, resolved := resolveSchemaBranch(definitions, member)
-			if budget -= len(source); !resolved || budget < 0 || !isFoldableBranch(branch) {
-				return schema, false
-			}
-			branchProperties, branchRequired, ok := schemaObjectMembers(branch)
-			if !ok {
-				return schema, false
-			}
-			branches = append(branches, schemaBranch{schema: branch, properties: branchProperties, required: branchRequired})
-		}
-		for _, name := range requiredNames(combinator, branches) {
-			if !isRequired[name] {
-				isRequired[name] = true
-				required = append(required, name)
-			}
-		}
-		for name := range branchPropertyNames(branches) {
-			if _, declared := properties[name]; declared {
-				continue
-			}
-			propertySchema, ok := combinatorPropertySchema(combinator, branches, name, &budget)
-			if budget -= len(propertySchema); !ok || budget < 0 {
-				return schema, false
-			}
-			constraints[name] = append(constraints[name], propertySchema)
-		}
-	}
-	for _, combinator := range anthropicSchemaCombinators {
-		delete(top, combinator)
-	}
-	if _, typed := top["type"]; !typed {
-		top["type"] = json.RawMessage(`"object"`)
-	}
-	if len(constraints) > 0 {
 		if properties == nil {
 			properties = map[string]json.RawMessage{}
 		}
-		for name, schemas := range constraints {
-			properties[name] = combinedSchemas("allOf", distinctSchemas(schemas))
+		properties[name] = propertySchema
+		added = true
+	}
+	for _, name := range requiredNames(combinator, branches) {
+		if !slices.Contains(required, name) {
+			required = append(required, name)
 		}
-		encoded, err := json.Marshal(properties)
-		if err != nil {
-			return schema, false
-		}
-		top["properties"] = encoded
+	}
+	delete(top, combinator)
+	if _, typed := top["type"]; !typed {
+		top["type"] = json.RawMessage(`"object"`)
+	}
+	if added {
+		top["properties"] = encodeSchemaJSON(properties)
 	}
 	if len(required) > 0 {
-		top["required"], _ = json.Marshal(required) // a []string always encodes
+		top["required"] = encodeSchemaJSON(required)
 	}
-	encoded, err := json.Marshal(top)
-	if err != nil {
+	encoded := encodeSchemaJSON(top)
+	if encoded == nil || len(encoded) > 2*len(schema) {
 		return schema, false
 	}
 	return encoded, true
+}
+
+// schemaBranch is one resolved branch of the top-level combinator.
+type schemaBranch struct {
+	properties map[string]json.RawMessage
+	required   []string
+	closed     bool // additionalProperties is false
+}
+
+// foldableBranches decodes the combinator's branches, resolving $ref
+// branches and dropping repeats. It reports false when the combinator is not
+// a non-empty array or a branch cannot be folded.
+func foldableBranches(raw json.RawMessage, definitions map[string]map[string]json.RawMessage) ([]schemaBranch, bool) {
+	var members []json.RawMessage
+	if json.Unmarshal(raw, &members) != nil || len(members) == 0 {
+		return nil, false
+	}
+	seen := map[string]bool{}
+	branches := make([]schemaBranch, 0, len(members))
+	for _, member := range members {
+		key := string(compactJSON(member))
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		branch, ok := resolveSchemaBranch(definitions, member)
+		if !ok || !isFoldableBranch(branch) {
+			return nil, false
+		}
+		properties, required, ok := schemaObjectMembers(branch)
+		if !ok {
+			return nil, false
+		}
+		additional := string(bytes.TrimSpace(branch["additionalProperties"]))
+		if additional != "" && additional != "true" && additional != "false" {
+			return nil, false
+		}
+		branches = append(branches, schemaBranch{properties: properties, required: required, closed: additional == "false"})
+	}
+	return branches, true
 }
 
 // isFoldableBranch reports whether branch says only foldableBranchMembers,
@@ -156,19 +187,42 @@ func isFoldableBranch(branch map[string]json.RawMessage) bool {
 	return !typed || (json.Unmarshal(raw, &kind) == nil && kind == "object")
 }
 
-// requiredNames is what a combinator's branches make required: every name an
-// allOf branch requires, and for oneOf and anyOf the names every branch
-// requires, which hold whichever branch applies.
+// combinatorPropertySchema is the schema the branches give the property name
+// (see anthropicInputSchema). It reports false when an allOf branch forbids
+// the property.
+func combinatorPropertySchema(combinator string, branches []schemaBranch, name string) (json.RawMessage, bool) {
+	var alternatives []json.RawMessage
+	for _, branch := range branches {
+		if property, declared := branch.properties[name]; declared {
+			alternatives = append(alternatives, property)
+			continue
+		}
+		switch {
+		case combinator == "allOf" && branch.closed:
+			return nil, false
+		case combinator != "allOf" && !branch.closed:
+			alternatives = append(alternatives, json.RawMessage(`{}`))
+		}
+	}
+	alternatives = distinctSchemas(alternatives)
+	if len(alternatives) == 1 {
+		return alternatives[0], true
+	}
+	nested := "anyOf"
+	if combinator == "allOf" {
+		nested = "allOf"
+	}
+	return encodeSchemaJSON(map[string][]json.RawMessage{nested: alternatives}), true
+}
+
+// requiredNames is what the branches make required: every name an allOf
+// branch requires, and for oneOf and anyOf the names every branch requires,
+// which hold whichever branch applies.
 func requiredNames(combinator string, branches []schemaBranch) []string {
 	var names []string
 	requiredBy := map[string]int{}
-	lastBranch := map[string]int{}
-	for i, branch := range branches {
-		for _, name := range branch.required {
-			if last, counted := lastBranch[name]; counted && last == i {
-				continue
-			}
-			lastBranch[name] = i
+	for _, branch := range branches {
+		for _, name := range slices.Compact(slices.Sorted(slices.Values(branch.required))) {
 			if requiredBy[name] == 0 {
 				names = append(names, name)
 			}
@@ -181,114 +235,50 @@ func requiredNames(combinator string, branches []schemaBranch) []string {
 	return slices.DeleteFunc(names, func(name string) bool { return requiredBy[name] < len(branches) })
 }
 
-// schemaBranch is one resolved branch of a top-level combinator.
-type schemaBranch struct {
-	schema     map[string]json.RawMessage
-	properties map[string]json.RawMessage
-	required   []string
-}
-
-// combinatorPropertySchema is the schema one combinator's branches give the
-// property name. Each branch that declares it gives its own schema; a branch
-// that leaves it out gives what its additionalProperties allows. Under oneOf
-// and anyOf that is any value when additionalProperties is absent or true,
-// and nothing when it is false (another branch may still allow it). Under
-// allOf an absent or true additionalProperties adds no constraint, and a
-// false one forbids the property outright, which the fold cannot keep. The
-// schemas are combined by anyOf for oneOf and anyOf (every alternative stays
-// a valid value) and by allOf for allOf. Each branch, and the bytes of each
-// alternative, are charged to budget. It reports false when a branch's
-// additionalProperties is neither a boolean nor a schema, when an allOf
-// branch forbids the property, or when the budget runs out.
-func combinatorPropertySchema(combinator string, branches []schemaBranch, name string, budget *int) (json.RawMessage, bool) {
-	var alternatives []json.RawMessage
+// branchPropertyNames is every property name the branches declare, sorted.
+func branchPropertyNames(branches []schemaBranch) []string {
+	var names []string
 	for _, branch := range branches {
-		if *budget--; *budget < 0 {
-			return nil, false
-		}
-		if property, declared := branch.properties[name]; declared {
-			alternatives = append(alternatives, property)
-			continue
-		}
-		additional, present := branch.schema["additionalProperties"]
-		var additionalSchema map[string]json.RawMessage
-		switch trimmed := string(bytes.TrimSpace(additional)); {
-		case !present || trimmed == "true":
-			if combinator != "allOf" {
-				alternatives = append(alternatives, json.RawMessage(`{}`))
-			}
-		case trimmed == "false":
-			if combinator == "allOf" {
-				return nil, false
-			}
-		case json.Unmarshal(additional, &additionalSchema) == nil && additionalSchema != nil:
-			alternatives = append(alternatives, additional)
-		default:
-			return nil, false
+		for name := range branch.properties {
+			names = append(names, name)
 		}
 	}
-	for _, alternative := range alternatives {
-		if *budget -= len(alternative); *budget < 0 {
-			return nil, false
-		}
-	}
-	nested := "anyOf"
-	if combinator == "allOf" {
-		nested = "allOf"
-	}
-	return combinedSchemas(nested, distinctSchemas(alternatives)), true
-}
-
-// combinedSchemas is the one schema, or the schemas under combinator.
-func combinedSchemas(combinator string, schemas []json.RawMessage) json.RawMessage {
-	if len(schemas) == 1 {
-		return schemas[0]
-	}
-	combined, _ := json.Marshal(map[string][]json.RawMessage{combinator: schemas})
-	return combined
+	slices.Sort(names)
+	return slices.Compact(names)
 }
 
 // distinctSchemas is schemas with repeats dropped, the first of each kept.
-// Schemas that differ only in member order or spacing are repeats.
 func distinctSchemas(schemas []json.RawMessage) []json.RawMessage {
 	distinct := make([]json.RawMessage, 0, len(schemas))
 	seen := map[string]bool{}
 	for _, schema := range schemas {
-		key := canonicalSchemaJSON(schema)
-		if seen[key] {
-			continue
+		if key := string(compactJSON(schema)); !seen[key] {
+			seen[key] = true
+			distinct = append(distinct, schema)
 		}
-		seen[key] = true
-		distinct = append(distinct, schema)
 	}
 	return distinct
 }
 
-// canonicalSchemaJSON is value with its object members sorted and its
-// numbers kept as written.
-func canonicalSchemaJSON(value json.RawMessage) string {
-	decoder := json.NewDecoder(bytes.NewReader(value))
-	decoder.UseNumber()
-	var decoded any
-	if decoder.Decode(&decoded) != nil {
-		return string(value)
+func compactJSON(value json.RawMessage) []byte {
+	var compacted bytes.Buffer
+	if json.Compact(&compacted, value) != nil {
+		return value
 	}
-	encoded, err := json.Marshal(decoded)
-	if err != nil {
-		return string(value)
-	}
-	return string(encoded)
+	return compacted.Bytes()
 }
 
-// branchPropertyNames is the set of property names the branches declare.
-func branchPropertyNames(branches []schemaBranch) map[string]bool {
-	names := map[string]bool{}
-	for _, branch := range branches {
-		for name := range branch.properties {
-			names[name] = true
-		}
+// encodeSchemaJSON encodes value without escaping <, > and &, so the
+// client's strings keep their bytes. It is nil only for a value JSON cannot
+// encode.
+func encodeSchemaJSON(value any) json.RawMessage {
+	var encoded bytes.Buffer
+	encoder := json.NewEncoder(&encoded)
+	encoder.SetEscapeHTML(false)
+	if encoder.Encode(value) != nil {
+		return nil
 	}
-	return names
+	return bytes.TrimSuffix(encoded.Bytes(), []byte("\n"))
 }
 
 // schemaObjectMembers is a schema's properties and required names. It
@@ -303,54 +293,48 @@ func schemaObjectMembers(schema map[string]json.RawMessage) (map[string]json.Raw
 	return properties, required, true
 }
 
-// resolveSchemaBranch decodes a combinator branch and returns it with the
-// bytes it was decoded from. A branch that is a "$ref" into the schema's own
-// $defs or definitions (how generated union schemas spell their branches) is
-// that definition. The name is a JSON Pointer segment, so "~1" decodes to "/"
-// and then "~0" to "~". It reports false for a branch that is not an object
+// resolveSchemaBranch decodes a combinator branch. A branch that is a "$ref"
+// into the schema's own $defs or definitions (how generated union schemas
+// spell their branches) is that definition. The reference is a URI fragment
+// holding a JSON Pointer, so it is percent-decoded and then "~1" becomes "/"
+// and "~0" becomes "~". It reports false for a branch that is not an object
 // and for a $ref it cannot resolve: one with sibling members, one outside the
 // schema or more than one segment deep, one naming no object definition, or
 // one whose definition is itself a $ref.
-func resolveSchemaBranch(
-	definitions map[string]map[string]json.RawMessage, member json.RawMessage,
-) (map[string]json.RawMessage, json.RawMessage, bool) {
+func resolveSchemaBranch(definitions map[string]map[string]json.RawMessage, member json.RawMessage) (map[string]json.RawMessage, bool) {
 	var branch map[string]json.RawMessage
 	if json.Unmarshal(member, &branch) != nil || branch == nil {
-		return nil, nil, false
+		return nil, false
 	}
 	raw, present := branch["$ref"]
 	if !present {
-		return branch, member, true
+		return branch, true
 	}
 	var ref string
 	if len(branch) > 1 || json.Unmarshal(raw, &ref) != nil {
-		return nil, nil, false
+		return nil, false
+	}
+	pointer, err := url.PathUnescape(ref)
+	if err != nil {
+		return nil, false
 	}
 	for _, table := range localDefinitionMembers {
-		segment, local := strings.CutPrefix(ref, "#/"+table+"/")
-		if !local {
+		segment, local := strings.CutPrefix(pointer, "#/"+table+"/")
+		if !local || strings.Contains(segment, "/") {
 			continue
 		}
-		if strings.Contains(segment, "/") {
-			return nil, nil, false
-		}
 		name := strings.ReplaceAll(strings.ReplaceAll(segment, "~1", "/"), "~0", "~")
-		source, defined := definitions[table][name]
 		var definition map[string]json.RawMessage
-		if !defined || json.Unmarshal(source, &definition) != nil || definition == nil {
-			return nil, nil, false
+		if json.Unmarshal(definitions[table][name], &definition) != nil || definition == nil {
+			return nil, false
 		}
 		if _, nested := definition["$ref"]; nested {
-			return nil, nil, false
+			return nil, false
 		}
-		return definition, source, true
+		return definition, true
 	}
-	return nil, nil, false
+	return nil, false
 }
-
-// keptReferencePrefixes are the local JSON Pointers whose targets the fold
-// keeps: the top level's own definitions and properties.
-var keptReferencePrefixes = []string{"#/$defs/", "#/definitions/", "#/properties/"}
 
 // hasReferenceTheFoldCouldBreak reports whether schema has a reference the
 // fold might leave pointing at nothing: a "$ref" other than the root ("#") or
@@ -383,15 +367,6 @@ func hasReferenceTheFoldCouldBreak(schema json.RawMessage) bool {
 			}
 		case []any:
 			pending = append(pending, value...)
-		}
-	}
-	return false
-}
-
-func hasAnthropicSchemaCombinator(schema map[string]json.RawMessage) bool {
-	for _, combinator := range anthropicSchemaCombinators {
-		if _, present := schema[combinator]; present {
-			return true
 		}
 	}
 	return false
