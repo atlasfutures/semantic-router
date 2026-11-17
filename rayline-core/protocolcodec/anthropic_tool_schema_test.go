@@ -78,11 +78,11 @@ func TestAnthropicInputSchemaFoldsTopLevelCombinators(t *testing.T) {
 				"properties": {"code": {"type": "string"}, "completion_summary": {"type": "string"}}}`,
 		},
 		{
-			name: "references to the root, its definitions and its properties stay valid and fold",
+			name: "references to the root and its definitions stay valid and fold",
 			schema: `{"$defs": {"Id": {"type": "string"}}, "properties": {"id": {"$ref": "#/$defs/Id"}},
-				"oneOf": [{"additionalProperties": false, "properties": {"parent": {"$ref": "#"}, "copy": {"$ref": "#/properties/id"}}}]}`,
+				"oneOf": [{"additionalProperties": false, "properties": {"id": {}, "parent": {"$ref": "#"}}}]}`,
 			want: `{"additionalProperties": false, "type": "object", "$defs": {"Id": {"type": "string"}}, "properties": {
-				"id": {"$ref": "#/$defs/Id"}, "parent": {"$ref": "#"}, "copy": {"$ref": "#/properties/id"}}}`,
+				"id": {"$ref": "#/$defs/Id"}, "parent": {"$ref": "#"}}}`,
 		},
 		{
 			name:   "the client's strings keep their bytes",
@@ -206,7 +206,11 @@ func TestAnthropicInputSchemaLeavesSchemasItCannotFold(t *testing.T) {
 		"a top-level allOf": `{"allOf": [{"properties": {"a": {"type": "string"}}}]}`,
 		"root patternProperties when every branch is closed": `{"patternProperties": {"^x-": {}},
 			"oneOf": [{"additionalProperties": false, "properties": {"id": {}}}]}`,
-		"a $ref with an invalid pointer escape": `{"$defs": {"run~2code": {"properties": {"a": {}}}}, "oneOf": [{"$ref": "#/$defs/run~2code"}]}`,
+		"a $ref with an invalid pointer escape":          `{"$defs": {"run~2code": {"properties": {"a": {}}}}, "oneOf": [{"$ref": "#/$defs/run~2code"}]}`,
+		"a root property every closed branch leaves out": `{"properties": {"x": {}}, "oneOf": [{"additionalProperties": false, "properties": {"y": {}}}]}`,
+		"a closed branch requiring a name it does not declare": `{"oneOf": [{"additionalProperties": false, "required": ["x"], "properties": {}},
+			{"additionalProperties": false, "required": ["y"], "properties": {"y": {}}}]}`,
+		"a reference to a root property":        `{"oneOf": [{"properties": {"x": {"type": "string"}, "y": {"$ref": "#/properties/x"}}}]}`,
 		"an empty combinator":                   `{"oneOf": []}`,
 		"a branch with an empty type":           `{"oneOf": [{"type": "", "properties": {"a": {}}}]}`,
 		"a null combinator":                     `{"oneOf": null}`,

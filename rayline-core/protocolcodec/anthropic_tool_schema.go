@@ -25,8 +25,8 @@ var foldableBranchMembers = []string{"type", "properties", "required", "addition
 var localDefinitionMembers = []string{"$defs", "definitions"}
 
 // keptReferencePrefixes are the local JSON Pointers whose targets the fold
-// keeps in place: the top level's own definitions and properties.
-var keptReferencePrefixes = []string{"#/$defs/", "#/definitions/", "#/properties/"}
+// keeps in place and never creates: the top level's own definitions.
+var keptReferencePrefixes = []string{"#/$defs/", "#/definitions/"}
 
 // maxFoldPairs bounds the property-branch pairs a fold weighs, so a schema
 // with very many branches and properties is sent unchanged rather than
@@ -97,7 +97,7 @@ func anthropicInputSchema(schema json.RawMessage) (json.RawMessage, bool) {
 		return schema, false
 	}
 	names := branchPropertyNames(branches)
-	if len(names)*len(branches) > maxFoldPairs {
+	if (len(names)+len(properties))*len(branches) > maxFoldPairs || forbidsRootProperty(branches, properties) {
 		return schema, false
 	}
 	topAdditional := string(bytes.TrimSpace(top["additionalProperties"]))
@@ -208,7 +208,13 @@ func foldableBranches(raw json.RawMessage, definitions map[string]map[string]jso
 		if additional != "" && additional != "true" && additional != "false" {
 			return nil, false
 		}
-		branches = append(branches, schemaBranch{properties: properties, required: required, closed: additional == "false"})
+		closed := additional == "false"
+		// A closed branch that requires a name it does not declare matches
+		// nothing; the fold would let its requirements loosen the others.
+		if closed && slices.ContainsFunc(required, func(name string) bool { _, declared := properties[name]; return !declared }) {
+			return nil, false
+		}
+		branches = append(branches, schemaBranch{properties: properties, required: required, closed: closed})
 	}
 	return branches, true
 }
@@ -225,6 +231,20 @@ func isObjectType(raw json.RawMessage) bool {
 	}
 	var kinds []string
 	return json.Unmarshal(raw, &kinds) == nil && len(kinds) == 1 && kinds[0] == "object"
+}
+
+// forbidsRootProperty reports whether the branches refuse a property the root
+// declares: every branch is closed and none declares it.
+func forbidsRootProperty(branches []schemaBranch, properties map[string]json.RawMessage) bool {
+	if slices.ContainsFunc(branches, func(branch schemaBranch) bool { return !branch.closed }) {
+		return false
+	}
+	for name := range properties {
+		if !slices.ContainsFunc(branches, func(branch schemaBranch) bool { _, declared := branch.properties[name]; return declared }) {
+			return true
+		}
+	}
+	return false
 }
 
 // isFoldableBranch reports whether branch says only foldableBranchMembers,
@@ -373,8 +393,9 @@ func localDefinition(raw json.RawMessage) (map[string]json.RawMessage, bool) {
 
 // hasReferenceTheFoldCouldBreak reports whether schema has a reference the
 // fold might leave pointing at nothing: a "$ref" other than the root ("#") or
-// a pointer under the top level's $defs, definitions or properties (such as
-// one into a removed branch, or to an anchor), or any "$dynamicRef".
+// a pointer under the top level's $defs or definitions (such as one into a
+// removed branch, into properties the fold may create, or to an anchor), or
+// any "$dynamicRef".
 // Anything that only looks like a reference, inside an enum or a default, is
 // counted too; that schema is just sent unchanged.
 func hasReferenceTheFoldCouldBreak(schema json.RawMessage) bool {
