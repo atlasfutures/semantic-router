@@ -2,6 +2,7 @@ package execution
 
 import (
 	"encoding/json"
+	"regexp"
 	"sort"
 	"strconv"
 
@@ -178,7 +179,7 @@ func boundedResponsesItem(path string, item map[string]any) string {
 	}
 	fields, known := boundedResponsesItems[kind]
 	if !known {
-		return path + "/type=" + kind
+		return path + "/type=" + logName(kind)
 	}
 	if failure := membersIn(path, item, fields); failure != "" {
 		return failure
@@ -206,11 +207,23 @@ func membersIn(path string, object map[string]any, allowed nameSet) string {
 	sort.Strings(keys)
 	for _, key := range keys {
 		if !allowed[key] {
-			return path + "/" + key
+			return path + "/" + logName(key)
 		}
 	}
 	return ""
 }
+
+// logName is a member name or type from the request as it may enter the
+// log: an identifier of at most 64 characters, else a fixed placeholder, so
+// a request cannot write arbitrary text into the log.
+func logName(name string) string {
+	if logNamePattern.MatchString(name) {
+		return name
+	}
+	return "<name>"
+}
+
+var logNamePattern = regexp.MustCompile(`^[A-Za-z0-9_.-]{0,64}$`)
 
 func isString(value any) bool {
 	_, ok := value.(string)
@@ -246,7 +259,7 @@ func partsIn(path string, content any, allowed nameSet) string {
 	return eachObject(path, content, func(at string, part map[string]any) string {
 		kind, _ := part["type"].(string)
 		if !allowed[kind] {
-			return at + "/type=" + kind
+			return at + "/type=" + logName(kind)
 		}
 		return membersIn(at, part, boundedPartFields[kind])
 	})
@@ -272,7 +285,7 @@ func toolsOf(tools any, kinds ...string) string {
 	return eachObject("/tools", tools, func(path string, tool map[string]any) string {
 		kind, present := tool["type"].(string)
 		if !present && tool["type"] != nil || !allowed[kind] {
-			return path + "/type=" + kind
+			return path + "/type=" + logName(kind)
 		}
 		if kind != "namespace" {
 			return ""
@@ -280,7 +293,7 @@ func toolsOf(tools any, kinds ...string) string {
 		return eachObject(path+"/tools", tool["tools"], func(path string, member map[string]any) string {
 			if member["type"] != "function" {
 				kind, _ := member["type"].(string)
-				return path + "/type=" + kind
+				return path + "/type=" + logName(kind)
 			}
 			return ""
 		})

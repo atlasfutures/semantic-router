@@ -805,6 +805,8 @@ func TestByteBoundIsBoundedOnlyOverAFullyKnownBody(t *testing.T) {
 		{"kwargs chat_template", chat, `{"model":"m","chat_template_kwargs":{"chat_template":"{{ 'hi ' * 1000000 }}"},"messages":[{"role":"user","content":"hi"}]}`, "/chat_template_kwargs/chat_template"},
 		{"unknown top-level member", chat, `{"model":"m","n_predict":8192,"messages":[{"role":"user","content":"hi"}]}`, "/n_predict"},
 		{"unknown message member", chat, `{"model":"m","messages":[{"role":"user","content":"hi","prefix":true}]}`, "/messages/0/prefix"},
+		{"unknown member named with free text", chat, `{"model":"m","messages":[{"role":"user","content":"hi"}],"my secret: do not log":1}`, "/<name>"},
+		{"unknown long type", responses, `{"model":"m","input":[{"type":"` + strings.Repeat("x", 65) + `"}]}`, "/input/0/type=<name>"},
 		{"unknown content part", chat, `{"model":"m","messages":[{"role":"user","content":[{"type":"text","text":"hi"},{"file_id":"file_1"}]}]}`, "/messages/0/content/1/type="},
 	} {
 		deployment := Deployment{ID: "local", Kind: "local", Protocol: test.protocol, RegistryModel: "z-ai/glm-5.3-flash", ContextWindow: 1_000_000}

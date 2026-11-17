@@ -152,8 +152,10 @@ opt-in. The core reports facts and never picks or ranks a model.
     member is also charged the namespace's name and `__`. The "execution
     context applied" and "decisions lookup refused" log lines name what made
     each estimated fact one in `capacity_estimated_by`: the first such member
-    as a path into the prepared request (`/tools/3/type=web_search`), or the
-    inline image count. It is a log field only and is not sent to Decisions.
+    as a path into the prepared request (`/tools/3/type=web_search`; a name
+    that is not an identifier of at most 64 characters is written `<name>`),
+    or the inline image count. It is a log field only and is not sent to
+    Decisions.
   - **`context_overflow`** (local deployments, `"refuses"` or
     `"truncates"`, default `"truncates"`) states what the runtime does with a
     prompt over its window. On a `"truncates"` deployment (Ollama,
