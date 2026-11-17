@@ -47,8 +47,10 @@ var (
 		"thinking", "output_config", "cache_control", "context_management", "diagnostics")
 	boundedMessagesDiagnostics = setOf("previous_message_id")
 	// Claude Code sends a mid-conversation system message with its own
-	// output_config (effort), a setting like the top-level one.
+	// output_config (effort), a setting like the top-level one. It is
+	// bounded only in that shape: on a system message, holding effort only.
 	boundedMessagesMessageFields = setOf("role", "content", "output_config")
+	boundedMessageOutputConfig   = setOf("effort")
 	boundedMessagesParts         = setOf("text", "tool_use", "tool_result", "thinking", "redacted_thinking")
 
 	boundedResponsesFields = setOf("model", "input", "instructions", "tools", "tool_choice",
@@ -134,6 +136,16 @@ func unboundedMember(protocol llmprotocol.WireFormat, body []byte) string {
 				return eachObject("/messages", top["messages"], func(path string, message map[string]any) string {
 					return firstOf(
 						func() string { return membersIn(path, message, boundedMessagesMessageFields) },
+						func() string {
+							if message["output_config"] == nil {
+								return ""
+							}
+							config, isObject := message["output_config"].(map[string]any)
+							if message["role"] != "system" || !isObject {
+								return path + "/output_config"
+							}
+							return membersIn(path+"/output_config", config, boundedMessageOutputConfig)
+						},
 						func() string { return partsIn(path+"/content", message["content"], boundedMessagesParts) },
 						func() string {
 							return eachPart(path+"/content", message["content"], func(path string, part map[string]any) string {
@@ -162,7 +174,7 @@ func unboundedMember(protocol llmprotocol.WireFormat, body []byte) string {
 				return eachObject("/input", top["input"], boundedResponsesItem)
 			})
 	}
-	return "protocol " + string(protocol)
+	return "protocol " + logName(string(protocol))
 }
 
 // firstOf runs checks in order and returns the first failure.
@@ -220,6 +232,9 @@ func membersIn(path string, object map[string]any, allowed nameSet) string {
 // log: an identifier of at most 64 characters, else a fixed placeholder, so
 // a request cannot write arbitrary text into the log.
 func logName(name string) string {
+	if name == "" {
+		return "<none>"
+	}
 	if logNamePattern.MatchString(name) {
 		return name
 	}
@@ -279,7 +294,9 @@ func eachPart(path string, content any, ok func(string, map[string]any) string) 
 // toolsOf checks that tools is absent or a list of tools of the given types
 // ("" for a tool without one). A namespace may hold only function tools: a
 // runtime flattens it into one function per member (namespaceFlatteningBytes
-// charges what that adds).
+// charges what that adds). As for a top-level tool, the other members of a
+// tool are not checked: they render as part of the tool's JSON, which the
+// bound counts.
 func toolsOf(tools any, kinds ...string) string {
 	if tools == nil {
 		return ""
