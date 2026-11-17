@@ -2,6 +2,8 @@ package execution
 
 import (
 	"encoding/json"
+	"sort"
+	"strconv"
 
 	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
 )
@@ -12,7 +14,8 @@ import (
 // bytes and the template margin. Anything else (media, content the body only
 // references, a template or role prefixes of the request's own, a
 // runtime-specific member) may make the runtime's prompt larger than the
-// bound, so the fact stays caller_estimated. Unknown fails toward estimated.
+// bound, so the fact stays caller_estimated, and unboundedMember names the
+// first such member for the log. Unknown fails toward estimated.
 // The allowlist does not guard against a template that renders an allowed
 // member more than once; that assumption is stated in README.md.
 
@@ -78,70 +81,135 @@ var (
 	}
 )
 
-// boundedBody reports whether the byte bound over a prepared body for
-// protocol is an upper bound on the runtime's count.
-func boundedBody(protocol llmprotocol.WireFormat, body []byte) bool {
+// unboundedMember is the first part of a prepared body for protocol that
+// keeps the byte bound from being an upper bound on the runtime's count, as a
+// path into the body ("/tools/4/type=web_search"), or "" when there is none.
+func unboundedMember(protocol llmprotocol.WireFormat, body []byte) string {
 	var top map[string]any
 	if json.Unmarshal(body, &top) != nil {
-		return false
+		return "body is not JSON"
 	}
 	switch protocol {
 	case llmprotocol.OpenAIChatV1:
-		kwargs, _ := top["chat_template_kwargs"].(map[string]any)
-		return membersIn(top, boundedChatFields) &&
-			(top["chat_template_kwargs"] == nil || kwargs != nil && membersIn(kwargs, boundedChatTemplateKwargs)) &&
-			toolsOf(top["tools"], "function") &&
-			eachObject(top["messages"], func(message map[string]any) bool {
-				return membersIn(message, boundedChatMessageFields) && partsIn(message["content"], boundedTextParts)
+		return firstOf(
+			func() string { return membersIn("", top, boundedChatFields) },
+			func() string {
+				kwargs, isObject := top["chat_template_kwargs"].(map[string]any)
+				if top["chat_template_kwargs"] == nil {
+					return ""
+				}
+				if !isObject {
+					return "/chat_template_kwargs"
+				}
+				return membersIn("/chat_template_kwargs", kwargs, boundedChatTemplateKwargs)
+			},
+			func() string { return toolsOf(top["tools"], "function") },
+			func() string {
+				return eachObject("/messages", top["messages"], func(path string, message map[string]any) string {
+					return firstOf(
+						func() string { return membersIn(path, message, boundedChatMessageFields) },
+						func() string { return partsIn(path+"/content", message["content"], boundedTextParts) })
+				})
 			})
 	case llmprotocol.AnthropicMessagesV1:
-		diagnostics, _ := top["diagnostics"].(map[string]any)
-		return membersIn(top, boundedMessagesFields) &&
-			(top["diagnostics"] == nil || diagnostics != nil && membersIn(diagnostics, boundedMessagesDiagnostics)) &&
-			toolsOf(top["tools"], "", "custom") &&
-			partsIn(top["system"], boundedTextParts) &&
-			eachObject(top["messages"], func(message map[string]any) bool {
-				return membersIn(message, setOf("role", "content")) && partsIn(message["content"], boundedMessagesParts) &&
-					eachPart(message["content"], func(part map[string]any) bool {
-						return part["type"] != "tool_result" || partsIn(part["content"], boundedTextParts)
-					})
+		return firstOf(
+			func() string { return membersIn("", top, boundedMessagesFields) },
+			func() string {
+				diagnostics, isObject := top["diagnostics"].(map[string]any)
+				if top["diagnostics"] == nil {
+					return ""
+				}
+				if !isObject {
+					return "/diagnostics"
+				}
+				return membersIn("/diagnostics", diagnostics, boundedMessagesDiagnostics)
+			},
+			func() string { return toolsOf(top["tools"], "", "custom") },
+			func() string { return partsIn("/system", top["system"], boundedTextParts) },
+			func() string {
+				return eachObject("/messages", top["messages"], func(path string, message map[string]any) string {
+					return firstOf(
+						func() string { return membersIn(path, message, setOf("role", "content")) },
+						func() string { return partsIn(path+"/content", message["content"], boundedMessagesParts) },
+						func() string {
+							return eachPart(path+"/content", message["content"], func(path string, part map[string]any) string {
+								if part["type"] != "tool_result" {
+									return ""
+								}
+								return partsIn(path+"/content", part["content"], boundedTextParts)
+							})
+						})
+				})
 			})
 	case llmprotocol.OpenAIResponsesV1:
-		return membersIn(top, boundedResponsesFields) &&
-			(top["instructions"] == nil || isString(top["instructions"])) &&
-			toolsOf(top["tools"], "function", "custom") &&
-			(isString(top["input"]) || eachObject(top["input"], boundedResponsesItem))
+		return firstOf(
+			func() string { return membersIn("", top, boundedResponsesFields) },
+			func() string {
+				if top["instructions"] == nil || isString(top["instructions"]) {
+					return ""
+				}
+				return "/instructions"
+			},
+			func() string { return toolsOf(top["tools"], "function", "custom") },
+			func() string {
+				if isString(top["input"]) {
+					return ""
+				}
+				return eachObject("/input", top["input"], boundedResponsesItem)
+			})
 	}
-	return false
+	return "protocol " + string(protocol)
 }
 
-func boundedResponsesItem(item map[string]any) bool {
+// firstOf runs checks in order and returns the first failure.
+func firstOf(checks ...func() string) string {
+	for _, check := range checks {
+		if failure := check(); failure != "" {
+			return failure
+		}
+	}
+	return ""
+}
+
+func boundedResponsesItem(path string, item map[string]any) string {
 	kind, _ := item["type"].(string)
 	if kind == "" && item["role"] != nil {
 		kind = "message"
 	}
 	fields, known := boundedResponsesItems[kind]
-	if !known || !membersIn(item, fields) {
-		return false
+	if !known {
+		return path + "/type=" + kind
+	}
+	if failure := membersIn(path, item, fields); failure != "" {
+		return failure
 	}
 	switch kind {
 	case "message":
-		return partsIn(item["content"], boundedResponsesParts)
+		return partsIn(path+"/content", item["content"], boundedResponsesParts)
 	case "function_call_output", "custom_tool_call_output":
-		return partsIn(item["output"], boundedResponsesParts)
+		return partsIn(path+"/output", item["output"], boundedResponsesParts)
 	case "reasoning":
-		return partsIn(item["summary"], setOf("summary_text")) && partsIn(item["content"], setOf("reasoning_text"))
+		return firstOf(
+			func() string { return partsIn(path+"/summary", item["summary"], setOf("summary_text")) },
+			func() string { return partsIn(path+"/content", item["content"], setOf("reasoning_text")) })
 	}
-	return true
+	return ""
 }
 
-func membersIn(object map[string]any, allowed nameSet) bool {
+// membersIn is the path of a member of object at path that is not allowed.
+// Members are checked in sorted order so the reported one is stable.
+func membersIn(path string, object map[string]any, allowed nameSet) string {
+	keys := make([]string, 0, len(object))
 	for key := range object {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
 		if !allowed[key] {
-			return false
+			return path + "/" + key
 		}
 	}
-	return true
+	return ""
 }
 
 func isString(value any) bool {
@@ -149,53 +217,61 @@ func isString(value any) bool {
 	return ok
 }
 
-// eachObject reports whether value is a list of objects that all satisfy ok.
-func eachObject(value any, ok func(map[string]any) bool) bool {
+// eachObject is the first failure of ok over a list of objects at path, or
+// path itself when value is not such a list.
+func eachObject(path string, value any, ok func(string, map[string]any) string) string {
 	list, isList := value.([]any)
 	if !isList {
-		return false
+		return path
 	}
-	for _, entry := range list {
+	for index, entry := range list {
+		at := path + "/" + strconv.Itoa(index)
 		object, isObject := entry.(map[string]any)
-		if !isObject || !ok(object) {
-			return false
+		if !isObject {
+			return at
+		}
+		if failure := ok(at, object); failure != "" {
+			return failure
 		}
 	}
-	return true
+	return ""
 }
 
-// partsIn reports whether content is absent, a string, or a list of parts
-// whose types are all allowed.
-func partsIn(content any, allowed nameSet) bool {
+// partsIn checks that content is absent, a string, or a list of parts whose
+// types and members are all allowed.
+func partsIn(path string, content any, allowed nameSet) string {
 	if content == nil || isString(content) {
-		return true
+		return ""
 	}
-	return eachObject(content, func(part map[string]any) bool {
+	return eachObject(path, content, func(at string, part map[string]any) string {
 		kind, _ := part["type"].(string)
-		return allowed[kind] && membersIn(part, boundedPartFields[kind])
+		if !allowed[kind] {
+			return at + "/type=" + kind
+		}
+		return membersIn(at, part, boundedPartFields[kind])
 	})
 }
 
 // eachPart applies ok to every part of a list content; a string is fine.
-func eachPart(content any, ok func(map[string]any) bool) bool {
+func eachPart(path string, content any, ok func(string, map[string]any) string) string {
 	if content == nil || isString(content) {
-		return true
+		return ""
 	}
-	return eachObject(content, ok)
+	return eachObject(path, content, ok)
 }
 
-// toolsOf reports whether tools is absent or a list of tools of the given
-// types ("" for a tool without one).
-func toolsOf(tools any, kinds ...string) bool {
+// toolsOf checks that tools is absent or a list of tools of the given types
+// ("" for a tool without one).
+func toolsOf(tools any, kinds ...string) string {
 	if tools == nil {
-		return true
+		return ""
 	}
 	allowed := setOf(kinds...)
-	return eachObject(tools, func(tool map[string]any) bool {
+	return eachObject("/tools", tools, func(path string, tool map[string]any) string {
 		kind, present := tool["type"].(string)
-		if !present && tool["type"] != nil {
-			return false
+		if !present && tool["type"] != nil || !allowed[kind] {
+			return path + "/type=" + kind
 		}
-		return allowed[kind]
+		return ""
 	})
 }

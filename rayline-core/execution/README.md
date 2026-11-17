@@ -146,7 +146,11 @@ opt-in. The core reports facts and never picks or ranks a model.
     Media, content the body only references (`file_id`, `item_reference`,
     `previous_response_id`), a request's own `chat_template` or
     `role_mapping`, a server tool and any unknown or runtime-specific member
-    fall to `caller_estimated`.
+    fall to `caller_estimated`. The "execution
+    context applied" log line names what made each estimated fact one in
+    `capacity_estimated_by`: the first such member as a path into the
+    prepared request (`/tools/3/type=web_search`), or the inline image count.
+    It is a log field only and is not sent to Decisions.
   - **`context_overflow`** (local deployments, `"refuses"` or
     `"truncates"`, default `"truncates"`) states what the runtime does with a
     prompt over its window. On a `"truncates"` deployment (Ollama,

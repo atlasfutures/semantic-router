@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -175,7 +176,7 @@ func TestByteBoundCoversTemplateReserialization(t *testing.T) {
 
 // localFact sizes a local target's prepared body as measureCapacity does.
 func localFact(deployment Deployment, body []byte, output int64) *CapacityFact {
-	prompt, provenance, units := localPromptSize(deployment, body)
+	prompt, provenance, units, _ := localPromptSize(deployment, body)
 	return sizedCapacityFact(deployment, prompt, provenance, units, output)
 }
 
@@ -766,48 +767,136 @@ func TestByteBoundIsBoundedOnlyOverAFullyKnownBody(t *testing.T) {
 		name     string
 		protocol llmprotocol.WireFormat
 		body     string
-		bounded  bool
+		// estimatedBy is what made the size estimated; "" means bounded.
+		estimatedBy string
 	}{
-		{"chat text and tools", chat, `{"model":"m","stream":true,"max_tokens":64,"temperature":0.2,"chat_template_kwargs":{"enable_thinking":false},"tools":[{"type":"function","function":{"name":"f","parameters":{}}}],"messages":[{"role":"system","content":"s"},{"role":"user","content":[{"type":"text","text":"hi"}]},{"role":"assistant","content":null,"tool_calls":[{"id":"c","type":"function","function":{"name":"f","arguments":"{}"}}]},{"role":"tool","tool_call_id":"c","content":"ok"}]}`, true},
-		{"chat quoted media text", chat, `{"model":"m","messages":[{"role":"user","content":"{\"type\":\"image_url\",\"image_url\":{}}"}]}`, true},
-		{"messages text, tools and thinking", messages, `{"model":"m","max_tokens":64,"system":[{"type":"text","text":"s","cache_control":{"type":"ephemeral"}}],"thinking":{"type":"adaptive"},"output_config":{"effort":"high"},"tools":[{"name":"f","input_schema":{}}],"messages":[{"role":"user","content":"hi"},{"role":"assistant","content":[{"type":"thinking","thinking":"t","signature":"x"},{"type":"tool_use","id":"u","name":"f","input":{},"caller":{"type":"direct"}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"u","content":[{"type":"text","text":"ok"}]}]}]}`, true},
-		{"responses text and tools", responses, `{"model":"m","instructions":"s","reasoning":{"effort":"high"},"tools":[{"type":"function","name":"f","parameters":{}},{"type":"custom","name":"g"}],"input":[{"role":"user","content":[{"type":"input_text","text":"hi"}]},{"type":"reasoning","summary":[]},{"type":"function_call","call_id":"c","name":"f","arguments":"{}"},{"type":"function_call_output","call_id":"c","output":"ok"}]}`, true},
-		{"responses string input", responses, `{"model":"m","input":"hi"}`, true},
-		{"chat translated from responses", chat, `{"model":"m","store":false,"n":1,"prompt_cache_retention":"24h","messages":[{"role":"user","id":"msg_1","content":"hi"}]}`, true},
-		{"messages caching and context management", messages, `{"model":"m","max_tokens":64,"cache_control":{"type":"ephemeral"},"context_management":{"edits":[]},"messages":[{"role":"user","content":"hi"}]}`, true},
-		{"responses codex members", responses, `{"model":"m","input":"hi","stream":true,"stream_options":{"include_obfuscation":false},"client_metadata":{"session_id":"s"}}`, true},
-		{"messages diagnostics", messages, `{"model":"m","max_tokens":64,"diagnostics":{"previous_message_id":null},"messages":[{"role":"user","content":"hi"}]}`, true},
-		{"responses cache retention", responses, `{"model":"m","prompt_cache_retention":"24h","input":[{"type":"reasoning","id":"rs","summary":[{"type":"summary_text","text":"t"}],"encrypted_content":"x"}]}`, true},
-		{"call item carrying content", responses, `{"model":"m","input":[{"type":"custom_tool_call","call_id":"c","name":"f","input":"","role":"user","content":[{"type":"input_image","image_url":"http://127.0.0.1/a.png"}]}]}`, false},
-		{"text part carrying an image", responses, `{"model":"m","input":[{"type":"function_call_output","call_id":"c","output":[{"type":"input_text","text":"hi","uuid":"a","image_url":"https://example.com/a.png"}]}]}`, false},
-		{"chat text part carrying an image", chat, `{"model":"m","messages":[{"role":"user","content":[{"type":"text","text":"hi","image_url":{"url":"https://example.com/a.png"}}]}]}`, false},
-		{"unknown diagnostics member", messages, `{"model":"m","diagnostics":{"x":1},"messages":[{"role":"user","content":"hi"}]}`, false},
+		{"chat text and tools", chat, `{"model":"m","stream":true,"max_tokens":64,"temperature":0.2,"chat_template_kwargs":{"enable_thinking":false},"tools":[{"type":"function","function":{"name":"f","parameters":{}}}],"messages":[{"role":"system","content":"s"},{"role":"user","content":[{"type":"text","text":"hi"}]},{"role":"assistant","content":null,"tool_calls":[{"id":"c","type":"function","function":{"name":"f","arguments":"{}"}}]},{"role":"tool","tool_call_id":"c","content":"ok"}]}`, ""},
+		{"chat quoted media text", chat, `{"model":"m","messages":[{"role":"user","content":"{\"type\":\"image_url\",\"image_url\":{}}"}]}`, ""},
+		{"messages text, tools and thinking", messages, `{"model":"m","max_tokens":64,"system":[{"type":"text","text":"s","cache_control":{"type":"ephemeral"}}],"thinking":{"type":"adaptive"},"output_config":{"effort":"high"},"tools":[{"name":"f","input_schema":{}}],"messages":[{"role":"user","content":"hi"},{"role":"assistant","content":[{"type":"thinking","thinking":"t","signature":"x"},{"type":"tool_use","id":"u","name":"f","input":{},"caller":{"type":"direct"}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"u","content":[{"type":"text","text":"ok"}]}]}]}`, ""},
+		{"responses text and tools", responses, `{"model":"m","instructions":"s","reasoning":{"effort":"high"},"tools":[{"type":"function","name":"f","parameters":{}},{"type":"custom","name":"g"}],"input":[{"role":"user","content":[{"type":"input_text","text":"hi"}]},{"type":"reasoning","summary":[]},{"type":"function_call","call_id":"c","name":"f","arguments":"{}"},{"type":"function_call_output","call_id":"c","output":"ok"}]}`, ""},
+		{"responses string input", responses, `{"model":"m","input":"hi"}`, ""},
+		{"chat translated from responses", chat, `{"model":"m","store":false,"n":1,"prompt_cache_retention":"24h","messages":[{"role":"user","id":"msg_1","content":"hi"}]}`, ""},
+		{"messages caching and context management", messages, `{"model":"m","max_tokens":64,"cache_control":{"type":"ephemeral"},"context_management":{"edits":[]},"messages":[{"role":"user","content":"hi"}]}`, ""},
+		{"responses codex members", responses, `{"model":"m","input":"hi","stream":true,"stream_options":{"include_obfuscation":false},"client_metadata":{"session_id":"s"}}`, ""},
+		{"messages diagnostics", messages, `{"model":"m","max_tokens":64,"diagnostics":{"previous_message_id":null},"messages":[{"role":"user","content":"hi"}]}`, ""},
+		{"responses cache retention", responses, `{"model":"m","prompt_cache_retention":"24h","input":[{"type":"reasoning","id":"rs","summary":[{"type":"summary_text","text":"t"}],"encrypted_content":"x"}]}`, ""},
+		{"call item carrying content", responses, `{"model":"m","input":[{"type":"custom_tool_call","call_id":"c","name":"f","input":"","role":"user","content":[{"type":"input_image","image_url":"http://127.0.0.1/a.png"}]}]}`, "/input/0/content"},
+		{"text part carrying an image", responses, `{"model":"m","input":[{"type":"function_call_output","call_id":"c","output":[{"type":"input_text","text":"hi","uuid":"a","image_url":"https://example.com/a.png"}]}]}`, "/input/0/output/0/image_url"},
+		{"chat text part carrying an image", chat, `{"model":"m","messages":[{"role":"user","content":[{"type":"text","text":"hi","image_url":{"url":"https://example.com/a.png"}}]}]}`, "/messages/0/content/0/image_url"},
+		{"unknown diagnostics member", messages, `{"model":"m","diagnostics":{"x":1},"messages":[{"role":"user","content":"hi"}]}`, "/diagnostics/x"},
 		// vLLM flattens a namespace, repeating its name in every function's.
-		{"namespace tools", responses, `{"model":"m","input":"hi","tools":[{"type":"namespace","name":"ns","tools":[{"type":"function","name":"f","parameters":{}}]}]}`, false},
+		{"namespace tools", responses, `{"model":"m","input":"hi","tools":[{"type":"namespace","name":"ns","tools":[{"type":"function","name":"f","parameters":{}}]}]}`, "/tools/0/type=namespace"},
+		{"responses server tool", responses, `{"model":"m","input":"hi","tools":[{"type":"web_search"}]}`, "/tools/0/type=web_search"},
 
-		{"unknown protocol", "", `{"model":"m","messages":[{"role":"user","content":"hi"}]}`, false},
-		{"not json", chat, `not json`, false},
-		{"inline image charged", chat, `{"model":"m","messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"data:image/png;base64,` + blob + `"}}]}]}`, false},
-		{"remote image", chat, `{"model":"m","messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"https://example.com/a.png"}}]}]}`, false},
-		{"audio", chat, `{"model":"m","messages":[{"role":"user","content":[{"type":"input_audio","input_audio":{"data":"AAAA","format":"wav"}}]}]}`, false},
-		{"tool result image", messages, `{"model":"m","messages":[{"role":"user","content":[{"type":"tool_result","tool_use_id":"t","content":[{"type":"image","source":{"type":"url","url":"https://example.com/a.png"}}]}]}]}`, false},
-		{"document", messages, `{"model":"m","messages":[{"role":"user","content":[{"type":"document","source":{"type":"url","url":"https://example.com/a.pdf"}}]}]}`, false},
-		{"server tool", messages, `{"model":"m","tools":[{"type":"web_search_20250305","name":"web_search"}],"messages":[{"role":"user","content":"hi"}]}`, false},
-		{"responses image", responses, `{"model":"m","input":[{"role":"user","content":[{"type":"input_image","image_url":"https://example.com/a.png"}]}]}`, false},
-		{"item reference", responses, `{"model":"m","input":[{"type":"item_reference","id":"msg_1"}]}`, false},
-		{"image history", responses, `{"model":"m","input":[{"type":"image_generation_call","id":"ig_1","status":"completed","result":null}]}`, false},
-		{"stored response", responses, `{"model":"m","previous_response_id":"resp_1","input":"hi"}`, false},
-		{"chat_template", chat, `{"model":"m","chat_template":"{{ messages[0]['content'] * 10000 }}","messages":[{"role":"user","content":"hi"}]}`, false},
-		{"kwargs chat_template", chat, `{"model":"m","chat_template_kwargs":{"chat_template":"{{ 'hi ' * 1000000 }}"},"messages":[{"role":"user","content":"hi"}]}`, false},
-		{"unknown top-level member", chat, `{"model":"m","n_predict":8192,"messages":[{"role":"user","content":"hi"}]}`, false},
-		{"unknown message member", chat, `{"model":"m","messages":[{"role":"user","content":"hi","prefix":true}]}`, false},
-		{"unknown content part", chat, `{"model":"m","messages":[{"role":"user","content":[{"type":"text","text":"hi"},{"file_id":"file_1"}]}]}`, false},
+		{"unknown protocol", "", `{"model":"m","messages":[{"role":"user","content":"hi"}]}`, "protocol "},
+		{"not json", chat, `not json`, "body is not JSON"},
+		{"inline image charged", chat, `{"model":"m","messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"data:image/png;base64,` + blob + `"}}]}]}`, "inline images: 1"},
+		{"remote image", chat, `{"model":"m","messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"https://example.com/a.png"}}]}]}`, "/messages/0/content/0/type=image_url"},
+		{"audio", chat, `{"model":"m","messages":[{"role":"user","content":[{"type":"input_audio","input_audio":{"data":"AAAA","format":"wav"}}]}]}`, "/messages/0/content/0/type=input_audio"},
+		{"tool result image", messages, `{"model":"m","messages":[{"role":"user","content":[{"type":"tool_result","tool_use_id":"t","content":[{"type":"image","source":{"type":"url","url":"https://example.com/a.png"}}]}]}]}`, "/messages/0/content/0/content/0/type=image"},
+		{"document", messages, `{"model":"m","messages":[{"role":"user","content":[{"type":"document","source":{"type":"url","url":"https://example.com/a.pdf"}}]}]}`, "/messages/0/content/0/type=document"},
+		{"server tool", messages, `{"model":"m","tools":[{"type":"web_search_20250305","name":"web_search"}],"messages":[{"role":"user","content":"hi"}]}`, "/tools/0/type=web_search_20250305"},
+		{"responses image", responses, `{"model":"m","input":[{"role":"user","content":[{"type":"input_image","image_url":"https://example.com/a.png"}]}]}`, "/input/0/content/0/type=input_image"},
+		{"item reference", responses, `{"model":"m","input":[{"type":"item_reference","id":"msg_1"}]}`, "/input/0/type=item_reference"},
+		{"image history", responses, `{"model":"m","input":[{"type":"image_generation_call","id":"ig_1","status":"completed","result":null}]}`, "/input/0/type=image_generation_call"},
+		{"stored response", responses, `{"model":"m","previous_response_id":"resp_1","input":"hi"}`, "/previous_response_id"},
+		{"chat_template", chat, `{"model":"m","chat_template":"{{ messages[0]['content'] * 10000 }}","messages":[{"role":"user","content":"hi"}]}`, "/chat_template"},
+		{"kwargs chat_template", chat, `{"model":"m","chat_template_kwargs":{"chat_template":"{{ 'hi ' * 1000000 }}"},"messages":[{"role":"user","content":"hi"}]}`, "/chat_template_kwargs/chat_template"},
+		{"unknown top-level member", chat, `{"model":"m","n_predict":8192,"messages":[{"role":"user","content":"hi"}]}`, "/n_predict"},
+		{"unknown message member", chat, `{"model":"m","messages":[{"role":"user","content":"hi","prefix":true}]}`, "/messages/0/prefix"},
+		{"unknown content part", chat, `{"model":"m","messages":[{"role":"user","content":[{"type":"text","text":"hi"},{"file_id":"file_1"}]}]}`, "/messages/0/content/1/type="},
 	} {
 		deployment := Deployment{ID: "local", Kind: "local", Protocol: test.protocol, RegistryModel: "z-ai/glm-5.3-flash", ContextWindow: 1_000_000}
-		want := map[bool]string{true: capacityProvenanceBounded, false: capacityProvenanceEstimated}[test.bounded]
-		if _, provenance, _ := localPromptSize(deployment, []byte(test.body)); provenance != want {
-			t.Errorf("%s: %s, want %s", test.name, provenance, want)
+		want := map[bool]string{true: capacityProvenanceBounded, false: capacityProvenanceEstimated}[test.estimatedBy == ""]
+		if _, provenance, _, estimatedBy := localPromptSize(deployment, []byte(test.body)); provenance != want || estimatedBy != test.estimatedBy {
+			t.Errorf("%s: %s by %q, want %s by %q", test.name, provenance, estimatedBy, want, test.estimatedBy)
 		}
+	}
+}
+
+// codexTurn is a Codex CLI Responses turn (testdata/capacity/
+// codex_responses_turn.json: captured against a local stub, with its
+// instructions shortened and its ids replaced). It declares Codex's sub-agent
+// functions as a namespace and a web_search server tool.
+func codexTurn(t *testing.T) map[string]any {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("testdata", "capacity", "codex_responses_turn.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var turn map[string]any
+	if err := json.Unmarshal(raw, &turn); err != nil {
+		t.Fatal(err)
+	}
+	return turn
+}
+
+// TestCodexTurnIsSizedBoundedAndAnEstimateLogsWhy runs the first Codex turn
+// through the core to a local Responses deployment: the runtime gets no server
+// tool, and the log line names what keeps the fact caller_estimated.
+func TestCodexTurnIsSizedBoundedAndAnEstimateLogsWhy(t *testing.T) {
+	turn := codexTurn(t)
+	turn["model"] = "arc-1.0"
+	turn["input"] = turn["input"].([]any)[:4]
+	withImage := map[string]any{}
+	for key, value := range turn {
+		withImage[key] = value
+	}
+	input := append([]any(nil), turn["input"].([]any)...)
+	user := map[string]any{}
+	for key, value := range input[3].(map[string]any) {
+		user[key] = value
+	}
+	user["content"] = append(append([]any(nil), user["content"].([]any)...), map[string]any{"type": "input_image", "image_url": "https://example.com/a.png"})
+	input[3] = user
+	withImage["input"] = input
+
+	for _, tc := range []struct {
+		name        string
+		body        map[string]any
+		provenance  string
+		estimatedBy string
+	}{
+		{"codex turn", turn, capacityProvenanceEstimated, "/tools/4/type=namespace"},
+		{"codex turn with a remote image", withImage, capacityProvenanceEstimated, "/tools/4/type=namespace"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var logs strings.Builder
+			previous := slog.Default()
+			slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+			defer slog.SetDefault(previous)
+			local := &upstreamFixture{}
+			config := capacityEstimateConfig(t, chatUpstream(t, local, false).URL, "http://127.0.0.1:9/v1/chat/completions")
+			config.Deployments, config.Actions = config.Deployments[:1], config.Actions[:1]
+			config.Deployments[0].InputModalities = []string{"text", "image"}
+			fixture := &v2Decisions{choose: fitPolicy}
+			_, httpServer := v2Server(t, onProtocol(t, config, llmprotocol.OpenAIResponsesV1), fixture)
+			executeHTTP(t, httpServer.URL, "/v1/responses", mustJSON(tc.body), "codex")
+			lookups := fixture.snapshot()
+			if len(lookups) != 1 || len(lookups[0].Execution.Targets) != 1 {
+				t.Fatalf("lookups %d", len(lookups))
+			}
+			if fact := lookups[0].Execution.Targets[0].Capacity; fact == nil || fact.Provenance != tc.provenance || !fact.Fits {
+				t.Fatalf("fact %s", mustJSON(fact))
+			}
+			if local.count() != 1 || strings.Contains(mustJSON(local.bodies[0]["tools"]), "web_search") {
+				t.Fatalf("local runtime got %d requests, tools %s", local.count(), mustJSON(local.bodies))
+			}
+			var applied map[string]any
+			for _, line := range strings.Split(strings.TrimSpace(logs.String()), "\n") {
+				var entry map[string]any
+				if json.Unmarshal([]byte(line), &entry) == nil && entry["msg"] == "execution context applied" {
+					applied = entry
+				}
+			}
+			want := any(nil)
+			if tc.estimatedBy != "" {
+				want = map[string]any{localActionID: tc.estimatedBy}
+			}
+			if applied == nil || mustJSON(applied["capacity_estimated_by"]) != mustJSON(want) {
+				t.Fatalf("execution context applied: %v", applied)
+			}
+		})
 	}
 }
 
@@ -833,7 +922,7 @@ func TestByteBoundCoversUnicodeNormalization(t *testing.T) {
 			t.Fatal(err)
 		}
 		deployment := Deployment{ID: "local", Kind: "local", Protocol: llmprotocol.OpenAIChatV1, RegistryModel: "example/other", ContextWindow: 8192}
-		prompt, provenance, _ := localPromptSize(deployment, body)
+		prompt, provenance, _, _ := localPromptSize(deployment, body)
 		if provenance == capacityProvenanceBounded && prompt < int64(test.bytes) {
 			t.Errorf("%s: bound %d below the normalized %d bytes", name, prompt, test.bytes)
 		}

@@ -60,14 +60,18 @@ func (estimate *CapacityEstimate) validate() error {
 }
 
 // localPromptSize bounds a prepared request by bytes for a local target
-// without a registered counter.
-func localPromptSize(deployment Deployment, body []byte) (int64, string, string) {
-	units := deployment.TokenUnits
+// without a registered counter. An estimated size comes with what made it
+// one: the charged images, or the first member unboundedMember reports.
+func localPromptSize(deployment Deployment, body []byte) (tokens int64, provenance, units, estimatedBy string) {
+	units = deployment.TokenUnits
 	tokens, images := byteBoundTokens(body, deployment.CapacityEstimate)
-	if images > 0 || !boundedBody(deployment.Protocol, body) {
-		return tokens, capacityProvenanceEstimated, units
+	if images > 0 {
+		return tokens, capacityProvenanceEstimated, units, fmt.Sprintf("inline images: %d", images)
 	}
-	return tokens, capacityProvenanceBounded, units
+	if member := unboundedMember(deployment.Protocol, body); member != "" {
+		return tokens, capacityProvenanceEstimated, units, member
+	}
+	return tokens, capacityProvenanceBounded, units, ""
 }
 
 func sizedCapacityFact(deployment Deployment, prompt int64, provenance, units string, outputLimit int64) *CapacityFact {
