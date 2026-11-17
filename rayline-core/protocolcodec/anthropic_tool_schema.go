@@ -214,9 +214,13 @@ func foldableBranches(combinator string, raw json.RawMessage, definitions map[st
 			return nil, false
 		}
 		closed := additional == "false"
-		// A closed branch that requires a name it does not declare matches
-		// nothing; the fold would let its requirements loosen the others.
-		if closed && slices.ContainsFunc(required, func(name string) bool { _, declared := properties[name]; return !declared }) {
+		// A branch that requires a name it forbids (declared as false, or
+		// left out of a closed branch) matches nothing; the fold would let
+		// its requirements loosen the others.
+		if slices.ContainsFunc(required, func(name string) bool {
+			property, declared := properties[name]
+			return (closed && !declared) || string(bytes.TrimSpace(property)) == "false"
+		}) {
 			return nil, false
 		}
 		branches = append(branches, schemaBranch{properties: properties, required: required, closed: closed})
@@ -363,11 +367,15 @@ func encodeSchemaJSON(value any) json.RawMessage {
 
 // schemaObjectMembers is a schema's properties and required names. It
 // reports false when either is present and not the shape JSON Schema gives
-// it.
+// it, including a required name listed twice.
 func schemaObjectMembers(schema map[string]json.RawMessage) (map[string]json.RawMessage, []string, bool) {
 	var properties map[string]json.RawMessage
 	var required []string
 	if !decodeSchemaMember(schema, "properties", &properties) || !decodeSchemaMember(schema, "required", &required) {
+		return nil, nil, false
+	}
+	// JSON Schema requires the names to be unique.
+	if len(slices.Compact(slices.Sorted(slices.Values(required)))) != len(required) {
 		return nil, nil, false
 	}
 	return properties, required, true
