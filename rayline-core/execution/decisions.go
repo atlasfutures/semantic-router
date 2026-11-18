@@ -406,8 +406,8 @@ func (provider *HTTPDecisions) Decide(ctx context.Context, input DecisionInput) 
 	}
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Authorization", "Bearer "+os.Getenv(provider.config.Decisions.AuthEnv))
-	request.Header.Set("X-Conversation-Id", fingerprint([]byte(input.SessionID)))
-	request.Header.Set("X-Rayline-Branch-Id", fingerprint([]byte(input.BranchID)))
+	request.Header.Set("X-Conversation-Id", input.SessionID)
+	request.Header.Set("X-Rayline-Branch-Id", input.BranchID)
 	request.Header.Set("X-Rayline-Wire-Format", string(input.Format))
 	if provider.config.Decisions.CellTag != "" {
 		request.Header.Set("X-Rayline-Cell", provider.config.Decisions.CellTag)

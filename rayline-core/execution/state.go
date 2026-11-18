@@ -331,18 +331,20 @@ func requestIdentity(header http.Header, body []byte) (string, string, error) {
 		return ""
 	}
 	session := first("x-rayline-session-id", "x-conversation-id", "x-metrics-conversation-id", "x-claude-code-session-id", "x-parent-session-id", "x-session-affinity", "x-session-id")
+	// Body ids are trimmed like header ids: a header value loses its
+	// boundary whitespace on the wire.
 	if session == "" {
-		session = wire.PromptCacheKey
+		session = strings.TrimSpace(wire.PromptCacheKey)
 	}
 	if session == "" {
-		session = wire.SessionID
+		session = strings.TrimSpace(wire.SessionID)
 	}
 	if session == "" && wire.Metadata.UserID != "" {
 		var user struct {
 			SessionID string `json:"session_id"`
 		}
 		if json.Unmarshal([]byte(wire.Metadata.UserID), &user) == nil {
-			session = user.SessionID
+			session = strings.TrimSpace(user.SessionID)
 		}
 		if session == "" {
 			if match := legacySession.FindStringSubmatch(wire.Metadata.UserID); match != nil {
@@ -357,8 +359,9 @@ func requestIdentity(header http.Header, body []byte) (string, string, error) {
 	if session == "" {
 		return "", "", fmt.Errorf("hybrid execution requires a stable session identity")
 	}
+	// Both ids are sent as header values, so they hold no control byte but tab.
 	for _, value := range []string{session, branch} {
-		if len(value) > 1024 || strings.ContainsAny(value, "\r\n\x00") {
+		if len(value) > 1024 || strings.IndexFunc(value, func(r rune) bool { return r < ' ' && r != '\t' || r == 0x7f }) >= 0 {
 			return "", "", fmt.Errorf("invalid execution session or branch identity")
 		}
 	}
