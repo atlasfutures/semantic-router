@@ -450,6 +450,11 @@ func (server *Server) execute(writer http.ResponseWriter, incoming *http.Request
 			reuse[selected.deployment.ID] = previous
 		}
 		prompt, err = server.measurePreparedPrompt(ctx, selected, prepared.body, state, reuse)
+		if uncounted := (*uncountedRequest)(nil); errors.As(err, &uncounted) {
+			// Capacity sized this request by its bytes; dispatch it as one
+			// without a counter.
+			prompt, err = nil, nil
+		}
 		if err != nil {
 			// A token_counter that cannot count makes its target unavailable,
 			// as in capacity measurement; the service reselects.

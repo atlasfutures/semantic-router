@@ -2,6 +2,7 @@ package execution
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"math"
 
@@ -60,14 +61,18 @@ func (estimate *CapacityEstimate) validate() error {
 }
 
 // localPromptSize bounds a prepared request by bytes for a local target
-// without a registered counter.
-func localPromptSize(deployment Deployment, body []byte) (int64, string, string) {
-	units := deployment.TokenUnits
+// without a registered counter. An estimated size comes with what made it
+// one: the charged images, or the first member unboundedMember reports.
+func localPromptSize(deployment Deployment, body []byte) (tokens int64, provenance, units, estimatedBy string) {
+	units = deployment.TokenUnits
 	tokens, images := byteBoundTokens(body, deployment.CapacityEstimate)
-	if images > 0 || !boundedBody(deployment.Protocol, body) {
-		return tokens, capacityProvenanceEstimated, units
+	if images > 0 {
+		return tokens, capacityProvenanceEstimated, units, fmt.Sprintf("inline images: %d", images)
 	}
-	return tokens, capacityProvenanceBounded, units
+	if member := unboundedMember(deployment.Protocol, body); member != "" {
+		return tokens, capacityProvenanceEstimated, units, member
+	}
+	return tokens, capacityProvenanceBounded, units, ""
 }
 
 func sizedCapacityFact(deployment Deployment, prompt int64, provenance, units string, outputLimit int64) *CapacityFact {
@@ -91,7 +96,7 @@ func sizedCapacityFact(deployment Deployment, prompt int64, provenance, units st
 // media_tokens; with none, the bound is an upper bound on the exact count.
 func byteBoundTokens(body []byte, estimate *CapacityEstimate) (int64, int) {
 	headroom, mediaTokens := estimate.settings()
-	text := worstCaseBytes(body)
+	text := worstCaseBytes(body) + namespaceFlatteningBytes(body)
 	blobs := inlineImages(body)
 	for _, blob := range blobs {
 		text -= int64(blob[1] - blob[0])
@@ -110,6 +115,40 @@ func worstCaseBytes(body []byte) int64 {
 		return 3 * int64(len(body))
 	}
 	return size
+}
+
+// namespaceFlatteningBytes is what a runtime can add by flattening each
+// Responses namespace tool into one function per member. Runtimes repeat the
+// namespace's name in every member's name in different spellings: vLLM
+// <namespace>__<name>, Ollama <namespace>.<name>, llama.cpp
+// ns_<namespace>___<name>. A runtime that flattens as the core does for Chat
+// and Messages (llmprotocol.FlattenedToolDescription) also puts the
+// namespace's description and a blank line before each member's own. Each
+// member is charged the longest of these, "ns_" + name + "___" + description
+// + "\n\n", in its worst-case spelling, so the bound does not rely on how
+// a particular runtime flattens.
+func namespaceFlatteningBytes(body []byte) int64 {
+	if !bytes.Contains(body, []byte(`"namespace"`)) {
+		return 0
+	}
+	var request struct {
+		Tools []map[string]any `json:"tools"`
+	}
+	if json.Unmarshal(body, &request) != nil {
+		return 0
+	}
+	var total int64
+	for _, tool := range request.Tools {
+		members, _ := tool["tools"].([]any)
+		name, _ := tool["name"].(string)
+		if tool["type"] != "namespace" || len(members) == 0 {
+			continue
+		}
+		description, _ := tool["description"].(string)
+		prefix, _ := json.Marshal("ns_" + name + "___" + description + "\n\n")
+		total += int64(len(members)) * worstCaseBytes(prefix)
+	}
+	return total
 }
 
 // inlineImages finds base64 images that are JSON structure, not text: an

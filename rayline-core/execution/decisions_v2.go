@@ -297,6 +297,21 @@ func capacitySummary(targets []targetV2) map[string]*CapacityFact {
 	return facts
 }
 
+// capacityEstimatedBy is, for logs, what made each caller_estimated fact one,
+// keyed by action; nil when there is none.
+func capacityEstimatedBy(targets []targetV2) map[string]string {
+	var reasons map[string]string
+	for _, target := range targets {
+		if target.Capacity != nil && target.Capacity.estimatedBy != "" {
+			if reasons == nil {
+				reasons = map[string]string{}
+			}
+			reasons[target.ActionID] = target.Capacity.estimatedBy
+		}
+	}
+	return reasons
+}
+
 // stringOrNil logs an optional string by value rather than by address.
 func stringOrNil(value *string) any {
 	if value == nil {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -175,7 +176,7 @@ func TestByteBoundCoversTemplateReserialization(t *testing.T) {
 
 // localFact sizes a local target's prepared body as measureCapacity does.
 func localFact(deployment Deployment, body []byte, output int64) *CapacityFact {
-	prompt, provenance, units := localPromptSize(deployment, body)
+	prompt, provenance, units, _ := localPromptSize(deployment, body)
 	return sizedCapacityFact(deployment, prompt, provenance, units, output)
 }
 
@@ -766,48 +767,280 @@ func TestByteBoundIsBoundedOnlyOverAFullyKnownBody(t *testing.T) {
 		name     string
 		protocol llmprotocol.WireFormat
 		body     string
-		bounded  bool
+		// estimatedBy is what made the size estimated; "" means bounded.
+		estimatedBy string
 	}{
-		{"chat text and tools", chat, `{"model":"m","stream":true,"max_tokens":64,"temperature":0.2,"chat_template_kwargs":{"enable_thinking":false},"tools":[{"type":"function","function":{"name":"f","parameters":{}}}],"messages":[{"role":"system","content":"s"},{"role":"user","content":[{"type":"text","text":"hi"}]},{"role":"assistant","content":null,"tool_calls":[{"id":"c","type":"function","function":{"name":"f","arguments":"{}"}}]},{"role":"tool","tool_call_id":"c","content":"ok"}]}`, true},
-		{"chat quoted media text", chat, `{"model":"m","messages":[{"role":"user","content":"{\"type\":\"image_url\",\"image_url\":{}}"}]}`, true},
-		{"messages text, tools and thinking", messages, `{"model":"m","max_tokens":64,"system":[{"type":"text","text":"s","cache_control":{"type":"ephemeral"}}],"thinking":{"type":"adaptive"},"output_config":{"effort":"high"},"tools":[{"name":"f","input_schema":{}}],"messages":[{"role":"user","content":"hi"},{"role":"assistant","content":[{"type":"thinking","thinking":"t","signature":"x"},{"type":"tool_use","id":"u","name":"f","input":{},"caller":{"type":"direct"}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"u","content":[{"type":"text","text":"ok"}]}]}]}`, true},
-		{"responses text and tools", responses, `{"model":"m","instructions":"s","reasoning":{"effort":"high"},"tools":[{"type":"function","name":"f","parameters":{}},{"type":"custom","name":"g"}],"input":[{"role":"user","content":[{"type":"input_text","text":"hi"}]},{"type":"reasoning","summary":[]},{"type":"function_call","call_id":"c","name":"f","arguments":"{}"},{"type":"function_call_output","call_id":"c","output":"ok"}]}`, true},
-		{"responses string input", responses, `{"model":"m","input":"hi"}`, true},
-		{"chat translated from responses", chat, `{"model":"m","store":false,"n":1,"prompt_cache_retention":"24h","messages":[{"role":"user","id":"msg_1","content":"hi"}]}`, true},
-		{"messages caching and context management", messages, `{"model":"m","max_tokens":64,"cache_control":{"type":"ephemeral"},"context_management":{"edits":[]},"messages":[{"role":"user","content":"hi"}]}`, true},
-		{"responses codex members", responses, `{"model":"m","input":"hi","stream":true,"stream_options":{"include_obfuscation":false},"client_metadata":{"session_id":"s"}}`, true},
-		{"messages diagnostics", messages, `{"model":"m","max_tokens":64,"diagnostics":{"previous_message_id":null},"messages":[{"role":"user","content":"hi"}]}`, true},
-		{"responses cache retention", responses, `{"model":"m","prompt_cache_retention":"24h","input":[{"type":"reasoning","id":"rs","summary":[{"type":"summary_text","text":"t"}],"encrypted_content":"x"}]}`, true},
-		{"call item carrying content", responses, `{"model":"m","input":[{"type":"custom_tool_call","call_id":"c","name":"f","input":"","role":"user","content":[{"type":"input_image","image_url":"http://127.0.0.1/a.png"}]}]}`, false},
-		{"text part carrying an image", responses, `{"model":"m","input":[{"type":"function_call_output","call_id":"c","output":[{"type":"input_text","text":"hi","uuid":"a","image_url":"https://example.com/a.png"}]}]}`, false},
-		{"chat text part carrying an image", chat, `{"model":"m","messages":[{"role":"user","content":[{"type":"text","text":"hi","image_url":{"url":"https://example.com/a.png"}}]}]}`, false},
-		{"unknown diagnostics member", messages, `{"model":"m","diagnostics":{"x":1},"messages":[{"role":"user","content":"hi"}]}`, false},
-		// vLLM flattens a namespace, repeating its name in every function's.
-		{"namespace tools", responses, `{"model":"m","input":"hi","tools":[{"type":"namespace","name":"ns","tools":[{"type":"function","name":"f","parameters":{}}]}]}`, false},
+		{"chat text and tools", chat, `{"model":"m","stream":true,"max_tokens":64,"temperature":0.2,"chat_template_kwargs":{"enable_thinking":false},"tools":[{"type":"function","function":{"name":"f","parameters":{}}}],"messages":[{"role":"system","content":"s"},{"role":"user","content":[{"type":"text","text":"hi"}]},{"role":"assistant","content":null,"tool_calls":[{"id":"c","type":"function","function":{"name":"f","arguments":"{}"}}]},{"role":"tool","tool_call_id":"c","content":"ok"}]}`, ""},
+		{"chat quoted media text", chat, `{"model":"m","messages":[{"role":"user","content":"{\"type\":\"image_url\",\"image_url\":{}}"}]}`, ""},
+		{"messages text, tools and thinking", messages, `{"model":"m","max_tokens":64,"system":[{"type":"text","text":"s","cache_control":{"type":"ephemeral"}}],"thinking":{"type":"adaptive"},"output_config":{"effort":"high"},"tools":[{"name":"f","input_schema":{}}],"messages":[{"role":"user","content":"hi"},{"role":"assistant","content":[{"type":"thinking","thinking":"t","signature":"x"},{"type":"tool_use","id":"u","name":"f","input":{},"caller":{"type":"direct"}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"u","content":[{"type":"text","text":"ok"}]}]}]}`, ""},
+		{"responses text and tools", responses, `{"model":"m","instructions":"s","reasoning":{"effort":"high"},"tools":[{"type":"function","name":"f","parameters":{}},{"type":"custom","name":"g"}],"input":[{"role":"user","content":[{"type":"input_text","text":"hi"}]},{"type":"reasoning","summary":[]},{"type":"function_call","call_id":"c","name":"f","arguments":"{}"},{"type":"function_call_output","call_id":"c","output":"ok"}]}`, ""},
+		{"responses string input", responses, `{"model":"m","input":"hi"}`, ""},
+		{"chat translated from responses", chat, `{"model":"m","store":false,"n":1,"prompt_cache_retention":"24h","messages":[{"role":"user","id":"msg_1","content":"hi"}]}`, ""},
+		{"messages caching and context management", messages, `{"model":"m","max_tokens":64,"cache_control":{"type":"ephemeral"},"context_management":{"edits":[]},"messages":[{"role":"user","content":"hi"}]}`, ""},
+		{"responses codex members", responses, `{"model":"m","input":"hi","stream":true,"stream_options":{"include_obfuscation":false},"client_metadata":{"session_id":"s"}}`, ""},
+		{"messages system message with effort", messages, `{"model":"m","max_tokens":64,"output_config":{"effort":"medium"},"messages":[{"role":"user","content":"hi"},{"role":"system","content":[{"type":"text","text":"env"}],"output_config":{"effort":"medium"}}]}`, ""},
+		{"effort on a user message", messages, `{"model":"m","max_tokens":64,"messages":[{"role":"user","content":"hi","output_config":{"effort":"medium"}}]}`, "/messages/0/output_config"},
+		{"system message output format", messages, `{"model":"m","max_tokens":64,"messages":[{"role":"user","content":"hi"},{"role":"system","content":"env","output_config":{"effort":"low","format":{"type":"json_schema"}}}]}`, "/messages/1/output_config/format"},
+		{"messages diagnostics", messages, `{"model":"m","max_tokens":64,"diagnostics":{"previous_message_id":null},"messages":[{"role":"user","content":"hi"}]}`, ""},
+		{"responses cache retention", responses, `{"model":"m","prompt_cache_retention":"24h","input":[{"type":"reasoning","id":"rs","summary":[{"type":"summary_text","text":"t"}],"encrypted_content":"x"}]}`, ""},
+		{"call item carrying content", responses, `{"model":"m","input":[{"type":"custom_tool_call","call_id":"c","name":"f","input":"","role":"user","content":[{"type":"input_image","image_url":"http://127.0.0.1/a.png"}]}]}`, "/input/0/content"},
+		{"text part carrying an image", responses, `{"model":"m","input":[{"type":"function_call_output","call_id":"c","output":[{"type":"input_text","text":"hi","uuid":"a","image_url":"https://example.com/a.png"}]}]}`, "/input/0/output/0/image_url"},
+		{"chat text part carrying an image", chat, `{"model":"m","messages":[{"role":"user","content":[{"type":"text","text":"hi","image_url":{"url":"https://example.com/a.png"}}]}]}`, "/messages/0/content/0/image_url"},
+		{"unknown diagnostics member", messages, `{"model":"m","diagnostics":{"x":1},"messages":[{"role":"user","content":"hi"}]}`, "/diagnostics/x"},
+		// A runtime flattens a namespace into its functions; namespaceFlatteningBytes charges that.
+		{"namespace tools", responses, `{"model":"m","input":"hi","tools":[{"type":"namespace","name":"ns","description":"d","tools":[{"type":"function","name":"f","parameters":{}}]}]}`, ""},
+		{"namespace holding a server tool", responses, `{"model":"m","input":"hi","tools":[{"type":"namespace","name":"ns","tools":[{"type":"function","name":"f"},{"type":"web_search"}]}]}`, "/tools/0/tools/1/type=web_search"},
+		{"responses server tool", responses, `{"model":"m","input":"hi","tools":[{"type":"web_search"}]}`, "/tools/0/type=web_search"},
 
-		{"unknown protocol", "", `{"model":"m","messages":[{"role":"user","content":"hi"}]}`, false},
-		{"not json", chat, `not json`, false},
-		{"inline image charged", chat, `{"model":"m","messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"data:image/png;base64,` + blob + `"}}]}]}`, false},
-		{"remote image", chat, `{"model":"m","messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"https://example.com/a.png"}}]}]}`, false},
-		{"audio", chat, `{"model":"m","messages":[{"role":"user","content":[{"type":"input_audio","input_audio":{"data":"AAAA","format":"wav"}}]}]}`, false},
-		{"tool result image", messages, `{"model":"m","messages":[{"role":"user","content":[{"type":"tool_result","tool_use_id":"t","content":[{"type":"image","source":{"type":"url","url":"https://example.com/a.png"}}]}]}]}`, false},
-		{"document", messages, `{"model":"m","messages":[{"role":"user","content":[{"type":"document","source":{"type":"url","url":"https://example.com/a.pdf"}}]}]}`, false},
-		{"server tool", messages, `{"model":"m","tools":[{"type":"web_search_20250305","name":"web_search"}],"messages":[{"role":"user","content":"hi"}]}`, false},
-		{"responses image", responses, `{"model":"m","input":[{"role":"user","content":[{"type":"input_image","image_url":"https://example.com/a.png"}]}]}`, false},
-		{"item reference", responses, `{"model":"m","input":[{"type":"item_reference","id":"msg_1"}]}`, false},
-		{"image history", responses, `{"model":"m","input":[{"type":"image_generation_call","id":"ig_1","status":"completed","result":null}]}`, false},
-		{"stored response", responses, `{"model":"m","previous_response_id":"resp_1","input":"hi"}`, false},
-		{"chat_template", chat, `{"model":"m","chat_template":"{{ messages[0]['content'] * 10000 }}","messages":[{"role":"user","content":"hi"}]}`, false},
-		{"kwargs chat_template", chat, `{"model":"m","chat_template_kwargs":{"chat_template":"{{ 'hi ' * 1000000 }}"},"messages":[{"role":"user","content":"hi"}]}`, false},
-		{"unknown top-level member", chat, `{"model":"m","n_predict":8192,"messages":[{"role":"user","content":"hi"}]}`, false},
-		{"unknown message member", chat, `{"model":"m","messages":[{"role":"user","content":"hi","prefix":true}]}`, false},
-		{"unknown content part", chat, `{"model":"m","messages":[{"role":"user","content":[{"type":"text","text":"hi"},{"file_id":"file_1"}]}]}`, false},
+		{"unknown protocol", "", `{"model":"m","messages":[{"role":"user","content":"hi"}]}`, "protocol <none>"},
+		{"not json", chat, `not json`, "body is not JSON"},
+		{"inline image charged", chat, `{"model":"m","messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"data:image/png;base64,` + blob + `"}}]}]}`, "inline images: 1"},
+		{"remote image", chat, `{"model":"m","messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"https://example.com/a.png"}}]}]}`, "/messages/0/content/0/type=image_url"},
+		{"audio", chat, `{"model":"m","messages":[{"role":"user","content":[{"type":"input_audio","input_audio":{"data":"AAAA","format":"wav"}}]}]}`, "/messages/0/content/0/type=input_audio"},
+		{"tool result image", messages, `{"model":"m","messages":[{"role":"user","content":[{"type":"tool_result","tool_use_id":"t","content":[{"type":"image","source":{"type":"url","url":"https://example.com/a.png"}}]}]}]}`, "/messages/0/content/0/content/0/type=image"},
+		{"document", messages, `{"model":"m","messages":[{"role":"user","content":[{"type":"document","source":{"type":"url","url":"https://example.com/a.pdf"}}]}]}`, "/messages/0/content/0/type=document"},
+		{"server tool", messages, `{"model":"m","tools":[{"type":"web_search_20250305","name":"web_search"}],"messages":[{"role":"user","content":"hi"}]}`, "/tools/0/type=web_search_20250305"},
+		{"responses image", responses, `{"model":"m","input":[{"role":"user","content":[{"type":"input_image","image_url":"https://example.com/a.png"}]}]}`, "/input/0/content/0/type=input_image"},
+		{"item reference", responses, `{"model":"m","input":[{"type":"item_reference","id":"msg_1"}]}`, "/input/0/type=item_reference"},
+		{"image history", responses, `{"model":"m","input":[{"type":"image_generation_call","id":"ig_1","status":"completed","result":null}]}`, "/input/0/type=image_generation_call"},
+		{"stored response", responses, `{"model":"m","previous_response_id":"resp_1","input":"hi"}`, "/previous_response_id"},
+		{"chat_template", chat, `{"model":"m","chat_template":"{{ messages[0]['content'] * 10000 }}","messages":[{"role":"user","content":"hi"}]}`, "/chat_template"},
+		{"kwargs chat_template", chat, `{"model":"m","chat_template_kwargs":{"chat_template":"{{ 'hi ' * 1000000 }}"},"messages":[{"role":"user","content":"hi"}]}`, "/chat_template_kwargs/chat_template"},
+		{"unknown top-level member", chat, `{"model":"m","n_predict":8192,"messages":[{"role":"user","content":"hi"}]}`, "/n_predict"},
+		{"unknown message member", chat, `{"model":"m","messages":[{"role":"user","content":"hi","prefix":true}]}`, "/messages/0/prefix"},
+		{"unknown member named with free text", chat, `{"model":"m","messages":[{"role":"user","content":"hi"}],"my secret: do not log":1}`, "/<name>"},
+		{"unknown long type", responses, `{"model":"m","input":[{"type":"` + strings.Repeat("x", 65) + `"}]}`, "/input/0/type=<name>"},
+		{"unknown content part", chat, `{"model":"m","messages":[{"role":"user","content":[{"type":"text","text":"hi"},{"file_id":"file_1"}]}]}`, "/messages/0/content/1/type=<none>"},
 	} {
 		deployment := Deployment{ID: "local", Kind: "local", Protocol: test.protocol, RegistryModel: "z-ai/glm-5.3-flash", ContextWindow: 1_000_000}
-		want := map[bool]string{true: capacityProvenanceBounded, false: capacityProvenanceEstimated}[test.bounded]
-		if _, provenance, _ := localPromptSize(deployment, []byte(test.body)); provenance != want {
-			t.Errorf("%s: %s, want %s", test.name, provenance, want)
+		want := map[bool]string{true: capacityProvenanceBounded, false: capacityProvenanceEstimated}[test.estimatedBy == ""]
+		if _, provenance, _, estimatedBy := localPromptSize(deployment, []byte(test.body)); provenance != want || estimatedBy != test.estimatedBy {
+			t.Errorf("%s: %s by %q, want %s by %q", test.name, provenance, estimatedBy, want, test.estimatedBy)
 		}
+	}
+}
+
+// codexTurn is a Codex CLI Responses turn (testdata/capacity/
+// codex_responses_turn.json: captured against a local stub, with its
+// instructions shortened and its ids replaced). It declares Codex's sub-agent
+// functions as a namespace and a web_search server tool.
+func codexTurn(t *testing.T) map[string]any {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("testdata", "capacity", "codex_responses_turn.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var turn map[string]any
+	if err := json.Unmarshal(raw, &turn); err != nil {
+		t.Fatal(err)
+	}
+	return turn
+}
+
+// withoutServerTools is the turn as the core prepares it for a target whose
+// arm has no hosted tools: the web_search tool is dropped.
+func withoutServerTools(turn map[string]any) map[string]any {
+	prepared := map[string]any{}
+	for key, value := range turn {
+		prepared[key] = value
+	}
+	var tools []any
+	for _, tool := range turn["tools"].([]any) {
+		if tool.(map[string]any)["type"] != "web_search" {
+			tools = append(tools, tool)
+		}
+	}
+	prepared["tools"] = tools
+	return prepared
+}
+
+// flatteners name a namespace member the way each runtime that flattens one
+// does, and say whether it repeats the namespace's description: vLLM,
+// Ollama, llama.cpp, and the core's own flattening for Chat and Messages
+// (llmprotocol.FlattenedToolDescription).
+var flatteners = map[string]struct {
+	name        func(namespace, member string) string
+	description bool
+}{
+	"vllm":      {func(namespace, member string) string { return namespace + "__" + member }, false},
+	"ollama":    {func(namespace, member string) string { return namespace + "." + member }, false},
+	"llama.cpp": {func(namespace, member string) string { return "ns_" + namespace + "___" + member }, false},
+	"core":      {func(namespace, member string) string { return namespace + "__" + member }, true},
+}
+
+// flattenNamespaces declares each namespace member as its own function, as
+// the named flattener renders it.
+func flattenNamespaces(turn map[string]any, flattener string) map[string]any {
+	flatten := flatteners[flattener]
+	flat := map[string]any{}
+	for key, value := range turn {
+		flat[key] = value
+	}
+	var tools []any
+	for _, entry := range turn["tools"].([]any) {
+		tool := entry.(map[string]any)
+		if tool["type"] != "namespace" {
+			tools = append(tools, tool)
+			continue
+		}
+		for _, member := range tool["tools"].([]any) {
+			function := map[string]any{}
+			for key, value := range member.(map[string]any) {
+				function[key] = value
+			}
+			function["name"] = flatten.name(tool["name"].(string), function["name"].(string))
+			if description, _ := tool["description"].(string); flatten.description && description != "" {
+				own, _ := function["description"].(string)
+				function["description"] = description + "\n\n" + own
+			}
+			tools = append(tools, function)
+		}
+	}
+	flat["tools"] = tools
+	return flat
+}
+
+func TestCodexResponsesTurnIsBoundedOverItsFlattenedNamespace(t *testing.T) {
+	deployment := Deployment{ID: "local", Kind: "local", Protocol: llmprotocol.OpenAIResponsesV1, RegistryModel: "z-ai/glm-5.3-flash", ContextWindow: 1_000_000}
+	turn := codexTurn(t)
+	// Sent to a runtime as is, the server tool would keep the size estimated.
+	if _, provenance, _, estimatedBy := localPromptSize(deployment, []byte(mustJSON(turn))); provenance != capacityProvenanceEstimated || estimatedBy != "/tools/8/type=web_search" {
+		t.Fatalf("client turn: %s by %q", provenance, estimatedBy)
+	}
+	// Bare members under a long name, and many members under a long
+	// description: there what the flattening repeats outgrows what nesting
+	// the members adds to the worst-case spelling.
+	bare := func(count int) []any {
+		members := make([]any, count)
+		for index := range members {
+			members[index] = map[string]any{"type": "function", "name": fmt.Sprintf("f%d", index)}
+		}
+		return members
+	}
+	longName := map[string]any{"model": "m", "input": "hi", "tools": []any{map[string]any{"type": "namespace", "name": strings.Repeat("n", 200), "tools": bare(3)}}}
+	longDescription := map[string]any{"model": "m", "input": "hi", "tools": []any{map[string]any{"type": "namespace", "name": "mcp__server", "description": strings.Repeat("An MCP server's long description. ", 60), "tools": bare(20)}}}
+	for name, body := range map[string]map[string]any{"codex": withoutServerTools(turn), "long namespace name": longName, "long namespace description": longDescription} {
+		bound, provenance, _, estimatedBy := localPromptSize(deployment, []byte(mustJSON(body)))
+		if provenance != capacityProvenanceBounded || estimatedBy != "" {
+			t.Fatalf("%s: %s by %q", name, provenance, estimatedBy)
+		}
+		for flattener := range flatteners {
+			if flat, _, _, _ := localPromptSize(deployment, []byte(mustJSON(flattenNamespaces(body, flattener)))); bound < flat {
+				t.Errorf("%s flattened as %s: the namespaced bound %d is below the flattened %d", name, flattener, bound, flat)
+			}
+		}
+	}
+}
+
+// TestClaudeCodeMessagesTurnIsBounded: a Claude Code 2.1.325 Messages turn
+// (testdata/capacity/claude_code_messages_turn.json: captured against a
+// local stub, its texts and tool descriptions shortened and its ids
+// replaced) carries a mid-conversation system message with its own effort.
+// It is bounded as sent; the same setting in any other shape is not.
+func TestClaudeCodeMessagesTurnIsBounded(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("testdata", "capacity", "claude_code_messages_turn.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	deployment := Deployment{ID: "local", Kind: "local", Protocol: llmprotocol.AnthropicMessagesV1, RegistryModel: "z-ai/glm-5.3-flash", ContextWindow: 1_000_000}
+	if _, provenance, _, estimatedBy := localPromptSize(deployment, raw); provenance != capacityProvenanceBounded || estimatedBy != "" {
+		t.Fatalf("captured turn: %s by %q", provenance, estimatedBy)
+	}
+	for name, mutate := range map[string]func(map[string]any){
+		"effort on the user message": func(turn map[string]any) {
+			turn["messages"].([]any)[0].(map[string]any)["output_config"] = map[string]any{"effort": "medium"}
+		},
+		"an output format beside the effort": func(turn map[string]any) {
+			turn["messages"].([]any)[1].(map[string]any)["output_config"] = map[string]any{"effort": "medium", "format": map[string]any{"type": "json_schema"}}
+		},
+	} {
+		var turn map[string]any
+		if err := json.Unmarshal(raw, &turn); err != nil {
+			t.Fatal(err)
+		}
+		mutate(turn)
+		if _, provenance, _, estimatedBy := localPromptSize(deployment, []byte(mustJSON(turn))); provenance != capacityProvenanceEstimated || estimatedBy == "" {
+			t.Errorf("%s: %s by %q", name, provenance, estimatedBy)
+		}
+	}
+}
+
+// TestCodexTurnIsSizedBoundedAndAnEstimateLogsWhy runs the first Codex turn
+// through the core to a local Responses deployment: the fact sent to
+// Decisions is caller_bounded and the runtime gets no server tool. A turn
+// with a remote image stays caller_estimated, and the log line names why,
+// also when the policy then refuses the turn.
+func TestCodexTurnIsSizedBoundedAndAnEstimateLogsWhy(t *testing.T) {
+	turn := codexTurn(t)
+	turn["model"] = "arc-1.0"
+	// Its first turn only: the core refuses tool history in a session it has
+	// no ledger for, and the whole captured turn is sized above.
+	turn["input"] = turn["input"].([]any)[:4]
+	withImage := map[string]any{}
+	for key, value := range turn {
+		withImage[key] = value
+	}
+	input := append([]any(nil), turn["input"].([]any)...)
+	user := map[string]any{}
+	for key, value := range input[3].(map[string]any) {
+		user[key] = value
+	}
+	user["content"] = append(append([]any(nil), user["content"].([]any)...), map[string]any{"type": "input_image", "image_url": "https://example.com/a.png"})
+	input[3] = user
+	withImage["input"] = input
+
+	for _, tc := range []struct {
+		name        string
+		body        map[string]any
+		provenance  string
+		estimatedBy string
+		refused     bool
+	}{
+		{"codex turn", turn, capacityProvenanceBounded, "", false},
+		{"codex turn with a remote image", withImage, capacityProvenanceEstimated, "/input/3/content/1/type=input_image", false},
+		{"refused codex turn with a remote image", withImage, capacityProvenanceEstimated, "/input/3/content/1/type=input_image", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var logs strings.Builder
+			previous := slog.Default()
+			slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+			defer slog.SetDefault(previous)
+			local := &upstreamFixture{}
+			config := capacityEstimateConfig(t, chatUpstream(t, local, false).URL, "http://127.0.0.1:9/v1/chat/completions")
+			config.Deployments, config.Actions = config.Deployments[:1], config.Actions[:1]
+			config.Deployments[0].InputModalities = []string{"text", "image"}
+			fixture := &v2Decisions{choose: fitPolicy}
+			if tc.refused {
+				fixture.refuse = func(contextV2) string { return "execution_no_feasible_target" }
+			}
+			_, httpServer := v2Server(t, onProtocol(t, config, llmprotocol.OpenAIResponsesV1), fixture)
+			executeHTTP(t, httpServer.URL, "/v1/responses", mustJSON(tc.body), "codex")
+			lookups := fixture.snapshot()
+			if len(lookups) != 1 || len(lookups[0].Execution.Targets) != 1 {
+				t.Fatalf("lookups %d", len(lookups))
+			}
+			if fact := lookups[0].Execution.Targets[0].Capacity; fact == nil || fact.Provenance != tc.provenance || !fact.Fits {
+				t.Fatalf("fact %s", mustJSON(fact))
+			}
+			if dispatched := map[bool]int{false: 1, true: 0}[tc.refused]; local.count() != dispatched || dispatched == 1 && strings.Contains(mustJSON(local.bodies[0]["tools"]), "web_search") {
+				t.Fatalf("local runtime got %d requests, tools %s", local.count(), mustJSON(local.bodies))
+			}
+			message := map[bool]string{false: "execution context applied", true: "decisions lookup refused"}[tc.refused]
+			var applied map[string]any
+			for _, line := range strings.Split(strings.TrimSpace(logs.String()), "\n") {
+				var entry map[string]any
+				if json.Unmarshal([]byte(line), &entry) == nil && entry["msg"] == message {
+					applied = entry
+				}
+			}
+			want := any(nil)
+			if tc.estimatedBy != "" {
+				want = map[string]any{localActionID: tc.estimatedBy}
+			}
+			if applied == nil || mustJSON(applied["capacity_estimated_by"]) != mustJSON(want) {
+				t.Fatalf("%s: %v", message, applied)
+			}
+		})
 	}
 }
 
@@ -833,7 +1066,7 @@ func TestByteBoundCoversUnicodeNormalization(t *testing.T) {
 			t.Fatal(err)
 		}
 		deployment := Deployment{ID: "local", Kind: "local", Protocol: llmprotocol.OpenAIChatV1, RegistryModel: "example/other", ContextWindow: 8192}
-		prompt, provenance, _ := localPromptSize(deployment, body)
+		prompt, provenance, _, _ := localPromptSize(deployment, body)
 		if provenance == capacityProvenanceBounded && prompt < int64(test.bytes) {
 			t.Errorf("%s: bound %d below the normalized %d bytes", name, prompt, test.bytes)
 		}

@@ -3,6 +3,7 @@ package execution
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sort"
@@ -47,6 +48,8 @@ type CapacityFact struct {
 	Provenance      string  `json:"provenance"`
 	// prompt is the prompt's own size within Required, for refusal messages.
 	prompt int64
+	// estimatedBy says, for logs, what made a caller_estimated size one.
+	estimatedBy string
 }
 
 // capacityFact compares the exact prepared prompt plus the actual output limit
@@ -96,10 +99,11 @@ func (server *Server) measureCapacity(ctx context.Context, body []byte, format l
 	}
 	sort.Strings(ids)
 	type promptSize struct {
-		prompt            int64
-		provenance, units string
+		prompt                         int64
+		provenance, units, estimatedBy string
 	}
 	sizes := map[string]promptSize{}
+	skipped := map[string]bool{}
 	for _, id := range ids {
 		selected := actions[id]
 		counted := server.counters[selected.deployment.ID] != nil
@@ -128,32 +132,42 @@ func (server *Server) measureCapacity(ctx context.Context, body []byte, format l
 			facts[id] = &CapacityFact{Fits: false, Reason: &reason, Provenance: capacityProvenanceMeasured}
 			continue
 		}
-		if !counted {
-			if selected.deployment.ContextWindow <= 0 {
+		if counted {
+			prompt, err := server.measurePreparedPrompt(ctx, selected, prepared.body, state, nil)
+			var uncounted *uncountedRequest
+			switch {
+			case err == nil:
+				measured[id] = prompt
+				facts[id] = capacityFact(selected.deployment, prompt, prepared.outputLimit)
+				continue
+			case errors.As(err, &uncounted):
+				// The Chat form a token_counter reads cannot carry part of
+				// this request: it is sized by its bytes as if uncounted.
+				if !skipped[selected.deployment.ID] {
+					skipped[selected.deployment.ID] = true
+					slog.Info("token counter skipped", "deployment", selected.deployment.ID, "reason", uncounted.reason)
+				}
+			default:
+				// A runtime that cannot count is a fact about that target
+				// only: it is unavailable, never a reason to refuse the turn.
+				slog.Warn("capacity measurement failed", "action_id", id, "deployment", selected.deployment.ID, "error", err.Error())
+				reason := CapacityRuntimeUnavailable
+				facts[id] = &CapacityFact{Fits: false, Reason: &reason, Provenance: capacityProvenanceMeasured}
 				continue
 			}
+		}
+		if selected.deployment.ContextWindow > 0 {
 			// Actions differing only in a control often prepare the same
 			// bytes: size each distinct body once per deployment.
 			key := selected.deployment.ID + "\x00" + fingerprint(prepared.body)
 			size, ok := sizes[key]
 			if !ok {
-				size.prompt, size.provenance, size.units = localPromptSize(selected.deployment, prepared.body)
+				size.prompt, size.provenance, size.units, size.estimatedBy = localPromptSize(selected.deployment, prepared.body)
 				sizes[key] = size
 			}
 			facts[id] = sizedCapacityFact(selected.deployment, size.prompt, size.provenance, size.units, prepared.outputLimit)
-			continue
+			facts[id].estimatedBy = size.estimatedBy
 		}
-		prompt, err := server.measurePreparedPrompt(ctx, selected, prepared.body, state, nil)
-		if err != nil {
-			// A runtime that cannot count is a fact about that target only:
-			// it is unavailable, never a reason to refuse the whole turn.
-			slog.Warn("capacity measurement failed", "action_id", id, "deployment", selected.deployment.ID, "error", err.Error())
-			reason := CapacityRuntimeUnavailable
-			facts[id] = &CapacityFact{Fits: false, Reason: &reason, Provenance: capacityProvenanceMeasured}
-			continue
-		}
-		measured[id] = prompt
-		facts[id] = capacityFact(selected.deployment, prompt, prepared.outputLimit)
 	}
 	server.relaxEstimatedShortfalls(format, facts)
 	return facts, measured, nil
