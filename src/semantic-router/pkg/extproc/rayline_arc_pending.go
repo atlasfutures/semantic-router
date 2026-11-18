@@ -90,9 +90,49 @@ func resolveRaylineARCPendingDecision(reqCtx *RequestContext, arcContext *select
 		"turn_index":      arcTurnIndexForTelemetry(state.TurnIndex),
 	})
 	if resolution == raylinearc.PendingInferred {
+		if !transaction.decidesPending {
+			transaction.stageInferredTurn(reqCtx)
+		}
 		return nil
 	}
 	return state.Pending
+}
+
+// stageInferredTurn stores the episode as this generation turn settled it,
+// under its lease, before the turn is decided. Whether the earlier decision
+// ran is read from this request's messages, not from how this turn ends, so
+// the store holds it at once: a refusal classed after the lease is given
+// back, a side call, or another instance then reads the episode this turn
+// was decided on, with the inferred turn's served model. One write, on the
+// first generation turn after a lookup; a lookup needs none, as its own
+// write follows. Best effort, as a boundary stage is: a failure leaves the
+// next request to settle the decision again.
+func (transaction *raylineARCEpisodeTransaction) stageInferredTurn(reqCtx *RequestContext) {
+	parent := reqCtx.TraceContext
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(parent, episodeFinalizeTimeout)
+	defer cancel()
+	if transaction.relaxed {
+		if !transaction.stateless {
+			transaction.retainRelaxedPolicyBoundary(ctx, cloneARCState(transaction.state), "inferred_stage")
+		}
+		return
+	}
+	stager, ok := transaction.store.(raylinearc.EpisodeStateStager)
+	if !ok {
+		return
+	}
+	switch err := stager.Stage(ctx, transaction.lease, transaction.state); {
+	case errors.Is(err, raylinearc.ErrEpisodeLeaseLost):
+		transaction.leaseLost.Store(true)
+		metrics.RecordRaylineARCEpisodeTransaction("lease_lost", "inferred_stage")
+	case err != nil:
+		logging.ComponentWarnEvent("extproc", "rayline_arc_inferred_stage_failed", map[string]interface{}{
+			"failure_class": boundedARCEpisodeFailure(err),
+		})
+	}
 }
 
 // raylineARCServedModelsFor is the served-model record a turn without episode
