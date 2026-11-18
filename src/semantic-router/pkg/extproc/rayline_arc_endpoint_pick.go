@@ -28,6 +28,16 @@ import (
 // rendezvous order, at most endpointResendMaxExtra of them, through the flex
 // re-send's transport (flex_resend.go). A response that has begun is never
 // re-sent.
+//
+// The history the pick was sent carries the reasoning its host family can
+// read (guardHistoryReasoning), signed or encrypted for that family alone. A
+// re-send to an endpoint of another family (signatureHostFamily: gpt on azure,
+// then on openai) is sent that history with its signed and encrypted
+// reasoning stripped, as the thinking-signature re-send strips it
+// (thinkingSignatureRetryPlan.retryBody): otherwise the new endpoint refuses
+// the call with a 400 ("encrypted reasoning ... can only be processed by the
+// provider that created it") and the turn is lost. The run then starts again
+// at the re-send's reply (encrypted_reasoning_strip).
 
 const (
 	// The sources of a turn's session key, as logged (session_key_source).
@@ -334,13 +344,15 @@ func addEndpointPickFields(fields map[string]interface{}, ctx *RequestContext) {
 }
 
 // endpointResendPlan is what re-sending a picked call on the arm's next
-// endpoints needs: the dispatch, the arm's own pin, the turn's data mode and
-// the body the pick was sent.
+// endpoints needs: the dispatch, the arm's own pin, the turn's data mode, the
+// body the pick was sent, and the pick itself, whose host family that body's
+// reasoning is bound to.
 type endpointResendPlan struct {
 	dispatch    *providerDispatch
 	pin         *config.OpenRouterProviderPreferences
 	privacyMode string
 	dispatched  []byte
+	picked      string
 }
 
 // stageEndpointResend keeps what the re-send needs when the dispatch picked
@@ -362,6 +374,7 @@ func (r *OpenAIRouter) stageEndpointResend(ctx *RequestContext, dispatch *provid
 		pin:         pin,
 		privacyMode: ctx.RaylineARCPrivacyMode,
 		dispatched:  body,
+		picked:      ctx.RaylineARCEndpointOrder[0],
 	}
 }
 
@@ -392,10 +405,35 @@ func endpointResendTags(ctx *RequestContext) []string {
 	return ctx.RaylineARCEndpointOrder[len(ctx.RaylineARCEndpointsTried):limit]
 }
 
-// endpointResendCall is one endpoint's re-send.
+// endpointResendCall is one endpoint's re-send: its body, and what was
+// stripped from the pick's history to send it there (body is nil and
+// stripped zero when the history went as the pick was sent it).
 type endpointResendCall struct {
-	tag  string
-	call *flexTwinCall
+	tag      string
+	call     *flexTwinCall
+	body     []byte
+	stripped thinkingRetryChange
+}
+
+// crossFamilyHistory is the pick's body with its signed and encrypted
+// reasoning stripped, for a re-send to tag, when tag is in another host
+// family than the pick and the guard is on; nil when the body goes as it was:
+// the same family, the guard off, or nothing to strip.
+func (r *OpenAIRouter) crossFamilyHistory(plan *endpointResendPlan, tag string) ([]byte, thinkingRetryChange) {
+	from, to := signatureHostFamily(plan.picked), signatureHostFamily(tag)
+	if from == "" || to == "" || from == to || !r.thinkingSignatureGuardOn(plan.dispatch) {
+		return nil, thinkingRetryChange{}
+	}
+	strip := &thinkingSignatureRetryPlan{
+		dispatch: plan.dispatch, dispatched: plan.dispatched,
+		claude:     r.armFamily(plan.dispatch.logicalModel) == anthropicFamily,
+		canDisable: r.Config.ModelCanDisableReasoning(plan.dispatch.logicalModel),
+	}
+	body, change, changed := strip.retryBody(nil)
+	if !changed {
+		return nil, thinkingRetryChange{}
+	}
+	return body, change
 }
 
 // buildEndpointResends builds every re-send the turn may make, before the
@@ -415,7 +453,12 @@ func (r *OpenAIRouter) buildEndpointResends(
 		// Each re-send is pinned as the pick was, from the same feed snapshot.
 		pinned := pinnedEndpointPreferences(plan.pin, tag, ctx.RaylineARCEndpointFeed, plan.dispatch.upstreamModel, now)
 		pin := privacyProviderPreferences(pinned, plan.privacyMode)
-		body, ok := withProviderObject(plan.dispatched, pin)
+		history, stripped := r.crossFamilyHistory(plan, tag)
+		source := plan.dispatched
+		if history != nil {
+			source = history
+		}
+		body, ok := withProviderObject(source, pin)
 		if !ok {
 			return nil, "body_unpinned"
 		}
@@ -423,7 +466,11 @@ func (r *OpenAIRouter) buildEndpointResends(
 		if call == nil {
 			return nil, unavailable
 		}
-		calls = append(calls, endpointResendCall{tag: tag, call: call})
+		resend := endpointResendCall{tag: tag, call: call}
+		if history != nil {
+			resend.body, resend.stripped = body, stripped
+		}
+		calls = append(calls, resend)
 	}
 	return calls, ""
 }
@@ -478,12 +525,30 @@ func (r *OpenAIRouter) endpointResendOnResponseHeaders(
 	deadline := received.Add(budget)
 	statuses := []int{status}
 	var result flexTwinResult
+	var last endpointResendCall
 	for index, resend := range calls {
+		last = resend
 		// The call in flight is now this endpoint's, read back off its body.
 		ctx.RaylineARCEndpointsTried = append(ctx.RaylineARCEndpointsTried, resend.tag)
 		ctx.RaylineARCDispatchedEndpoint = knownEndpoint(ctx.RaylineARCEndpointFeed, plan.dispatch.upstreamModel, resend.tag, true)
 		ctx.DispatchedOutbound = readDispatchedOutboundParams(resend.call.body, plan.dispatch)
-		recordDispatchedProviderPin(ctx, resend.call.body)
+		// Its pin, and its reasoning controls, which a stripped call may have
+		// dropped with its reasoning: its line states what it carried.
+		recordDispatchedControls(ctx, resend.call.body)
+		if resend.body != nil {
+			strip := map[string]interface{}{
+				"request_id": ctx.RequestID, "model": plan.dispatch.logicalModel,
+				"from_endpoint": plan.picked, "to_endpoint": resend.tag,
+				"from_host_family": signatureHostFamily(plan.picked), "to_host_family": signatureHostFamily(resend.tag),
+				"wire_format": plan.dispatch.targetFormat, "stripped": resend.stripped.stripped,
+				"thinking_disabled": resend.stripped.thinkingDisabled,
+			}
+			if trace := ctx.VSRRaylineARC; trace != nil {
+				strip["episode_id_hash"] = trace.EpisodeIDHash
+				strip["policy_action_id"] = trace.PolicyActionID
+			}
+			logging.ComponentEvent("extproc", "encrypted_reasoning_strip", strip)
+		}
 		result = callFlexTwin(ctx, resend.call, r.flexResendBodyLimit(), deadline)
 		// A refused re-send's row names its own provider ids.
 		ctx.UpstreamCallIDs = result.ids
@@ -493,6 +558,15 @@ func (r *OpenAIRouter) endpointResendOnResponseHeaders(
 			break
 		}
 		r.settleRefusedAttempt(ctx, retry, result.status, markAttempt)
+	}
+	if last.body != nil {
+		// The call the client gets kept no reasoning: it is the body the
+		// episode records, and the run starts again at its reply.
+		r.auditRaylineARCUpstream(last.body, ctx)
+		if transaction := ctx.RaylineARCTransaction; transaction != nil && transaction.thinkingWorker != "" {
+			transaction.thinkingRestart, transaction.thinkingAdopted = true, ""
+		}
+		fields["reasoning_stripped"] = last.stripped.stripped
 	}
 	fields["endpoint_statuses"] = statuses
 	fields["resend_latency_ms"] = time.Since(received).Milliseconds()
