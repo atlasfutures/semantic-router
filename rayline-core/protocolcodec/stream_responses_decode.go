@@ -29,10 +29,25 @@ func (decoder *responsesStreamDecoder) decodeResponsesLifecycleEvent(
 		"response.reasoning_summary_text.done", "response.reasoning_text.done":
 		return nil, nil, nil
 	case "response.function_call_arguments.done":
+		index := responsesWireOutputIndex(wire)
+		unstreamed := len(decoder.toolArguments[index]) == 0
 		if err := decoder.validateResponsesToolDone(wire); err != nil {
 			return nil, nil, err
 		}
-		return nil, nil, nil
+		if !unstreamed || wire.Arguments == "" {
+			return nil, nil, nil
+		}
+		// Some servers (LM Studio) send a call's arguments only here, with no
+		// delta. They go on as the call's one argument delta, the event every
+		// client encoder writes arguments from: a Chat client otherwise got
+		// finish_reason "tool_calls" and no call. The delta appends them, so
+		// the copy the check above kept is cleared first.
+		decoder.toolArguments[index] = nil
+		wire.Delta = wire.Arguments
+		if err := decoder.applyResponsesToolDelta(&event, wire); err != nil {
+			return nil, nil, err
+		}
+		return decoder.emitResponsesEvent(event)
 	case "response.web_search_call.in_progress", "response.web_search_call.searching",
 		"response.web_search_call.completed":
 		// A web search's progress is not carried: the item's added and done
