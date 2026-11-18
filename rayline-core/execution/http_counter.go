@@ -206,7 +206,7 @@ func chatFormForCounting(engine *protocolcodec.Engine, protocol llmprotocol.Wire
 		}
 		return nil, 0, &uncountedRequest{reason: "no Chat form: " + logName(code)}
 	}
-	if len(result.Diagnostics) >= countDiagnostics {
+	if len(result.Diagnostics) >= chatFormDiagnostics {
 		return nil, 0, &uncountedRequest{reason: "too many members the Chat form drops to check"}
 	}
 	if carry.Dropped() > 0 {
@@ -357,19 +357,23 @@ func translatedCountAllowance(tokens int, headroom float64) int {
 // broken counter, and adding the allowance to it could overflow.
 const maxCountedTokens = 1 << 31
 
-// countDiagnostics is the diagnostics limit of the engine that translates for
-// counting. The default limit (64) is filled by neutral members alone (one
-// per deferred tool or per message), after which some drops go unrecorded.
-// This one is above what a valid request can produce (its tools, messages
-// and content blocks are capped at about 21k), so the list that proves
-// nothing else was dropped is complete; a list that reaches it is uncounted.
-var countDiagnostics = 1 << 16
+// chatFormDiagnostics is the diagnostics limit of the Chat-form engine. The
+// default limit (64) is filled by neutral members alone (one per deferred
+// tool or per message), after which some drops go unrecorded. This one is
+// above what a valid request can produce (its tools, messages and content
+// blocks are capped at about 21k), so the list that proves nothing else was
+// dropped is complete; a list that reaches it is uncounted.
+var chatFormDiagnostics = 1 << 16
 
-// newCountingEngine is the codec the counter translates with: the built-in
-// one, with countDiagnostics.
-func newCountingEngine() (*protocolcodec.Engine, error) {
+// newChatFormEngine builds the protocol codec the token counter uses to
+// translate a Messages or Responses request to the Chat form it posts; it
+// counts nothing itself. It is the built-in codec the core dispatches with,
+// except for one setting: its diagnostics limit is chatFormDiagnostics, so
+// the list of dropped members chatFormForCounting checks is complete. A
+// separate instance keeps the dispatch engine's limit unchanged.
+func newChatFormEngine() (*protocolcodec.Engine, error) {
 	policy := llmprotocol.DefaultPolicy()
-	policy.Limits.Diagnostics = countDiagnostics
+	policy.Limits.Diagnostics = chatFormDiagnostics
 	return protocolcodec.NewEngine(protocolcodec.NewBuiltinRegistry(), policy)
 }
 

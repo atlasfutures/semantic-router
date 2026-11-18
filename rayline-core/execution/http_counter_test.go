@@ -392,7 +392,7 @@ func worstCaseText(text string) int {
 }
 
 func TestChatFormForCountingRefusesWhatItCannotCarry(t *testing.T) {
-	engine, err := newCountingEngine()
+	engine, err := newChatFormEngine()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -468,7 +468,7 @@ func preparedFor(t *testing.T, protocol llmprotocol.WireFormat, body []byte) []b
 // form cannot carry, but the core drops it for a local target before the
 // counter sees the request.
 func TestTokenCounterCountsRealHarnessTurns(t *testing.T) {
-	engine, err := newCountingEngine()
+	engine, err := newChatFormEngine()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -505,17 +505,17 @@ func TestChatFormForCountingNeedsACompleteDropList(t *testing.T) {
 		tools[index] = map[string]any{"name": fmt.Sprintf("mcp_tool_%d", index), "input_schema": map[string]any{"type": "object"}, "defer_loading": true}
 	}
 	body := mustJSON(map[string]any{"model": "m", "max_tokens": 64, "tools": tools, "messages": []any{map[string]any{"role": "user", "content": "hi"}}})
-	engine, err := newCountingEngine()
+	engine, err := newChatFormEngine()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err = chatFormForCounting(engine, llmprotocol.AnthropicMessagesV1, []byte(body)); err != nil {
 		t.Fatalf("70 deferred tools: %v", err)
 	}
-	previous := countDiagnostics
-	countDiagnostics = 64
-	defer func() { countDiagnostics = previous }()
-	small, err := newCountingEngine()
+	previous := chatFormDiagnostics
+	chatFormDiagnostics = 64
+	defer func() { chatFormDiagnostics = previous }()
+	small, err := newChatFormEngine()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -543,7 +543,7 @@ func TestTokenCounterRefusesAnImplausibleCountAndLogsNoRequestText(t *testing.T)
 	if _, err := newHTTPCounter(t.Context(), deployment, Config{Deployments: []Deployment{deployment}}, nil); err == nil {
 		t.Fatal("a Messages counter without a codec qualified")
 	}
-	engine, err := newCountingEngine()
+	engine, err := newChatFormEngine()
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -46,7 +46,7 @@ func (server *Server) RegisterConfiguredPromptCounters(ctx context.Context) erro
 			if deployment.PromptCounter != nil {
 				return fmt.Errorf("deployment %s sets both prompt_counter and token_counter", deployment.ID)
 			}
-			engine, err := newCountingEngine()
+			engine, err := newChatFormEngine()
 			if err != nil {
 				return err
 			}
