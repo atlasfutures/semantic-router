@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -188,7 +189,9 @@ func TestResponsesRouteNeverReplaysWhatChanged(t *testing.T) {
 			`{"type":"message","role":"assistant","content":[{"type":"input_text","text":"Hello."}]},` +
 			`{"type":"message","role":"user","content":"Bye"}]}`
 		got := routeResponsesBody(t, body, "routed-model", nil)
-		if strings.Contains(got, `"text":"Hello.","type":"input_text"`) || !strings.Contains(got, `"text":"Hello.","type":"output_text"`) {
+		assistant := itemsOfType(responsesInputItems(t, got), "message", "assistant")
+		want := jsonValue(t, `[{"type":"output_text","text":"Hello.","annotations":[]}]`)
+		if len(assistant) != 1 || !reflect.DeepEqual(assistant[0]["content"], want) {
 			t.Fatalf("the assistant input_text travelled:\n%s", got)
 		}
 	})
@@ -200,7 +203,7 @@ func TestResponsesRouteNeverReplaysWhatChanged(t *testing.T) {
 			`{"type":"function_call_output","call_id":"c1","output":[{"type":"input_text","text":"README.md"}]}],` +
 			`"tools":[{"type":"function","name":"exec","parameters":{"type":"object"},"strict":false}]}`
 		got := routeResponsesBody(t, body, "routed-model", nil)
-		if !strings.Contains(got, `"output":"README.md"`) {
+		if outputs := itemsOfType(responsesInputItems(t, got), "function_call_output", ""); len(outputs) != 1 || outputs[0]["output"] != "README.md" {
 			t.Fatalf("the tool output list travelled:\n%s", got)
 		}
 	})

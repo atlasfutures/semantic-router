@@ -35,8 +35,8 @@ func itemsOfType(items []map[string]any, kind, role string) []map[string]any {
 
 func jsonValue(t *testing.T, raw string) any {
 	t.Helper()
-	var value any
-	if err := json.Unmarshal([]byte(raw), &value); err != nil {
+	value, err := decodeJSONValue([]byte(raw))
+	if err != nil {
 		t.Fatal(err)
 	}
 	return value
