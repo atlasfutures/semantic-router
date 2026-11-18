@@ -21,12 +21,12 @@ func streamResponsesTo(t *testing.T, client llmprotocol.WireFormat, body string)
 	}
 	accumulator := NewResponseAccumulator()
 	_, events, _, pushErr := stream.Push([]byte(body))
-	if err := accumulator.Apply(events); err != nil {
-		t.Fatal(err)
+	if applyErr := accumulator.Apply(events); applyErr != nil {
+		t.Fatal(applyErr)
 	}
 	_, events, _, finalErr := stream.Finalize(pushErr)
-	if err := accumulator.Apply(events); err != nil {
-		t.Fatal(err)
+	if applyErr := accumulator.Apply(events); applyErr != nil {
+		t.Fatal(applyErr)
 	}
 	response, err := accumulator.Response()
 	if err != nil {
