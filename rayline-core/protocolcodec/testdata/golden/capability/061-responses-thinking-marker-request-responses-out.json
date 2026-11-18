@@ -29,8 +29,9 @@
             {
               "content": [
                 {
+                  "annotations": [],
                   "text": "It is sunny.",
-                  "type": "input_text"
+                  "type": "output_text"
                 }
               ],
               "role": "assistant",

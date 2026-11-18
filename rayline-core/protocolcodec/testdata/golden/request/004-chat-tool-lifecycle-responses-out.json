@@ -18,12 +18,7 @@
     },
     {
       "call_id": "call_weather_1",
-      "output": [
-        {
-          "text": "Sunny, 21 C",
-          "type": "input_text"
-        }
-      ],
+      "output": "Sunny, 21 C",
       "type": "function_call_output"
     },
     {
