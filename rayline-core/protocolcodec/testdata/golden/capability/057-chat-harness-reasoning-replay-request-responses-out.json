@@ -34,12 +34,7 @@
             },
             {
               "call_id": "call_1",
-              "output": [
-                {
-                  "text": "sunny",
-                  "type": "input_text"
-                }
-              ],
+              "output": "sunny",
               "type": "function_call_output"
             }
           ],
@@ -194,8 +189,9 @@
             {
               "content": [
                 {
+                  "annotations": [],
                   "text": "Hello there.",
-                  "type": "input_text"
+                  "type": "output_text"
                 }
               ],
               "role": "assistant",

@@ -459,7 +459,14 @@ func (state *responsesMessageEncodingState) flushOrdinary() error {
 	if len(state.ordinary) == 0 {
 		return nil
 	}
-	content, err := encodeResponsesContent(state.ordinary, state.textDirection)
+	direction := state.textDirection
+	if direction == "input" && state.role == "assistant" && onlyResentAssistantText(state.ordinary) {
+		// Earlier assistant output goes back in the output union, as Codex
+		// itself resends it: strict Responses servers refuse an assistant
+		// message holding input_text.
+		direction = "history"
+	}
+	content, err := encodeResponsesContent(state.ordinary, direction)
 	if err != nil {
 		return err
 	}
@@ -495,7 +502,7 @@ func (state *responsesMessageEncodingState) appendToolResult(result *llmprotocol
 	if result == nil {
 		return llmprotocol.NewError(llmprotocol.ErrorInvalidRequest, "invalid_tool_result", "tool result is invalid", nil)
 	}
-	output, err := encodeResponsesContent(result.Content, "input")
+	output, err := encodeResponsesToolOutput(result.Content)
 	if err != nil {
 		return err
 	}
@@ -504,6 +511,17 @@ func (state *responsesMessageEncodingState) appendToolResult(result *llmprotocol
 		CallID: result.CallID, Output: output,
 	})
 	return nil
+}
+
+// encodeResponsesToolOutput writes a tool result that is one text part as a
+// string, as Codex sends it: strict Responses servers refuse a
+// function_call_output whose output is a list. Any other result keeps the
+// list, the only form that can carry it.
+func encodeResponsesToolOutput(contents []llmprotocol.Content) (json.RawMessage, error) {
+	if kept := withoutCarriedContent(contents); len(kept) == 1 && kept[0].Kind == llmprotocol.ContentText {
+		return json.Marshal(kept[0].Text)
+	}
+	return encodeResponsesContent(contents, "input")
 }
 
 func (state *responsesMessageEncodingState) flushReasoning() error {
@@ -624,14 +642,32 @@ func decodeResponsesReasoning(
 	return contents, nil
 }
 
+// onlyResentAssistantText reports whether an assistant message's content fits
+// the output union (text and refusals). One that also holds an input image or
+// file keeps the input union, the only one that can carry it.
+func onlyResentAssistantText(contents []llmprotocol.Content) bool {
+	for _, content := range withoutCarriedContent(contents) {
+		if content.Kind != llmprotocol.ContentText && content.Kind != llmprotocol.ContentRefusal {
+			return false
+		}
+	}
+	return true
+}
+
+// encodeResponsesContent writes content parts for direction "input", "output"
+// (a provider response), or "history" (assistant output resent in a request,
+// whose citations, as on input, are not sent).
 func encodeResponsesContent(contents []llmprotocol.Content, direction string) (json.RawMessage, error) {
 	parts := make([]responsesContentWire, 0, len(contents))
 	for _, content := range withoutCarriedContent(contents) {
 		switch content.Kind {
 		case llmprotocol.ContentText:
-			part := responsesContentWire{Type: direction + "_text", Text: content.Text}
-			if direction == "output" {
-				part.Annotations = responsesAnnotations(content.Citations)
+			part := responsesContentWire{Type: "input_text", Text: content.Text}
+			switch direction {
+			case "output":
+				part.Type, part.Annotations = "output_text", responsesAnnotations(content.Citations)
+			case "history":
+				part.Type = "output_text"
 			}
 			parts = append(parts, part)
 		case llmprotocol.ContentRefusal:

@@ -18,12 +18,7 @@
     },
     {
       "call_id": "call_lookup",
-      "output": [
-        {
-          "text": "ten",
-          "type": "input_text"
-        }
-      ],
+      "output": "ten",
       "type": "function_call_output"
     }
   ],
