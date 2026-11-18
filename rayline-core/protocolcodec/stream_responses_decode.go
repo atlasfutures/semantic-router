@@ -50,7 +50,10 @@ func (decoder *responsesStreamDecoder) decodeResponsesLifecycleEvent(
 func (decoder *responsesStreamDecoder) validateResponsesToolDone(wire responsesEventWire) error {
 	index := responsesWireOutputIndex(wire)
 	call := decoder.toolCalls[index]
-	if call.Name != "" && wire.Name != call.Name {
+	// The event's name is not in the published schema and some servers (LM
+	// Studio) leave it out; the item's added event names the call. A name
+	// that is sent must still agree.
+	if call.Name != "" && wire.Name != "" && wire.Name != call.Name {
 		return invalidProviderResponse("stream_tool_identity_mismatch", "Responses function-call done event changed the tool name")
 	}
 	if call.Name == "" {
