@@ -294,6 +294,19 @@ type publicDecision struct {
 	CostWeight *float64          `json:"cost_weight"`
 	Prices     *resultPrices     `json:"prices"`
 	Receipt    *DecisionReceipt  `json:"receipt"`
+	// ThinkingLevel is absent for an action with no thinking level. It is
+	// kept raw: it only describes the decision, so a value that isn't a
+	// string is left out rather than failing the answer.
+	ThinkingLevel json.RawMessage `json:"thinking_level"`
+}
+
+// thinkingLevel is the result's thinking level, or "" when it names none.
+func (result publicDecision) thinkingLevel() string {
+	var level string
+	if json.Unmarshal(result.ThinkingLevel, &level) != nil {
+		return ""
+	}
+	return level
 }
 
 type notAdmittedEcho struct {
@@ -491,6 +504,7 @@ func (provider *HTTPDecisions) Decide(ctx context.Context, input DecisionInput) 
 			decision, err = provider.currentTopDecision(input.Format, result, selected, priced != 0)
 		}
 		decision.Signals = result.Signals
+		decision.ThinkingLevel = selected.thinkingLevel()
 		return decision, err
 	}
 	identity := selected.Identity
@@ -542,6 +556,7 @@ func (provider *HTTPDecisions) Decide(ctx context.Context, input DecisionInput) 
 	decision := Decision{RouteID: result.RouteID, ActionID: identity.ActionID, Worker: selected.Worker, Model: action.Model, ReportedModel: selected.Model, PackageSHA256: identity.PackageSHA256, ControlID: identity.ControlID, ArmID: identity.ArmID, Result: provider.config.Decisions.Result, IdentitySource: "response", AppliedValueUSD: provider.valueUSD}
 	decision.PriceProfile = appliedProfile
 	decision.Receipt = receipt
+	decision.ThinkingLevel = selected.thinkingLevel()
 	decision.Signals = result.Signals
 	provider.logDecision(decision, identity.Prices.Basis, identity.Prices.SHA256)
 	return decision, nil

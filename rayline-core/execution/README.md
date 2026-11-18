@@ -245,6 +245,17 @@ opt-in. The core reports facts and never picks or ranks a model.
   `routing.policy` must echo `status: "applied"` and the preset. An
   `unsupported` echo fails visibly; there is no fallback to another mode. Responses add `X-Rayline-Decided-By` and
   `X-Rayline-Event` headers, and logs record the receipt and capacity facts.
+  Responses also describe the decision that chose the turn's target:
+  - `X-Rayline-Decision-Ms`: how long that Decisions consult took, in whole
+    milliseconds;
+  - `X-Rayline-Thinking-Level`: the result's `thinking_level`, when it has one;
+  - `X-Rayline-Decision-Reason`: the receipt's `selection.outcome`
+    (`prefer_local_threshold`, `utility_fallback`, `schedule`), when the
+    policy's selection rule ran;
+  - `X-Rayline-P-Pass` and `X-Rayline-Min-P-Pass`, with
+    `prefer_local_threshold`: the selected action's `p_pass` and the rule's
+    `min_p_pass`.
+  A thinking level or outcome that isn't a lowercase word is left out.
 
 ## Configuration
 

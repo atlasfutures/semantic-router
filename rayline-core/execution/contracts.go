@@ -5,6 +5,7 @@ package execution
 import (
 	"context"
 	"encoding/json"
+	"time"
 
 	"github.com/atlasfutures/semantic-router/rayline-core/cachecontext"
 	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
@@ -115,6 +116,12 @@ type Decision struct {
 	Result          string
 	// Receipt is the v2 policy receipt; nil in current and v1 modes.
 	Receipt *DecisionReceipt
+	// ThinkingLevel is the thinking level the answer names for the selected
+	// action; empty when it names none.
+	ThinkingLevel string
+	// Elapsed is how long the Decisions consult that made this decision
+	// took, as the server measured it.
+	Elapsed time.Duration
 	// Signals is the response's signals block, returned to the caller; nil
 	// when absent.
 	Signals json.RawMessage
