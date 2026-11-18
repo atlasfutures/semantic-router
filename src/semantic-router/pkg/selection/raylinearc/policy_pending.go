@@ -55,6 +55,11 @@ type PendingDecision struct {
 	// Policy is the policy context the decision was made in and its ledger
 	// entry; nil when it recorded none.
 	Policy *PendingPolicy `json:"policy,omitempty"`
+	// PrefillBaseDigest is, when the decision's request ended with an
+	// assistant message (a prefill the model continues), the digest of the
+	// messages before it: the next turn carries the completed reply in that
+	// message's place. Empty otherwise.
+	PrefillBaseDigest string `json:"prefill_base_digest,omitempty"`
 	// PriorServedModel is the served-model record as the decision read it,
 	// before the decision overwrote it with its own model; empty when it
 	// read none. A request that drops the decision unexecuted reads this
@@ -76,7 +81,7 @@ type PendingPolicy struct {
 }
 
 // NewPendingDecision is the pending form of a decision for a request of
-// digests: arm, its model, the policy state the decision would commit
+// digests and roles: arm, its model, the policy state the decision would commit
 // (nil when it records none) and the encoded tokens, at turnIndex completed
 // turns. A route id longer than the stored bound is not kept.
 func NewPendingDecision(
@@ -86,6 +91,7 @@ func NewPendingDecision(
 	turnIndex uint64,
 	inputTokens int,
 	digests *PrefixDigests,
+	roles []string,
 	next *PolicyEpisodeState,
 	now time.Time,
 ) *PendingDecision {
@@ -93,6 +99,9 @@ func NewPendingDecision(
 	pending := &PendingDecision{
 		Arm: arm, Model: model, TurnIndex: turnIndex, DecidedUnixMS: now.UTC().UnixMilli(),
 		InputTokens: inputTokens, PrefixLen: count, PrefixDigest: digests.Digest(count),
+	}
+	if count > 0 && len(roles) == count && roles[count-1] == "assistant" {
+		pending.PrefillBaseDigest = digests.Digest(count - 1)
 	}
 	if len(routeID) <= maxPendingRouteIDBytes {
 		pending.RouteID = routeID
@@ -138,7 +147,8 @@ func (pending *PendingDecision) Validate(workerCount int) error {
 	malformed := errors.New("ARC episode pending decision is malformed")
 	if pending.Arm < 0 || pending.Arm >= workerCount || pending.PrefixLen < 1 || pending.InputTokens < 0 ||
 		pending.DecidedUnixMS <= 0 || !isLowerHex64(pending.PrefixDigest) ||
-		len(pending.RouteID) > maxPendingRouteIDBytes {
+		len(pending.RouteID) > maxPendingRouteIDBytes ||
+		(pending.PrefillBaseDigest != "" && !isLowerHex64(pending.PrefillBaseDigest)) {
 		return malformed
 	}
 	policy := pending.Policy
@@ -181,12 +191,20 @@ const (
 // ResolvePending is the episode a request of digests and roles is decided
 // on, given the pending decision the episode holds:
 //
-//   - the request's next turn -- it extends the decision's messages and
-//     carries an assistant message right after them -- records the decision
-//     as a turn that ran, marked inferred;
+//   - the request's next turn records the decision as a turn that ran,
+//     marked inferred: it extends the decision's messages, carries an
+//     assistant message right after them and something after that reply
+//     (a request ending at an assistant message is a prefill of the same
+//     turn); or, for a decision whose request ended with a prefill, it
+//     carries the completed reply in the prefill's place and something
+//     after it;
 //   - any other request drops it: the same turn asked again (identical, or
-//     with its last message edited, or with a message appended beside it
-//     without a reply), or one that departs from it.
+//     with its last message edited, with a message appended beside it
+//     without a reply, or with a prefill added), or one that departs from
+//     it.
+//
+// roles are the request's, with every assistant output item (of any kind)
+// read as "assistant".
 //
 // The resolved state holds no pending decision. state itself is never
 // changed; it is returned as is when it holds none.
@@ -205,13 +223,12 @@ func ResolvePending(state *EpisodeState, digests *PrefixDigests, roles []string)
 		boundary.Arm != pending.Arm {
 		return resolved, PendingSuperseded
 	}
-	messages := digests.Messages()
-	if pending.PrefixLen >= len(messages) || pending.PrefixLen >= len(roles) ||
-		roles[pending.PrefixLen] != "assistant" || digests.Digest(pending.PrefixLen) != pending.PrefixDigest {
+	reply, ok := pending.replyIndex(digests, roles)
+	if !ok {
 		return resolved, PendingDropped
 	}
 	if pending.Policy != nil {
-		resolved.Policy = pending.inferredPolicy(state.Policy, digests)
+		resolved.Policy = pending.inferredPolicy(state.Policy, digests, reply)
 	}
 	// The arm's last call record outlives the inferred turn, which made no
 	// call the cell saw: Commit replaces the arm's warmth.
@@ -226,9 +243,26 @@ func ResolvePending(state *EpisodeState, digests *PrefixDigests, roles []string)
 	return resolved, PendingInferred
 }
 
+// replyIndex is where the request carries the reply to the decision, and
+// false when it carries none (ResolvePending).
+func (pending *PendingDecision) replyIndex(digests *PrefixDigests, roles []string) (int, bool) {
+	decided, count := pending.PrefixLen, len(digests.Messages())
+	if len(roles) != count || decided >= count {
+		return 0, false
+	}
+	if decided+1 < count && roles[decided] == "assistant" && digests.Digest(decided) == pending.PrefixDigest {
+		return decided, true
+	}
+	if pending.PrefillBaseDigest != "" && roles[decided-1] == "assistant" && roles[count-1] != "assistant" &&
+		digests.Digest(decided-1) == pending.PrefillBaseDigest {
+		return decided - 1, true
+	}
+	return 0, false
+}
+
 // inferredPolicy is stored with the pending decision's ledger entry
 // recorded, marked inferred, in the context the decision was made in.
-func (pending *PendingDecision) inferredPolicy(stored *PolicyEpisodeState, digests *PrefixDigests) *PolicyEpisodeState {
+func (pending *PendingDecision) inferredPolicy(stored *PolicyEpisodeState, digests *PrefixDigests, reply int) *PolicyEpisodeState {
 	policy := pending.Policy
 	var base *PolicyEpisodeState
 	if stored != nil && stored.Epoch == policy.Epoch && stored.PrefixLen <= pending.PrefixLen &&
@@ -255,7 +289,13 @@ func (pending *PendingDecision) inferredPolicy(stored *PolicyEpisodeState, diges
 		prices := *entry.Prices
 		entry.Prices = &prices
 	}
-	next := base.withLedgerEntry(entry, pending.PrefixLen, pending.PrefixDigest)
+	// The reply is the message at reply: the decided message count for an
+	// ordinary turn, the prefill's place for a completed prefill. The
+	// context's prefix is the decided message count, as a served turn's is,
+	// over the request's messages (a completed prefill's reply replaces the
+	// prefill).
+	entry.Message = reply
+	next := base.withLedgerEntry(entry, pending.PrefixLen, digests.Digest(pending.PrefixLen))
 	next.Exploration = policy.Exploration.Clone()
 	return next
 }

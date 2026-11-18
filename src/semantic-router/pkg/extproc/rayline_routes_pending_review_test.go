@@ -129,3 +129,96 @@ func TestLookupKeepsAStoredBoundaryDecisionItReplayed(t *testing.T) {
 		}
 	}
 }
+
+// lookupAs posts a /v1/routes lookup in format with body.
+func (fixture *pendingRoutesFixture) lookupAs(t *testing.T, conversation, format string, body map[string]any) {
+	t.Helper()
+	raw, err := json.Marshal(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := fixture.router.handleRaylineRoutesAPI(raw, routesContext(map[string]string{
+		"x-rayline-format": format, raylineRoutesSessionHeader: conversation,
+	}))
+	fixture.router.background.Wait()
+	if code := immediateStatusCode(t, response); code != 200 {
+		t.Fatalf("%s lookup status %d: %s", format, code, response.GetImmediateResponse().Body)
+	}
+}
+
+// The next-turn rule per wire format, through the endpoint: a lookup, then
+// the next turn's lookup carrying a reply. The decision is recorded as ran
+// (turn 1, one inferred entry) whatever item the reply opens with; a request
+// that only adds a prefill to the same turn drops it.
+func TestNextTurnRulePerWireFormat(t *testing.T) {
+	user := func(text string) map[string]any { return map[string]any{"role": "user", "content": text} }
+	responsesUser := func(text string) map[string]any {
+		return map[string]any{"type": "message", "role": "user", "content": []any{map[string]any{"type": "input_text", "text": text}}}
+	}
+	cases := []struct {
+		name, format string
+		first, next  map[string]any
+		inferred     bool
+	}{
+		{
+			name: "chat with the system message in messages", format: "chat",
+			first: map[string]any{"model": "rayline/arc-dev", "messages": []any{
+				map[string]any{"role": "system", "content": "be brief"}, user("fix it"),
+			}},
+			next: map[string]any{"model": "rayline/arc-dev", "messages": []any{
+				map[string]any{"role": "system", "content": "be brief"}, user("fix it"),
+				map[string]any{"role": "assistant", "content": "fixed"}, user("thanks"),
+			}},
+			inferred: true,
+		},
+		{
+			name: "anthropic prefill completed", format: "anthropic",
+			first: map[string]any{"model": "rayline/arc-dev", "max_tokens": 64, "messages": []any{
+				user("fix it"), map[string]any{"role": "assistant", "content": "The fix is"},
+			}},
+			next: map[string]any{"model": "rayline/arc-dev", "max_tokens": 64, "messages": []any{
+				user("fix it"), map[string]any{"role": "assistant", "content": "The fix is a nil check."}, user("thanks"),
+			}},
+			inferred: true,
+		},
+		{
+			name: "anthropic prefill added to the same turn", format: "anthropic",
+			first: map[string]any{"model": "rayline/arc-dev", "max_tokens": 64, "messages": []any{user("fix it")}},
+			next: map[string]any{"model": "rayline/arc-dev", "max_tokens": 64, "messages": []any{
+				user("fix it"), map[string]any{"role": "assistant", "content": "The fix is"},
+			}},
+			inferred: false,
+		},
+	}
+	for _, opener := range []map[string]any{
+		{"type": "reasoning", "id": "rs_1", "summary": []any{}},
+		{"type": "function_call", "call_id": "c1", "name": "ls", "arguments": "{}"},
+		{"type": "custom_tool_call", "call_id": "c1", "name": "apply_patch", "input": "*** Begin Patch"},
+		{"type": "message", "role": "assistant", "content": []any{map[string]any{"type": "output_text", "text": "done"}}},
+	} {
+		cases = append(cases, struct {
+			name, format string
+			first, next  map[string]any
+			inferred     bool
+		}{
+			name: "responses reply opening with " + opener["type"].(string), format: "responses",
+			first: map[string]any{"model": "rayline/arc-dev", "input": []any{responsesUser("fix it")}},
+			next: map[string]any{"model": "rayline/arc-dev", "input": []any{
+				responsesUser("fix it"), opener, responsesUser("thanks"),
+			}},
+			inferred: true,
+		})
+	}
+	for index, tc := range cases {
+		fixture := newPendingRoutesFixture(t, true, "")
+		conversation := fmt.Sprintf("conversation-format-%d", index)
+		fixture.lookupAs(t, conversation, tc.format, tc.first)
+		fixture.lookupAs(t, conversation, tc.format, tc.next)
+		state := fixture.stored(t, conversation)
+		inferred := state.TurnIndex == 1 && state.Policy != nil && len(state.Policy.Ledger) == 1 &&
+			state.Policy.Ledger[0].Basis == raylinearc.PolicyLedgerBasisInferred
+		if inferred != tc.inferred || state.Pending == nil {
+			t.Fatalf("%s: inferred %t, want %t (turn %d, policy %+v)", tc.name, inferred, tc.inferred, state.TurnIndex, state.Policy)
+		}
+	}
+}

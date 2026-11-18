@@ -69,7 +69,7 @@ func withPendingLookup(t *testing.T, state *EpisodeState, messages ...string) *E
 	turn, _, _ := PolicyTurnFrom(state.Policy, digests, roles, state.TurnIndex, PolicyTurnSignals{CallKind: PolicyCallMain})
 	next := turn.NextWithPricesFrom(digests, pendingActionB, "arm-b", nil)
 	stored := cloneEpisodeState(state)
-	stored.Pending = NewPendingDecision("rte_1", 1, "vendor/b", state.TurnIndex, 42, digests, next, pendingNow)
+	stored.Pending = NewPendingDecision("rte_1", 1, "vendor/b", state.TurnIndex, 42, digests, roles, next, pendingNow)
 	return stored
 }
 
@@ -93,7 +93,9 @@ func TestResolvePendingTellsTheNextTurnFromARepeat(t *testing.T) {
 			`{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"ls","input":{}}]}`,
 			`{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"a.go"}]}`,
 		}, PendingInferred},
-		"reply only, no new message": {[]string{pendingTask, pendingReply1, pendingAsk2, `{"role":"assistant","content":"two"}`}, PendingInferred},
+		// A request that ends at an assistant message is a prefill of the
+		// same turn, not its next turn.
+		"prefill added to the same turn": {[]string{pendingTask, pendingReply1, pendingAsk2, `{"role":"assistant","content":"two"}`}, PendingDropped},
 	}
 	for name, tc := range cases {
 		raw, roles := rawMessages(t, tc.messages...)
@@ -199,7 +201,7 @@ func TestCommitClearsThePendingDecision(t *testing.T) {
 // unwritable.
 func TestNewPendingDecisionBoundsTheRouteID(t *testing.T) {
 	raw, _ := rawMessages(t, pendingTask)
-	long := NewPendingDecision(strings.Repeat("r", maxPendingRouteIDBytes+1), 0, "", 0, 0, NewPrefixDigests(raw), nil, pendingNow)
+	long := NewPendingDecision(strings.Repeat("r", maxPendingRouteIDBytes+1), 0, "", 0, 0, NewPrefixDigests(raw), nil, nil, pendingNow)
 	if long.RouteID != "" || long.Validate(2) != nil {
 		t.Fatalf("pending %+v", long)
 	}
@@ -230,7 +232,7 @@ func TestEpisodeStateWireV11CarriesPendingDecisions(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(decoded.Pending, stored.Pending) {
 		t.Fatalf("pending did not round-trip: %+v (%v)", decoded.Pending, err)
 	}
-	raw, roles := rawMessages(t, pendingTask, pendingReply1, pendingAsk2, `{"role":"assistant","content":"two"}`)
+	raw, roles := rawMessages(t, pendingTask, pendingReply1, pendingAsk2, `{"role":"assistant","content":"two"}`, `{"role":"user","content":"three"}`)
 	inferred, _ := ResolvePending(stored, NewPrefixDigests(raw), roles)
 	marked, err := marshalEpisodeState(inferred, 3, pendingNow)
 	if err != nil || !bytes.Contains(marked, []byte(episodeStateSchemaV11)) || !bytes.Contains(marked, []byte(`"basis":"inferred"`)) {
@@ -318,5 +320,47 @@ func TestResolvePendingNeverReusesAnEpoch(t *testing.T) {
 	resolved, _ = ResolvePending(stored, NewPrefixDigests(raw), roles)
 	if resolved.Policy.Epoch <= decided || len(resolved.Policy.Ledger) != 1 {
 		t.Fatalf("same-numbered sibling context: epoch %d ledger %+v", resolved.Policy.Epoch, resolved.Policy.Ledger)
+	}
+}
+
+// A lookup whose request ended with an assistant prefill: the next turn
+// carries the completed reply in the prefill's place and something after it,
+// and records the decision as the turn that wrote that reply. The same turn
+// asked again with the prefill (or a changed prefill) drops it.
+func TestResolvePendingCompletesAPrefill(t *testing.T) {
+	prefill := `{"role":"assistant","content":"The fix is"}`
+	stored := withPendingLookup(t, executedEpisode(t), pendingTask, pendingReply1, pendingAsk2, prefill)
+	if stored.Pending.PrefillBaseDigest == "" {
+		t.Fatal("a decision ending at a prefill kept no base digest")
+	}
+	completed := `{"role":"assistant","content":"The fix is a nil check."}`
+	cases := map[string]struct {
+		messages []string
+		want     string
+	}{
+		"completed prefill, then the next ask": {[]string{pendingTask, pendingReply1, pendingAsk2, completed, `{"role":"user","content":"thanks"}`}, PendingInferred},
+		"prefill kept, then the next ask":      {[]string{pendingTask, pendingReply1, pendingAsk2, prefill, `{"role":"user","content":"thanks"}`}, PendingInferred},
+		"same prefill asked again":             {[]string{pendingTask, pendingReply1, pendingAsk2, prefill}, PendingDropped},
+		"changed prefill asked again":          {[]string{pendingTask, pendingReply1, pendingAsk2, `{"role":"assistant","content":"First,"}`}, PendingDropped},
+		"prefill dropped, question edited":     {[]string{pendingTask, pendingReply1, `{"role":"user","content":"other"}`}, PendingDropped},
+	}
+	for name, tc := range cases {
+		raw, roles := rawMessages(t, tc.messages...)
+		digests := NewPrefixDigests(raw)
+		resolved, resolution := ResolvePending(stored, digests, roles)
+		if resolution != tc.want {
+			t.Fatalf("%s: resolution %q, want %q", name, resolution, tc.want)
+		}
+		if resolution != PendingInferred {
+			continue
+		}
+		entry := resolved.Policy.Ledger[len(resolved.Policy.Ledger)-1]
+		if entry.Message != 3 || resolved.Policy.PrefixLen != 4 || resolved.Policy.PrefixDigest != digests.Digest(4) {
+			t.Fatalf("%s: entry at %d, prefix %d", name, entry.Message, resolved.Policy.PrefixLen)
+		}
+		if _, attribution, transition := PolicyTurnFrom(resolved.Policy, digests, roles, resolved.TurnIndex,
+			PolicyTurnSignals{CallKind: PolicyCallMain}); transition != PolicyTransitionExtends || attribution[len(attribution)-1].Message != 3 {
+			t.Fatalf("%s: next turn %s attribution %+v", name, transition, attribution)
+		}
 	}
 }

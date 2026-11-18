@@ -18,7 +18,9 @@ package extproc
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
@@ -67,7 +69,8 @@ func resolveRaylineARCPendingDecision(reqCtx *RequestContext, arcContext *select
 		return nil
 	}
 	digests := raylinearc.NewPrefixDigests(messages)
-	transaction.requestDigests = digests
+	roles = pendingReplyRoles(arcContext.RequestFormat, messages, roles)
+	transaction.requestDigests, transaction.requestRoles = digests, roles
 	if state == nil || state.Pending == nil {
 		return nil
 	}
@@ -238,7 +241,7 @@ func (transaction *raylineARCEpisodeTransaction) pendingState(routeID string) (*
 	}
 	next.Pending = raylinearc.NewPendingDecision(
 		routeID, arm, transaction.servedModel, next.TurnIndex, transaction.serializedTokens,
-		transaction.requestDigests, transaction.policyNext, time.Now(),
+		transaction.requestDigests, transaction.requestRoles, transaction.policyNext, time.Now(),
 	)
 	next.Pending.PriorServedModel = transaction.priorServedModel
 	// The served-model record names the decided model, as a committed
@@ -248,4 +251,28 @@ func (transaction *raylineARCEpisodeTransaction) pendingState(routeID string) (*
 	// that names no model leaves the record as it was.
 	next.ServedModel = transaction.servedModel
 	return next, nil
+}
+
+// pendingReplyRoles are roles with every Responses assistant output item read
+// as "assistant", for the next-turn test only: the episode's attribution
+// reads a message, a function call or reasoning as the assistant's
+// (policyResponsesRoles), but a reply may open with any output item, such as
+// a custom tool call, a shell call or a web search.
+func pendingReplyRoles(format string, messages []json.RawMessage, roles []string) []string {
+	if format != policyFormatResponses {
+		return roles
+	}
+	read := append([]string(nil), roles...)
+	for index, item := range messages {
+		if read[index] != "" {
+			continue
+		}
+		var envelope struct {
+			Type string `json:"type"`
+		}
+		if json.Unmarshal(item, &envelope) == nil && strings.HasSuffix(envelope.Type, "_call") {
+			read[index] = "assistant"
+		}
+	}
+	return read
 }

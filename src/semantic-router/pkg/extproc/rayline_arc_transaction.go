@@ -187,6 +187,7 @@ type raylineARCEpisodeTransaction struct {
 	// them, kept by the pending-decision resolution for the decision the
 	// request may store; nil before it ran.
 	requestDigests *raylinearc.PrefixDigests
+	requestRoles   []string
 	// resolvedPending marks a request that recorded or dropped the pending
 	// decision it read, and readTurnIndex is the turn count it read, before
 	// that: state no longer holds it.
