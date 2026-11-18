@@ -223,7 +223,7 @@ func chatFormForCounting(engine *protocolcodec.Engine, protocol llmprotocol.Wire
 			return nil, 0, &uncountedRequest{reason: "a message carries output_config other than an effort on a system message"}
 		}
 		if !countNeutralMembers[member] && !countChargedMembers[member] {
-			return nil, 0, &uncountedRequest{reason: fmt.Sprintf("the Chat form %s %s", diagnostic.Action, logName(member))}
+			return nil, 0, &uncountedRequest{reason: fmt.Sprintf("the Chat form %s %s", diagnostic.Action, logName(diagnostic.Field))}
 		}
 	}
 	charged, err := droppedTextBytes(body)
