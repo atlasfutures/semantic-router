@@ -505,3 +505,33 @@ func TestGenerationTurnReadsTheServedRecordOnlyWithoutAPreviousArm(t *testing.T)
 		t.Fatal(err)
 	}
 }
+
+// Rule: a repeat ask decides on the turns that ran, and the policy never
+// sees its own unexecuted decision as the held model. In a fresh episode the
+// served-model record names the first ask's decision once it is written, so
+// the repeat (and an edited one) is held to the record as the first ask read
+// it, through any number of repeats.
+func TestRepeatAskIsNotHeldToItsOwnDecision(t *testing.T) {
+	fixture := newPendingRoutesFixture(t, true, "")
+	fixture.twoStage()
+	const conversation = "conversation-repeat-hold"
+	if err := fixture.store.SeedServedModel(raylinearc.HashEpisodeID(conversation), "vendor/off"); err != nil {
+		t.Fatal(err)
+	}
+	fixture.picks = []string{fixture.actions[0]} // vendor/think every time
+	body := pendingRoutesBody(t, pendingTurnTask, pendingTurnReply, pendingTurnNext)
+	fixture.lookup(t, conversation, body)
+	fixture.lookup(t, conversation, body)
+	fixture.lookup(t, conversation, pendingRoutesBody(t, pendingTurnTask, pendingTurnReply, pendingTurnEdited))
+	for index, sent := range fixture.policy.fake.received() {
+		if got := fixture.attestedModel(sent); got != "vendor/off" {
+			t.Fatalf("ask %d was held to %q, want the record before the asks, vendor/off", index+1, got)
+		}
+	}
+	if served := fixture.servedRecord(t, conversation); served != "vendor/think" {
+		t.Fatalf("the served record is %q, want the last decision vendor/think", served)
+	}
+	if state := fixture.stored(t, conversation); state.Pending.PriorServedModel != "vendor/off" {
+		t.Fatalf("the pending decision kept %q as the record before it", state.Pending.PriorServedModel)
+	}
+}

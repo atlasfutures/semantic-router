@@ -308,13 +308,13 @@ func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 			// the selection): a route lookup's pending decision is recorded
 			// or dropped by this request
 			// (rayline_arc_pending.go).
-			resolveRaylineARCPendingDecision(reqCtx, result)
+			dropped := resolveRaylineARCPendingDecision(reqCtx, result)
 			// Only an episode with no memory of its model reads the records
 			// a two-stage package's refusal is answered from
 			// (rayline_arc_derived_hold.go).
 			if result.PolicyCallKind != raylinearc.PolicyCallSide &&
 				(result.State == nil || result.State.PreviousArm == nil) {
-				result.ServedModels = r.raylineARCServedModels(reqCtx, result.EpisodeIDHash)
+				result.ServedModels = r.raylineARCServedModelsFor(reqCtx, result, dropped)
 			}
 		}
 	}

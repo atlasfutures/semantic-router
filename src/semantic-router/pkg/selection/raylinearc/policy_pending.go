@@ -55,6 +55,11 @@ type PendingDecision struct {
 	// Policy is the policy context the decision was made in and its ledger
 	// entry; nil when it recorded none.
 	Policy *PendingPolicy `json:"policy,omitempty"`
+	// PriorServedModel is the served-model record as the decision read it,
+	// before the decision overwrote it with its own model; empty when it
+	// read none. A request that drops the decision unexecuted reads this
+	// instead of the record, which now names the dropped decision.
+	PriorServedModel string `json:"prior_served_model,omitempty"`
 }
 
 // PendingPolicy is a pending decision's policy context and ledger entry.

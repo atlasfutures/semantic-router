@@ -39,35 +39,37 @@ import (
 // prepared episode holds against this request, so the selection, the holds
 // read before it, and the turn's own commit all see the resolved episode.
 // It also marks a route lookup's transaction as one that stores its decision
-// pending. Only a policy-service cell calls it. A side call or a coalesced resend resolves nothing: neither
-// commits, and the next main turn resolves it.
-func resolveRaylineARCPendingDecision(reqCtx *RequestContext, arcContext *selection.RaylineARCSelectionContext) {
+// pending. Only a policy-service cell calls it. A side call or a coalesced
+// resend resolves nothing: neither commits, and the next main turn resolves
+// it. It returns the pending decision the request dropped unexecuted, nil
+// when it dropped none.
+func resolveRaylineARCPendingDecision(reqCtx *RequestContext, arcContext *selection.RaylineARCSelectionContext) *raylinearc.PendingDecision {
 	transaction := reqCtx.RaylineARCTransaction
 	if transaction == nil || transaction.sideCall || transaction.leaseless ||
 		arcContext.PolicyCallKind == raylinearc.PolicyCallSide {
-		return
+		return nil
 	}
 	transaction.decidesPending = reqCtx.RaylineRouteSurface == string(routerruntime.RouteDecisionSurfaceRoutes)
 	if transaction.borrowed || arcContext.Coalesced != nil {
 		// A resend that joined an identical lookup in flight shares its
 		// decision and the episode it was decided on (already resolved), and
 		// reports the same pending turn; it writes nothing.
-		return
+		return nil
 	}
 	state := arcContext.State
 	if !transaction.decidesPending && (state == nil || state.Pending == nil) {
-		return
+		return nil
 	}
 	_, messages, roles, err := policyClientRequestOf(arcContext)
 	if err != nil {
 		// The selection refuses the same body; there is nothing to resolve
 		// against.
-		return
+		return nil
 	}
 	digests := raylinearc.NewPrefixDigests(messages)
 	transaction.requestDigests = digests
 	if state == nil || state.Pending == nil {
-		return
+		return nil
 	}
 	resolved, resolution := raylinearc.ResolvePending(state, digests, roles)
 	arcContext.State, transaction.state = resolved, resolved
@@ -79,6 +81,34 @@ func resolveRaylineARCPendingDecision(reqCtx *RequestContext, arcContext *select
 		"resolution":      resolution,
 		"turn_index":      arcTurnIndexForTelemetry(state.TurnIndex),
 	})
+	if resolution == raylinearc.PendingInferred {
+		return nil
+	}
+	return state.Pending
+}
+
+// raylineARCServedModelsFor is the served-model record a turn without episode
+// memory is held to (rayline_arc_derived_hold.go). A tracked lookup writes its
+// decided model there, so after a request dropped that decision unexecuted
+// the record names a model that did not run: the record as the dropped
+// decision read it is used instead. A lookup keeps what it used for the
+// decision it stores, so repeated asks keep the record from before them.
+func (r *OpenAIRouter) raylineARCServedModelsFor(
+	reqCtx *RequestContext,
+	arcContext *selection.RaylineARCSelectionContext,
+	dropped *raylinearc.PendingDecision,
+) []selection.RaylineARCServedModel {
+	var served []selection.RaylineARCServedModel
+	switch {
+	case dropped == nil:
+		served = r.raylineARCServedModels(reqCtx, arcContext.EpisodeIDHash)
+	case dropped.PriorServedModel != "":
+		served = []selection.RaylineARCServedModel{{Source: derivedHoldSessionRecord, Model: dropped.PriorServedModel}}
+	}
+	if transaction := reqCtx.RaylineARCTransaction; transaction != nil && len(served) > 0 {
+		transaction.priorServedModel = served[0].Model
+	}
+	return served
 }
 
 // commitPending stores the lookup's decision as the episode's pending
@@ -156,6 +186,7 @@ func (transaction *raylineARCEpisodeTransaction) pendingState(routeID string) (*
 		routeID, arm, transaction.servedModel, next.TurnIndex, transaction.serializedTokens,
 		transaction.requestDigests, transaction.policyNext, time.Now(),
 	)
+	next.Pending.PriorServedModel = transaction.priorServedModel
 	// The served-model record names the decided model, as a committed
 	// lookup's did: a conversation that comes back after its episode expired,
 	// with nothing reported, is held to the last decision, assumed to have

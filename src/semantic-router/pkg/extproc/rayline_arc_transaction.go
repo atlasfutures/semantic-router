@@ -192,6 +192,9 @@ type raylineARCEpisodeTransaction struct {
 	// that: state no longer holds it.
 	resolvedPending bool
 	readTurnIndex   uint64
+	// priorServedModel is the served-model record this request was held to
+	// (raylineARCServedModelsFor), kept with a pending decision it stores.
+	priorServedModel string
 }
 
 func newRaylineARCEpisodeTransaction(
