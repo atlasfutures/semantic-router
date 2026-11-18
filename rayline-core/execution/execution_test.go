@@ -355,4 +355,11 @@ func TestRequestIdentityMustFitAnHTTPHeader(t *testing.T) {
 			t.Errorf("session id %q: got %q, %v", session, got, err)
 		}
 	}
+	// A header value loses its boundary whitespace on the wire, so a body id
+	// is trimmed as a header id is: " tenant " and "tenant" are one session.
+	for _, body := range []string{`{"prompt_cache_key":" tenant\t"}`, `{"session_id":"\ttenant "}`, `{"prompt_cache_key":"  ","session_id":"tenant"}`, `{"metadata":{"user_id":"{\"session_id\":\" tenant \"}"}}`} {
+		if got, _, err := requestIdentity(http.Header{}, []byte(body)); err != nil || got != "tenant" {
+			t.Errorf("%s: got %q, %v", body, got, err)
+		}
+	}
 }
