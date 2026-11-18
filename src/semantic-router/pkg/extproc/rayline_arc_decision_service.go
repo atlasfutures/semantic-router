@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"sort"
 	"time"
@@ -595,13 +596,42 @@ func ephemeralSessionCloseTimeout(algorithm *config.AlgorithmConfig) time.Durati
 	return config.DefaultRaylineARCRoutesDeadlineMS * time.Millisecond
 }
 
-// commitDecisionOnlyEpisode advances the episode at decision time. The request
+// committedEpisodeTurnIndex is the episode turn a lookup reports, read from
+// the state its commit stored.
+//
+// Selection does not mutate the episode state: the commit clones it,
+// increments the clone, persists that, and swaps it onto the transaction. So
+// the pre-commit state is always one behind, and reading it reported
+// turn_index 0 for the first committed lookup of an episode already at 1.
+//
+// A pending decision advanced nothing, so it reports the turn it was decided
+// for, the one after the turns recorded: the number a committed lookup
+// reports for the same conversation, and the same number again when the
+// turn is asked again.
+func committedEpisodeTurnIndex(requestContext *RequestContext) int {
+	if requestContext == nil || requestContext.RaylineARCTransaction == nil ||
+		requestContext.RaylineARCTransaction.state == nil {
+		return 0
+	}
+	turnIndex := requestContext.RaylineARCTransaction.state.TurnIndex
+	if requestContext.RaylineARCTransaction.decidesPending {
+		turnIndex++
+	}
+	if turnIndex > math.MaxInt32 {
+		return math.MaxInt32
+	}
+	return int(turnIndex)
+}
+
+// commitDecisionOnlyEpisode writes the episode at decision time. The request
 // pipeline waits for the complete upstream response before committing, but a decision-only
 // consult has no upstream: the caller executes the worker out of this router's
-// sight. Deferring would leave the lease pending forever and score the next
-// turn against a trajectory that never advanced, so the selected arm becomes
-// the previous arm optimistically, here. The status argument is a formality
-// the ARC transaction ignores.
+// sight, and leaving the lease pending would hold the episode forever. On a
+// policy-service cell a /v1/routes lookup writes its decision as the
+// episode's pending decision, which the next request settles
+// (rayline_arc_pending.go); otherwise the selected arm becomes the previous
+// arm optimistically, here. The status argument is a formality the ARC
+// transaction ignores.
 func commitDecisionOnlyEpisode(ctx context.Context, requestContext *RequestContext) error {
 	// An ephemeral consult prepared nothing, so there is nothing to advance.
 	// That is the intended terminal state, not a missing step.

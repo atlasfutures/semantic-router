@@ -19,7 +19,6 @@ package extproc
 import (
 	"context"
 	"errors"
-	"math"
 	"time"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
@@ -40,7 +39,7 @@ import (
 // prepared episode holds against this request, so the selection, the holds
 // read before it, and the turn's own commit all see the resolved episode.
 // It also marks a route lookup's transaction as one that stores its decision
-// pending. A side call or a coalesced resend resolves nothing: neither
+// pending. Only a policy-service cell calls it. A side call or a coalesced resend resolves nothing: neither
 // commits, and the next main turn resolves it.
 func resolveRaylineARCPendingDecision(reqCtx *RequestContext, arcContext *selection.RaylineARCSelectionContext) {
 	transaction := reqCtx.RaylineARCTransaction
@@ -90,10 +89,8 @@ func (transaction *raylineARCEpisodeTransaction) commitPending(
 	}
 	transaction.finalizeOnce.Do(func() {
 		defer transaction.releaseHold()
-		if transaction.borrowed {
-			metrics.RecordRaylineARCEpisodeTransaction("coalesced", "")
-			return
-		}
+		// The selection can still read the lookup as a side call, which
+		// writes nothing.
 		if transaction.sideCall {
 			transaction.commitSideCall(ctx)
 			return
@@ -152,31 +149,4 @@ func (transaction *raylineARCEpisodeTransaction) pendingState(routeID string) (*
 	// next keeps the served model of a turn the request inferred, if any
 	// (cloneARCState); the decision itself has not run.
 	return next, nil
-}
-
-// committedEpisodeTurnIndex is the episode turn a lookup reports, read from
-// the state its commit stored.
-//
-// Selection does not mutate the episode state: the commit clones it,
-// increments the clone, persists that, and swaps it onto the transaction. So
-// the pre-commit state is always one behind, and reading it reported
-// turn_index 0 for the first committed lookup of an episode already at 1.
-//
-// A pending decision advanced nothing, so it reports the turn it was decided
-// for, the one after the turns recorded: the number a committed lookup
-// reports for the same conversation, and the same number again when the
-// turn is asked again.
-func committedEpisodeTurnIndex(requestContext *RequestContext) int {
-	if requestContext == nil || requestContext.RaylineARCTransaction == nil ||
-		requestContext.RaylineARCTransaction.state == nil {
-		return 0
-	}
-	turnIndex := requestContext.RaylineARCTransaction.state.TurnIndex
-	if requestContext.RaylineARCTransaction.decidesPending && turnIndex < math.MaxUint64 {
-		turnIndex++
-	}
-	if turnIndex > math.MaxInt32 {
-		return math.MaxInt32
-	}
-	return int(turnIndex)
 }

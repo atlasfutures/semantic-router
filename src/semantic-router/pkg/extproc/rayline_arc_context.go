@@ -304,8 +304,9 @@ func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 			result.PolicyInput, result.PolicyInstructions = input, instructions
 		}
 		if rawEpisodeID != "" {
-			// Before anything reads the episode: a route lookup's pending
-			// decision is recorded or dropped by this request
+			// Before anything reads the episode state (the holds below and
+			// the selection): a route lookup's pending decision is recorded
+			// or dropped by this request
 			// (rayline_arc_pending.go).
 			resolveRaylineARCPendingDecision(reqCtx, result)
 			// Only an episode with no memory of its model reads the records

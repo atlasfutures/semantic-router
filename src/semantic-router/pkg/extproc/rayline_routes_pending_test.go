@@ -221,9 +221,13 @@ func TestRoutesExecutionLookupWritesNoPendingDecision(t *testing.T) {
 			t.Fatalf("execution=%t: throwaway %t, episode read %t", execution, arcContext.RoutesThrowaway, arcContext.State != nil)
 		}
 		store := router.RaylineARCEpisodeStore.(*raylinearc.MemoryEpisodeStore)
-		_, read, err := store.Snapshot(context.Background(), raylinearc.HashEpisodeID("conversation-execution"), 3)
+		stored, read, err := store.Snapshot(context.Background(), raylinearc.HashEpisodeID("conversation-execution"), 3)
 		if err != nil || (read.Version() != 0) == execution {
 			t.Fatalf("execution=%t: record version %d (%v)", execution, read.Version(), err)
+		}
+		// The control lookup stored a pending decision, not a turn.
+		if !execution && (stored.Pending == nil || stored.TurnIndex != 0 || stored.PreviousArm != nil) {
+			t.Fatalf("the control lookup stored %+v", stored)
 		}
 	}
 }
