@@ -23,8 +23,10 @@ import (
 // same step: one Redis script with the episode's keys, or under the memory
 // store's lock. A record is therefore ordered exactly as the commits are --
 // by the store, with no clock and no second round trip -- and it exists only
-// for a turn whose commit succeeded. A failed or conflicting commit writes
-// none.
+// for a turn whose commit (or stage, below) succeeded. A failed or conflicting commit writes
+// none. A stage under the lease writes it the same way when its state names
+// one: a request that recorded a route lookup's decision as a turn that ran
+// makes that turn durable when it stages, before it commits.
 
 // ServedModelTTL is how long the last served model outlives its episode.
 const ServedModelTTL = 7 * 24 * time.Hour

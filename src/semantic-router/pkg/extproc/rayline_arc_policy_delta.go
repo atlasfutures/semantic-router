@@ -1000,6 +1000,11 @@ func (transaction *raylineARCEpisodeTransaction) dropPolicyStagedTurn(ctx contex
 		if transaction.state != nil {
 			started = transaction.state.TurnIndex
 		}
+		if transaction.resolvedPending {
+			// The turn it started from is the one it read, not the one its
+			// resolved pending decision moved the episode to.
+			started = transaction.readTurnIndex
+		}
 		staging.writeShared(ctx, func(ctx context.Context, shared raylinearc.EpisodeStagedTurnStore) error {
 			return shared.DeleteStagedTurn(ctx, staging.episodeIDHash, started, nil)
 		})

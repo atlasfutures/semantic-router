@@ -53,11 +53,17 @@ const maxPolicyAuditFilledModelBytes = 96
 // for a decision whose service echoed routing_prices_used, which prices
 // scored it. Prices is omitted otherwise, so an entry without it is
 // byte-identical to one written before live prices.
+//
+// Basis is how the cell knows the action ran: empty when the cell served
+// the turn itself, PolicyLedgerBasisInferred when it assumed a route
+// lookup's decision ran. It is omitted when empty, so a served entry is
+// byte-identical to one written before the mark.
 type PolicyLedgerEntry struct {
 	Message  int               `json:"message"`
 	ActionID string            `json:"action_id"`
 	ArmID    string            `json:"arm_id"`
 	Prices   *PolicyPriceAudit `json:"prices,omitempty"`
+	Basis    string            `json:"basis,omitempty"`
 }
 
 // PolicyPriceAudit is the price identity of one decision: the package that
@@ -404,7 +410,8 @@ func (state *PolicyEpisodeState) Validate() error {
 	audits := 0
 	for _, entry := range state.Ledger {
 		if entry.Message < 0 || entry.Message > state.PrefixLen ||
-			!isLowerHex64(entry.ActionID) || len(entry.ArmID) > maxPolicyArmIDBytes {
+			!isLowerHex64(entry.ActionID) || len(entry.ArmID) > maxPolicyArmIDBytes ||
+			(entry.Basis != "" && entry.Basis != PolicyLedgerBasisInferred) {
 			return errors.New("ARC policy episode ledger entry is malformed")
 		}
 		if entry.Prices != nil {
@@ -796,12 +803,25 @@ func (state *PolicyEpisodeState) NextWithPricesFrom(
 	armID string,
 	prices *PolicyPriceAudit,
 ) *PolicyEpisodeState {
-	messages := digests.Messages()
-	next := state.Clone()
+	count := len(digests.Messages())
+	next := state.withLedgerEntry(PolicyLedgerEntry{
+		Message: count, ActionID: actionID, ArmID: armID, Prices: prices,
+	}, count, digests.Digest(count))
 	next.Exploration = nil
-	next.Ledger = append(next.Ledger, PolicyLedgerEntry{
-		Message: len(messages), ActionID: actionID, ArmID: armID, Prices: prices,
-	})
+	return next
+}
+
+// withLedgerEntry is the state with entry recorded as the newest ledger
+// entry and the prefix moved to the prefixLen messages of prefixDigest that
+// precede its reply. The ledger keeps its bound, and only the newest
+// MaxPolicyPriceAudits entries their price audits.
+func (state *PolicyEpisodeState) withLedgerEntry(
+	entry PolicyLedgerEntry,
+	prefixLen int,
+	prefixDigest string,
+) *PolicyEpisodeState {
+	next := state.Clone()
+	next.Ledger = append(next.Ledger, entry)
 	if len(next.Ledger) > MaxPolicyLedgerEntries {
 		next.Ledger = next.Ledger[len(next.Ledger)-MaxPolicyLedgerEntries:]
 	}
@@ -814,8 +834,8 @@ func (state *PolicyEpisodeState) NextWithPricesFrom(
 			next.Ledger[index].Prices = nil
 		}
 	}
-	next.PrefixLen = len(messages)
-	next.PrefixDigest = digests.Digest(len(messages))
+	next.PrefixLen = prefixLen
+	next.PrefixDigest = prefixDigest
 	return next
 }
 

@@ -91,6 +91,29 @@ func assertCommitRecordsServedModel(t *testing.T, store servedCommitStore, episo
 	if worker, _ := store.LastServedModel(ctx, episode); worker != "kimi" {
 		t.Fatalf("record %q after a commit naming no worker", worker)
 	}
+	// A stage under the lease records a state's served model as a commit
+	// does (a route lookup's decision recorded as a turn that ran, made
+	// durable before the turn commits), and keeps it if the turn then
+	// aborts; a stage naming none leaves the record.
+	stager, ok := store.(EpisodeStateStager)
+	if !ok {
+		t.Fatal("the store does not stage")
+	}
+	for _, worker := range []string{"qwen", ""} {
+		lease, state, err := store.Prepare(ctx, episode, 2)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := stager.Stage(ctx, lease, served(state, worker)); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.Abort(ctx, lease); err != nil {
+			t.Fatal(err)
+		}
+		if recorded, _ := store.LastServedModel(ctx, episode); recorded != "qwen" {
+			t.Fatalf("record %q after a stage naming %q, want qwen", recorded, worker)
+		}
+	}
 }
 
 func TestMemoryCommitRecordsServedModel(t *testing.T) {
@@ -105,7 +128,7 @@ func TestMemoryCommitRecordsServedModel(t *testing.T) {
 	assertCommitRecordsServedModel(t, store, episode)
 	// The record outlives the episode, for ServedModelTTL.
 	now = now.Add(time.Hour)
-	if worker, _ := store.LastServedModel(context.Background(), episode); worker != "kimi" {
+	if worker, _ := store.LastServedModel(context.Background(), episode); worker != "qwen" {
 		t.Fatalf("record %q after the episode's idle TTL", worker)
 	}
 	now = now.Add(ServedModelTTL)
