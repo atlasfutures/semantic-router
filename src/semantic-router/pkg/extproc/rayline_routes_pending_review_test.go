@@ -251,6 +251,22 @@ func TestNextTurnRulePerWireFormat(t *testing.T) {
 			inferred: true,
 		})
 	}
+	call := map[string]any{"type": "function_call", "call_id": "c9", "name": "ls", "arguments": "{}"}
+	cases = append(cases, struct {
+		name, format string
+		first, next  map[string]any
+		inferred     bool
+	}{
+		// A request ending with a completed output item is no prefill: the
+		// item's result that follows is not this decision's reply.
+		name: "responses ending with a function call, then its output", format: "responses",
+		first: map[string]any{"model": "rayline/arc-dev", "input": []any{responsesUser("fix it"), call}},
+		next: map[string]any{"model": "rayline/arc-dev", "input": []any{
+			responsesUser("fix it"), call,
+			map[string]any{"type": "function_call_output", "call_id": "c9", "output": "a.go"}, responsesUser("thanks"),
+		}},
+		inferred: false,
+	})
 	for index, tc := range cases {
 		fixture := newPendingRoutesFixture(t, true, "")
 		conversation := fmt.Sprintf("conversation-format-%d", index)

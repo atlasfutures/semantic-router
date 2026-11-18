@@ -86,7 +86,8 @@ type PendingPolicy struct {
 }
 
 // NewPendingDecision is the pending form of a decision for a request of
-// digests and roles: arm, its model, the policy state the decision would commit
+// digests, which ends with an assistant message the model continues when
+// prefill is set: arm, its model, the policy state the decision would commit
 // (nil when it records none) and the encoded tokens, at turnIndex completed
 // turns. A route id longer than the stored bound is not kept.
 func NewPendingDecision(
@@ -96,7 +97,7 @@ func NewPendingDecision(
 	turnIndex uint64,
 	inputTokens int,
 	digests *PrefixDigests,
-	roles []string,
+	prefill bool,
 	next *PolicyEpisodeState,
 	now time.Time,
 ) *PendingDecision {
@@ -105,7 +106,7 @@ func NewPendingDecision(
 		Arm: arm, Model: model, TurnIndex: turnIndex, DecidedUnixMS: now.UTC().UnixMilli(),
 		InputTokens: inputTokens, PrefixLen: count, PrefixDigest: digests.Digest(count),
 	}
-	if count > 0 && len(roles) == count && roles[count-1] == "assistant" {
+	if prefill && count > 0 {
 		pending.PrefillBaseDigest = digests.Digest(count - 1)
 	}
 	if len(routeID) <= maxPendingRouteIDBytes {

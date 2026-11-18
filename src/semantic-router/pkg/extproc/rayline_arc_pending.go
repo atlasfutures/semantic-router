@@ -69,8 +69,9 @@ func resolveRaylineARCPendingDecision(reqCtx *RequestContext, arcContext *select
 		return nil
 	}
 	digests := raylinearc.NewPrefixDigests(messages)
+	transaction.requestDigests = digests
+	transaction.requestPrefill = endsWithAssistantMessage(arcContext.RequestFormat, messages, roles)
 	roles = pendingReplyRoles(arcContext.RequestFormat, messages, roles)
-	transaction.requestDigests, transaction.requestRoles = digests, roles
 	if state == nil || state.Pending == nil {
 		return nil
 	}
@@ -87,6 +88,10 @@ func resolveRaylineARCPendingDecision(reqCtx *RequestContext, arcContext *select
 		kept := raylinearc.ClonePendingDecision(state.Pending)
 		if !transaction.decidesPending {
 			kept.Superseded = true
+			// The served-model record names the lookup's pick; the stage
+			// below puts back the record the decision read, so a cold
+			// request after this episode expires is not held to it.
+			resolved.ServedModel = kept.PriorServedModel
 		}
 		resolved.Pending = kept
 	}
@@ -253,7 +258,7 @@ func (transaction *raylineARCEpisodeTransaction) pendingState(routeID string) (*
 	}
 	next.Pending = raylinearc.NewPendingDecision(
 		routeID, arm, transaction.servedModel, next.TurnIndex, transaction.serializedTokens,
-		transaction.requestDigests, transaction.requestRoles, transaction.policyNext, time.Now(),
+		transaction.requestDigests, transaction.requestPrefill, transaction.policyNext, time.Now(),
 	)
 	next.Pending.PriorServedModel = transaction.priorServedModel
 	// The served-model record names the decided model, as a committed
@@ -300,4 +305,21 @@ func responsesModelOutput(itemType string) bool {
 		return false
 	}
 	return !strings.HasSuffix(itemType, "_output")
+}
+
+// endsWithAssistantMessage reports whether the request ends with an assistant
+// message the model continues (a prefill), not a completed output item such
+// as a Responses function call, reasoning or approval request.
+func endsWithAssistantMessage(format string, messages []json.RawMessage, roles []string) bool {
+	last := len(messages) - 1
+	if last < 0 || len(roles) != len(messages) || roles[last] != "assistant" {
+		return false
+	}
+	if format != policyFormatResponses {
+		return true
+	}
+	var envelope struct {
+		Type string `json:"type"`
+	}
+	return json.Unmarshal(messages[last], &envelope) == nil && (envelope.Type == "" || envelope.Type == "message")
 }

@@ -573,6 +573,9 @@ func TestFailedTurnAfterADroppedDecisionKeepsItForTheRetry(t *testing.T) {
 	if err := transaction.abort(context.Background(), "upstream_error"); err != nil {
 		t.Fatal(err)
 	}
+	if served := fixture.servedRecord(t, conversation); served != "vendor/off" {
+		t.Fatalf("after the failed turn the served record is %q, want the one before the lookup", served)
+	}
 	state := fixture.stored(t, conversation)
 	if state.PolicyBoundary == nil || state.Pending == nil || state.Pending.PriorServedModel != "vendor/off" {
 		t.Fatalf("the staged record lost the dropped decision: boundary %v pending %+v", state.PolicyBoundary, state.Pending)

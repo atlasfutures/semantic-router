@@ -69,7 +69,7 @@ func withPendingLookup(t *testing.T, state *EpisodeState, messages ...string) *E
 	turn, _, _ := PolicyTurnFrom(state.Policy, digests, roles, state.TurnIndex, PolicyTurnSignals{CallKind: PolicyCallMain})
 	next := turn.NextWithPricesFrom(digests, pendingActionB, "arm-b", nil)
 	stored := cloneEpisodeState(state)
-	stored.Pending = NewPendingDecision("rte_1", 1, "vendor/b", state.TurnIndex, 42, digests, roles, next, pendingNow)
+	stored.Pending = NewPendingDecision("rte_1", 1, "vendor/b", state.TurnIndex, 42, digests, roles[len(roles)-1] == "assistant", next, pendingNow)
 	return stored
 }
 
@@ -201,7 +201,7 @@ func TestCommitClearsThePendingDecision(t *testing.T) {
 // unwritable.
 func TestNewPendingDecisionBoundsTheRouteID(t *testing.T) {
 	raw, _ := rawMessages(t, pendingTask)
-	long := NewPendingDecision(strings.Repeat("r", maxPendingRouteIDBytes+1), 0, "", 0, 0, NewPrefixDigests(raw), nil, nil, pendingNow)
+	long := NewPendingDecision(strings.Repeat("r", maxPendingRouteIDBytes+1), 0, "", 0, 0, NewPrefixDigests(raw), false, nil, pendingNow)
 	if long.RouteID != "" || long.Validate(2) != nil {
 		t.Fatalf("pending %+v", long)
 	}
