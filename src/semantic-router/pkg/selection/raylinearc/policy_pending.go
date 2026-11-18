@@ -211,7 +211,7 @@ func ResolvePending(state *EpisodeState, digests *PrefixDigests, roles []string)
 		return resolved, PendingDropped
 	}
 	if pending.Policy != nil {
-		resolved.Policy = pending.inferredPolicy(state.Policy)
+		resolved.Policy = pending.inferredPolicy(state.Policy, digests)
 	}
 	// The arm's last call record outlives the inferred turn, which made no
 	// call the cell saw: Commit replaces the arm's warmth.
@@ -228,15 +228,23 @@ func ResolvePending(state *EpisodeState, digests *PrefixDigests, roles []string)
 
 // inferredPolicy is stored with the pending decision's ledger entry
 // recorded, marked inferred, in the context the decision was made in.
-func (pending *PendingDecision) inferredPolicy(stored *PolicyEpisodeState) *PolicyEpisodeState {
+func (pending *PendingDecision) inferredPolicy(stored *PolicyEpisodeState, digests *PrefixDigests) *PolicyEpisodeState {
 	policy := pending.Policy
 	var base *PolicyEpisodeState
-	if stored != nil && stored.Epoch == policy.Epoch {
+	if stored != nil && stored.Epoch == policy.Epoch && stored.PrefixLen <= pending.PrefixLen &&
+		digests.Digest(stored.PrefixLen) == stored.PrefixDigest {
 		base = stored.Clone()
 	} else {
 		// The decision opened a new context (a prefix break or a
-		// compaction), which starts with an empty ledger and the full offer.
-		base = &PolicyEpisodeState{Epoch: policy.Epoch}
+		// compaction), which starts with an empty ledger and the full offer;
+		// or the store moved to another context after it (a refused turn in
+		// a rewritten history staged one). Either way the context is new,
+		// numbered past any the store has used.
+		epoch := policy.Epoch
+		if stored != nil && stored.Epoch >= epoch {
+			epoch = stored.Epoch + 1
+		}
+		base = &PolicyEpisodeState{Epoch: epoch}
 	}
 	base.EpochStartTurn = policy.EpochStartTurn
 	base.CompactionCount = policy.CompactionCount

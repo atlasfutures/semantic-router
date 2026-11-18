@@ -298,3 +298,25 @@ func TestPendingDecisionKeepsALongModel(t *testing.T) {
 		t.Fatalf("a long model made the record unwritable: %v", err)
 	}
 }
+
+// A decision made in one context and inferred after the store moved to a
+// later one (a refused turn in a rewritten history staged it) opens a new
+// context numbered past both, never an epoch the store already used.
+func TestResolvePendingNeverReusesAnEpoch(t *testing.T) {
+	stored := withPendingLookup(t, executedEpisode(t), pendingTask, pendingReply1, pendingAsk2)
+	decided := stored.Pending.Policy.Epoch
+	other, _ := rawMessages(t, `{"role":"user","content":"another history"}`)
+	stored.Policy = &PolicyEpisodeState{Epoch: decided + 1, PrefixLen: 1, PrefixDigest: MessagesDigest(other, 1)}
+	raw, roles := rawMessages(t, pendingTask, pendingReply1, pendingAsk2, `{"role":"assistant","content":"two"}`, `{"role":"user","content":"three"}`)
+	resolved, resolution := ResolvePending(stored, NewPrefixDigests(raw), roles)
+	if resolution != PendingInferred || resolved.Policy.Epoch <= decided+1 || len(resolved.Policy.Ledger) != 1 {
+		t.Fatalf("resolution %q epoch %d (stored %d, decided %d) ledger %d", resolution, resolved.Policy.Epoch, decided+1, decided, len(resolved.Policy.Ledger))
+	}
+	// The same epoch number, but a context the request does not extend (a
+	// sibling opened with the same number): also a new context.
+	stored.Policy = &PolicyEpisodeState{Epoch: decided, PrefixLen: 1, PrefixDigest: MessagesDigest(other, 1)}
+	resolved, _ = ResolvePending(stored, NewPrefixDigests(raw), roles)
+	if resolved.Policy.Epoch <= decided || len(resolved.Policy.Ledger) != 1 {
+		t.Fatalf("same-numbered sibling context: epoch %d ledger %+v", resolved.Policy.Epoch, resolved.Policy.Ledger)
+	}
+}
