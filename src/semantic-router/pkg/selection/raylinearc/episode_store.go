@@ -87,6 +87,12 @@ const (
 	// carries, so every other episode keeps its earlier bytes and a v10
 	// reader refuses it by its schema rather than by a field it does not know.
 	episodeStateSchemaV11 = "rayline.arc.episode-state.v11"
+	// episodeStateSchemaV12 adds a report of what ran: the ledger's reported
+	// basis and the episode's last report. It is written only for a record
+	// that carries either, whatever else it carries, so every other episode
+	// keeps its earlier bytes and a v11 reader refuses it by its schema
+	// rather than by a field or a basis it does not know.
+	episodeStateSchemaV12 = "rayline.arc.episode-state.v12"
 	maxFutureClockSkew    = 5 * time.Minute
 	episodeOwnerBytes     = 24
 	maxEpisodeStateBytes  = 64 * 1024
@@ -219,6 +225,7 @@ type episodeStateWire struct {
 	ReasoningProvenance  []reasoning.ReasoningProvenance `json:"reasoning_provenance,omitempty"`
 	PolicySession        *episodePolicySessionWire       `json:"policy_session,omitempty"`
 	Pending              *PendingDecision                `json:"pending,omitempty"`
+	LastReport           *LastReport                     `json:"last_report,omitempty"`
 }
 
 // episodePolicySessionWire is a persisted Modal sticky session.
@@ -316,7 +323,8 @@ func controlPlacementsToWire(placements []ControlPlacement) []episodeControlWire
 // episodeStateSizeLimit is the most bytes a record of schema may take.
 func episodeStateSizeLimit(schema string) int {
 	if schema == episodeStateSchemaV6 || schema == episodeStateSchemaV7 || schema == episodeStateSchemaV8 ||
-		schema == episodeStateSchemaV9 || schema == episodeStateSchemaV10 || schema == episodeStateSchemaV11 {
+		schema == episodeStateSchemaV9 || schema == episodeStateSchemaV10 || schema == episodeStateSchemaV11 ||
+		schema == episodeStateSchemaV12 {
 		return maxEpisodeStateBytesV6
 	}
 	return maxEpisodeStateBytes
@@ -521,6 +529,7 @@ func cloneEpisodeState(state *EpisodeState) *EpisodeState {
 		ReasoningProvenance:  append([]reasoning.ReasoningProvenance(nil), state.ReasoningProvenance...),
 		PolicySession:        clonePolicySession(state.PolicySession),
 		Pending:              ClonePendingDecision(state.Pending),
+		LastReport:           CloneLastReport(state.LastReport),
 	}
 	for index, warmth := range state.Warmth {
 		if warmth == nil {
@@ -624,24 +633,17 @@ func marshalEpisodeState(
 		wire.SchemaVersion = episodeStateSchemaV11
 		wire.Pending = ClonePendingDecision(state.Pending)
 	}
+	if carriesReport(state.Policy, state.LastReport) {
+		wire.SchemaVersion = episodeStateSchemaV12
+		wire.Pending = ClonePendingDecision(state.Pending)
+		wire.LastReport = CloneLastReport(state.LastReport)
+	}
 	owner := state.EncoderOwner
 	visited := append([]string{}, state.EncoderVisitedOwners...)
 	wire.EncoderOwner = &owner
 	wire.EncoderVisitedOwners = &visited
 	for index, warmth := range state.Warmth {
-		if warmth == nil {
-			continue
-		}
-		wire.Warmth[index] = &episodeWarmthWire{
-			LastUsedUnixMS:  warmth.LastUsed.UTC().UnixMilli(),
-			LastInputTokens: warmth.LastInputTokens,
-		}
-		if call := warmth.Call; call != nil {
-			wire.Warmth[index].Call = &episodeCallWire{
-				ActionID: call.ActionID, CompletedUnixMS: call.CompletedAt.UTC().UnixMilli(), ContextEpoch: call.ContextEpoch, TTLSeconds: call.TTLSeconds, TTLSource: call.TTLSource,
-				PromptTokens: call.PromptTokens, CacheReadTokens: call.CacheReadTokens, CacheWriteTokens: call.CacheWriteTokens,
-			}
-		}
+		wire.Warmth[index] = warmthToWire(warmth)
 	}
 	payload, err := json.Marshal(wire)
 	if err != nil {
@@ -692,6 +694,14 @@ func unmarshalEpisodeState(
 func decodeEpisodeStateAffinity(
 	wire episodeStateWire,
 ) (string, []string, error) {
+	// v12 is exactly the record that carries a report of what ran, whatever
+	// else it carries; it may hold anything v3 to v11 do.
+	if carriesReport(wire.Policy, wire.LastReport) != (wire.SchemaVersion == episodeStateSchemaV12) {
+		return "", nil, errors.New("ARC episode state contract mismatch")
+	}
+	if wire.SchemaVersion == episodeStateSchemaV12 {
+		return decodeEpisodeOwner(wire)
+	}
 	// v11 is exactly the record that carries a pending decision or a ledger
 	// basis, whatever else it carries; it may hold anything v3 to v10 do.
 	if carriesPendingOrBasis(wire.Policy, wire.Pending) != (wire.SchemaVersion == episodeStateSchemaV11) {
@@ -773,6 +783,20 @@ func decodeEpisodeOwner(wire episodeStateWire) (string, []string, error) {
 		append([]string(nil), (*wire.EncoderVisitedOwners)...), nil
 }
 
+// carriesReport reports whether a record holds a reported ledger entry or a
+// last report, which only a v12 reader knows.
+func carriesReport(policy *PolicyEpisodeState, last *LastReport) bool {
+	if last != nil {
+		return true
+	}
+	for _, entry := range ledgerOf(policy) {
+		if entry.Basis == PolicyLedgerBasisReported {
+			return true
+		}
+	}
+	return false
+}
+
 // carriesPendingOrBasis reports whether a record holds a pending decision or
 // a ledger entry with a basis mark, which only a v11 reader knows.
 func carriesPendingOrBasis(policy *PolicyEpisodeState, pending *PendingDecision) bool {
@@ -832,6 +856,7 @@ func episodeStateFromWire(
 		Thinking:             thinkingLedgerFromWire(wire.Thinking),
 		PolicyBoundary:       clonePolicyBoundary(wire.PolicyBoundary),
 		Pending:              ClonePendingDecision(wire.Pending),
+		LastReport:           CloneLastReport(wire.LastReport),
 	}
 	if wire.PolicySession != nil {
 		state.PolicySession = &PolicySession{ID: wire.PolicySession.ID, Token: wire.PolicySession.Token}
@@ -846,21 +871,57 @@ func episodeStateFromWire(
 		state.Upstream = append(state.Upstream, UpstreamPrefix(prefix))
 	}
 	for index, warmth := range wire.Warmth {
-		if warmth == nil {
-			continue
-		}
-		state.Warmth[index] = &cachecontext.WorkerWarmth{
-			LastUsed:        time.UnixMilli(warmth.LastUsedUnixMS).UTC(),
-			LastInputTokens: warmth.LastInputTokens,
-		}
-		if call := warmth.Call; call != nil {
-			state.Warmth[index].Call = &cachecontext.CallCache{
-				ActionID: call.ActionID, CompletedAt: time.UnixMilli(call.CompletedUnixMS).UTC(), ContextEpoch: call.ContextEpoch, TTLSeconds: call.TTLSeconds, TTLSource: call.TTLSource,
-				PromptTokens: call.PromptTokens, CacheReadTokens: call.CacheReadTokens, CacheWriteTokens: call.CacheWriteTokens,
-			}
-		}
+		state.Warmth[index] = warmthFromWire(warmth)
 	}
 	return state
+}
+
+// warmthToWire is an arm's warmth as the record stores it; nil for none.
+func warmthToWire(warmth *cachecontext.WorkerWarmth) *episodeWarmthWire {
+	if warmth == nil {
+		return nil
+	}
+	wire := &episodeWarmthWire{
+		LastUsedUnixMS:  warmth.LastUsed.UTC().UnixMilli(),
+		LastInputTokens: warmth.LastInputTokens,
+	}
+	if call := warmth.Call; call != nil {
+		wire.Call = &episodeCallWire{
+			ActionID: call.ActionID, CompletedUnixMS: call.CompletedAt.UTC().UnixMilli(), ContextEpoch: call.ContextEpoch, TTLSeconds: call.TTLSeconds, TTLSource: call.TTLSource,
+			PromptTokens: call.PromptTokens, CacheReadTokens: call.CacheReadTokens, CacheWriteTokens: call.CacheWriteTokens,
+		}
+	}
+	return wire
+}
+
+// warmthFromWire is a stored arm's warmth; nil for none.
+func warmthFromWire(wire *episodeWarmthWire) *cachecontext.WorkerWarmth {
+	if wire == nil {
+		return nil
+	}
+	warmth := &cachecontext.WorkerWarmth{
+		LastUsed:        time.UnixMilli(wire.LastUsedUnixMS).UTC(),
+		LastInputTokens: wire.LastInputTokens,
+	}
+	if call := wire.Call; call != nil {
+		warmth.Call = &cachecontext.CallCache{
+			ActionID: call.ActionID, CompletedAt: time.UnixMilli(call.CompletedUnixMS).UTC(), ContextEpoch: call.ContextEpoch, TTLSeconds: call.TTLSeconds, TTLSource: call.TTLSource,
+			PromptTokens: call.PromptTokens, CacheReadTokens: call.CacheReadTokens, CacheWriteTokens: call.CacheWriteTokens,
+		}
+	}
+	return warmth
+}
+
+func cloneWarmthWire(wire *episodeWarmthWire) *episodeWarmthWire {
+	if wire == nil {
+		return nil
+	}
+	cloned := *wire
+	if wire.Call != nil {
+		call := *wire.Call
+		cloned.Call = &call
+	}
+	return &cloned
 }
 
 func validatePersistedEpisodeState(
@@ -883,6 +944,9 @@ func validatePersistedEpisodeState(
 		return err
 	}
 	if err := state.Pending.Validate(len(state.Warmth)); err != nil {
+		return err
+	}
+	if err := state.LastReport.validate(state); err != nil {
 		return err
 	}
 	if len(state.Controls) > MaxControlPlacements {

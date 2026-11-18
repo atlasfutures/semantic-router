@@ -215,6 +215,19 @@ func ResolvePending(state *EpisodeState, digests *PrefixDigests, roles []string)
 // inferredPolicy is stored with the pending decision's ledger entry
 // recorded, marked inferred, in the context the decision was made in.
 func (pending *PendingDecision) inferredPolicy(stored *PolicyEpisodeState) *PolicyEpisodeState {
+	entry := pending.Policy.Entry
+	entry.Basis = PolicyLedgerBasisInferred
+	if entry.Prices != nil {
+		prices := *entry.Prices
+		entry.Prices = &prices
+	}
+	return pending.recordedPolicy(stored, &entry)
+}
+
+// recordedPolicy is stored in the context the decision was made in, its
+// prefix moved to the decision's messages, with entry recorded for the
+// reply; with no entry the reply stays unattributed.
+func (pending *PendingDecision) recordedPolicy(stored *PolicyEpisodeState, entry *PolicyLedgerEntry) *PolicyEpisodeState {
 	policy := pending.Policy
 	var base *PolicyEpisodeState
 	if stored != nil && stored.Epoch == policy.Epoch {
@@ -227,13 +240,13 @@ func (pending *PendingDecision) inferredPolicy(stored *PolicyEpisodeState) *Poli
 	base.EpochStartTurn = policy.EpochStartTurn
 	base.CompactionCount = policy.CompactionCount
 	base.CompactionSummary = policy.CompactionSummary
-	entry := policy.Entry
-	entry.Basis = PolicyLedgerBasisInferred
-	if entry.Prices != nil {
-		prices := *entry.Prices
-		entry.Prices = &prices
+	var next *PolicyEpisodeState
+	if entry != nil {
+		next = base.withLedgerEntry(*entry, pending.PrefixLen, pending.PrefixDigest)
+	} else {
+		next = base.Clone()
+		next.PrefixLen, next.PrefixDigest = pending.PrefixLen, pending.PrefixDigest
 	}
-	next := base.withLedgerEntry(entry, pending.PrefixLen, pending.PrefixDigest)
 	next.Exploration = policy.Exploration.Clone()
 	return next
 }

@@ -75,6 +75,9 @@ type EpisodeState struct {
 	// Pending is a route lookup's decision not yet known to have run; the
 	// next request resolves it (ResolvePending). Commit clears it.
 	Pending *PendingDecision
+	// LastReport is the latest report of a call that ran recorded on this
+	// episode (ApplyReport); nil when none was.
+	LastReport *LastReport
 }
 
 // ControlPlacement is one placer's state. A placer governs one worker's

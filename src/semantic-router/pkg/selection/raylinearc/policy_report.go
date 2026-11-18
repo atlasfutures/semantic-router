@@ -1,0 +1,418 @@
+/*
+Copyright 2025 vLLM Semantic Router.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package raylinearc
+
+import (
+	"errors"
+	"math"
+	"time"
+
+	"github.com/atlasfutures/semantic-router/rayline-core/cachecontext"
+)
+
+// PolicyLedgerBasisReported marks a ledger entry recorded from a report of
+// what ran: a caller that ran the model itself said which one, after a route
+// lookup.
+const PolicyLedgerBasisReported = "reported"
+
+// Report sources. The gateway in front of the cell reports the calls it sent
+// to a provider itself; a client reports the turns it ran. When both report
+// one turn, the gateway's report wins.
+const (
+	ReportSourceGateway = "gateway"
+	ReportSourceClient  = "client"
+)
+
+// ReportedTTLSource is the TTL source of a call's cache lifetime taken from a
+// report rather than from the request the cell sent.
+const ReportedTTLSource = "reported"
+
+// maxReportIDBytes bounds the ids a last report keeps: a route id, as a
+// pending decision keeps it, and a caller's report id.
+const maxReportIDBytes = maxPendingRouteIDBytes
+
+// Report outcomes, as ApplyReport reports them.
+const (
+	// ReportPendingResolved: the pending decision was recorded as a turn
+	// that ran, for the reported model.
+	ReportPendingResolved = "pending_resolved"
+	// ReportTurnRecorded: no decision was pending; the report was recorded
+	// as a new turn.
+	ReportTurnRecorded = "turn_recorded"
+	// ReportClientReplaced: the gateway's report replaced a client's for the
+	// same turn.
+	ReportClientReplaced = "client_report_replaced"
+	// ReportNoEpisode: the conversation has no history; nothing was written.
+	ReportNoEpisode = "no_episode"
+	// ReportNotPending: the decision the report names is no longer pending.
+	ReportNotPending = "not_pending"
+	// ReportLate: the call finished before the pending decision was made,
+	// or before the newest recorded turn, or a later turn was recorded
+	// since the report it would replace.
+	ReportLate = "late"
+	// ReportDuplicate: the same report was already recorded.
+	ReportDuplicate = "duplicate"
+	// ReportSuperseded: the gateway already reported this turn.
+	ReportSuperseded = "superseded"
+)
+
+// ReportedRun is what a report says ran, mapped onto the package.
+type ReportedRun struct {
+	// Arm is the policy arm that served the model, -1 when no arm of the
+	// package does: the turn is then recorded with no arm.
+	Arm int
+	// ActionID is the package action, empty when the model is the arm's but
+	// the action is not known.
+	ActionID string
+	// ArmID is the service's trained-arm id for the ledger, empty when not
+	// known; the service then reads the entry as the action's model only.
+	ArmID string
+	// Model is the model the turn records as served.
+	Model string
+	// Call is the reported usage; ApplyReport sets its action and time.
+	Call cachecontext.CallCache
+}
+
+// Report is one report of a call that ran.
+type Report struct {
+	// RouteID names the decision the report is for; empty applies it to the
+	// latest pending decision.
+	RouteID  string
+	ReportID string
+	Source   string
+	// FinishedAt is when the call's response was complete.
+	FinishedAt time.Time
+	// Run maps what ran onto the package, given the action already recorded
+	// or decided for the turn ("" for none): a report that names only a
+	// model is read as that action when the model is its own.
+	Run func(decidedAction string) ReportedRun
+}
+
+// ReportOutcome is what a report did to the episode.
+type ReportOutcome struct {
+	Recorded   bool
+	Reason     string
+	RouteID    string
+	TurnIndex  uint64
+	Attributed bool
+}
+
+// LastReport is the episode's most recent recorded report: what a later
+// report of the same turn is matched against (a duplicate, or the gateway's
+// report replacing a client's).
+type LastReport struct {
+	RouteID  string `json:"route_id,omitempty"`
+	ReportID string `json:"report_id,omitempty"`
+	Source   string `json:"source"`
+	// TurnIndex is the episode's turn count right after the report.
+	TurnIndex uint64 `json:"turn_index"`
+	// Message is the ledger message the report recorded, -1 for none.
+	Message int `json:"message"`
+	// Arm is the arm the report recorded, -1 for none.
+	Arm int `json:"arm"`
+	// Replaced is, for a client's report on an arm, that arm's warmth
+	// before it: the gateway's report for the turn restores it when it names
+	// another arm.
+	Replaced *ReplacedWarmth `json:"replaced,omitempty"`
+}
+
+// ReplacedWarmth is an arm's warmth before a client's report; Warmth is nil
+// when the arm had none.
+type ReplacedWarmth struct {
+	Warmth *episodeWarmthWire `json:"warmth"`
+}
+
+// CloneLastReport is a copy the caller may change.
+func CloneLastReport(last *LastReport) *LastReport {
+	if last == nil {
+		return nil
+	}
+	cloned := *last
+	if last.Replaced != nil {
+		replaced := ReplacedWarmth{Warmth: cloneWarmthWire(last.Replaced.Warmth)}
+		cloned.Replaced = &replaced
+	}
+	return &cloned
+}
+
+func (last *LastReport) validate(state *EpisodeState) error {
+	if last == nil {
+		return nil
+	}
+	if (last.Source != ReportSourceGateway && last.Source != ReportSourceClient) ||
+		len(last.RouteID) > maxReportIDBytes || len(last.ReportID) > maxReportIDBytes ||
+		last.TurnIndex > state.TurnIndex || last.Message < -1 || last.Arm < -1 || last.Arm >= len(state.Warmth) ||
+		(last.Replaced != nil && (last.Source != ReportSourceClient || last.Arm < 0)) {
+		return errors.New("ARC episode last report is malformed")
+	}
+	return nil
+}
+
+// EpisodeHasHistory reports whether an episode records anything a report
+// could apply to: a turn, a pending decision, or a policy context. A fresh
+// state, which a read of an absent record returns, has none.
+func EpisodeHasHistory(state *EpisodeState) bool {
+	return state != nil &&
+		(state.TurnIndex > 0 || state.Pending != nil || state.Policy != nil || state.PreviousArm != nil)
+}
+
+// ApplyReport is the episode after a report of a call that ran. state itself
+// is never changed; it is returned as is when the report is ignored.
+//
+// The pending decision the report names (or, naming none, the latest one,
+// if the call finished after it was made) becomes a recorded turn marked
+// reported, for the model that ran. With nothing pending, a report naming no
+// decision is recorded as a new turn. A report of a turn already reported
+// is a duplicate, or -- the gateway's after a client's, while no later turn
+// was recorded -- replaces the client's: the gateway's report wins.
+func ApplyReport(state *EpisodeState, report Report) (*EpisodeState, ReportOutcome, error) {
+	if !EpisodeHasHistory(state) {
+		return state, ignoredReport(ReportNoEpisode), nil
+	}
+	pending, last := state.Pending, state.LastReport
+	if report.RouteID != "" {
+		switch {
+		case pending != nil && pending.RouteID == report.RouteID:
+			return resolveReported(state, report)
+		case last != nil && last.RouteID == report.RouteID:
+			return reportOfReportedTurn(state, report)
+		}
+		return state, staleRouteReport(), nil
+	}
+	if pending != nil && !report.FinishedAt.Before(time.UnixMilli(pending.DecidedUnixMS)) {
+		return resolveReported(state, report)
+	}
+	if last != nil && report.ReportID != "" && last.ReportID == report.ReportID {
+		return state, ignoredReport(ReportDuplicate), nil
+	}
+	if last != nil && last.TurnIndex == state.TurnIndex && last.Source != report.Source {
+		return reportOfReportedTurn(state, report)
+	}
+	// A call that finished before the pending decision was made is not its
+	// turn, nor, finishing before the newest recorded turn, a turn after it.
+	if pending != nil || report.FinishedAt.Before(latestTurnTime(state)) {
+		return state, ignoredReport(ReportLate), nil
+	}
+	return recordReportedTurn(state, report)
+}
+
+// staleRouteReport is the rule for a report naming a decision that is no
+// longer pending: dropped, never recorded as a new turn. The decision existed
+// and is gone -- recorded as inferred by the next turn, replaced by a repeat
+// ask, or dropped -- so recording the report would count a turn twice.
+func staleRouteReport() ReportOutcome {
+	return ignoredReport(ReportNotPending)
+}
+
+func ignoredReport(reason string) ReportOutcome {
+	return ReportOutcome{Reason: reason}
+}
+
+// reportOfReportedTurn answers a report of the turn the last report
+// recorded: from the same source a duplicate; a client's after the
+// gateway's is superseded; the gateway's after a client's replaces it,
+// unless a later turn was recorded since.
+func reportOfReportedTurn(state *EpisodeState, report Report) (*EpisodeState, ReportOutcome, error) {
+	last := state.LastReport
+	switch {
+	case last.Source == report.Source:
+		return state, ignoredReport(ReportDuplicate), nil
+	case report.Source != ReportSourceGateway:
+		return state, ignoredReport(ReportSuperseded), nil
+	case last.TurnIndex != state.TurnIndex:
+		return state, ignoredReport(ReportLate), nil
+	}
+	return replaceClientReport(state, report)
+}
+
+// resolveReported records the pending decision as a turn that ran, for the
+// reported run, in the context the decision was made in.
+func resolveReported(state *EpisodeState, report Report) (*EpisodeState, ReportOutcome, error) {
+	pending := state.Pending
+	decided := ""
+	if pending.Policy != nil {
+		decided = pending.Policy.Entry.ActionID
+	}
+	run := report.Run(decided)
+	next := cloneEpisodeState(state)
+	message := -1
+	if pending.Policy != nil {
+		message = pending.PrefixLen
+		next.Policy = pending.recordedPolicy(state.Policy, reportedEntry(pending.Policy.Entry, run))
+	}
+	replaced, err := commitReportedRun(next, run, pending.InputTokens, report)
+	if err != nil {
+		return state, ReportOutcome{}, err
+	}
+	next.LastReport = newLastReport(pending.RouteID, report, next.TurnIndex, message, run.Arm, replaced)
+	return next, recordedReport(ReportPendingResolved, pending.RouteID, next, run), nil
+}
+
+// recordReportedTurn records a report with nothing pending as a new turn.
+// The report carries no messages, so it records no ledger entry: the reply
+// stays unattributed, as one past the ledger's bound is.
+func recordReportedTurn(state *EpisodeState, report Report) (*EpisodeState, ReportOutcome, error) {
+	run := report.Run("")
+	next := cloneEpisodeState(state)
+	tokens := 0
+	if run.Call.PromptTokens != nil {
+		tokens = *run.Call.PromptTokens
+	} else if run.Arm >= 0 && run.Arm < len(next.Warmth) && next.Warmth[run.Arm] != nil {
+		tokens = next.Warmth[run.Arm].LastInputTokens
+	}
+	replaced, err := commitReportedRun(next, run, tokens, report)
+	if err != nil {
+		return state, ReportOutcome{}, err
+	}
+	next.LastReport = newLastReport("", report, next.TurnIndex, -1, run.Arm, replaced)
+	return next, recordedReport(ReportTurnRecorded, "", next, run), nil
+}
+
+// replaceClientReport rewrites the turn a client reported with the
+// gateway's report of it. The turn count does not move; the client's arm
+// gets back the warmth it had before the client's report when the gateway
+// names another arm.
+func replaceClientReport(state *EpisodeState, report Report) (*EpisodeState, ReportOutcome, error) {
+	last := state.LastReport
+	next := cloneEpisodeState(state)
+	var clientEntry *PolicyLedgerEntry
+	if ledger := ledgerOf(next.Policy); last.Message >= 0 && len(ledger) > 0 &&
+		ledger[len(ledger)-1].Message == last.Message && ledger[len(ledger)-1].Basis == PolicyLedgerBasisReported {
+		entry := ledger[len(ledger)-1]
+		clientEntry = &entry
+		next.Policy.Ledger = ledger[:len(ledger)-1]
+	}
+	decided := ""
+	if clientEntry != nil {
+		decided = clientEntry.ActionID
+	}
+	run := report.Run(decided)
+	if run.Arm >= len(next.Warmth) {
+		return state, ReportOutcome{}, errors.New("reported arm is out of range")
+	}
+	tokens := 0
+	if last.Arm >= 0 && state.Warmth[last.Arm] != nil {
+		tokens = state.Warmth[last.Arm].LastInputTokens
+	}
+	if last.Arm >= 0 && last.Arm != run.Arm && last.Replaced != nil {
+		next.Warmth[last.Arm] = warmthFromWire(last.Replaced.Warmth)
+	}
+	if next.Policy != nil && last.Message >= 0 && run.ActionID != "" {
+		entry := PolicyLedgerEntry{Message: last.Message, ActionID: run.ActionID, ArmID: run.ArmID, Basis: PolicyLedgerBasisReported}
+		if clientEntry != nil && clientEntry.ActionID == run.ActionID {
+			entry = *clientEntry
+		}
+		next.Policy = next.Policy.withLedgerEntry(entry, next.Policy.PrefixLen, next.Policy.PrefixDigest)
+	}
+	next.ServedModel = run.Model
+	next.PreviousArm = nil
+	if run.Arm >= 0 {
+		arm := run.Arm
+		next.PreviousArm = &arm
+		next.Warmth[arm] = &cachecontext.WorkerWarmth{
+			LastUsed: report.FinishedAt.UTC(), LastInputTokens: tokens, Call: reportedCall(run, report),
+		}
+	}
+	next.LastReport = newLastReport(last.RouteID, report, state.TurnIndex, last.Message, run.Arm, nil)
+	return next, recordedReport(ReportClientReplaced, last.RouteID, next, run), nil
+}
+
+func ledgerOf(policy *PolicyEpisodeState) []PolicyLedgerEntry {
+	if policy == nil {
+		return nil
+	}
+	return policy.Ledger
+}
+
+// reportedEntry is the ledger entry of a reported run on a decision's turn:
+// the decided entry when the run is the decided action, an entry for the
+// action that ran otherwise (no price audit: the decision's prices scored
+// another action), none when the action is not known.
+func reportedEntry(decided PolicyLedgerEntry, run ReportedRun) *PolicyLedgerEntry {
+	if run.ActionID == "" {
+		return nil
+	}
+	entry := PolicyLedgerEntry{Message: decided.Message, ActionID: run.ActionID, ArmID: run.ArmID}
+	if run.ActionID == decided.ActionID {
+		entry = decided
+		if decided.Prices != nil {
+			prices := *decided.Prices
+			entry.Prices = &prices
+		}
+	}
+	entry.Basis = PolicyLedgerBasisReported
+	return &entry
+}
+
+// commitReportedRun records run as the turn that ran: the arm's warmth and
+// last call, the held arm and the served model. A run with no arm counts the
+// turn and clears the held arm, writing no warmth. For a client's report on
+// an arm it returns that arm's warmth before it.
+func commitReportedRun(next *EpisodeState, run ReportedRun, inputTokens int, report Report) (*ReplacedWarmth, error) {
+	next.ServedModel = run.Model
+	if run.Arm < 0 {
+		next.PreviousArm = nil
+		next.PolicyBoundary = nil
+		next.Pending = nil
+		if next.TurnIndex < math.MaxUint64 {
+			next.TurnIndex++
+		}
+		return nil, nil
+	}
+	if run.Arm >= len(next.Warmth) {
+		return nil, errors.New("reported arm is out of range")
+	}
+	before := next.Warmth[run.Arm]
+	if err := next.Commit(run.Arm, inputTokens, report.FinishedAt.UTC()); err != nil {
+		return nil, err
+	}
+	next.Warmth[run.Arm].Call = reportedCall(run, report)
+	if report.Source != ReportSourceClient {
+		return nil, nil
+	}
+	return &ReplacedWarmth{Warmth: warmthToWire(before)}, nil
+}
+
+func reportedCall(run ReportedRun, report Report) *cachecontext.CallCache {
+	call := run.Call
+	call.ActionID = run.ActionID
+	call.CompletedAt = report.FinishedAt.UTC()
+	return &call
+}
+
+func newLastReport(routeID string, report Report, turnIndex uint64, message, arm int, replaced *ReplacedWarmth) *LastReport {
+	return &LastReport{
+		RouteID: routeID, ReportID: report.ReportID, Source: report.Source,
+		TurnIndex: turnIndex, Message: message, Arm: arm, Replaced: replaced,
+	}
+}
+
+func recordedReport(reason, routeID string, next *EpisodeState, run ReportedRun) ReportOutcome {
+	return ReportOutcome{Recorded: true, Reason: reason, RouteID: routeID, TurnIndex: next.TurnIndex, Attributed: run.Arm >= 0}
+}
+
+// latestTurnTime is when the episode's newest recorded turn ran, as its
+// arm's warmth records it.
+func latestTurnTime(state *EpisodeState) time.Time {
+	var latest time.Time
+	for _, warmth := range state.Warmth {
+		if warmth != nil && warmth.LastUsed.After(latest) {
+			latest = warmth.LastUsed
+		}
+	}
+	return latest
+}
