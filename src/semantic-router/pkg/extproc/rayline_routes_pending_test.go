@@ -302,26 +302,27 @@ func TestResolvedTurnDropsStagedTurnsFromTheTurnItRead(t *testing.T) {
 	}
 }
 
-// A turn that resolved a pending decision stores no boundary decision: the
-// stage would persist the resolution without its served-model record.
-func TestResolvedTurnStagesNoBoundary(t *testing.T) {
+// A turn that recorded a pending decision as a turn that ran makes that turn
+// durable when it stages its boundary decision, before it commits: the
+// stage records the inferred turn's served model with it, as a commit does.
+func TestResolvedTurnStagesTheInferredServedModel(t *testing.T) {
 	_, store, episode := boundaryFixture(t)
 	lease, state, err := store.Prepare(context.Background(), episode, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
-	transaction := newRaylineARCEpisodeTransaction(store, lease, state, episode, 0, nil)
-	transaction.resolvedPending = true
+	resolved := cloneARCState(state)
+	resolved.ServedModel = "vendor/inferred"
+	transaction := newRaylineARCEpisodeTransaction(store, lease, resolved, episode, 0, nil)
 	messages := []json.RawMessage{json.RawMessage(`{"role":"user","content":"fix the bug"}`)}
 	transaction.retainPolicyBoundary(context.Background(), raylinearc.NewPolicyBoundaryDecision(1, 0, &raylinearc.PolicyEpisodeState{}, messages))
-	if transaction.state.PolicyBoundary != nil {
-		t.Fatal("a resolved turn staged its boundary decision")
+	if transaction.state.PolicyBoundary == nil {
+		t.Fatal("the boundary decision was not staged")
 	}
 	if err := store.Abort(context.Background(), lease); err != nil {
 		t.Fatal(err)
 	}
-	stored, _, err := store.Snapshot(context.Background(), episode, 2)
-	if err != nil || stored.PolicyBoundary != nil {
-		t.Fatalf("stored boundary %+v (%v)", stored.PolicyBoundary, err)
+	if served, err := store.LastServedModel(context.Background(), episode); err != nil || served != "vendor/inferred" {
+		t.Fatalf("served model %q (%v), want the inferred turn's", served, err)
 	}
 }

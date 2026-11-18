@@ -149,9 +149,8 @@ func (transaction *raylineARCEpisodeTransaction) pendingState(routeID string) (*
 		routeID, arm, transaction.servedModel, next.TurnIndex, transaction.serializedTokens,
 		transaction.requestDigests, transaction.policyNext, time.Now(),
 	)
-	// The served-model record names a turn the request inferred, if any;
-	// the decision itself has not run.
-	next.ServedModel = transaction.state.ServedModel
+	// next keeps the served model of a turn the request inferred, if any
+	// (cloneARCState); the decision itself has not run.
 	return next, nil
 }
 

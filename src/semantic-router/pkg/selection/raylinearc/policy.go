@@ -37,9 +37,9 @@ const (
 )
 
 type EpisodeState struct {
-	// ServedModel, when set on the state a turn commits, is recorded by the
-	// commit itself as the episode's served model (ServedModelStore). It is
-	// not part of the persisted state.
+	// ServedModel, when set on the state a turn commits or stages, is
+	// recorded by that write itself as the episode's served model
+	// (ServedModelStore). It is not part of the persisted state.
 	ServedModel          string
 	PreviousArm          *int
 	TurnIndex            uint64

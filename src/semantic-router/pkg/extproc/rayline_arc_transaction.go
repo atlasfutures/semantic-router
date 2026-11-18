@@ -465,12 +465,8 @@ func (transaction *raylineARCEpisodeTransaction) retainPolicyBoundary(
 	ctx context.Context,
 	boundary *raylinearc.PolicyBoundaryDecision,
 ) {
-	// A turn that resolved a pending decision stages nothing either: the
-	// stage would make the resolution durable without the served-model
-	// record a commit writes with it. Its retry resolves the decision again
-	// and decides afresh.
 	if transaction == nil || transaction.state == nil || transaction.borrowed ||
-		transaction.sideCall || transaction.stateless || transaction.decidesPending || transaction.resolvedPending {
+		transaction.sideCall || transaction.stateless || transaction.decidesPending {
 		return
 	}
 	staged := cloneARCState(transaction.state)
@@ -1017,6 +1013,9 @@ func cloneARCState(
 		return nil
 	}
 	cloned := &raylinearc.EpisodeState{
+		// Set only on a state that recorded a route lookup's decision as a
+		// turn that ran: a stage of it records that turn's model.
+		ServedModel:          state.ServedModel,
 		TurnIndex:            state.TurnIndex,
 		Warmth:               make([]*cachecontext.WorkerWarmth, len(state.Warmth)),
 		EncoderOwner:         state.EncoderOwner,
