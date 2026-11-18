@@ -92,7 +92,7 @@ func TestTokenCounterMeasuresTheLocalTargetWithItsImages(t *testing.T) {
 			local = target.Capacity
 		}
 	}
-	if local == nil || !local.Fits || local.Provenance != capacityProvenanceMeasured || local.Units == nil || *local.Units != counterUnits || local.Required == nil || *local.Required != 700+100 {
+	if local == nil || !local.Fits || local.Provenance != capacityProvenanceMeasured || local.Units == nil || *local.Units != counterUnits || local.Required == nil || *local.Required != 700+chatCountMargin+100 {
 		t.Fatalf("local capacity %+v", local)
 	}
 	bodies := counter.counted()
@@ -155,6 +155,49 @@ func TestTokenCounterQualification(t *testing.T) {
 			server, _ := v2Server(t, config, &v2Decisions{choose: fitPolicy})
 			if err := server.RegisterConfiguredPromptCounters(t.Context()); err == nil {
 				t.Fatal("qualified")
+			}
+		})
+	}
+}
+
+// An exact Chat count is raised by chatCountMargin before the fit check, so
+// a prompt the counter puts within the margin of the window is not sent
+// local. The window is 1000 and the output 100, so the last count that fits is
+// 1000 - 100 - chatCountMargin.
+func TestTokenCounterChatCountCarriesTheMargin(t *testing.T) {
+	for _, tc := range []struct {
+		counted  int
+		fits     bool
+		required int64
+	}{
+		{counted: 790, fits: true, required: 790 + chatCountMargin + 100},
+		{counted: 1000 - 100 - chatCountMargin, fits: true, required: 1000},
+		{counted: 1000 - 100 - chatCountMargin + 1, fits: false, required: 1001},
+		{counted: 1000 - 100 - 1, fits: false, required: 1000 + chatCountMargin - 1},
+	} {
+		t.Run(fmt.Sprint(tc.counted), func(t *testing.T) {
+			counter := &tokenCounterFixture{units: counterUnits, tokens: tc.counted}
+			config, local := countedLocalConfig(t, counter.serve(t).URL)
+			fixture := &v2Decisions{choose: fitPolicy}
+			server, httpServer := v2Server(t, config, fixture)
+			if err := server.RegisterConfiguredPromptCounters(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			status, response := executeHTTP(t, httpServer.URL, "/v1/chat/completions", `{"model":"arc-1.0","max_tokens":100,"messages":[{"role":"user","content":"hi"}]}`, "chat-margin")
+			if status != http.StatusOK {
+				t.Fatalf("status %d: %.300s", status, response)
+			}
+			var fact *CapacityFact
+			for _, target := range fixture.snapshot()[0].Execution.Targets {
+				if target.Placement == "local" {
+					fact = target.Capacity
+				}
+			}
+			if fact == nil || fact.Fits != tc.fits || fact.Provenance != capacityProvenanceMeasured || fact.Required == nil || *fact.Required != tc.required {
+				t.Fatalf("local capacity %s, want fits %v required %d", mustJSON(fact), tc.fits, tc.required)
+			}
+			if reached := local.count() != 0; reached != tc.fits {
+				t.Fatalf("local runtime reached %v, want %v", reached, tc.fits)
 			}
 		})
 	}
