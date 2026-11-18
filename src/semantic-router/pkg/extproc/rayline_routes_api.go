@@ -21,7 +21,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -35,6 +34,7 @@ import (
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/headers"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/metrics"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/routerruntime"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
@@ -378,6 +378,8 @@ func (r *OpenAIRouter) handleRaylineRoutesAPI(
 	if refusal != nil {
 		return r.createRaylineRoutesCodedError(ctx, refusal)
 	}
+	// Counted as soon as the envelope is known: what callers send, not what succeeds.
+	metrics.RecordRaylineARCRoutesLookup(routing.executionVersion())
 	if tierRefusal != nil {
 		return r.createRaylineRoutesCodedError(ctx, tierRefusal)
 	}
@@ -475,6 +477,7 @@ func (r *OpenAIRouter) handleRaylineRoutesAPI(
 		"worker_model":        decision.WorkerModel,
 		"interface":           "routes",
 		"recipe":              string(recipe.Name),
+		"routing_execution":   routing.executionVersion(),
 	}
 	addRaylineRoutesEncodeFields(decisionFields, decision.Encode)
 	logging.ComponentEvent("extproc", "routing_decision", decisionFields)
@@ -1175,10 +1178,20 @@ func raylineRoutesHeaderWarnings(
 
 // raylineRoutesEpisodeIdentity composes the episode this decision belongs to.
 //
-// The branch is folded into the identity rather than carried beside it,
-// matching how the gateway already composes userId:conversationId[:branch]:
-// two concurrent subagents on one conversation are two trajectories, and
-// scoring them as one would make each read as the other's previous turn.
+// It is the session exactly as a generation turn sends it in the episode
+// header, because both paths hash that one string into the episode key, and
+// a lookup and the turns of its conversation must land on one episode. Any
+// encoding applied here and not there splits them.
+//
+// The branch is folded in the way the gateway folds it into the session,
+// userId:conversationId[:branch]: two concurrent subagents on one
+// conversation are two trajectories, and scoring them as one would make each
+// read as the other's previous turn. Session "a" with branch "b" is the lane
+// a generation turn sending "a:b" joins. That is not a collision between
+// callers: whoever controls the session header already names any episode on
+// generation, which hashes the raw value. Accounts stay apart on the lookup
+// scope by its length-prefixed user (raylineRoutesLookupScope).
+//
 // An absent session yields an empty identity, which makes the lookup
 // ephemeral. So does a cell with episode_writes off, whatever the caller
 // sent.
@@ -1187,17 +1200,11 @@ func raylineRoutesEpisodeIdentity(ctx *RequestContext) string {
 	if session == "" {
 		return ""
 	}
-	// The session is escaped on BOTH paths, not just the one that appends a
-	// branch. Escaping only the joined form leaves the collision it was meant
-	// to close: session "a:b" alone still encodes to "a:b", which is exactly
-	// what session "a" with branch "b" produces. The value is hashed
-	// downstream, so this has to be injective, not readable.
-	encoded := url.QueryEscape(session)
 	branch := raylineRoutesHeader(ctx, raylineRoutesBranchHeader)
 	if branch == "" {
-		return encoded
+		return session
 	}
-	return encoded + ":" + url.QueryEscape(branch)
+	return session + ":" + branch
 }
 
 // raylineRoutesRouteID adopts the caller's id when it sent one, so a single id

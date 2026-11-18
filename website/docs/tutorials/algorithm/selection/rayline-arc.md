@@ -772,8 +772,8 @@ Three optional request headers shape continuity:
 
 | Header | Effect |
 |---|---|
-| `x-rayline-session` | the conversation this lookup belongs to. **Absent means stateless**, which is what a playground wants: experimenting must not advance a real conversation |
-| `x-rayline-branch` | a subagent lane inside that conversation, so concurrent subagents are separate trajectories rather than each other's previous turn |
+| `x-rayline-session` | the conversation this lookup belongs to. **Absent means stateless**, which is what a playground wants: experimenting must not advance a real conversation. A tracked lookup shares its episode with the generation turns that send the same value in `episode.id_header` |
+| `x-rayline-branch` | a subagent lane inside that conversation, so concurrent subagents are separate trajectories rather than each other's previous turn. A generation turn joins the same lane by sending `<session>:<branch>` as its session |
 | `x-rayline-route-id` | a caller-minted id this router adopts and echoes, so one id spans both records |
 
 A branch without a session names a lane in no conversation, so it is dropped
@@ -864,6 +864,15 @@ applied. A pick missing for a point, prices the service did not apply, or a
 record contradicting the requested temperature answers 502
 `inconsistent_upstream`. Without `routes_api.routing`, a body carrying the
 block answers 503 `unavailable`.
+
+`llm_rayline_arc_routes_lookups_total{execution}` counts lookups by the
+`routing.execution` envelope they carry (`none`, `v1`, `v2`), so the labels
+show what share of lookups send one and in which version. A lookup is
+counted once its routing block is read, whatever it is then answered,
+including a refusal of its messages; one refused before that (a body that is
+not JSON, a routing block that is itself invalid) is not. Each answered
+lookup's `routing_decision` event carries the same value as
+`routing_execution`.
 
 ### Routing on generation turns: arc-1.0's V and T
 

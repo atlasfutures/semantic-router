@@ -254,19 +254,64 @@ func TestRaylineRouteIDCarriesEnoughEntropy(t *testing.T) {
 	}
 }
 
-// Two callers must not be able to compose the same episode identity.
-func TestRaylineRoutesEpisodeIdentityIsUnambiguous(t *testing.T) {
+// A tracked lookup and a generation turn on the same conversation must decide
+// on one episode. The gateway composes the session from colon-joined parts,
+// which is exactly the shape an encoding step on one path would split. A
+// lookup's branch is the lane a generation turn names by folding the branch
+// into its session the same way.
+func TestRaylineRoutesLookupSharesTheGenerationEpisode(t *testing.T) {
 	t.Parallel()
-	withColonInSession := raylineRoutesEpisodeIdentity(routesContext(map[string]string{
-		raylineRoutesSessionHeader: "a:b",
-	}))
-	withBranch := raylineRoutesEpisodeIdentity(routesContext(map[string]string{
-		raylineRoutesSessionHeader: "a",
-		raylineRoutesBranchHeader:  "b",
-	}))
-	if withColonInSession == withBranch {
-		t.Fatalf("session %q and session+branch composed to the same identity %q",
-			"a:b", withBranch)
+	for name, testCase := range map[string]struct {
+		lookup            map[string]string
+		generationSession string
+	}{
+		"session": {
+			lookup:            map[string]string{raylineRoutesSessionHeader: "user-1:conversation-1"},
+			generationSession: "user-1:conversation-1",
+		},
+		"session with characters an escape rewrites": {
+			lookup:            map[string]string{raylineRoutesSessionHeader: "user 1:conv+1/%41é"},
+			generationSession: "user 1:conv+1/%41é",
+		},
+		"session and branch": {
+			lookup: map[string]string{
+				raylineRoutesSessionHeader: "user-1:conversation-1",
+				raylineRoutesBranchHeader:  "subagent-2",
+			},
+			generationSession: "user-1:conversation-1:subagent-2",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			router, selectors := oneCellRouter(t, "sage")
+			algorithm := router.Config.Decisions[0].Algorithm
+			algorithm.RaylineARC.Episode.IDHeader = raylineRoutesSessionHeader
+
+			response := router.handleRaylineRoutesAPI(oneCellBody("arc-sage-1.0", false), routesContext(testCase.lookup))
+			if status := immediateStatusCode(t, response); status != 200 {
+				t.Fatalf("lookup status %d: %s", status, response.GetImmediateResponse().Body)
+			}
+			lookups := selectors[config.DefaultRecipeName].contexts
+			if len(lookups) != 1 || lookups[0].RaylineARC == nil {
+				t.Fatalf("lookup decided %d times, want once with an ARC context", len(lookups))
+			}
+
+			// The generation builder names its episode from the header
+			// before it reads the turns, so a body-less context is enough
+			// to see the key.
+			generation := router.buildRaylineARCSelectionContext(
+				algorithm,
+				&RequestContext{Headers: map[string]string{raylineRoutesSessionHeader: testCase.generationSession}},
+				router.Config.Decisions[0].ModelRefs,
+				raylineARCEpisodeRequired,
+			)
+			if generation.EpisodeIDHash != raylinearc.HashEpisodeID(testCase.generationSession) {
+				t.Fatalf("generation episode %q is not the session's hash", generation.EpisodeIDHash)
+			}
+			if got, want := lookups[0].RaylineARC.EpisodeIDHash, generation.EpisodeIDHash; got != want {
+				t.Fatalf("lookup episode %q, generation episode %q: one conversation, two episodes", got, want)
+			}
+		})
 	}
 }
 

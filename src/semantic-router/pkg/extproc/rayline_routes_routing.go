@@ -127,6 +127,21 @@ type raylineRoutesRouting struct {
 	signals []string
 }
 
+// executionVersion names the routing.execution envelope the lookup carried,
+// for its metric and its routing_decision event: none, v1 or v2.
+func (routing *raylineRoutesRouting) executionVersion() string {
+	switch {
+	case routing == nil:
+		return "none"
+	case routing.executionV2 != nil:
+		return "v2"
+	case routing.execution != nil:
+		return "v1"
+	default:
+		return "none"
+	}
+}
+
 func (routing *raylineRoutesRouting) wantsPredictions() bool {
 	return routing != nil && slices.Contains(routing.responseFields, "predictions")
 }
