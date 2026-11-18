@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/sessiontelemetry"
 )
 
 // generationTurn builds, selects and stages a generation turn of conversation
@@ -220,5 +222,38 @@ func TestNextTurnRulePerWireFormat(t *testing.T) {
 		if inferred != tc.inferred || state.Pending == nil {
 			t.Fatalf("%s: inferred %t, want %t (turn %d, policy %+v)", tc.name, inferred, tc.inferred, state.TurnIndex, state.Policy)
 		}
+	}
+}
+
+// A lookup the selection read as a side call wrote nothing: it reports the
+// recorded turn count, as a lookup classified as a side call before the
+// episode was read does, not the pending turn.
+func TestSideCallLookupReportsTheRecordedTurn(t *testing.T) {
+	state, _ := raylinearc.NewEpisodeState(2)
+	state.TurnIndex = 3
+	reqCtx := &RequestContext{RaylineARCTransaction: &raylineARCEpisodeTransaction{state: state, decidesPending: true}}
+	if got := committedEpisodeTurnIndex(reqCtx); got != 4 {
+		t.Fatalf("a pending lookup reported %d, want 4", got)
+	}
+	reqCtx.RaylineARCTransaction.sideCall = true
+	if got := committedEpisodeTurnIndex(reqCtx); got != 3 {
+		t.Fatalf("a lookup read as a side call reported %d, want the recorded 3", got)
+	}
+}
+
+// Session telemetry is not written for a lookup at all (a consult names no
+// requested model, which the record requires), so no turn number of a
+// pending decision reaches it.
+func TestLookupWritesNoSessionTelemetry(t *testing.T) {
+	fixture := newPendingRoutesFixture(t, true, "")
+	const conversation = "conversation-telemetry"
+	fixture.lookup(t, conversation, pendingRoutesBody(t, pendingTurnTask))
+	fixture.lookup(t, conversation, pendingRoutesBody(t, pendingTurnTask, pendingTurnReply, pendingTurnNext))
+	hash := raylinearc.HashEpisodeID(conversation)
+	if _, ok := sessiontelemetry.GetRouterSessionSnapshot(hash, time.Now()); ok {
+		t.Fatal("a lookup wrote a session telemetry record")
+	}
+	if _, ok := sessiontelemetry.GetLastModel(hash); ok {
+		t.Fatal("a lookup wrote a session last-model record")
 	}
 }
