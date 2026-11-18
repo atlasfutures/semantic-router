@@ -162,8 +162,8 @@ func TestTokenCounterQualification(t *testing.T) {
 
 // An exact Chat count is raised by chatCountMargin before the fit check, so
 // a prompt the counter puts within the margin of the window is not sent
-// local. The window is 1000 and the output 100: a count of 850 is the last
-// that fits.
+// local. The window is 1000 and the output 100, so the last count that fits is
+// 1000 - 100 - chatCountMargin.
 func TestTokenCounterChatCountCarriesTheMargin(t *testing.T) {
 	for _, tc := range []struct {
 		counted  int
@@ -187,14 +187,14 @@ func TestTokenCounterChatCountCarriesTheMargin(t *testing.T) {
 			if status != http.StatusOK {
 				t.Fatalf("status %d: %.300s", status, response)
 			}
+			var fact *CapacityFact
 			for _, target := range fixture.snapshot()[0].Execution.Targets {
-				if target.Placement != "local" {
-					continue
+				if target.Placement == "local" {
+					fact = target.Capacity
 				}
-				fact := target.Capacity
-				if fact == nil || fact.Fits != tc.fits || fact.Provenance != capacityProvenanceMeasured || *fact.Required != tc.required {
-					t.Fatalf("local capacity %s, want fits %v required %d", mustJSON(fact), tc.fits, tc.required)
-				}
+			}
+			if fact == nil || fact.Fits != tc.fits || fact.Provenance != capacityProvenanceMeasured || fact.Required == nil || *fact.Required != tc.required {
+				t.Fatalf("local capacity %s, want fits %v required %d", mustJSON(fact), tc.fits, tc.required)
 			}
 			if reached := local.count() != 0; reached != tc.fits {
 				t.Fatalf("local runtime reached %v, want %v", reached, tc.fits)

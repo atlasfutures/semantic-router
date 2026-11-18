@@ -37,8 +37,7 @@ import (
 // OpenAI Chat form (chatFormForCounting); the request dispatched is
 // unchanged. The runtime renders its own protocol through the same template
 // but by its own conversion, which the Chat form only approximates, so such
-// a count is raised by translatedCountAllowance. A Chat count is raised by
-// chatCountMargin.
+// a count is raised by translatedCountAllowance.
 type TokenCounterConfig struct {
 	URL     string `json:"url"`
 	AuthEnv string `json:"auth_env,omitempty"`

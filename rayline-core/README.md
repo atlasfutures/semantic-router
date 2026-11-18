@@ -92,9 +92,10 @@ readiness. `POST url` with the prepared OpenAI Chat request, byte for byte,
 answers `{"prompt_tokens": N, "units": "..."}`. A counter that fails or changes
 units makes that target `fits: false` (`runtime_unavailable`) for the turn. It
 returns no token IDs, so current-prefix overlap stays unknown; capacity uses its
-count. The URL must be loopback `http`, without credentials or a query. On a
-Chat deployment the core adds 50 tokens to the count, for what a server's chat
-template may add that the counter cannot see.
+count. On a Chat deployment the core adds 50 tokens to the count, for what a
+server's chat template may add that the counter cannot see, so a turn within 50
+tokens of the window is not sent to the local model. The URL must be loopback
+`http`, without credentials or a query.
 
 On a Messages or Responses deployment (Claude Code, omp, Codex) the core
 translates the prepared request to the Chat form for counting only; the
