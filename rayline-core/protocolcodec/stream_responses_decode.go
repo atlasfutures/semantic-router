@@ -34,14 +34,15 @@ func (decoder *responsesStreamDecoder) decodeResponsesLifecycleEvent(
 		if err := decoder.validateResponsesToolDone(wire); err != nil {
 			return nil, nil, err
 		}
-		if !unstreamed || wire.Arguments == "" {
+		if !unstreamed {
 			return nil, nil, nil
 		}
 		// Some servers (LM Studio) send a call's arguments only here, with no
 		// delta. They go on as the call's one argument delta, the event every
-		// client encoder writes arguments from: a Chat client otherwise got
-		// finish_reason "tool_calls" and no call. The delta appends them, so
-		// the copy the check above kept is cleared first.
+		// client encoder writes arguments from: a Chat client is otherwise
+		// sent finish_reason "tool_calls" and no call. The check above has
+		// already proved them a JSON object and stored them as the call's
+		// arguments; the delta appends them, so that copy is cleared first.
 		decoder.toolArguments[index] = nil
 		wire.Delta = wire.Arguments
 		if err := decoder.applyResponsesToolDelta(&event, wire); err != nil {

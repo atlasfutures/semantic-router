@@ -103,11 +103,10 @@ func chatStreamToolCalls(t *testing.T, body string) (map[int]*chatStreamedCall, 
 	return calls, finish
 }
 
-// A Chat client is sent tool calls from argument deltas. A Responses stream
-// whose call arrives with its arguments only in the done event used to give a
-// Chat client finish_reason "tool_calls" and no call at all; the completed
-// call is now sent whole. A call that was streamed as deltas is not sent
-// again.
+// A Chat client is sent tool calls from argument deltas. A call whose
+// arguments arrive only in the done event reaches it as one tool_calls entry
+// with its id, name and arguments, as a call streamed as deltas does, and
+// with the arguments once.
 func TestChatClientGetsAToolCallStreamedWithoutArgumentDeltas(t *testing.T) {
 	for name, deltas := range map[string]bool{"done event only": false, "argument deltas": true} {
 		t.Run(name, func(t *testing.T) {
@@ -123,9 +122,9 @@ func TestChatClientGetsAToolCallStreamedWithoutArgumentDeltas(t *testing.T) {
 	}
 }
 
-// streamedArguments returns the tool-call argument text a client of format
-// receives in its argument deltas, joined: Responses
-// function_call_arguments.delta, Messages input_json_delta, Chat tool_calls.
+// streamedArguments returns the tool-call argument text a Responses or
+// Messages client receives in its argument deltas, joined: Responses
+// function_call_arguments.delta, Messages input_json_delta.
 func streamedArguments(t *testing.T, client llmprotocol.WireFormat, body string) string {
 	t.Helper()
 	stream, err := NewBuiltinEngine().NewStream(llmprotocol.OpenAIResponsesV1, client, llmprotocol.StreamContext{
@@ -176,8 +175,8 @@ func streamedArguments(t *testing.T, client llmprotocol.WireFormat, body string)
 }
 
 // Responses and Messages clients receive the arguments of a done-only call
-// once, as they do for a call streamed as deltas.
-func TestDoneOnlyToolArgumentsReachEveryClientOnce(t *testing.T) {
+// in one argument delta, once, as they do for a call streamed as deltas.
+func TestDoneOnlyToolArgumentsReachResponsesAndMessagesClientsOnce(t *testing.T) {
 	for _, client := range []llmprotocol.WireFormat{llmprotocol.OpenAIResponsesV1, llmprotocol.AnthropicMessagesV1} {
 		for name, deltas := range map[string]bool{"done event only": false, "argument deltas": true} {
 			t.Run(string(client)+"/"+name, func(t *testing.T) {
@@ -189,23 +188,28 @@ func TestDoneOnlyToolArgumentsReachEveryClientOnce(t *testing.T) {
 	}
 }
 
-// A done-only call a Chat client was sent is output the client holds, so a
-// turn cut after it is not treated as one that produced nothing.
+// A call a Chat client was sent is output the client holds, so a turn cut
+// after it is not treated as one that produced nothing, whether its
+// arguments came as deltas or only in the done event.
 func TestDoneOnlyToolCallCountsAsPublishedOutput(t *testing.T) {
-	body, _, found := strings.Cut(responsesToolCallStream(false), "event: response.completed")
-	if !found {
-		t.Fatal("the stream has no response.completed event")
-	}
-	stream, err := NewBuiltinEngine().NewStream(llmprotocol.OpenAIResponsesV1, llmprotocol.OpenAIChatV1, llmprotocol.StreamContext{
-		Context: context.Background(), PublicModel: "public-model", ProviderModel: "local-model",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, _, _, err := stream.Push([]byte(body)); err != nil {
-		t.Fatal(err)
-	}
-	if !stream.OutputPublished() {
-		t.Fatal("the call the Chat client was sent did not count as published output")
+	for name, deltas := range map[string]bool{"done event only": false, "argument deltas": true} {
+		t.Run(name, func(t *testing.T) {
+			body, _, found := strings.Cut(responsesToolCallStream(deltas), "event: response.completed")
+			if !found {
+				t.Fatal("the stream has no response.completed event")
+			}
+			stream, err := NewBuiltinEngine().NewStream(llmprotocol.OpenAIResponsesV1, llmprotocol.OpenAIChatV1, llmprotocol.StreamContext{
+				Context: context.Background(), PublicModel: "public-model", ProviderModel: "local-model",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, _, _, err := stream.Push([]byte(body)); err != nil {
+				t.Fatal(err)
+			}
+			if !stream.OutputPublished() {
+				t.Fatal("the call the Chat client was sent did not count as published output")
+			}
+		})
 	}
 }
