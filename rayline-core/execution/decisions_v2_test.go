@@ -923,4 +923,13 @@ func TestV2ResponseDescribesTheDecision(t *testing.T) {
 	if header.Get("X-Rayline-Decision-Ms") == "" {
 		t.Fatalf("headers %v", header)
 	}
+
+	// Description fields of another shape are left out; the turn still runs.
+	decide(localActionID, 1, map[string]any{"rule": 1, "outcome": []string{"x"}})
+	header = turn("other-shapes")
+	for _, name := range []string{"X-Rayline-Thinking-Level", "X-Rayline-Decision-Reason", "X-Rayline-P-Pass"} {
+		if values := header.Values(name); len(values) != 0 {
+			t.Fatalf("%s %v", name, values)
+		}
+	}
 }

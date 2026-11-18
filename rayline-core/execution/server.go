@@ -687,11 +687,8 @@ func setDecisionHeaders(header http.Header, selection Decision) {
 	if decisionWord.MatchString(selection.ThinkingLevel) {
 		header.Set("X-Rayline-Thinking-Level", selection.ThinkingLevel)
 	}
-	if selection.Receipt == nil || selection.Receipt.Selection == nil {
-		return
-	}
-	rule := selection.Receipt.Selection
-	if !decisionWord.MatchString(rule.Outcome) {
+	rule := selection.Receipt.selection()
+	if rule == nil || !decisionWord.MatchString(rule.Outcome) {
 		return
 	}
 	header.Set("X-Rayline-Decision-Reason", rule.Outcome)

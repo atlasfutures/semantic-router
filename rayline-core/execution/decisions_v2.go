@@ -185,8 +185,19 @@ type DecisionReceipt struct {
 	// CapacityUnknown lists offered actions admitted with unknown capacity.
 	CapacityUnknown []string `json:"capacity_unknown,omitempty"`
 	// Selection is the selection rule's record, present when the policy's
-	// rule ran for this decision.
-	Selection *receiptSelection `json:"selection,omitempty"`
+	// rule ran for this decision. It is kept raw and read best-effort
+	// ([DecisionReceipt.selection]): it only describes the decision.
+	Selection json.RawMessage `json:"selection,omitempty"`
+}
+
+// selection is the receipt's selection record, or nil when it has none or
+// it doesn't have the expected shape.
+func (receipt *DecisionReceipt) selection() *receiptSelection {
+	var record receiptSelection
+	if receipt == nil || len(receipt.Selection) == 0 || json.Unmarshal(receipt.Selection, &record) != nil {
+		return nil
+	}
+	return &record
 }
 
 // receiptSelection is how a selection rule (prefer_local) chose: its
