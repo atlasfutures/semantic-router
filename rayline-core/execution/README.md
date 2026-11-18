@@ -146,7 +146,20 @@ opt-in. The core reports facts and never picks or ranks a model.
     Media, content the body only references (`file_id`, `item_reference`,
     `previous_response_id`), a request's own `chat_template` or
     `role_mapping`, a server tool and any unknown or runtime-specific member
-    fall to `caller_estimated`.
+    fall to `caller_estimated`. A Responses `namespace` of function tools
+    (Codex's sub-agent tools) is bounded. A runtime that flattens it into one
+    function per member repeats the namespace's name in each member's name
+    (vLLM `<namespace>__<name>`, Ollama `<namespace>.<name>`, llama.cpp
+    `ns_<namespace>___<name>`) and may repeat its description as the core's
+    own Chat and Messages flattening does, so each member is also charged
+    `ns_`, the name, `___`, the description and a blank line. A Messages
+    `output_config` on a message is bounded only on a system message holding
+    `effort` alone (Claude Code's mid-conversation message). The "execution
+    context applied" and "decisions lookup refused" log lines name what made
+    each estimated fact one in `capacity_estimated_by`: the first such member
+    as a path into the prepared request (`/tools/3/type=web_search`; a name
+    that is not an identifier of at most 64 characters is written `<name>`),
+    or the inline image count. It is a log field only, not sent to Decisions.
   - **`context_overflow`** (local deployments, `"refuses"` or
     `"truncates"`, default `"truncates"`) states what the runtime does with a
     prompt over its window. On a `"truncates"` deployment (Ollama,

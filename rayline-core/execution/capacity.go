@@ -47,6 +47,8 @@ type CapacityFact struct {
 	Provenance      string  `json:"provenance"`
 	// prompt is the prompt's own size within Required, for refusal messages.
 	prompt int64
+	// estimatedBy says, for logs, what made a caller_estimated size one.
+	estimatedBy string
 }
 
 // capacityFact compares the exact prepared prompt plus the actual output limit
@@ -96,8 +98,8 @@ func (server *Server) measureCapacity(ctx context.Context, body []byte, format l
 	}
 	sort.Strings(ids)
 	type promptSize struct {
-		prompt            int64
-		provenance, units string
+		prompt                         int64
+		provenance, units, estimatedBy string
 	}
 	sizes := map[string]promptSize{}
 	for _, id := range ids {
@@ -137,10 +139,11 @@ func (server *Server) measureCapacity(ctx context.Context, body []byte, format l
 			key := selected.deployment.ID + "\x00" + fingerprint(prepared.body)
 			size, ok := sizes[key]
 			if !ok {
-				size.prompt, size.provenance, size.units = localPromptSize(selected.deployment, prepared.body)
+				size.prompt, size.provenance, size.units, size.estimatedBy = localPromptSize(selected.deployment, prepared.body)
 				sizes[key] = size
 			}
 			facts[id] = sizedCapacityFact(selected.deployment, size.prompt, size.provenance, size.units, prepared.outputLimit)
+			facts[id].estimatedBy = size.estimatedBy
 			continue
 		}
 		prompt, err := server.measurePreparedPrompt(ctx, selected, prepared.body, state, nil)
