@@ -216,9 +216,9 @@ func (transaction *raylineARCEpisodeTransaction) commitPending(
 }
 
 // pendingState is the episode with this lookup's decision as its pending
-// decision: the prepared (resolved) episode, the routing fields the
-// selection moved, and no boundary decision, so a repeat ask decides again
-// rather than replaying this one.
+// decision: the prepared (resolved) episode and the routing fields the
+// selection moved. The lookup stages no boundary decision of its own, so a
+// repeat ask decides again rather than replaying this one.
 func (transaction *raylineARCEpisodeTransaction) pendingState(routeID string) (*raylinearc.EpisodeState, error) {
 	if transaction.state == nil || transaction.requestDigests == nil {
 		return nil, errors.New("a pending decision needs its request's episode and messages")
@@ -229,7 +229,13 @@ func (transaction *raylineARCEpisodeTransaction) pendingState(routeID string) (*
 	}
 	next := cloneARCState(transaction.state)
 	transaction.applyRoutingState(next)
-	next.PolicyBoundary = nil
+	if boundary := next.PolicyBoundary; boundary != nil && boundary.Arm != arm {
+		// A boundary decision a failed generation turn stored is kept only
+		// when this lookup answered the same arm (it replays it): its retry
+		// then reuses it. A lookup that decided otherwise is the newer
+		// decision, and a repeat ask must not replay the older one.
+		next.PolicyBoundary = nil
+	}
 	next.Pending = raylinearc.NewPendingDecision(
 		routeID, arm, transaction.servedModel, next.TurnIndex, transaction.serializedTokens,
 		transaction.requestDigests, transaction.policyNext, time.Now(),

@@ -3,6 +3,7 @@ package extproc
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 
 	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
@@ -99,4 +100,32 @@ func TestNextTurnDoesNotInferADecisionAGenerationCallSuperseded(t *testing.T) {
 		t.Fatalf("the next turn recorded the superseded lookup's arm as the one that ran: %+v", state.Policy)
 	}
 	_ = next.RaylineARCTransaction.abort(context.Background(), "test")
+}
+
+// A lookup for the same messages as a failed generation turn's stored
+// boundary decision keeps that decision when it answered the same arm (it
+// replayed it): the generation retry still reuses that arm. A lookup that
+// answered another arm is the newer decision and clears it.
+func TestLookupKeepsAStoredBoundaryDecisionItReplayed(t *testing.T) {
+	for _, tc := range []struct {
+		boundaryArm int
+		kept        bool
+	}{{0, true}, {1, false}} {
+		fixture := newPendingRoutesFixture(t, true, "")
+		fixture.picks = []string{fixture.actions[0]} // the lookup answers arm 0
+		conversation := fmt.Sprintf("conversation-boundary-%d", tc.boundaryArm)
+		reqCtx := fixture.generationTurn(t, conversation, pendingRoutesBody(t, pendingTurnTask))
+		raw, _ := json.Marshal(pendingTurnTask)
+		digests := raylinearc.NewPrefixDigests([]json.RawMessage{raw})
+		boundary := raylinearc.NewPolicyBoundaryDecisionFrom(tc.boundaryArm, 0, &raylinearc.PolicyEpisodeState{}, digests)
+		reqCtx.RaylineARCTransaction.retainPolicyBoundary(context.Background(), boundary)
+		if err := reqCtx.RaylineARCTransaction.abort(context.Background(), "upstream_error"); err != nil {
+			t.Fatal(err)
+		}
+		fixture.lookup(t, conversation, pendingRoutesBody(t, pendingTurnTask))
+		state := fixture.stored(t, conversation)
+		if kept := state.PolicyBoundary != nil && state.PolicyBoundary.Same(boundary); kept != tc.kept || state.Pending == nil {
+			t.Fatalf("boundary arm %d: kept %t, want %t (pending %+v)", tc.boundaryArm, kept, tc.kept, state.Pending)
+		}
+	}
 }
