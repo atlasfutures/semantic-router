@@ -85,7 +85,7 @@ func resolveRaylineARCPendingDecision(reqCtx *RequestContext, arcContext *select
 // decision and releases the lease. The trajectory -- turn count, previous
 // arm, ledger, warmth, boundary -- is written as the request resolved it;
 // only what later requests are routed through moves with the decision: the
-// encoder owner and the policy session.
+// encoder owner, the policy session and the served-model record.
 func (transaction *raylineARCEpisodeTransaction) commitPending(
 	ctx context.Context,
 	requestContext *RequestContext,
@@ -156,7 +156,11 @@ func (transaction *raylineARCEpisodeTransaction) pendingState(routeID string) (*
 		routeID, arm, transaction.servedModel, next.TurnIndex, transaction.serializedTokens,
 		transaction.requestDigests, transaction.policyNext, time.Now(),
 	)
-	// next keeps the served model of a turn the request inferred, if any
-	// (cloneARCState); the decision itself has not run.
+	// The served-model record names the decided model, as a committed
+	// lookup's did: a conversation that comes back after its episode expired,
+	// with nothing reported, is held to the last decision, assumed to have
+	// run. A repeat ask overwrites it with the newest decision. A decision
+	// that names no model leaves the record as it was.
+	next.ServedModel = transaction.servedModel
 	return next, nil
 }
