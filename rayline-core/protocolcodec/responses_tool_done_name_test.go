@@ -99,11 +99,7 @@ func TestResponsesToolDoneWithoutANameCompletes(t *testing.T) {
 				if bytes.Contains(frames, []byte(`"name":""`)) || bytes.Contains(frames, []byte(`"name":null`)) {
 					t.Fatalf("the client was sent an empty tool name:\n%s", frames)
 				}
-				// A Chat client is sent tool calls from argument deltas, and
-				// this stream has none: that is a separate gap, unrelated to
-				// the name, so only the frames of the other clients are
-				// checked for the call's name.
-				if client != llmprotocol.OpenAIChatV1 && !bytes.Contains(frames, []byte(`"name":"exec_command"`)) {
+				if !bytes.Contains(frames, []byte(`"name":"exec_command"`)) {
 					t.Fatalf("the client was not sent the call's own name:\n%s", frames)
 				}
 			})
