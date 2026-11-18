@@ -547,7 +547,7 @@ func TestRaylineRoutesLookupSessionsEndToEnd(t *testing.T) {
 		router.background.Wait()
 		contexts := selectors[config.DefaultRecipeName].contexts
 		arcContext := contexts[len(contexts)-1].RaylineARC
-		scopeHash := raylinearc.HashEpisodeID(raylineRoutesLookupScope("user-1", "conv+1"))
+		scopeHash := raylinearc.HashEpisodeID(raylineRoutesLookupScope("user-1", "conv 1"))
 		if arcContext.RoutesLookupSession != named || (arcContext.EpisodeIDHash == scopeHash) != named {
 			t.Fatalf("named=%t: lookup session %t on %s", named, arcContext.RoutesLookupSession, arcContext.EpisodeIDHash)
 		}

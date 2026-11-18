@@ -772,8 +772,8 @@ Three optional request headers shape continuity:
 
 | Header | Effect |
 |---|---|
-| `x-rayline-session` | the conversation this lookup belongs to. **Absent means stateless**, which is what a playground wants: experimenting must not advance a real conversation |
-| `x-rayline-branch` | a subagent lane inside that conversation, so concurrent subagents are separate trajectories rather than each other's previous turn |
+| `x-rayline-session` | the conversation this lookup belongs to. **Absent means stateless**, which is what a playground wants: experimenting must not advance a real conversation. A tracked lookup shares its episode with the generation turns that send the same value in `episode.id_header` |
+| `x-rayline-branch` | a subagent lane inside that conversation, so concurrent subagents are separate trajectories rather than each other's previous turn. A generation turn joins the same lane by sending `<session>:<branch>` as its session |
 | `x-rayline-route-id` | a caller-minted id this router adopts and echoes, so one id spans both records |
 
 A branch without a session names a lane in no conversation, so it is dropped
