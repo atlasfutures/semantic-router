@@ -187,6 +187,11 @@ type raylineARCEpisodeTransaction struct {
 	// them, kept by the pending-decision resolution for the decision the
 	// request may store; nil before it ran.
 	requestDigests *raylinearc.PrefixDigests
+	// resolvedPending marks a request that recorded or dropped the pending
+	// decision it read, and readTurnIndex is the turn count it read, before
+	// that: state no longer holds it.
+	resolvedPending bool
+	readTurnIndex   uint64
 }
 
 func newRaylineARCEpisodeTransaction(
@@ -460,8 +465,12 @@ func (transaction *raylineARCEpisodeTransaction) retainPolicyBoundary(
 	ctx context.Context,
 	boundary *raylinearc.PolicyBoundaryDecision,
 ) {
+	// A turn that resolved a pending decision stages nothing either: the
+	// stage would make the resolution durable without the served-model
+	// record a commit writes with it. Its retry resolves the decision again
+	// and decides afresh.
 	if transaction == nil || transaction.state == nil || transaction.borrowed ||
-		transaction.sideCall || transaction.stateless || transaction.decidesPending {
+		transaction.sideCall || transaction.stateless || transaction.decidesPending || transaction.resolvedPending {
 		return
 	}
 	staged := cloneARCState(transaction.state)

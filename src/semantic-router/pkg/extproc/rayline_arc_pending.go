@@ -66,6 +66,7 @@ func resolveRaylineARCPendingDecision(reqCtx *RequestContext, arcContext *select
 	}
 	resolved, resolution := raylinearc.ResolvePending(state, digests, roles)
 	arcContext.State, transaction.state = resolved, resolved
+	transaction.resolvedPending, transaction.readTurnIndex = true, state.TurnIndex
 	logging.ComponentEvent("extproc", "rayline_arc_pending_decision", map[string]interface{}{
 		"episode_id_hash": arcContext.EpisodeIDHash,
 		"request_id":      reqCtx.RequestID,

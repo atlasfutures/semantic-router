@@ -3,6 +3,7 @@ package extproc
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -277,5 +278,50 @@ func TestGenerationTurnResolvesALookupsPendingDecision(t *testing.T) {
 	if state.Pending != nil || state.TurnIndex != 2 || len(state.Policy.Ledger) != 1 ||
 		state.Policy.Ledger[0].Basis != raylinearc.PolicyLedgerBasisInferred {
 		t.Fatalf("after the generation turn the record is %+v", state)
+	}
+}
+
+// A turn that resolved a pending decision cleans up the service's staged
+// turn from the turn count it read: a successor that committed the turn its
+// resolution moved to keeps its record.
+func TestResolvedTurnDropsStagedTurnsFromTheTurnItRead(t *testing.T) {
+	shared := newFakeStagedTurnStore()
+	episode := strings.Repeat("e", 64)
+	if err := shared.StoreStagedTurn(context.Background(), episode, 4, []byte("successor")); err != nil {
+		t.Fatal(err)
+	}
+	state, _ := raylinearc.NewEpisodeState(2)
+	state.TurnIndex = 4
+	transaction := &raylineARCEpisodeTransaction{
+		state: state, resolvedPending: true, readTurnIndex: 3,
+		policyStaging: &policyStaging{shared: shared, episodeIDHash: episode, turns: newPolicyStagedTurns()},
+	}
+	transaction.dropPolicyStagedTurn(context.Background())
+	if record, _ := shared.LoadStagedTurn(context.Background(), episode); string(record) != "successor" {
+		t.Fatalf("the successor's staged turn was deleted: %q", record)
+	}
+}
+
+// A turn that resolved a pending decision stores no boundary decision: the
+// stage would persist the resolution without its served-model record.
+func TestResolvedTurnStagesNoBoundary(t *testing.T) {
+	_, store, episode := boundaryFixture(t)
+	lease, state, err := store.Prepare(context.Background(), episode, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	transaction := newRaylineARCEpisodeTransaction(store, lease, state, episode, 0, nil)
+	transaction.resolvedPending = true
+	messages := []json.RawMessage{json.RawMessage(`{"role":"user","content":"fix the bug"}`)}
+	transaction.retainPolicyBoundary(context.Background(), raylinearc.NewPolicyBoundaryDecision(1, 0, &raylinearc.PolicyEpisodeState{}, messages))
+	if transaction.state.PolicyBoundary != nil {
+		t.Fatal("a resolved turn staged its boundary decision")
+	}
+	if err := store.Abort(context.Background(), lease); err != nil {
+		t.Fatal(err)
+	}
+	stored, _, err := store.Snapshot(context.Background(), episode, 2)
+	if err != nil || stored.PolicyBoundary != nil {
+		t.Fatalf("stored boundary %+v (%v)", stored.PolicyBoundary, err)
 	}
 }
