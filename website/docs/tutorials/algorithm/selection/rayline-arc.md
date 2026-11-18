@@ -808,7 +808,11 @@ its messages:
   from it: the pending decision is dropped and the turn is decided afresh,
   on the turns that ran. A repeat never replays the earlier answer.
 
-A pending decision that nothing settles expires with the episode. One limit
+A pending decision that nothing settles expires with the episode. The decided
+model also becomes the conversation's last served model, kept for seven days:
+a conversation that comes back after its episode expired, with nothing
+reported about what ran, is held to the last decision, even if the caller
+never ran it. One limit
 remains: a policy service that remembers its last pick per conversation may
 fall back to that pick when the episode has no recorded turn in the current
 context (right after a compaction or a changed beginning), so a repeat ask

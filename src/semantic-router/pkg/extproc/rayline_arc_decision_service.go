@@ -614,9 +614,9 @@ func committedEpisodeTurnIndex(requestContext *RequestContext) int {
 		return 0
 	}
 	turnIndex := requestContext.RaylineARCTransaction.state.TurnIndex
-	// A lookup the selection read as a side call wrote nothing and decided
-	// no turn of the conversation: it reports the recorded count, as one
-	// classified before the episode was read does.
+	// A pending lookup reports the turn after the recorded ones. One the
+	// selection read as a side call wrote nothing and reports the recorded
+	// count, as one classified before the episode was read does.
 	if transaction := requestContext.RaylineARCTransaction; transaction.decidesPending && !transaction.sideCall {
 		turnIndex++
 	}

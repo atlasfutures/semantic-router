@@ -118,10 +118,7 @@ func NewPendingDecision(
 			Epoch: next.Epoch, EpochStartTurn: next.EpochStartTurn, CompactionCount: next.CompactionCount,
 			CompactionSummary: next.CompactionSummary, Exploration: next.Exploration.Clone(), Entry: entry,
 		}
-		if entry.Prices != nil {
-			prices := *entry.Prices
-			pending.Policy.Entry.Prices = &prices
-		}
+		pending.Policy.Entry.Prices = clonePriceAudit(entry.Prices)
 	}
 	return pending
 }
@@ -135,10 +132,7 @@ func ClonePendingDecision(pending *PendingDecision) *PendingDecision {
 	if pending.Policy != nil {
 		policy := *pending.Policy
 		policy.Exploration = pending.Policy.Exploration.Clone()
-		if pending.Policy.Entry.Prices != nil {
-			prices := *pending.Policy.Entry.Prices
-			policy.Entry.Prices = &prices
-		}
+		policy.Entry.Prices = clonePriceAudit(pending.Policy.Entry.Prices)
 		cloned.Policy = &policy
 	}
 	return &cloned
@@ -289,10 +283,7 @@ func (pending *PendingDecision) inferredPolicy(stored *PolicyEpisodeState, diges
 	base.CompactionSummary = policy.CompactionSummary
 	entry := policy.Entry
 	entry.Basis = PolicyLedgerBasisInferred
-	if entry.Prices != nil {
-		prices := *entry.Prices
-		entry.Prices = &prices
-	}
+	entry.Prices = clonePriceAudit(entry.Prices)
 	// The reply is the message at reply: the decided message count for an
 	// ordinary turn, the prefill's place for a completed prefill. The
 	// context's prefix is the decided message count, as a served turn's is,
@@ -302,4 +293,14 @@ func (pending *PendingDecision) inferredPolicy(stored *PolicyEpisodeState, diges
 	next := base.withLedgerEntry(entry, pending.PrefixLen, digests.Digest(pending.PrefixLen))
 	next.Exploration = policy.Exploration.Clone()
 	return next
+}
+
+// clonePriceAudit is a copy of audit the caller may keep: a pending decision
+// and the ledger entry made from it do not share one.
+func clonePriceAudit(audit *PolicyPriceAudit) *PolicyPriceAudit {
+	if audit == nil {
+		return nil
+	}
+	cloned := *audit
+	return &cloned
 }

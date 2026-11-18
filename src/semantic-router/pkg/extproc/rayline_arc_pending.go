@@ -71,11 +71,10 @@ func resolveRaylineARCPendingDecision(reqCtx *RequestContext, arcContext *select
 	digests := raylinearc.NewPrefixDigests(messages)
 	transaction.requestDigests = digests
 	transaction.requestPrefill = endsWithAssistantMessage(arcContext.RequestFormat, messages, roles)
-	roles = pendingReplyRoles(arcContext.RequestFormat, messages, roles)
 	if state == nil || state.Pending == nil {
 		return nil
 	}
-	resolved, resolution := raylinearc.ResolvePending(state, digests, roles)
+	resolved, resolution := raylinearc.ResolvePending(state, digests, pendingReplyRoles(arcContext.RequestFormat, messages, roles))
 	if resolution == raylinearc.PendingDropped || resolution == raylinearc.PendingSuperseded {
 		// The decision is out of this request's decision, but it stays on
 		// the episode: a turn that then fails leaves its retry the dropped
@@ -89,8 +88,10 @@ func resolveRaylineARCPendingDecision(reqCtx *RequestContext, arcContext *select
 		if !transaction.decidesPending {
 			kept.Superseded = true
 			// The served-model record names the lookup's pick; the stage
-			// below puts back the record the decision read, so a cold
-			// request after this episode expires is not held to it.
+			// below puts back the record the decision read, when it read
+			// one, so a cold request after this episode expires is not held
+			// to the pick. (A store cannot delete the record: a lookup that
+			// read none leaves its pick there, as a committed lookup did.)
 			resolved.ServedModel = kept.PriorServedModel
 		}
 		resolved.Pending = kept
@@ -106,11 +107,11 @@ func resolveRaylineARCPendingDecision(reqCtx *RequestContext, arcContext *select
 	})
 	// A generation turn stores what it settled at once (stageSettled); a
 	// lookup writes it with its own pending write.
-	if !transaction.decidesPending && (resolution == raylinearc.PendingInferred ||
-		resolution == raylinearc.PendingDropped && !state.Pending.Superseded) {
+	if !transaction.decidesPending &&
+		(resolution == raylinearc.PendingInferred || resolution == raylinearc.PendingDropped) {
 		transaction.stageSettled(reqCtx)
 	}
-	if resolution == raylinearc.PendingInferred {
+	if resolution != raylinearc.PendingDropped && resolution != raylinearc.PendingSuperseded {
 		return nil
 	}
 	return state.Pending
