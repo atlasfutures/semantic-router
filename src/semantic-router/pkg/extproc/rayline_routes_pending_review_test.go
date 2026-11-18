@@ -71,35 +71,64 @@ func TestLateRefusalAfterAnInferredTurnExcludesTheModel(t *testing.T) {
 }
 
 // A lookup decided arm 0; a generation call for the same messages dropped
-// that decision, staged its own boundary decision for arm 1, served its reply
-// and failed to commit. The next turn must not record the lookup's arm as the
-// model that wrote the reply: the generation call's decision superseded it.
+// that decision, staged its own boundary decision, served its reply and
+// failed to commit. The next turn must not record the lookup's decision as
+// the one that wrote the reply, whether the generation call chose another
+// arm or the same arm (a boundary names only the arm, and several actions,
+// one per thinking level, share one): the generation call's decision came
+// after the lookup's and superseded it.
 func TestNextTurnDoesNotInferADecisionAGenerationCallSuperseded(t *testing.T) {
+	for _, boundaryArm := range []int{1, 0} {
+		fixture := newPendingRoutesFixture(t, true, "")
+		conversation := fmt.Sprintf("conversation-superseded-%d", boundaryArm)
+		fixture.picks = []string{fixture.actions[0]} // arm 0 (think)
+		fixture.lookup(t, conversation, pendingRoutesBody(t, pendingTurnTask))
+		decision := fixture.router.Config.Decisions[0]
+		reqCtx := &RequestContext{
+			Headers:           map[string]string{decisionServiceEpisodeHeader: conversation},
+			RaylineARCRawBody: pendingRoutesBody(t, pendingTurnTask), SourceFormat: llmprotocol.AnthropicMessagesV1,
+			RequestID: "generation-same-turn",
+		}
+		arcContext := fixture.router.buildRaylineARCSelectionContext(decision.Algorithm, reqCtx, decision.ModelRefs, raylineARCEpisodeRequired)
+		if arcContext.PreparationFailure != "" {
+			t.Fatal(arcContext.PreparationFailure)
+		}
+		raw, _ := json.Marshal(pendingTurnTask)
+		digests := raylinearc.NewPrefixDigests([]json.RawMessage{raw})
+		reqCtx.RaylineARCTransaction.retainPolicyBoundary(context.Background(),
+			raylinearc.NewPolicyBoundaryDecisionFrom(boundaryArm, 0, &raylinearc.PolicyEpisodeState{}, digests))
+		if err := reqCtx.RaylineARCTransaction.abort(context.Background(), "commit_failure"); err != nil {
+			t.Fatal(err)
+		}
+		next := fixture.generationTurn(t, conversation, pendingRoutesBody(t, pendingTurnTask, pendingTurnReply, pendingTurnNext))
+		state := next.RaylineARCTransaction.state
+		if state.TurnIndex != 0 || (state.Policy != nil && len(state.Policy.Ledger) != 0) {
+			t.Fatalf("boundary arm %d: the next turn recorded the superseded lookup decision: %+v", boundaryArm, state.Policy)
+		}
+		_ = next.RaylineARCTransaction.abort(context.Background(), "test")
+	}
+}
+
+// The reverse order: a failed generation turn stored its boundary decision,
+// then a lookup for the same messages answered that arm and kept it. The
+// lookup's decision is the newer one, and the next turn records it.
+func TestNextTurnInfersALookupThatKeptAnEarlierBoundary(t *testing.T) {
 	fixture := newPendingRoutesFixture(t, true, "")
-	const conversation = "conversation-superseded"
-	fixture.picks = []string{fixture.actions[0]} // arm 0 (think)
-	fixture.lookup(t, conversation, pendingRoutesBody(t, pendingTurnTask))
-	decision := fixture.router.Config.Decisions[0]
-	reqCtx := &RequestContext{
-		Headers:           map[string]string{decisionServiceEpisodeHeader: conversation},
-		RaylineARCRawBody: pendingRoutesBody(t, pendingTurnTask), SourceFormat: llmprotocol.AnthropicMessagesV1,
-		RequestID: "generation-same-turn",
-	}
-	arcContext := fixture.router.buildRaylineARCSelectionContext(decision.Algorithm, reqCtx, decision.ModelRefs, raylineARCEpisodeRequired)
-	if arcContext.PreparationFailure != "" {
-		t.Fatal(arcContext.PreparationFailure)
-	}
-	raw, _ := json.Marshal(map[string]any{"role": "user", "content": "fix the bug"})
+	const conversation = "conversation-kept-then-next"
+	fixture.picks = []string{fixture.actions[0]} // arm 0
+	turn := fixture.generationTurn(t, conversation, pendingRoutesBody(t, pendingTurnTask))
+	raw, _ := json.Marshal(pendingTurnTask)
 	digests := raylinearc.NewPrefixDigests([]json.RawMessage{raw})
-	reqCtx.RaylineARCTransaction.retainPolicyBoundary(context.Background(),
-		raylinearc.NewPolicyBoundaryDecisionFrom(1, 0, &raylinearc.PolicyEpisodeState{}, digests))
-	if err := reqCtx.RaylineARCTransaction.abort(context.Background(), "commit_failure"); err != nil {
+	turn.RaylineARCTransaction.retainPolicyBoundary(context.Background(),
+		raylinearc.NewPolicyBoundaryDecisionFrom(0, 0, &raylinearc.PolicyEpisodeState{}, digests))
+	if err := turn.RaylineARCTransaction.abort(context.Background(), "upstream_error"); err != nil {
 		t.Fatal(err)
 	}
+	fixture.lookup(t, conversation, pendingRoutesBody(t, pendingTurnTask))
 	next := fixture.generationTurn(t, conversation, pendingRoutesBody(t, pendingTurnTask, pendingTurnReply, pendingTurnNext))
 	state := next.RaylineARCTransaction.state
-	if state.PreviousArm != nil && *state.PreviousArm == 0 {
-		t.Fatalf("the next turn recorded the superseded lookup's arm as the one that ran: %+v", state.Policy)
+	if state.TurnIndex != 1 || len(state.Policy.Ledger) != 1 || state.Policy.Ledger[0].Basis != raylinearc.PolicyLedgerBasisInferred {
+		t.Fatalf("the lookup's decision was not inferred: turn %d %+v", state.TurnIndex, state.Policy)
 	}
 	_ = next.RaylineARCTransaction.abort(context.Background(), "test")
 }

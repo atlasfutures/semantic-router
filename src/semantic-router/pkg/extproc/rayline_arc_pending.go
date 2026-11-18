@@ -244,6 +244,9 @@ func (transaction *raylineARCEpisodeTransaction) pendingState(routeID string) (*
 		transaction.requestDigests, transaction.requestRoles, transaction.policyNext, time.Now(),
 	)
 	next.Pending.PriorServedModel = transaction.priorServedModel
+	// The kept boundary is named, so the next request can tell it from one a
+	// generation call stores after this decision.
+	next.Pending.KeptBoundary = raylinearc.ClonePolicyBoundary(next.PolicyBoundary)
 	// The served-model record names the decided model, as a committed
 	// lookup's did: a conversation that comes back after its episode expired,
 	// with nothing reported, is held to the last decision, assumed to have

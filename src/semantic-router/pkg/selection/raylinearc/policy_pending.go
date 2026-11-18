@@ -60,6 +60,11 @@ type PendingDecision struct {
 	// messages before it: the next turn carries the completed reply in that
 	// message's place. Empty otherwise.
 	PrefillBaseDigest string `json:"prefill_base_digest,omitempty"`
+	// KeptBoundary is the boundary decision a failed generation turn had
+	// stored for these messages when the lookup wrote this decision and kept
+	// (it answered that arm); nil when there was none. A stored boundary for
+	// the same messages that is not this one was taken after the decision.
+	KeptBoundary *PolicyBoundaryDecision `json:"kept_boundary,omitempty"`
 	// PriorServedModel is the served-model record as the decision read it,
 	// before the decision overwrote it with its own model; empty when it
 	// read none. A request that drops the decision unexecuted reads this
@@ -126,6 +131,7 @@ func ClonePendingDecision(pending *PendingDecision) *PendingDecision {
 		return nil
 	}
 	cloned := *pending
+	cloned.KeptBoundary = clonePolicyBoundary(pending.KeptBoundary)
 	if pending.Policy != nil {
 		policy := *pending.Policy
 		policy.Exploration = pending.Policy.Exploration.Clone()
@@ -150,6 +156,9 @@ func (pending *PendingDecision) Validate(workerCount int) error {
 		len(pending.RouteID) > maxPendingRouteIDBytes ||
 		(pending.PrefillBaseDigest != "" && !isLowerHex64(pending.PrefillBaseDigest)) {
 		return malformed
+	}
+	if err := pending.KeptBoundary.Validate(workerCount); err != nil {
+		return err
 	}
 	policy := pending.Policy
 	if policy == nil {
@@ -183,8 +192,8 @@ const (
 	// describes the episode; it was dropped.
 	PendingStale = "stale"
 	// PendingSuperseded: a generation call for the decision's own messages
-	// decided another arm and stored that boundary decision before it ran;
-	// the cell cannot tell the lookup's decision ran, so it was dropped.
+	// decided after it and stored its boundary decision before it ran; the
+	// cell cannot tell the lookup's decision ran, so it was dropped.
 	PendingSuperseded = "superseded"
 )
 
@@ -220,7 +229,10 @@ func ResolvePending(state *EpisodeState, digests *PrefixDigests, roles []string)
 	}
 	if boundary := state.PolicyBoundary; boundary != nil && boundary.TurnIndex == state.TurnIndex &&
 		boundary.PrefixLen == pending.PrefixLen && boundary.PrefixDigest == pending.PrefixDigest &&
-		boundary.Arm != pending.Arm {
+		!boundary.Same(pending.KeptBoundary) {
+		// A boundary decision only names an arm, and several actions (one
+		// per thinking level) may share it: any decision a generation call
+		// took after the lookup supersedes the lookup's.
 		return resolved, PendingSuperseded
 	}
 	reply, ok := pending.replyIndex(digests, roles)
