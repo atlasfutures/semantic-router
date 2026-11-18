@@ -35,6 +35,7 @@ import (
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/headers"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/metrics"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/routerruntime"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
@@ -378,6 +379,8 @@ func (r *OpenAIRouter) handleRaylineRoutesAPI(
 	if refusal != nil {
 		return r.createRaylineRoutesCodedError(ctx, refusal)
 	}
+	// Counted as soon as the envelope is known: what callers send, not what succeeds.
+	metrics.RecordRaylineARCRoutesLookup(routing.executionVersion())
 	if tierRefusal != nil {
 		return r.createRaylineRoutesCodedError(ctx, tierRefusal)
 	}
@@ -475,6 +478,7 @@ func (r *OpenAIRouter) handleRaylineRoutesAPI(
 		"worker_model":        decision.WorkerModel,
 		"interface":           "routes",
 		"recipe":              string(recipe.Name),
+		"routing_execution":   routing.executionVersion(),
 	}
 	addRaylineRoutesEncodeFields(decisionFields, decision.Encode)
 	logging.ComponentEvent("extproc", "routing_decision", decisionFields)

@@ -83,3 +83,22 @@ var RaylineARCRoutesEncodeBypasses = promauto.NewCounterVec(
 func RecordRaylineARCRoutesEncodeBypass(outcome string) {
 	RaylineARCRoutesEncodeBypasses.WithLabelValues(outcome).Inc()
 }
+
+// RaylineARCRoutesLookups counts route lookups by the routing.execution
+// envelope they carry: none, v1 or v2. Read beside each other, the labels
+// show what share of lookups send a caller-held execution context, and in
+// which version. A lookup is counted once its body and routing block are
+// read, whatever it is then answered; one whose body or routing block is
+// refused as unreadable or invalid is not, as its envelope is not known.
+var RaylineARCRoutesLookups = promauto.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "llm_rayline_arc_routes_lookups_total",
+		Help: "Rayline ARC route lookups by the routing.execution envelope they carry (none, v1, v2).",
+	},
+	[]string{"execution"},
+)
+
+// RecordRaylineARCRoutesLookup records one route lookup by execution version.
+func RecordRaylineARCRoutesLookup(execution string) {
+	RaylineARCRoutesLookups.WithLabelValues(execution).Inc()
+}
