@@ -72,6 +72,9 @@ type EpisodeState struct {
 	// sessioned policy Server (policy_service.sessions); nil otherwise. Its
 	// token is a credential: never logged.
 	PolicySession *PolicySession
+	// Pending is a route lookup's decision not yet known to have run; the
+	// next request resolves it (ResolvePending). Commit clears it.
+	Pending *PendingDecision
 }
 
 // ControlPlacement is one placer's state. A placer governs one worker's
@@ -215,6 +218,7 @@ func (state *EpisodeState) Commit(
 	selected := arm
 	state.PreviousArm = &selected
 	state.PolicyBoundary = nil
+	state.Pending = nil
 	if state.TurnIndex < math.MaxUint64 {
 		state.TurnIndex++
 	}
