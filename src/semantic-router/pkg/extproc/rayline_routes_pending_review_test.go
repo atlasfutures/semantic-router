@@ -233,6 +233,9 @@ func TestNextTurnRulePerWireFormat(t *testing.T) {
 		{"type": "reasoning", "id": "rs_1", "summary": []any{}},
 		{"type": "function_call", "call_id": "c1", "name": "ls", "arguments": "{}"},
 		{"type": "custom_tool_call", "call_id": "c1", "name": "apply_patch", "input": "*** Begin Patch"},
+		{"type": "mcp_list_tools", "id": "ml_1", "server_label": "docs", "tools": []any{}},
+		{"type": "mcp_approval_request", "id": "ma_1", "server_label": "docs", "name": "search", "arguments": "{}"},
+		{"type": "program", "id": "pg_1"},
 		{"type": "message", "role": "assistant", "content": []any{map[string]any{"type": "output_text", "text": "done"}}},
 	} {
 		cases = append(cases, struct {
@@ -292,5 +295,22 @@ func TestLookupWritesNoSessionTelemetry(t *testing.T) {
 	}
 	if _, ok := sessiontelemetry.GetLastModel(hash); ok {
 		t.Fatal("a lookup wrote a session last-model record")
+	}
+}
+
+// Responses items the client adds are never read as the model's reply; every
+// other item type is.
+func TestResponsesModelOutputItems(t *testing.T) {
+	for _, itemType := range []string{"function_call_output", "custom_tool_call_output", "local_shell_call_output",
+		"item_reference", "mcp_approval_response", "compaction", "message"} {
+		if responsesModelOutput(itemType) {
+			t.Errorf("%s read as model output", itemType)
+		}
+	}
+	for _, itemType := range []string{"function_call", "reasoning", "custom_tool_call", "web_search_call", "mcp_call",
+		"mcp_list_tools", "mcp_approval_request", "program", "image_generation_call", "apply_patch_call"} {
+		if !responsesModelOutput(itemType) {
+			t.Errorf("%s not read as model output", itemType)
+		}
 	}
 }

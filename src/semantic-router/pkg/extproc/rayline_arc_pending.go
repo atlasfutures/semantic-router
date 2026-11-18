@@ -265,11 +265,14 @@ func (transaction *raylineARCEpisodeTransaction) pendingState(routeID string) (*
 	return next, nil
 }
 
-// pendingReplyRoles are roles with every Responses assistant output item read
+// pendingReplyRoles are roles with every Responses model output item read
 // as "assistant", for the next-turn test only: the episode's attribution
 // reads a message, a function call or reasoning as the assistant's
-// (policyResponsesRoles), but a reply may open with any output item, such as
-// a custom tool call, a shell call or a web search.
+// (policyResponsesRoles), but a reply may open with any output item (a
+// custom tool call, a shell call, a web search, an MCP tool listing or
+// approval request, a program). Every item that is not a message is output
+// unless it is input the client adds: a tool's result (*_output), an item
+// reference, an approval response, or a compaction or tools item.
 func pendingReplyRoles(format string, messages []json.RawMessage, roles []string) []string {
 	if format != policyFormatResponses {
 		return roles
@@ -282,9 +285,19 @@ func pendingReplyRoles(format string, messages []json.RawMessage, roles []string
 		var envelope struct {
 			Type string `json:"type"`
 		}
-		if json.Unmarshal(item, &envelope) == nil && strings.HasSuffix(envelope.Type, "_call") {
+		if json.Unmarshal(item, &envelope) == nil && responsesModelOutput(envelope.Type) {
 			read[index] = "assistant"
 		}
 	}
 	return read
+}
+
+// responsesModelOutput reports whether a Responses item type (other than a
+// message) is something the model produced.
+func responsesModelOutput(itemType string) bool {
+	switch itemType {
+	case "", "message", "item_reference", "mcp_approval_response", "compaction", "compaction_trigger", "additional_tools":
+		return false
+	}
+	return !strings.HasSuffix(itemType, "_output")
 }
