@@ -19,15 +19,23 @@ import (
 // pendingRoutesFixture is a policy-service cell serving /v1/routes through the
 // real policy selection, a fake policy service and a memory episode store.
 type pendingRoutesFixture struct {
-	router  *OpenAIRouter
-	policy  *policySelectorFixture
+	router *OpenAIRouter
+	policy *policySelectorFixture
+	// store is the memory store; records reads whichever store the cell
+	// uses (a shared Redis one in the two-instance tests).
 	store   *raylinearc.MemoryEpisodeStore
+	records pendingRecords
 	actions []string
 	// picks are the actions the fake service answers, in order; the last
 	// repeats.
 	picks []string
 	// now is the episode store's clock; expire moves it past the idle TTL.
 	now atomic.Int64
+}
+
+type pendingRecords interface {
+	raylinearc.EpisodeSnapshotStore
+	raylinearc.ServedModelStore
 }
 
 // expire moves the store's clock past the episode idle TTL, as an hour
@@ -65,7 +73,7 @@ func newPendingRoutesFixture(t *testing.T, episodeWrites bool, consistency strin
 	registry := selection.NewRegistry()
 	registry.Register(selection.MethodRaylineARC, policy.selector)
 	fixture.router = &OpenAIRouter{Config: cfg, ModelSelector: registry, RaylineARCEpisodeStore: store}
-	fixture.store = store
+	fixture.store, fixture.records = store, store
 	policy.fake.chooseWith(func(raylinearc.PolicyDecisionRequest) string {
 		fixture.policy.fake.mu.Lock()
 		served := len(fixture.policy.fake.bodies)
@@ -101,7 +109,7 @@ func (fixture *pendingRoutesFixture) lookup(t *testing.T, conversation string, b
 // none was written.
 func (fixture *pendingRoutesFixture) stored(t *testing.T, conversation string) *raylinearc.EpisodeState {
 	t.Helper()
-	state, read, err := fixture.store.Snapshot(context.Background(), raylinearc.HashEpisodeID(conversation), 2)
+	state, read, err := fixture.records.Snapshot(context.Background(), raylinearc.HashEpisodeID(conversation), 2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -370,7 +378,7 @@ func (fixture *pendingRoutesFixture) twoStage() {
 
 func (fixture *pendingRoutesFixture) servedRecord(t *testing.T, conversation string) string {
 	t.Helper()
-	served, err := fixture.store.LastServedModel(context.Background(), raylinearc.HashEpisodeID(conversation))
+	served, err := fixture.records.LastServedModel(context.Background(), raylinearc.HashEpisodeID(conversation))
 	if err != nil {
 		t.Fatal(err)
 	}

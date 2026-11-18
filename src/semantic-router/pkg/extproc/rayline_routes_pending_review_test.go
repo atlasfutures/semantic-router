@@ -168,8 +168,10 @@ func TestNextTurnRulePerWireFormat(t *testing.T) {
 				map[string]any{"role": "system", "content": "be brief"}, user("fix it"),
 			}},
 			next: map[string]any{"model": "rayline/arc-dev", "messages": []any{
-				map[string]any{"role": "system", "content": "be brief"}, user("fix it"),
-				map[string]any{"role": "assistant", "content": "fixed"}, user("thanks"),
+				map[string]any{"role": "system", "content": "be brief"},
+				user("fix it"),
+				map[string]any{"role": "assistant", "content": "fixed"},
+				user("thanks"),
 			}},
 			inferred: true,
 		},
