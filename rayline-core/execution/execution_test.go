@@ -81,6 +81,7 @@ func onProtocol(t *testing.T, config Config, protocol llmprotocol.WireFormat) Co
 type decisionCapture struct {
 	mu       sync.Mutex
 	contexts []externalContext
+	headers  []http.Header
 	step     int
 }
 
@@ -103,6 +104,7 @@ func executorWithHTTPDecisions(t *testing.T, config Config, capture *decisionCap
 		}
 		capture.mu.Lock()
 		capture.contexts = append(capture.contexts, body.Routing.Execution)
+		capture.headers = append(capture.headers, r.Header.Clone())
 		index := capture.step
 		if index >= len(config.Actions) {
 			index = len(config.Actions) - 1
