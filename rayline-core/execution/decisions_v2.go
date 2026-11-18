@@ -184,6 +184,22 @@ type DecisionReceipt struct {
 	CapacityBasis *string            `json:"capacity_basis,omitempty"`
 	// CapacityUnknown lists offered actions admitted with unknown capacity.
 	CapacityUnknown []string `json:"capacity_unknown,omitempty"`
+	// Selection is the selection rule's record, present when the policy's
+	// rule ran for this decision.
+	Selection *receiptSelection `json:"selection,omitempty"`
+}
+
+// receiptSelection is how a selection rule (prefer_local) chose: its
+// outcome (prefer_local_threshold, utility_fallback, schedule), its
+// threshold and each local candidate's pass probability.
+type receiptSelection struct {
+	Rule     string  `json:"rule"`
+	MinPPass float64 `json:"min_p_pass"`
+	Local    []struct {
+		ActionID string   `json:"action_id"`
+		PPass    *float64 `json:"p_pass"`
+	} `json:"local"`
+	Outcome string `json:"outcome"`
 }
 
 type excludedTarget struct {

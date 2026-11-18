@@ -7,9 +7,11 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/atlasfutures/semantic-router/rayline-core/cachecontext"
 	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
@@ -825,5 +827,100 @@ func TestV2ReceiptMayExcludeATargetTheServiceDoesNotKnow(t *testing.T) {
 	}
 	if local.count() != 1 || cloud.count() != 0 {
 		t.Fatalf("dispatch local=%d cloud=%d", local.count(), cloud.count())
+	}
+}
+
+// The response names the decision that chose the turn's target: how long
+// its consult took, the thinking level it picked and the selection rule's
+// outcome, with the pass probability and threshold when local was good
+// enough.
+func TestV2ResponseDescribesTheDecision(t *testing.T) {
+	local, cloud := &upstreamFixture{}, &upstreamFixture{}
+	config := hybridV2Config(t, chatUpstream(t, local, false).URL, chatUpstream(t, cloud, true).URL+"/v1/chat/completions")
+	// The fixture answers on the server's goroutine; set guards what it reads.
+	var (
+		set       sync.Mutex
+		chosen    string
+		level     any
+		selection any
+	)
+	decide := func(action string, thinking, rule any) {
+		set.Lock()
+		defer set.Unlock()
+		chosen, level, selection = action, thinking, rule
+	}
+	fixture := &v2Decisions{
+		choose: func(contextV2) string {
+			set.Lock()
+			defer set.Unlock()
+			return chosen
+		},
+		mutate: func(response map[string]any) {
+			set.Lock()
+			defer set.Unlock()
+			time.Sleep(20 * time.Millisecond)
+			if level != nil {
+				response["thinking_level"] = level
+			}
+			if selection != nil {
+				response["receipt"].(map[string]any)["selection"] = selection
+			}
+		},
+	}
+	// The local runtime counts every turn's prompt at 300 tokens, so it fits.
+	_, httpServer := v2Server(t, config, fixture, 300, 300, 300)
+	turn := func(session string) http.Header {
+		t.Helper()
+		request, _ := http.NewRequest(http.MethodPost, httpServer.URL+"/v1/chat/completions", strings.NewReader(chatTurn(userTask)))
+		request.Header.Set("Authorization", "Bearer "+testCoreToken)
+		request.Header.Set("X-Rayline-Session-Id", session)
+		response, err := http.DefaultClient.Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := io.ReadAll(response.Body)
+		response.Body.Close()
+		if response.StatusCode != 200 {
+			t.Fatalf("%s: status %d: %.300s", session, response.StatusCode, body)
+		}
+		return response.Header
+	}
+	rule := func(outcome string) map[string]any {
+		return map[string]any{"rule": "prefer_local", "min_p_pass": 0.75, "max_rest_tokens": nil, "outcome": outcome,
+			"local": []map[string]any{{"action_id": localActionID, "p_pass": 0.82, "rest_tokens": nil, "eligible": true}}}
+	}
+
+	decide(localActionID, "low", rule("prefer_local_threshold"))
+	header := turn("good-enough")
+	if ms, err := strconv.Atoi(header.Get("X-Rayline-Decision-Ms")); err != nil || ms < 20 {
+		t.Fatalf("decision ms %q", header.Get("X-Rayline-Decision-Ms"))
+	}
+	for name, want := range map[string]string{"X-Rayline-Thinking-Level": "low", "X-Rayline-Decision-Reason": "prefer_local_threshold", "X-Rayline-P-Pass": "0.82", "X-Rayline-Min-P-Pass": "0.75"} {
+		if got := header.Get(name); got != want {
+			t.Fatalf("%s %q, want %q", name, got, want)
+		}
+	}
+
+	decide(cloudActionID, nil, rule("utility_fallback"))
+	header = turn("best-value")
+	if header.Get("X-Rayline-Decision-Reason") != "utility_fallback" || header.Get("X-Rayline-Decision-Ms") == "" {
+		t.Fatalf("headers %v", header)
+	}
+	for _, name := range []string{"X-Rayline-Thinking-Level", "X-Rayline-P-Pass", "X-Rayline-Min-P-Pass"} {
+		if values := header.Values(name); len(values) != 0 {
+			t.Fatalf("%s %v without a level or a threshold pick", name, values)
+		}
+	}
+
+	// No selection rule ran, and a level that isn't a plain word is left out.
+	decide(localActionID, "low\r\nX-Injected: 1", nil)
+	header = turn("no-rule")
+	for _, name := range []string{"X-Rayline-Thinking-Level", "X-Rayline-Decision-Reason", "X-Rayline-P-Pass", "X-Injected"} {
+		if values := header.Values(name); len(values) != 0 {
+			t.Fatalf("%s %v", name, values)
+		}
+	}
+	if header.Get("X-Rayline-Decision-Ms") == "" {
+		t.Fatalf("headers %v", header)
 	}
 }

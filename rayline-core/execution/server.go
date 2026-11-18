@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -407,7 +408,7 @@ func (server *Server) execute(writer http.ResponseWriter, incoming *http.Request
 				return
 			}
 		}
-		decision, err := server.provider.Decide(ctx, input)
+		decision, err := server.decide(ctx, input)
 		if err != nil {
 			server.writeDecisionError(writer, format, err, input.Capacity)
 			return
@@ -600,6 +601,7 @@ func (server *Server) execute(writer http.ResponseWriter, incoming *http.Request
 	if selection.Receipt != nil {
 		writer.Header().Set("X-Rayline-Decided-By", selection.Receipt.decidedBy())
 	}
+	setDecisionHeaders(writer.Header(), selection)
 	if v2 && event.Kind != nil {
 		writer.Header().Set("X-Rayline-Event", *event.Kind+"/"+event.Basis)
 	}
@@ -661,6 +663,48 @@ func (server *Server) execute(writer http.ResponseWriter, incoming *http.Request
 		decidedBy = selection.Receipt.decidedBy()
 	}
 	slog.Info("execution completed", "route_id", decision.RouteID, "selected_model", selection.Model, "selected_action_id", selection.ActionID, "selected_control_id", selection.ControlID, "executed_model", decision.Model, "executed_action_id", decision.ActionID, "executed_control_id", prepared.receipt.ControlID, "worker", decision.Worker, "deployment", selected.deployment.ID, "deployment_kind", selected.deployment.Kind, "test_alias_reason", aliasReason, "context_epoch", call.ContextEpoch, "event_kind", event.kindName(), "event_basis", event.Basis, "decided_by", decidedBy, "consults", pending.consults+1, "output_tokens", tokenCountOrNil(response.Usage.OutputTotal), "input_tokens", tokenCountOrNil(response.Usage.InputTotal), "cache", completionCacheEvidence(state, selected.deployment.ID, measuredEvidence, currentPrefix))
+}
+
+// decide consults Decisions and records how long the consult took.
+func (server *Server) decide(ctx context.Context, input DecisionInput) (Decision, error) {
+	started := time.Now()
+	decision, err := server.provider.Decide(ctx, input)
+	decision.Elapsed = time.Since(started)
+	return decision, err
+}
+
+// decisionWord is a thinking level or selection outcome safe to send as a
+// header value.
+var decisionWord = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
+
+// setDecisionHeaders describes the decision that chose this turn's target:
+// how long its consult took, the thinking level it picked and, when the
+// policy's selection rule ran, its outcome. With the prefer_local_threshold
+// outcome they also carry the selected action's pass probability and the
+// rule's threshold.
+func setDecisionHeaders(header http.Header, selection Decision) {
+	header.Set("X-Rayline-Decision-Ms", strconv.FormatInt(selection.Elapsed.Milliseconds(), 10))
+	if decisionWord.MatchString(selection.ThinkingLevel) {
+		header.Set("X-Rayline-Thinking-Level", selection.ThinkingLevel)
+	}
+	if selection.Receipt == nil || selection.Receipt.Selection == nil {
+		return
+	}
+	rule := selection.Receipt.Selection
+	if !decisionWord.MatchString(rule.Outcome) {
+		return
+	}
+	header.Set("X-Rayline-Decision-Reason", rule.Outcome)
+	if rule.Outcome != "prefer_local_threshold" {
+		return
+	}
+	for _, candidate := range rule.Local {
+		if candidate.ActionID == selection.ActionID && candidate.PPass != nil {
+			header.Set("X-Rayline-P-Pass", strconv.FormatFloat(*candidate.PPass, 'f', -1, 64))
+			header.Set("X-Rayline-Min-P-Pass", strconv.FormatFloat(rule.MinPPass, 'f', -1, 64))
+			return
+		}
+	}
 }
 
 // maxReconsults bounds re-consults for one request: one post-decision veto,
@@ -774,7 +818,7 @@ func (server *Server) reconsult(ctx context.Context, writer http.ResponseWriter,
 	pending.input.Capacity = capacity
 	input.Reconsult = &Reconsult{Kind: kind, RetryOf: retryOf, Attempt: pending.consults + 2}
 	slog.Info("execution reconsult", "reconsult", kind, "retry_of", retryOf, "vetoed_action_id", actionID, "required", int64OrNil(fact.Required), "available", int64OrNil(fact.Available), "attempt", input.Reconsult.Attempt)
-	decision, err := server.provider.Decide(ctx, input)
+	decision, err := server.decide(ctx, input)
 	if err != nil {
 		server.writeDecisionError(writer, format, err, input.Capacity)
 		return false

@@ -294,6 +294,8 @@ type publicDecision struct {
 	CostWeight *float64          `json:"cost_weight"`
 	Prices     *resultPrices     `json:"prices"`
 	Receipt    *DecisionReceipt  `json:"receipt"`
+	// ThinkingLevel is absent for an action with no thinking level.
+	ThinkingLevel *string `json:"thinking_level"`
 }
 
 type notAdmittedEcho struct {
@@ -542,6 +544,9 @@ func (provider *HTTPDecisions) Decide(ctx context.Context, input DecisionInput) 
 	decision := Decision{RouteID: result.RouteID, ActionID: identity.ActionID, Worker: selected.Worker, Model: action.Model, ReportedModel: selected.Model, PackageSHA256: identity.PackageSHA256, ControlID: identity.ControlID, ArmID: identity.ArmID, Result: provider.config.Decisions.Result, IdentitySource: "response", AppliedValueUSD: provider.valueUSD}
 	decision.PriceProfile = appliedProfile
 	decision.Receipt = receipt
+	if selected.ThinkingLevel != nil {
+		decision.ThinkingLevel = *selected.ThinkingLevel
+	}
 	decision.Signals = result.Signals
 	provider.logDecision(decision, identity.Prices.Basis, identity.Prices.SHA256)
 	return decision, nil
