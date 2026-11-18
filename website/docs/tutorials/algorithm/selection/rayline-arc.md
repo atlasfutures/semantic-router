@@ -794,12 +794,32 @@ cache key, so continuity and encoder efficiency arrive together, and neither
 is reachable without the lease that serializes concurrent turns on one
 conversation.
 
-A tracked lookup commits its episode at decision time: there is no dispatch
-phase to commit against, so the chosen arm becomes the previous arm on the
-assumption that the caller ran it. A caller that routinely ignores the answer
-will see `episode.stayed` stop making sense, which is the signal that its
-episode ids are not stable per conversation. `episode` is omitted entirely
-from an ephemeral lookup rather than reported as turn zero.
+On a policy-service cell, a tracked lookup does not record a turn: the caller
+runs the model out of the cell's sight, and may ask again for the same turn.
+The decision is stored as the conversation's pending decision, and the
+conversation's next request, a lookup or a generation turn, settles it from
+its messages:
+
+- a request that carries a reply right after the messages the decision was
+  for is the next turn: the decision is recorded as a turn that ran, marked
+  `inferred` in the episode's ledger, before the new turn is decided;
+- any other request is the same turn asked again (identical, with its last
+  message edited, or with a message appended and no reply) or a departure
+  from it: the pending decision is dropped and the turn is decided afresh,
+  on the turns that ran. A repeat never replays the earlier answer.
+
+A pending decision that nothing settles expires with the episode. One limit
+remains: a policy service that remembers its last pick per conversation may
+fall back to that pick when the episode has no recorded turn in the current
+context (right after a compaction or a changed beginning), so a repeat ask
+there can lean towards the earlier answer.
+`episode.turn_index` is the turn the decision is for, so asking again reports
+the same number; `episode.stayed` compares with the last turn that ran. A
+caller that routinely ignores the answer will see `episode.stayed` stop making
+sense, which is the signal that its episode ids are not stable per
+conversation. `episode` is omitted entirely from an ephemeral lookup rather
+than reported as turn zero. An artifact-mode cell still records the turn at
+decision time, assuming the caller ran it.
 
 ### Enabling it
 
