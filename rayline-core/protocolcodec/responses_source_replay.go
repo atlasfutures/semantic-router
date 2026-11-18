@@ -106,13 +106,13 @@ func responsesReplayForm(body map[string]any) map[string]any {
 		if !ok {
 			return nil
 		}
-		switch item["type"] {
-		case "message":
-			if item["role"] == "assistant" {
-				resentAssistantText(item)
-			} else if content, ok := item["content"].(string); ok {
-				item["content"] = inputTextParts(content)
-			}
+		if item["type"] != "message" {
+			continue
+		}
+		if item["role"] == "assistant" {
+			resentAssistantText(item)
+		} else if content, ok := item["content"].(string); ok {
+			item["content"] = inputTextParts(content)
 		}
 	}
 	if items != nil {
