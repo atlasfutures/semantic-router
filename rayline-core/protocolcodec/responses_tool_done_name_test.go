@@ -58,18 +58,27 @@ func TestResponsesToolDoneWithoutANameCompletes(t *testing.T) {
 	}
 }
 
-// A done event that does name the call must still name the same tool.
+// A done event that does send a name must name the same tool.
 func TestResponsesToolDoneWithAnotherNameIsRefused(t *testing.T) {
 	raw, err := os.ReadFile("testdata/provider/lmstudio/responses-tool-call-stream.txt")
 	if err != nil {
 		t.Fatal(err)
 	}
-	renamed := strings.Replace(string(raw), `"type":"response.function_call_arguments.done",`, `"type":"response.function_call_arguments.done","name":"other_tool",`, 1)
-	if renamed == string(raw) {
-		t.Fatal("the fixture has no function_call_arguments.done event")
-	}
-	_, pushErr, _ := streamLMStudioResponses(t, renamed)
-	if pushErr == nil || !strings.Contains(pushErr.Error(), "stream_tool_identity_mismatch") {
-		t.Fatalf("push error = %v, want stream_tool_identity_mismatch", pushErr)
+	for name, want := range map[string]string{
+		`"other_tool"`: "stream_tool_identity_mismatch",
+		`""`:           "stream_required_field",
+		`null`:         "stream_required_field",
+	} {
+		t.Run(name, func(t *testing.T) {
+			renamed := strings.Replace(string(raw), `"type":"response.function_call_arguments.done",`,
+				`"type":"response.function_call_arguments.done","name":`+name+`,`, 1)
+			if renamed == string(raw) {
+				t.Fatal("the fixture has no function_call_arguments.done event")
+			}
+			_, pushErr, _ := streamLMStudioResponses(t, renamed)
+			if pushErr == nil || !strings.Contains(pushErr.Error(), want) {
+				t.Fatalf("push error = %v, want %s", pushErr, want)
+			}
+		})
 	}
 }
