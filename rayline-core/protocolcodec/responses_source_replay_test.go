@@ -46,10 +46,19 @@ func TestResponsesRouteThatOnlyChangesTheModelSendsTheClientBytes(t *testing.T) 
 		"resent assistant output_text": `{"model":"client-model","input":[{"type":"message","role":"user","content":"List the files."},` +
 			`{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Done.","annotations":[]}]},` +
 			`{"type":"message","role":"user","content":"Thanks."}]}`,
+		"resent assistant output_text without annotations": `{"model":"client-model","input":[{"type":"message","role":"user","content":"List the files."},` +
+			`{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Done."}]},` +
+			`{"type":"message","role":"user","content":"Thanks."}]}`,
+		"string assistant content": `{"model":"client-model","input":[{"type":"message","role":"user","content":"List the files."},` +
+			`{"type":"message","role":"assistant","content":"Done."},{"type":"message","role":"user","content":"Thanks."}]}`,
 		"string input": `{"model":"client-model","input":"List the files.","store":false}`,
 		"string tool output": `{"model":"client-model","input":[{"type":"message","role":"user","content":"Run ls."},` +
 			`{"type":"function_call","call_id":"c1","name":"exec","arguments":"{\"cmd\":\"ls\"}"},` +
 			`{"type":"function_call_output","call_id":"c1","output":"README.md\n"}],` +
+			`"tools":[{"type":"function","name":"exec","parameters":{"type":"object"},"strict":false}]}`,
+		"one-part tool output": `{"model":"client-model","input":[{"type":"message","role":"user","content":"Run ls."},` +
+			`{"type":"function_call","call_id":"c1","name":"exec","arguments":"{\"cmd\":\"ls\"}"},` +
+			`{"type":"function_call_output","call_id":"c1","output":[{"type":"input_text","text":"README.md\n"}]}],` +
 			`"tools":[{"type":"function","name":"exec","parameters":{"type":"object"},"strict":false}]}`,
 		"a developer message's own id": `{"model":"client-model","input":[{"type":"message","id":"msg_dev","role":"developer",` +
 			`"content":[{"type":"input_text","text":"Sandbox: read-only."}]},{"type":"message","role":"user","content":"Hi"}]}`,
@@ -173,6 +182,18 @@ func TestResponsesRouteNeverReplaysWhatChanged(t *testing.T) {
 		got := routeResponsesBody(t, body, "routed-model", nil)
 		if got == withModel(body, "client-model", "routed-model") {
 			t.Fatalf("a reordered body replayed the client bytes:\n%s", got)
+		}
+	})
+	// An assistant message of input_text parts is valid in the Responses
+	// schema, but strict servers refuse it; the client's bytes must not be
+	// replayed past the encoder's output_text.
+	t.Run("assistant input_text the encoder writes as output_text", func(t *testing.T) {
+		body := `{"model":"client-model","input":[{"type":"message","role":"user","content":"Hi"},` +
+			`{"type":"message","role":"assistant","content":[{"type":"input_text","text":"Hello."}]},` +
+			`{"type":"message","role":"user","content":"Bye"}]}`
+		got := routeResponsesBody(t, body, "routed-model", nil)
+		if strings.Contains(got, `"text":"Hello.","type":"input_text"`) || !strings.Contains(got, `"text":"Hello.","type":"output_text"`) {
+			t.Fatalf("the assistant input_text travelled:\n%s", got)
 		}
 	})
 	t.Run("assistant text whose annotations the encoder drops", func(t *testing.T) {

@@ -19,8 +19,9 @@
             {
               "content": [
                 {
+                  "annotations": [],
                   "text": "The handbook says ten.",
-                  "type": "input_text"
+                  "type": "output_text"
                 }
               ],
               "role": "assistant",
@@ -57,8 +58,9 @@
             {
               "content": [
                 {
+                  "annotations": [],
                   "text": "The release is out.",
-                  "type": "input_text"
+                  "type": "output_text"
                 }
               ],
               "role": "assistant",
@@ -123,8 +125,9 @@
             {
               "content": [
                 {
+                  "annotations": [],
                   "text": "hi",
-                  "type": "input_text"
+                  "type": "output_text"
                 }
               ],
               "role": "assistant",
@@ -161,8 +164,9 @@
             {
               "content": [
                 {
+                  "annotations": [],
                   "text": "hi",
-                  "type": "input_text"
+                  "type": "output_text"
                 }
               ],
               "role": "assistant",
