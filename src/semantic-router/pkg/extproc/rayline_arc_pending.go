@@ -75,13 +75,20 @@ func resolveRaylineARCPendingDecision(reqCtx *RequestContext, arcContext *select
 		return nil
 	}
 	resolved, resolution := raylinearc.ResolvePending(state, digests, roles)
-	if resolution == raylinearc.PendingDropped {
-		// The decision is out of this request's decision, but it stays on the
-		// state a stage persists (a boundary or a refusal, before the turn
-		// commits): a turn that then fails leaves its retry the dropped
+	if resolution == raylinearc.PendingDropped || resolution == raylinearc.PendingSuperseded {
+		// The decision is out of this request's decision, but it stays on
+		// the episode: a turn that then fails leaves its retry the dropped
 		// decision, and with it the served-model record from before it. A
-		// commit clears it, and a lookup replaces it.
-		resolved.Pending = raylinearc.ClonePendingDecision(state.Pending)
+		// commit clears it, and a lookup replaces it. A generation call
+		// decides this very turn itself, so the decision it dropped is marked
+		// superseded and never recorded as ran: if the call serves its reply
+		// and then fails to commit, the next turn must not credit the
+		// lookup's pick.
+		kept := raylinearc.ClonePendingDecision(state.Pending)
+		if !transaction.decidesPending {
+			kept.Superseded = true
+		}
+		resolved.Pending = kept
 	}
 	arcContext.State, transaction.state = resolved, resolved
 	transaction.resolvedPending, transaction.readTurnIndex = true, state.TurnIndex
@@ -92,25 +99,30 @@ func resolveRaylineARCPendingDecision(reqCtx *RequestContext, arcContext *select
 		"resolution":      resolution,
 		"turn_index":      arcTurnIndexForTelemetry(state.TurnIndex),
 	})
+	// A generation turn stores what it settled at once (stageSettled); a
+	// lookup writes it with its own pending write.
+	if !transaction.decidesPending && (resolution == raylinearc.PendingInferred ||
+		resolution == raylinearc.PendingDropped && !state.Pending.Superseded) {
+		transaction.stageSettled(reqCtx)
+	}
 	if resolution == raylinearc.PendingInferred {
-		if !transaction.decidesPending {
-			transaction.stageInferredTurn(reqCtx)
-		}
 		return nil
 	}
 	return state.Pending
 }
 
-// stageInferredTurn stores the episode as this generation turn settled it,
-// under its lease, before the turn is decided. Whether the earlier decision
-// ran is read from this request's messages, not from how this turn ends, so
-// the store holds it at once: a refusal classed after the lease is given
-// back, a side call, or another instance then reads the episode this turn
-// was decided on, with the inferred turn's served model. One write, on the
-// first generation turn after a lookup; a lookup needs none, as its own
-// write follows. Best effort, as a boundary stage is: a failure leaves the
-// next request to settle the decision again.
-func (transaction *raylineARCEpisodeTransaction) stageInferredTurn(reqCtx *RequestContext) {
+// stageSettled stores the episode as this generation turn settled a lookup's
+// pending decision, under its lease, before the turn is decided. Whether the
+// earlier decision ran is read from this request's messages, not from how
+// this turn ends, so the store holds it at once: an inferred turn (a refusal
+// classed after the lease is given back, a side call, or another instance
+// then reads the episode this turn was decided on, with the inferred turn's
+// served model), or a decision this call supersedes (a reply this call
+// serves and then fails to commit is never credited to the lookup). One
+// write, on the first generation turn after a lookup; a lookup needs none,
+// as its own write follows. Best effort, as a boundary stage is: a failure
+// leaves the next request to settle the decision again.
+func (transaction *raylineARCEpisodeTransaction) stageSettled(reqCtx *RequestContext) {
 	parent := reqCtx.TraceContext
 	if parent == nil {
 		parent = context.Background()
@@ -119,7 +131,7 @@ func (transaction *raylineARCEpisodeTransaction) stageInferredTurn(reqCtx *Reque
 	defer cancel()
 	if transaction.relaxed {
 		if !transaction.stateless {
-			transaction.retainRelaxedPolicyBoundary(ctx, cloneARCState(transaction.state), "inferred_stage")
+			transaction.retainRelaxedPolicyBoundary(ctx, cloneARCState(transaction.state), "settled_stage")
 		}
 		return
 	}
@@ -130,9 +142,9 @@ func (transaction *raylineARCEpisodeTransaction) stageInferredTurn(reqCtx *Reque
 	switch err := stager.Stage(ctx, transaction.lease, transaction.state); {
 	case errors.Is(err, raylinearc.ErrEpisodeLeaseLost):
 		transaction.leaseLost.Store(true)
-		metrics.RecordRaylineARCEpisodeTransaction("lease_lost", "inferred_stage")
+		metrics.RecordRaylineARCEpisodeTransaction("lease_lost", "settled_stage")
 	case err != nil:
-		logging.ComponentWarnEvent("extproc", "rayline_arc_inferred_stage_failed", map[string]interface{}{
+		logging.ComponentWarnEvent("extproc", "rayline_arc_settled_stage_failed", map[string]interface{}{
 			"failure_class": boundedARCEpisodeFailure(err),
 		})
 	}
@@ -244,9 +256,6 @@ func (transaction *raylineARCEpisodeTransaction) pendingState(routeID string) (*
 		transaction.requestDigests, transaction.requestRoles, transaction.policyNext, time.Now(),
 	)
 	next.Pending.PriorServedModel = transaction.priorServedModel
-	// The kept boundary is named, so the next request can tell it from one a
-	// generation call stores after this decision.
-	next.Pending.KeptBoundary = raylinearc.ClonePolicyBoundary(next.PolicyBoundary)
 	// The served-model record names the decided model, as a committed
 	// lookup's did: a conversation that comes back after its episode expired,
 	// with nothing reported, is held to the last decision, assumed to have

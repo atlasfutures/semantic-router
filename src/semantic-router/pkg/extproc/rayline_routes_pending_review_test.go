@@ -71,14 +71,15 @@ func TestLateRefusalAfterAnInferredTurnExcludesTheModel(t *testing.T) {
 }
 
 // A lookup decided arm 0; a generation call for the same messages dropped
-// that decision, staged its own boundary decision, served its reply and
+// that decision, decided itself, served its reply and
 // failed to commit. The next turn must not record the lookup's decision as
-// the one that wrote the reply, whether the generation call chose another
-// arm or the same arm (a boundary names only the arm, and several actions,
-// one per thinking level, share one): the generation call's decision came
-// after the lookup's and superseded it.
+// the one that wrote the reply, whether the generation call staged no
+// boundary decision (an unscheduled cell), or one for another arm or the
+// same arm (a boundary names only the arm, and several actions, one per
+// thinking level, share one): the generation call's decision came after the
+// lookup's and superseded it.
 func TestNextTurnDoesNotInferADecisionAGenerationCallSuperseded(t *testing.T) {
-	for _, boundaryArm := range []int{1, 0} {
+	for _, boundaryArm := range []int{-1, 1, 0} {
 		fixture := newPendingRoutesFixture(t, true, "")
 		conversation := fmt.Sprintf("conversation-superseded-%d", boundaryArm)
 		fixture.picks = []string{fixture.actions[0]} // arm 0 (think)
@@ -95,10 +96,15 @@ func TestNextTurnDoesNotInferADecisionAGenerationCallSuperseded(t *testing.T) {
 		}
 		raw, _ := json.Marshal(pendingTurnTask)
 		digests := raylinearc.NewPrefixDigests([]json.RawMessage{raw})
-		reqCtx.RaylineARCTransaction.retainPolicyBoundary(context.Background(),
-			raylinearc.NewPolicyBoundaryDecisionFrom(boundaryArm, 0, &raylinearc.PolicyEpisodeState{}, digests))
+		if boundaryArm >= 0 {
+			reqCtx.RaylineARCTransaction.retainPolicyBoundary(context.Background(),
+				raylinearc.NewPolicyBoundaryDecisionFrom(boundaryArm, 0, &raylinearc.PolicyEpisodeState{}, digests))
+		}
 		if err := reqCtx.RaylineARCTransaction.abort(context.Background(), "commit_failure"); err != nil {
 			t.Fatal(err)
+		}
+		if stored := fixture.stored(t, conversation); stored.Pending == nil || !stored.Pending.Superseded {
+			t.Fatalf("boundary arm %d: the dropped decision is not stored as superseded: %+v", boundaryArm, stored.Pending)
 		}
 		next := fixture.generationTurn(t, conversation, pendingRoutesBody(t, pendingTurnTask, pendingTurnReply, pendingTurnNext))
 		state := next.RaylineARCTransaction.state
