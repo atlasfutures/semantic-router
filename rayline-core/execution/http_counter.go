@@ -154,6 +154,8 @@ func (counter *httpCounter) Count(ctx context.Context, prompt cachecontext.Prepa
 	tokens := *result.PromptTokens
 	if counter.engine != nil {
 		tokens += charged + translatedCountAllowance(tokens, counter.headroom)
+	} else {
+		tokens += chatCountMargin
 	}
 	return cachecontext.PromptMeasurement{PromptTokens: tokens, Provenance: "local_measured"}, nil
 }
@@ -352,6 +354,16 @@ func droppedTextBytes(body []byte) (int, error) {
 func translatedCountAllowance(tokens int, headroom float64) int {
 	return int(math.Ceil(float64(tokens)*headroom)) + estimateTemplateMarginTokens
 }
+
+// chatCountMargin is added to an exact Chat count. A server's chat template
+// may add tokens its defaults decide and the counter cannot see: on
+// 2026-11-18 LM Studio serving Gemma 4 reported prompt_tokens 2 to 7 above the
+// count (it adds a default thinking turn), where Ollama and llama.cpp matched
+// exactly. The count, and the required size built on it, therefore include
+// these tokens, so a turn that lands at the window limit is not sent to
+// overshoot it. A translated count already carries a larger allowance
+// (translatedCountAllowance, at least estimateTemplateMarginTokens).
+const chatCountMargin = 50
 
 // maxCountedTokens is far above any context window; a larger count is a
 // broken counter, and adding the allowance to it could overflow.

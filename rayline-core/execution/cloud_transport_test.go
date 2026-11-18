@@ -501,3 +501,41 @@ func TestCloudMessagesDispatchForwardsTheClientBeta(t *testing.T) {
 		})
 	}
 }
+
+// TestCloudTurnSendsOneConversationIdentity: the Routes call that decides a
+// turn and the cloud generation call that serves it name the conversation
+// and branch with the same values, so the service groups both under one
+// conversation.
+func TestCloudTurnSendsOneConversationIdentity(t *testing.T) {
+	var served http.Header
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		served = r.Header.Clone()
+		modelPinHeaders(w.Header())
+		_, _ = io.WriteString(w, `{"id":"chat1","object":"chat.completion","created":1,"model":"moonshotai/kimi-k3","choices":[{"index":0,"message":{"role":"assistant","content":"ready"},"finish_reason":"stop"}],"usage":{"prompt_tokens":40,"completion_tokens":8,"total_tokens":48}}`)
+	}))
+	defer gateway.Close()
+	capture := &decisionCapture{}
+	_, server := executorWithHTTPDecisions(t, modelPinConfig(t, gateway.URL), capture)
+	request, err := http.NewRequest(http.MethodPost, server.URL+"/v1/chat/completions", strings.NewReader(`{"model":"arc-1.0","max_tokens":64,"messages":[{"role":"user","content":"hello"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Authorization", "Bearer "+testCoreToken)
+	request.Header.Set("X-Rayline-Session-Id", "session-one")
+	request.Header.Set("X-Rayline-Branch-Id", "branch-one")
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	answer, _ := io.ReadAll(response.Body)
+	response.Body.Close()
+	if response.StatusCode != 200 || served == nil || len(capture.headers) != 1 {
+		t.Fatalf("turn failed: %d %s (routes calls=%d)", response.StatusCode, answer, len(capture.headers))
+	}
+	routes := capture.headers[0]
+	for header, want := range map[string]string{"X-Conversation-Id": "session-one", "X-Rayline-Branch-Id": "branch-one"} {
+		if routes.Get(header) != want || served.Get(header) != want {
+			t.Errorf("%s: routes call %q, generation call %q, want %q on both", header, routes.Get(header), served.Get(header), want)
+		}
+	}
+}
