@@ -868,10 +868,11 @@ block answers 503 `unavailable`.
 `llm_rayline_arc_routes_lookups_total{execution}` counts lookups by the
 `routing.execution` envelope they carry (`none`, `v1`, `v2`), so the labels
 show what share of lookups send one and in which version. A lookup is
-counted once its body and routing block are read, whatever it is then
-answered; one whose body or routing block is refused as unreadable or invalid
-is not. Each answered lookup's `routing_decision` event carries the same value
-as `routing_execution`.
+counted once its routing block is read, whatever it is then answered,
+including a refusal of its messages; one refused before that (a body that is
+not JSON, a routing block that is itself invalid) is not. Each answered
+lookup's `routing_decision` event carries the same value as
+`routing_execution`.
 
 ### Routing on generation turns: arc-1.0's V and T
 

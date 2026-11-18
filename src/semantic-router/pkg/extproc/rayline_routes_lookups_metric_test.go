@@ -75,6 +75,9 @@ func TestRaylineRoutesCountLookupsByExecutionVersion(t *testing.T) {
 		"unknown price model": {"main", "v2", executionV2Body(`{"execution":` + v2 +
 			`,"prices":{"acme/x":{"input":1,"cache_read":0,"cache_write":0,"output":1}}}`), 400},
 		"tier the cell does not serve": {"sage", "none", []byte(`{"model":"arc-swift-1.0","messages":[{"role":"user","content":"hi"}]}`), 404},
+		"message the codec refuses": {"main", "v1", []byte(`{"model":"arc-1.0","messages":[{"role":"user","content":"a"},` +
+			`{"role":"assistant","content":"b"},{"role":"user","content":"c"},{"role":"assistant","content":"d"},` +
+			`{"role":"user","content":[{"type":"no_such_block"}]}],"routing":{"execution":` + v1 + `}}`), 400},
 	} {
 		t.Run(name, func(t *testing.T) {
 			router, _ := oneCellRouter(t, tc.shape)
