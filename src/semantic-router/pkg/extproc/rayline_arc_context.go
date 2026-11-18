@@ -537,9 +537,16 @@ func (r *OpenAIRouter) raylineARCEpisodeStoreFor(reqCtx *RequestContext) rayline
 		return nil
 	}
 	if reqCtx != nil {
-		if recipe := reqCtx.Routing.RecipeName(); recipe != "" && recipe != config.DefaultRecipeName {
-			return r.RaylineARCRecipeEpisodeStores[recipe]
-		}
+		return r.raylineARCEpisodeStoreOf(reqCtx.Routing.RecipeName())
+	}
+	return r.RaylineARCEpisodeStore
+}
+
+// raylineARCEpisodeStoreOf is the episode store of a recipe: a named
+// recipe's own, the default store for the default recipe or none named.
+func (r *OpenAIRouter) raylineARCEpisodeStoreOf(recipe config.RecipeName) raylinearc.EpisodeStore {
+	if recipe != "" && recipe != config.DefaultRecipeName {
+		return r.RaylineARCRecipeEpisodeStores[recipe]
 	}
 	return r.RaylineARCEpisodeStore
 }

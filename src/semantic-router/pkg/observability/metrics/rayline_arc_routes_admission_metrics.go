@@ -103,3 +103,19 @@ var RaylineARCRoutesLookups = promauto.NewCounterVec(
 func RecordRaylineARCRoutesLookup(execution string) {
 	RaylineARCRoutesLookups.WithLabelValues(execution).Inc()
 }
+
+// RaylineARCRouteReports counts /v1/report calls by who reported (gateway,
+// client), what happened (recorded, ignored, error) and why (the answer's
+// reason, or the error code).
+var RaylineARCRouteReports = promauto.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "llm_rayline_arc_route_reports_total",
+		Help: "Rayline ARC reports of what ran after a route lookup, by source, status and reason.",
+	},
+	[]string{"source", "status", "reason"},
+)
+
+// RecordRaylineARCRouteReport records one report's answer.
+func RecordRaylineARCRouteReport(source, status, reason string) {
+	RaylineARCRouteReports.WithLabelValues(source, status, reason).Inc()
+}

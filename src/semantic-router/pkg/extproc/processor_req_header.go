@@ -46,7 +46,7 @@ func (r *OpenAIRouter) handleRequestHeaders(v *ext_proc.ProcessingRequest_Reques
 	// carrying the header skipped method validation entirely and was
 	// forwarded upstream, and a GET with a body reached the body handler and
 	// could be answered 200 against a POST-only contract.
-	if ctx.SkipProcessing && !isRaylineRoutesRequest(ctx) {
+	if ctx.SkipProcessing && !isRaylineServedRequest(ctx) {
 		detectStreamingExpectation(ctx)
 		return newContinueRequestHeadersResponse(buildLooperInternalHeaderRemovalMutation()), nil
 	}
@@ -67,7 +67,7 @@ func (r *OpenAIRouter) handleRequestHeaders(v *ext_proc.ProcessingRequest_Reques
 	// to answer it, and is continued upstream -- forwarding a request to an
 	// endpoint that exists only here and executes nothing. Refusing it now is
 	// the only place left that still can.
-	if isRaylineRoutesRequest(ctx) && v.RequestHeaders.GetEndOfStream() {
+	if isRaylineServedRequest(ctx) && v.RequestHeaders.GetEndOfStream() {
 		return r.createRaylineRoutesError(
 			ctx,
 			400,

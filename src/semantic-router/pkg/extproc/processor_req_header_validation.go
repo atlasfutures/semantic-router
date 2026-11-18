@@ -18,7 +18,7 @@ func (r *OpenAIRouter) validateRequestHeaders(method string, path string, ctx *R
 		return validateAllowedMethod(r, method, "GET")
 	case "/v1/responses":
 		return r.validateResponseAPICollectionMethod(method)
-	case raylineRoutesAPIPath:
+	case raylineRoutesAPIPath, raylineReportAPIPath:
 		return r.validateRaylineRoutesMethod(method, ctx)
 	}
 
