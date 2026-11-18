@@ -172,6 +172,10 @@ const (
 	// PendingStale: a turn committed after the decision, so it no longer
 	// describes the episode; it was dropped.
 	PendingStale = "stale"
+	// PendingSuperseded: a generation call for the decision's own messages
+	// decided another arm and stored that boundary decision before it ran;
+	// the cell cannot tell the lookup's decision ran, so it was dropped.
+	PendingSuperseded = "superseded"
 )
 
 // ResolvePending is the episode a request of digests and roles is decided
@@ -195,6 +199,11 @@ func ResolvePending(state *EpisodeState, digests *PrefixDigests, roles []string)
 	resolved.Pending = nil
 	if pending.TurnIndex != state.TurnIndex {
 		return resolved, PendingStale
+	}
+	if boundary := state.PolicyBoundary; boundary != nil && boundary.TurnIndex == state.TurnIndex &&
+		boundary.PrefixLen == pending.PrefixLen && boundary.PrefixDigest == pending.PrefixDigest &&
+		boundary.Arm != pending.Arm {
+		return resolved, PendingSuperseded
 	}
 	messages := digests.Messages()
 	if pending.PrefixLen >= len(messages) || pending.PrefixLen >= len(roles) ||
