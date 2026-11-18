@@ -246,18 +246,7 @@ func validateResponsesEventFieldPresence(eventType string, body []byte) error {
 	if err != nil {
 		return err
 	}
-	if err := requireProviderNonNullFields(fields, required...); err != nil {
-		return err
-	}
-	if raw, present := fields["name"]; present && eventType == "response.function_call_arguments.done" {
-		// The name may be left out (validateResponsesToolDone); one that is
-		// sent must be a name, so it can be checked against the call's.
-		var name string
-		if json.Unmarshal(raw, &name) != nil || name == "" {
-			return invalidProviderResponse("stream_required_field", "Upstream stream event field name must be a tool name")
-		}
-	}
-	return nil
+	return requireProviderNonNullFields(fields, required...)
 }
 
 func validateAnthropicEventFieldPresence(eventType string, body []byte) error {

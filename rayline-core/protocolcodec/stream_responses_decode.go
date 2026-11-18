@@ -51,14 +51,11 @@ func (decoder *responsesStreamDecoder) validateResponsesToolDone(wire responsesE
 	index := responsesWireOutputIndex(wire)
 	call := decoder.toolCalls[index]
 	// The event's name is not in the published schema and some servers (LM
-	// Studio) leave it out; the item's added event names the call. A name
-	// that is sent must still agree.
-	if call.Name != "" && wire.Name != "" && wire.Name != call.Name {
+	// Studio) leave it out: the call keeps the name its added event gave it,
+	// which that event must carry. An absent, null or empty name says
+	// nothing; any other must agree.
+	if wire.Name != "" && wire.Name != call.Name {
 		return invalidProviderResponse("stream_tool_identity_mismatch", "Responses function-call done event changed the tool name")
-	}
-	if call.Name == "" {
-		call.Name = wire.Name
-		decoder.toolCalls[index] = call
 	}
 	arguments := decoder.toolArguments[index]
 	if len(arguments) == 0 {
