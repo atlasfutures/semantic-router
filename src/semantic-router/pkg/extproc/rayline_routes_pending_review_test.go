@@ -301,16 +301,39 @@ func TestLookupWritesNoSessionTelemetry(t *testing.T) {
 // Responses items the client adds are never read as the model's reply; every
 // other item type is.
 func TestResponsesModelOutputItems(t *testing.T) {
-	for _, itemType := range []string{"function_call_output", "custom_tool_call_output", "local_shell_call_output",
-		"item_reference", "mcp_approval_response", "compaction", "message"} {
+	for _, itemType := range []string{
+		"function_call_output", "custom_tool_call_output", "local_shell_call_output",
+		"item_reference", "mcp_approval_response", "compaction", "message",
+	} {
 		if responsesModelOutput(itemType) {
 			t.Errorf("%s read as model output", itemType)
 		}
 	}
-	for _, itemType := range []string{"function_call", "reasoning", "custom_tool_call", "web_search_call", "mcp_call",
-		"mcp_list_tools", "mcp_approval_request", "program", "image_generation_call", "apply_patch_call"} {
+	for _, itemType := range []string{
+		"function_call", "reasoning", "custom_tool_call", "web_search_call", "mcp_call",
+		"mcp_list_tools", "mcp_approval_request", "program", "image_generation_call", "apply_patch_call",
+	} {
 		if !responsesModelOutput(itemType) {
 			t.Errorf("%s not read as model output", itemType)
 		}
+	}
+}
+
+// Fork detection: a generation turn committed [A]; a lookup for the same
+// messages then stored a pending decision. An edited ask of that lookup
+// ([B] in A's place) is a retry of a turn that has not run, and stays on the
+// conversation's episode rather than forking to a fresh sibling.
+func TestEditedAskOfAPendingLookupStaysOnItsEpisode(t *testing.T) {
+	fixture := newPendingRoutesFixture(t, true, "")
+	const conversation = "conversation-fork-pending"
+	turn := fixture.generationTurn(t, conversation, pendingRoutesBody(t, pendingTurnTask))
+	if err := turn.RaylineARCTransaction.commit(context.Background(), turn); err != nil {
+		t.Fatal(err)
+	}
+	fixture.lookup(t, conversation, pendingRoutesBody(t, pendingTurnTask))
+	edited := fixture.lookup(t, conversation, pendingRoutesBody(t, map[string]any{"role": "user", "content": "fix the other bug"}))
+	state := fixture.stored(t, conversation)
+	if state.Pending == nil || state.Pending.RouteID != edited.RouteID {
+		t.Fatalf("the edited ask left the conversation's episode: pending %+v, want route %s", state.Pending, edited.RouteID)
 	}
 }
