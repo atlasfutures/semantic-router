@@ -357,8 +357,9 @@ func requestIdentity(header http.Header, body []byte) (string, string, error) {
 	if session == "" {
 		return "", "", fmt.Errorf("hybrid execution requires a stable session identity")
 	}
+	// Both ids are sent as header values, so they hold no control byte but tab.
 	for _, value := range []string{session, branch} {
-		if len(value) > 1024 || strings.ContainsAny(value, "\r\n\x00") {
+		if len(value) > 1024 || strings.IndexFunc(value, func(r rune) bool { return r < ' ' && r != '\t' || r == 0x7f }) >= 0 {
 			return "", "", fmt.Errorf("invalid execution session or branch identity")
 		}
 	}

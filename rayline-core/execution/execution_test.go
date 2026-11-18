@@ -332,3 +332,27 @@ func TestTruncatedStreamCannotCommitOrRegenerateObservedOutput(t *testing.T) {
 		t.Error("failed stream committed success state")
 	}
 }
+
+// TestRequestIdentityMustFitAnHTTPHeader: the session and branch ids are sent
+// as header values, so an id the HTTP transport cannot send is refused when
+// the request arrives, not when the Routes call is made.
+func TestRequestIdentityMustFitAnHTTPHeader(t *testing.T) {
+	for _, session := range []string{"a\x01b", "a\x7fb", "a\x1fb"} {
+		body, _ := json.Marshal(map[string]any{"prompt_cache_key": session})
+		if _, _, err := requestIdentity(http.Header{}, body); err == nil {
+			t.Errorf("accepted session id %q", session)
+		}
+	}
+	header := http.Header{}
+	header.Set("X-Rayline-Session-Id", "s")
+	header.Set("X-Rayline-Branch-Id", "a\x01b")
+	if _, _, err := requestIdentity(header, []byte(`{}`)); err == nil {
+		t.Error("accepted a branch id with a control byte")
+	}
+	for _, session := range []string{"a\tb", "sessión-ü", "pck_0123"} {
+		body, _ := json.Marshal(map[string]any{"prompt_cache_key": session})
+		if got, _, err := requestIdentity(http.Header{}, body); err != nil || got != session {
+			t.Errorf("session id %q: got %q, %v", session, got, err)
+		}
+	}
+}
