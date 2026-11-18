@@ -54,9 +54,13 @@ func TestCurrentContractFixtureSelectsExactResult(t *testing.T) {
 		t.Run(result, func(t *testing.T) {
 			response := currentContractResponse(t)
 			config, selected := currentContractConfig(t, response, result)
+			selected["thinking_level"] = "medium"
 			decision, err := currentDecisionFixture(t, config, response).Decide(t.Context(), currentTestInput())
 			if err != nil {
 				t.Fatal(err)
+			}
+			if decision.ThinkingLevel != "medium" {
+				t.Fatalf("thinking level %q", decision.ThinkingLevel)
 			}
 			if decision.ActionID != selected["policy_action_id"] || decision.Model != selected["model"] || decision.Result != result || decision.IdentitySource != "configured_manifest" || decision.PackageSHA256 != config.PackageSHA256 || decision.ControlID != config.Actions[0].ControlID || decision.AppliedValueUSD == nil || *decision.AppliedValueUSD != selected["v_value"] {
 				t.Fatalf("selected result did not retain its manifest and value provenance: %+v", decision)
