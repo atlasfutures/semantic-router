@@ -56,10 +56,6 @@ func TestResponsesRouteThatOnlyChangesTheModelSendsTheClientBytes(t *testing.T) 
 			`{"type":"function_call","call_id":"c1","name":"exec","arguments":"{\"cmd\":\"ls\"}"},` +
 			`{"type":"function_call_output","call_id":"c1","output":"README.md\n"}],` +
 			`"tools":[{"type":"function","name":"exec","parameters":{"type":"object"},"strict":false}]}`,
-		"one-part tool output": `{"model":"client-model","input":[{"type":"message","role":"user","content":"Run ls."},` +
-			`{"type":"function_call","call_id":"c1","name":"exec","arguments":"{\"cmd\":\"ls\"}"},` +
-			`{"type":"function_call_output","call_id":"c1","output":[{"type":"input_text","text":"README.md\n"}]}],` +
-			`"tools":[{"type":"function","name":"exec","parameters":{"type":"object"},"strict":false}]}`,
 		"a developer message's own id": `{"model":"client-model","input":[{"type":"message","id":"msg_dev","role":"developer",` +
 			`"content":[{"type":"input_text","text":"Sandbox: read-only."}]},{"type":"message","role":"user","content":"Hi"}]}`,
 		"non-ASCII and markup": `{"model":"client-model","input":[{"type":"message","role":"user","content":"Überprüfe <b>die</b> Datei — 日本語 ✓ & more"}]}`,
@@ -194,6 +190,18 @@ func TestResponsesRouteNeverReplaysWhatChanged(t *testing.T) {
 		got := routeResponsesBody(t, body, "routed-model", nil)
 		if strings.Contains(got, `"text":"Hello.","type":"input_text"`) || !strings.Contains(got, `"text":"Hello.","type":"output_text"`) {
 			t.Fatalf("the assistant input_text travelled:\n%s", got)
+		}
+	})
+	// Likewise a tool output sent as a one-part list: strict servers refuse a
+	// list there, so the encoder's string must travel.
+	t.Run("a one-part tool output list the encoder writes as a string", func(t *testing.T) {
+		body := `{"model":"client-model","input":[{"type":"message","role":"user","content":"Run ls."},` +
+			`{"type":"function_call","call_id":"c1","name":"exec","arguments":"{}"},` +
+			`{"type":"function_call_output","call_id":"c1","output":[{"type":"input_text","text":"README.md"}]}],` +
+			`"tools":[{"type":"function","name":"exec","parameters":{"type":"object"},"strict":false}]}`
+		got := routeResponsesBody(t, body, "routed-model", nil)
+		if !strings.Contains(got, `"output":"README.md"`) {
+			t.Fatalf("the tool output list travelled:\n%s", got)
 		}
 	})
 	t.Run("assistant text whose annotations the encoder drops", func(t *testing.T) {
