@@ -10,6 +10,7 @@ import (
 	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/routerruntime"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
@@ -328,5 +329,24 @@ func TestResolvedTurnStagesTheInferredServedModel(t *testing.T) {
 	}
 	if served, err := store.LastServedModel(context.Background(), episode); err != nil || served != "vendor/inferred" {
 		t.Fatalf("served model %q (%v), want the inferred turn's", served, err)
+	}
+}
+
+// A resend that joined an identical tracked lookup in flight shares the
+// leader's decision and episode: it reports the same pending turn and
+// writes nothing.
+func TestCoalescedLookupReportsThePendingTurn(t *testing.T) {
+	state, _ := raylinearc.NewEpisodeState(2)
+	state.TurnIndex = 3
+	reqCtx := &RequestContext{RaylineRouteSurface: string(routerruntime.RouteDecisionSurfaceRoutes)}
+	reqCtx.RaylineARCTransaction = newBorrowedRaylineARCEpisodeTransaction(nil, state, strings.Repeat("e", 64), nil)
+	resolveRaylineARCPendingDecision(reqCtx, &selection.RaylineARCSelectionContext{
+		State: state, Coalesced: &selection.SelectionResult{},
+	})
+	if got := committedEpisodeTurnIndex(reqCtx); got != 4 {
+		t.Fatalf("a coalesced lookup reported turn %d, want the leader's pending turn 4", got)
+	}
+	if err := reqCtx.RaylineARCTransaction.commit(context.Background(), reqCtx); err != nil {
+		t.Fatalf("a coalesced lookup's commit: %v", err)
 	}
 }

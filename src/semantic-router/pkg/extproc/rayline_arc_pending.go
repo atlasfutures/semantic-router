@@ -43,11 +43,17 @@ import (
 // commits, and the next main turn resolves it.
 func resolveRaylineARCPendingDecision(reqCtx *RequestContext, arcContext *selection.RaylineARCSelectionContext) {
 	transaction := reqCtx.RaylineARCTransaction
-	if transaction == nil || transaction.borrowed || transaction.sideCall || transaction.leaseless ||
-		arcContext.Coalesced != nil || arcContext.PolicyCallKind == raylinearc.PolicyCallSide {
+	if transaction == nil || transaction.sideCall || transaction.leaseless ||
+		arcContext.PolicyCallKind == raylinearc.PolicyCallSide {
 		return
 	}
 	transaction.decidesPending = reqCtx.RaylineRouteSurface == string(routerruntime.RouteDecisionSurfaceRoutes)
+	if transaction.borrowed || arcContext.Coalesced != nil {
+		// A resend that joined an identical lookup in flight shares its
+		// decision and the episode it was decided on (already resolved), and
+		// reports the same pending turn; it writes nothing.
+		return
+	}
 	state := arcContext.State
 	if !transaction.decidesPending && (state == nil || state.Pending == nil) {
 		return
@@ -89,6 +95,10 @@ func (transaction *raylineARCEpisodeTransaction) commitPending(
 	}
 	transaction.finalizeOnce.Do(func() {
 		defer transaction.releaseHold()
+		if transaction.borrowed {
+			metrics.RecordRaylineARCEpisodeTransaction("coalesced", "")
+			return
+		}
 		// The selection can still read the lookup as a side call, which
 		// writes nothing.
 		if transaction.sideCall {

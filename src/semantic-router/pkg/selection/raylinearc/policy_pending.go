@@ -133,7 +133,7 @@ func (pending *PendingDecision) Validate(workerCount int) error {
 	malformed := errors.New("ARC episode pending decision is malformed")
 	if pending.Arm < 0 || pending.Arm >= workerCount || pending.PrefixLen < 1 || pending.InputTokens < 0 ||
 		pending.DecidedUnixMS <= 0 || !isLowerHex64(pending.PrefixDigest) ||
-		len(pending.RouteID) > maxPendingRouteIDBytes || len(pending.Model) > MaxPolicyExclusionModelBytes {
+		len(pending.RouteID) > maxPendingRouteIDBytes {
 		return malformed
 	}
 	policy := pending.Policy

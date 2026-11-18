@@ -287,3 +287,14 @@ func TestEpisodeStateWireRefusesAMalformedPendingDecision(t *testing.T) {
 		t.Fatalf("pending wire %v", payload["pending"])
 	}
 }
+
+// A binding's model id has no length bound of its own on every cell, so a
+// pending decision keeps a long one rather than making the record
+// unwritable.
+func TestPendingDecisionKeepsALongModel(t *testing.T) {
+	stored := withPendingLookup(t, executedEpisode(t), pendingTask, pendingReply1, pendingAsk2)
+	stored.Pending.Model = strings.Repeat("m", 300)
+	if _, err := marshalEpisodeState(stored, 1, pendingNow); err != nil {
+		t.Fatalf("a long model made the record unwritable: %v", err)
+	}
+}
