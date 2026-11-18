@@ -72,6 +72,14 @@ func resolveRaylineARCPendingDecision(reqCtx *RequestContext, arcContext *select
 		return nil
 	}
 	resolved, resolution := raylinearc.ResolvePending(state, digests, roles)
+	if resolution == raylinearc.PendingDropped {
+		// The decision is out of this request's decision, but it stays on the
+		// state a stage persists (a boundary or a refusal, before the turn
+		// commits): a turn that then fails leaves its retry the dropped
+		// decision, and with it the served-model record from before it. A
+		// commit clears it, and a lookup replaces it.
+		resolved.Pending = raylinearc.ClonePendingDecision(state.Pending)
+	}
 	arcContext.State, transaction.state = resolved, resolved
 	transaction.resolvedPending, transaction.readTurnIndex = true, state.TurnIndex
 	logging.ComponentEvent("extproc", "rayline_arc_pending_decision", map[string]interface{}{

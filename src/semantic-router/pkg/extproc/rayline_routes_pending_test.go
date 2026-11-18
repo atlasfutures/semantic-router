@@ -535,3 +535,46 @@ func TestRepeatAskIsNotHeldToItsOwnDecision(t *testing.T) {
 		t.Fatalf("the pending decision kept %q as the record before it", state.Pending.PriorServedModel)
 	}
 }
+
+// A generation turn that drops a lookup's decision and stages before it runs
+// (a boundary or a refusal) keeps the dropped decision on the staged
+// record: if the turn then fails, its retry is still held to the record from
+// before the lookup, not to the lookup's unexecuted pick.
+func TestFailedTurnAfterADroppedDecisionKeepsItForTheRetry(t *testing.T) {
+	fixture := newPendingRoutesFixture(t, true, "")
+	const conversation = "conversation-dropped-stage"
+	if err := fixture.store.SeedServedModel(raylinearc.HashEpisodeID(conversation), "vendor/off"); err != nil {
+		t.Fatal(err)
+	}
+	fixture.picks = []string{fixture.actions[0]} // vendor/think
+	fixture.lookup(t, conversation, pendingRoutesBody(t, pendingTurnTask))
+	decision := fixture.router.Config.Decisions[0]
+	reqCtx := &RequestContext{
+		Headers:           map[string]string{decisionServiceEpisodeHeader: conversation},
+		RaylineARCRawBody: pendingRoutesBody(t, pendingTurnTask), SourceFormat: llmprotocol.AnthropicMessagesV1,
+		RequestID: "generation-same-turn",
+	}
+	arcContext := fixture.router.buildRaylineARCSelectionContext(decision.Algorithm, reqCtx, decision.ModelRefs, raylineARCEpisodeRequired)
+	if arcContext.PreparationFailure != "" || len(arcContext.ServedModels) != 1 || arcContext.ServedModels[0].Model != "vendor/off" {
+		t.Fatalf("the same-turn generation was held to %+v (%s)", arcContext.ServedModels, arcContext.PreparationFailure)
+	}
+	transaction := reqCtx.RaylineARCTransaction
+	messages := []json.RawMessage{json.RawMessage(`{"role":"user","content":"fix the bug"}`)}
+	transaction.retainPolicyBoundary(context.Background(),
+		raylinearc.NewPolicyBoundaryDecision(1, 0, &raylinearc.PolicyEpisodeState{}, messages))
+	if err := transaction.abort(context.Background(), "upstream_error"); err != nil {
+		t.Fatal(err)
+	}
+	state := fixture.stored(t, conversation)
+	if state.PolicyBoundary == nil || state.Pending == nil || state.Pending.PriorServedModel != "vendor/off" {
+		t.Fatalf("the staged record lost the dropped decision: boundary %v pending %+v", state.PolicyBoundary, state.Pending)
+	}
+	retry := fixture.router.buildRaylineARCSelectionContext(decision.Algorithm, &RequestContext{
+		Headers:           map[string]string{decisionServiceEpisodeHeader: conversation},
+		RaylineARCRawBody: pendingRoutesBody(t, pendingTurnEdited), SourceFormat: llmprotocol.AnthropicMessagesV1,
+		RequestID: "generation-retry",
+	}, decision.ModelRefs, raylineARCEpisodeRequired)
+	if len(retry.ServedModels) != 1 || retry.ServedModels[0].Model != "vendor/off" {
+		t.Fatalf("the retry was held to %+v, want the record before the lookup", retry.ServedModels)
+	}
+}
