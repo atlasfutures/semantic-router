@@ -2,6 +2,7 @@ package execution
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -86,7 +87,9 @@ func (server *Server) measureExecutionContext(ctx context.Context, body []byte, 
 			// A token_counter carries no prefix evidence; its failure leaves
 			// the prefix unknown, and capacity marks the target unavailable.
 			if countOnly {
-				slog.Warn("token counter failed during prefix measurement", "deployment", worker.DeploymentID, "error", err.Error())
+				if uncounted := (*uncountedRequest)(nil); !errors.As(err, &uncounted) {
+					slog.Warn("token counter failed during prefix measurement", "deployment", worker.DeploymentID, "error", err.Error())
+				}
 				continue
 			}
 			return ExecutionContext{}, nil, err

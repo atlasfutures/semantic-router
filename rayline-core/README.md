@@ -74,7 +74,7 @@ execution core does not download a model or launch inference.
 }
 ```
 
-A local Chat deployment can instead name a same-host HTTP counter in
+A local deployment can instead name a same-host HTTP counter in
 `token_counter` (at most one of the two members). The counter renders the
 prepared request with the serving model's own chat template and counts it with
 the model's own tokenizer, images included, so its counts are
@@ -93,6 +93,17 @@ answers `{"prompt_tokens": N, "units": "..."}`. A counter that fails or changes
 units makes that target `fits: false` (`runtime_unavailable`) for the turn. It
 returns no token IDs, so current-prefix overlap stays unknown; capacity uses its
 count. The URL must be loopback `http`, without credentials or a query.
+
+On a Messages or Responses deployment (Claude Code, omp, Codex) the core
+translates the prepared request to the Chat form for counting only; the
+request sent to the model is unchanged. Such a count is raised by the
+deployment's `headroom_ratio` (5% by default) plus 512 tokens for the
+difference between the Chat form and the runtime's own rendering. That
+allowance is not measured; set `capacity_margin_tokens` to add more. A request
+the Chat form cannot fully carry (a server tool, a document, opaque reasoning)
+is sized by its bytes instead, as without a counter, and the core logs "token
+counter skipped" with the reason. A counter that fails or returns an
+implausible count makes the target unavailable for the turn, as on Chat.
 
 The surrounding deployment must already pin `runtime_identity`, `wire_model`,
 and `token_units`. The counter hashes the model file once before readiness, then
