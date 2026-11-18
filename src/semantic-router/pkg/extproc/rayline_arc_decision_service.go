@@ -20,7 +20,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"net/http"
 	"sort"
 	"time"
@@ -594,25 +593,6 @@ func ephemeralSessionCloseTimeout(algorithm *config.AlgorithmConfig) time.Durati
 		}
 	}
 	return config.DefaultRaylineARCRoutesDeadlineMS * time.Millisecond
-}
-
-// committedEpisodeTurnIndex reads the trajectory position this decision
-// advanced, from the state the commit stored.
-//
-// Selection does not mutate the episode state: the commit clones it,
-// increments the clone, persists that, and swaps it onto the transaction. So
-// the pre-commit state is always one behind, and reading it reported
-// turn_index 0 for the first committed lookup of an episode already at 1.
-func committedEpisodeTurnIndex(requestContext *RequestContext) int {
-	if requestContext == nil || requestContext.RaylineARCTransaction == nil ||
-		requestContext.RaylineARCTransaction.state == nil {
-		return 0
-	}
-	turnIndex := requestContext.RaylineARCTransaction.state.TurnIndex
-	if turnIndex > math.MaxInt32 {
-		return math.MaxInt32
-	}
-	return int(turnIndex)
 }
 
 // commitDecisionOnlyEpisode advances the episode at decision time. The request

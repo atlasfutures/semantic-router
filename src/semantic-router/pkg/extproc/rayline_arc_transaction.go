@@ -179,6 +179,14 @@ type raylineARCEpisodeTransaction struct {
 	// refusal classed after that (a provider error's body, read after its
 	// headers aborted the turn) stages through a short lease of its own.
 	leaseReleased atomic.Bool
+	// decidesPending marks a route lookup on a policy-service cell: its
+	// decision is stored as the episode's pending decision (commitPending)
+	// rather than committed as a turn, and it stages no boundary decision.
+	decidesPending bool
+	// requestDigests are the request's messages as the episode compares
+	// them, kept by the pending-decision resolution for the decision the
+	// request may store; nil before it ran.
+	requestDigests *raylinearc.PrefixDigests
 }
 
 func newRaylineARCEpisodeTransaction(
@@ -453,7 +461,7 @@ func (transaction *raylineARCEpisodeTransaction) retainPolicyBoundary(
 	boundary *raylinearc.PolicyBoundaryDecision,
 ) {
 	if transaction == nil || transaction.state == nil || transaction.borrowed ||
-		transaction.sideCall || transaction.stateless {
+		transaction.sideCall || transaction.stateless || transaction.decidesPending {
 		return
 	}
 	staged := cloneARCState(transaction.state)
@@ -583,6 +591,9 @@ func (transaction *raylineARCEpisodeTransaction) commit(
 	if transaction == nil {
 		return nil
 	}
+	if transaction.decidesPending {
+		return transaction.commitPending(ctx, requestContext)
+	}
 	transaction.observeOpaqueReasoning(requestContext)
 	transaction.finalizeOnce.Do(func() {
 		defer transaction.releaseHold()
@@ -595,7 +606,7 @@ func (transaction *raylineARCEpisodeTransaction) commit(
 			return
 		}
 		if transaction.relaxed {
-			transaction.commitRelaxed(ctx, requestContext)
+			transaction.commitRelaxed(ctx, requestContext, transaction.nextState, "relaxed")
 			return
 		}
 		// A delta cell's turn appends its reply inside the lease, while it is
@@ -681,12 +692,15 @@ func (transaction *raylineARCEpisodeTransaction) commitSideCall(ctx context.Cont
 	metrics.RecordRaylineARCEpisodeTransaction("commit", "side_call")
 }
 
-// commitRelaxed records a relaxed turn if the episode is still at the version
-// it read. Nothing here fails the request: the turn has been served, and a
-// lost race or a store error only drops its state update.
+// commitRelaxed records a relaxed turn, the state next builds, if the
+// episode is still at the version it read. Nothing here fails the request:
+// the turn has been served, and a lost race or a store error only drops its
+// state update. label names the commit in the transaction metric.
 func (transaction *raylineARCEpisodeTransaction) commitRelaxed(
 	ctx context.Context,
 	requestContext *RequestContext,
+	next func() (*raylinearc.EpisodeState, error),
+	label string,
 ) {
 	if !transaction.selectionReady {
 		return
@@ -695,7 +709,7 @@ func (transaction *raylineARCEpisodeTransaction) commitRelaxed(
 		metrics.RecordRaylineARCEpisodeTransaction("relaxed_dropped", "stateless")
 		return
 	}
-	nextState, err := transaction.nextState()
+	nextState, err := next()
 	if err != nil {
 		metrics.RecordRaylineARCEpisodeTransaction("relaxed_dropped", "state")
 		return
@@ -711,7 +725,7 @@ func (transaction *raylineARCEpisodeTransaction) commitRelaxed(
 	default:
 		transaction.state = nextState
 		transaction.endReplacedPolicySession(ctx)
-		metrics.RecordRaylineARCEpisodeTransaction("commit", "relaxed")
+		metrics.RecordRaylineARCEpisodeTransaction("commit", label)
 		recordCommittedARCEpisodeTelemetry(requestContext, transaction)
 	}
 }
@@ -720,17 +734,7 @@ func (transaction *raylineARCEpisodeTransaction) commitRelaxed(
 // staging applied and the selection committed.
 func (transaction *raylineARCEpisodeTransaction) nextState() (*raylinearc.EpisodeState, error) {
 	nextState := cloneARCState(transaction.state)
-	nextState.EncoderOwner = transaction.encoderOwner
-	nextState.EncoderVisitedOwners = append(
-		[]string(nil),
-		transaction.encoderVisited...,
-	)
-	if transaction.policySessionCleared {
-		nextState.PolicySession = nil
-	} else if transaction.policySession != nil {
-		session := *transaction.policySession
-		nextState.PolicySession = &session
-	}
+	transaction.applyRoutingState(nextState)
 	if transaction.policyNext != nil {
 		nextState.Policy = transaction.policyNext.Clone()
 	}
@@ -787,6 +791,20 @@ func (transaction *raylineARCEpisodeTransaction) nextState() (*raylinearc.Episod
 		previousCall, transaction.call, transaction.callCompleted, now,
 	)
 	return nextState, nil
+}
+
+// applyRoutingState sets on next what this request moved that later
+// requests are routed through, whether or not it records a turn: the
+// encoder owner and the policy session.
+func (transaction *raylineARCEpisodeTransaction) applyRoutingState(next *raylinearc.EpisodeState) {
+	next.EncoderOwner = transaction.encoderOwner
+	next.EncoderVisitedOwners = append([]string(nil), transaction.encoderVisited...)
+	if transaction.policySessionCleared {
+		next.PolicySession = nil
+	} else if transaction.policySession != nil {
+		session := *transaction.policySession
+		next.PolicySession = &session
+	}
 }
 
 func (transaction *raylineARCEpisodeTransaction) abort(
@@ -1001,6 +1019,7 @@ func cloneARCState(
 		ReasoningIssuers:     append([]string(nil), state.ReasoningIssuers...),
 		ReasoningProvenance:  append([]reasoning.ReasoningProvenance(nil), state.ReasoningProvenance...),
 		PolicyBoundary:       raylinearc.ClonePolicyBoundary(state.PolicyBoundary),
+		Pending:              raylinearc.ClonePendingDecision(state.Pending),
 	}
 	if state.PolicySession != nil {
 		session := *state.PolicySession
