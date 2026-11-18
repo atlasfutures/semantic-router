@@ -72,7 +72,7 @@ func TestCrossFamilyEndpointResendStripsTheEncryptedReasoning(t *testing.T) {
 	router := endpointPickRouter(upstream.server.URL, tags...)
 	ctx, _ := routeEndpointTurn(t, router, endpointTurn{key: endpointPickKey, feed: endpointFeed(t, tags...)})
 	withHeldReasoning(t, ctx)
-	transaction := &raylineARCEpisodeTransaction{thinkingWorker: "run", thinkingAdopted: "adopted"}
+	transaction := &raylineARCEpisodeTransaction{thinkingWorker: "run", thinkingAdopted: "adopted", borrowed: true}
 	ctx.RaylineARCTransaction = transaction
 
 	reply := answerHeaders(t, router, ctx, http.StatusServiceUnavailable)
@@ -131,7 +131,7 @@ func TestSameFamilyOrUnguardedEndpointResendKeepsTheReasoning(t *testing.T) {
 			router.Config.KeepUnservedClaudeThinking = !tc.guard
 			ctx, _ := routeEndpointTurn(t, router, endpointTurn{key: endpointPickKey, feed: endpointFeed(t, tc.tags...)})
 			withHeldReasoning(t, ctx)
-			transaction := &raylineARCEpisodeTransaction{thinkingWorker: "run"}
+			transaction := &raylineARCEpisodeTransaction{thinkingWorker: "run", borrowed: true}
 			ctx.RaylineARCTransaction = transaction
 
 			reply := answerHeaders(t, router, ctx, http.StatusServiceUnavailable)
