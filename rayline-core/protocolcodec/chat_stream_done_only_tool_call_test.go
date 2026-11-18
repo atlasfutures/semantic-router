@@ -213,3 +213,17 @@ func TestDoneOnlyToolCallCountsAsPublishedOutput(t *testing.T) {
 		})
 	}
 }
+
+// An added item may already hold the call's whole arguments, with no delta
+// after it. Those are not done-only arguments, so no delta is made from the
+// done event, and no client is sent them twice or refuses the stream over a
+// mismatch. (A Chat client is not sent such a call either; no server is
+// known to stream calls this way.)
+func TestCallWhoseAddedItemHoldsItsArgumentsIsNotResent(t *testing.T) {
+	body := strings.Replace(responsesToolCallStream(false), `"arguments":"","call_id"`, `"arguments":"{\"cmd\":\"cat notes.txt\"}","call_id"`, 1)
+	for _, client := range []llmprotocol.WireFormat{llmprotocol.OpenAIResponsesV1, llmprotocol.AnthropicMessagesV1, llmprotocol.OpenAIChatV1} {
+		if _, _, err := streamResponsesTo(t, client, body); err != nil {
+			t.Fatalf("%s stream refused: %v", client, err)
+		}
+	}
+}
