@@ -1175,20 +1175,18 @@ func raylineRoutesHeaderWarnings(
 // raylineRoutesEpisodeIdentity composes the episode this decision belongs to.
 //
 // It is the session exactly as a generation turn sends it in the episode
-// header, because both paths hash that one string into the episode key: a
-// lookup and the turns of the same conversation must land on one episode.
-// Any encoding applied here and not there splits them; the gateway composes
-// its sessions from colon-joined parts, so escaping ':' did exactly that.
+// header, because both paths hash that one string into the episode key, and
+// a lookup and the turns of its conversation must land on one episode. Any
+// encoding applied here and not there splits them.
 //
 // The branch is folded in the way the gateway folds it into the session,
 // userId:conversationId[:branch]: two concurrent subagents on one
 // conversation are two trajectories, and scoring them as one would make each
-// read as the other's previous turn. Session "a" with branch "b" is therefore
-// the same lane as session "a:b", which is also the lane a generation turn
-// sending "a:b" joins. That is not a collision between callers: whoever
-// controls the session header already names any episode they like on
-// generation, which hashes the raw value. The lookup scope keeps its own
-// guard against two accounts sharing one (raylineRoutesLookupScope).
+// read as the other's previous turn. Session "a" with branch "b" is the lane
+// a generation turn sending "a:b" joins. That is not a collision between
+// callers: whoever controls the session header already names any episode on
+// generation, which hashes the raw value. Accounts stay apart on the lookup
+// scope by its length-prefixed user (raylineRoutesLookupScope).
 //
 // An absent session yields an empty identity, which makes the lookup
 // ephemeral. So does a cell with episode_writes off, whatever the caller

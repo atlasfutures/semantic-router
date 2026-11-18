@@ -269,6 +269,10 @@ func TestRaylineRoutesLookupSharesTheGenerationEpisode(t *testing.T) {
 			lookup:            map[string]string{raylineRoutesSessionHeader: "user-1:conversation-1"},
 			generationSession: "user-1:conversation-1",
 		},
+		"session with characters an escape rewrites": {
+			lookup:            map[string]string{raylineRoutesSessionHeader: "user 1:conv+1/%41é"},
+			generationSession: "user 1:conv+1/%41é",
+		},
 		"session and branch": {
 			lookup: map[string]string{
 				raylineRoutesSessionHeader: "user-1:conversation-1",
