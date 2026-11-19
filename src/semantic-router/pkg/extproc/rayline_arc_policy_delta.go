@@ -1001,10 +1001,12 @@ func (transaction *raylineARCEpisodeTransaction) dropPolicyStagedTurn(ctx contex
 			started = transaction.state.TurnIndex
 		}
 		if transaction.resolvedPending {
-			// The fence is the turn count this request read from the store,
-			// not the higher count in memory after it recorded a lookup's
-			// pending decision as a turn: that higher count may belong to a
-			// later request that committed it, whose staged turn must survive.
+			// Delete only staged-turn records up to the turn count this
+			// request read from the store. Do not use the count in memory:
+			// after this request recorded a lookup's pending decision as a
+			// turn it is one higher, and a staged record at that higher count
+			// may belong to a later request that committed that turn; it
+			// must survive.
 			started = transaction.readTurnIndex
 		}
 		staging.writeShared(ctx, func(ctx context.Context, shared raylinearc.EpisodeStagedTurnStore) error {
