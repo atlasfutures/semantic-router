@@ -270,7 +270,7 @@ func (service *raylineARCDecisionService) RouteDecision(
 		decisionFacts.Receipt = trace.RouteReceipt
 		decisionFacts.Signals = trace.Signals
 		if request.Routing.ExecutionV2 != nil {
-			restorePlainStandIns(&decisionFacts, request.Routing.ExecutionV2.StandIns)
+			restorePlainStandIns(&decisionFacts, request.Routing.ExecutionV2)
 		}
 	}
 	// The episode is reported only when the caller joined one. An ephemeral

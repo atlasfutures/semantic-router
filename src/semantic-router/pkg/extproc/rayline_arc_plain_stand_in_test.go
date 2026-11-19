@@ -127,10 +127,11 @@ func TestPlainStandInsInTheEnvelope(t *testing.T) {
 	// A later turn of such a conversation: its history and last_served name
 	// the plain action that ran, and are read as the stand-in.
 	t.Run("second turn", func(t *testing.T) {
-		_, request, _ := apply(t, envelope(`[{"message":1,"action_id":"`+haikuPlain+`"}]`, `{"action_id":"`+haikuPlain+`","worker":"w","message":1}`, "null",
+		_, request, v2 := apply(t, envelope(`[{"message":1,"action_id":"`+haikuPlain+`"}]`, `{"action_id":"`+haikuPlain+`","worker":"w","message":1}`, "null",
 			cloud(haikuPlain), cloud(sonnet)))
 		if len(request.Attribution) != 1 || request.Attribution[0].ActionID != haikuNone ||
-			request.Selection.LastServedActionID == nil || *request.Selection.LastServedActionID != haikuNone {
+			request.Selection.LastServedActionID == nil || *request.Selection.LastServedActionID != haikuNone ||
+			!reflect.DeepEqual(v2.HeldStandIns, map[string]string{haikuNone: haikuPlain}) {
 			t.Fatalf("attribution %+v, last served %v", request.Attribution, request.Selection.LastServedActionID)
 		}
 	})
@@ -187,7 +188,10 @@ func TestPlainStandInsInTheAnswer(t *testing.T) {
 		PolicyActionID: haikuNone, ControlID: noneControl, ArmID: "arm", ThinkingLevel: "none", Receipt: receipt,
 		Results: []routerruntime.RouteResult{result("swift", haikuNone), result("sage", opus)},
 	}
-	restorePlainStandIns(&facts, map[string]selection.RaylineARCPlainStandIn{haikuNone: {PlainActionID: haikuPlain, PlainControlID: plainControlID}})
+	restorePlainStandIns(&facts, &selection.RaylineARCRouteExecutionV2{
+		StandIns:     map[string]selection.RaylineARCPlainStandIn{haikuNone: {PlainActionID: haikuPlain, PlainControlID: plainControlID}},
+		HeldStandIns: map[string]string{haikuNone: haikuPlain},
+	})
 	if facts.PolicyActionID != haikuPlain || facts.ControlID != plainControlID || facts.ArmID != "" || facts.ThinkingLevel != "" {
 		t.Fatalf("decision %+v", facts)
 	}
@@ -206,8 +210,18 @@ func TestPlainStandInsInTheAnswer(t *testing.T) {
 	}
 	unchanged := routerruntime.RouteDecision{PolicyActionID: haikuNone, Receipt: receipt}
 	restorePlainStandIns(&unchanged, nil)
+	restorePlainStandIns(&unchanged, &selection.RaylineARCRouteExecutionV2{})
 	if unchanged.PolicyActionID != haikuNone || unchanged.Receipt != receipt {
 		t.Fatal("no stand-ins must change nothing")
+	}
+	// The "none" action itself last ran: held_from keeps its own id, whatever
+	// the targets stood in for.
+	ran := routerruntime.RouteDecision{PolicyActionID: haikuNone, Receipt: receipt}
+	restorePlainStandIns(&ran, &selection.RaylineARCRouteExecutionV2{
+		StandIns: map[string]selection.RaylineARCPlainStandIn{haikuNone: {PlainActionID: haikuPlain, PlainControlID: plainControlID}},
+	})
+	if *ran.Receipt.HeldFrom != haikuNone || ran.PolicyActionID != haikuPlain {
+		t.Fatalf("held_from %s, action %s", *ran.Receipt.HeldFrom, ran.PolicyActionID)
 	}
 }
 

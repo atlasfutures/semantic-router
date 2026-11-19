@@ -153,21 +153,33 @@ func applyPlainStandIns(v2 *selection.RaylineARCRouteExecutionV2, standIns map[s
 		v2.Attribution[index].ActionID = claim(v2.Attribution[index].ActionID)
 	}
 	for _, field := range []**string{&v2.LastServedActionID, &v2.HoldActionID} {
-		if *field != nil {
-			renamed := claim(**field)
-			*field = &renamed
+		if *field == nil {
+			continue
 		}
+		original := **field
+		renamed := claim(original)
+		if renamed != original {
+			if v2.HeldStandIns == nil {
+				v2.HeldStandIns = map[string]string{}
+			}
+			v2.HeldStandIns[renamed] = original
+		}
+		*field = &renamed
 	}
 }
 
 // restorePlainStandIns answers each stand-in the decision names under the
 // plain action and control the executor offered. The arm and the thinking
 // level, which describe the stand-in's training and steering, are cleared:
-// the plain action has no trained arm and no steering level.
-func restorePlainStandIns(facts *routerruntime.RouteDecision, standIns map[string]selection.RaylineARCPlainStandIn) {
-	if len(standIns) == 0 {
+// the plain action has no trained arm and no steering level. The receipt's
+// held_from names what last ran, so it is restored from the executor's own
+// last_served or hold claim, never from a target: a stand-in action that did
+// run keeps its own id.
+func restorePlainStandIns(facts *routerruntime.RouteDecision, v2 *selection.RaylineARCRouteExecutionV2) {
+	if v2 == nil || len(v2.StandIns) == 0 && len(v2.HeldStandIns) == 0 {
 		return
 	}
+	standIns := v2.StandIns
 	if plain, ok := standIns[facts.PolicyActionID]; ok {
 		facts.PolicyActionID, facts.ControlID, facts.ArmID, facts.ThinkingLevel = plain.PlainActionID, plain.PlainControlID, "", ""
 	}
@@ -194,9 +206,8 @@ func restorePlainStandIns(facts *routerruntime.RouteDecision, standIns map[strin
 		}
 	}
 	if held := facts.Receipt.HeldFrom; held != nil {
-		if plain, ok := standIns[*held]; ok {
-			value := plain.PlainActionID
-			receipt.HeldFrom = &value
+		if original, ok := v2.HeldStandIns[*held]; ok {
+			receipt.HeldFrom = &original
 		}
 	}
 	facts.Receipt = &receipt

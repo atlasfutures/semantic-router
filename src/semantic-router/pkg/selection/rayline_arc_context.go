@@ -270,6 +270,10 @@ type RaylineARCRouteExecutionV2 struct {
 	// that action: the answer names the plain action instead (extproc
 	// rayline_arc_plain_stand_in.go). Nil when none.
 	StandIns map[string]RaylineARCPlainStandIn
+	// HeldStandIns are the executor's last_served or hold claims read as
+	// another action, by that action: the plain action that ran. Nil when
+	// none.
+	HeldStandIns map[string]string
 }
 
 // RaylineARCPlainStandIn is the plain action, and its control, a stand-in
