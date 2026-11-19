@@ -2,6 +2,7 @@ package protocolcodec
 
 import (
 	"encoding/json"
+	"strings"
 
 	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
 )
@@ -118,7 +119,17 @@ func (decoder *responsesStreamDecoder) applyResponsesItemStart(event *llmprotoco
 	decoder.itemTypes[responsesWireOutputIndex(wire)] = item.Type
 	event.Role = llmprotocol.RoleAssistant
 	if item.Type == "function_call" {
-		event.ToolCall = &llmprotocol.ToolCall{ID: item.CallID, Name: item.Name, Arguments: item.Arguments, Namespace: item.Namespace}
+		// An added item's "{}" is a start placeholder (this codec's Responses
+		// encoder writes one for every call it opens from a Messages stream),
+		// not the call's arguments: the deltas or the done event carry those.
+		// It is not passed on, so a call with no delta gets its done
+		// arguments as its one delta, and a client that adds the deltas to
+		// the added item's arguments does not assemble "{}" twice.
+		arguments := item.Arguments
+		if strings.TrimSpace(arguments) == "{}" {
+			arguments = ""
+		}
+		event.ToolCall = &llmprotocol.ToolCall{ID: item.CallID, Name: item.Name, Arguments: arguments, Namespace: item.Namespace}
 	} else if item.Type == "reasoning" {
 		event.Content = &llmprotocol.Content{Kind: llmprotocol.ContentReasoning}
 	} else if item.Type == "image_generation_call" {
