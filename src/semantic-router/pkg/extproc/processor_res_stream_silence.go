@@ -50,11 +50,12 @@ func (r *OpenAIRouter) streamSilenceLimit(ctx *RequestContext) time.Duration {
 // hostRetryBudgetLeft is how long a re-send in flight, from its own start,
 // may wait for its first content before the turn's host-retry budget
 // (response_stream.host_retry_budget_sec) is spent; capped is false when no
-// budget applies.
+// budget applies. An endpoint re-send is bounded by its own budget
+// (endpointDeadline), not host retry's.
 func (r *OpenAIRouter) hostRetryBudgetLeft(ctx *RequestContext) (time.Duration, bool) {
 	budget := r.Config.ResponseStreamHostRetryBudgetSec
-	if budget <= 0 || ctx.StreamContentSeen || !ctx.HostRetry.started() || ctx.StartTime.IsZero() ||
-		refusalReserveServing(ctx) {
+	if budget <= 0 || ctx.StreamContentSeen || !ctx.HostRetry.started() || ctx.HostRetry.endpoint != nil ||
+		ctx.StartTime.IsZero() || refusalReserveServing(ctx) {
 		return 0, false
 	}
 	return ctx.StartTime.Add(time.Duration(budget) * time.Second).Sub(ctx.StreamContentSince), true

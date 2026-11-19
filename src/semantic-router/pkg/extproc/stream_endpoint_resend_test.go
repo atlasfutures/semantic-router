@@ -330,3 +330,16 @@ func TestHeldFramesReleasedWithTheFirstContentRecordTheHold(t *testing.T) {
 	assert.GreaterOrEqual(t, hold, int64(20))
 	assert.Nil(t, lines[0]["endpoint_resend"])
 }
+
+// An endpoint re-send in flight keeps its first-content limit: host retry's
+// budget, counted from the turn's start, is not its bound.
+func TestHostRetryBudgetDoesNotShortenAnEndpointReSend(t *testing.T) {
+	router := hostRetryRouter("http://127.0.0.1:1", true, 30)
+	router.Config.ResponseStreamHostRetryBudgetSec = 30
+	ctx, _ := silentStreamContext(t, 0)
+	ctx.RequestModel = hostRetryArm
+	ctx.StartTime = time.Now().Add(-40 * time.Second)
+	ctx.StreamContentSince = time.Now()
+	ctx.HostRetry = &hostRetryPlan{splice: &hostRetrySplice{}, endpoint: &endpointResendPlan{}}
+	assert.Equal(t, 30*time.Second, router.streamSilenceLimit(ctx))
+}
