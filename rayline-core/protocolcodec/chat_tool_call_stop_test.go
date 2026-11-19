@@ -172,15 +172,19 @@ func TestChatStreamFiltersRestateAStopFinishAfterAToolCall(t *testing.T) {
 		"tool call, finish_reason stop, native": {chatToolCallStreamUnder("stop", "stop"), strings.Replace(chatToolCallStreamUnder("stop", "stop"), `"finish_reason":"stop"`, `"finish_reason":"tool_calls"`, 1)},
 		"tool call, finish_reason tool_calls":   {chatToolCallStreamUnder("tool_calls", ""), chatToolCallStreamUnder("tool_calls", "")},
 		"text, finish_reason stop":              {chatTextStreamUnderStop, chatTextStreamUnderStop},
-		// A trailing chunk repeating "stop" repeats what the client was
-		// first sent: tool_calls after a restated stop, length after length.
+		// A trailing chunk repeating "stop" follows a restated finish; after
+		// any other first finish it is left as the upstream wrote it.
 		"tool call, stop, trailing stop": {
 			withTrailingStop(chatToolCallStreamUnder("stop", "")),
 			strings.ReplaceAll(withTrailingStop(chatToolCallStreamUnder("stop", "")), `"finish_reason":"stop"`, `"finish_reason":"tool_calls"`),
 		},
 		"tool call, length, trailing stop": {
 			withTrailingStop(chatToolCallStreamUnder("length", "")),
-			strings.ReplaceAll(withTrailingStop(chatToolCallStreamUnder("length", "")), `"finish_reason":"stop"`, `"finish_reason":"length"`),
+			withTrailingStop(chatToolCallStreamUnder("length", "")),
+		},
+		"tool call, tool_calls, trailing stop": {
+			withTrailingStop(chatToolCallStreamUnder("tool_calls", "")),
+			withTrailingStop(chatToolCallStreamUnder("tool_calls", "")),
 		},
 	} {
 		for _, readSize := range []int{len(run.stream), 7, 1} {

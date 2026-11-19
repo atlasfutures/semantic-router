@@ -1,7 +1,9 @@
 package extproc
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -42,8 +44,11 @@ func TestAChatToolCallUnderAStopFinishReachesEveryClientAsAToolCall(t *testing.T
 			require.Equal(t, llmprotocol.StopToolCall, ctx.SemanticResponse.StopReason)
 		})
 		// A buffered body with no finish_reason at all is answered the same.
-		noFinish := []byte(strings.Replace(string(buffered), `"finish_reason": "stop"`, `"logprobs": null`, 1))
-		require.NotEqual(t, string(buffered), string(noFinish))
+		var reply map[string]any
+		require.NoError(t, json.Unmarshal(buffered, &reply))
+		delete(reply["choices"].([]any)[0].(map[string]any), "finish_reason")
+		noFinish, err := json.Marshal(reply)
+		require.NoError(t, err)
 		for name, upstream := range map[string][]byte{"buffered": buffered, "buffered, no finish_reason": noFinish} {
 			t.Run(string(client)+"/"+name, func(t *testing.T) {
 				ctx := chatToolCallStopContext(client, testNeutralRequest("public-model", "weather?"))
@@ -54,7 +59,9 @@ func TestAChatToolCallUnderAStopFinishReachesEveryClientAsAToolCall(t *testing.T
 				require.Nil(t, response.GetImmediateResponse())
 				mutation := response.GetResponseBody().GetResponse().GetBodyMutation()
 				require.NotNil(t, mutation, "the upstream body reached the client unchanged")
-				body := strings.ReplaceAll(strings.ReplaceAll(string(mutation.GetBody()), " ", ""), "\n", "")
+				var compact bytes.Buffer
+				require.NoError(t, json.Compact(&compact, mutation.GetBody()))
+				body := compact.String()
 				require.Contains(t, body, want)
 				require.NotContains(t, body, `"finish_reason":"stop"`)
 				require.NotContains(t, body, `"stop_reason":"end_turn"`)
@@ -73,8 +80,8 @@ func chatToolCallStopContext(client llmprotocol.WireFormat, request *llmprotocol
 }
 
 // A same-format stream whose tool call ended on "length" and whose trailing
-// chunk repeats "stop" never tells the client "tool_calls": the repeat keeps
-// the first reason, so the cut call is not run.
+// chunk repeats "stop" never tells the client "tool_calls": only a first
+// finish of "stop" is restated, so the cut call is not run.
 func TestASameFormatChatStreamRepeatingStopAfterALengthKeepsTheLength(t *testing.T) {
 	chunk := func(delta, finish string) string {
 		return `data: {"id":"gen-e2e","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":` +
@@ -89,7 +96,6 @@ func TestASameFormatChatStreamRepeatingStopAfterALengthKeepsTheLength(t *testing
 	})
 	response := (&OpenAIRouter{}).handleSemanticStreamingResponseBody([]byte(stream), true, ctx)
 	body := string(response.GetResponseBody().GetResponse().GetBodyMutation().GetBody())
-	require.Equal(t, 2, strings.Count(body, `"finish_reason":"length"`), body)
+	require.Contains(t, body, `"finish_reason":"length"`)
 	require.NotContains(t, body, `"finish_reason":"tool_calls"`)
-	require.NotContains(t, body, `"finish_reason":"stop"`)
 }

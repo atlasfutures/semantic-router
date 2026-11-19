@@ -29,11 +29,11 @@ type ChatUsageStreamFilter struct {
 }
 
 // chatFinishState is what restateChatFinish remembers across frames: whether
-// a frame carried a tool call delta, and the finish_reason the client was
-// first sent, which a trailing repeat of "stop" is kept consistent with.
+// a frame carried a tool call delta, whether the choice has finished, and
+// whether its finish was restated as "tool_calls", which a trailing repeat of
+// "stop" then follows.
 type chatFinishState struct {
-	toolCall bool
-	first    string
+	toolCall, finished, restated bool
 }
 
 func NewChatUsageStreamFilter(limit int) *ChatUsageStreamFilter {
@@ -180,10 +180,11 @@ func filterChatUsageFrame(frame []byte, limit int, first, keepUsage bool, finish
 // restateChatFinish sets the finish_reason each choice states to the one the
 // stream decoder reads (decodeChatChoiceStop, chatToolCallStop): "length"
 // beside a native length reason, and "tool_calls" for a "stop" that ends a
-// stream which carried a tool call. A "stop" repeated by a trailing chunk
-// after that repeats what the client was first sent, as the decoder keeps
-// the first reason. A stream has one choice (the decoder refuses more). It
-// reports whether it changed anything.
+// stream which carried a tool call. Only the first finish is restated, and a
+// trailing chunk that repeats it: a later "stop" after any other first finish
+// is left as the upstream wrote it, as the decoder keeps the first reason. A
+// stream has one choice (the decoder refuses more). It reports whether it
+// changed anything.
 func restateChatFinish(object map[string]json.RawMessage, state *chatFinishState) (bool, error) {
 	rawChoices, exists := object["choices"]
 	if !exists {
@@ -191,10 +192,10 @@ func restateChatFinish(object map[string]json.RawMessage, state *chatFinishState
 	}
 	// Most frames are text deltas: only one that may name a native reason
 	// or open the first tool call is read, and after a tool call, every
-	// frame until the first finish and then any that may repeat "stop".
+	// frame until the finish, then any that may repeat a restated "stop".
 	if !bytes.Contains(rawChoices, []byte("native_finish_reason")) &&
 		(state.toolCall || !bytes.Contains(rawChoices, []byte(`"tool_calls"`))) &&
-		(!state.toolCall || state.first != "" && !bytes.Contains(rawChoices, []byte(`"stop"`))) {
+		(!state.toolCall || state.finished && (!state.restated || !bytes.Contains(rawChoices, []byte(`"stop"`)))) {
 		return false, nil
 	}
 	var choices []map[string]json.RawMessage
@@ -218,17 +219,12 @@ func restateChatFinish(object map[string]json.RawMessage, state *chatFinishState
 				choice["finish_reason"] = json.RawMessage(`"length"`)
 				changed = true
 			}
-		case state.toolCall && *finish == "stop":
-			restated := state.first
-			if restated == "" {
-				restated = "tool_calls"
-			}
-			choice["finish_reason"], _ = json.Marshal(restated)
+		case state.toolCall && *finish == "stop" && (!state.finished || state.restated):
+			choice["finish_reason"] = json.RawMessage(`"tool_calls"`)
+			state.restated = true
 			changed = true
 		}
-		if finish != nil && state.first == "" {
-			_ = json.Unmarshal(choice["finish_reason"], &state.first)
-		}
+		state.finished = state.finished || finish != nil
 	}
 	if !changed {
 		return false, nil
