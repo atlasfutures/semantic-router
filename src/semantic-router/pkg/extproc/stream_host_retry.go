@@ -115,6 +115,23 @@ type hostRetryPlan struct {
 	// once on that same host, with the dispatched body unchanged
 	// (response_stream.single_host_resend).
 	sameHost bool
+	// endpoint makes the plan an endpoint-picked turn's in-band re-send
+	// (stream_endpoint_resend.go): its calls go to the arm's next endpoints,
+	// with the bodies the endpoint re-send builds, and only an in-band
+	// failure before any content moves the turn on.
+	endpoint *endpointResendPlan
+	// endpointDeadline is when the turn's in-band endpoint re-sends stop
+	// being started: the re-send budget from the first of them.
+	endpointDeadline time.Time
+	// thinking is the run's thinking state before a stripped endpoint
+	// re-send restarted it, kept so a later re-send that carries the history
+	// whole can put it back.
+	thinking *endpointThinkingState
+	// holdStarted is when the turn's first frame was held from the client,
+	// and holdReleased when the client was first sent a frame after it
+	// (llm_usage stream_hold_ms).
+	holdStarted  time.Time
+	holdReleased time.Time
 }
 
 type hostAttempt struct {
@@ -278,6 +295,9 @@ func (plan *hostRetryPlan) currentHost(ctx *RequestContext) (string, string) {
 // which takes a first-content limit to fire.
 func (r *OpenAIRouter) holdingForHostRetry(ctx *RequestContext) bool {
 	plan := ctx.HostRetry
+	if plan != nil && plan.endpoint != nil {
+		return r.holdingForEndpointResend(ctx)
+	}
 	return plan != nil && !refusalReserveServing(ctx) && !plan.exposed && streamSilenceTimerArmed(ctx) && !ctx.StreamContentSeen &&
 		!ctx.StreamingComplete && r.streamSilenceLimit(ctx) > 0 && plan.canReplace()
 }
@@ -296,6 +316,9 @@ func (r *OpenAIRouter) holdHostRetryFrames(ctx *RequestContext, response *ext_pr
 	}
 	if r.holdingResponse(ctx) {
 		if len(streamed.Body) > 0 {
+			if plan.holdStarted.IsZero() {
+				plan.holdStarted = time.Now()
+			}
 			plan.held = append(plan.held, streamed.Body...)
 			streamed.Body = bytes.Clone(hostRetryHoldFrame)
 			if reserve := ctx.RefusalReserve; reserve != nil {
@@ -310,6 +333,9 @@ func (r *OpenAIRouter) holdHostRetryFrames(ctx *RequestContext, response *ext_pr
 	}
 	if len(streamed.Body) > 0 {
 		plan.exposed = true
+		if !plan.holdStarted.IsZero() && plan.holdReleased.IsZero() {
+			plan.holdReleased = time.Now()
+		}
 		r.noteRefusalReserveRelease(ctx)
 	}
 	return withRefusalAttemptsComment(ctx, response)
@@ -324,6 +350,10 @@ func (r *OpenAIRouter) retryOnNextHost(ctx *RequestContext, class, detail string
 	if refusalReserveServing(ctx) {
 		// A refusal re-serve's arm is never failed over to another host.
 		return false
+	}
+	if plan != nil && plan.endpoint != nil {
+		// An endpoint-picked turn moves to its next endpoint, never to a host.
+		return r.retryOnNextEndpoint(ctx, class, detail)
 	}
 	if plan == nil || plan.exposed || ctx.StreamContentSeen || ctx.StreamingComplete || !streamSilenceTimerArmed(ctx) {
 		return false
@@ -418,7 +448,9 @@ func (r *OpenAIRouter) retryOnNextHost(ctx *RequestContext, class, detail string
 	}
 	logging.ComponentEvent("extproc", "stream_host_retry", fields)
 
-	r.settleStalledHost(ctx, class, detail)
+	r.settleStalledHost(ctx, class, detail, func(record *llmUsageRecord) {
+		record.HostRetry = nonEmpty(hostRetryAttempt)
+	})
 	plan.stop()
 	plan.attempts = append(plan.attempts, hostAttempt{started: time.Now()})
 	plan.held, plan.exposed = nil, false
@@ -463,7 +495,11 @@ func (plan *hostRetryPlan) resendWait(ctx *RequestContext) time.Duration {
 // reports whether a re-send took over.
 func (r *OpenAIRouter) failHost(ctx *RequestContext, class, detail string) bool {
 	plan := ctx.HostRetry
-	logging.ComponentWarnEvent("extproc", "stream_host_retry_failed", map[string]interface{}{
+	event := "stream_host_retry_failed"
+	if plan.endpoint != nil {
+		event = "endpoint_stream_resend_failed"
+	}
+	logging.ComponentWarnEvent("extproc", event, map[string]interface{}{
 		"request_id": ctx.RequestID, "model": plan.dispatch.logicalModel,
 		"attempt": len(plan.attempts), "detail": detail,
 	})
@@ -535,10 +571,11 @@ func mustMarshalStrings(values []string) json.RawMessage {
 }
 
 // settleStalledHost writes the usage line of a call that failed before any
-// content. It states no usage, so its counts are null and its cost unknown,
-// never zero; the turn has not failed, so the turn's own failure state is
-// left for the call that takes over.
-func (r *OpenAIRouter) settleStalledHost(ctx *RequestContext, class, detail string) {
+// content, which mark tags as the re-sent kind it is. It states no usage, so
+// its counts are null and its cost unknown, never zero; the turn has not
+// failed, so the turn's own failure state is left for the call that takes
+// over.
+func (r *OpenAIRouter) settleStalledHost(ctx *RequestContext, class, detail string, mark func(*llmUsageRecord)) {
 	latency := time.Duration(0)
 	if !ctx.StartTime.IsZero() {
 		latency = time.Since(ctx.StartTime)
@@ -556,7 +593,10 @@ func (r *OpenAIRouter) settleStalledHost(ctx *RequestContext, class, detail stri
 	record.FailureDetail = nonEmpty(detail)
 	contentSent := false
 	record.ContentSentBeforeFailure = &contentSent
-	record.HostRetry = nonEmpty(hostRetryAttempt)
+	// None of this call's frames reached the client: the hold is the line
+	// of the call that served.
+	record.StreamHoldMS = nil
+	mark(&record)
 	r.priceUsageRecord(&record, ctx, ctx.RequestModel, usage)
 	emitLLMUsageRecord(record)
 	metrics.RecordModelWindowedRequest(
@@ -593,9 +633,16 @@ func (r *OpenAIRouter) retryAfterStreamFailure(ctx *RequestContext) bool {
 	if state == nil || state.upstreamFailed == nil && state.failed == nil || state.carriesContent() {
 		return false
 	}
+	class, detail := turnFailureUpstreamError, "stream_error"
+	if plan := ctx.HostRetry; plan != nil && plan.endpoint != nil {
+		var retries bool
+		if class, detail, retries = endpointStreamFailure(state); !retries {
+			return false
+		}
+	}
 	seen, first := ctx.StreamContentSeen, ctx.StreamFirstContentAt
 	ctx.StreamContentSeen, ctx.StreamFirstContentAt = false, time.Time{}
-	if r.retryOnNextHost(ctx, turnFailureUpstreamError, "stream_error") {
+	if r.retryOnNextHost(ctx, class, detail) {
 		return true
 	}
 	ctx.StreamContentSeen, ctx.StreamFirstContentAt = seen, first
@@ -831,7 +878,8 @@ func droppedHostChunk(ctx *RequestContext) *ext_proc.ProcessingResponse {
 // the host it is attributed to.
 func addHostRetryFields(record *llmUsageRecord, ctx *RequestContext) {
 	plan := ctx.HostRetry
-	if plan == nil || len(plan.attempts) < 2 && plan.attempts[0].host == "" {
+	if plan == nil || plan.endpoint != nil || len(plan.attempts) < 2 && plan.attempts[0].host == "" {
+		// An endpoint re-send's lines are marked endpoint_resend instead.
 		return
 	}
 	index := len(plan.attempts)

@@ -148,6 +148,12 @@ func newHostUpstream(t *testing.T, behaviour map[string]string) *hostUpstream {
 			w.Header().Set("content-type", "text/event-stream")
 			w.WriteHeader(http.StatusOK)
 			_, _ = io.WriteString(w, `data: {"error":{"type":"invalid_request_error","code":"data_inspection_failed","message":"Input data may contain inappropriate content."}}`+"\n\n")
+		case "sse_api_error":
+			// An in-band provider 5xx before any content, as OpenRouter
+			// streams it after answering 200.
+			w.Header().Set("content-type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			_, _ = io.WriteString(w, hostRetryPreContentChunk+endpointStreamErrorChunk)
 		case "sse_error":
 			w.Header().Set("content-type", "text/event-stream")
 			w.WriteHeader(http.StatusOK)

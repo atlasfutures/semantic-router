@@ -135,6 +135,14 @@ type CanonicalResponseStream struct {
 	// and its first-content limit starts when it dials. It applies only where
 	// host retry is on for the arm. Off by default.
 	SingleHostResend bool `yaml:"single_host_resend,omitempty"`
+	// EndpointStreamResend re-sends a streamed ARC turn whose picked
+	// OpenRouter endpoint answered 200 and then failed in-band (an SSE error
+	// event) before any content reached the client, on the arm's next
+	// endpoints, within the bound the status re-send keeps. Until the first
+	// content the stream's opening frames are held and SSE comments are sent
+	// in their place. A first-content stall is not a trigger. For a turn that
+	// picked an endpoint it takes the place of host retry. Off by default.
+	EndpointStreamResend bool `yaml:"endpoint_stream_resend,omitempty"`
 }
 
 // CanonicalServiceGlobal groups shared runtime services exposed by the router.
@@ -432,6 +440,7 @@ func applyCanonicalRouterGlobal(cfg *RouterConfig, router CanonicalRouterGlobal)
 	cfg.ResponseStreamHostRetry = router.ResponseStream.HostRetry
 	cfg.ResponseStreamHostRetryBudgetSec = router.ResponseStream.HostRetryBudgetSec
 	cfg.ResponseStreamSingleHostResend = router.ResponseStream.SingleHostResend
+	cfg.ResponseStreamEndpointStreamResend = router.ResponseStream.EndpointStreamResend
 	cfg.ThinkingMarkerMint = router.ThinkingMarkers.Mint
 	cfg.KeepUnservedClaudeThinking = router.ThinkingSignatures.KeepUnserved
 	cfg.SkipProcessing = router.SkipProcessing

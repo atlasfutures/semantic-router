@@ -143,6 +143,12 @@ func silentStreamError(ctx *RequestContext) *llmprotocol.ProtocolError {
 	if ctx != nil && ctx.HostRetry != nil && ctx.HostRetry.failedClass != "" {
 		return reservedArmFailedError(ctx.HostRetry.failedClass)
 	}
+	if ctx != nil && ctx.HostRetry != nil && ctx.HostRetry.endpoint != nil && ctx.HostRetry.exhausted {
+		// The last endpoint re-send failed before any content: nothing
+		// stalled, so the turn is not a timeout.
+		return llmprotocol.NewError(llmprotocol.ErrorUpstreamUnavailable, endpointResendExhaustedCode,
+			"every endpoint the turn was re-sent on failed before any content", nil)
+	}
 	if ctx != nil && ctx.StreamContentSeen {
 		return llmprotocol.NewError(llmprotocol.ErrorUpstreamTimeout, streamIdleTimeoutCode,
 			"the model stopped sending content, so the router ended this stream", nil)
@@ -158,6 +164,10 @@ const (
 	// that failed before any content: no host retry follows it, and the
 	// client is told how it failed rather than a timeout.
 	reservedArmFailedCode = "reserved_model_failed"
+	// endpointResendExhaustedCode is the in-band error of an endpoint-picked
+	// turn whose last in-band re-send failed before any content
+	// (stream_endpoint_resend.go).
+	endpointResendExhaustedCode = "endpoint_resend_exhausted"
 )
 
 // reservedArmFailedError is the error a refusal re-serve's arm that failed
