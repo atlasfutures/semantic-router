@@ -1,0 +1,31 @@
+{
+  "id": "chatcmpl-fixture-tool-stop",
+  "object": "chat.completion",
+  "created": 1793318400,
+  "model": "gemini-3-flash",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "call_fixture",
+            "type": "function",
+            "function": {
+              "name": "get_weather",
+              "arguments": "{\"city\":\"Paris\"}"
+            }
+          }
+        ]
+      },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 40,
+    "completion_tokens": 12,
+    "total_tokens": 52
+  }
+}
