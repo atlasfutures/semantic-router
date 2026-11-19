@@ -408,3 +408,75 @@ func TestClaudeCodeRoleKeyedSubagentClaimIsMainWhenForked(t *testing.T) {
 		}
 	}
 }
+
+// probeCuttingStore answers a fork probe's Prepare as a Redis store does when
+// the probe's deadline lands inside its call rather than between polls: it
+// holds the call until the deadline and returns the deadline bare.
+type probeCuttingStore struct {
+	*raylinearc.MemoryEpisodeStore
+	mu   sync.Mutex
+	cuts int
+}
+
+func (store *probeCuttingStore) Prepare(
+	ctx context.Context,
+	episodeIDHash string,
+	workerCount int,
+) (raylinearc.Lease, *raylinearc.EpisodeState, error) {
+	store.mu.Lock()
+	cut := store.cuts > 0
+	if cut {
+		store.cuts--
+	}
+	store.mu.Unlock()
+	if cut {
+		<-ctx.Done()
+		return raylinearc.Lease{}, nil, ctx.Err()
+	}
+	return store.MemoryEpisodeStore.Prepare(ctx, episodeIDHash, workerCount)
+}
+
+func newProbeCuttingCell(t *testing.T) (*forkCell, *probeCuttingStore) {
+	t.Helper()
+	cell := newForkCell(t)
+	store := &probeCuttingStore{MemoryEpisodeStore: cell.router.RaylineARCEpisodeStore.(*raylinearc.MemoryEpisodeStore)}
+	cell.router.RaylineARCEpisodeStore = store
+	return cell, store
+}
+
+// A probe cut inside the store call is the loop's own deadline, not a stalled
+// store: the continuation probes again and wins the lease, where it used to
+// fail as episode_store_timeout after any number of seconds of waiting.
+func TestForkProbeCutInsideTheStoreCallProbesAgain(t *testing.T) {
+	cell, store := newProbeCuttingCell(t)
+	cell.run("u1")
+	store.mu.Lock()
+	store.cuts = 2
+	store.mu.Unlock()
+	turn := cell.run("u1", "a1", "u2")
+	if turn.arc.EpisodeIDHash != forkTestRoot || turn.arc.Fork == nil || turn.arc.Fork.Fork {
+		t.Fatalf("turn on %s fork=%+v, want the root episode", turn.arc.EpisodeIDHash, turn.arc.Fork)
+	}
+	if store.cuts != 0 {
+		t.Fatalf("%d cuts left, want both spent", store.cuts)
+	}
+}
+
+// A store that stalls on every call still fails the turn as
+// episode_store_timeout, once the acquire budget is spent.
+func TestForkProbeStoreStalledThroughTheBudgetFails(t *testing.T) {
+	cell, store := newProbeCuttingCell(t)
+	cell.algorithm.RaylineARC.Episode.AcquireTimeoutSeconds = 1
+	cell.run("u1")
+	store.mu.Lock()
+	store.cuts = 1 << 20
+	store.mu.Unlock()
+	turn := cell.startBody(chatBody(t, "u1", "a1", "u2"), llmprotocol.OpenAIChatV1)
+	defer turn.finish(t)
+	if turn.arc.PreparationFailure != "episode_store_timeout" {
+		t.Fatalf("failure %q, want episode_store_timeout", turn.arc.PreparationFailure)
+	}
+	if turn.elapsed < 900*time.Millisecond {
+		t.Fatalf("failed after %s, want the 1 s acquire budget spent", turn.elapsed)
+	}
+}

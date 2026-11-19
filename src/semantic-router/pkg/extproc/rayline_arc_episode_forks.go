@@ -23,6 +23,7 @@ import (
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/metrics"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
@@ -281,8 +282,16 @@ func (r *OpenAIRouter) prepareRaylineARCForkedTurn(
 		}
 		reqCtx.RaylineARCAcquireTimeout = probe
 		state, coalesced, failure := r.prepareOrJoinRaylineARCTurn(arcConfig, reqCtx, placed.hash, workerCount, false)
-		if failure == "episode_timeout" && !lastAttempt {
+		// A probe's deadline is this loop's, not the store's: when it lands
+		// inside a store call rather than between polls, the store reports it
+		// bare (episode_store_timeout) though it may only have been answering
+		// "held". Only the last probe's says the store stalled.
+		storeTimeout := failure == "episode_store_timeout" && parent.Err() == nil
+		if (failure == "episode_timeout" || storeTimeout) && !lastAttempt {
 			continue
+		}
+		if storeTimeout {
+			metrics.SetRaylineARCNamedComponentReady("episode_store", false)
 		}
 		if failure != "" || coalesced != nil {
 			r.applyRaylineARCForkPlacement(result, placed)
