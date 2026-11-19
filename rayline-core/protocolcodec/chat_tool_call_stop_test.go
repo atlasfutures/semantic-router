@@ -45,7 +45,7 @@ func TestABufferedChatToolCallUnderAStopFinishIsAToolCallStop(t *testing.T) {
 		messages  string
 	}{
 		"tool call, finish_reason stop":       {chatToolCallReply("stop"), llmprotocol.StopToolCall, "stop", true, `"finish_reason":"tool_calls"`, `"stop_reason":"tool_use"`},
-		"tool call, no finish_reason":         {chatToolCallReply(""), llmprotocol.StopToolCall, "", false, `"tool_calls":[`, `"stop_reason":"tool_use"`},
+		"tool call, no finish_reason":         {chatToolCallReply(""), llmprotocol.StopToolCall, "", true, `"finish_reason":"tool_calls"`, `"stop_reason":"tool_use"`},
 		"tool call, finish_reason tool_calls": {chatToolCallReply("tool_calls"), llmprotocol.StopToolCall, "tool_calls", false, `"finish_reason":"tool_calls"`, `"stop_reason":"tool_use"`},
 		"cut tool call, native length": {
 			chatBufferedToolCall(chatBufferedCutArguments, "tool_calls", "length"),

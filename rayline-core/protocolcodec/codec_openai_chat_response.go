@@ -347,9 +347,14 @@ func encodeChatUsage(usage llmprotocol.Usage, publishProviderCost bool) *chatUsa
 // another stop than the one decoded from it: OpenRouter labels a reply cut at
 // the output limit "tool_calls" and says "max_output_tokens" only in
 // native_finish_reason. Such a body is never handed back as it is, or a Chat
-// client reads the cut call as one to run.
+// client reads the cut call as one to run. A body holding a tool call under
+// no finish_reason misstates it too: its client must be told "tool_calls"
+// (chatToolCallStop).
 func chatSourceStopMisstated(sourceStop string, stop llmprotocol.StopReason) bool {
-	return sourceStop != "" && decodeChatStop(sourceStop) != stop
+	if sourceStop == "" {
+		return stop == llmprotocol.StopToolCall
+	}
+	return decodeChatStop(sourceStop) != stop
 }
 
 // UpstreamBodyMisstatesStop reports an upstream response body whose own stop
