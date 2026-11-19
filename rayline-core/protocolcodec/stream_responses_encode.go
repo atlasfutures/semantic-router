@@ -186,6 +186,13 @@ func (encoder *responsesStreamEncoder) ensureResponsesOutputStarted(
 		if event.ToolCall != nil {
 			item.CallID, item.Name, item.Arguments = event.ToolCall.ID, event.ToolCall.Name, event.ToolCall.Arguments
 			item.Namespace = event.ToolCall.Namespace
+			// A start's "{}" is a placeholder the deltas replace (see
+			// encodeResponsesItemStart). A client that adds the deltas to
+			// the added item's arguments, as the OpenAI SDK's stream helper
+			// does, would otherwise assemble "{}" in front of them.
+			if strings.TrimSpace(item.Arguments) == "{}" {
+				item.Arguments = ""
+			}
 		}
 	case responsesOutputImage:
 		item.Type = "image_generation_call"
