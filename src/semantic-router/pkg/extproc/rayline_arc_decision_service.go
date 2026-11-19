@@ -113,6 +113,10 @@ func (service *raylineARCDecisionService) RouteDecision(
 		episodeMode,
 	)
 	selectionContext.RaylineARC.RouteControls = request.Routing
+	if request.Routing != nil && algorithm.RaylineARC != nil {
+		applyPlainStandIns(request.Routing.ExecutionV2, plainStandInsOf(algorithm.RaylineARC.PolicyService),
+			selectionContext.RaylineARC.EpisodeIDHash)
+	}
 	selectionContext.RaylineARC.RoutesLookup = true
 	selectionContext.RaylineARC.RoutesThrowaway = request.Ephemeral
 	selectionContext.RaylineARC.RoutesEncodeLimit = requestContext.RaylineRoutesEncodeLimit

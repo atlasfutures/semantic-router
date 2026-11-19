@@ -36,18 +36,18 @@ func TestPlainStandInsComeFromThePackage(t *testing.T) {
 		t.Fatalf("plain Opus action id %s, want the fixture's native Opus", got)
 	}
 	cfg := v5ConfigWith(t, func(rendered string) string { return rendered })
-	scorer := newPolicyServiceScorer(cfg, &cfg.Decisions[0])
+	policy := cfg.Decisions[0].Algorithm.RaylineARC.PolicyService
 	want := map[string]plainStandIn{v5GLMPlain: {standInActionID: v5GLMNone, plainControlID: plainControlID, model: "glm-5.3-flash"}}
-	if !reflect.DeepEqual(scorer.plainStandIns, want) {
-		t.Fatalf("stand-ins %+v", scorer.plainStandIns)
+	if got := plainStandInsOf(policy); !reflect.DeepEqual(got, want) {
+		t.Fatalf("stand-ins %+v", got)
 	}
-	bound := map[string]policyBinding{}
-	for id, binding := range scorer.bindings {
-		bound[id] = binding
-	}
-	bound[v5GLMPlain] = policyBinding{model: "glm-5.3-flash"}
-	if got := plainStandInsOf(cfg.Decisions[0].Algorithm.RaylineARC.PolicyService, bound); got != nil {
+	withPlain := *policy
+	withPlain.Bindings = append(append([]config.RaylineARCPolicyBinding{}, policy.Bindings...), config.RaylineARCPolicyBinding{ActionID: v5GLMPlain, Worker: "glm"})
+	if got := plainStandInsOf(&withPlain); got != nil {
 		t.Fatalf("a package that binds the plain action still stands in: %+v", got)
+	}
+	if plainStandInsOf(nil) != nil {
+		t.Fatal("no policy service, no stand-ins")
 	}
 }
 
@@ -60,8 +60,8 @@ func TestPlainStandInsInTheEnvelope(t *testing.T) {
 			local: {model: "qwen3.8-27b"}, opus: {model: "claude-opus-5.5"}, sonnet: {model: "claude-sonnet-5.5"},
 			haikuNone: {model: "claude-haiku-5.5", level: "none"}, haikuUp: {model: "claude-haiku-5.5", level: "up"},
 		},
-		plainStandIns: map[string]plainStandIn{haikuPlain: {standInActionID: haikuNone, plainControlID: plainControlID, model: "claude-haiku-5.5"}},
 	}
+	standIns := map[string]plainStandIn{haikuPlain: {standInActionID: haikuNone, plainControlID: plainControlID, model: "claude-haiku-5.5"}}
 	target := func(actionID, placement, capacity string) string {
 		return `{"action_id":"` + actionID + `","worker":"w","placement":"` + placement + `","cache":null,"capacity":` + capacity + `}`
 	}
@@ -87,7 +87,7 @@ func TestPlainStandInsInTheEnvelope(t *testing.T) {
 		}
 		controls := raylineRoutesControls(routing, &config.RaylineARCRoutesRoutingConfig{}, time.Now())
 		request := &raylinearc.PolicyDecisionRequest{Selection: raylinearc.PolicySelection{AvailableActionIDs: []string{local, opus, sonnet, haikuNone, haikuUp}}}
-		applyPlainStandIns(controls.ExecutionV2, scorer, "episode")
+		applyPlainStandIns(controls.ExecutionV2, standIns, "episode")
 		unknown, class := applyRoutePolicyAndExecutionV2(request, scorer, controls)
 		if class != "" {
 			t.Fatalf("refused %s", class)
@@ -132,6 +132,17 @@ func TestPlainStandInsInTheEnvelope(t *testing.T) {
 		if len(request.Attribution) != 1 || request.Attribution[0].ActionID != haikuNone ||
 			request.Selection.LastServedActionID == nil || *request.Selection.LastServedActionID != haikuNone {
 			t.Fatalf("attribution %+v, last served %v", request.Attribution, request.Selection.LastServedActionID)
+		}
+	})
+
+	// A later turn that no longer offers Haiku at all (its backend excluded,
+	// say) still names the plain action that ran: read as the stand-in, not
+	// refused, and nothing is answered under it.
+	t.Run("history without the target", func(t *testing.T) {
+		_, request, v2 := apply(t, envelope(`[{"message":1,"action_id":"`+haikuPlain+`"}]`, `{"action_id":"`+haikuPlain+`","worker":"w","message":1}`, "null",
+			cloud(sonnet), cloud(opus)))
+		if v2.StandIns != nil || request.Attribution[0].ActionID != haikuNone || *request.Selection.LastServedActionID != haikuNone {
+			t.Fatalf("stand-ins %+v, attribution %+v", v2.StandIns, request.Attribution)
 		}
 	})
 
