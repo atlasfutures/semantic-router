@@ -677,6 +677,8 @@ func (r *OpenAIRouter) refusedReserveAttemptRecord(ctx *RequestContext, index in
 	record.ContentSentBeforeFailure = &contentSent
 	record.RefusalReserve = nonEmpty(refusalReserveRefused)
 	record.RefusalReserveAttempt = &index
+	// The refused call's frames never reached the client.
+	record.StreamHoldMS = nil
 	// Priced now, as the refused arm's call, but counted in the cost metric
 	// only if the record is written: a re-serve that does not start leaves
 	// the refusal to the turn's own line, which counts it.
@@ -803,6 +805,8 @@ func (r *OpenAIRouter) spliceReserve(
 	if old != nil {
 		old.stop()
 		plan.trailersPending = old.trailersPending
+		// The turn's hold began with the refused arm's frames.
+		plan.holdStarted, plan.holdReleased = old.holdStarted, old.holdReleased
 	}
 	ctx.HostRetry = plan
 	plan.dispatch = dispatch

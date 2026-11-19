@@ -448,6 +448,18 @@ global:
   re-send waits 2 s first (the error's own delay when one is reported, at most
   10 s); its first-content limit starts when it dials. It applies only where
   host retry is on for the model. Off by default.
+- `endpoint_stream_resend: true` re-sends a streamed ARC turn whose picked
+  OpenRouter endpoint answered 200 and then sent an in-band error (an SSE
+  error event) before any content reached the client, on the model's next
+  endpoints in the pick's order, as a failed response status already is. The
+  status re-send and this one share one bound: at most two further endpoints
+  per turn. A re-send to an endpoint of another host family is sent the
+  history with its signed and encrypted reasoning stripped. Until the first
+  content the Router holds the stream's opening frames and sends SSE comments
+  in their place (`llm_usage.stream_hold_ms` records how long). A
+  first-content stall is not a trigger. For a turn that picked an endpoint it
+  takes the place of host retry. It needs
+  `response_body_mode: FULL_DUPLEX_STREAMED`. Off by default.
 - A model may set `providers.models[].host_retry` to turn the re-send on or
   off for itself; absent, the global flag applies. Host retry targets a
   provider that stalls before any content. It does not help a model whose
