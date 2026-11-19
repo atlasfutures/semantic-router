@@ -292,7 +292,9 @@ type RouteBaseline struct {
 
 // RouteEpisode reports the trajectory state this decision advanced.
 type RouteEpisode struct {
-	// TurnIndex is the episode revision this decision wrote.
+	// TurnIndex is the episode turn this decision is for, counting from 1. A
+	// decision stored pending reports the turn after the recorded ones, so
+	// the same turn asked again reports the same number.
 	TurnIndex int
 	// Stayed reports whether the selector kept the previous turn's arm.
 	//

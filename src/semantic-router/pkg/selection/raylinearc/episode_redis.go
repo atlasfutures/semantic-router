@@ -59,13 +59,15 @@ if ARGV[5] ~= "" then redis.call("SET", KEYS[4], ARGV[5], "PX", ARGV[6]) end
 return 1
 `)
 	// Stage writes the state under the held lease and leaves the lease and
-	// fence as they are.
+	// fence as they are. A state that names a served model records it, as a
+	// commit does.
 	redisStageScript = redis.NewScript(`
 if redis.call("GET", KEYS[1]) ~= ARGV[1] then return 0 end
 if tonumber(redis.call("GET", KEYS[2]) or "-1") ~= tonumber(ARGV[2]) then
   return 0
 end
 redis.call("SET", KEYS[3], ARGV[3], "PX", ARGV[4])
+if ARGV[5] ~= "" then redis.call("SET", KEYS[4], ARGV[5], "PX", ARGV[6]) end
 return 1
 `)
 	// The fence is the episode's version. A relaxed read takes no lease, but
@@ -272,11 +274,13 @@ func (store *RedisEpisodeStore) Stage(
 	result, err := redisStageScript.Run(
 		ctx,
 		store.client,
-		store.keys(lease.episodeIDHash),
+		store.commitKeys(lease.episodeIDHash),
 		lease.ownerToken,
 		lease.version,
 		payload,
 		store.idleTTL.Milliseconds(),
+		state.ServedModel,
+		ServedModelTTL.Milliseconds(),
 	).Int()
 	if err != nil {
 		return boundedRedisEpisodeError("stage", err)

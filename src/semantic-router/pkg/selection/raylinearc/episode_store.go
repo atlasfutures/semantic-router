@@ -81,6 +81,12 @@ const (
 	// episode keeps its earlier bytes and a v9 reader refuses it by its
 	// schema rather than by a field it does not know.
 	episodeStateSchemaV10 = "rayline.arc.episode-state.v10"
+	// episodeStateSchemaV11 adds a route lookup's pending decision and the
+	// ledger's basis mark (an entry the cell inferred rather than served).
+	// It is written only for a record that carries either, whatever else it
+	// carries, so every other episode keeps its earlier bytes and a v10
+	// reader refuses it by its schema rather than by a field it does not know.
+	episodeStateSchemaV11 = "rayline.arc.episode-state.v11"
 	maxFutureClockSkew    = 5 * time.Minute
 	episodeOwnerBytes     = 24
 	maxEpisodeStateBytes  = 64 * 1024
@@ -212,6 +218,7 @@ type episodeStateWire struct {
 	PolicyBoundary       *PolicyBoundaryDecision         `json:"policy_boundary,omitempty"`
 	ReasoningProvenance  []reasoning.ReasoningProvenance `json:"reasoning_provenance,omitempty"`
 	PolicySession        *episodePolicySessionWire       `json:"policy_session,omitempty"`
+	Pending              *PendingDecision                `json:"pending,omitempty"`
 }
 
 // episodePolicySessionWire is a persisted Modal sticky session.
@@ -309,7 +316,7 @@ func controlPlacementsToWire(placements []ControlPlacement) []episodeControlWire
 // episodeStateSizeLimit is the most bytes a record of schema may take.
 func episodeStateSizeLimit(schema string) int {
 	if schema == episodeStateSchemaV6 || schema == episodeStateSchemaV7 || schema == episodeStateSchemaV8 ||
-		schema == episodeStateSchemaV9 || schema == episodeStateSchemaV10 {
+		schema == episodeStateSchemaV9 || schema == episodeStateSchemaV10 || schema == episodeStateSchemaV11 {
 		return maxEpisodeStateBytesV6
 	}
 	return maxEpisodeStateBytes
@@ -513,6 +520,7 @@ func cloneEpisodeState(state *EpisodeState) *EpisodeState {
 		PolicyBoundary:       clonePolicyBoundary(state.PolicyBoundary),
 		ReasoningProvenance:  append([]reasoning.ReasoningProvenance(nil), state.ReasoningProvenance...),
 		PolicySession:        clonePolicySession(state.PolicySession),
+		Pending:              ClonePendingDecision(state.Pending),
 	}
 	for index, warmth := range state.Warmth {
 		if warmth == nil {
@@ -612,6 +620,10 @@ func marshalEpisodeState(
 		wire.SchemaVersion = episodeStateSchemaV10
 		wire.PolicySession = &episodePolicySessionWire{ID: state.PolicySession.ID, Token: state.PolicySession.Token}
 	}
+	if carriesPendingOrBasis(state.Policy, state.Pending) {
+		wire.SchemaVersion = episodeStateSchemaV11
+		wire.Pending = ClonePendingDecision(state.Pending)
+	}
 	owner := state.EncoderOwner
 	visited := append([]string{}, state.EncoderVisitedOwners...)
 	wire.EncoderOwner = &owner
@@ -680,6 +692,14 @@ func unmarshalEpisodeState(
 func decodeEpisodeStateAffinity(
 	wire episodeStateWire,
 ) (string, []string, error) {
+	// v11 is exactly the record that carries a pending decision or a ledger
+	// basis, whatever else it carries; it may hold anything v3 to v10 do.
+	if carriesPendingOrBasis(wire.Policy, wire.Pending) != (wire.SchemaVersion == episodeStateSchemaV11) {
+		return "", nil, errors.New("ARC episode state contract mismatch")
+	}
+	if wire.SchemaVersion == episodeStateSchemaV11 {
+		return decodeEpisodeOwner(wire)
+	}
 	// v10 is exactly the record that carries a policy session, whatever else
 	// it carries; it may hold anything v3 to v9 do.
 	if (wire.PolicySession != nil) != (wire.SchemaVersion == episodeStateSchemaV10) {
@@ -753,6 +773,23 @@ func decodeEpisodeOwner(wire episodeStateWire) (string, []string, error) {
 		append([]string(nil), (*wire.EncoderVisitedOwners)...), nil
 }
 
+// carriesPendingOrBasis reports whether a record holds a pending decision or
+// a ledger entry with a basis mark, which only a v11 reader knows.
+func carriesPendingOrBasis(policy *PolicyEpisodeState, pending *PendingDecision) bool {
+	if pending != nil {
+		return true
+	}
+	if policy == nil {
+		return false
+	}
+	for _, entry := range policy.Ledger {
+		if entry.Basis != "" {
+			return true
+		}
+	}
+	return false
+}
+
 func carriesExplorationOrigin(policy *PolicyEpisodeState, boundary *PolicyBoundaryDecision) bool {
 	return policy != nil && policy.Exploration != nil || boundary != nil && boundary.Exploration != nil
 }
@@ -794,6 +831,7 @@ func episodeStateFromWire(
 		Policy:               wire.Policy.Clone(),
 		Thinking:             thinkingLedgerFromWire(wire.Thinking),
 		PolicyBoundary:       clonePolicyBoundary(wire.PolicyBoundary),
+		Pending:              ClonePendingDecision(wire.Pending),
 	}
 	if wire.PolicySession != nil {
 		state.PolicySession = &PolicySession{ID: wire.PolicySession.ID, Token: wire.PolicySession.Token}
@@ -842,6 +880,9 @@ func validatePersistedEpisodeState(
 		return err
 	}
 	if err := state.PolicyBoundary.Validate(len(state.Warmth)); err != nil {
+		return err
+	}
+	if err := state.Pending.Validate(len(state.Warmth)); err != nil {
 		return err
 	}
 	if len(state.Controls) > MaxControlPlacements {
