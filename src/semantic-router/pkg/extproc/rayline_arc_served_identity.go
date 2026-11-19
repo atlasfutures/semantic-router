@@ -76,6 +76,14 @@ func (builder *responseHeaderMutationBuilder) addRaylineARCServedIdentity(ctx *R
 // copy the upstream sent is replaced when the cell names an endpoint and
 // removed on every other response, so a client never sees two values or one
 // the cell did not state.
+//
+// One exception: an in-band endpoint re-send (stream_endpoint_resend.go)
+// moves the turn to another endpoint after these headers went out, and
+// headers cannot be sent twice. The header then names the endpoint the
+// response started on; the turn's llm_usage (provider_endpoint,
+// provider_endpoints_tried, endpoint_resend) names the one that served.
+// Deferring the headers to the first content instead would leave the client
+// with no response at all for as long as the upstream thinks.
 func (builder *responseHeaderMutationBuilder) addRaylineARCServedEndpoint(ctx *RequestContext, isSuccessful bool) {
 	_, ok := raylineARCServedIdentityOf(ctx)
 	tag := ctx.RaylineARCDispatchedEndpoint

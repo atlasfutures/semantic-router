@@ -658,8 +658,15 @@ func (r *OpenAIRouter) prepareRaylineARCTransaction(
 	switch failure {
 	case "":
 		metrics.SetRaylineARCNamedComponentReady("episode_store", true)
-	case "episode_store", "episode_store_timeout":
+	case "episode_store":
 		metrics.SetRaylineARCNamedComponentReady("episode_store", false)
+	case "episode_store_timeout":
+		// A fork probe's timeout is its loop's to judge: a cut probe is no
+		// sign the store stalled, so prepareRaylineARCForkedTurn reports only
+		// the last one's.
+		if reqCtx.RaylineARCAcquireTimeout <= 0 {
+			metrics.SetRaylineARCNamedComponentReady("episode_store", false)
+		}
 	}
 	if err != nil {
 		return nil, failure

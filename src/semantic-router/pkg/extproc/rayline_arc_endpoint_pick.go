@@ -27,7 +27,10 @@ import (
 // before any byte reached the client is re-sent on the next endpoints of the
 // rendezvous order, at most endpointResendMaxExtra of them, through the flex
 // re-send's transport (flex_resend.go). A response that has begun is never
-// re-sent.
+// re-sent. A failed status is re-sent here; a 200 stream that fails in-band
+// before any content is re-sent into the open response when
+// response_stream.endpoint_stream_resend is on (stream_endpoint_resend.go).
+// Both count against the same bound.
 //
 // The history the pick was sent carries the reasoning its host family can
 // read (guardHistoryReasoning), signed or encrypted for that family alone. A
@@ -493,8 +496,13 @@ func (r *OpenAIRouter) endpointResendOnResponseHeaders(
 	if trigger == "" || len(tags) == 0 {
 		return nil
 	}
-	// One turn re-sends once: its calls are made here, not by a later hop.
+	// One turn re-sends once: its calls are made here, not by a later hop,
+	// nor by the in-band re-send (stream_endpoint_resend.go), whose plan the
+	// re-send's whole-body reply could never use.
 	ctx.RaylineARCEndpointResend = nil
+	if hold := ctx.HostRetry; hold != nil && hold.endpoint != nil {
+		ctx.HostRetry = nil
+	}
 	received := time.Now()
 	budget, skipped := r.flexResendBudget()
 	fields := map[string]interface{}{
@@ -535,20 +543,7 @@ func (r *OpenAIRouter) endpointResendOnResponseHeaders(
 		// Its pin, and its reasoning controls, which a stripped call may have
 		// dropped with its reasoning: its line states what it carried.
 		recordDispatchedControls(ctx, resend.call.body)
-		if resend.body != nil {
-			strip := map[string]interface{}{
-				"request_id": ctx.RequestID, "model": plan.dispatch.logicalModel,
-				"from_endpoint": plan.picked, "to_endpoint": resend.tag,
-				"from_host_family": signatureHostFamily(plan.picked), "to_host_family": signatureHostFamily(resend.tag),
-				"wire_format": plan.dispatch.targetFormat, "stripped": resend.stripped.stripped,
-				"thinking_disabled": resend.stripped.thinkingDisabled,
-			}
-			if trace := ctx.VSRRaylineARC; trace != nil {
-				strip["episode_id_hash"] = trace.EpisodeIDHash
-				strip["policy_action_id"] = trace.PolicyActionID
-			}
-			logging.ComponentEvent("extproc", "encrypted_reasoning_strip", strip)
-		}
+		logEncryptedReasoningStrip(ctx, plan, resend)
 		result = callFlexTwin(ctx, resend.call, r.flexResendBodyLimit(), deadline)
 		// A refused re-send's row names its own provider ids.
 		ctx.UpstreamCallIDs = result.ids
@@ -580,4 +575,25 @@ func (r *OpenAIRouter) endpointResendOnResponseHeaders(
 	addEndpointPickFields(fields, ctx)
 	logging.ComponentEvent("extproc", "endpoint_resend", fields)
 	return r.serveResent(ctx, plan.dispatch.logicalModel, result)
+}
+
+// logEncryptedReasoningStrip logs a re-send whose body had the pick's signed
+// and encrypted reasoning stripped (encrypted_reasoning_strip); a re-send
+// that went with the history as sent logs nothing.
+func logEncryptedReasoningStrip(ctx *RequestContext, plan *endpointResendPlan, resend endpointResendCall) {
+	if resend.body == nil {
+		return
+	}
+	strip := map[string]interface{}{
+		"request_id": ctx.RequestID, "model": plan.dispatch.logicalModel,
+		"from_endpoint": plan.picked, "to_endpoint": resend.tag,
+		"from_host_family": signatureHostFamily(plan.picked), "to_host_family": signatureHostFamily(resend.tag),
+		"wire_format": plan.dispatch.targetFormat, "stripped": resend.stripped.stripped,
+		"thinking_disabled": resend.stripped.thinkingDisabled,
+	}
+	if trace := ctx.VSRRaylineARC; trace != nil {
+		strip["episode_id_hash"] = trace.EpisodeIDHash
+		strip["policy_action_id"] = trace.PolicyActionID
+	}
+	logging.ComponentEvent("extproc", "encrypted_reasoning_strip", strip)
 }

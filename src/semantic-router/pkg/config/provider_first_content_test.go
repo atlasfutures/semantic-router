@@ -135,3 +135,37 @@ func TestNegativeArmIdleSecIsRefused(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+// response_stream.endpoint_stream_resend is a known canonical key, off by
+// default, and survives the canonical export.
+func TestEndpointStreamResendLoadsAndIsOffByDefault(t *testing.T) {
+	parsed, err := ParseYAMLBytes([]byte(providerPreferencesConfigYAML("")))
+	if err != nil {
+		t.Fatalf("ParseYAMLBytes: %v", err)
+	}
+	if parsed.ResponseStreamEndpointStreamResend {
+		t.Fatal("endpoint_stream_resend is on by default")
+	}
+	source := providerPreferencesConfigYAML("") + `global:
+  router:
+    response_stream:
+      endpoint_stream_resend: true
+`
+	parsed, err = ParseYAMLBytes([]byte(source))
+	if err != nil {
+		t.Fatalf("ParseYAMLBytes: %v", err)
+	}
+	if !parsed.ResponseStreamEndpointStreamResend {
+		t.Fatal("response_stream.endpoint_stream_resend did not load")
+	}
+	var raw map[string]interface{}
+	if err := yamlv3.Unmarshal([]byte(source), &raw); err != nil {
+		t.Fatalf("unmarshal raw canonical config: %v", err)
+	}
+	if warnings := collectUnknownFields(raw, reflect.TypeOf(CanonicalConfig{})); len(warnings) != 0 {
+		t.Fatalf("the key is not a known canonical key: %v", warnings)
+	}
+	if !CanonicalConfigFromRouterConfig(parsed).Global.Router.ResponseStream.EndpointStreamResend {
+		t.Fatal("endpoint_stream_resend was dropped by the canonical export")
+	}
+}

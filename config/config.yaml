@@ -2323,6 +2323,13 @@ global:
       # 2 s (the error's own delay when one is reported, at most 10 s).
       # Applies only where host retry is on for the arm. Off by default.
       single_host_resend: false
+      # Re-send a streamed ARC turn whose picked OpenRouter endpoint answered
+      # 200 and then sent an in-band error before any content, on the arm's
+      # next endpoints (at most two more, shared with the status re-send).
+      # The stream's opening frames are held until the first content. A
+      # first-content stall is not a trigger. For a turn that picked an
+      # endpoint it takes the place of host retry. Off by default.
+      endpoint_stream_resend: false
       # How long a discount endpoint's standard re-send (standard_twin) may
       # take. It must stay below the ext_proc message_timeout, which bounds
       # how long Envoy waits for the re-send's answer. 0 selects 55 s (below
