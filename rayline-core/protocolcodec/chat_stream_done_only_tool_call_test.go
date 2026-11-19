@@ -4,35 +4,21 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
 )
 
-// responsesToolCallStream is a Responses provider stream of one function call
-// to exec_command. With deltas, its arguments arrive as one
-// function_call_arguments.delta before the done event; without, only in the
-// done event, as some local servers (LM Studio) stream them.
-func responsesToolCallStream(deltas bool) string {
-	frame := func(event, data string) string { return "event: " + event + "\ndata: " + data + "\n\n" }
-	frames := []string{
-		frame("response.created", `{"type":"response.created","sequence_number":0,"response":{"id":"resp_1","object":"response","created_at":100,"model":"local-model","status":"in_progress","output":[]}}`),
-		frame("response.output_item.added", `{"type":"response.output_item.added","sequence_number":1,"output_index":0,"item":{"id":"fc_1","type":"function_call","status":"in_progress","arguments":"","call_id":"call_1","name":"exec_command"}}`),
-	}
-	sequence := 2
+// doneOnlyOrStreamedCall is a Responses stream of one get_time call, opened
+// with empty arguments, whose arguments arrive as one delta or, as some
+// local servers (LM Studio) stream them, only in the done event.
+func doneOnlyOrStreamedCall(deltas bool) string {
+	const arguments = `{"city":"Paris"}`
 	if deltas {
-		frames = append(frames, frame("response.function_call_arguments.delta", `{"type":"response.function_call_arguments.delta","sequence_number":2,"item_id":"fc_1","output_index":0,"delta":"{\"cmd\":\"cat notes.txt\"}"}`))
-		sequence = 3
+		return responsesCallStream("", []string{arguments}, arguments)
 	}
-	number := strconv.Itoa
-	frames = append(frames,
-		frame("response.function_call_arguments.done", `{"type":"response.function_call_arguments.done","sequence_number":`+number(sequence)+`,"item_id":"fc_1","output_index":0,"name":"exec_command","arguments":"{\"cmd\":\"cat notes.txt\"}"}`),
-		frame("response.output_item.done", `{"type":"response.output_item.done","sequence_number":`+number(sequence+1)+`,"output_index":0,"item":{"id":"fc_1","type":"function_call","status":"completed","arguments":"{\"cmd\":\"cat notes.txt\"}","call_id":"call_1","name":"exec_command"}}`),
-		frame("response.completed", `{"type":"response.completed","sequence_number":`+number(sequence+2)+`,"response":{"id":"resp_1","object":"response","created_at":100,"model":"local-model","status":"completed","output":[{"id":"fc_1","type":"function_call","status":"completed","arguments":"{\"cmd\":\"cat notes.txt\"}","call_id":"call_1","name":"exec_command"}],"usage":{"input_tokens":10,"output_tokens":5,"total_tokens":15}}}`),
-	)
-	return strings.Join(frames, "")
+	return responsesCallStream("", nil, arguments)
 }
 
 type chatStreamedCall struct {
@@ -110,10 +96,10 @@ func chatStreamToolCalls(t *testing.T, body string) (map[int]*chatStreamedCall, 
 func TestChatClientGetsAToolCallStreamedWithoutArgumentDeltas(t *testing.T) {
 	for name, deltas := range map[string]bool{"done event only": false, "argument deltas": true} {
 		t.Run(name, func(t *testing.T) {
-			calls, finish := chatStreamToolCalls(t, responsesToolCallStream(deltas))
+			calls, finish := chatStreamToolCalls(t, doneOnlyOrStreamedCall(deltas))
 			call := calls[0]
-			if len(calls) != 1 || call == nil || call.id != "call_1" || call.name != "exec_command" || call.arguments != `{"cmd":"cat notes.txt"}` {
-				t.Fatalf("tool calls = %+v, want one exec_command call_1 with its arguments once", calls)
+			if len(calls) != 1 || call == nil || call.id != "call_1" || call.name != "get_time" || call.arguments != `{"city":"Paris"}` {
+				t.Fatalf("tool calls = %+v, want one get_time call_1 with its arguments once", calls)
 			}
 			if finish != "tool_calls" {
 				t.Fatalf("finish_reason = %q, want tool_calls", finish)
@@ -128,7 +114,7 @@ func TestChatClientGetsAToolCallStreamedWithoutArgumentDeltas(t *testing.T) {
 func TestDoneOnlyToolCallCountsAsPublishedOutput(t *testing.T) {
 	for name, deltas := range map[string]bool{"done event only": false, "argument deltas": true} {
 		t.Run(name, func(t *testing.T) {
-			body, _, found := strings.Cut(responsesToolCallStream(deltas), "event: response.completed")
+			body, _, found := strings.Cut(doneOnlyOrStreamedCall(deltas), "event: response.completed")
 			if !found {
 				t.Fatal("the stream has no response.completed event")
 			}

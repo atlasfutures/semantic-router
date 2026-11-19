@@ -208,6 +208,7 @@ func TestConflictingToolArgumentsAreStillRefused(t *testing.T) {
 	cases := map[string]string{
 		"deltas then other done arguments":     responsesCallStream("", []string{`{"city":"Paris"}`}, `{"city":"Rome"}`),
 		"added arguments then other done ones": responsesCallStream(`{"city":"Paris"}`, nil, `{"city":"Rome"}`),
+		"placeholder, deltas, other done ones": responsesCallStream("{}", []string{`{"city":"Paris"}`}, `{"city":"Rome"}`),
 	}
 	for name, body := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -250,7 +251,8 @@ func TestAnthropicZeroArgumentCallRoundTripsThroughResponsesToChat(t *testing.T)
 		t.Fatalf("Responses to Chat refused: %v\n%s", err, responses)
 	}
 	calls := assembledToolArguments(t, llmprotocol.OpenAIChatV1, written)
-	if len(calls) != 1 || calls[0] != "{}" {
-		t.Fatalf("Chat client assembled %q, want one call with {}\n%s", calls, written)
+	if len(calls) != 1 {
+		t.Fatalf("Chat client assembled %q, want one call\n%s", calls, written)
 	}
+	requireSameJSONObject(t, calls[0], "{}")
 }
