@@ -172,6 +172,16 @@ func TestChatStreamFiltersRestateAStopFinishAfterAToolCall(t *testing.T) {
 		"tool call, finish_reason stop, native": {chatToolCallStreamUnder("stop", "stop"), strings.Replace(chatToolCallStreamUnder("stop", "stop"), `"finish_reason":"stop"`, `"finish_reason":"tool_calls"`, 1)},
 		"tool call, finish_reason tool_calls":   {chatToolCallStreamUnder("tool_calls", ""), chatToolCallStreamUnder("tool_calls", "")},
 		"text, finish_reason stop":              {chatTextStreamUnderStop, chatTextStreamUnderStop},
+		// A trailing chunk repeating "stop" repeats what the client was
+		// first sent: tool_calls after a restated stop, length after length.
+		"tool call, stop, trailing stop": {
+			withTrailingStop(chatToolCallStreamUnder("stop", "")),
+			strings.ReplaceAll(withTrailingStop(chatToolCallStreamUnder("stop", "")), `"finish_reason":"stop"`, `"finish_reason":"tool_calls"`),
+		},
+		"tool call, length, trailing stop": {
+			withTrailingStop(chatToolCallStreamUnder("length", "")),
+			strings.ReplaceAll(withTrailingStop(chatToolCallStreamUnder("length", "")), `"finish_reason":"stop"`, `"finish_reason":"length"`),
+		},
 	} {
 		for _, readSize := range []int{len(run.stream), 7, 1} {
 			filter := NewChatPassthroughStreamFilter(1 << 20)
@@ -239,4 +249,29 @@ func chatStreamJSON(t *testing.T, stream string) []any {
 		frames = append(frames, decoded)
 	}
 	return frames
+}
+
+// withTrailingStop inserts, before [DONE], the trailing chunk OpenRouter
+// sends: an empty delta repeating finish_reason "stop".
+func withTrailingStop(stream string) string {
+	return strings.Replace(stream, "data: [DONE]", `data: {"id":"gen-fixture","object":"chat.completion.chunk","created":1,"model":"m",`+
+		`"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`+"\n\ndata: [DONE]", 1)
+}
+
+// With several choices the neutral response holds one stop for all of them,
+// so a tool call in the first does not relabel the others: the stops stay as
+// the upstream stated them and the body is handed back as it is.
+func TestABufferedChatToolCallBesideOtherChoicesKeepsTheirStops(t *testing.T) {
+	body := []byte(`{"id":"gen-fixture","object":"chat.completion","created":1,"model":"m","choices":[{"index":0,` +
+		`"message":{"role":"assistant","content":null,"tool_calls":[{"id":"call_fixture","type":"function",` +
+		`"function":{"name":"bash","arguments":"{\"command\":\"ls\"}"}}]},"finish_reason":"stop"},` +
+		`{"index":1,"message":{"role":"assistant","content":"Done."},"finish_reason":"stop"}],` +
+		`"usage":{"prompt_tokens":92,"completion_tokens":14,"total_tokens":106}}`)
+	response, _, _, err := NewBuiltinEngine().DecodeResponse(llmprotocol.OpenAIChatV1, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.StopReason != llmprotocol.StopEndTurn || UpstreamBodyMisstatesStop(llmprotocol.OpenAIChatV1, response) {
+		t.Fatalf("stop = %q, misstated = %v; want end_turn, false", response.StopReason, UpstreamBodyMisstatesStop(llmprotocol.OpenAIChatV1, response))
+	}
 }

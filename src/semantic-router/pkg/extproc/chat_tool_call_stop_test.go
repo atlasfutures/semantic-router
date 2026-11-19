@@ -71,3 +71,25 @@ func chatToolCallStopContext(client llmprotocol.WireFormat, request *llmprotocol
 		StartTime: time.Now(), TraceContext: context.Background(), UpstreamStatusCode: 200,
 	}
 }
+
+// A same-format stream whose tool call ended on "length" and whose trailing
+// chunk repeats "stop" never tells the client "tool_calls": the repeat keeps
+// the first reason, so the cut call is not run.
+func TestASameFormatChatStreamRepeatingStopAfterALengthKeepsTheLength(t *testing.T) {
+	chunk := func(delta, finish string) string {
+		return `data: {"id":"gen-e2e","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":` +
+			delta + `,"finish_reason":` + finish + `}]}` + "\n\n"
+	}
+	stream := chunk(`{"role":"assistant","tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"bash","arguments":"{\"command\":\"ls\"}"}}]}`, "null") +
+		chunk(`{}`, `"length"`) + chunk(`{}`, `"stop"`) + "data: [DONE]\n\n"
+	includeUsage := true
+	ctx := chatToolCallStopContext(llmprotocol.OpenAIChatV1, &llmprotocol.Request{
+		Generation: 1, Model: "public-model", Stream: true,
+		StreamOptions: llmprotocol.StreamOptions{IncludeUsage: &includeUsage},
+	})
+	response := (&OpenAIRouter{}).handleSemanticStreamingResponseBody([]byte(stream), true, ctx)
+	body := string(response.GetResponseBody().GetResponse().GetBodyMutation().GetBody())
+	require.Equal(t, 2, strings.Count(body, `"finish_reason":"length"`), body)
+	require.NotContains(t, body, `"finish_reason":"tool_calls"`)
+	require.NotContains(t, body, `"finish_reason":"stop"`)
+}

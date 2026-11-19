@@ -25,8 +25,15 @@ type ChatUsageStreamFilter struct {
 	failure         error
 	finalized       bool
 	keepUsage       bool
-	// toolCall is whether a frame so far carried a tool call delta.
+	finish          chatFinishState
+}
+
+// chatFinishState is what restateChatFinish remembers across frames: whether
+// a frame carried a tool call delta, and the finish_reason the client was
+// first sent, which a trailing repeat of "stop" is kept consistent with.
+type chatFinishState struct {
 	toolCall bool
+	first    string
 }
 
 func NewChatUsageStreamFilter(limit int) *ChatUsageStreamFilter {
@@ -84,7 +91,7 @@ func (filter *ChatUsageStreamFilter) Finalize() ([]byte, error) {
 func (filter *ChatUsageStreamFilter) filterFrames(frames [][]byte) ([]byte, error) {
 	var output bytes.Buffer
 	for _, frame := range frames {
-		filtered, keep, hasData, terminal, err := filterChatUsageFrame(frame, filter.framer.limit, filter.frames == 0, filter.keepUsage, &filter.toolCall)
+		filtered, keep, hasData, terminal, err := filterChatUsageFrame(frame, filter.framer.limit, filter.frames == 0, filter.keepUsage, &filter.finish)
 		filter.frames++
 		if err != nil {
 			return nil, filter.poison(err)
@@ -114,7 +121,7 @@ func (filter *ChatUsageStreamFilter) poison(err error) error {
 	return filter.failure
 }
 
-func filterChatUsageFrame(frame []byte, limit int, first, keepUsage bool, toolCall *bool) ([]byte, bool, bool, bool, error) {
+func filterChatUsageFrame(frame []byte, limit int, first, keepUsage bool, finish *chatFinishState) ([]byte, bool, bool, bool, error) {
 	parsed, err := parseSSEFrameAtPosition(frame, limit, first)
 	if err != nil {
 		return nil, false, false, false, err
@@ -129,7 +136,7 @@ func filterChatUsageFrame(frame []byte, limit int, first, keepUsage bool, toolCa
 	if err := decodeProviderWire(parsed.Data, &object, llmprotocol.DefaultPolicy()); err != nil {
 		return nil, false, true, false, err
 	}
-	restated, err := restateChatFinish(object, toolCall)
+	restated, err := restateChatFinish(object, finish)
 	if err != nil {
 		return nil, false, true, false, err
 	}
@@ -173,19 +180,21 @@ func filterChatUsageFrame(frame []byte, limit int, first, keepUsage bool, toolCa
 // restateChatFinish sets the finish_reason each choice states to the one the
 // stream decoder reads (decodeChatChoiceStop, chatToolCallStop): "length"
 // beside a native length reason, and "tool_calls" for a "stop" that ends a
-// stream which carried a tool call. toolCall records whether one has been
-// seen; a stream has one choice (the decoder refuses more). It reports
-// whether it changed anything.
-func restateChatFinish(object map[string]json.RawMessage, toolCall *bool) (bool, error) {
+// stream which carried a tool call. A "stop" repeated by a trailing chunk
+// after that repeats what the client was first sent, as the decoder keeps
+// the first reason. A stream has one choice (the decoder refuses more). It
+// reports whether it changed anything.
+func restateChatFinish(object map[string]json.RawMessage, state *chatFinishState) (bool, error) {
 	rawChoices, exists := object["choices"]
 	if !exists {
 		return false, nil
 	}
-	// Most frames are text deltas: only one that may name a native reason,
-	// open the first tool call, or end a stream that carried one is read.
+	// Most frames are text deltas: only one that may name a native reason
+	// or open the first tool call is read, and after a tool call, every
+	// frame until the first finish and then any that may repeat "stop".
 	if !bytes.Contains(rawChoices, []byte("native_finish_reason")) &&
-		(*toolCall || !bytes.Contains(rawChoices, []byte(`"tool_calls"`))) &&
-		(!*toolCall || !bytes.Contains(rawChoices, []byte(`"stop"`))) {
+		(state.toolCall || !bytes.Contains(rawChoices, []byte(`"tool_calls"`))) &&
+		(!state.toolCall || state.first != "" && !bytes.Contains(rawChoices, []byte(`"stop"`))) {
 		return false, nil
 	}
 	var choices []map[string]json.RawMessage
@@ -198,7 +207,7 @@ func restateChatFinish(object map[string]json.RawMessage, toolCall *bool) (bool,
 			ToolCalls []json.RawMessage `json:"tool_calls"`
 		}
 		_ = json.Unmarshal(choice["delta"], &delta)
-		*toolCall = *toolCall || len(delta.ToolCalls) > 0
+		state.toolCall = state.toolCall || len(delta.ToolCalls) > 0
 		var finish, native *string
 		_ = json.Unmarshal(choice["finish_reason"], &finish)
 		_ = json.Unmarshal(choice["native_finish_reason"], &native)
@@ -209,9 +218,16 @@ func restateChatFinish(object map[string]json.RawMessage, toolCall *bool) (bool,
 				choice["finish_reason"] = json.RawMessage(`"length"`)
 				changed = true
 			}
-		case *toolCall && *finish == "stop":
-			choice["finish_reason"] = json.RawMessage(`"tool_calls"`)
+		case state.toolCall && *finish == "stop":
+			restated := state.first
+			if restated == "" {
+				restated = "tool_calls"
+			}
+			choice["finish_reason"], _ = json.Marshal(restated)
 			changed = true
+		}
+		if finish != nil && state.first == "" {
+			_ = json.Unmarshal(choice["finish_reason"], &state.first)
 		}
 	}
 	if !changed {

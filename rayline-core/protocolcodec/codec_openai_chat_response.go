@@ -113,7 +113,10 @@ func decodeChatChoices(wire chatResponseWire, response *llmprotocol.Response, po
 				response.SourceStopReason = *choice.FinishReason
 				response.StopReason = decodeChatChoiceStop(*choice.FinishReason, choice.NativeFinishReason)
 			}
-			if responsesOutputHasToolCall([]llmprotocol.OutputItem{item}) {
+			// The neutral response has one stop for every choice, so with
+			// alternatives the choice's own stop is left as it was rather
+			// than imposed on the others.
+			if len(choices) == 1 && responsesOutputHasToolCall([]llmprotocol.OutputItem{item}) {
 				response.StopReason = chatToolCallStop(response.StopReason)
 			}
 			// A message with no content (null, or "") under a length stop or
