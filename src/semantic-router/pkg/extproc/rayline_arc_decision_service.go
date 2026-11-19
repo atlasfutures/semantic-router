@@ -265,6 +265,9 @@ func (service *raylineARCDecisionService) RouteDecision(
 		decisionFacts.CacheTrace = trace.RouteCacheTrace
 		decisionFacts.Receipt = trace.RouteReceipt
 		decisionFacts.Signals = trace.Signals
+		if request.Routing.ExecutionV2 != nil {
+			restorePlainStandIns(&decisionFacts, request.Routing.ExecutionV2.StandIns)
+		}
 	}
 	// The episode is reported only when the caller joined one. An ephemeral
 	// consult scored against a fresh in-memory episode, so its turn index and

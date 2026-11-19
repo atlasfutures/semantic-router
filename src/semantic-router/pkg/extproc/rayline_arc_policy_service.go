@@ -101,6 +101,9 @@ type policyServiceScorer struct {
 	workers     []raylinearc.WorkerManifest
 	bindings    map[string]policyBinding
 	actionOrder []string
+	// plainStandIns are the plain actions this cell lacks that a v2 lookup's
+	// target is scored as another action for (rayline_arc_plain_stand_in.go).
+	plainStandIns map[string]plainStandIn
 	// effortOverrides is the cell's dispatch_effort_overrides, by worker.
 	effortOverrides map[string]string
 	// fallback is ADR 0120's fallback: excluded models leave the offer, and
@@ -291,6 +294,7 @@ func newPolicyServiceScorer(
 		}
 		scorer.actionOrder = append(scorer.actionOrder, binding.ActionID)
 	}
+	scorer.plainStandIns = plainStandInsOf(policy, scorer.bindings)
 	scorer.armOffered = policyArmOffered(policy.PackageStageOneOfferedModels(), scorer.bindings, len(scorer.workers))
 	if fallback := policy.PackageFallbackActionID(); fallback != "" {
 		if _, bound := scorer.bindings[fallback]; bound {
@@ -864,6 +868,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	if routeControls != nil {
 		executionV2 = routeControls.ExecutionV2
 	}
+	applyPlainStandIns(executionV2, scorer, arcContext.EpisodeIDHash)
 	unknownTargets, class := applyRoutePolicyAndExecutionV2(&request, scorer, routeControls)
 	if class != "" {
 		logging.ComponentErrorEvent("extproc", "rayline_arc_policy_service_failed", map[string]interface{}{
