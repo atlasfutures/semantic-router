@@ -1,0 +1,36 @@
+event: response.created
+data: {"type":"response.created","response":{"id":"resp_1","object":"response","created_at":1795010166,"completed_at":null,"status":"in_progress","incomplete_details":null,"model":"local-model","previous_response_id":null,"instructions":null,"output":[],"error":null,"tools":[{"type":"function","name":"exec_command","parameters":{"type":"object","properties":{"cmd":{"type":"string"}},"required":["cmd"]},"strict":false,"description":"Runs a command in a PTY. (Trimmed.)"}],"tool_choice":"auto","truncation":"auto","parallel_tool_calls":true,"text":{"format":{"type":"text"}},"top_p":0.95,"presence_penalty":0,"frequency_penalty":1.1,"top_logprobs":0,"temperature":1,"reasoning":{"summary":null,"effort":null},"usage":null,"max_output_tokens":2048,"max_tool_calls":null,"store":false,"background":false,"service_tier":"default","metadata":{},"safety_identifier":null,"prompt_cache_key":null},"sequence_number":0}
+
+event: response.in_progress
+data: {"type":"response.in_progress","response":{"id":"resp_1","object":"response","created_at":1795010166,"completed_at":null,"status":"in_progress","incomplete_details":null,"model":"local-model","previous_response_id":null,"instructions":null,"output":[],"error":null,"tools":[{"type":"function","name":"exec_command","parameters":{"type":"object","properties":{"cmd":{"type":"string"}},"required":["cmd"]},"strict":false,"description":"Runs a command in a PTY. (Trimmed.)"}],"tool_choice":"auto","truncation":"auto","parallel_tool_calls":true,"text":{"format":{"type":"text"}},"top_p":0.95,"presence_penalty":0,"frequency_penalty":1.1,"top_logprobs":0,"temperature":1,"reasoning":{"summary":null,"effort":null},"usage":null,"max_output_tokens":2048,"max_tool_calls":null,"store":false,"background":false,"service_tier":"default","metadata":{},"safety_identifier":null,"prompt_cache_key":null},"sequence_number":1}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","output_index":0,"item":{"id":"rs_1","type":"reasoning","status":"in_progress","summary":[],"content":[]},"sequence_number":2}
+
+event: response.content_part.added
+data: {"type":"response.content_part.added","item_id":"rs_1","output_index":0,"content_index":0,"part":{"type":"reasoning_text","text":""},"sequence_number":3}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","item_id":"rs_1","output_index":0,"content_index":0,"delta":"Run cat to read the file.","sequence_number":4}
+
+event: response.reasoning_text.done
+data: {"type":"response.reasoning_text.done","item_id":"rs_1","output_index":0,"content_index":0,"text":"Run cat to read the file.","sequence_number":5}
+
+event: response.content_part.done
+data: {"type":"response.content_part.done","item_id":"rs_1","output_index":0,"content_index":0,"part":{"type":"reasoning_text","text":"Run cat to read the file."},"sequence_number":6}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","output_index":0,"item":{"id":"rs_1","type":"reasoning","status":"completed","summary":[],"content":[{"type":"reasoning_text","text":"Run cat to read the file."}]},"sequence_number":7}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","output_index":1,"item":{"id":"fc_1","type":"function_call","status":"in_progress","arguments":"","call_id":"call_1","name":"exec_command"},"sequence_number":8}
+
+event: response.function_call_arguments.done
+data: {"type":"response.function_call_arguments.done","item_id":"fc_1","output_index":1,"arguments":"{\"cmd\":\"cat notes.txt\"}","sequence_number":9}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","output_index":1,"item":{"id":"fc_1","type":"function_call","status":"completed","arguments":"{\"cmd\":\"cat notes.txt\"}","call_id":"call_1","name":"exec_command"},"sequence_number":10}
+
+event: response.completed
+data: {"type":"response.completed","response":{"id":"resp_1","object":"response","created_at":1795010166,"completed_at":1795010192,"status":"completed","incomplete_details":null,"model":"local-model","previous_response_id":null,"instructions":null,"output":[{"id":"rs_1","type":"reasoning","status":"completed","summary":[],"content":[{"type":"reasoning_text","text":"Run cat to read the file."}]},{"id":"fc_1","type":"function_call","status":"completed","arguments":"{\"cmd\":\"cat notes.txt\"}","call_id":"call_1","name":"exec_command"}],"error":null,"tools":[{"type":"function","name":"exec_command","parameters":{"type":"object","properties":{"cmd":{"type":"string"}},"required":["cmd"]},"strict":false,"description":"Runs a command in a PTY. (Trimmed.)"}],"tool_choice":"auto","truncation":"auto","parallel_tool_calls":true,"text":{"format":{"type":"text"}},"top_p":0.95,"presence_penalty":0,"frequency_penalty":1.1,"top_logprobs":0,"temperature":1,"reasoning":{"summary":null,"effort":null},"usage":{"input_tokens":7052,"output_tokens":78,"total_tokens":7130,"input_tokens_details":{"cached_tokens":6912},"output_tokens_details":{"reasoning_tokens":78}},"max_output_tokens":2048,"max_tool_calls":null,"store":false,"background":false,"service_tier":"default","metadata":{},"safety_identifier":null,"prompt_cache_key":null},"sequence_number":11}
+

@@ -1,0 +1,147 @@
+{
+  "model": "gpt-5.5",
+  "stream": true,
+  "input": [
+    {
+      "type": "message",
+      "id": "msg_0000",
+      "role": "developer",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "You are a coding agent running in the Codex CLI. (Trimmed.)"
+        }
+      ]
+    },
+    {
+      "type": "message",
+      "id": "msg_0001",
+      "role": "developer",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "<skills_instructions>(Trimmed.)</skills_instructions>"
+        }
+      ]
+    },
+    {
+      "type": "message",
+      "id": "msg_0002",
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "<environment_context>\n  <cwd>/workspace/project</cwd>\n</environment_context>"
+        }
+      ]
+    },
+    {
+      "type": "message",
+      "id": "msg_0003",
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "Run the shell command: cat notes.txt   then tell me the word it printed."
+        }
+      ]
+    },
+    {
+      "type": "reasoning",
+      "id": "rs_1",
+      "summary": [],
+      "content": [
+        {
+          "type": "reasoning_text",
+          "text": "Run cat to read the file. (Trimmed.)"
+        }
+      ],
+      "encrypted_content": null
+    },
+    {
+      "type": "function_call",
+      "status": "completed",
+      "id": "fc_1",
+      "name": "exec_command",
+      "arguments": "{\"cmd\":\"cat notes.txt\"}",
+      "call_id": "call_1"
+    },
+    {
+      "type": "function_call_output",
+      "id": "fco_0001",
+      "call_id": "call_1",
+      "output": "Process exited with code 0\nOutput:\nalpha\n"
+    },
+    {
+      "type": "reasoning",
+      "id": "rs_2",
+      "summary": [],
+      "content": [
+        {
+          "type": "reasoning_text",
+          "text": "It printed alpha. (Trimmed.)"
+        }
+      ],
+      "encrypted_content": null
+    },
+    {
+      "type": "message",
+      "status": "completed",
+      "id": "msg_0004",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "output_text",
+          "text": "The word printed from `notes.txt` is \"alpha\".",
+          "annotations": [],
+          "logprobs": []
+        }
+      ]
+    },
+    {
+      "type": "message",
+      "id": "msg_0005",
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "Now say goodbye in one word."
+        }
+      ]
+    }
+  ],
+  "tools": [
+    {
+      "type": "function",
+      "name": "exec_command",
+      "description": "Runs a command in a PTY. (Trimmed.)",
+      "strict": false,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "cmd": {
+            "type": "string",
+            "description": "Shell command to execute."
+          }
+        },
+        "required": [
+          "cmd"
+        ],
+        "additionalProperties": false
+      }
+    }
+  ],
+  "tool_choice": "auto",
+  "parallel_tool_calls": true,
+  "reasoning": {
+    "summary": "auto"
+  },
+  "store": false,
+  "include": [
+    "reasoning.encrypted_content"
+  ],
+  "prompt_cache_key": "00000000-0000-7000-8000-00000000c0de",
+  "client_metadata": {
+    "session_id": "00000000-0000-7000-8000-00000000c0de"
+  }
+}

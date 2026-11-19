@@ -206,6 +206,14 @@ type llmUsageRecord struct {
 	UpstreamHost         *string `json:"upstream_host"`
 	UpstreamHostSource   *string `json:"upstream_host_source"`
 	HostAttemptStartedMS *int64  `json:"host_attempt_started_ms"`
+	// StreamHoldMS is how long a streamed turn's frames were held from the
+	// client before it was sent one (a host retry, an endpoint re-send or a
+	// refusal re-serve holds them until the first content): the
+	// milliseconds from the first frame held to the first frame the client
+	// was sent after it, on the line of the call whose frames reached the
+	// client. Null when the turn held nothing, and on the line of a call
+	// that was replaced.
+	StreamHoldMS *int64 `json:"stream_hold_ms"`
 	// RefusalReserve marks the calls of a streamed ARC turn refused before
 	// any text or tool call and re-served in place on the policy's next
 	// choice (rayline_arc_refusal_reserve.go): refused_attempt on each
@@ -444,6 +452,7 @@ func (r *OpenAIRouter) newLLMUsageRecord(ctx *RequestContext, usage responseUsag
 	if state := ctx.SemanticStreamState; state != nil {
 		record.UpstreamResponseID = nonEmpty(state.upstreamResponseID)
 	}
+	record.StreamHoldMS = streamHoldMillis(ctx)
 	addHostRetryFields(&record, ctx)
 	addRefusalReserveFields(&record, ctx)
 	addUsageRecordARCAttribution(&record, ctx)
@@ -635,4 +644,21 @@ func nonEmpty(value string) *string {
 		return nil
 	}
 	return &value
+}
+
+// streamHoldMillis is the turn's hold so far (llm_usage stream_hold_ms): to
+// the first frame the client was sent after it, or to now when the frames
+// held go out with the reply this line is written for. Nil when nothing was
+// held.
+func streamHoldMillis(ctx *RequestContext) *int64 {
+	plan := ctx.HostRetry
+	if plan == nil || plan.holdStarted.IsZero() {
+		return nil
+	}
+	released := plan.holdReleased
+	if released.IsZero() {
+		released = time.Now()
+	}
+	held := released.Sub(plan.holdStarted).Milliseconds()
+	return &held
 }

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -46,6 +47,11 @@ func TestResponsesRouteThatOnlyChangesTheModelSendsTheClientBytes(t *testing.T) 
 		"resent assistant output_text": `{"model":"client-model","input":[{"type":"message","role":"user","content":"List the files."},` +
 			`{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Done.","annotations":[]}]},` +
 			`{"type":"message","role":"user","content":"Thanks."}]}`,
+		"resent assistant output_text without annotations": `{"model":"client-model","input":[{"type":"message","role":"user","content":"List the files."},` +
+			`{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Done."}]},` +
+			`{"type":"message","role":"user","content":"Thanks."}]}`,
+		"string assistant content": `{"model":"client-model","input":[{"type":"message","role":"user","content":"List the files."},` +
+			`{"type":"message","role":"assistant","content":"Done."},{"type":"message","role":"user","content":"Thanks."}]}`,
 		"string input": `{"model":"client-model","input":"List the files.","store":false}`,
 		"string tool output": `{"model":"client-model","input":[{"type":"message","role":"user","content":"Run ls."},` +
 			`{"type":"function_call","call_id":"c1","name":"exec","arguments":"{\"cmd\":\"ls\"}"},` +
@@ -173,6 +179,32 @@ func TestResponsesRouteNeverReplaysWhatChanged(t *testing.T) {
 		got := routeResponsesBody(t, body, "routed-model", nil)
 		if got == withModel(body, "client-model", "routed-model") {
 			t.Fatalf("a reordered body replayed the client bytes:\n%s", got)
+		}
+	})
+	// An assistant message of input_text parts is valid in the Responses
+	// schema, but strict servers refuse it; the client's bytes must not be
+	// replayed past the encoder's output_text.
+	t.Run("assistant input_text the encoder writes as output_text", func(t *testing.T) {
+		body := `{"model":"client-model","input":[{"type":"message","role":"user","content":"Hi"},` +
+			`{"type":"message","role":"assistant","content":[{"type":"input_text","text":"Hello."}]},` +
+			`{"type":"message","role":"user","content":"Bye"}]}`
+		got := routeResponsesBody(t, body, "routed-model", nil)
+		assistant := itemsOfType(responsesInputItems(t, got), "message", "assistant")
+		want := jsonValue(t, `[{"type":"output_text","text":"Hello.","annotations":[]}]`)
+		if len(assistant) != 1 || !reflect.DeepEqual(assistant[0]["content"], want) {
+			t.Fatalf("the assistant input_text travelled:\n%s", got)
+		}
+	})
+	// Likewise a tool output sent as a one-part list: strict servers refuse a
+	// list there, so the encoder's string must travel.
+	t.Run("a one-part tool output list the encoder writes as a string", func(t *testing.T) {
+		body := `{"model":"client-model","input":[{"type":"message","role":"user","content":"Run ls."},` +
+			`{"type":"function_call","call_id":"c1","name":"exec","arguments":"{}"},` +
+			`{"type":"function_call_output","call_id":"c1","output":[{"type":"input_text","text":"README.md"}]}],` +
+			`"tools":[{"type":"function","name":"exec","parameters":{"type":"object"},"strict":false}]}`
+		got := routeResponsesBody(t, body, "routed-model", nil)
+		if outputs := itemsOfType(responsesInputItems(t, got), "function_call_output", ""); len(outputs) != 1 || outputs[0]["output"] != "README.md" {
+			t.Fatalf("the tool output list travelled:\n%s", got)
 		}
 	})
 	t.Run("assistant text whose annotations the encoder drops", func(t *testing.T) {

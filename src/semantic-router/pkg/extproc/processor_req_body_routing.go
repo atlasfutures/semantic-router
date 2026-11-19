@@ -458,6 +458,9 @@ func (r *OpenAIRouter) finalizeProviderDispatchResponse(
 	r.stageThinkingSignatureRetry(ctx, dispatch, body)
 	r.stageEdgeResend(ctx, dispatch, body)
 	r.stageHostRetry(ctx, dispatch, body)
+	// After host retry: an endpoint-picked turn's in-band re-send takes its
+	// place (stream_endpoint_resend.go).
+	r.stageEndpointStreamResend(ctx, dispatch, body)
 	r.stageRefusalReserve(ctx, dispatch, body)
 	r.auditRaylineARCUpstream(body, ctx)
 	common := response.GetRequestBody().GetResponse()
