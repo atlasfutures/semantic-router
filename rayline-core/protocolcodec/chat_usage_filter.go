@@ -12,7 +12,9 @@ import (
 // opt into usage, and it states a stop at the output limit as Chat does: a
 // choice whose native_finish_reason is a length reason ends with
 // finish_reason "length", whatever label the upstream gave it (OpenRouter
-// says "tool_calls" for a call cut at the limit, which a client would run).
+// says "tool_calls" for a call cut at the limit, which a client would run),
+// and a stream that carried a tool call ends with "tool_calls" rather than
+// "stop", as the stream decoder reads it (chatToolCallStop).
 // A provider error frame is restated in its public form. It preserves every
 // other JSON field, including provider extensions, and is
 // independent from neutral semantic decoding used for accounting.
@@ -23,6 +25,8 @@ type ChatUsageStreamFilter struct {
 	failure         error
 	finalized       bool
 	keepUsage       bool
+	// toolCall is whether a frame so far carried a tool call delta.
+	toolCall bool
 }
 
 func NewChatUsageStreamFilter(limit int) *ChatUsageStreamFilter {
@@ -80,7 +84,7 @@ func (filter *ChatUsageStreamFilter) Finalize() ([]byte, error) {
 func (filter *ChatUsageStreamFilter) filterFrames(frames [][]byte) ([]byte, error) {
 	var output bytes.Buffer
 	for _, frame := range frames {
-		filtered, keep, hasData, terminal, err := filterChatUsageFrame(frame, filter.framer.limit, filter.frames == 0, filter.keepUsage)
+		filtered, keep, hasData, terminal, err := filterChatUsageFrame(frame, filter.framer.limit, filter.frames == 0, filter.keepUsage, &filter.toolCall)
 		filter.frames++
 		if err != nil {
 			return nil, filter.poison(err)
@@ -110,7 +114,7 @@ func (filter *ChatUsageStreamFilter) poison(err error) error {
 	return filter.failure
 }
 
-func filterChatUsageFrame(frame []byte, limit int, first, keepUsage bool) ([]byte, bool, bool, bool, error) {
+func filterChatUsageFrame(frame []byte, limit int, first, keepUsage bool, toolCall *bool) ([]byte, bool, bool, bool, error) {
 	parsed, err := parseSSEFrameAtPosition(frame, limit, first)
 	if err != nil {
 		return nil, false, false, false, err
@@ -125,7 +129,7 @@ func filterChatUsageFrame(frame []byte, limit int, first, keepUsage bool) ([]byt
 	if err := decodeProviderWire(parsed.Data, &object, llmprotocol.DefaultPolicy()); err != nil {
 		return nil, false, true, false, err
 	}
-	restated, err := restateChatNativeLengthFinish(object)
+	restated, err := restateChatFinish(object, toolCall)
 	if err != nil {
 		return nil, false, true, false, err
 	}
@@ -166,12 +170,22 @@ func filterChatUsageFrame(frame []byte, limit int, first, keepUsage bool) ([]byt
 	return filtered, err == nil, true, false, err
 }
 
-// restateChatNativeLengthFinish sets finish_reason "length" on each choice
-// whose native_finish_reason is a length reason, as the stream decoder reads
-// it (decodeChatChoiceStop). It reports whether it changed anything.
-func restateChatNativeLengthFinish(object map[string]json.RawMessage) (bool, error) {
+// restateChatFinish sets the finish_reason each choice states to the one the
+// stream decoder reads (decodeChatChoiceStop, chatToolCallStop): "length"
+// beside a native length reason, and "tool_calls" for a "stop" that ends a
+// stream which carried a tool call. toolCall records whether one has been
+// seen; a stream has one choice (the decoder refuses more). It reports
+// whether it changed anything.
+func restateChatFinish(object map[string]json.RawMessage, toolCall *bool) (bool, error) {
 	rawChoices, exists := object["choices"]
-	if !exists || !bytes.Contains(rawChoices, []byte("native_finish_reason")) {
+	if !exists {
+		return false, nil
+	}
+	// Most frames are text deltas: only one that may name a native reason,
+	// open the first tool call, or end a stream that carried one is read.
+	if !bytes.Contains(rawChoices, []byte("native_finish_reason")) &&
+		(*toolCall || !bytes.Contains(rawChoices, []byte(`"tool_calls"`))) &&
+		(!*toolCall || !bytes.Contains(rawChoices, []byte(`"stop"`))) {
 		return false, nil
 	}
 	var choices []map[string]json.RawMessage
@@ -180,14 +194,25 @@ func restateChatNativeLengthFinish(object map[string]json.RawMessage) (bool, err
 	}
 	changed := false
 	for _, choice := range choices {
+		var delta struct {
+			ToolCalls []json.RawMessage `json:"tool_calls"`
+		}
+		_ = json.Unmarshal(choice["delta"], &delta)
+		*toolCall = *toolCall || len(delta.ToolCalls) > 0
 		var finish, native *string
 		_ = json.Unmarshal(choice["finish_reason"], &finish)
 		_ = json.Unmarshal(choice["native_finish_reason"], &native)
-		if finish == nil || native == nil || *finish == "length" || !chatNativeLengthReason(*native) {
-			continue
+		switch {
+		case finish == nil:
+		case native != nil && chatNativeLengthReason(*native):
+			if *finish != "length" {
+				choice["finish_reason"] = json.RawMessage(`"length"`)
+				changed = true
+			}
+		case *toolCall && *finish == "stop":
+			choice["finish_reason"] = json.RawMessage(`"tool_calls"`)
+			changed = true
 		}
-		choice["finish_reason"] = json.RawMessage(`"length"`)
-		changed = true
 	}
 	if !changed {
 		return false, nil

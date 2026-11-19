@@ -113,6 +113,9 @@ func decodeChatChoices(wire chatResponseWire, response *llmprotocol.Response, po
 				response.SourceStopReason = *choice.FinishReason
 				response.StopReason = decodeChatChoiceStop(*choice.FinishReason, choice.NativeFinishReason)
 			}
+			if responsesOutputHasToolCall([]llmprotocol.OutputItem{item}) {
+				response.StopReason = chatToolCallStop(response.StopReason)
+			}
 			// A message with no content (null, or "") under a length stop or
 			// a refusal is a reply that wrote nothing (max_tokens 1 can end
 			// that way), not an empty output item: the response carries no
@@ -370,6 +373,22 @@ func decodeChatStop(reason string) llmprotocol.StopReason {
 		return llmprotocol.StopContentFilter
 	default:
 		return llmprotocol.StopUnknown
+	}
+}
+
+// chatToolCallStop is the stop of a Chat reply that carries a completed tool
+// call. Some OpenAI-compatible servers end such a reply with finish_reason
+// "stop", or with none; an agent loop reads the stop reason, and a plain end
+// of turn beside a tool call stalls it, so the call wins, as it does for a
+// completed function_call item in the Responses decoder. Every other stop
+// stays: a call cut at the output limit ends as the length stop it is
+// (decodeChatChoiceStop), and the cut-call handling depends on that.
+func chatToolCallStop(stop llmprotocol.StopReason) llmprotocol.StopReason {
+	switch stop {
+	case llmprotocol.StopEndTurn, "":
+		return llmprotocol.StopToolCall
+	default:
+		return stop
 	}
 }
 
