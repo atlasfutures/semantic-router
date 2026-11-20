@@ -125,6 +125,10 @@ type LastReport struct {
 	Message int `json:"message"`
 	// Arm is the arm the report recorded, -1 for none.
 	Arm int `json:"arm"`
+	// Decided is the decision's ledger entry for the turn (its action and
+	// trained arm), which a correction of the turn resolves against; nil
+	// when the decision recorded none.
+	Decided *PolicyLedgerEntry `json:"decided,omitempty"`
 	// Epoch is the policy context Message is a position in.
 	Epoch int `json:"epoch"`
 	// InputTokens is the turn's encoded input tokens, as its decision
@@ -148,6 +152,11 @@ func CloneLastReport(last *LastReport) *LastReport {
 		return nil
 	}
 	cloned := *last
+	if last.Decided != nil {
+		decided := *last.Decided
+		decided.Prices = clonePriceAudit(decided.Prices)
+		cloned.Decided = &decided
+	}
 	if last.Replaced != nil {
 		replaced := ReplacedWarmth{Warmth: cloneWarmthWire(last.Replaced.Warmth)}
 		cloned.Replaced = &replaced
@@ -164,7 +173,8 @@ func (last *LastReport) validate(state *EpisodeState) error {
 		len(last.ClientReportID) > maxReportIDBytes || (last.ClientReportID != "" && last.Source != ReportSourceGateway) ||
 		last.TurnIndex > state.TurnIndex || last.Message < -1 || last.Arm < -1 || last.Arm >= len(state.Warmth) ||
 		last.InputTokens < 0 || last.Epoch < 0 ||
-		(last.Replaced != nil && (last.Source != ReportSourceClient || last.Arm < 0)) {
+		(last.Replaced != nil && (last.Source != ReportSourceClient || last.Arm < 0)) ||
+		(last.Decided != nil && (!isLowerHex64(last.Decided.ActionID) || len(last.Decided.ArmID) > maxPolicyArmIDBytes)) {
 		return errors.New("ARC episode last report is malformed")
 	}
 	return nil
@@ -286,6 +296,11 @@ func resolveReported(state *EpisodeState, report Report) (*EpisodeState, ReportO
 	if next.Policy != nil {
 		next.LastReport.Epoch = next.Policy.Epoch
 	}
+	if pending.Policy != nil {
+		decided := pending.Policy.Entry
+		decided.Prices = clonePriceAudit(decided.Prices)
+		next.LastReport.Decided = &decided
+	}
 	return next, recordedReport(ReportPendingResolved, pending.RouteID, next, run), nil
 }
 
@@ -301,30 +316,26 @@ func replaceClientReport(state *EpisodeState, report Report) (*EpisodeState, Rep
 	// current one.
 	sameContext := next.Policy != nil && last.Message >= 0 && next.Policy.Epoch == last.Epoch &&
 		next.Policy.PrefixLen == last.Message
-	var clientEntry *PolicyLedgerEntry
 	if ledger := ledgerOf(next.Policy); sameContext && len(ledger) > 0 &&
 		ledger[len(ledger)-1].Message == last.Message && ledger[len(ledger)-1].Basis == PolicyLedgerBasisReported {
-		entry := ledger[len(ledger)-1]
-		clientEntry = &entry
 		next.Policy.Ledger = ledger[:len(ledger)-1]
 	}
-	decided := ""
-	if clientEntry != nil {
-		decided = clientEntry.ActionID
+	// The correction is resolved against the decision, as the gateway's
+	// report would have been had it arrived first.
+	decided := PolicyLedgerEntry{Message: last.Message}
+	if last.Decided != nil {
+		decided = *last.Decided
+		decided.Message = last.Message
 	}
-	run := report.Run(decided)
+	run := report.Run(decided.ActionID)
 	if run.Arm >= len(next.Warmth) {
 		return state, ReportOutcome{}, errors.New("reported arm is out of range")
 	}
 	if last.Arm >= 0 && last.Arm != run.Arm && last.Replaced != nil {
 		next.Warmth[last.Arm] = warmthFromWire(last.Replaced.Warmth)
 	}
-	if sameContext && run.ActionID != "" {
-		entry := PolicyLedgerEntry{Message: last.Message, ActionID: run.ActionID, ArmID: run.ArmID, Basis: PolicyLedgerBasisReported}
-		if clientEntry != nil && clientEntry.ActionID == run.ActionID {
-			entry = *clientEntry
-		}
-		next.Policy = next.Policy.withLedgerEntry(entry, next.Policy.PrefixLen, next.Policy.PrefixDigest)
+	if entry := reportedEntry(decided, run); sameContext && entry != nil {
+		next.Policy = next.Policy.withLedgerEntry(*entry, next.Policy.PrefixLen, next.Policy.PrefixDigest)
 	}
 	next.ServedModel = run.Model
 	next.PreviousArm = nil
@@ -342,6 +353,7 @@ func replaceClientReport(state *EpisodeState, report Report) (*EpisodeState, Rep
 	}
 	next.LastReport = newLastReport(last.RouteID, report, state.TurnIndex, last.Message, run.Arm, nil)
 	next.LastReport.InputTokens, next.LastReport.Epoch = last.InputTokens, last.Epoch
+	next.LastReport.Decided = last.Decided
 	next.LastReport.ClientReportID = last.ReportID
 	return next, recordedReport(ReportClientReplaced, last.RouteID, next, run), nil
 }

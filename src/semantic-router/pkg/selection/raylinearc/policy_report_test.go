@@ -556,3 +556,20 @@ func TestClientRetryAfterAGatewayCorrectionIsRecognised(t *testing.T) {
 		t.Fatalf("the client's retry: %+v", outcome)
 	}
 }
+
+// A gateway correction resolves its model against the decision, not the
+// client's report: after a client reported another model, the gateway's
+// report of the decided model records the decided action with its trained
+// arm, as it would had it arrived first.
+func TestGatewayCorrectionResolvesAgainstTheDecision(t *testing.T) {
+	client, _ := mustApplyReport(t, pendingEpisode(t), reportOf(ReportSourceClient, "rte_1", ranOn(0, pendingActionA, "vendor/a"), nil))
+	var asked string
+	edge, outcome := mustApplyReport(t, client, reportOf(ReportSourceGateway, "rte_1", ranOn(1, pendingActionB, "vendor/b"), &asked))
+	if outcome.Reason != ReportClientReplaced || asked != pendingActionB {
+		t.Fatalf("outcome %+v, mapping asked with %q, want the decided action", outcome, asked)
+	}
+	entry := edge.Policy.Ledger[len(edge.Policy.Ledger)-1]
+	if entry.ActionID != pendingActionB || entry.ArmID != "arm-b" || entry.Basis != PolicyLedgerBasisReported {
+		t.Fatalf("entry %+v, want the decided action with its trained arm", entry)
+	}
+}
