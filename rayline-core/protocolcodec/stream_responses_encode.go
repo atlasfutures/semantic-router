@@ -192,6 +192,7 @@ func (encoder *responsesStreamEncoder) ensureResponsesOutputStarted(
 			// does, would otherwise assemble "{}" in front of them.
 			if strings.TrimSpace(item.Arguments) == "{}" {
 				item.Arguments = ""
+				encoder.placeholderCalls[key] = true
 			}
 		}
 	case responsesOutputImage:
@@ -806,6 +807,20 @@ func (encoder *responsesStreamEncoder) encodeCompletedResponsesOutput(
 		// Anthropic tool_use opens with, and the item says it is incomplete.
 		arguments = "{}"
 	}
+	var frames [][]byte
+	if open := encoder.openToolCalls[key]; encoder.placeholderCalls[key] && arguments != "" && (open == nil || open.Arguments == "") {
+		// The added item was opened empty and no delta filled it (a Claude
+		// call whose input never streamed): deliver the arguments the done
+		// event states, as the delta a client assembles them from.
+		delta, err := encoder.encodeResponsesStreamFrame(responsesEventWire{
+			Type: "response.function_call_arguments.delta", Sequence: encoder.nextWireSequence(),
+			ItemID: id, OutputIndex: responsesOutputIndex(index), Delta: arguments,
+		})
+		if err != nil {
+			return nil, nil, err
+		}
+		frames = append(frames, delta)
+	}
 	done := responsesEventWire{
 		Type: "response.function_call_arguments.done", Sequence: encoder.nextWireSequence(),
 		ItemID: id, OutputIndex: responsesOutputIndex(index),
@@ -815,7 +830,7 @@ func (encoder *responsesStreamEncoder) encodeCompletedResponsesOutput(
 	if err != nil {
 		return nil, nil, err
 	}
-	frames := [][]byte{doneFrame}
+	frames = append(frames, doneFrame)
 	wire := responsesEventWire{
 		Type: "response.output_item.done", Sequence: encoder.nextWireSequence(), OutputIndex: responsesOutputIndex(index),
 	}

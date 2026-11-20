@@ -14,7 +14,9 @@ import (
 // SDK's stream helper does, takes the added item's arguments and appends
 // every argument delta. A Claude tool_use opens with input {} and then
 // streams its input as input_json_delta, so the added item must not carry
-// that "{}" or the client assembles it in front of the arguments.
+// that "{}" or the client assembles it in front of the arguments. A call whose
+// input never streams (no delta, or only an empty one) still reaches the client
+// as its arguments, delivered as a delta before the call is done.
 func TestResponsesClientAssemblesClaudeToolArgumentsOnce(t *testing.T) {
 	frame := func(event, data string) string { return "event: " + event + "\ndata: " + data + "\n\n" }
 	stream := func(deltas ...string) string {
@@ -38,6 +40,8 @@ func TestResponsesClientAssemblesClaudeToolArgumentsOnce(t *testing.T) {
 		want string
 	}{
 		"zero arguments":     {stream("{}"), "{}"},
+		"no delta":           {stream(), "{}"},
+		"empty delta":        {stream(""), "{}"},
 		"streamed arguments": {stream(`{"city":`, `"Paris"}`), `{"city":"Paris"}`},
 	}
 	for name, test := range cases {
@@ -76,6 +80,9 @@ func TestResponsesClientAssemblesClaudeToolArgumentsOnce(t *testing.T) {
 						assembled = append(assembled, event.Item.Arguments)
 					}
 				case "response.function_call_arguments.delta":
+					if len(assembled) == 0 {
+						t.Fatal("argument delta before any function_call item")
+					}
 					assembled[len(assembled)-1] += event.Delta
 				}
 			}

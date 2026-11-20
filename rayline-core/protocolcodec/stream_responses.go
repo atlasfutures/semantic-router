@@ -119,6 +119,11 @@ type responsesStreamEncoder struct {
 	// and only the call's own name, id and arguments can close it
 	// (closeOpenResponsesItems); the deltas themselves pass straight through.
 	openToolCalls map[responsesOutputKey]*llmprotocol.ToolCall
+	// placeholderCalls marks the calls whose added item was opened with empty
+	// arguments in place of the start's "{}" placeholder. One that completes
+	// without streaming any argument still owes the client its arguments as a
+	// delta, so a client that assembles them from the deltas ends with them.
+	placeholderCalls map[responsesOutputKey]bool
 	// closingAtCut is set while the items a cut landed in are being closed,
 	// so each closes as incomplete: the turn ended in the middle of it.
 	closingAtCut bool
@@ -159,6 +164,7 @@ func (OpenAIResponsesCodec) NewEncoder(context llmprotocol.StreamContext, policy
 		imageProgressCompleted: make(map[responsesOutputKey]bool),
 		reasoningSignatures:    make(map[int]string),
 		openToolCalls:          make(map[responsesOutputKey]*llmprotocol.ToolCall),
+		placeholderCalls:       make(map[responsesOutputKey]bool),
 	}
 }
 
