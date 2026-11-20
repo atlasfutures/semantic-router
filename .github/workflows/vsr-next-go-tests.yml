@@ -35,7 +35,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           # The extproc image's toolchain (tools/docker/Dockerfile.extproc).
-          go-version: "1.27.2"
+          go-version: "1.27.4"
           cache-dependency-path: src/semantic-router/go.sum
 
       - name: Cache Rust builds
