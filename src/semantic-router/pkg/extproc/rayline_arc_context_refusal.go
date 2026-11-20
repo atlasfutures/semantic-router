@@ -10,6 +10,7 @@ import (
 	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
 )
 
 // contextTooLongCode is the public error code of a turn longer than every
@@ -30,15 +31,21 @@ func contextTooLongMessageFor(tokens, limit int) string {
 	return contextTooLongMessage + ": " + strconv.Itoa(tokens) + " tokens > " + strconv.Itoa(limit) + " maximum"
 }
 
-// largestContextWindow is the largest card context window among the arms;
-// zero when an arm declares none (that arm holds any length, so no turn is
-// over-length) or there are no arms.
-func (r *OpenAIRouter) largestContextWindow(modelRefs []config.ModelRef) int {
-	if r == nil || r.Config == nil {
+// admissibleContextWindow is the largest card context window among the arms
+// the request's other constraints admit: vision on an image turn and
+// capability, the masks no_context_arm is combined with. It is the length a
+// shortened turn must fit. Zero when no arm is admitted or an admitted arm
+// declares no window (that arm holds any length).
+func (r *OpenAIRouter) admissibleContextWindow(modelRefs []config.ModelRef, arc *selection.RaylineARCSelectionContext) int {
+	if r == nil || r.Config == nil || arc == nil {
 		return 0
 	}
+	marked := func(mask []bool, index int) bool { return index < len(mask) && mask[index] }
 	largest := 0
-	for _, ref := range modelRefs {
+	for index, ref := range modelRefs {
+		if (arc.ImageBearing && marked(arc.NonVisionArms, index)) || marked(arc.IncapableArms, index) {
+			continue
+		}
 		params, known := r.Config.ModelConfig[strings.TrimSpace(ref.Model)]
 		if !known || params.ContextWindowSize <= 0 {
 			return 0

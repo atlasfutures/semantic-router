@@ -10,6 +10,7 @@ import (
 	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
 )
 
 // A turn no window can hold is the caller's to shorten: a 400 that says the
@@ -61,16 +62,27 @@ func TestContextTooLongMessageFor(t *testing.T) {
 	}
 }
 
-// The stated window is the largest arm card; an arm with no declared window
-// holds any length, so none is stated.
-func TestLargestContextWindow(t *testing.T) {
+// The stated window is the largest card among the arms the turn's other
+// constraints admit: an image turn ignores a text-only arm's larger window, an
+// incapable arm is ignored, and an admitted arm with no declared window holds
+// any length, so none is stated.
+func TestAdmissibleContextWindow(t *testing.T) {
 	window := func(n int) config.ModelParams { return config.ModelParams{ContextWindowSize: n} }
 	router := &OpenAIRouter{Config: &config.RouterConfig{}}
-	router.Config.ModelConfig = map[string]config.ModelParams{"a": window(1000000), "b": window(1050000), "c": {}}
-	if got := router.largestContextWindow([]config.ModelRef{{Model: "a"}, {Model: "b"}}); got != 1050000 {
-		t.Fatalf("largest = %d, want 1050000", got)
+	router.Config.ModelConfig = map[string]config.ModelParams{"a": window(4000), "b": window(128000), "c": {}}
+	refs := []config.ModelRef{{Model: "a"}, {Model: "b"}}
+	if got := router.admissibleContextWindow(refs, &selection.RaylineARCSelectionContext{}); got != 128000 {
+		t.Fatalf("text turn = %d, want 128000", got)
 	}
-	if got := router.largestContextWindow([]config.ModelRef{{Model: "a"}, {Model: "c"}}); got != 0 {
+	image := &selection.RaylineARCSelectionContext{ImageBearing: true, NonVisionArms: []bool{false, true}}
+	if got := router.admissibleContextWindow(refs, image); got != 4000 {
+		t.Fatalf("image turn = %d, want the vision arm's 4000", got)
+	}
+	incapable := &selection.RaylineARCSelectionContext{IncapableArms: []bool{false, true}}
+	if got := router.admissibleContextWindow(refs, incapable); got != 4000 {
+		t.Fatalf("with an incapable arm = %d, want 4000", got)
+	}
+	if got := router.admissibleContextWindow([]config.ModelRef{{Model: "a"}, {Model: "c"}}, &selection.RaylineARCSelectionContext{}); got != 0 {
 		t.Fatalf("with an undeclared window = %d, want 0", got)
 	}
 }

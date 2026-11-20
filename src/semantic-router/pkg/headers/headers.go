@@ -331,9 +331,13 @@ const (
 	// no backend was called), "stateless_path" (the turn named previous_response_id on a route that
 	// does not continue a stored conversation, either because its policy
 	// does not do stateful continuation or because the cell retains nothing
-	// (response_api store_backend: none); resend the items instead) or
+	// (response_api store_backend: none); resend the items instead),
+	// "context_too_long" (the turn is longer than every window it could be
+	// served in; resending it unchanged cannot succeed, a shorter
+	// conversation can, and no backend was called) or
 	// "unavailable" (anything else). The first three ride a 429 or 503;
-	// "missing_session", "request_shape" and "stateless_path" ride a 400;
+	// "missing_session", "request_shape", "stateless_path" and
+	// "context_too_long" ride a 400;
 	// "undecidable" and "no_private_arm" ride a 422. Emitted only on those refusals, never with
 	// an internal class. "stateless_path" is also the one value emitted
 	// before any selection runs: the Responses store gate answers it on a
