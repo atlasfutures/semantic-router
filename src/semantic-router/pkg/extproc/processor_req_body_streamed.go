@@ -96,6 +96,11 @@ func (h *StreamedBodyHandler) HandleChunk(body *ext_proc.HttpBody, ctx *RequestC
 	chunk := body.GetBody()
 	eos := body.GetEndOfStream()
 
+	// A report is held to its own bound while it accumulates, whatever the
+	// generic streaming limits are.
+	if isRaylineReportRequest(ctx) && h.buf.Len()+len(chunk) > raylineReportMaxBodyBytes {
+		return h.router.createRaylineRoutesError(ctx, 413, "invalid_request_error", "report body exceeds its limit"), nil
+	}
 	h.buf.Write(chunk)
 
 	if err := h.checkGuards(); err != nil {

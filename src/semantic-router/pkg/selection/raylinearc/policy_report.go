@@ -121,6 +121,8 @@ type LastReport struct {
 	Message int `json:"message"`
 	// Arm is the arm the report recorded, -1 for none.
 	Arm int `json:"arm"`
+	// Epoch is the policy context Message is a position in.
+	Epoch int `json:"epoch"`
 	// InputTokens is the turn's encoded input tokens, as its decision
 	// recorded them, which a correction of the turn writes again.
 	InputTokens int `json:"input_tokens"`
@@ -156,7 +158,7 @@ func (last *LastReport) validate(state *EpisodeState) error {
 	if (last.Source != ReportSourceGateway && last.Source != ReportSourceClient) ||
 		len(last.RouteID) > maxReportIDBytes || len(last.ReportID) > maxReportIDBytes ||
 		last.TurnIndex > state.TurnIndex || last.Message < -1 || last.Arm < -1 || last.Arm >= len(state.Warmth) ||
-		last.InputTokens < 0 ||
+		last.InputTokens < 0 || last.Epoch < 0 ||
 		(last.Replaced != nil && (last.Source != ReportSourceClient || last.Arm < 0)) {
 		return errors.New("ARC episode last report is malformed")
 	}
@@ -271,6 +273,9 @@ func resolveReported(state *EpisodeState, report Report) (*EpisodeState, ReportO
 	}
 	next.LastReport = newLastReport(pending.RouteID, report, next.TurnIndex, message, run.Arm, replaced)
 	next.LastReport.InputTokens = pending.InputTokens
+	if next.Policy != nil {
+		next.LastReport.Epoch = next.Policy.Epoch
+	}
 	return next, recordedReport(ReportPendingResolved, pending.RouteID, next, run), nil
 }
 
@@ -281,8 +286,13 @@ func resolveReported(state *EpisodeState, report Report) (*EpisodeState, ReportO
 func replaceClientReport(state *EpisodeState, report Report) (*EpisodeState, ReportOutcome, error) {
 	last := state.LastReport
 	next := cloneEpisodeState(state)
+	// The turn's ledger position is rewritten only in the context it was
+	// recorded in: after a context change it describes no message of the
+	// current one.
+	sameContext := next.Policy != nil && last.Message >= 0 && next.Policy.Epoch == last.Epoch &&
+		next.Policy.PrefixLen == last.Message
 	var clientEntry *PolicyLedgerEntry
-	if ledger := ledgerOf(next.Policy); last.Message >= 0 && len(ledger) > 0 &&
+	if ledger := ledgerOf(next.Policy); sameContext && len(ledger) > 0 &&
 		ledger[len(ledger)-1].Message == last.Message && ledger[len(ledger)-1].Basis == PolicyLedgerBasisReported {
 		entry := ledger[len(ledger)-1]
 		clientEntry = &entry
@@ -299,7 +309,7 @@ func replaceClientReport(state *EpisodeState, report Report) (*EpisodeState, Rep
 	if last.Arm >= 0 && last.Arm != run.Arm && last.Replaced != nil {
 		next.Warmth[last.Arm] = warmthFromWire(last.Replaced.Warmth)
 	}
-	if next.Policy != nil && last.Message >= 0 && run.ActionID != "" {
+	if sameContext && run.ActionID != "" {
 		entry := PolicyLedgerEntry{Message: last.Message, ActionID: run.ActionID, ArmID: run.ArmID, Basis: PolicyLedgerBasisReported}
 		if clientEntry != nil && clientEntry.ActionID == run.ActionID {
 			entry = *clientEntry
@@ -321,7 +331,7 @@ func replaceClientReport(state *EpisodeState, report Report) (*EpisodeState, Rep
 		next.Pending.PriorServedModel = run.Model
 	}
 	next.LastReport = newLastReport(last.RouteID, report, state.TurnIndex, last.Message, run.Arm, nil)
-	next.LastReport.InputTokens = last.InputTokens
+	next.LastReport.InputTokens, next.LastReport.Epoch = last.InputTokens, last.Epoch
 	return next, recordedReport(ReportClientReplaced, last.RouteID, next, run), nil
 }
 

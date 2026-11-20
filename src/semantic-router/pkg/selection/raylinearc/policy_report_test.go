@@ -480,3 +480,20 @@ func TestGatewayCorrectionKeepsTheTurnsInputTokens(t *testing.T) {
 		t.Fatalf("outcome %+v tokens %d, want the decision's 42", outcome, edge.Warmth[0].LastInputTokens)
 	}
 }
+
+// A gateway correction after the conversation moved to another policy
+// context (a refused request with a rewritten history staged one) corrects
+// the arm and model but writes no ledger entry into the new context, whose
+// messages the old position does not describe; the record stays valid.
+func TestGatewayCorrectionAfterAContextChange(t *testing.T) {
+	client, _ := mustApplyReport(t, pendingEpisode(t), reportOf(ReportSourceClient, "rte_1", ranOn(1, pendingActionB, "vendor/b"), nil))
+	moved := cloneEpisodeState(client)
+	moved.Policy = &PolicyEpisodeState{Epoch: client.Policy.Epoch + 1}
+	edge, outcome := mustApplyReport(t, moved, reportOf(ReportSourceGateway, "rte_1", ranOn(0, pendingActionA, "vendor/a"), nil))
+	if outcome.Reason != ReportClientReplaced || *edge.PreviousArm != 0 || edge.ServedModel != "vendor/a" || len(edge.Policy.Ledger) != 0 {
+		t.Fatalf("outcome %+v record %+v ledger %+v", outcome, edge, edge.Policy.Ledger)
+	}
+	if _, err := marshalEpisodeState(edge, 5, pendingNow); err != nil {
+		t.Fatalf("the corrected record does not validate: %v", err)
+	}
+}
