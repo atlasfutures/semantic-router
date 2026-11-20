@@ -1,0 +1,37 @@
+{
+  "created_at": 1793318400,
+  "error": null,
+  "id": "chatcmpl-fixture-tool-stop",
+  "incomplete_details": null,
+  "instructions": null,
+  "metadata": {},
+  "model": "routed-model",
+  "object": "response",
+  "output": [
+    {
+      "arguments": "{\"city\":\"Paris\"}",
+      "call_id": "call_fixture",
+      "id": "item_eeaba17ce4f976acc825d98e",
+      "name": "get_weather",
+      "type": "function_call"
+    }
+  ],
+  "parallel_tool_calls": true,
+  "status": "completed",
+  "temperature": null,
+  "tool_choice": "auto",
+  "tools": [],
+  "top_p": null,
+  "usage": {
+    "input_tokens": 40,
+    "input_tokens_details": {
+      "cache_write_tokens": 0,
+      "cached_tokens": 0
+    },
+    "output_tokens": 12,
+    "output_tokens_details": {
+      "reasoning_tokens": 0
+    },
+    "total_tokens": 52
+  }
+}

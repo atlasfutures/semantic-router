@@ -174,8 +174,8 @@ type RaylineARCAlgorithmConfig struct {
 	// a larger one publishes a context the encoder refuses after admission.
 	//
 	// In artifact mode a turn whose estimate exceeds it is refused before
-	// the episode lease and the encoder call, as over_context_limit (503,
-	// which a gateway replays to its fallback). The estimate is the router's
+	// the episode lease and the encoder call, as over_context_limit (a 400
+	// "prompt is too long"). The estimate is the router's
 	// byte heuristic of the request body, not the encoder's tokenizer, so a
 	// turn under the limit here can still be refused by the encoder, and a
 	// Responses turn that resumes stored history is counted by its body

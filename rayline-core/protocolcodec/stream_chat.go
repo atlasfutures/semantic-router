@@ -466,7 +466,7 @@ func (decoder *chatStreamDecoder) observeRepeatedFinishReason(reason, native *st
 	if reason == nil {
 		return
 	}
-	trailing := decodeChatChoiceStop(*reason, native)
+	trailing := decoder.choiceStop(*reason, native)
 	if trailing == decoder.stop {
 		return
 	}
@@ -644,7 +644,7 @@ func (decoder *chatStreamDecoder) completeChoice(reason, native *string) ([]llmp
 	if reason == nil {
 		return nil, nil
 	}
-	decoder.stop = decodeChatChoiceStop(*reason, native)
+	decoder.stop = decoder.choiceStop(*reason, native)
 	if len(decoder.items) == 0 {
 		if decoder.stop == llmprotocol.StopToolCall {
 			return nil, invalidProviderResponse("stream_tool_output_missing", "Chat stream ended with tool_calls but emitted no tool call")
@@ -683,6 +683,18 @@ func (decoder *chatStreamDecoder) completeChoice(reason, native *string) ([]llmp
 		events = append(events, event)
 	}
 	return events, nil
+}
+
+// choiceStop maps a choice's finish reason, then lets a tool call the stream
+// carried win over an end-of-turn reason (chatToolCallStop).
+func (decoder *chatStreamDecoder) choiceStop(reason string, native *string) llmprotocol.StopReason {
+	stop := decodeChatChoiceStop(reason, native)
+	for _, kind := range decoder.itemKinds {
+		if kind == llmprotocol.ContentToolCall {
+			return chatToolCallStop(stop)
+		}
+	}
+	return stop
 }
 
 // decodeChatChoiceStop maps a choice's finish reason, letting a native length

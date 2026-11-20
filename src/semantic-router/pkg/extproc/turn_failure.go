@@ -196,6 +196,8 @@ func selectionTurnFailureClass(internal string) string {
 		return turnFailureNoAvailableAction
 	case arcFailurePolicyUndecidable:
 		return turnFailureUndecidable
+	case arcFailureNoContextArm, arcFailureOverContextLimit:
+		return turnFailureContextOverflow
 	default:
 		return publicSelectionFailureClass(internal)
 	}

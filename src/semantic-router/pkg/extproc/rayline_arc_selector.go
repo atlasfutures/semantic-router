@@ -390,8 +390,8 @@ func (selector *raylineARCSelector) Select(
 //
 // The privacy mask is applied last. A basket no arm of which can serve the
 // turn keeps the class that says why; one where only arms the request's
-// privacy mode rules out could serve it is refused as no_private_arm, which
-// the gateway does not replay, rather than as a 503 it would.
+// privacy mode rules out could serve it is refused as no_private_arm (a 422
+// the client is told as it is), rather than as a 503 that reads as an outage.
 //
 // The two hard constraints are not the same kind of fact. The vision flag answers
 // a question about this turn; the disabled flag is a standing operator verdict
@@ -466,10 +466,9 @@ func withOverContextArms(
 // holds the capability says exactly that, which is the class the caller's
 // gateway has to route around.
 //
-// The failure class is deliberately not a 400. The gateway does not replay a
-// body-level 400, so refusing here would end the user's turn; it does replay
-// 502 and 503, and every other authoritative selection failure already answers
-// 503 through the same path.
+// The failure class answers 503 through the same path as every other
+// authoritative selection failure. The gateway passes a cell's refusal to the
+// client as it is and replays no cell turn on another provider.
 func withIncapableArms(
 	arcContext *selection.RaylineARCSelectionContext,
 	armCount int,
