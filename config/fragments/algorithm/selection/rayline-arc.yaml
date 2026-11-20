@@ -74,8 +74,8 @@ routing:
           # context the encoder refuses after admission. GET /v1/models
           # publishes it on the alias as routing.max_context_tokens; in
           # artifact mode a longer turn is refused before the episode lease
-          # and the encoder call as over_context_limit (503, replayed by a
-          # gateway). Omitted, nothing is refused on it and nothing is
+          # and the encoder call as over_context_limit (a 400 "prompt is too
+          # long"). Omitted, nothing is refused on it and nothing is
           # published. This reference declares the arms' own windows.
           max_context_tokens: 131072
           # routes_api serves POST /v1/routes from this cell: the selector's

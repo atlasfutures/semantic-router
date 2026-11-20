@@ -136,6 +136,13 @@ type RequestContext struct {
 	// stated in the no_output_arm refusal; zero when an admitted arm declares
 	// no limit or none is admitted.
 	RaylineARCOutputLimit int64
+	// RaylineARCContextTokens is the turn's context estimate as the
+	// context-window mask read it, and RaylineARCContextLimit the largest
+	// window it could be served in (the largest arm window, or the cell's
+	// max_context_tokens); both are stated in the "prompt is too long"
+	// refusal, and zero when unknown.
+	RaylineARCContextTokens int
+	RaylineARCContextLimit  int
 	// RaylineARCPrivacyAllowedArms is a private request's allowed set as its
 	// trusted header states it, sorted and deduplicated; nil for a standard
 	// request. Logged only as a count and a digest.
