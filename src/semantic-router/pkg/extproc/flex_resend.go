@@ -446,6 +446,15 @@ func (r *OpenAIRouter) flexResendBodyLimit() int64 {
 // flexTwinBodyDeadline bounds a re-send's body, the generation itself: the
 // turn's own stream deadline, measured from the start of the request as
 // responseStreamOverran measures it. Zero when that deadline is off.
+//
+// The re-send answers inside Envoy's response-headers message, so the ext_proc
+// message_timeout bounds the whole of it. The stream deadline sits below that
+// timeout on the ladder in processor_res_stream_deadline.go (590 s under
+// 610 s), and it runs from the request's start, which is before the headers
+// message began; so this deadline ends before Envoy's. A deployment with a
+// shorter message_timeout sets response_stream.deadline_sec below it, as the
+// ladder already requires (the budget alone, 300 s by default, exceeded a
+// 60 s message_timeout before this change too).
 func (r *OpenAIRouter) flexTwinBodyDeadline(ctx *RequestContext) time.Time {
 	deadline := r.responseStreamDeadline()
 	if deadline <= 0 || ctx == nil || ctx.StartTime.IsZero() {
