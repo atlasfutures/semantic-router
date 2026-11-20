@@ -537,3 +537,22 @@ func TestGatewayCorrectionKeepsTheCallsEpoch(t *testing.T) {
 		t.Fatalf("corrected call epoch %q, want the original %q", got, client.Policy.ContextEpoch())
 	}
 }
+
+// After the gateway corrected a client's report, the client's retry of that
+// report (its report id) is still recognised, and never settles a decision
+// pending after the corrected turn.
+func TestClientRetryAfterAGatewayCorrectionIsRecognised(t *testing.T) {
+	byClient := reportOf(ReportSourceClient, "", ranOn(1, pendingActionB, "vendor/b"), nil)
+	byClient.ReportID, byClient.FinishedAt = "client-call-1", reportFinished.Add(5*time.Minute)
+	client, _ := mustApplyReport(t, pendingEpisode(t), byClient)
+	edge, outcome := mustApplyReport(t, client, reportOf(ReportSourceGateway, "rte_1", ranOn(0, pendingActionA, "vendor/a"), nil))
+	if outcome.Reason != ReportClientReplaced {
+		t.Fatalf("correction %+v", outcome)
+	}
+	next := withPendingLookup(t, edge, pendingTask, pendingReply1, pendingAsk2, `{"role":"assistant","content":"two"}`, `{"role":"user","content":"three"}`)
+	next.LastReport, next.Pending.RouteID = edge.LastReport, "rte_2"
+	next.Pending.DecidedUnixMS = reportFinished.Add(time.Minute).UnixMilli()
+	if after, outcome := mustApplyReport(t, next, byClient); outcome.Recorded || after != next {
+		t.Fatalf("the client's retry: %+v", outcome)
+	}
+}

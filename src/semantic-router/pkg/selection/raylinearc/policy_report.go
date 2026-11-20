@@ -115,7 +115,10 @@ type ReportOutcome struct {
 type LastReport struct {
 	RouteID  string `json:"route_id,omitempty"`
 	ReportID string `json:"report_id,omitempty"`
-	Source   string `json:"source"`
+	// ClientReportID is, after the gateway replaced a client's report, the
+	// client report's id, so the client's retry of it is still recognised.
+	ClientReportID string `json:"client_report_id,omitempty"`
+	Source         string `json:"source"`
 	// TurnIndex is the episode's turn count right after the report.
 	TurnIndex uint64 `json:"turn_index"`
 	// Message is the ledger message the report recorded, -1 for none.
@@ -158,6 +161,7 @@ func (last *LastReport) validate(state *EpisodeState) error {
 	}
 	if (last.Source != ReportSourceGateway && last.Source != ReportSourceClient) ||
 		len(last.RouteID) > maxReportIDBytes || len(last.ReportID) > maxReportIDBytes ||
+		len(last.ClientReportID) > maxReportIDBytes || (last.ClientReportID != "" && last.Source != ReportSourceGateway) ||
 		last.TurnIndex > state.TurnIndex || last.Message < -1 || last.Arm < -1 || last.Arm >= len(state.Warmth) ||
 		last.InputTokens < 0 || last.Epoch < 0 ||
 		(last.Replaced != nil && (last.Source != ReportSourceClient || last.Arm < 0)) {
@@ -210,8 +214,13 @@ func ApplyReport(state *EpisodeState, report Report) (*EpisodeState, ReportOutco
 // applied to a decision made after it.
 func unnamedReport(state *EpisodeState, report Report) (*EpisodeState, ReportOutcome, error) {
 	pending, last := state.Pending, state.LastReport
-	if last != nil && report.ReportID != "" && last.ReportID == report.ReportID && last.Source == report.Source {
-		return state, ignoredReport(ReportDuplicate), nil
+	if last != nil && report.ReportID != "" {
+		if last.ReportID == report.ReportID && last.Source == report.Source {
+			return state, ignoredReport(ReportDuplicate), nil
+		}
+		if last.ClientReportID == report.ReportID && report.Source == ReportSourceClient {
+			return state, ignoredReport(ReportSuperseded), nil
+		}
 	}
 	if pending != nil && !report.FinishedAt.Before(time.UnixMilli(pending.DecidedUnixMS)) {
 		return resolveReported(state, report)
@@ -333,6 +342,7 @@ func replaceClientReport(state *EpisodeState, report Report) (*EpisodeState, Rep
 	}
 	next.LastReport = newLastReport(last.RouteID, report, state.TurnIndex, last.Message, run.Arm, nil)
 	next.LastReport.InputTokens, next.LastReport.Epoch = last.InputTokens, last.Epoch
+	next.LastReport.ClientReportID = last.ReportID
 	return next, recordedReport(ReportClientReplaced, last.RouteID, next, run), nil
 }
 
