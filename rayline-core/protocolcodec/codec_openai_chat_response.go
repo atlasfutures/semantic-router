@@ -113,6 +113,12 @@ func decodeChatChoices(wire chatResponseWire, response *llmprotocol.Response, po
 				response.SourceStopReason = *choice.FinishReason
 				response.StopReason = decodeChatChoiceStop(*choice.FinishReason, choice.NativeFinishReason)
 			}
+			// The neutral response has one stop for every choice, so with
+			// alternatives the choice's own stop is left as it was rather
+			// than imposed on the others.
+			if len(choices) == 1 && responsesOutputHasToolCall([]llmprotocol.OutputItem{item}) {
+				response.StopReason = chatToolCallStop(response.StopReason)
+			}
 			// A message with no content (null, or "") under a length stop or
 			// a refusal is a reply that wrote nothing (max_tokens 1 can end
 			// that way), not an empty output item: the response carries no
@@ -344,9 +350,14 @@ func encodeChatUsage(usage llmprotocol.Usage, publishProviderCost bool) *chatUsa
 // another stop than the one decoded from it: OpenRouter labels a reply cut at
 // the output limit "tool_calls" and says "max_output_tokens" only in
 // native_finish_reason. Such a body is never handed back as it is, or a Chat
-// client reads the cut call as one to run.
+// client reads the cut call as one to run. A body holding a tool call under
+// no finish_reason misstates it too: its client must be told "tool_calls"
+// (chatToolCallStop).
 func chatSourceStopMisstated(sourceStop string, stop llmprotocol.StopReason) bool {
-	return sourceStop != "" && decodeChatStop(sourceStop) != stop
+	if sourceStop == "" {
+		return stop == llmprotocol.StopToolCall
+	}
+	return decodeChatStop(sourceStop) != stop
 }
 
 // UpstreamBodyMisstatesStop reports an upstream response body whose own stop
@@ -370,6 +381,22 @@ func decodeChatStop(reason string) llmprotocol.StopReason {
 		return llmprotocol.StopContentFilter
 	default:
 		return llmprotocol.StopUnknown
+	}
+}
+
+// chatToolCallStop is the stop of a Chat reply that carries a completed tool
+// call. Some OpenAI-compatible servers end such a reply with finish_reason
+// "stop", or with none; an agent loop reads the stop reason, and a plain end
+// of turn beside a tool call stalls it, so the call wins, as it does for a
+// completed function_call item in the Responses decoder. Every other stop
+// stays: a call cut at the output limit ends as the length stop it is
+// (decodeChatChoiceStop), and the cut-call handling depends on that.
+func chatToolCallStop(stop llmprotocol.StopReason) llmprotocol.StopReason {
+	switch stop {
+	case llmprotocol.StopEndTurn, "":
+		return llmprotocol.StopToolCall
+	default:
+		return stop
 	}
 }
 
