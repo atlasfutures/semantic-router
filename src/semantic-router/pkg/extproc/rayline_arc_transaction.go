@@ -617,6 +617,7 @@ func (transaction *raylineARCEpisodeTransaction) commit(
 			transaction.commitSideCall(ctx)
 			return
 		}
+		transaction.logServedThinkingFingerprints(requestContext)
 		if transaction.relaxed {
 			transaction.commitRelaxed(ctx, requestContext, transaction.nextState, "relaxed")
 			return
