@@ -36,12 +36,7 @@
             },
             {
               "call_id": "call_1",
-              "output": [
-                {
-                  "text": "sunny",
-                  "type": "input_text"
-                }
-              ],
+              "output": "sunny",
               "type": "function_call_output"
             }
           ],
@@ -89,12 +84,7 @@
             },
             {
               "call_id": "call_1",
-              "output": [
-                {
-                  "text": "sunny",
-                  "type": "input_text"
-                }
-              ],
+              "output": "sunny",
               "type": "function_call_output"
             }
           ],

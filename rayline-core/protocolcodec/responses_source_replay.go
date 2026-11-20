@@ -69,10 +69,15 @@ func replayEquivalentResponsesSource(
 //   - a string instructions member is a leading developer message holding it,
 //     which is where the decoder puts it;
 //   - a string input is one user message;
-//   - string message content, and a string function_call_output output, is
-//     one input_text part;
-//   - an assistant message's output_text part with no annotations is the
-//     input_text part the encoder writes for resent assistant text.
+//   - string message content is one input_text part, or, in an assistant
+//     message, one output_text part;
+//   - an assistant message's output_text part with no annotations member is
+//     the one with an empty annotations list the encoder writes for resent
+//     assistant text.
+//
+// A function_call_output output is not rewritten: the encoder writes a
+// one-text output as a string, so a client that sent a string matches, and a
+// client that sent a list gets the string, which strict servers require.
 //
 // Nothing else is rewritten. A body whose instructions, input or items have
 // any other shape returns nil, which sends the canonical body.
@@ -101,18 +106,13 @@ func responsesReplayForm(body map[string]any) map[string]any {
 		if !ok {
 			return nil
 		}
-		switch item["type"] {
-		case "message":
-			if content, ok := item["content"].(string); ok {
-				item["content"] = inputTextParts(content)
-			}
-			if item["role"] == "assistant" {
-				resentAssistantText(item)
-			}
-		case "function_call_output":
-			if output, ok := item["output"].(string); ok {
-				item["output"] = inputTextParts(output)
-			}
+		if item["type"] != "message" {
+			continue
+		}
+		if item["role"] == "assistant" {
+			resentAssistantText(item)
+		} else if content, ok := item["content"].(string); ok {
+			item["content"] = inputTextParts(content)
 		}
 	}
 	if items != nil {
@@ -121,24 +121,25 @@ func responsesReplayForm(body map[string]any) map[string]any {
 	return body
 }
 
-// resentAssistantText respells an assistant message's annotation-free
-// output_text parts as the input_text parts the encoder writes. A part that
-// carries annotations is left as it is, so its difference sends the
-// canonical body.
+// resentAssistantText respells an assistant message's string content, and its
+// output_text parts with no annotations member, as the output_text parts the
+// encoder writes. A part that carries annotations is left as it is, and so is
+// an input_text part, which the encoder never writes there: either
+// difference sends the canonical body.
 func resentAssistantText(item map[string]any) {
+	if content, ok := item["content"].(string); ok {
+		item["content"] = []any{map[string]any{"type": "output_text", "text": content, "annotations": []any{}}}
+		return
+	}
 	parts, _ := item["content"].([]any)
 	for _, raw := range parts {
 		part, ok := raw.(map[string]any)
 		if !ok || part["type"] != "output_text" {
 			continue
 		}
-		if annotations, stated := part["annotations"]; stated {
-			if list, ok := annotations.([]any); !ok || len(list) > 0 {
-				continue
-			}
+		if _, stated := part["annotations"]; !stated {
+			part["annotations"] = []any{}
 		}
-		delete(part, "annotations")
-		part["type"] = "input_text"
 	}
 }
 

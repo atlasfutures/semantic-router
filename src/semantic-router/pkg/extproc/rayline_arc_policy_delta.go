@@ -944,7 +944,7 @@ func addPolicyDecisionModeFields(fields map[string]interface{}, trace *selection
 }
 
 // publishPolicyStagedTurn keeps what this turn's append staged, as of the
-// turn count its commit writes, or drops the episode's entry: a turn that
+// turn count this turn's commit writes, or drops the episode's entry: a turn that
 // appended nothing leaves nothing for the next to build on. It runs before
 // the commit, under the lease, so the next turn's prepare cannot read the
 // committed state beside the previous entry; a commit that then fails takes
@@ -974,7 +974,7 @@ func (transaction *raylineARCEpisodeTransaction) publishPolicyStagedTurn(
 }
 
 // retractPolicyStagedTurn drops the entry publishPolicyStagedTurn wrote
-// when its commit failed, unless a later turn has replaced it.
+// when this turn's commit failed, unless a later turn has replaced the entry.
 func (transaction *raylineARCEpisodeTransaction) retractPolicyStagedTurn(ctx context.Context, staged *policyStagedTurn) {
 	staging := transaction.policyStaging
 	if staging == nil || staged == nil {
@@ -990,9 +990,9 @@ func (transaction *raylineARCEpisodeTransaction) retractPolicyStagedTurn(ctx con
 
 // dropPolicyStagedTurn forgets the episode's staged turn after a commit that
 // did not happen: the service may hold an append the episode never recorded.
-// The shared record is deleted only if it belongs to the turn this one
-// started from or an earlier one: a turn that lost its lease leaves the
-// record of a turn committed after it.
+// The shared record is deleted only if it belongs to the turn count this
+// request started from or an earlier one: a request that lost its lease
+// leaves alone the record of a turn another request committed after it.
 func (transaction *raylineARCEpisodeTransaction) dropPolicyStagedTurn(ctx context.Context) {
 	if staging := transaction.policyStaging; staging != nil {
 		staging.turns.drop(staging.episodeIDHash)
@@ -1001,8 +1001,12 @@ func (transaction *raylineARCEpisodeTransaction) dropPolicyStagedTurn(ctx contex
 			started = transaction.state.TurnIndex
 		}
 		if transaction.resolvedPending {
-			// The turn it started from is the one it read, not the one its
-			// resolved pending decision moved the episode to.
+			// Delete only staged-turn records up to the turn count this
+			// request read from the store. Do not use the count in memory:
+			// after this request recorded a lookup's pending decision as a
+			// turn it is one higher, and a staged record at that higher count
+			// may belong to a later request that committed that turn; it
+			// must survive.
 			started = transaction.readTurnIndex
 		}
 		staging.writeShared(ctx, func(ctx context.Context, shared raylinearc.EpisodeStagedTurnStore) error {

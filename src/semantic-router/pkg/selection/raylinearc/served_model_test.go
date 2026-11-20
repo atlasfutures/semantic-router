@@ -91,10 +91,15 @@ func assertCommitRecordsServedModel(t *testing.T, store servedCommitStore, episo
 	if worker, _ := store.LastServedModel(ctx, episode); worker != "kimi" {
 		t.Fatalf("record %q after a commit naming no worker", worker)
 	}
-	// A stage under the lease records a state's served model as a commit
-	// does (a route lookup's decision recorded as a turn that ran, made
-	// durable before the turn commits), and keeps it if the turn then
-	// aborts; a stage naming none leaves the record.
+}
+
+// A stage under the lease records a state's served model as a commit does
+// (a route lookup's decision recorded as a turn that ran, made durable
+// before the turn commits), and keeps it if the turn then aborts; a stage
+// naming none leaves the record.
+func assertStageRecordsServedModel(t *testing.T, store servedCommitStore, episode string) {
+	t.Helper()
+	ctx := context.Background()
 	stager, ok := store.(EpisodeStateStager)
 	if !ok {
 		t.Fatal("the store does not stage")
@@ -128,7 +133,7 @@ func TestMemoryCommitRecordsServedModel(t *testing.T) {
 	assertCommitRecordsServedModel(t, store, episode)
 	// The record outlives the episode, for ServedModelTTL.
 	now = now.Add(time.Hour)
-	if worker, _ := store.LastServedModel(context.Background(), episode); worker != "qwen" {
+	if worker, _ := store.LastServedModel(context.Background(), episode); worker != "kimi" {
 		t.Fatalf("record %q after the episode's idle TTL", worker)
 	}
 	now = now.Add(ServedModelTTL)
@@ -142,6 +147,7 @@ func TestMemoryCommitRecordsServedModel(t *testing.T) {
 		}
 		now = now.Add(time.Second)
 	}
+	assertStageRecordsServedModel(t, store, HashEpisodeID("staged-episode"))
 	if len(store.served) != 2 {
 		t.Fatalf("kept %d records, want the capacity of 2", len(store.served))
 	}
@@ -159,6 +165,7 @@ func TestRedisCommitRecordsServedModel(t *testing.T) {
 		time.Now().Format("150405.000000")+":", time.Second)
 	episode := HashEpisodeID("served-episode")
 	assertCommitRecordsServedModel(t, store, episode)
+	assertStageRecordsServedModel(t, store, HashEpisodeID("staged-episode"))
 	ttl, err := store.client.TTL(context.Background(), store.servedKey(episode)).Result()
 	if err != nil || ttl <= time.Hour {
 		t.Fatalf("record TTL %v, %v; want ServedModelTTL", ttl, err)

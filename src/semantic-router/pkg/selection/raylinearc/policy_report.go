@@ -184,6 +184,11 @@ func ApplyReport(state *EpisodeState, report Report) (*EpisodeState, ReportOutco
 		return state, ignoredReport(ReportNoEpisode), nil
 	}
 	pending, last := state.Pending, state.LastReport
+	// A generation call through the cell decided the superseded decision's
+	// turn itself and records it; a report of it would count it twice.
+	if pending != nil && pending.Superseded {
+		return state, ignoredReport(ReportNotPending), nil
+	}
 	if report.RouteID != "" {
 		switch {
 		case pending != nil && pending.RouteID == report.RouteID:
@@ -251,8 +256,8 @@ func resolveReported(state *EpisodeState, report Report) (*EpisodeState, ReportO
 	next := cloneEpisodeState(state)
 	message := -1
 	if pending.Policy != nil {
-		message = pending.PrefixLen
-		next.Policy = pending.recordedPolicy(state.Policy, reportedEntry(pending.Policy.Entry, run))
+		message, _ = pending.reportedReply()
+		next.Policy = pending.reportedPolicy(state.Policy, reportedEntry(pending.Policy.Entry, run))
 	}
 	replaced, err := commitReportedRun(next, run, pending.InputTokens, report)
 	if err != nil {
@@ -349,10 +354,7 @@ func reportedEntry(decided PolicyLedgerEntry, run ReportedRun) *PolicyLedgerEntr
 	entry := PolicyLedgerEntry{Message: decided.Message, ActionID: run.ActionID, ArmID: run.ArmID}
 	if run.ActionID == decided.ActionID {
 		entry = decided
-		if decided.Prices != nil {
-			prices := *decided.Prices
-			entry.Prices = &prices
-		}
+		entry.Prices = clonePriceAudit(decided.Prices)
 	}
 	entry.Basis = PolicyLedgerBasisReported
 	return &entry

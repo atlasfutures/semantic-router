@@ -192,6 +192,14 @@ type llmUsageRecord struct {
 	// (edge_503_resend.go): edge_attempt on the refused call, edge_resend on
 	// the re-send. Null on every other call.
 	EdgeResend *string `json:"edge_resend"`
+	// ResentBodyBytes, ResentLastEvent and ResentReadError say how a served
+	// re-send's body ended (resent_body_facts.go): bytes read, the stream's
+	// last SSE data event, and the class of the error that ended the read.
+	// Null on every call that is not a delivered re-send; the last event is
+	// null on a body that is not a stream, the read error on one read to its end.
+	ResentBodyBytes *int    `json:"resent_body_bytes"`
+	ResentLastEvent *string `json:"resent_last_event"`
+	ResentReadError *string `json:"resent_read_error"`
 	// HostRetry marks the calls of a streamed turn re-sent on its arm's next
 	// provider host after a call failed before any content
 	// (stream_host_retry.go): host_attempt on each call the cell went on
@@ -206,6 +214,14 @@ type llmUsageRecord struct {
 	UpstreamHost         *string `json:"upstream_host"`
 	UpstreamHostSource   *string `json:"upstream_host_source"`
 	HostAttemptStartedMS *int64  `json:"host_attempt_started_ms"`
+	// StreamHoldMS is how long a streamed turn's frames were held from the
+	// client before it was sent one (a host retry, an endpoint re-send or a
+	// refusal re-serve holds them until the first content): the
+	// milliseconds from the first frame held to the first frame the client
+	// was sent after it, on the line of the call whose frames reached the
+	// client. Null when the turn held nothing, and on the line of a call
+	// that was replaced.
+	StreamHoldMS *int64 `json:"stream_hold_ms"`
 	// RefusalReserve marks the calls of a streamed ARC turn refused before
 	// any text or tool call and re-served in place on the policy's next
 	// choice (rayline_arc_refusal_reserve.go): refused_attempt on each
@@ -415,6 +431,12 @@ func (r *OpenAIRouter) newLLMUsageRecord(ctx *RequestContext, usage responseUsag
 		// The refused call's line overwrites this with edge_attempt.
 		record.EdgeResend = nonEmpty(edgeResendServed)
 	}
+	if facts := ctx.ResentBody; facts != nil {
+		size := facts.bytes
+		record.ResentBodyBytes = &size
+		record.ResentLastEvent = nonEmpty(facts.lastEvent)
+		record.ResentReadError = nonEmpty(facts.readError)
+	}
 	record.ProviderEndpoint = nonEmpty(ctx.RaylineARCDispatchedEndpoint)
 	record.SessionKeySource = nonEmpty(ctx.RaylineARCSessionKeySource)
 	record.EndpointSource = nonEmpty(ctx.RaylineARCEndpointSource)
@@ -444,6 +466,7 @@ func (r *OpenAIRouter) newLLMUsageRecord(ctx *RequestContext, usage responseUsag
 	if state := ctx.SemanticStreamState; state != nil {
 		record.UpstreamResponseID = nonEmpty(state.upstreamResponseID)
 	}
+	record.StreamHoldMS = streamHoldMillis(ctx)
 	addHostRetryFields(&record, ctx)
 	addRefusalReserveFields(&record, ctx)
 	addUsageRecordARCAttribution(&record, ctx)
@@ -635,4 +658,21 @@ func nonEmpty(value string) *string {
 		return nil
 	}
 	return &value
+}
+
+// streamHoldMillis is the turn's hold so far (llm_usage stream_hold_ms): to
+// the first frame the client was sent after it, or to now when the frames
+// held go out with the reply this line is written for. Nil when nothing was
+// held.
+func streamHoldMillis(ctx *RequestContext) *int64 {
+	plan := ctx.HostRetry
+	if plan == nil || plan.holdStarted.IsZero() {
+		return nil
+	}
+	released := plan.holdReleased
+	if released.IsZero() {
+		released = time.Now()
+	}
+	held := released.Sub(plan.holdStarted).Milliseconds()
+	return &held
 }

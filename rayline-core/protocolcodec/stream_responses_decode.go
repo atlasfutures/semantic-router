@@ -2,6 +2,7 @@ package protocolcodec
 
 import (
 	"encoding/json"
+	"strings"
 
 	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
 )
@@ -29,10 +30,26 @@ func (decoder *responsesStreamDecoder) decodeResponsesLifecycleEvent(
 		"response.reasoning_summary_text.done", "response.reasoning_text.done":
 		return nil, nil, nil
 	case "response.function_call_arguments.done":
+		index := responsesWireOutputIndex(wire)
+		unstreamed := len(decoder.toolArguments[index]) == 0
 		if err := decoder.validateResponsesToolDone(wire); err != nil {
 			return nil, nil, err
 		}
-		return nil, nil, nil
+		if !unstreamed {
+			return nil, nil, nil
+		}
+		// Some servers (LM Studio) send a call's arguments only here, with no
+		// delta. They go on as the call's one argument delta, the event every
+		// client encoder writes arguments from: a Chat client is otherwise
+		// sent finish_reason "tool_calls" and no call. The check above has
+		// already proved them a JSON object and stored them as the call's
+		// arguments; the delta appends them, so that copy is cleared first.
+		decoder.toolArguments[index] = nil
+		wire.Delta = wire.Arguments
+		if err := decoder.applyResponsesToolDelta(&event, wire); err != nil {
+			return nil, nil, err
+		}
+		return decoder.emitResponsesEvent(event)
 	case "response.web_search_call.in_progress", "response.web_search_call.searching",
 		"response.web_search_call.completed":
 		// A web search's progress is not carried: the item's added and done
@@ -50,12 +67,12 @@ func (decoder *responsesStreamDecoder) decodeResponsesLifecycleEvent(
 func (decoder *responsesStreamDecoder) validateResponsesToolDone(wire responsesEventWire) error {
 	index := responsesWireOutputIndex(wire)
 	call := decoder.toolCalls[index]
-	if call.Name != "" && wire.Name != call.Name {
+	// The event's name is not in the published schema and some servers (LM
+	// Studio) leave it out: the call keeps the name its added event gave it,
+	// which that event must carry. An absent, null or empty name says
+	// nothing; any other must agree.
+	if wire.Name != "" && wire.Name != call.Name {
 		return invalidProviderResponse("stream_tool_identity_mismatch", "Responses function-call done event changed the tool name")
-	}
-	if call.Name == "" {
-		call.Name = wire.Name
-		decoder.toolCalls[index] = call
 	}
 	arguments := decoder.toolArguments[index]
 	if len(arguments) == 0 {
@@ -102,7 +119,17 @@ func (decoder *responsesStreamDecoder) applyResponsesItemStart(event *llmprotoco
 	decoder.itemTypes[responsesWireOutputIndex(wire)] = item.Type
 	event.Role = llmprotocol.RoleAssistant
 	if item.Type == "function_call" {
-		event.ToolCall = &llmprotocol.ToolCall{ID: item.CallID, Name: item.Name, Arguments: item.Arguments, Namespace: item.Namespace}
+		// An added item's "{}" is a start placeholder (this codec's Responses
+		// encoder writes one for every call it opens from a Messages stream),
+		// not the call's arguments: the deltas or the done event carry those.
+		// It is not passed on, so a call with no delta gets its done
+		// arguments as its one delta, and a client that adds the deltas to
+		// the added item's arguments does not assemble "{}" twice.
+		arguments := item.Arguments
+		if strings.TrimSpace(arguments) == "{}" {
+			arguments = ""
+		}
+		event.ToolCall = &llmprotocol.ToolCall{ID: item.CallID, Name: item.Name, Arguments: arguments, Namespace: item.Namespace}
 	} else if item.Type == "reasoning" {
 		event.Content = &llmprotocol.Content{Kind: llmprotocol.ContentReasoning}
 	} else if item.Type == "image_generation_call" {

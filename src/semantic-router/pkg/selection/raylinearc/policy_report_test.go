@@ -176,7 +176,7 @@ func TestApplyReportOfAnArmWithoutActionHoldsTheArm(t *testing.T) {
 func TestReportRuleStaleRouteIDIsDropped(t *testing.T) {
 	replaced := pendingEpisode(t)
 	replaced.Pending.RouteID = "rte_2"
-	raw, roles := rawMessages(t, pendingTask, pendingReply1, pendingAsk2, `{"role":"assistant","content":"two"}`)
+	raw, roles := rawMessages(t, pendingTask, pendingReply1, pendingAsk2, `{"role":"assistant","content":"two"}`, `{"role":"user","content":"three"}`)
 	inferred, resolution := ResolvePending(pendingEpisode(t), NewPrefixDigests(raw), roles)
 	if resolution != PendingInferred {
 		t.Fatalf("resolution %q", resolution)

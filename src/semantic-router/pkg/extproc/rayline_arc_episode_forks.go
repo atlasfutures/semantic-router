@@ -23,6 +23,7 @@ import (
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/metrics"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
@@ -172,8 +173,9 @@ func (check *raylineARCForkCheck) resolve(ctx context.Context, held string) (ray
 }
 
 // latestCommitted reports whether stream's newest admitted turn committed:
-// its episode's recorded prefix is that turn's. A state that cannot be read
-// counts as not committed, which keeps the request on the stream.
+// its episode's recorded prefix is that turn's and no pending lookup decision
+// is for it. A state that cannot be read counts as not committed, which keeps
+// the request on the stream.
 func (check *raylineARCForkCheck) latestCommitted(ctx context.Context, view raylinearc.EpisodeForkView, stream string) bool {
 	record := view.Main
 	if stream != raylinearc.EpisodeForkMainStream {
@@ -187,6 +189,11 @@ func (check *raylineARCForkCheck) latestCommitted(ctx context.Context, view rayl
 	defer cancel()
 	state, _, err := check.snapshots.Snapshot(readContext, record.EpisodeHash, check.workerCount)
 	if err != nil || state == nil || state.Policy == nil {
+		return false
+	}
+	// A lookup's pending decision for the newest request has not run, even
+	// when an earlier turn committed the same messages.
+	if pending := state.Pending; pending != nil && pending.PrefixLen == latest.Len && pending.PrefixDigest == latest.Digest {
 		return false
 	}
 	return state.Policy.PrefixLen == latest.Len && state.Policy.PrefixDigest == latest.Digest
@@ -281,8 +288,16 @@ func (r *OpenAIRouter) prepareRaylineARCForkedTurn(
 		}
 		reqCtx.RaylineARCAcquireTimeout = probe
 		state, coalesced, failure := r.prepareOrJoinRaylineARCTurn(arcConfig, reqCtx, placed.hash, workerCount, false)
-		if failure == "episode_timeout" && !lastAttempt {
+		// A probe's deadline is this loop's, not the store's: when it lands
+		// inside a store call rather than between polls, the store reports it
+		// bare (episode_store_timeout) though it may only have been answering
+		// "held". Only the last probe's says the store stalled.
+		storeTimeout := failure == "episode_store_timeout" && parent.Err() == nil
+		if (failure == "episode_timeout" || storeTimeout) && !lastAttempt {
 			continue
+		}
+		if storeTimeout {
+			metrics.SetRaylineARCNamedComponentReady("episode_store", false)
 		}
 		if failure != "" || coalesced != nil {
 			r.applyRaylineARCForkPlacement(result, placed)

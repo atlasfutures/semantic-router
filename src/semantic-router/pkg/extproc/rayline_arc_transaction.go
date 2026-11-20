@@ -187,11 +187,17 @@ type raylineARCEpisodeTransaction struct {
 	// them, kept by the pending-decision resolution for the decision the
 	// request may store; nil before it ran.
 	requestDigests *raylinearc.PrefixDigests
+	// requestPrefill marks a request that ends with an assistant message the
+	// model continues (endsWithAssistantMessage).
+	requestPrefill bool
 	// resolvedPending marks a request that recorded or dropped the pending
 	// decision it read, and readTurnIndex is the turn count it read, before
 	// that: state no longer holds it.
 	resolvedPending bool
 	readTurnIndex   uint64
+	// priorServedModel is the served-model record this request was held to
+	// (raylineARCServedModelsFor), kept with a pending decision it stores.
+	priorServedModel string
 }
 
 func newRaylineARCEpisodeTransaction(
@@ -473,7 +479,7 @@ func (transaction *raylineARCEpisodeTransaction) retainPolicyBoundary(
 	staged.PolicyBoundary = raylinearc.ClonePolicyBoundary(boundary)
 	stagePolicyExplorationOrigin(staged, transaction.policyNext)
 	if transaction.relaxed {
-		transaction.retainRelaxedPolicyBoundary(ctx, staged)
+		transaction.retainRelaxedPolicyBoundary(ctx, staged, "boundary_stage")
 		return
 	}
 	stager, ok := transaction.store.(raylinearc.EpisodeStateStager)
@@ -502,6 +508,7 @@ func (transaction *raylineARCEpisodeTransaction) retainPolicyBoundary(
 func (transaction *raylineARCEpisodeTransaction) retainRelaxedPolicyBoundary(
 	parent context.Context,
 	staged *raylinearc.EpisodeState,
+	label string,
 ) {
 	// A relaxed turn never waits on episode state, so the stage gets a short
 	// bound of its own; losing it only means a retry decides again.
@@ -509,8 +516,8 @@ func (transaction *raylineARCEpisodeTransaction) retainRelaxedPolicyBoundary(
 	defer cancel()
 	err := transaction.snapshots.CommitIfUnchanged(ctx, transaction.episodeIDHash, transaction.read, staged)
 	if err != nil {
-		metrics.RecordRaylineARCEpisodeTransaction("relaxed_dropped", "boundary_stage")
-		logging.ComponentWarnEvent("extproc", "rayline_arc_boundary_stage_failed", map[string]interface{}{
+		metrics.RecordRaylineARCEpisodeTransaction("relaxed_dropped", label)
+		logging.ComponentWarnEvent("extproc", "rayline_arc_"+label+"_failed", map[string]interface{}{
 			"failure_class": boundedARCEpisodeFailure(err), "relaxed": true,
 		})
 		return

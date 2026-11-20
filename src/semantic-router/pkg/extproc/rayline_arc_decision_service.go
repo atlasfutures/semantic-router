@@ -614,7 +614,10 @@ func committedEpisodeTurnIndex(requestContext *RequestContext) int {
 		return 0
 	}
 	turnIndex := requestContext.RaylineARCTransaction.state.TurnIndex
-	if requestContext.RaylineARCTransaction.decidesPending {
+	// A pending lookup reports the turn after the recorded ones. One the
+	// selection read as a side call wrote nothing and reports the recorded
+	// count, as one classified before the episode was read does.
+	if transaction := requestContext.RaylineARCTransaction; transaction.decidesPending && !transaction.sideCall {
 		turnIndex++
 	}
 	if turnIndex > math.MaxInt32 {
@@ -695,7 +698,7 @@ func commitDecisionOnlyEpisode(ctx context.Context, requestContext *RequestConte
 				// nothing against a terminal transaction. The caller still
 				// gets the deadline, because their budget is still gone.
 				logging.ComponentErrorEvent("extproc", "routing_decision_episode_committed_after_deadline", map[string]interface{}{
-					"detail": "the episode advanced for a lookup that answered 504; the next turn is scored against an arm the caller was never given",
+					"detail": "the episode was written for a lookup that answered 504; a pending decision the caller was never given may be inferred as the next turn's",
 				})
 			} else {
 				raylineARCReleaseTimedOutEpisode(ctx, requestContext)

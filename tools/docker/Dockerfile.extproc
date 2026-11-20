@@ -340,7 +340,7 @@ ARG BUILDPLATFORM
 # bodies; the router's own time is mostly JSON passes over the transcript.
 # Pinned to a patch release; tools/scripts/json-v2-byte-diff.sh checks that a
 # toolchain change moves no byte the router writes.
-FROM --platform=$BUILDPLATFORM golang:1.27.2 AS go-builder
+FROM --platform=$BUILDPLATFORM golang:1.27.4 AS go-builder
 
 # Install cross-compilation tools for Go
 RUN dpkg --add-architecture arm64 && \
