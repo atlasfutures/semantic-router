@@ -240,6 +240,11 @@ func privacyAllowedArmsHash(allowed []string) string {
 // applied mode, and for a private request its allowed set's size and digest.
 func addPrivacyFields(fields map[string]interface{}, ctx *RequestContext) {
 	fields["privacy_mode"] = privacyModeLabel(ctx.RaylineARCPrivacyMode)
+	if len(ctx.RaylineARCExcludedArms) > 0 {
+		// The arms the gateway took out of this request's offer, in any
+		// mode: a decision learned from must say what it was not offered.
+		fields["gateway_excluded_arms"] = ctx.RaylineARCExcludedArms
+	}
 	if ctx.RaylineARCPrivacyMode == "" {
 		return
 	}

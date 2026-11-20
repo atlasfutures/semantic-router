@@ -151,6 +151,10 @@ type RequestContext struct {
 	// endpoint allow list (x-rayline-privacy-allowed-endpoints); absent for
 	// a standard request or one whose gateway sent none.
 	RaylineARCPrivacyAllowedEndpoints privacyAllowedEndpoints
+	// RaylineARCExcludedArms is the arms the trusted gateway excluded from
+	// this request in any data mode (x-rayline-excluded-arms), sorted and
+	// deduplicated; nil when it excludes none.
+	RaylineARCExcludedArms []string
 	// RaylineARCSessionKey is the opaque key an arm's OpenRouter endpoint is
 	// picked by (rayline_arc_endpoint_pick.go): the gateway's
 	// x-rayline-session-key, or the cell's own digest of the episode's user

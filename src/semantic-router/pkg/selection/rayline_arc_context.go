@@ -65,6 +65,10 @@ type RaylineARCSelectionContext struct {
 	// (extproc/rayline_arc_privacy.go). Nil for a standard request, which
 	// leaves selection exactly as it was.
 	PrivacyExcludedArms []bool
+	// GatewayExcludedArms marks, by arm ordinal, the candidates the
+	// request's trusted gateway excluded in any data mode
+	// (extproc/rayline_arc_excluded_arms.go). Nil when it excludes none.
+	GatewayExcludedArms []bool
 	// PrivacyMode is the request's data mode: "" for a standard request,
 	// else privacy or zdr. A privacy or zdr turn sends an arm's override pin
 	// for its mode when the arm declares one, so its failures are recorded

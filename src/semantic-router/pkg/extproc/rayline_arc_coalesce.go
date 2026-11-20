@@ -147,7 +147,7 @@ func raylineARCTurnInputs(
 		eligibility = strings.TrimSpace(reqCtx.Headers[lever.EligibilityHeader])
 	}
 	return fmt.Sprintf(
-		"decision=%p|format=%s|close=%t|eligible=%q|fault=%s|credentials=%s|call_kind=%q|compaction=%q|agent_key_source=%q|privacy_mode=%q|training_data=%q|privacy_allowed_arms=%q|route_controls=%q|surface=%q|max_encode_tokens=%d",
+		"decision=%p|format=%s|close=%t|eligible=%q|fault=%s|credentials=%s|call_kind=%q|compaction=%q|agent_key_source=%q|privacy_mode=%q|training_data=%q|privacy_allowed_arms=%q|excluded_arms=%q|route_controls=%q|surface=%q|max_encode_tokens=%d",
 		arcConfig,
 		reqCtx.SourceFormat,
 		reqCtx.RaylineARCCloseRequested,
@@ -167,6 +167,8 @@ func raylineARCTurnInputs(
 		// A private request must never inherit a decision made over another
 		// allowed set.
 		strings.TrimSpace(reqCtx.Headers[raylineARCPrivacyAllowedArmsHeader]),
+		// Nor one made over another gateway exclusion.
+		strings.TrimSpace(reqCtx.Headers[raylineARCExcludedArmsHeader]),
 		// A lookup's result points, prices and exploration.
 		reqCtx.RaylineRoutesControlsKey,
 		// A consult's surface and encode limit: a routed turn never takes a

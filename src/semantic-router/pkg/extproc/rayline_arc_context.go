@@ -190,6 +190,7 @@ func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 		reqCtx.RaylineARCPrivacyMode = raylineARCPrivacyMode(signalHeaders)
 		reqCtx.RaylineARCPrivacyAllowedArms = raylineARCPrivacyAllowedArms(reqCtx.RaylineARCPrivacyMode, signalHeaders)
 		reqCtx.RaylineARCPrivacyAllowedEndpoints = raylineARCPrivacyAllowedEndpoints(reqCtx.RaylineARCPrivacyMode, signalHeaders)
+		reqCtx.RaylineARCExcludedArms = raylineARCExcludedArms(signalHeaders)
 		result.PolicyCallKind, result.PolicyCallKindSource = raylineARCPolicyCallKindOfBodyForked(
 			signalHeaders, policyRequestFormat(reqCtx.SourceFormat), reqCtx.RaylineARCRawBody, result.EpisodeIDHash,
 			raylineARCForksSubagents(algorithm.RaylineARC, policyRequestFormat(reqCtx.SourceFormat)),
@@ -332,6 +333,7 @@ func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 	reqCtx.RaylineARCRequestedOutputTokens = result.RequestedOutputTokens
 	reqCtx.RaylineARCOverOutputArms = result.OverOutputArms
 	result.DisabledArms = r.disabledArms(modelRefs)
+	result.GatewayExcludedArms = gatewayExcludedArms(reqCtx.RaylineARCExcludedArms, modelRefs)
 	result.PrivacyExcludedArms = privacyExcludedArms(reqCtx.RaylineARCPrivacyMode, reqCtx.RaylineARCPrivacyAllowedArms, modelRefs)
 	result.PrivacyMode = reqCtx.RaylineARCPrivacyMode
 	result.EphemeralTurn = raylineARCEphemeralTurn(reqCtx.RaylineARCPrivacyMode)

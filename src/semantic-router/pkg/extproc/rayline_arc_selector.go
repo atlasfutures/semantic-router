@@ -388,6 +388,10 @@ func (selector *raylineARCSelector) Select(
 // and is the one constraint that yields: it is lifted rather than refusing a
 // turn.
 //
+// The gateway's excluded arms (rayline_arc_excluded_arms.go) follow the
+// operator's verdict: a basket where only gateway-excluded arms could serve
+// the turn is refused as no_gateway_arm.
+//
 // The privacy mask is applied last. A basket no arm of which can serve the
 // turn keeps the class that says why; one where only arms the request's
 // privacy mode rules out could serve it is refused as no_private_arm (a 422
@@ -419,6 +423,10 @@ func hardExcludedArms(
 		return nil, err
 	}
 	excluded, err = withDisabledArms(arcContext, armCount, excluded)
+	if err != nil {
+		return nil, err
+	}
+	excluded, err = withGatewayExcludedArms(arcContext, armCount, excluded)
 	if err != nil {
 		return nil, err
 	}

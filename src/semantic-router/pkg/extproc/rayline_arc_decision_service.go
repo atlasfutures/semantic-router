@@ -827,9 +827,10 @@ func (service *raylineARCDecisionService) decisionOnlyRequestContext(
 		}
 		headers[algorithm.RaylineARC.Episode.IDHeader] = episodeIdentity
 	}
-	// The privacy headers alone: the builder reads them only on a cell that
-	// trusts them, and a consult must be masked as the routed turn would be.
-	for _, name := range []string{raylineARCPrivacyModeHeader, raylineARCPrivacyAllowedArmsHeader} {
+	// The privacy headers and the gateway's excluded arms alone: the builder
+	// reads them only on a cell that trusts them, and a consult must be
+	// masked as the routed turn would be.
+	for _, name := range []string{raylineARCPrivacyModeHeader, raylineARCPrivacyAllowedArmsHeader, raylineARCExcludedArmsHeader} {
 		if value, stated := request.Headers[name]; stated {
 			headers[name] = value
 		}
