@@ -155,7 +155,7 @@ func (r *OpenAIRouter) edgeResendOnResponseHeaders(
 	ctx.EdgeResent = true
 
 	time.Sleep(wait)
-	result := callFlexTwin(ctx, call, r.flexResendBodyLimit(), received.Add(budget))
+	result := callFlexTwin(ctx, call, r.flexResendBodyLimit(), received.Add(budget), r.flexTwinBodyDeadline(ctx))
 	fields := map[string]interface{}{
 		"request_id":        ctx.RequestID,
 		"model":             plan.dispatch.logicalModel,
