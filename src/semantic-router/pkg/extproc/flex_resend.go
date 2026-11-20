@@ -382,7 +382,7 @@ func (r *OpenAIRouter) flexResendOnResponseHeaders(
 
 	plan.trigger = trigger
 	started := time.Now()
-	result := callFlexTwin(ctx, call, r.flexResendBodyLimit(), received.Add(budget))
+	result := callFlexTwin(ctx, call, r.flexResendBodyLimit(), received.Add(budget), r.flexTwinBodyDeadline(ctx))
 	fields := map[string]interface{}{
 		"request_id":          ctx.RequestID,
 		"flex_model":          plan.flexModel,
@@ -443,9 +443,31 @@ func (r *OpenAIRouter) flexResendBodyLimit() int64 {
 	return flexResendMaxBody
 }
 
-// flexResendBudget is how long the re-send may take, measured from the
-// refused call's response headers, or the reason it is not attempted: the
-// operator turned it off, or the budget is too short to be worth a call.
+// flexTwinBodyDeadline bounds a re-send's body, the generation itself: the
+// turn's own stream deadline, measured from the start of the request as
+// responseStreamOverran measures it. Zero when that deadline is off.
+//
+// The re-send answers inside Envoy's response-headers message, so the ext_proc
+// message_timeout bounds the whole of it. The stream deadline sits below that
+// timeout on the ladder in processor_res_stream_deadline.go (590 s under
+// 610 s), and it runs from the request's start, which is before the headers
+// message began; so this deadline ends before Envoy's. A deployment with a
+// shorter message_timeout sets response_stream.deadline_sec below it, as the
+// ladder already requires (the budget alone, 300 s by default, exceeded a
+// 60 s message_timeout before this change too).
+func (r *OpenAIRouter) flexTwinBodyDeadline(ctx *RequestContext) time.Time {
+	deadline := r.responseStreamDeadline()
+	if deadline <= 0 || ctx == nil || ctx.StartTime.IsZero() {
+		return time.Time{}
+	}
+	return ctx.StartTime.Add(deadline)
+}
+
+// flexResendBudget is how long the re-send may take to answer with its
+// response headers, measured from the refused call's, or the reason it is not
+// attempted: the operator turned it off, or the budget is too short to be
+// worth a call. It does not bound the re-send's body (flexTwinBodyDeadline):
+// a budget that did cut every re-sent generation longer than it.
 func (r *OpenAIRouter) flexResendBudget() (time.Duration, string) {
 	budget := flexResendDefaultBudget
 	if r != nil && r.Config != nil {
@@ -476,20 +498,45 @@ type flexTwinResult struct {
 	ids upstreamCallIDs
 }
 
-func callFlexTwin(ctx *RequestContext, call *flexTwinCall, limit int64, deadline time.Time) flexTwinResult {
+// callFlexTwin makes the re-send. deadline bounds the wait for its response
+// headers, the re-send budget; once they arrive the body, which is the whole
+// generation, is read until bodyDeadline, the turn's own stream deadline
+// (flexTwinBodyDeadline). A zero bodyDeadline leaves the body unbounded but
+// for the caller's context, as the stream deadline turned off does.
+func callFlexTwin(ctx *RequestContext, call *flexTwinCall, limit int64, deadline, bodyDeadline time.Time) flexTwinResult {
 	parent := ctx.TraceContext
 	if parent == nil {
 		parent = context.Background()
 	}
-	callCtx, cancel := context.WithDeadline(parent, deadline)
+	callCtx, cancel := context.WithCancel(parent)
 	defer cancel()
-	request, err := http.NewRequestWithContext(callCtx, http.MethodPost, call.url, bytes.NewReader(call.body))
+	if !bodyDeadline.IsZero() {
+		if bodyDeadline.Before(deadline) {
+			bodyDeadline = deadline
+		}
+		callCtx, cancel = context.WithDeadline(callCtx, bodyDeadline)
+		defer cancel()
+	}
+	headerCtx, cancelHeaders := context.WithCancelCause(callCtx)
+	defer cancelHeaders(nil)
+	headerTimer := time.AfterFunc(time.Until(deadline), func() { cancelHeaders(context.DeadlineExceeded) })
+	request, err := http.NewRequestWithContext(headerCtx, http.MethodPost, call.url, bytes.NewReader(call.body))
 	if err != nil {
+		headerTimer.Stop()
 		return flexTwinFailure(err)
 	}
 	request.Header = call.headers.Clone()
 	response, err := flexResendHTTPClient.Do(request)
+	if !headerTimer.Stop() && err == nil {
+		// The budget ran out as the headers arrived: the body read would be
+		// cancelled mid-way, so the re-send is out of time, as before.
+		response.Body.Close()
+		err = context.DeadlineExceeded
+	}
 	if err != nil {
+		if errors.Is(context.Cause(headerCtx), context.DeadlineExceeded) && !errors.Is(err, context.DeadlineExceeded) {
+			err = fmt.Errorf("%w: %v", context.DeadlineExceeded, err)
+		}
 		return flexTwinFailure(err)
 	}
 	defer response.Body.Close()
