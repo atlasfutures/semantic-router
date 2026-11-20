@@ -866,7 +866,8 @@ as a turn marked `reported`, for the model that actually ran:
   action is taken when it is that model's. A model no arm of the package
   serves (a local model) is recorded as a turn with no arm.
 - `usage` is what the cell records of a call it serves: `prompt_tokens` is
-  the whole prompt, cache read and write included. `finished_at` is required.
+  the whole prompt, cache read and write included. `finished_at` is required:
+  when the call's response completed, within the last day.
   Output tokens and cost are not accepted.
 
 The answer is always `200` once the report is read:

@@ -61,6 +61,10 @@ const (
 	// raylineReportClockSkew is how far ahead of this clock a finish time
 	// may lie, for the reporter's clock.
 	raylineReportClockSkew = time.Minute
+	// raylineReportMaxAge is how long after a call its report is still read:
+	// a report is sent right after the call, and an episode keeps far less
+	// idle history than this.
+	raylineReportMaxAge = 24 * time.Hour
 	// raylineReportNotTracked is the answer of a cell that keeps no episodes
 	// for route lookups: episode writes off, or no policy service.
 	raylineReportNotTracked = "not_tracked"
@@ -175,6 +179,9 @@ func readRaylineReport(body []byte, source string, now time.Time) (raylineReport
 	}
 	if finished.After(now.Add(raylineReportClockSkew)) {
 		return raylineReport{}, reportInvalid("executed.finished_at is in the future")
+	}
+	if finished.Before(now.Add(-raylineReportMaxAge)) {
+		return raylineReport{}, reportInvalid("executed.finished_at is more than a day ago")
 	}
 	// Kept as sent, even a little ahead of this clock.
 	report.finishedAt = finished.UTC()

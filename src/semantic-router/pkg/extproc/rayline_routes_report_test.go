@@ -362,6 +362,8 @@ func TestRoutesReportRefusals(t *testing.T) {
 		"output tokens":     {"c", "", executedReport("", "off", map[string]any{"usage": map[string]any{"output_tokens": 5}}), 400, "invalid_report"},
 		"unknown tier":      {"c", "", map[string]any{"model": "arc-9", "executed": map[string]any{"model": "off", "finished_at": time.Now().UTC().Format(time.RFC3339)}}, 400, "unknown_model"},
 		"ttl out of bounds": {"c", "", executedReport("", "off", map[string]any{"usage": map[string]any{"cache_ttl_seconds": 0}}), 400, "invalid_report"},
+		"zero-time finish":  {"c", "", executedReport("", "off", map[string]any{"finished_at": "0001-01-01T00:00:00.000000001Z"}), 400, "invalid_report"},
+		"day-old finish":    {"c", "", executedReport("", "off", map[string]any{"finished_at": time.Now().Add(-25 * time.Hour).UTC().Format(time.RFC3339)}), 400, "invalid_report"},
 	}
 	for name, tc := range cases {
 		code, body := fixture.postReport(t, tc.conversation, tc.source, tc.body)
