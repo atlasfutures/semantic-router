@@ -106,7 +106,7 @@ jobs:
           MATRIX_IMAGE: ${{ matrix.image }}
           CARGO_BUILD_JOBS: "8"
           DASHBOARD_VERSION_MODE: pr
-          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_NUMBER: ${{ github.event.pull_request.number || github.run_number }}
         run: bash tools/ci/docker-build-args.sh
 
       - name: Build affected image without publishing
