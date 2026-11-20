@@ -195,6 +195,7 @@ func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 		)
 	}
 	reqCtx.RaylineARCSessionKey, reqCtx.RaylineARCSessionKeySource = raylineARCSessionKey(signalHeaders, rawEpisodeID)
+	reqCtx.RaylineARCUserKey = raylineARCUserKey(rawEpisodeID)
 	if rawEpisodeID != "" {
 		var (
 			state     *raylinearc.EpisodeState

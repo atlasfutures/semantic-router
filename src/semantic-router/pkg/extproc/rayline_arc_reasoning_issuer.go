@@ -162,6 +162,10 @@ func (r *OpenAIRouter) opaqueReasoningIssuerFor(dispatch *providerDispatch, priv
 // publisher, or the vendor segment of an anthropic/... provider model id.
 const anthropicFamily = "anthropic"
 
+// openAIFamily is the family armFamily names for GPT: the card publisher, or
+// the vendor segment of an openai/... provider model id.
+const openAIFamily = "openai"
+
 // workerFamily names the family of the worker serving this turn, for the
 // stream encoder's provenance decisions (llmprotocol.StreamContext.WorkerFamily):
 // the selected worker's, or the requested model's when none was selected. It

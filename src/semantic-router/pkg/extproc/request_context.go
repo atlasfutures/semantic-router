@@ -151,6 +151,10 @@ type RequestContext struct {
 	// (header, fallback, or none when the turn has no episode).
 	RaylineARCSessionKey       string
 	RaylineARCSessionKeySource string
+	// RaylineARCUserKey is the opaque per-user key (raylineARCUserKey) an
+	// OpenAI-family dispatch sends OpenRouter as its session_id
+	// (req_filter_upstream_session.go); "" when the episode id names no user.
+	RaylineARCUserKey string
 	// RaylineARCEndpointSource says where the arm's endpoints were read from:
 	// feed (the routing-price feed's rows) or none (no feed in effect, so no
 	// pick). RaylineARCEndpointOrder is the candidates in the session's

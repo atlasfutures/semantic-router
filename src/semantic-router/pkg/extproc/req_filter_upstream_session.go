@@ -36,9 +36,10 @@ const upstreamSessionIDField = "session_id"
 func applyUpstreamSessionID(
 	body []byte,
 	dispatch *providerDispatch,
+	routerConfig *config.RouterConfig,
 	ctx *RequestContext,
 ) ([]byte, error) {
-	encoded, err := upstreamSessionIDMember(dispatch, ctx)
+	encoded, err := upstreamSessionIDMember(dispatch, routerConfig, ctx)
 	if err != nil || encoded == nil {
 		return body, err
 	}
@@ -52,12 +53,16 @@ func applyUpstreamSessionID(
 
 // upstreamSessionIDMember is the session_id member a dispatch carries, nil
 // when it carries none.
-func upstreamSessionIDMember(dispatch *providerDispatch, ctx *RequestContext) (json.RawMessage, error) {
-	episodeIDHash, wanted := upstreamSessionIDForDispatch(dispatch, ctx)
+func upstreamSessionIDMember(
+	dispatch *providerDispatch,
+	routerConfig *config.RouterConfig,
+	ctx *RequestContext,
+) (json.RawMessage, error) {
+	sessionID, wanted := upstreamSessionIDForDispatch(dispatch, routerConfig, ctx)
 	if !wanted {
 		return nil, nil
 	}
-	encoded, err := json.Marshal(episodeIDHash)
+	encoded, err := json.Marshal(sessionID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to serialize upstream session id: %w", err)
 	}
@@ -81,7 +86,7 @@ func applyUpstreamRoutingMembers(
 	routerConfig *config.RouterConfig,
 	ctx *RequestContext,
 ) ([]byte, error) {
-	session, err := upstreamSessionIDMember(dispatch, ctx)
+	session, err := upstreamSessionIDMember(dispatch, routerConfig, ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -127,9 +132,21 @@ func setTopLevelMembers(body []byte, members map[string]json.RawMessage) ([]byte
 }
 
 // upstreamSessionIDForDispatch answers the three gates in one place, so the
-// mutation above reads as a mutation and the policy stays testable on its own.
+// mutation above reads as a mutation and the policy stays testable on its own,
+// and picks the key's scope by the worker's family.
+//
+// For an OpenAI worker OpenRouter also scopes OpenAI's prompt cache by the
+// session_id: a new session_id never reads a prefix another session wrote,
+// even byte for byte the same and seconds old, while the same session_id
+// always does. A per-conversation key therefore made every first turn of a
+// conversation on a GPT worker a full cache write, where an Anthropic worker
+// reads the shared system and tools prefix. An OpenAI worker is sent the per-user key
+// instead, so one user's conversations share their common prefix and users
+// stay apart, or no session_id when the episode names no user. Other
+// families keep the per-conversation key.
 func upstreamSessionIDForDispatch(
 	dispatch *providerDispatch,
+	routerConfig *config.RouterConfig,
 	ctx *RequestContext,
 ) (string, bool) {
 	if dispatch == nil || ctx == nil || ctx.VSRSelectedDecision == nil {
@@ -144,6 +161,9 @@ func upstreamSessionIDForDispatch(
 	}
 	if ctx.VSRRaylineARC == nil || ctx.VSRRaylineARC.EpisodeIDHash == "" {
 		return "", false
+	}
+	if modelFamily(routerConfig, dispatch.logicalModel) == openAIFamily {
+		return ctx.RaylineARCUserKey, ctx.RaylineARCUserKey != ""
 	}
 	return ctx.VSRRaylineARC.EpisodeIDHash, true
 }

@@ -93,6 +93,18 @@ func raylineARCSessionKey(signalHeaders map[string]string, rawEpisodeID string) 
 	return raylinearc.SessionKeyDigest(parts[0], parts[1]), sessionKeySourceFallback
 }
 
+// raylineARCUserKey is an opaque per-user key: a digest of the user part of
+// a user:conversation episode id, domain-separated from the episode and
+// session digests. It is "" for an episode id of any other shape and for a
+// turn with no episode. It never carries the user id itself.
+func raylineARCUserKey(rawEpisodeID string) string {
+	parts := strings.SplitN(strings.TrimSpace(rawEpisodeID), ":", 3)
+	if len(parts) < 2 || strings.TrimSpace(parts[0]) == "" {
+		return ""
+	}
+	return raylinearc.HashEpisodeID("rayline-arc-user:" + parts[0])
+}
+
 // soleEndpoint is the endpoint a pin names alone with no OpenRouter fallback
 // (its only list, or its order when it sets no only list, of one tag) when
 // the feed records that tag as the one endpoint the pin reaches, or "" when
