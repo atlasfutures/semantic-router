@@ -207,7 +207,9 @@ func mustEdgeResolved(t *testing.T) *EpisodeState {
 // its route id): arriving after it, it rewrites the turn with what the edge saw and restores the client's
 // arm warmth when the arms differ; the turn count does not move. It still
 // does after the client's next lookup stored a pending decision, which it
-// leaves pending. Once a later turn is recorded, it is late.
+// leaves pending. Once a later turn is recorded, the last report is gone
+// with it (the record returns to its earlier schema) and the gateway's
+// report changes nothing.
 func TestEdgeReportReplacesTheClientsForTheSameTurn(t *testing.T) {
 	stored := pendingEpisode(t)
 	client, _ := mustApplyReport(t, stored, reportOf(ReportSourceClient, "rte_1", ranOn(1, pendingActionB, "vendor/b"), nil))
@@ -253,8 +255,11 @@ func TestEdgeReportReplacesTheClientsForTheSameTurn(t *testing.T) {
 	if err := later.Commit(0, 5, reportFinished.Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
+	if later.LastReport != nil {
+		t.Fatal("a committed turn kept the last report")
+	}
 	_, outcome = mustApplyReport(t, later, reportOf(ReportSourceGateway, "rte_1", ranOn(0, pendingActionA, "vendor/a"), nil))
-	if outcome.Recorded || outcome.Reason != ReportLate {
+	if outcome.Recorded || outcome.Reason != ReportNotPending {
 		t.Fatalf("after a later turn: %+v", outcome)
 	}
 }

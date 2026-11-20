@@ -104,9 +104,11 @@ func RecordRaylineARCRoutesLookup(execution string) {
 	RaylineARCRoutesLookups.WithLabelValues(execution).Inc()
 }
 
-// RaylineARCRouteReports counts /v1/report calls by who reported (gateway,
+// RaylineARCRouteReports counts /v1/report calls that were read -- answered
+// 200, or failed against the episode store -- by who reported (gateway,
 // client), what happened (recorded, ignored, error) and why (the answer's
-// reason, or the error code).
+// reason, or the error code). Refusals of a malformed request are not
+// counted.
 var RaylineARCRouteReports = promauto.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "llm_rayline_arc_route_reports_total",

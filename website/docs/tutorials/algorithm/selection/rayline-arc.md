@@ -870,16 +870,18 @@ as a turn marked `reported`, for the model that actually ran:
   when the call's response completed, within the last day.
   Output tokens and cost are not accepted.
 
-The answer is always `200` once the report is read:
+A well-formed report is answered `200` whether it changed the record or was
+ignored, so a caller never retries a report that was read:
 `{"object": "route.report", "status": "recorded" | "ignored", "reason", "route_id", "turn_index", "attributed"}`.
 Reasons when recorded: `pending_resolved`, `client_report_replaced`.
 Reasons when ignored: `not_tracked` (`episode_writes` off, or not a
 policy-service cell; nothing is stored), `no_episode`, `not_pending` (the
 named decision was already recorded, replaced by a repeat ask, or dropped,
 so a report that comes after the next turn changes nothing; or, naming no
-decision, there was none pending), `late`, `duplicate`, `superseded`. A malformed report is
-`400` in the lookup's error envelope; a conversation another request is
-updating is `429 episode_busy` with `retry-after`.
+decision, there was none pending), `duplicate`, `superseded`. Otherwise the
+answer is an error in the lookup's envelope: `400` for a malformed report,
+`429 episode_busy` with `retry-after` while another request is updating the
+conversation, `503` or `504` when the episode store fails or is slow.
 
 `x-rayline-report-source: gateway` marks a report from a gateway in front of
 the cell, of a call it sent to a provider itself; anything else is a client's

@@ -3,6 +3,7 @@ package extproc
 import (
 	"context"
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -149,7 +150,7 @@ func TestRoutesReportOfAnotherModel(t *testing.T) {
 	if *state.PreviousArm != 1 || state.Policy.Ledger[0].ActionID != fixture.actions[2] || state.Policy.Ledger[0].ArmID != "" {
 		t.Fatalf("record %+v ledger %+v", state, state.Policy.Ledger)
 	}
-	if state.Warmth[0] != before.Warmth[0] && (state.Warmth[0] == nil) != (before.Warmth[0] == nil) {
+	if !reflect.DeepEqual(state.Warmth[0], before.Warmth[0]) {
 		t.Fatalf("the decided arm's warmth changed: %+v", state.Warmth[0])
 	}
 	fixture.lookup(t, conversation, pendingRoutesBody(t, pendingTurnTask, pendingTurnReply, pendingTurnNext))
@@ -275,6 +276,10 @@ func TestRoutesReportWithEpisodeWritesOff(t *testing.T) {
 	}
 	if code, _ := fixture.postReport(t, "conversation-off", "", map[string]any{"executed": map[string]any{}}); code != 400 {
 		t.Fatalf("a malformed report with writes off was answered %d", code)
+	}
+	unknownLevel := executedReport("rte_1", "think", map[string]any{"thinking_level": "max"})
+	if code, _ := fixture.postReport(t, "conversation-off", "", unknownLevel); code != 400 {
+		t.Fatalf("a level the model does not have was answered %d with writes off", code)
 	}
 }
 
@@ -498,7 +503,6 @@ func TestRoutesReportKeepsAFinishTimeAheadOfTheClock(t *testing.T) {
 	if answer := fixture.report(t, conversation, "", report); answer.Reason != raylinearc.ReportPendingResolved {
 		t.Fatalf("first: %+v", answer)
 	}
-	time.Sleep(5 * time.Millisecond)
 	if answer := fixture.report(t, conversation, "", report); answer.Status != "ignored" || answer.Reason != raylinearc.ReportNotPending {
 		t.Fatalf("retry: %+v", answer)
 	}

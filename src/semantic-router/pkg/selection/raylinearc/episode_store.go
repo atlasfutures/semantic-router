@@ -635,7 +635,6 @@ func marshalEpisodeState(
 	}
 	if carriesReport(state.Policy, state.LastReport) {
 		wire.SchemaVersion = episodeStateSchemaV12
-		wire.Pending = ClonePendingDecision(state.Pending)
 		wire.LastReport = CloneLastReport(state.LastReport)
 	}
 	owner := state.EncoderOwner

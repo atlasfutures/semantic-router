@@ -42,9 +42,10 @@ const (
 // report rather than from the request the cell sent.
 const ReportedTTLSource = "reported"
 
-// maxReportIDBytes bounds the ids a last report keeps: a route id, as a
-// pending decision keeps it, and a caller's report id.
-const maxReportIDBytes = maxPendingRouteIDBytes
+// MaxReportIDBytes bounds the ids a report may carry and a last report
+// keeps: a route id, as a pending decision keeps it, and a caller's report
+// id.
+const MaxReportIDBytes = maxPendingRouteIDBytes
 
 // Report outcomes, as ApplyReport reports them.
 const (
@@ -59,9 +60,6 @@ const (
 	// ReportNotPending: the decision the report names is no longer pending,
 	// or, naming none, there is no pending decision it could settle.
 	ReportNotPending = "not_pending"
-	// ReportLate: a later turn was recorded since the report the gateway's
-	// would replace.
-	ReportLate = "late"
 	// ReportDuplicate: the same report was already recorded.
 	ReportDuplicate = "duplicate"
 	// ReportSuperseded: the gateway already reported this turn.
@@ -76,9 +74,6 @@ type ReportedRun struct {
 	// ActionID is the package action, empty when the model is the arm's but
 	// the action is not known.
 	ActionID string
-	// ArmID is the service's trained-arm id for the ledger, empty when not
-	// known; the service then reads the entry as the action's model only.
-	ArmID string
 	// Model is the model the turn records as served.
 	Model string
 	// Call is the reported usage; ApplyReport sets its action and time.
@@ -169,8 +164,8 @@ func (last *LastReport) validate(state *EpisodeState) error {
 		return nil
 	}
 	if (last.Source != ReportSourceGateway && last.Source != ReportSourceClient) ||
-		len(last.RouteID) > maxReportIDBytes || len(last.ReportID) > maxReportIDBytes ||
-		len(last.ClientReportID) > maxReportIDBytes || (last.ClientReportID != "" && last.Source != ReportSourceGateway) ||
+		len(last.RouteID) > MaxReportIDBytes || len(last.ReportID) > MaxReportIDBytes ||
+		len(last.ClientReportID) > MaxReportIDBytes || (last.ClientReportID != "" && last.Source != ReportSourceGateway) ||
 		last.TurnIndex > state.TurnIndex || last.Message < -1 || last.Arm < -1 || last.Arm >= len(state.Warmth) ||
 		last.InputTokens < 0 || last.Epoch < 0 ||
 		(last.Replaced != nil && (last.Source != ReportSourceClient || last.Arm < 0)) ||
@@ -193,9 +188,10 @@ func EpisodeHasHistory(state *EpisodeState) bool {
 //
 // The pending decision the report names becomes a recorded turn marked
 // reported, for the model that ran. A report naming the decision the last
-// report recorded is a duplicate, or -- the gateway's after a client's,
-// while no later turn was recorded -- replaces the client's: the gateway's
-// report wins. A report naming no decision is used only to settle the
+// report recorded is a duplicate, or -- the gateway's after a client's --
+// replaces the client's: the gateway's report wins. A recorded turn after
+// it clears the last report, so it is replaced only while it is the
+// latest turn. A report naming no decision is used only to settle the
 // pending decision (unnamedReport).
 func ApplyReport(state *EpisodeState, report Report) (*EpisodeState, ReportOutcome, error) {
 	if !EpisodeHasHistory(state) {
@@ -250,10 +246,10 @@ func ignoredReport(reason string) ReportOutcome {
 	return ReportOutcome{Reason: reason}
 }
 
-// reportOfReportedTurn answers a report of the turn the last report
-// recorded: from the same source a duplicate; a client's after the
-// gateway's is superseded; the gateway's after a client's replaces it,
-// unless a later turn was recorded since.
+// reportOfReportedTurn answers a report naming the route id the last report
+// recorded -- the episode's latest turn, as a commit clears the last report:
+// from the same source a duplicate; a client's after the gateway's is
+// superseded; the gateway's after a client's replaces it.
 func reportOfReportedTurn(state *EpisodeState, report Report) (*EpisodeState, ReportOutcome, error) {
 	last := state.LastReport
 	switch {
@@ -261,8 +257,6 @@ func reportOfReportedTurn(state *EpisodeState, report Report) (*EpisodeState, Re
 		return state, ignoredReport(ReportDuplicate), nil
 	case report.Source != ReportSourceGateway:
 		return state, ignoredReport(ReportSuperseded), nil
-	case last.TurnIndex != state.TurnIndex:
-		return state, ignoredReport(ReportLate), nil
 	}
 	return replaceClientReport(state, report)
 }
@@ -373,7 +367,10 @@ func reportedEntry(decided PolicyLedgerEntry, run ReportedRun) *PolicyLedgerEntr
 	if run.ActionID == "" {
 		return nil
 	}
-	entry := PolicyLedgerEntry{Message: decided.Message, ActionID: run.ActionID, ArmID: run.ArmID}
+	// No decision named the trained arm of an action other than the decided
+	// one: the entry has none, which the service reads as the action's
+	// model only.
+	entry := PolicyLedgerEntry{Message: decided.Message, ActionID: run.ActionID}
 	if run.ActionID == decided.ActionID {
 		entry = decided
 		entry.Prices = clonePriceAudit(decided.Prices)

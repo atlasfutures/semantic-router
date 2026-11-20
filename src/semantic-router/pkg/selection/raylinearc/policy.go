@@ -75,8 +75,8 @@ type EpisodeState struct {
 	// Pending is a route lookup's decision not yet known to have run; the
 	// next request resolves it (ResolvePending). Commit clears it.
 	Pending *PendingDecision
-	// LastReport is the latest report of a call that ran recorded on this
-	// episode (ApplyReport); nil when none was.
+	// LastReport is the report that recorded the episode's latest turn
+	// (ApplyReport); nil when that turn was not reported. Commit clears it.
 	LastReport *LastReport
 }
 
@@ -222,6 +222,9 @@ func (state *EpisodeState) Commit(
 	state.PreviousArm = &selected
 	state.PolicyBoundary = nil
 	state.Pending = nil
+	// A report of an earlier turn can neither be retried nor corrected once
+	// a turn is recorded after it.
+	state.LastReport = nil
 	if state.TurnIndex < math.MaxUint64 {
 		state.TurnIndex++
 	}

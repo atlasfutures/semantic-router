@@ -53,9 +53,6 @@ const (
 	raylineReportMaxBodyBytes = 16 * 1024
 	// raylineReportMaxModelBytes bounds the model name a report records.
 	raylineReportMaxModelBytes = 256
-	// raylineReportMaxIDBytes bounds a route id or report id, as the episode
-	// keeps them.
-	raylineReportMaxIDBytes = 128
 	// raylineReportMaxTTLSeconds bounds a reported cache lifetime.
 	raylineReportMaxTTLSeconds = 24 * 60 * 60
 	// raylineReportClockSkew is how far ahead of this clock a finish time
@@ -154,9 +151,12 @@ func readRaylineReport(body []byte, source string, now time.Time) (raylineReport
 	default:
 		return raylineReport{}, reportInvalid(raylineReportSourceHeader + " must be gateway or client")
 	}
-	for name, id := range map[string]*string{"route_id": wire.RouteID, "report_id": wire.ReportID} {
-		if id != nil && (*id == "" || len(*id) > raylineReportMaxIDBytes) {
-			return raylineReport{}, reportInvalid(fmt.Sprintf("%s must be 1 to %d bytes", name, raylineReportMaxIDBytes))
+	for _, id := range []struct {
+		name  string
+		value *string
+	}{{"route_id", wire.RouteID}, {"report_id", wire.ReportID}} {
+		if id.value != nil && (*id.value == "" || len(*id.value) > raylinearc.MaxReportIDBytes) {
+			return raylineReport{}, reportInvalid(fmt.Sprintf("%s must be 1 to %d bytes", id.name, raylinearc.MaxReportIDBytes))
 		}
 	}
 	report.routeID, report.reportID = stringOf(wire.RouteID), stringOf(wire.ReportID)
@@ -186,11 +186,12 @@ func readRaylineReport(body []byte, source string, now time.Time) (raylineReport
 	// Kept as sent, even a little ahead of this clock.
 	report.finishedAt = finished.UTC()
 	if usage := executed.Usage; usage != nil {
-		for name, tokens := range map[string]*int{
-			"prompt_tokens": usage.PromptTokens, "cache_read_tokens": usage.CacheReadTokens, "cache_write_tokens": usage.CacheWriteTokens,
-		} {
-			if tokens != nil && *tokens < 0 {
-				return raylineReport{}, reportInvalid("executed.usage." + name + " must not be negative")
+		for _, tokens := range []struct {
+			name  string
+			value *int
+		}{{"prompt_tokens", usage.PromptTokens}, {"cache_read_tokens", usage.CacheReadTokens}, {"cache_write_tokens", usage.CacheWriteTokens}} {
+			if tokens.value != nil && *tokens.value < 0 {
+				return raylineReport{}, reportInvalid("executed.usage." + tokens.name + " must not be negative")
 			}
 		}
 		if ttl := usage.CacheTTLSeconds; ttl != nil && (*ttl < 1 || *ttl > raylineReportMaxTTLSeconds) {
@@ -326,20 +327,24 @@ func (r *OpenAIRouter) handleRaylineReportAPI(body []byte, ctx *RequestContext) 
 		return r.createRaylineRoutesCodedError(ctx, routesInvalid("missing_session", raylineRoutesSessionHeader+" is required"))
 	}
 	arc := target.Algorithm.RaylineARC
-	// Only a policy-service cell with episode writes keeps pending
-	// decisions; elsewhere a lookup commits at decision time or keeps
-	// nothing, and a report would count its turn twice.
-	if !arc.RoutesAPI.EpisodeWrites || arc.PolicyService == nil {
+	// Only a policy-service cell keeps pending decisions; elsewhere a lookup
+	// commits at decision time, and a report would count its turn twice.
+	if arc.PolicyService == nil {
+		return r.raylineReportAnswer(ctx, report, raylinearc.ReportOutcome{Reason: raylineReportNotTracked})
+	}
+	// The model is mapped before the switch is read, so a report is refused
+	// or accepted the same way whether episode writes are on or off.
+	scorer := newPolicyServiceScorer(r.Config, target)
+	candidates, refusal := scorer.reportCandidates(report)
+	if refusal != nil {
+		return r.createRaylineRoutesCodedError(ctx, refusal)
+	}
+	if !arc.RoutesAPI.EpisodeWrites {
 		return r.raylineReportAnswer(ctx, report, raylinearc.ReportOutcome{Reason: raylineReportNotTracked})
 	}
 	store := r.raylineARCEpisodeStoreOf(recipe.Name)
 	if store == nil {
 		return r.createRaylineRoutesCodedError(ctx, raylineReportUnavailable())
-	}
-	scorer := newPolicyServiceScorer(r.Config, target)
-	candidates, refusal := scorer.reportCandidates(report)
-	if refusal != nil {
-		return r.createRaylineRoutesCodedError(ctx, refusal)
 	}
 	reportContext, cancel := context.WithTimeout(r.raylineRoutesContext(ctx), arc.RoutesAPI.EffectiveDeadline())
 	defer cancel()
