@@ -464,3 +464,24 @@ func hasHeader(response *ext_proc.ProcessingResponse, name string) bool {
 	}
 	return false
 }
+
+// Anything after the report object is refused before the tier is read: a
+// trailing delimiter must not let a report for an unknown tier fall back to
+// the default tier's episode.
+func TestRoutesReportRefusesTrailingData(t *testing.T) {
+	fixture := newPendingRoutesFixture(t, true, "")
+	first := fixture.lookup(t, "conversation-trailing", pendingRoutesBody(t, pendingTurnTask))
+	body, _ := json.Marshal(map[string]any{"model": "arc-9", "route_id": first.RouteID, "executed": map[string]any{
+		"model": first.Model, "finished_at": time.Now().UTC().Format(time.RFC3339),
+	}})
+	for _, trailing := range []string{"}", " {}", "x"} {
+		response := fixture.router.handleRaylineReportAPI(append(append([]byte{}, body...), trailing...),
+			reportContext(map[string]string{raylineRoutesSessionHeader: "conversation-trailing"}))
+		if code := immediateStatusCode(t, response); code != 400 {
+			t.Fatalf("trailing %q: status %d: %s", trailing, code, response.GetImmediateResponse().Body)
+		}
+	}
+	if state := fixture.stored(t, "conversation-trailing"); state.Pending == nil {
+		t.Fatal("a refused report changed the record")
+	}
+}

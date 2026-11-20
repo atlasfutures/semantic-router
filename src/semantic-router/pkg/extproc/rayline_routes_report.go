@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"slices"
 	"time"
 
@@ -133,7 +134,12 @@ func readRaylineReport(body []byte, source string, now time.Time) (raylineReport
 	var wire raylineReportBody
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&wire); err != nil || decoder.More() {
+	// The object must be the whole body: anything after it, even a stray
+	// delimiter, is refused before the tier is read from the same bytes.
+	if err := decoder.Decode(&wire); err != nil {
+		return raylineReport{}, reportInvalid("report body is not a valid report object")
+	}
+	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
 		return raylineReport{}, reportInvalid("report body is not a valid report object")
 	}
 	report := raylineReport{source: raylinearc.ReportSourceClient}

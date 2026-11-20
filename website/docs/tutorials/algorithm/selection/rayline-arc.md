@@ -881,7 +881,10 @@ updating is `429 episode_busy` with `retry-after`.
 `x-rayline-report-source: gateway` marks a report from a gateway in front of
 the cell, of a call it sent to a provider itself; anything else is a client's
 report. When both report one turn, the gateway's wins, while no later turn
-has been recorded. The header decides nothing else. A gateway that exposes
+has been recorded. Two reports are of one turn when they name the same
+`route_id` or `report_id`, or, carrying neither, finished at the same moment;
+a gateway report that names neither is an ordinary report. The header decides
+nothing else. A gateway that exposes
 this endpoint must set or overwrite it and remove it from client requests, or
 a client could claim the gateway's precedence.
 
