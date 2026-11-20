@@ -580,6 +580,10 @@ func (r *OpenAIRouter) serveResent(
 	model string,
 	result flexTwinResult,
 ) *ext_proc.ProcessingResponse {
+	// How the body ended is read before a cut body is settled as a failure,
+	// which drops it.
+	ctx.ResentBody = newResentBodyFacts(result,
+		strings.Contains(strings.ToLower(result.contentType), "text/event-stream"))
 	result = terminalFlexTwinResult(ctx, result)
 	// The call in flight is now the re-send's, priced at its rates and
 	// counted against it. The response body phase releases the count; a

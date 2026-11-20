@@ -178,6 +178,9 @@ type RequestContext struct {
 	// re-send.
 	EdgeResend *edgeResendPlan
 	EdgeResent bool
+	// ResentBody is how the served re-send's body ended (resent_body_facts.go),
+	// set by serveResent for every re-send path; nil on other calls.
+	ResentBody *resentBodyFacts
 	// streamReceiver is the ext_proc stream's receiver, so a phase that must
 	// read ahead (the guard's re-send) can, and put back what it read.
 	streamReceiver *streamReceiver
