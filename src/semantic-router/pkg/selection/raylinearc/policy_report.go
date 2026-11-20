@@ -192,11 +192,6 @@ func ApplyReport(state *EpisodeState, report Report) (*EpisodeState, ReportOutco
 	}
 	report.FinishedAt = time.UnixMilli(report.FinishedAt.UnixMilli()).UTC()
 	pending, last := state.Pending, state.LastReport
-	// A generation call through the cell decided the superseded decision's
-	// turn itself and records it; a report of it would count it twice.
-	if pending != nil && pending.Superseded {
-		return state, ignoredReport(ReportNotPending), nil
-	}
 	if report.RouteID != "" {
 		switch {
 		case pending != nil && pending.RouteID == report.RouteID:
@@ -206,11 +201,13 @@ func ApplyReport(state *EpisodeState, report Report) (*EpisodeState, ReportOutco
 		}
 		return state, staleRouteReport(), nil
 	}
-	if pending != nil && !report.FinishedAt.Before(time.UnixMilli(pending.DecidedUnixMS)) {
-		return resolveReported(state, report)
-	}
+	// The last reported call is matched first: a report of it is never
+	// applied to a decision made after it.
 	if sameReportedCall(last, report) {
 		return reportOfReportedTurn(state, report)
+	}
+	if pending != nil && !report.FinishedAt.Before(time.UnixMilli(pending.DecidedUnixMS)) {
+		return resolveReported(state, report)
 	}
 	// A call that finished before the pending decision was made is not its
 	// turn, nor, finishing before the newest recorded turn, a turn after it.
@@ -266,6 +263,11 @@ func reportOfReportedTurn(state *EpisodeState, report Report) (*EpisodeState, Re
 // reported run, in the context the decision was made in.
 func resolveReported(state *EpisodeState, report Report) (*EpisodeState, ReportOutcome, error) {
 	pending := state.Pending
+	// A generation call through the cell decided the superseded decision's
+	// turn itself and records it; a report of it would count it twice.
+	if pending.Superseded {
+		return state, ignoredReport(ReportNotPending), nil
+	}
 	decided := ""
 	if pending.Policy != nil {
 		decided = pending.Policy.Entry.ActionID
@@ -350,7 +352,19 @@ func replaceClientReport(state *EpisodeState, report Report) (*EpisodeState, Rep
 			LastUsed: report.FinishedAt.UTC(), LastInputTokens: tokens, Call: reportedCall(run, report),
 		}
 	}
-	next.LastReport = newLastReport(last.RouteID, report, state.TurnIndex, last.Message, run.Arm, nil)
+	// A decision pending after the corrected turn read the served model the
+	// client's report left; a request that drops it restores that record.
+	if next.Pending != nil {
+		next.Pending.PriorServedModel = run.Model
+	}
+	// The client report's identity stays where the gateway's brings none,
+	// so a retry of the client's report is still recognised.
+	replacement := newLastReport(last.RouteID, report, state.TurnIndex, last.Message, run.Arm, nil)
+	if replacement.ReportID == "" {
+		replacement.ReportID = last.ReportID
+	}
+	replacement.FinishedUnixMS = last.FinishedUnixMS
+	next.LastReport = replacement
 	return next, recordedReport(ReportClientReplaced, last.RouteID, next, run), nil
 }
 

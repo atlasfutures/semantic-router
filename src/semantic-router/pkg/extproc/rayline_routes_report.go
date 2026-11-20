@@ -58,8 +58,8 @@ const (
 	raylineReportMaxIDBytes = 128
 	// raylineReportMaxTTLSeconds bounds a reported cache lifetime.
 	raylineReportMaxTTLSeconds = 24 * 60 * 60
-	// raylineReportClockSkew is how far in the future a finish time may
-	// lie, for the reporter's clock; it is then read as now.
+	// raylineReportClockSkew is how far ahead of this clock a finish time
+	// may lie, for the reporter's clock.
 	raylineReportClockSkew = time.Minute
 	// raylineReportNotTracked is the answer of a cell that keeps no episodes
 	// for route lookups: episode writes off, or no policy service.
@@ -176,7 +176,9 @@ func readRaylineReport(body []byte, source string, now time.Time) (raylineReport
 	if finished.After(now.Add(raylineReportClockSkew)) {
 		return raylineReport{}, reportInvalid("executed.finished_at is in the future")
 	}
-	report.finishedAt = minTime(finished, now).UTC()
+	// Kept as sent, even a little ahead of this clock: it is also what a
+	// retry of the same report is recognised by.
+	report.finishedAt = finished.UTC()
 	if usage := executed.Usage; usage != nil {
 		for name, tokens := range map[string]*int{
 			"prompt_tokens": usage.PromptTokens, "cache_read_tokens": usage.CacheReadTokens, "cache_write_tokens": usage.CacheWriteTokens,
@@ -203,13 +205,6 @@ func stringOf(value *string) string {
 		return ""
 	}
 	return *value
-}
-
-func minTime(a, b time.Time) time.Time {
-	if a.Before(b) {
-		return a
-	}
-	return b
 }
 
 func isLowerHexID(value string) bool {

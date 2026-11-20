@@ -474,3 +474,67 @@ func TestReportsWithDifferentReportIDsAreDifferentCalls(t *testing.T) {
 		t.Fatalf("outcome %+v", outcome)
 	}
 }
+
+// clientThenNextLookup is a client's report of the first turn (report id
+// call-1, no route id), then the next turn's lookup pending as rte_2,
+// decided after the report.
+func clientThenNextLookup(t *testing.T) *EpisodeState {
+	t.Helper()
+	byClient := reportOf(ReportSourceClient, "", ranOn(1, pendingActionB, "vendor/b"), nil)
+	byClient.ReportID = "call-1"
+	client, _ := mustApplyReport(t, pendingEpisode(t), byClient)
+	next := withPendingLookup(t, client, pendingTask, pendingReply1, pendingAsk2, `{"role":"assistant","content":"two"}`, `{"role":"user","content":"three"}`)
+	next.LastReport, next.Pending.RouteID = client.LastReport, "rte_2"
+	next.Pending.DecidedUnixMS = reportFinished.Add(time.Minute).UnixMilli()
+	next.Pending.PriorServedModel = client.ServedModel
+	return next
+}
+
+// A gateway report naming the last report's id corrects that turn, even
+// when it finished after the next lookup was decided: the identity is
+// matched before the report is applied to the pending decision, which stays
+// pending, and whose prior served model is the corrected one.
+func TestReportOfTheLastReportedCallIsMatchedBeforeThePendingDecision(t *testing.T) {
+	stored := clientThenNextLookup(t)
+	byGateway := reportOf(ReportSourceGateway, "", ranOn(0, pendingActionA, "vendor/a"), nil)
+	byGateway.ReportID, byGateway.FinishedAt = "call-1", reportFinished.Add(2*time.Minute)
+	next, outcome := mustApplyReport(t, stored, byGateway)
+	if outcome.Reason != ReportClientReplaced || next.TurnIndex != stored.TurnIndex || next.Pending == nil || next.Pending.RouteID != "rte_2" {
+		t.Fatalf("outcome %+v record %+v", outcome, next)
+	}
+	if next.Pending.PriorServedModel != "vendor/a" {
+		t.Fatalf("the pending decision's prior served model is %q, want the corrected model", next.Pending.PriorServedModel)
+	}
+}
+
+// A replacement keeps the client report's identity when the gateway brings
+// none: the client's retry is then superseded, not a new turn.
+func TestReplacementKeepsTheClientReportIdentity(t *testing.T) {
+	byClient := reportOf(ReportSourceClient, "", ranOn(1, pendingActionB, "vendor/b"), nil)
+	byClient.ReportID = "call-1"
+	client, _ := mustApplyReport(t, pendingEpisode(t), byClient)
+	byGateway := reportOf(ReportSourceGateway, "rte_1", ranOn(0, pendingActionA, "vendor/a"), nil)
+	byGateway.FinishedAt = reportFinished.Add(-time.Second)
+	replaced, outcome := mustApplyReport(t, client, byGateway)
+	if outcome.Reason != ReportClientReplaced {
+		t.Fatalf("replacement %+v", outcome)
+	}
+	if next, outcome := mustApplyReport(t, replaced, byClient); outcome.Recorded || outcome.Reason != ReportSuperseded || next != replaced {
+		t.Fatalf("the client's retry: %+v", outcome)
+	}
+}
+
+// A superseded pending decision blocks only reports of that decision: the
+// gateway's correction of the turn before it still applies.
+func TestSupersededPendingDoesNotBlockACorrectionOfTheTurnBefore(t *testing.T) {
+	stored := clientThenNextLookup(t)
+	stored.Pending.Superseded = true
+	byGateway := reportOf(ReportSourceGateway, "", ranOn(0, pendingActionA, "vendor/a"), nil)
+	byGateway.ReportID = "call-1"
+	if _, outcome := mustApplyReport(t, stored, byGateway); outcome.Reason != ReportClientReplaced {
+		t.Fatalf("outcome %+v", outcome)
+	}
+	if _, outcome := mustApplyReport(t, stored, reportOf(ReportSourceClient, "rte_2", ranOn(0, pendingActionA, "vendor/a"), nil)); outcome.Reason != ReportNotPending {
+		t.Fatalf("a report of the superseded decision: %+v", outcome)
+	}
+}

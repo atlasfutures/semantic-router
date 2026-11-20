@@ -485,3 +485,19 @@ func TestRoutesReportRefusesTrailingData(t *testing.T) {
 		t.Fatal("a refused report changed the record")
 	}
 }
+
+// A finish time a little ahead of the cell's clock is kept as sent, so the
+// retry of a report without ids is still the same call.
+func TestRoutesReportKeepsAFinishTimeAheadOfTheClock(t *testing.T) {
+	fixture := newPendingRoutesFixture(t, true, "")
+	const conversation = "conversation-skew"
+	first := fixture.lookup(t, conversation, pendingRoutesBody(t, pendingTurnTask))
+	report := executedReport("", first.Model, map[string]any{"finished_at": time.Now().Add(30 * time.Second).UTC().Format(time.RFC3339Nano)})
+	if answer := fixture.report(t, conversation, "", report); answer.Reason != raylinearc.ReportPendingResolved {
+		t.Fatalf("first: %+v", answer)
+	}
+	time.Sleep(5 * time.Millisecond)
+	if answer := fixture.report(t, conversation, "", report); answer.Status != "ignored" || answer.Reason != raylinearc.ReportDuplicate {
+		t.Fatalf("retry: %+v", answer)
+	}
+}
