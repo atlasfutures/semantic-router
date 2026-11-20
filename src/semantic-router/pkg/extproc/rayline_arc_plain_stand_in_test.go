@@ -5,6 +5,7 @@ package extproc
 import (
 	"encoding/json"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -161,20 +162,40 @@ func TestPlainStandInsInTheEnvelope(t *testing.T) {
 			t.Fatalf("held %v, held stand-ins %+v", request.Selection.HeldActionID, v2.HeldStandIns)
 		}
 	})
-	t.Run("hold on a target not stood in for", func(t *testing.T) {
-		body := hold(envelope(`[]`, "null", "null", target(haikuPlain, "cloud", overWindow), cloud(haikuNone), cloud(opus)), haikuPlain)
+	// An envelope the stand-in would make pass a check it fails on its own
+	// ids is left as it was, with the refusal it had before.
+	raw := func(t *testing.T, body string) (*selection.RaylineARCRouteExecutionV2, string) {
+		t.Helper()
 		routing, _, refusal := readRaylineRoutesRouting(executionV2Body(`{"execution":`+body+`}`), nil, config.DefaultRaylineARCValueUSDMax)
 		if refusal != nil {
 			t.Fatalf("parse refused %s (%s)", refusal.code, refusal.message)
 		}
 		controls := raylineRoutesControls(routing, &config.RaylineARCRoutesRoutingConfig{}, time.Now())
 		applyPlainStandIns(controls.ExecutionV2, standIns, "episode")
-		if held := controls.ExecutionV2.HoldActionID; held == nil || *held != haikuPlain || controls.ExecutionV2.HeldStandIns != nil {
-			t.Fatalf("hold %v rewritten", held)
+		request := &raylinearc.PolicyDecisionRequest{Selection: raylinearc.PolicySelection{AvailableActionIDs: []string{haikuNone, haikuUp, opus, sonnet}}}
+		_, class := applyRoutePolicyAndExecutionV2(request, scorer, controls)
+		return controls.ExecutionV2, class
+	}
+	t.Run("hold on a target not stood in for", func(t *testing.T) {
+		v2, class := raw(t, hold(envelope(`[]`, "null", "null", target(haikuPlain, "cloud", overWindow), cloud(haikuNone), cloud(opus)), haikuPlain))
+		if *v2.HoldActionID != haikuPlain || v2.HeldStandIns != nil || class != arcFailureExecutionUnknownAction {
+			t.Fatalf("hold %s, held stand-ins %+v, class %q", *v2.HoldActionID, v2.HeldStandIns, class)
 		}
-		request := &raylinearc.PolicyDecisionRequest{Selection: raylinearc.PolicySelection{AvailableActionIDs: []string{haikuNone, opus}}}
-		if _, class := applyRoutePolicyAndExecutionV2(request, scorer, controls); class != arcFailureExecutionUnknownAction {
-			t.Fatalf("class %q, want the refusal a hold on an unknown action had before", class)
+	})
+	t.Run("hold on the stand-in itself", func(t *testing.T) {
+		// Only the plain target is offered, but the caller holds the none
+		// action: no target stands in, so the hold cannot be met through the
+		// plain action, and the plain target is left out as before.
+		v2, _ := raw(t, hold(envelope(`[]`, "null", "null", cloud(haikuPlain), cloud(sonnet)), haikuNone))
+		if v2.StandIns != nil || *v2.HoldActionID != haikuNone || slices.Contains(v2.TargetActionIDs, haikuNone) {
+			t.Fatalf("stand-ins %+v, hold %s, targets %v", v2.StandIns, *v2.HoldActionID, v2.TargetActionIDs)
+		}
+	})
+	t.Run("history and last_served disagree", func(t *testing.T) {
+		v2, class := raw(t, envelope(`[{"message":1,"action_id":"`+haikuPlain+`"}]`, `{"action_id":"`+haikuNone+`","worker":"w","message":1}`, "null",
+			cloud(haikuPlain), cloud(sonnet)))
+		if v2.StandIns != nil || v2.Attribution[0].ActionID != haikuPlain || class != arcFailureExecutionUnknownAction {
+			t.Fatalf("stand-ins %+v, attribution %+v, class %q", v2.StandIns, v2.Attribution, class)
 		}
 	})
 

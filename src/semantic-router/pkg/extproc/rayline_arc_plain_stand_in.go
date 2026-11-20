@@ -91,22 +91,47 @@ func v5ActionID(controlID, model string) string {
 
 // applyPlainStandIns rewrites a v2 envelope before it is decided, once per
 // lookup and before identical lookups are coalesced, so each caller's own
-// envelope says what it was answered under. A target that is a plain action
-// the cell lacks becomes its stand-in (its capacity, infeasibility and cache
-// evidence with it), unless the lookup already offers that stand-in; each
-// such target is recorded on the envelope for the answer and logged. A plain
-// action the executor attributes or last served becomes its stand-in whatever
-// the targets: it ran as the stand-in's model and base, and an unknown claim
-// would refuse the lookup. A hold is read as the stand-in only with its
-// target.
+// envelope says what it was answered under. It never makes an envelope pass a
+// check it failed: for a model whose envelope is inconsistent on the original
+// ids (history and last_served naming the same message as its plain and its
+// none action), nothing is rewritten, and the lookup is refused as it was.
+//
+// Otherwise a plain action the executor attributes or last served is read as
+// its stand-in whatever the targets: it ran as the stand-in's model and base,
+// and an unknown claim would refuse the lookup. A target that is a plain
+// action the cell lacks becomes its stand-in (its capacity, infeasibility and
+// cache evidence with it), and is recorded on the envelope for the answer and
+// logged, unless the lookup already offers the stand-in or holds it (a hold
+// on an action the caller did not offer stays unavailable). A hold follows its
+// target: it is read as the stand-in only when that target is.
 func applyPlainStandIns(v2 *selection.RaylineARCRouteExecutionV2, standIns map[string]plainStandIn, episodeIDHash string) {
 	if v2 == nil || len(standIns) == 0 {
 		return
 	}
+	consistent := func(plainID string, standIn plainStandIn) bool {
+		served, message := v2.LastServedActionID, v2.LastServedMessage
+		if served == nil || message == nil {
+			return true
+		}
+		pair := []string{plainID, standIn.standInActionID}
+		for _, entry := range v2.Attribution {
+			if entry.Message == *message && entry.ActionID != *served && slices.Contains(pair, entry.ActionID) && slices.Contains(pair, *served) {
+				return false
+			}
+		}
+		return true
+	}
+	claims := map[string]string{}
+	for plainID, standIn := range standIns {
+		if consistent(plainID, standIn) {
+			claims[plainID] = standIn.standInActionID
+		}
+	}
+	held := func(actionID string) bool { return v2.HoldActionID != nil && *v2.HoldActionID == actionID }
 	targets := map[string]string{}
 	for _, target := range v2.TargetActionIDs {
 		standIn, ok := standIns[target]
-		if !ok || slices.Contains(v2.TargetActionIDs, standIn.standInActionID) {
+		if _, eligible := claims[target]; !ok || !eligible || slices.Contains(v2.TargetActionIDs, standIn.standInActionID) || held(standIn.standInActionID) {
 			continue
 		}
 		targets[target] = standIn.standInActionID
@@ -128,8 +153,8 @@ func applyPlainStandIns(v2 *selection.RaylineARCRouteExecutionV2, standIns map[s
 		return actionID
 	}
 	claim := func(actionID string) string {
-		if standIn, ok := standIns[actionID]; ok {
-			return standIn.standInActionID
+		if to, ok := claims[actionID]; ok {
+			return to
 		}
 		return actionID
 	}
@@ -150,9 +175,6 @@ func applyPlainStandIns(v2 *selection.RaylineARCRouteExecutionV2, standIns map[s
 	for index := range v2.Attribution {
 		v2.Attribution[index].ActionID = claim(v2.Attribution[index].ActionID)
 	}
-	// A hold constrains this lookup's offer, so it follows the target it holds:
-	// it is read as the stand-in only when that target is, and otherwise keeps
-	// its own id and the refusals that come with it.
 	for _, field := range []struct {
 		id     **string
 		rename func(string) string
@@ -172,16 +194,16 @@ func applyPlainStandIns(v2 *selection.RaylineARCRouteExecutionV2, standIns map[s
 	}
 	// The claims the catalog check reads, as routesExecutionV2Controls lists
 	// them: the attributions, then last_served, then the hold.
-	claims := make([]string, 0, len(v2.ActionIDs))
+	named := make([]string, 0, len(v2.ActionIDs))
 	for _, entry := range v2.Attribution {
-		claims = append(claims, entry.ActionID)
+		named = append(named, entry.ActionID)
 	}
 	for _, field := range []*string{v2.LastServedActionID, v2.HoldActionID} {
 		if field != nil {
-			claims = append(claims, *field)
+			named = append(named, *field)
 		}
 	}
-	v2.ActionIDs = claims
+	v2.ActionIDs = named
 }
 
 // restorePlainStandIns answers each stand-in the decision names under the
