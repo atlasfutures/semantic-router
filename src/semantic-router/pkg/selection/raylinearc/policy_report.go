@@ -229,7 +229,7 @@ func unnamedReport(state *EpisodeState, report Report) (*EpisodeState, ReportOut
 			return state, ignoredReport(ReportDuplicate), nil
 		}
 		if last.ClientReportID == report.ReportID && report.Source == ReportSourceClient {
-			return state, ignoredReport(ReportSuperseded), nil
+			return state, ignoredReport(ReportDuplicate), nil
 		}
 	}
 	if pending != nil && !report.FinishedAt.Before(time.UnixMilli(pending.DecidedUnixMS)) {

@@ -454,8 +454,10 @@ func applyRaylineReport(
 	}
 	if err != nil || !outcome.Recorded {
 		// The lease is released even past the deadline, so the next request
-		// does not wait out its TTL.
-		_ = store.Abort(context.WithoutCancel(ctx), lease)
+		// does not wait out its TTL, within the bound a turn's release has.
+		abortContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), episodeFinalizeTimeout)
+		_ = store.Abort(abortContext, lease)
+		cancel()
 	}
 	return outcome, err
 }

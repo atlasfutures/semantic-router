@@ -552,7 +552,7 @@ func TestClientRetryAfterAGatewayCorrectionIsRecognised(t *testing.T) {
 	next := withPendingLookup(t, edge, pendingTask, pendingReply1, pendingAsk2, `{"role":"assistant","content":"two"}`, `{"role":"user","content":"three"}`)
 	next.LastReport, next.Pending.RouteID = edge.LastReport, "rte_2"
 	next.Pending.DecidedUnixMS = reportFinished.Add(time.Minute).UnixMilli()
-	if after, outcome := mustApplyReport(t, next, byClient); outcome.Recorded || after != next {
+	if after, outcome := mustApplyReport(t, next, byClient); outcome.Recorded || outcome.Reason != ReportDuplicate || after != next {
 		t.Fatalf("the client's retry: %+v", outcome)
 	}
 }
