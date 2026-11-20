@@ -180,6 +180,7 @@ func (store *MemoryEpisodeStore) Stage(
 	}
 	entry.state = cloneEpisodeState(state)
 	entry.lastAccess = store.now()
+	store.recordServedLocked(lease.episodeIDHash, state.ServedModel, store.now())
 	return nil
 }
 

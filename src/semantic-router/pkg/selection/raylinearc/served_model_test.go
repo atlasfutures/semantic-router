@@ -93,6 +93,34 @@ func assertCommitRecordsServedModel(t *testing.T, store servedCommitStore, episo
 	}
 }
 
+// A stage under the lease records a state's served model as a commit does
+// (a route lookup's decision recorded as a turn that ran, made durable
+// before the turn commits), and keeps it if the turn then aborts; a stage
+// naming none leaves the record.
+func assertStageRecordsServedModel(t *testing.T, store servedCommitStore, episode string) {
+	t.Helper()
+	ctx := context.Background()
+	stager, ok := store.(EpisodeStateStager)
+	if !ok {
+		t.Fatal("the store does not stage")
+	}
+	for _, worker := range []string{"qwen", ""} {
+		lease, state, err := store.Prepare(ctx, episode, 2)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := stager.Stage(ctx, lease, served(state, worker)); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.Abort(ctx, lease); err != nil {
+			t.Fatal(err)
+		}
+		if recorded, _ := store.LastServedModel(ctx, episode); recorded != "qwen" {
+			t.Fatalf("record %q after a stage naming %q, want qwen", recorded, worker)
+		}
+	}
+}
+
 func TestMemoryCommitRecordsServedModel(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	store, err := NewMemoryEpisodeStore(MemoryEpisodeStoreConfig{
@@ -119,6 +147,7 @@ func TestMemoryCommitRecordsServedModel(t *testing.T) {
 		}
 		now = now.Add(time.Second)
 	}
+	assertStageRecordsServedModel(t, store, HashEpisodeID("staged-episode"))
 	if len(store.served) != 2 {
 		t.Fatalf("kept %d records, want the capacity of 2", len(store.served))
 	}
@@ -136,6 +165,7 @@ func TestRedisCommitRecordsServedModel(t *testing.T) {
 		time.Now().Format("150405.000000")+":", time.Second)
 	episode := HashEpisodeID("served-episode")
 	assertCommitRecordsServedModel(t, store, episode)
+	assertStageRecordsServedModel(t, store, HashEpisodeID("staged-episode"))
 	ttl, err := store.client.TTL(context.Background(), store.servedKey(episode)).Result()
 	if err != nil || ttl <= time.Hour {
 		t.Fatalf("record TTL %v, %v; want ServedModelTTL", ttl, err)

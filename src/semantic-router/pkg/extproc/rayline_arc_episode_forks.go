@@ -173,8 +173,9 @@ func (check *raylineARCForkCheck) resolve(ctx context.Context, held string) (ray
 }
 
 // latestCommitted reports whether stream's newest admitted turn committed:
-// its episode's recorded prefix is that turn's. A state that cannot be read
-// counts as not committed, which keeps the request on the stream.
+// its episode's recorded prefix is that turn's and no pending lookup decision
+// is for it. A state that cannot be read counts as not committed, which keeps
+// the request on the stream.
 func (check *raylineARCForkCheck) latestCommitted(ctx context.Context, view raylinearc.EpisodeForkView, stream string) bool {
 	record := view.Main
 	if stream != raylinearc.EpisodeForkMainStream {
@@ -188,6 +189,11 @@ func (check *raylineARCForkCheck) latestCommitted(ctx context.Context, view rayl
 	defer cancel()
 	state, _, err := check.snapshots.Snapshot(readContext, record.EpisodeHash, check.workerCount)
 	if err != nil || state == nil || state.Policy == nil {
+		return false
+	}
+	// A lookup's pending decision for the newest request has not run, even
+	// when an earlier turn committed the same messages.
+	if pending := state.Pending; pending != nil && pending.PrefixLen == latest.Len && pending.PrefixDigest == latest.Digest {
 		return false
 	}
 	return state.Policy.PrefixLen == latest.Len && state.Policy.PrefixDigest == latest.Digest
@@ -267,8 +273,7 @@ func (r *OpenAIRouter) prepareRaylineARCForkedTurn(
 		placed, ok := check.resolve(parent, "")
 		if !ok {
 			// A registry that cannot be read cannot place the request: it
-			// fails (and the gateway replays it) rather than risk serving a
-			// fork on its parent's episode.
+			// fails rather than risk serving a fork on its parent's episode.
 			return nil, nil, "episode_store"
 		}
 		remaining := deadline.Sub(check.now())

@@ -192,6 +192,14 @@ type llmUsageRecord struct {
 	// (edge_503_resend.go): edge_attempt on the refused call, edge_resend on
 	// the re-send. Null on every other call.
 	EdgeResend *string `json:"edge_resend"`
+	// ResentBodyBytes, ResentLastEvent and ResentReadError say how a served
+	// re-send's body ended (resent_body_facts.go): bytes read, the stream's
+	// last SSE data event, and the class of the error that ended the read.
+	// Null on every call that is not a delivered re-send; the last event is
+	// null on a body that is not a stream, the read error on one read to its end.
+	ResentBodyBytes *int    `json:"resent_body_bytes"`
+	ResentLastEvent *string `json:"resent_last_event"`
+	ResentReadError *string `json:"resent_read_error"`
 	// HostRetry marks the calls of a streamed turn re-sent on its arm's next
 	// provider host after a call failed before any content
 	// (stream_host_retry.go): host_attempt on each call the cell went on
@@ -422,6 +430,12 @@ func (r *OpenAIRouter) newLLMUsageRecord(ctx *RequestContext, usage responseUsag
 	if ctx.EdgeResent {
 		// The refused call's line overwrites this with edge_attempt.
 		record.EdgeResend = nonEmpty(edgeResendServed)
+	}
+	if facts := ctx.ResentBody; facts != nil {
+		size := facts.bytes
+		record.ResentBodyBytes = &size
+		record.ResentLastEvent = nonEmpty(facts.lastEvent)
+		record.ResentReadError = nonEmpty(facts.readError)
 	}
 	record.ProviderEndpoint = nonEmpty(ctx.RaylineARCDispatchedEndpoint)
 	record.SessionKeySource = nonEmpty(ctx.RaylineARCSessionKeySource)

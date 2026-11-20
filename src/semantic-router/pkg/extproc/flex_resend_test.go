@@ -350,7 +350,14 @@ func TestFlexResendOfAStreamedTurnServesTheTwinsStream(t *testing.T) {
 	}
 	assertFields(t, "standard re-send", lines[1], map[string]interface{}{
 		"flex_resend": flexResendStandard, "streaming": true, "provider_reported_cost": 0.00004,
+		"resent_body_bytes": len(sse), "resent_last_event": "done",
 	})
+	if lines[1]["resent_read_error"] != nil {
+		t.Fatalf("a re-send read to its end stated read error %v", lines[1]["resent_read_error"])
+	}
+	if lines[0]["resent_body_bytes"] != nil {
+		t.Fatalf("the refused call stated re-send body facts: %v", lines[0])
+	}
 }
 
 // Default off: an arm without a twin answers a 429 exactly as before, and
@@ -563,6 +570,7 @@ func TestFlexResendStreamCutAfterUsageIsNotCommitted(t *testing.T) {
 	}
 	assertFields(t, "cut re-send", lines[1], map[string]interface{}{
 		"flex_resend": flexResendStandard, "truncated": true, "provider_reported_cost": 0.00004,
+		"resent_body_bytes": len(frames), "resent_last_event": "finish", "resent_read_error": "unexpected_eof",
 	})
 	if lines[1]["failure_class"] == nil {
 		t.Fatalf("the cut re-send's line carries no failure class: %v", lines[1])

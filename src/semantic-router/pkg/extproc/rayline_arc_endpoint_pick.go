@@ -544,7 +544,7 @@ func (r *OpenAIRouter) endpointResendOnResponseHeaders(
 		// dropped with its reasoning: its line states what it carried.
 		recordDispatchedControls(ctx, resend.call.body)
 		logEncryptedReasoningStrip(ctx, plan, resend)
-		result = callFlexTwin(ctx, resend.call, r.flexResendBodyLimit(), deadline)
+		result = callFlexTwin(ctx, resend.call, r.flexResendBodyLimit(), deadline, r.flexTwinBodyDeadline(ctx))
 		// A refused re-send's row names its own provider ids.
 		ctx.UpstreamCallIDs = result.ids
 		statuses = append(statuses, result.status)

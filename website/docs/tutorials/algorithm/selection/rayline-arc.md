@@ -362,8 +362,10 @@ Two things follow from declaring it. `GET /v1/models` publishes it on the
 alias as `routing.max_context_tokens`, so a gateway derives the window it
 advertises from the cell. And in artifact mode a turn whose estimate exceeds
 it is refused before the episode lease and before any encoder call, as
-`over_context_limit`: a 503 the gateway replays to its fallback provider,
-like `no_context_arm`, never a 400 that would end the turn.
+`over_context_limit`: like `no_context_arm`, a 400 invalid request saying
+`prompt is too long: N tokens > M maximum`, as a provider answers an
+over-length prompt, so a client shortens the conversation rather than
+retrying it. The decision-only `/v1/route` consult still answers it as a 503.
 
 That refusal is on the router's estimate, the same conservative byte count
 the per-arm masks read, not on the encoder's tokenizer: a turn under the
@@ -794,12 +796,36 @@ cache key, so continuity and encoder efficiency arrive together, and neither
 is reachable without the lease that serializes concurrent turns on one
 conversation.
 
-A tracked lookup commits its episode at decision time: there is no dispatch
-phase to commit against, so the chosen arm becomes the previous arm on the
-assumption that the caller ran it. A caller that routinely ignores the answer
-will see `episode.stayed` stop making sense, which is the signal that its
-episode ids are not stable per conversation. `episode` is omitted entirely
-from an ephemeral lookup rather than reported as turn zero.
+On a policy-service cell, a tracked lookup does not record a turn: the caller
+runs the model out of the cell's sight, and may ask again for the same turn.
+The decision is stored as the conversation's pending decision, and the
+conversation's next request, a lookup or a generation turn, settles it from
+its messages:
+
+- a request that carries a reply right after the messages the decision was
+  for is the next turn: the decision is recorded as a turn that ran, marked
+  `inferred` in the episode's ledger, before the new turn is decided;
+- any other request is the same turn asked again (identical, with its last
+  message edited, or with a message appended and no reply) or a departure
+  from it: the pending decision is dropped and the turn is decided afresh,
+  on the turns that ran. A repeat never replays the earlier answer.
+
+A pending decision that nothing settles expires with the episode. The decided
+model also becomes the conversation's last served model, kept for seven days:
+a conversation that comes back after its episode expired, with nothing
+reported about what ran, is held to the last decision, even if the caller
+never ran it. One limit
+remains: a policy service that remembers its last pick per conversation may
+fall back to that pick when the episode has no recorded turn in the current
+context (right after a compaction or a changed beginning), so a repeat ask
+there can lean towards the earlier answer.
+`episode.turn_index` is the turn the decision is for, so asking again reports
+the same number; `episode.stayed` compares with the last turn that ran. A
+caller that routinely ignores the answer will see `episode.stayed` stop making
+sense, which is the signal that its episode ids are not stable per
+conversation. `episode` is omitted entirely from an ephemeral lookup rather
+than reported as turn zero. An artifact-mode cell still records the turn at
+decision time, assuming the caller ran it.
 
 ### Enabling it
 
@@ -1021,7 +1047,7 @@ card changes what such a request is sent. And `context_window` is enforced at
 selection as a mask, not a filter: a turn longer than an arm's window excludes
 that arm where it stands, the way an image turn excludes a text-only arm, and
 a turn longer than every arm's window fails closed with `no_context_arm`, a
-503 the gateway replays. The router's generic context filter, which removes a
+400 `prompt is too long`. The router's generic context filter, which removes a
 plain decision's candidate from the list, is not applied to a `rayline_arc`
 decision, because a shortened positional list does not steer a turn, it fails
 it with `candidate_count`. Declare windows on ARC cards only on a build that

@@ -40,15 +40,16 @@ const arcFailureMissingEpisodeID = "missing_episode_id"
 
 // arcFailureNoCapableArm is the bounded class for a turn no arm in the basket
 // can serve without changing what the model is shown. It answers 503 like
-// every other authoritative selection failure, because the gateway replays 503
-// and does not replay a body-level 400: a refusal here would end the turn,
-// while a replayable status sends it to the fallback provider intact.
+// every other authoritative selection failure. The gateway passes a cell's
+// refusal to the client as it is and replays no cell turn on another
+// provider, so the client sees this 503 itself.
 const arcFailureNoCapableArm = "no_capable_arm"
 
 // arcFailureNoContextArm is the bounded class for a turn longer than every
-// arm's declared context window. Like no_vision_arm it answers 503: the
-// gateway replays that to its fallback provider, and a 400 would end the
-// turn.
+// arm's declared context window. It answers 400 "prompt is too long"
+// (contextTooLongResponse), as a provider does for an over-length prompt: the
+// gateway passes a cell's refusal through and replays no cell turn, so a 503
+// only sent the client round a retry of a request no arm can hold.
 const arcFailureNoContextArm = "no_context_arm"
 
 // arcFailureOverContextLimit is the bounded class for a turn whose estimate
@@ -56,8 +57,7 @@ const arcFailureNoContextArm = "no_context_arm"
 // promises, bounded by its encoder's capacity, whatever the arms could hold.
 // Artifact mode refuses it before the episode lease and the encoder call,
 // so the encoder is not asked to hold a session the cell did not promise.
-// Like no_context_arm it answers 503, which the gateway replays to its
-// fallback provider; a 400 would end the turn.
+// Like no_context_arm it answers 400 "prompt is too long".
 //
 // It is a refusal on the router's estimate, not the encoder's count: a turn
 // under the limit here can still be refused by the encoder, and a Responses
@@ -173,6 +173,7 @@ func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 			"context_tokens":     result.ContextTokens,
 			"max_context_tokens": limit,
 		})
+		reqCtx.RaylineARCContextTokens, reqCtx.RaylineARCContextLimit = result.ContextTokens, limit
 		result.PreparationFailure = arcFailureOverContextLimit
 		return result
 	}
@@ -236,13 +237,6 @@ func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 			if shared, ok := r.raylineARCEpisodeStoreFor(reqCtx).(raylinearc.EpisodeStagedTurnStore); ok {
 				result.PolicyStagedTurns = shared
 			}
-		}
-		// Only an episode with no memory of its model reads the records a
-		// two-stage package's refusal is answered from
-		// (rayline_arc_derived_hold.go).
-		if algorithm.RaylineARC.PolicyService != nil && result.PolicyCallKind != raylinearc.PolicyCallSide &&
-			(state == nil || state.PreviousArm == nil) {
-			result.ServedModels = r.raylineARCServedModels(reqCtx, result.EpisodeIDHash)
 		}
 		// A policy-service turn records its ledger entry, so it commits only
 		// once the client has the whole reply. Artifact-mode turns commit at
@@ -310,6 +304,20 @@ func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 			}
 			result.PolicyInput, result.PolicyInstructions = input, instructions
 		}
+		if rawEpisodeID != "" {
+			// Before anything reads the episode state (the holds below and
+			// the selection): a route lookup's pending decision is recorded
+			// or dropped by this request
+			// (rayline_arc_pending.go).
+			dropped := resolveRaylineARCPendingDecision(reqCtx, result)
+			// Only an episode with no memory of its model reads the records
+			// a two-stage package's refusal is answered from
+			// (rayline_arc_derived_hold.go).
+			if result.PolicyCallKind != raylinearc.PolicyCallSide &&
+				(result.State == nil || result.State.PreviousArm == nil) {
+				result.ServedModels = r.raylineARCServedModelsFor(reqCtx, result, dropped)
+			}
+		}
 	}
 	result.ImageBearing = imageBearing
 	// Every per-arm fact below is the served worker's: under
@@ -333,6 +341,7 @@ func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 	result.RequiredCapabilities = requestRoutingCapabilities(reqCtx)
 	result.IncapableArms = r.incapableArms(modelRefs, result.RequiredCapabilities)
 	reqCtx.RaylineARCOutputLimit = r.admissibleOutputLimit(modelRefs, result)
+	reqCtx.RaylineARCContextTokens, reqCtx.RaylineARCContextLimit = result.ContextTokens, r.admissibleContextWindow(modelRefs, result)
 	result.ToolLoopForeignArms, result.ToolLoopArm, result.ToolLoopFamily = r.toolLoopForeignArms(
 		algorithm.RaylineARC, reqCtx, result.State, modelRefs,
 	)

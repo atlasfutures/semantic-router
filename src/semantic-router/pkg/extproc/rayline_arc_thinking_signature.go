@@ -977,7 +977,7 @@ func (r *OpenAIRouter) thinkingSignatureRetryOnResponseHeaders(
 		// The block the refusal named is never sent again.
 		transaction.thinkingRefused = refusedThinkingKeys(plan.dispatched, plan.dispatch.targetFormat, body)
 	}
-	result := callFlexTwin(ctx, call, r.flexResendBodyLimit(), received.Add(budget))
+	result := callFlexTwin(ctx, call, r.flexResendBodyLimit(), received.Add(budget), r.flexTwinBodyDeadline(ctx))
 	fields := map[string]interface{}{
 		"request_id":        ctx.RequestID,
 		"model":             plan.dispatch.logicalModel,
