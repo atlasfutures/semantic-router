@@ -222,9 +222,9 @@ func TestRoutesReportAfterTheNextTurnIsIgnored(t *testing.T) {
 	}
 }
 
-// With no pending decision, the gateway's report of a pinned call is a new
-// reported turn on a conversation with history (here, after the gateway
-// reported the looked-up turn), and nothing at all on one without: no
+// With no pending decision, a report naming no route id -- here the
+// gateway's report of a later pinned call -- changes nothing and is answered
+// not_pending; on a conversation the cell never saw it is no_episode, and no
 // record, not even a lease, is left behind.
 func TestRoutesReportWithoutPendingDecision(t *testing.T) {
 	fixture := newPendingRoutesFixture(t, true, "")
@@ -236,7 +236,7 @@ func TestRoutesReportWithoutPendingDecision(t *testing.T) {
 	pinned = executedReport("", "off", nil)
 	pinned["report_id"] = "rt_pinned_2"
 	answer := fixture.report(t, conversation, raylinearc.ReportSourceGateway, pinned)
-	if answer.Status != "recorded" || answer.Reason != raylinearc.ReportTurnRecorded || *answer.TurnIndex != 2 {
+	if answer.Status != "ignored" || answer.Reason != raylinearc.ReportNotPending {
 		t.Fatalf("answer %+v", answer)
 	}
 	answer = fixture.report(t, "conversation-unknown", raylinearc.ReportSourceGateway, executedReport("", "off", nil))
@@ -486,8 +486,8 @@ func TestRoutesReportRefusesTrailingData(t *testing.T) {
 	}
 }
 
-// A finish time a little ahead of the cell's clock is kept as sent, so the
-// retry of a report without ids is still the same call.
+// A finish time a little ahead of the cell's clock is accepted as sent; a
+// retry of the report, nothing being pending any more, changes nothing.
 func TestRoutesReportKeepsAFinishTimeAheadOfTheClock(t *testing.T) {
 	fixture := newPendingRoutesFixture(t, true, "")
 	const conversation = "conversation-skew"
@@ -497,7 +497,7 @@ func TestRoutesReportKeepsAFinishTimeAheadOfTheClock(t *testing.T) {
 		t.Fatalf("first: %+v", answer)
 	}
 	time.Sleep(5 * time.Millisecond)
-	if answer := fixture.report(t, conversation, "", report); answer.Status != "ignored" || answer.Reason != raylinearc.ReportDuplicate {
+	if answer := fixture.report(t, conversation, "", report); answer.Status != "ignored" || answer.Reason != raylinearc.ReportNotPending {
 		t.Fatalf("retry: %+v", answer)
 	}
 }

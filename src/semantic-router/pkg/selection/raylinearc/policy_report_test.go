@@ -193,61 +193,6 @@ func TestReportRuleStaleRouteIDIsDropped(t *testing.T) {
 	}
 }
 
-// A report with no route id and no pending decision records a new reported
-// turn on a conversation with history, with no ledger entry: it carries no
-// messages to say which one is the reply.
-func TestApplyReportWithoutPendingRecordsATurn(t *testing.T) {
-	stored := executedEpisode(t)
-	next, outcome := mustApplyReport(t, stored, reportOf(ReportSourceGateway, "", ranOn(1, pendingActionB, "vendor/b"), nil))
-	if !outcome.Recorded || outcome.Reason != ReportTurnRecorded || outcome.TurnIndex != 2 || outcome.RouteID != "" {
-		t.Fatalf("outcome %+v", outcome)
-	}
-	if next.TurnIndex != 2 || *next.PreviousArm != 1 || !reflect.DeepEqual(next.Policy, stored.Policy) {
-		t.Fatalf("record %+v", next)
-	}
-	if next.Warmth[1].LastInputTokens != 1200 {
-		t.Fatalf("input tokens %d, want the reported prompt", next.Warmth[1].LastInputTokens)
-	}
-	if next.LastReport.Message != -1 || next.LastReport.Source != ReportSourceGateway || next.LastReport.Replaced != nil {
-		t.Fatalf("last report %+v", next.LastReport)
-	}
-}
-
-// Ignored reports change nothing: a conversation with no history, a
-// duplicate by route id or by report id, and a call that finished before the
-// pending decision was made or before the newest recorded turn.
-func TestApplyReportIgnores(t *testing.T) {
-	fresh, _ := NewEpisodeState(2)
-	resolved, _ := mustApplyReport(t, pendingEpisode(t), reportOf(ReportSourceClient, "rte_1", ranOn(1, pendingActionB, "vendor/b"), nil))
-	byID := reportOf(ReportSourceGateway, "", ranOn(1, pendingActionB, "vendor/b"), nil)
-	byID.ReportID = "rt_edge_1"
-	recorded, _ := mustApplyReport(t, executedEpisode(t), byID)
-	early := reportOf(ReportSourceGateway, "", ranOn(1, pendingActionB, "vendor/b"), nil)
-	early.FinishedAt = pendingNow.Add(-time.Second)
-	beforeTurn := reportOf(ReportSourceGateway, "", ranOn(1, pendingActionB, "vendor/b"), nil)
-	beforeTurn.FinishedAt = pendingNow.Add(-90 * time.Second)
-	cases := map[string]struct {
-		state  *EpisodeState
-		report Report
-		want   string
-	}{
-		"no history":                          {fresh, reportOf(ReportSourceClient, "rte_1", ranOn(1, pendingActionB, "vendor/b"), nil), ReportNoEpisode},
-		"duplicate route id":                  {resolved, reportOf(ReportSourceClient, "rte_1", ranOn(1, pendingActionB, "vendor/b"), nil), ReportDuplicate},
-		"duplicate report id":                 {recorded, byID, ReportDuplicate},
-		"finished before the pending":         {pendingEpisode(t), early, ReportLate},
-		"finished before the newest turn":     {executedEpisode(t), beforeTurn, ReportLate},
-		"client after the edge, by route id":  {mustEdgeResolved(t), reportOf(ReportSourceClient, "rte_1", ranOn(1, pendingActionB, "vendor/b"), nil), ReportSuperseded},
-		"client after the edge, no route id":  {mustEdgeResolved(t), reportOf(ReportSourceClient, "", ranOn(1, pendingActionB, "vendor/b"), nil), ReportSuperseded},
-		"edge again after the edge, route id": {mustEdgeResolved(t), reportOf(ReportSourceGateway, "rte_1", ranOn(1, pendingActionB, "vendor/b"), nil), ReportDuplicate},
-	}
-	for name, tc := range cases {
-		next, outcome := mustApplyReport(t, tc.state, tc.report)
-		if outcome.Recorded || outcome.Reason != tc.want || next != tc.state {
-			t.Fatalf("%s: outcome %+v, want ignored %q", name, outcome, tc.want)
-		}
-	}
-}
-
 // mustEdgeResolved is the pending episode after the edge reported its turn.
 func mustEdgeResolved(t *testing.T) *EpisodeState {
 	t.Helper()
@@ -368,70 +313,6 @@ func TestLastReportValidation(t *testing.T) {
 	}
 }
 
-// A report is the same turn as the last report only when it names its
-// route id, its report id, or finished at the same moment; otherwise it is
-// an ordinary report. A gateway report of a later pinned call after a
-// client's report records a new turn rather than replacing the client's,
-// and an older one is late.
-func TestReportPrecedenceNeedsTheSameTurn(t *testing.T) {
-	client, _ := mustApplyReport(t, pendingEpisode(t), reportOf(ReportSourceClient, "rte_1", ranOn(1, pendingActionB, "vendor/b"), nil))
-	later := reportOf(ReportSourceGateway, "", ranOn(0, pendingActionA, "vendor/a"), nil)
-	later.ReportID, later.FinishedAt = "rt_pinned_9", reportFinished.Add(time.Minute)
-	next, outcome := mustApplyReport(t, client, later)
-	if outcome.Reason != ReportTurnRecorded || next.TurnIndex != 3 {
-		t.Fatalf("a later pinned call: %+v, turn %d", outcome, next.TurnIndex)
-	}
-	older := reportOf(ReportSourceGateway, "", ranOn(0, pendingActionA, "vendor/a"), nil)
-	older.FinishedAt = reportFinished.Add(-time.Second)
-	if _, outcome := mustApplyReport(t, client, older); outcome.Recorded || outcome.Reason != ReportLate {
-		t.Fatalf("an older gateway report: %+v", outcome)
-	}
-}
-
-// A gateway report naming the client report's report id is the same turn:
-// it replaces the client's, rather than being dropped as a duplicate.
-func TestGatewayReportWithTheClientsReportIDReplacesIt(t *testing.T) {
-	byClient := reportOf(ReportSourceClient, "", ranOn(1, pendingActionB, "vendor/b"), nil)
-	byClient.ReportID = "call-2"
-	client, _ := mustApplyReport(t, pendingEpisode(t), byClient)
-	byGateway := reportOf(ReportSourceGateway, "", ranOn(0, pendingActionA, "vendor/a"), nil)
-	byGateway.ReportID, byGateway.FinishedAt = "call-2", reportFinished.Add(-time.Second)
-	next, outcome := mustApplyReport(t, client, byGateway)
-	if outcome.Reason != ReportClientReplaced || *next.PreviousArm != 0 || next.TurnIndex != client.TurnIndex {
-		t.Fatalf("outcome %+v record %+v", outcome, next)
-	}
-}
-
-// A retried report with neither id is recognised by its completion time:
-// the identical body is a duplicate, not a second turn.
-func TestRetriedReportWithoutIDsIsADuplicate(t *testing.T) {
-	retry := reportOf(ReportSourceClient, "", ranOn(1, pendingActionB, "vendor/b"), nil)
-	first, outcome := mustApplyReport(t, pendingEpisode(t), retry)
-	if outcome.Reason != ReportPendingResolved {
-		t.Fatalf("first: %+v", outcome)
-	}
-	if next, outcome := mustApplyReport(t, first, retry); outcome.Recorded || outcome.Reason != ReportDuplicate || next != first {
-		t.Fatalf("retry: %+v", outcome)
-	}
-}
-
-// A turn recorded with no arm keeps its completion time, so a report of a
-// call that finished before it is late, though it finished after every
-// arm's last use.
-func TestUnattributedTurnKeepsItsTimeForTheLateCheck(t *testing.T) {
-	local := reportOf(ReportSourceGateway, "", ReportedRun{Arm: -1, Model: "local/llama"}, nil)
-	local.ReportID = "rt_local"
-	recorded, outcome := mustApplyReport(t, executedEpisode(t), local)
-	if outcome.Reason != ReportTurnRecorded || recorded.LastReport.FinishedUnixMS != reportFinished.UnixMilli() {
-		t.Fatalf("outcome %+v last %+v", outcome, recorded.LastReport)
-	}
-	before := reportOf(ReportSourceGateway, "", ranOn(1, pendingActionB, "vendor/b"), nil)
-	before.ReportID, before.FinishedAt = "rt_before", reportFinished.Add(-time.Second)
-	if _, outcome := mustApplyReport(t, recorded, before); outcome.Recorded || outcome.Reason != ReportLate {
-		t.Fatalf("a report from before the unattributed turn: %+v", outcome)
-	}
-}
-
 // A superseded pending decision -- a generation call through the cell
 // decided its turn and records it -- is not reportable.
 func TestSupersededPendingDecisionIsNotReportable(t *testing.T) {
@@ -462,19 +343,6 @@ func TestReportOfAPrefillDecisionTakesThePrefillsPlace(t *testing.T) {
 	}
 }
 
-// Two reports with different report ids are different calls, even when they
-// finished in the same millisecond.
-func TestReportsWithDifferentReportIDsAreDifferentCalls(t *testing.T) {
-	first := reportOf(ReportSourceGateway, "", ranOn(1, pendingActionB, "vendor/b"), nil)
-	first.ReportID = "rt_pinned_1"
-	recorded, _ := mustApplyReport(t, executedEpisode(t), first)
-	second := first
-	second.ReportID = "rt_pinned_2"
-	if next, outcome := mustApplyReport(t, recorded, second); outcome.Reason != ReportTurnRecorded || next.TurnIndex != recorded.TurnIndex+1 {
-		t.Fatalf("outcome %+v", outcome)
-	}
-}
-
 // clientThenNextLookup is a client's report of the first turn (report id
 // call-1, no route id), then the next turn's lookup pending as rte_2,
 // decided after the report.
@@ -490,51 +358,102 @@ func clientThenNextLookup(t *testing.T) *EpisodeState {
 	return next
 }
 
-// A gateway report naming the last report's id corrects that turn, even
-// when it finished after the next lookup was decided: the identity is
-// matched before the report is applied to the pending decision, which stays
-// pending, and whose prior served model is the corrected one.
-func TestReportOfTheLastReportedCallIsMatchedBeforeThePendingDecision(t *testing.T) {
-	stored := clientThenNextLookup(t)
-	byGateway := reportOf(ReportSourceGateway, "", ranOn(0, pendingActionA, "vendor/a"), nil)
-	byGateway.ReportID, byGateway.FinishedAt = "call-1", reportFinished.Add(2*time.Minute)
-	next, outcome := mustApplyReport(t, stored, byGateway)
-	if outcome.Reason != ReportClientReplaced || next.TurnIndex != stored.TurnIndex || next.Pending == nil || next.Pending.RouteID != "rte_2" {
-		t.Fatalf("outcome %+v record %+v", outcome, next)
+// Rule (owner's choice): a report naming no route id is used only to settle
+// the conversation's pending decision. With nothing pending -- a pinned call
+// with no lookup before it, a second report of a call already reported, a
+// retry, a helper call -- it changes nothing and is answered not_pending:
+// without a route id the cell cannot tell a new turn from one it has.
+func TestReportRuleWithoutRouteIDOnlySettlesThePendingDecision(t *testing.T) {
+	resolved, outcome := mustApplyReport(t, pendingEpisode(t), reportOf(ReportSourceGateway, "", ranOn(1, pendingActionB, "vendor/b"), nil))
+	if outcome.Reason != ReportPendingResolved || outcome.RouteID != "rte_1" {
+		t.Fatalf("with a pending decision: %+v", outcome)
 	}
-	if next.Pending.PriorServedModel != "vendor/a" {
-		t.Fatalf("the pending decision's prior served model is %q, want the corrected model", next.Pending.PriorServedModel)
+	clientResolved, _ := mustApplyReport(t, pendingEpisode(t), reportOf(ReportSourceClient, "rte_1", ranOn(1, pendingActionB, "vendor/b"), nil))
+	early := reportOf(ReportSourceGateway, "", ranOn(1, pendingActionB, "vendor/b"), nil)
+	early.FinishedAt = pendingNow.Add(-time.Second)
+	cases := map[string]struct {
+		state  *EpisodeState
+		report Report
+	}{
+		"nothing pending, a later pinned call":             {executedEpisode(t), reportOf(ReportSourceGateway, "", ranOn(0, pendingActionA, "vendor/a"), nil)},
+		"the gateway's copy of a call the client reported": {clientResolved, reportOf(ReportSourceGateway, "", ranOn(1, pendingActionB, "vendor/b"), nil)},
+		"the client's copy of a call the gateway reported": {resolved, reportOf(ReportSourceClient, "", ranOn(1, pendingActionB, "vendor/b"), nil)},
+		"a retry with neither id":                          {resolved, reportOf(ReportSourceGateway, "", ranOn(1, pendingActionB, "vendor/b"), nil)},
+		"a call that finished before the pending decision": {pendingEpisode(t), early},
+	}
+	for name, tc := range cases {
+		next, outcome := mustApplyReport(t, tc.state, tc.report)
+		if outcome.Recorded || outcome.Reason != ReportNotPending || next != tc.state {
+			t.Fatalf("%s: %+v", name, outcome)
+		}
 	}
 }
 
-// A replacement keeps the client report's identity when the gateway brings
-// none: the client's retry is then superseded, not a new turn.
-func TestReplacementKeepsTheClientReportIdentity(t *testing.T) {
-	byClient := reportOf(ReportSourceClient, "", ranOn(1, pendingActionB, "vendor/b"), nil)
+// Rule (owner's choice): the gateway's report replaces a client's only when
+// both name the same route id. A matching report id does not: nothing hands
+// the gateway a client's report id, and a report id only recognises a
+// retry of the same report.
+func TestReportRuleGatewayReplacesOnlyByRouteID(t *testing.T) {
+	byClient := reportOf(ReportSourceClient, "rte_1", ranOn(1, pendingActionB, "vendor/b"), nil)
 	byClient.ReportID = "call-1"
 	client, _ := mustApplyReport(t, pendingEpisode(t), byClient)
-	byGateway := reportOf(ReportSourceGateway, "rte_1", ranOn(0, pendingActionA, "vendor/a"), nil)
-	byGateway.FinishedAt = reportFinished.Add(-time.Second)
-	replaced, outcome := mustApplyReport(t, client, byGateway)
-	if outcome.Reason != ReportClientReplaced {
-		t.Fatalf("replacement %+v", outcome)
+	sameReportID := reportOf(ReportSourceGateway, "", ranOn(0, pendingActionA, "vendor/a"), nil)
+	sameReportID.ReportID = "call-1"
+	if next, outcome := mustApplyReport(t, client, sameReportID); outcome.Recorded || outcome.Reason != ReportNotPending || next != client {
+		t.Fatalf("by report id: %+v", outcome)
 	}
-	if next, outcome := mustApplyReport(t, replaced, byClient); outcome.Recorded || outcome.Reason != ReportSuperseded || next != replaced {
-		t.Fatalf("the client's retry: %+v", outcome)
+	if _, outcome := mustApplyReport(t, client, reportOf(ReportSourceGateway, "rte_1", ranOn(0, pendingActionA, "vendor/a"), nil)); outcome.Reason != ReportClientReplaced {
+		t.Fatalf("by route id: %+v", outcome)
 	}
 }
 
-// A superseded pending decision blocks only reports of that decision: the
-// gateway's correction of the turn before it still applies.
-func TestSupersededPendingDoesNotBlockACorrectionOfTheTurnBefore(t *testing.T) {
+// Rule (owner's choice): a report id recognises a retry of the same report
+// from the same reporter, answered duplicate, and is matched before the
+// pending decision: a retry is never applied to a decision made after it.
+func TestReportRuleReportIDRecognisesARetry(t *testing.T) {
 	stored := clientThenNextLookup(t)
-	stored.Pending.Superseded = true
-	byGateway := reportOf(ReportSourceGateway, "", ranOn(0, pendingActionA, "vendor/a"), nil)
-	byGateway.ReportID = "call-1"
-	if _, outcome := mustApplyReport(t, stored, byGateway); outcome.Reason != ReportClientReplaced {
+	retry := reportOf(ReportSourceClient, "", ranOn(1, pendingActionB, "vendor/b"), nil)
+	retry.ReportID, retry.FinishedAt = "call-1", reportFinished.Add(2*time.Minute)
+	next, outcome := mustApplyReport(t, stored, retry)
+	if outcome.Recorded || outcome.Reason != ReportDuplicate || next != stored {
 		t.Fatalf("outcome %+v", outcome)
 	}
-	if _, outcome := mustApplyReport(t, stored, reportOf(ReportSourceClient, "rte_2", ranOn(0, pendingActionA, "vendor/a"), nil)); outcome.Reason != ReportNotPending {
-		t.Fatalf("a report of the superseded decision: %+v", outcome)
+}
+
+// A correction of the turn before a later lookup's pending decision leaves
+// that decision pending and updates the served model it restores when it
+// is dropped; a superseded later decision does not block the correction.
+func TestGatewayCorrectionBeforeALaterPendingDecision(t *testing.T) {
+	for _, superseded := range []bool{false, true} {
+		stored := clientThenNextLookup(t)
+		stored.Pending.Superseded = superseded
+		next, outcome := mustApplyReport(t, stored, reportOf(ReportSourceGateway, "rte_1", ranOn(0, pendingActionA, "vendor/a"), nil))
+		if outcome.Reason != ReportClientReplaced || next.TurnIndex != stored.TurnIndex || next.Pending == nil ||
+			next.Pending.RouteID != "rte_2" || next.Pending.PriorServedModel != "vendor/a" {
+			t.Fatalf("superseded=%t: outcome %+v pending %+v", superseded, outcome, next.Pending)
+		}
+	}
+}
+
+// Ignored reports change nothing: no history, a duplicate by route id, a
+// client's report after the gateway's, and the gateway's again.
+func TestApplyReportIgnores(t *testing.T) {
+	fresh, _ := NewEpisodeState(2)
+	resolved, _ := mustApplyReport(t, pendingEpisode(t), reportOf(ReportSourceClient, "rte_1", ranOn(1, pendingActionB, "vendor/b"), nil))
+	cases := map[string]struct {
+		state  *EpisodeState
+		report Report
+		want   string
+	}{
+		"no history":                          {fresh, reportOf(ReportSourceClient, "rte_1", ranOn(1, pendingActionB, "vendor/b"), nil), ReportNoEpisode},
+		"duplicate route id":                  {resolved, reportOf(ReportSourceClient, "rte_1", ranOn(1, pendingActionB, "vendor/b"), nil), ReportDuplicate},
+		"client after the edge, by route id":  {mustEdgeResolved(t), reportOf(ReportSourceClient, "rte_1", ranOn(1, pendingActionB, "vendor/b"), nil), ReportSuperseded},
+		"edge again after the edge, route id": {mustEdgeResolved(t), reportOf(ReportSourceGateway, "rte_1", ranOn(1, pendingActionB, "vendor/b"), nil), ReportDuplicate},
+	}
+	for name, tc := range cases {
+		next, outcome := mustApplyReport(t, tc.state, tc.report)
+		if outcome.Recorded || outcome.Reason != tc.want || next != tc.state {
+			t.Fatalf("%s: outcome %+v, want ignored %q", name, outcome, tc.want)
+		}
 	}
 }

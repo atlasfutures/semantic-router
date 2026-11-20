@@ -176,8 +176,7 @@ func readRaylineReport(body []byte, source string, now time.Time) (raylineReport
 	if finished.After(now.Add(raylineReportClockSkew)) {
 		return raylineReport{}, reportInvalid("executed.finished_at is in the future")
 	}
-	// Kept as sent, even a little ahead of this clock: it is also what a
-	// retry of the same report is recognised by.
+	// Kept as sent, even a little ahead of this clock.
 	report.finishedAt = finished.UTC()
 	if usage := executed.Usage; usage != nil {
 		for name, tokens := range map[string]*int{

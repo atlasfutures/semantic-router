@@ -853,10 +853,11 @@ as a turn marked `reported`, for the model that actually ran:
 }
 ```
 
-- `route_id` names the lookup's decision; without it the report applies to
-  the latest pending decision, if the call finished after that decision was
-  made. `model` is the ARC id the conversation is routed by (the default tier
-  when absent).
+- `route_id` names the lookup's decision. A report without it is used only
+  to settle the conversation's pending decision, if the call finished after
+  that decision was made; with nothing pending it changes nothing. `report_id`
+  marks a retry of the same report as a duplicate. `model` is the ARC id the
+  conversation is routed by (the default tier when absent).
 - `executed.model` is required, in the names a lookup returns. `action_id`
   (a lookup's `policy_action_id` or an alternative's `action_id`) or
   `thinking_level` pick the exact action; with the model alone, the decided
@@ -868,25 +869,21 @@ as a turn marked `reported`, for the model that actually ran:
 
 The answer is always `200` once the report is read:
 `{"object": "route.report", "status": "recorded" | "ignored", "reason", "route_id", "turn_index", "attributed"}`.
-Reasons when recorded: `pending_resolved`, `turn_recorded` (no decision was
-pending; a report without `route_id` on a conversation with history is a new
-turn), `client_report_replaced`. Reasons when ignored: `not_tracked`
-(`episode_writes` off, or not a policy-service cell; nothing is stored),
-`no_episode`, `not_pending` (the named decision was already recorded,
-replaced by a repeat ask, or dropped: a report that comes after the next turn
-changes nothing), `late`, `duplicate`, `superseded`. A malformed report is
+Reasons when recorded: `pending_resolved`, `client_report_replaced`.
+Reasons when ignored: `not_tracked` (`episode_writes` off, or not a
+policy-service cell; nothing is stored), `no_episode`, `not_pending` (the
+named decision was already recorded, replaced by a repeat ask, or dropped,
+so a report that comes after the next turn changes nothing; or, naming no
+decision, there was none pending), `late`, `duplicate`, `superseded`. A malformed report is
 `400` in the lookup's error envelope; a conversation another request is
 updating is `429 episode_busy` with `retry-after`.
 
 `x-rayline-report-source: gateway` marks a report from a gateway in front of
 the cell, of a call it sent to a provider itself; anything else is a client's
-report. When both report one turn, the gateway's wins, while no later turn
-has been recorded. Two reports are of one turn when they name the same
-`route_id` or `report_id`, or, carrying neither, finished at the same moment;
-a gateway report that names neither is an ordinary report. The header decides
-nothing else. A gateway that exposes
-this endpoint must set or overwrite it and remove it from client requests, or
-a client could claim the gateway's precedence.
+report. When both name the same `route_id`, the gateway's report wins, while
+no later turn has been recorded. The header decides nothing else. A gateway
+that exposes this endpoint must set or overwrite it and remove it from client
+requests, or a client could claim the gateway's precedence.
 
 ### Enabling it
 

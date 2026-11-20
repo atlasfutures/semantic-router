@@ -50,19 +50,16 @@ const (
 	// ReportPendingResolved: the pending decision was recorded as a turn
 	// that ran, for the reported model.
 	ReportPendingResolved = "pending_resolved"
-	// ReportTurnRecorded: no decision was pending; the report was recorded
-	// as a new turn.
-	ReportTurnRecorded = "turn_recorded"
 	// ReportClientReplaced: the gateway's report replaced a client's for the
 	// same turn.
 	ReportClientReplaced = "client_report_replaced"
 	// ReportNoEpisode: the conversation has no history; nothing was written.
 	ReportNoEpisode = "no_episode"
-	// ReportNotPending: the decision the report names is no longer pending.
+	// ReportNotPending: the decision the report names is no longer pending,
+	// or, naming none, there is no pending decision it could settle.
 	ReportNotPending = "not_pending"
-	// ReportLate: the call finished before the pending decision was made,
-	// or before the newest recorded turn, or a later turn was recorded
-	// since the report it would replace.
+	// ReportLate: a later turn was recorded since the report the gateway's
+	// would replace.
 	ReportLate = "late"
 	// ReportDuplicate: the same report was already recorded.
 	ReportDuplicate = "duplicate"
@@ -124,10 +121,6 @@ type LastReport struct {
 	Message int `json:"message"`
 	// Arm is the arm the report recorded, -1 for none.
 	Arm int `json:"arm"`
-	// FinishedUnixMS is when the reported call finished: the recorded
-	// turn's time, also for a turn with no arm, and what a retry of the
-	// same report carries.
-	FinishedUnixMS int64 `json:"finished_unix_ms"`
 	// Replaced is, for a client's report on an arm, that arm's warmth
 	// before it: the gateway's report for the turn restores it when it names
 	// another arm.
@@ -160,7 +153,6 @@ func (last *LastReport) validate(state *EpisodeState) error {
 	if (last.Source != ReportSourceGateway && last.Source != ReportSourceClient) ||
 		len(last.RouteID) > maxReportIDBytes || len(last.ReportID) > maxReportIDBytes ||
 		last.TurnIndex > state.TurnIndex || last.Message < -1 || last.Arm < -1 || last.Arm >= len(state.Warmth) ||
-		last.FinishedUnixMS <= 0 ||
 		(last.Replaced != nil && (last.Source != ReportSourceClient || last.Arm < 0)) {
 		return errors.New("ARC episode last report is malformed")
 	}
@@ -178,56 +170,46 @@ func EpisodeHasHistory(state *EpisodeState) bool {
 // ApplyReport is the episode after a report of a call that ran. state itself
 // is never changed; it is returned as is when the report is ignored.
 //
-// The pending decision the report names (or, naming none, the latest one,
-// if the call finished after it was made) becomes a recorded turn marked
-// reported, for the model that ran. A report of the turn the last report
-// recorded -- the same route id, the same report id, or the same completion
-// time -- is a duplicate, or, the gateway's after a client's while no later
-// turn was recorded, replaces the client's: the gateway's report wins. With
-// nothing pending, any other report naming no decision is recorded as a new
-// turn unless it finished before the newest recorded turn.
+// The pending decision the report names becomes a recorded turn marked
+// reported, for the model that ran. A report naming the decision the last
+// report recorded is a duplicate, or -- the gateway's after a client's,
+// while no later turn was recorded -- replaces the client's: the gateway's
+// report wins. A report naming no decision is used only to settle the
+// pending decision (unnamedReport).
 func ApplyReport(state *EpisodeState, report Report) (*EpisodeState, ReportOutcome, error) {
 	if !EpisodeHasHistory(state) {
 		return state, ignoredReport(ReportNoEpisode), nil
 	}
-	report.FinishedAt = time.UnixMilli(report.FinishedAt.UnixMilli()).UTC()
 	pending, last := state.Pending, state.LastReport
-	if report.RouteID != "" {
-		switch {
-		case pending != nil && pending.RouteID == report.RouteID:
-			return resolveReported(state, report)
-		case last != nil && last.RouteID == report.RouteID:
-			return reportOfReportedTurn(state, report)
-		}
-		return state, staleRouteReport(), nil
+	if report.RouteID == "" {
+		return unnamedReport(state, report)
 	}
-	// The last reported call is matched first: a report of it is never
-	// applied to a decision made after it.
-	if sameReportedCall(last, report) {
+	switch {
+	case pending != nil && pending.RouteID == report.RouteID:
+		return resolveReported(state, report)
+	case last != nil && last.RouteID == report.RouteID:
 		return reportOfReportedTurn(state, report)
+	}
+	return state, staleRouteReport(), nil
+}
+
+// unnamedReport is the rule for a report naming no route id: it is used
+// only to settle the pending decision, if the call finished after that
+// decision was made. Anything else is not_pending, never a new turn: with no
+// position in the conversation, the cell cannot tell a call it has not seen
+// from a second report of one it has (the gateway's copy of a client's
+// report, a retry, a helper call). A retry of the last report -- its report
+// id, from the same reporter -- is a duplicate, matched first so it is never
+// applied to a decision made after it.
+func unnamedReport(state *EpisodeState, report Report) (*EpisodeState, ReportOutcome, error) {
+	pending, last := state.Pending, state.LastReport
+	if last != nil && report.ReportID != "" && last.ReportID == report.ReportID && last.Source == report.Source {
+		return state, ignoredReport(ReportDuplicate), nil
 	}
 	if pending != nil && !report.FinishedAt.Before(time.UnixMilli(pending.DecidedUnixMS)) {
 		return resolveReported(state, report)
 	}
-	// A call that finished before the pending decision was made is not its
-	// turn, nor, finishing before the newest recorded turn, a turn after it.
-	if pending != nil || report.FinishedAt.Before(latestTurnTime(state)) {
-		return state, ignoredReport(ReportLate), nil
-	}
-	return recordReportedTurn(state, report)
-}
-
-// sameReportedCall reports whether a report naming no decision is of the
-// call the last report recorded: the same report id, or, when the ids do not
-// tell them apart, the same completion time (a retry of the same report).
-func sameReportedCall(last *LastReport, report Report) bool {
-	if last == nil {
-		return false
-	}
-	if report.ReportID != "" && last.ReportID != "" {
-		return report.ReportID == last.ReportID
-	}
-	return report.FinishedAt.UnixMilli() == last.FinishedUnixMS
+	return state, ignoredReport(ReportNotPending), nil
 }
 
 // staleRouteReport is the rule for a report naming a decision that is no
@@ -287,26 +269,6 @@ func resolveReported(state *EpisodeState, report Report) (*EpisodeState, ReportO
 	return next, recordedReport(ReportPendingResolved, pending.RouteID, next, run), nil
 }
 
-// recordReportedTurn records a report with nothing pending as a new turn.
-// The report carries no messages, so it records no ledger entry: the reply
-// stays unattributed, as one past the ledger's bound is.
-func recordReportedTurn(state *EpisodeState, report Report) (*EpisodeState, ReportOutcome, error) {
-	run := report.Run("")
-	next := cloneEpisodeState(state)
-	tokens := 0
-	if run.Call.PromptTokens != nil {
-		tokens = *run.Call.PromptTokens
-	} else if run.Arm >= 0 && run.Arm < len(next.Warmth) && next.Warmth[run.Arm] != nil {
-		tokens = next.Warmth[run.Arm].LastInputTokens
-	}
-	replaced, err := commitReportedRun(next, run, tokens, report)
-	if err != nil {
-		return state, ReportOutcome{}, err
-	}
-	next.LastReport = newLastReport("", report, next.TurnIndex, -1, run.Arm, replaced)
-	return next, recordedReport(ReportTurnRecorded, "", next, run), nil
-}
-
 // replaceClientReport rewrites the turn a client reported with the
 // gateway's report of it. The turn count does not move; the client's arm
 // gets back the warmth it had before the client's report when the gateway
@@ -357,14 +319,7 @@ func replaceClientReport(state *EpisodeState, report Report) (*EpisodeState, Rep
 	if next.Pending != nil {
 		next.Pending.PriorServedModel = run.Model
 	}
-	// The client report's identity stays where the gateway's brings none,
-	// so a retry of the client's report is still recognised.
-	replacement := newLastReport(last.RouteID, report, state.TurnIndex, last.Message, run.Arm, nil)
-	if replacement.ReportID == "" {
-		replacement.ReportID = last.ReportID
-	}
-	replacement.FinishedUnixMS = last.FinishedUnixMS
-	next.LastReport = replacement
+	next.LastReport = newLastReport(last.RouteID, report, state.TurnIndex, last.Message, run.Arm, nil)
 	return next, recordedReport(ReportClientReplaced, last.RouteID, next, run), nil
 }
 
@@ -432,26 +387,9 @@ func newLastReport(routeID string, report Report, turnIndex uint64, message, arm
 	return &LastReport{
 		RouteID: routeID, ReportID: report.ReportID, Source: report.Source,
 		TurnIndex: turnIndex, Message: message, Arm: arm, Replaced: replaced,
-		FinishedUnixMS: report.FinishedAt.UnixMilli(),
 	}
 }
 
 func recordedReport(reason, routeID string, next *EpisodeState, run ReportedRun) ReportOutcome {
 	return ReportOutcome{Recorded: true, Reason: reason, RouteID: routeID, TurnIndex: next.TurnIndex, Attributed: run.Arm >= 0}
-}
-
-// latestTurnTime is when the episode's newest recorded turn ran, as its
-// arm's warmth or, for a reported turn with no arm, the last report records
-// it.
-func latestTurnTime(state *EpisodeState) time.Time {
-	var latest time.Time
-	if state.LastReport != nil {
-		latest = time.UnixMilli(state.LastReport.FinishedUnixMS).UTC()
-	}
-	for _, warmth := range state.Warmth {
-		if warmth != nil && warmth.LastUsed.After(latest) {
-			latest = warmth.LastUsed
-		}
-	}
-	return latest
 }
