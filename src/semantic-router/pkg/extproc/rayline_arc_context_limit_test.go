@@ -160,20 +160,16 @@ func TestRaylineARCSelectionContextDoesNotRefuseOnTheLimitInPolicyServiceMode(t 
 	}
 }
 
-// The class is the router's to answer for, on both entrypoints: not the
-// caller's omission (no 400 that ends the turn), not back-pressure (no 429
-// that asks the caller to wait), and never a request-shape refusal. It lands
-// on the public `unavailable`, the 503 a gateway replays to its fallback.
-func TestOverContextLimitIsAReplayableSelectionFailure(t *testing.T) {
+// The class is not back-pressure (no 429 that asks the caller to wait) and
+// never a request-shape refusal: it lands on the public `context_too_long`,
+// the 400 "prompt is too long" (TestRaylineARCContextTooLongIsAPromptTooLong400).
+func TestOverContextLimitIsAPromptTooLongRefusal(t *testing.T) {
 	t.Parallel()
 	if selectionFailureIsContended(arcFailureOverContextLimit) {
 		t.Fatalf("%s must not answer 429: waiting does not shorten the prompt", arcFailureOverContextLimit)
 	}
-	if selectionFailureIsCallerError(arcFailureOverContextLimit) {
-		t.Fatalf("%s must not answer 400: the gateway replays a 503 and ends the turn on a 400", arcFailureOverContextLimit)
-	}
-	if got := publicSelectionFailureClass(arcFailureOverContextLimit); got != selectionFailureUnavailable {
-		t.Fatalf("public class = %q, want %s", got, selectionFailureUnavailable)
+	if got := publicSelectionFailureClass(arcFailureOverContextLimit); got != selectionFailureContextTooLong {
+		t.Fatalf("public class = %q, want %s", got, selectionFailureContextTooLong)
 	}
 	err := prepareFailureError(arcFailureOverContextLimit)
 	if errors.Is(err, routerruntime.ErrRouteDecisionContended) || errors.Is(err, routerruntime.ErrRouteDecisionInvalidBody) {
@@ -188,6 +184,6 @@ func TestOverContextLimitIsAReplayableSelectionFailure(t *testing.T) {
 	selectionContext.RaylineARC.PreparationFailure = arcFailureOverContextLimit
 	_, selectErr := selector.Select(context.Background(), selectionContext)
 	if !errors.As(selectErr, &failure) || failure.class != arcFailureOverContextLimit || failure.contended() {
-		t.Fatalf("Select() error = %v, want the %s class as a 503", selectErr, arcFailureOverContextLimit)
+		t.Fatalf("Select() error = %v, want the %s class, uncontended", selectErr, arcFailureOverContextLimit)
 	}
 }

@@ -65,8 +65,8 @@ func TestRaylineARCSelectorExcludesArmsTheTurnDoesNotFit(t *testing.T) {
 }
 
 // A turn no arm can hold fails closed with its own class, before the encoder
-// is touched, and as a 503 the gateway replays rather than a 400 that ends
-// the turn.
+// is touched, and never as back-pressure (its 400 is
+// TestRaylineARCContextTooLongIsAPromptTooLong400).
 func TestRaylineARCSelectorFailsClosedWhenNoArmHoldsTheTurn(t *testing.T) {
 	state, err := raylinearc.NewEpisodeState(2)
 	if err != nil {
@@ -83,7 +83,7 @@ func TestRaylineARCSelectorFailsClosedWhenNoArmHoldsTheTurn(t *testing.T) {
 		t.Fatalf("encoder calls = %d, want 0", encoder.calls)
 	}
 	if failure.contended() {
-		t.Fatalf("%s must answer 503, not 429", arcFailureNoContextArm)
+		t.Fatalf("%s must not answer 429: waiting does not shorten the prompt", arcFailureNoContextArm)
 	}
 }
 

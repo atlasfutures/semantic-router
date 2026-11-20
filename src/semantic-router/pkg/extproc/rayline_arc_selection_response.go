@@ -75,6 +75,9 @@ const (
 	// The turn asked to continue a stored conversation on a path that does
 	// not do stateful continuation: resend the items instead of the id.
 	selectionFailureStatelessPath = "stateless_path"
+	// The turn is longer than every window it could be served in: resending
+	// it unchanged cannot succeed; a shorter conversation can.
+	selectionFailureContextTooLong = "context_too_long"
 	// Anything else: waiting is not known to help.
 	selectionFailureUnavailable = "unavailable"
 )
@@ -121,6 +124,8 @@ func publicSelectionFailureClass(class string) string {
 		return selectionFailureStatelessPath
 	case arcFailureNoPrivateArm:
 		return selectionFailureNoPrivateArm
+	case arcFailureNoContextArm, arcFailureOverContextLimit:
+		return selectionFailureContextTooLong
 	default:
 		if selectionShapeRefusalClasses[class] {
 			return selectionFailureRequestShape
@@ -306,6 +311,8 @@ func (r *OpenAIRouter) authoritativeSelectionFailureResponse(
 		response = r.statelessPathResponse(ctx)
 	case failure.class == arcFailureNoOutputArm:
 		response = r.noOutputArmResponse(ctx)
+	case failure.class == arcFailureNoContextArm || failure.class == arcFailureOverContextLimit:
+		response = r.contextTooLongResponse(ctx)
 	case selectionFailureIsCallerError(failure.class):
 		// The bounded class is already counted where it is constructed, which
 		// is the one place that sees both entrypoints. Counting it again here

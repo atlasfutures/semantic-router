@@ -362,8 +362,10 @@ Two things follow from declaring it. `GET /v1/models` publishes it on the
 alias as `routing.max_context_tokens`, so a gateway derives the window it
 advertises from the cell. And in artifact mode a turn whose estimate exceeds
 it is refused before the episode lease and before any encoder call, as
-`over_context_limit`: a 503 the gateway replays to its fallback provider,
-like `no_context_arm`, never a 400 that would end the turn.
+`over_context_limit`: like `no_context_arm`, a 400 invalid request saying
+`prompt is too long: N tokens > M maximum`, as a provider answers an
+over-length prompt, so a client shortens the conversation rather than
+retrying it. The decision-only `/v1/route` consult still answers it as a 503.
 
 That refusal is on the router's estimate, the same conservative byte count
 the per-arm masks read, not on the encoder's tokenizer: a turn under the
@@ -1045,7 +1047,7 @@ card changes what such a request is sent. And `context_window` is enforced at
 selection as a mask, not a filter: a turn longer than an arm's window excludes
 that arm where it stands, the way an image turn excludes a text-only arm, and
 a turn longer than every arm's window fails closed with `no_context_arm`, a
-503 the gateway replays. The router's generic context filter, which removes a
+400 `prompt is too long`. The router's generic context filter, which removes a
 plain decision's candidate from the list, is not applied to a `rayline_arc`
 decision, because a shortened positional list does not steer a turn, it fails
 it with `candidate_count`. Declare windows on ARC cards only on a build that

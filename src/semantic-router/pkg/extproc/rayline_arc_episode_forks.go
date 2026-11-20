@@ -273,8 +273,7 @@ func (r *OpenAIRouter) prepareRaylineARCForkedTurn(
 		placed, ok := check.resolve(parent, "")
 		if !ok {
 			// A registry that cannot be read cannot place the request: it
-			// fails (and the gateway replays it) rather than risk serving a
-			// fork on its parent's episode.
+			// fails rather than risk serving a fork on its parent's episode.
 			return nil, nil, "episode_store"
 		}
 		remaining := deadline.Sub(check.now())

@@ -137,8 +137,8 @@ func TestARCContextLimitIsPublishedAndEnforcedThroughTheRouterSurfaces(t *testin
 	if refusal == nil {
 		t.Fatalf("a turn over the limit was not refused: %+v", response)
 	}
-	if got := int(refusal.GetStatus().GetCode()); got != http.StatusServiceUnavailable {
-		t.Fatalf("status = %d, want 503, the status the gateway replays", got)
+	if got := int(refusal.GetStatus().GetCode()); got != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 prompt is too long", got)
 	}
 	class, retryAfter := "", ""
 	for _, header := range refusal.GetHeaders().GetSetHeaders() {
@@ -149,8 +149,8 @@ func TestARCContextLimitIsPublishedAndEnforcedThroughTheRouterSurfaces(t *testin
 			retryAfter = string(header.GetHeader().GetRawValue())
 		}
 	}
-	if class != selectionFailureUnavailable {
-		t.Fatalf("%s = %q, want %s", headers.VSRFailureClass, class, selectionFailureUnavailable)
+	if class != selectionFailureContextTooLong {
+		t.Fatalf("%s = %q, want %s", headers.VSRFailureClass, class, selectionFailureContextTooLong)
 	}
 	if retryAfter != "" {
 		t.Fatalf("retry-after = %q on a refusal waiting cannot help", retryAfter)
