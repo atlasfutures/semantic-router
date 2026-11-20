@@ -19,6 +19,7 @@ package raylinearc
 import (
 	"errors"
 	"math"
+	"strconv"
 	"time"
 
 	"github.com/atlasfutures/semantic-router/rayline-core/cachecontext"
@@ -322,7 +323,7 @@ func replaceClientReport(state *EpisodeState, report Report) (*EpisodeState, Rep
 		arm := run.Arm
 		next.PreviousArm = &arm
 		next.Warmth[arm] = &cachecontext.WorkerWarmth{
-			LastUsed: report.FinishedAt.UTC(), LastInputTokens: last.InputTokens, Call: reportedCall(run, report, next.Policy),
+			LastUsed: report.FinishedAt.UTC(), LastInputTokens: last.InputTokens, Call: reportedCall(run, report, last.contextEpoch()),
 		}
 	}
 	// A decision pending after the corrected turn read the served model the
@@ -381,7 +382,11 @@ func commitReportedRun(next *EpisodeState, run ReportedRun, inputTokens int, rep
 	if err := next.Commit(run.Arm, inputTokens, report.FinishedAt.UTC()); err != nil {
 		return nil, err
 	}
-	next.Warmth[run.Arm].Call = reportedCall(run, report, next.Policy)
+	epoch := ""
+	if next.Policy != nil {
+		epoch = next.Policy.ContextEpoch()
+	}
+	next.Warmth[run.Arm].Call = reportedCall(run, report, epoch)
 	if report.Source != ReportSourceClient {
 		return nil, nil
 	}
@@ -389,15 +394,23 @@ func commitReportedRun(next *EpisodeState, run ReportedRun, inputTokens int, rep
 }
 
 // reportedCall is the arm's last-call record for a reported run, in the
-// context epoch the turn is recorded in, as a served turn's call is.
-func reportedCall(run ReportedRun, report Report, policy *PolicyEpisodeState) *cachecontext.CallCache {
+// context epoch its turn was recorded in ("" when unknown), as a served
+// turn's call is.
+func reportedCall(run ReportedRun, report Report, epoch string) *cachecontext.CallCache {
 	call := run.Call
 	call.ActionID = run.ActionID
 	call.CompletedAt = report.FinishedAt.UTC()
-	if policy != nil {
-		call.ContextEpoch = policy.ContextEpoch()
-	}
+	call.ContextEpoch = epoch
 	return &call
+}
+
+// contextEpoch is the context epoch of the turn the report recorded, ""
+// when it recorded none.
+func (last *LastReport) contextEpoch() string {
+	if last.Message < 0 {
+		return ""
+	}
+	return strconv.Itoa(last.Epoch)
 }
 
 func newLastReport(routeID string, report Report, turnIndex uint64, message, arm int, replaced *ReplacedWarmth) *LastReport {

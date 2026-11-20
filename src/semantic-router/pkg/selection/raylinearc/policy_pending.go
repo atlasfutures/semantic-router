@@ -323,6 +323,15 @@ func (pending *PendingDecision) reportedReply() (int, string) {
 func (pending *PendingDecision) reportedPolicy(stored *PolicyEpisodeState, entry *PolicyLedgerEntry) *PolicyEpisodeState {
 	reply, digest := pending.reportedReply()
 	base := pending.contextBase(stored, stored != nil && stored.PrefixLen <= reply)
+	// A regenerated reply (the same messages decided again after their
+	// turn was recorded) replaces the attribution at its position.
+	kept := base.Ledger[:0:0]
+	for _, recorded := range base.Ledger {
+		if recorded.Message < reply {
+			kept = append(kept, recorded)
+		}
+	}
+	base.Ledger = kept
 	var next *PolicyEpisodeState
 	if entry != nil {
 		recorded := *entry

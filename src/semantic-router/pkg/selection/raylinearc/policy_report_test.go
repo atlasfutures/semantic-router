@@ -497,3 +497,43 @@ func TestGatewayCorrectionAfterAContextChange(t *testing.T) {
 		t.Fatalf("the corrected record does not validate: %v", err)
 	}
 }
+
+// A regenerated reply -- the same messages decided again after their turn
+// was reported -- replaces the earlier attribution at that position: an
+// unattributed report leaves none, an attributed one exactly one.
+func TestReportOfARegeneratedReplyReplacesItsAttribution(t *testing.T) {
+	first, _ := mustApplyReport(t, pendingEpisode(t), reportOf(ReportSourceClient, "rte_1", ranOn(1, pendingActionB, "vendor/b"), nil))
+	again := withPendingLookup(t, first, pendingTask, pendingReply1, pendingAsk2)
+	again.Pending.RouteID = "rte_2"
+	before := len(first.Policy.Ledger)
+	for name, run := range map[string]ReportedRun{"unattributed": {Arm: -1, Model: "local/llama"}, "attributed": ranOn(0, pendingActionA, "vendor/a")} {
+		next, outcome := mustApplyReport(t, again, reportOf(ReportSourceClient, "rte_2", run, nil))
+		if outcome.Reason != ReportPendingResolved {
+			t.Fatalf("%s: %+v", name, outcome)
+		}
+		at3 := 0
+		for _, entry := range next.Policy.Ledger {
+			if entry.Message == 3 {
+				at3++
+				if entry.ActionID != run.ActionID {
+					t.Fatalf("%s: message 3 attributed to %s", name, entry.ActionID[:8])
+				}
+			}
+		}
+		if want := map[bool]int{true: 1, false: 0}[run.ActionID != ""]; at3 != want || len(next.Policy.Ledger) != before-1+want {
+			t.Fatalf("%s: %d entries at message 3, ledger %+v", name, at3, next.Policy.Ledger)
+		}
+	}
+}
+
+// A gateway correction keeps the epoch of the context its call ran in, even
+// after the episode moved to another context.
+func TestGatewayCorrectionKeepsTheCallsEpoch(t *testing.T) {
+	client, _ := mustApplyReport(t, pendingEpisode(t), reportOf(ReportSourceClient, "rte_1", ranOn(1, pendingActionB, "vendor/b"), nil))
+	moved := cloneEpisodeState(client)
+	moved.Policy = &PolicyEpisodeState{Epoch: client.Policy.Epoch + 1}
+	edge, _ := mustApplyReport(t, moved, reportOf(ReportSourceGateway, "rte_1", ranOn(0, pendingActionA, "vendor/a"), nil))
+	if got := edge.Warmth[0].Call.ContextEpoch; got != client.Policy.ContextEpoch() {
+		t.Fatalf("corrected call epoch %q, want the original %q", got, client.Policy.ContextEpoch())
+	}
+}
