@@ -501,3 +501,28 @@ func TestRoutesReportKeepsAFinishTimeAheadOfTheClock(t *testing.T) {
 		t.Fatalf("retry: %+v", answer)
 	}
 }
+
+// When the report's model is known but its action is not (several levels,
+// none named), the turn records the reported model, not another model the
+// same worker also binds.
+func TestReportedRunRecordsTheReportedModelWhenTheActionIsUnknown(t *testing.T) {
+	scorer := &policyServiceScorer{
+		workerIDs: []string{"shared"},
+		workers:   []raylinearc.WorkerManifest{{ID: "shared", Model: "vendor/shared"}},
+		bindings: map[string]policyBinding{
+			"a0": {arm: 0, model: "vendor/a", level: "none"},
+			"b0": {arm: 0, model: "vendor/b", level: "none"},
+			"b1": {arm: 0, model: "vendor/b", level: "up"},
+		},
+		actionOrder: []string{"a0", "b0", "b1"},
+	}
+	report := raylineReport{model: "vendor/b"}
+	candidates, refusal := scorer.reportCandidates(report)
+	if refusal != nil || len(candidates) != 2 {
+		t.Fatalf("candidates %v (%v)", candidates, refusal)
+	}
+	run := scorer.reportedRun(report, candidates, "a0")
+	if run.Arm != 0 || run.ActionID != "" || run.Model != "vendor/b" {
+		t.Fatalf("run %+v, want arm 0, no action, model vendor/b", run)
+	}
+}

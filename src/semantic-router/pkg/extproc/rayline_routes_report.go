@@ -275,7 +275,7 @@ func (scorer *policyServiceScorer) reportedRun(report raylineReport, candidates 
 		// Two arms can serve one model through different providers; the
 		// package's first is taken.
 		run.Arm = scorer.bindings[candidates[0]].arm
-		run.Model = scorer.armModel(run.Arm)
+		run.Model = scorer.actionModel(candidates[0])
 		return run
 	}
 	run.Arm, run.ActionID, run.Model = scorer.bindings[action].arm, action, scorer.actionModel(action)

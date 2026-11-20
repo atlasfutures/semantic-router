@@ -457,3 +457,26 @@ func TestApplyReportIgnores(t *testing.T) {
 		}
 	}
 }
+
+// A reported call is stamped with the context epoch the turn is recorded
+// in, as a served turn's call is, and a gateway correction keeps it.
+func TestReportedCallCarriesTheContextEpoch(t *testing.T) {
+	client, _ := mustApplyReport(t, pendingEpisode(t), reportOf(ReportSourceClient, "rte_1", ranOn(1, pendingActionB, "vendor/b"), nil))
+	if call := client.Warmth[1].Call; call.ContextEpoch != client.Policy.ContextEpoch() {
+		t.Fatalf("call epoch %q, want %q", call.ContextEpoch, client.Policy.ContextEpoch())
+	}
+	edge, _ := mustApplyReport(t, client, reportOf(ReportSourceGateway, "rte_1", ranOn(0, pendingActionA, "vendor/a"), nil))
+	if call := edge.Warmth[0].Call; call.ContextEpoch != client.Policy.ContextEpoch() {
+		t.Fatalf("corrected call epoch %q, want %q", call.ContextEpoch, client.Policy.ContextEpoch())
+	}
+}
+
+// A gateway correction keeps the turn's input-token count, also when the
+// client's report recorded no arm to read it from.
+func TestGatewayCorrectionKeepsTheTurnsInputTokens(t *testing.T) {
+	client, _ := mustApplyReport(t, pendingEpisode(t), reportOf(ReportSourceClient, "rte_1", ReportedRun{Arm: -1, Model: "local/llama"}, nil))
+	edge, outcome := mustApplyReport(t, client, reportOf(ReportSourceGateway, "rte_1", ranOn(0, pendingActionA, "vendor/a"), nil))
+	if outcome.Reason != ReportClientReplaced || edge.Warmth[0].LastInputTokens != 42 {
+		t.Fatalf("outcome %+v tokens %d, want the decision's 42", outcome, edge.Warmth[0].LastInputTokens)
+	}
+}

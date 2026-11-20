@@ -121,6 +121,9 @@ type LastReport struct {
 	Message int `json:"message"`
 	// Arm is the arm the report recorded, -1 for none.
 	Arm int `json:"arm"`
+	// InputTokens is the turn's encoded input tokens, as its decision
+	// recorded them, which a correction of the turn writes again.
+	InputTokens int `json:"input_tokens"`
 	// Replaced is, for a client's report on an arm, that arm's warmth
 	// before it: the gateway's report for the turn restores it when it names
 	// another arm.
@@ -153,6 +156,7 @@ func (last *LastReport) validate(state *EpisodeState) error {
 	if (last.Source != ReportSourceGateway && last.Source != ReportSourceClient) ||
 		len(last.RouteID) > maxReportIDBytes || len(last.ReportID) > maxReportIDBytes ||
 		last.TurnIndex > state.TurnIndex || last.Message < -1 || last.Arm < -1 || last.Arm >= len(state.Warmth) ||
+		last.InputTokens < 0 ||
 		(last.Replaced != nil && (last.Source != ReportSourceClient || last.Arm < 0)) {
 		return errors.New("ARC episode last report is malformed")
 	}
@@ -266,6 +270,7 @@ func resolveReported(state *EpisodeState, report Report) (*EpisodeState, ReportO
 		return state, ReportOutcome{}, err
 	}
 	next.LastReport = newLastReport(pending.RouteID, report, next.TurnIndex, message, run.Arm, replaced)
+	next.LastReport.InputTokens = pending.InputTokens
 	return next, recordedReport(ReportPendingResolved, pending.RouteID, next, run), nil
 }
 
@@ -291,10 +296,6 @@ func replaceClientReport(state *EpisodeState, report Report) (*EpisodeState, Rep
 	if run.Arm >= len(next.Warmth) {
 		return state, ReportOutcome{}, errors.New("reported arm is out of range")
 	}
-	tokens := 0
-	if last.Arm >= 0 && state.Warmth[last.Arm] != nil {
-		tokens = state.Warmth[last.Arm].LastInputTokens
-	}
 	if last.Arm >= 0 && last.Arm != run.Arm && last.Replaced != nil {
 		next.Warmth[last.Arm] = warmthFromWire(last.Replaced.Warmth)
 	}
@@ -311,7 +312,7 @@ func replaceClientReport(state *EpisodeState, report Report) (*EpisodeState, Rep
 		arm := run.Arm
 		next.PreviousArm = &arm
 		next.Warmth[arm] = &cachecontext.WorkerWarmth{
-			LastUsed: report.FinishedAt.UTC(), LastInputTokens: tokens, Call: reportedCall(run, report),
+			LastUsed: report.FinishedAt.UTC(), LastInputTokens: last.InputTokens, Call: reportedCall(run, report, next.Policy),
 		}
 	}
 	// A decision pending after the corrected turn read the served model the
@@ -320,6 +321,7 @@ func replaceClientReport(state *EpisodeState, report Report) (*EpisodeState, Rep
 		next.Pending.PriorServedModel = run.Model
 	}
 	next.LastReport = newLastReport(last.RouteID, report, state.TurnIndex, last.Message, run.Arm, nil)
+	next.LastReport.InputTokens = last.InputTokens
 	return next, recordedReport(ReportClientReplaced, last.RouteID, next, run), nil
 }
 
@@ -369,17 +371,22 @@ func commitReportedRun(next *EpisodeState, run ReportedRun, inputTokens int, rep
 	if err := next.Commit(run.Arm, inputTokens, report.FinishedAt.UTC()); err != nil {
 		return nil, err
 	}
-	next.Warmth[run.Arm].Call = reportedCall(run, report)
+	next.Warmth[run.Arm].Call = reportedCall(run, report, next.Policy)
 	if report.Source != ReportSourceClient {
 		return nil, nil
 	}
 	return &ReplacedWarmth{Warmth: warmthToWire(before)}, nil
 }
 
-func reportedCall(run ReportedRun, report Report) *cachecontext.CallCache {
+// reportedCall is the arm's last-call record for a reported run, in the
+// context epoch the turn is recorded in, as a served turn's call is.
+func reportedCall(run ReportedRun, report Report, policy *PolicyEpisodeState) *cachecontext.CallCache {
 	call := run.Call
 	call.ActionID = run.ActionID
 	call.CompletedAt = report.FinishedAt.UTC()
+	if policy != nil {
+		call.ContextEpoch = policy.ContextEpoch()
+	}
 	return &call
 }
 
