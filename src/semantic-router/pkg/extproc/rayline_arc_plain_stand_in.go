@@ -95,9 +95,10 @@ func v5ActionID(controlID, model string) string {
 // the cell lacks becomes its stand-in (its capacity, infeasibility and cache
 // evidence with it), unless the lookup already offers that stand-in; each
 // such target is recorded on the envelope for the answer and logged. A plain
-// action the executor attributes, last served or holds becomes its stand-in
-// whatever the targets: it ran as the stand-in's model and base, and an
-// unknown claim would refuse the lookup.
+// action the executor attributes or last served becomes its stand-in whatever
+// the targets: it ran as the stand-in's model and base, and an unknown claim
+// would refuse the lookup. A hold is read as the stand-in only with its
+// target.
 func applyPlainStandIns(v2 *selection.RaylineARCRouteExecutionV2, standIns map[string]plainStandIn, episodeIDHash string) {
 	if v2 == nil || len(standIns) == 0 {
 		return
@@ -146,26 +147,41 @@ func applyPlainStandIns(v2 *selection.RaylineARCRouteExecutionV2, standIns map[s
 			v2.CacheContext.Actions[index].ActionID = target(v2.CacheContext.Actions[index].ActionID)
 		}
 	}
-	for index := range v2.ActionIDs {
-		v2.ActionIDs[index] = claim(v2.ActionIDs[index])
-	}
 	for index := range v2.Attribution {
 		v2.Attribution[index].ActionID = claim(v2.Attribution[index].ActionID)
 	}
-	for _, field := range []**string{&v2.LastServedActionID, &v2.HoldActionID} {
-		if *field == nil {
+	// A hold constrains this lookup's offer, so it follows the target it holds:
+	// it is read as the stand-in only when that target is, and otherwise keeps
+	// its own id and the refusals that come with it.
+	for _, field := range []struct {
+		id     **string
+		rename func(string) string
+	}{{&v2.LastServedActionID, claim}, {&v2.HoldActionID, target}} {
+		if *field.id == nil {
 			continue
 		}
-		original := **field
-		renamed := claim(original)
+		original := **field.id
+		renamed := field.rename(original)
 		if renamed != original {
 			if v2.HeldStandIns == nil {
 				v2.HeldStandIns = map[string]string{}
 			}
 			v2.HeldStandIns[renamed] = original
 		}
-		*field = &renamed
+		*field.id = &renamed
 	}
+	// The claims the catalog check reads, as routesExecutionV2Controls lists
+	// them: the attributions, then last_served, then the hold.
+	claims := make([]string, 0, len(v2.ActionIDs))
+	for _, entry := range v2.Attribution {
+		claims = append(claims, entry.ActionID)
+	}
+	for _, field := range []*string{v2.LastServedActionID, v2.HoldActionID} {
+		if field != nil {
+			claims = append(claims, *field)
+		}
+	}
+	v2.ActionIDs = claims
 }
 
 // restorePlainStandIns answers each stand-in the decision names under the

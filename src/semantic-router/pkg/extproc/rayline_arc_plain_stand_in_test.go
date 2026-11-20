@@ -147,6 +147,37 @@ func TestPlainStandInsInTheEnvelope(t *testing.T) {
 		}
 	})
 
+	// A hold follows its target. Held on a plain target that is stood in
+	// for, it holds the stand-in; held on a plain target that is not (the
+	// Messages shape, here also marked not to fit), it keeps its own id and
+	// is refused as before.
+	hold := func(body, actionID string) string {
+		return strings.Replace(body, `"hold":null`, `"hold":{"scope":"action","action_id":"`+actionID+`"}`, 1)
+	}
+	t.Run("hold on a stood-in target", func(t *testing.T) {
+		_, request, v2 := apply(t, hold(envelope(`[]`, "null", "null", cloud(haikuPlain), cloud(sonnet)), haikuPlain))
+		if request.Selection.HeldActionID == nil || *request.Selection.HeldActionID != haikuNone ||
+			!reflect.DeepEqual(v2.HeldStandIns, map[string]string{haikuNone: haikuPlain}) {
+			t.Fatalf("held %v, held stand-ins %+v", request.Selection.HeldActionID, v2.HeldStandIns)
+		}
+	})
+	t.Run("hold on a target not stood in for", func(t *testing.T) {
+		body := hold(envelope(`[]`, "null", "null", target(haikuPlain, "cloud", overWindow), cloud(haikuNone), cloud(opus)), haikuPlain)
+		routing, _, refusal := readRaylineRoutesRouting(executionV2Body(`{"execution":`+body+`}`), nil, config.DefaultRaylineARCValueUSDMax)
+		if refusal != nil {
+			t.Fatalf("parse refused %s (%s)", refusal.code, refusal.message)
+		}
+		controls := raylineRoutesControls(routing, &config.RaylineARCRoutesRoutingConfig{}, time.Now())
+		applyPlainStandIns(controls.ExecutionV2, standIns, "episode")
+		if held := controls.ExecutionV2.HoldActionID; held == nil || *held != haikuPlain || controls.ExecutionV2.HeldStandIns != nil {
+			t.Fatalf("hold %v rewritten", held)
+		}
+		request := &raylinearc.PolicyDecisionRequest{Selection: raylinearc.PolicySelection{AvailableActionIDs: []string{haikuNone, opus}}}
+		if _, class := applyRoutePolicyAndExecutionV2(request, scorer, controls); class != arcFailureExecutionUnknownAction {
+			t.Fatalf("class %q, want the refusal a hold on an unknown action had before", class)
+		}
+	})
+
 	// The Messages shape offers Haiku under "none" as well: nothing stands
 	// in, and the plain target is left out as before, so the decide is the
 	// one it was.
