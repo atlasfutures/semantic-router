@@ -481,6 +481,10 @@ type PolicySessionBinding struct {
 	owned    []PolicySession
 	sessions int
 	moved    bool
+	// moveReason is why the turn moved (suspect, stale_owner, transport, or
+	// the lost session's class) and moveError the foreign error code the
+	// answer carried, if any; both are log fields only.
+	moveReason, moveError string
 	// replaced is the persisted session this turn moved off, ended only after
 	// the commit that records its replacement. An ephemeral turn records no
 	// replacement, so it never sets one.
@@ -497,7 +501,7 @@ func (binding *PolicySessionBinding) Decide(
 		case binding.persisted != nil && binding.backend.suspect.has(*binding.persisted):
 			// The persisted session timed out on an earlier turn: this turn's
 			// one move is to a new session, before any call reaches the old one.
-			binding.moved = true
+			binding.moved, binding.moveReason = true, "suspect"
 			if err := binding.moveOff(ctx); err != nil {
 				return nil, err
 			}
@@ -532,6 +536,7 @@ func (binding *PolicySessionBinding) Decide(
 		return response, err
 	}
 	binding.moved = true
+	binding.moveReason, binding.moveError = policySessionMoveReason(stale, transport, err)
 	moveCtx := ctx
 	if transport {
 		var cancel context.CancelFunc
@@ -754,6 +759,33 @@ func (binding *PolicySessionBinding) Session() (*PolicySession, bool) {
 	}
 	changed := binding.persisted == nil || *binding.persisted != *binding.current
 	return clonePolicySession(binding.current), changed
+}
+
+// policySessionMoveReason names why a turn moves, for its log: the stale
+// owner, the transport failure, or the lost session's class with the foreign
+// error code it carried.
+func policySessionMoveReason(stale, transport bool, err error) (string, string) {
+	switch {
+	case stale:
+		return "stale_owner", ""
+	case transport:
+		return "transport", ""
+	}
+	var failure *PolicyServiceError
+	if !errors.As(err, &failure) {
+		return "", ""
+	}
+	code, _ := failure.Detail["error"].(string)
+	return failure.Class, code
+}
+
+// MoveReason is why the turn moved and the foreign error code the answer
+// carried, both empty when it did not move or the reason is unknown.
+func (binding *PolicySessionBinding) MoveReason() (string, string) {
+	if binding == nil || !binding.moved {
+		return "", ""
+	}
+	return binding.moveReason, binding.moveError
 }
 
 // Sessions is how many sessions the turn's calls used, and whether it moved.

@@ -1237,6 +1237,13 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		if failure != nil && failure.Status != 0 {
 			fields["status"] = failure.Status
 		}
+		// An error code outside the service's closed set is logged, bounded,
+		// so a foreign answer is named without a probe.
+		if failure != nil {
+			if code, ok := failure.Detail["error"].(string); ok {
+				fields["upstream_error"] = code
+			}
+		}
 		// With nothing to hold, a media refusal fails as the
 		// unsupported_request it is on the wire (request_shape); the log keeps
 		// its bounded sub_reason.
