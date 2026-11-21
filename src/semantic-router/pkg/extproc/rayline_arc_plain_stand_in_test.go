@@ -237,18 +237,26 @@ func TestPlainAliasesInTheAnswer(t *testing.T) {
 		`"identity":{"action_id":"` + haikuNone + `","policy_action_id":"` + haikuNone + `","control_id":"` + noneControl + `","arm_id":"arm"},` +
 		`"alternatives":[{"action_id":"` + haikuNone + `","thinking_level":"none","model":"m"},{"action_id":"` + opus + `","thinking_level":"none"}],` +
 		`"receipt":{"action_id":"` + haikuNone + `","control_id":"` + noneControl + `","held_from":"` + haikuNone + `","excluded":[{"action_id":"` + haikuNone + `","reason":"r"}],"capacity_unknown":["` + haikuNone + `"]},` +
-		`"candidates":{"rows":[["` + haikuNone + `"]]}}`
+		`"candidates":{"rows":[["` + haikuNone + `"]]},` +
+		`"routing":{"execution":{"turn":{"id":"` + haikuNone + `","epoch":"` + haikuNone + `"}}}}`
 	renamed, err := renamePlainAliasesInAnswer([]byte(answer), map[string]selection.RaylineARCPlainStandIn{
 		haikuNone: {PlainActionID: haikuPlain, PlainControlID: plainControlID, Model: "claude-haiku-5.5"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(renamed), haikuNone) {
-		t.Fatalf("the answer still names the stand-in: %s", renamed)
-	}
 	var got map[string]any
 	_ = json.Unmarshal(renamed, &got)
+	// The routing echo is the caller's own members, answered as sent: an
+	// opaque turn id equal to the stand-in id is not an action id.
+	turn := got["routing"].(map[string]any)["execution"].(map[string]any)["turn"].(map[string]any)
+	if turn["id"] != haikuNone || turn["epoch"] != haikuNone {
+		t.Fatalf("the routing echo was rewritten: %v", turn)
+	}
+	delete(got, "routing")
+	if rest, _ := json.Marshal(got); strings.Contains(string(rest), haikuNone) {
+		t.Fatalf("the answer still names the stand-in: %s", rest)
+	}
 	identity := got["identity"].(map[string]any)
 	if identity["control_id"] != plainControlID || identity["arm_id"] != nil || got["thinking_level"] != nil {
 		t.Fatalf("identity %v, level %v", identity, got["thinking_level"])

@@ -4,6 +4,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"slices"
+	"strings"
 	"sync"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
@@ -45,8 +47,10 @@ type plainAlias struct {
 	model           string
 }
 
-// plainAliasCache holds plainAliasesOf per policy-service config: a config is
-// rebuilt on reload, so an entry is computed once per loaded package.
+// plainAliasCache holds plainAliasesOf by what it depends on, the package and
+// the cell's bound action ids, never by config: a reload builds a new config,
+// which must not be kept alive here. Entries are only the small alias maps,
+// one per distinct package and binding set the process has served.
 var plainAliasCache sync.Map
 
 // plainAliasesOf maps each plain action that has a stand-in on this cell to
@@ -55,15 +59,21 @@ func plainAliasesOf(policy *config.RaylineARCPolicyServiceConfig) map[string]pla
 	if policy == nil {
 		return nil
 	}
-	if cached, ok := plainAliasCache.Load(policy); ok {
+	ids := make([]string, 0, len(policy.Bindings))
+	for _, binding := range policy.Bindings {
+		ids = append(ids, binding.ActionID)
+	}
+	slices.Sort(ids)
+	key := policy.PackageSHA256 + "\x00" + strings.Join(ids, ",")
+	if cached, ok := plainAliasCache.Load(key); ok {
 		return cached.(map[string]plainAlias)
 	}
-	bound := make(map[string]bool, len(policy.Bindings))
+	bound := make(map[string]bool, len(ids))
 	actions := map[string]config.RaylineARCPolicyActionV5{}
-	for _, binding := range policy.Bindings {
-		bound[binding.ActionID] = true
-		if action, ok := policy.PackageV5Action(binding.ActionID); ok {
-			actions[binding.ActionID] = action
+	for _, actionID := range ids {
+		bound[actionID] = true
+		if action, ok := policy.PackageV5Action(actionID); ok {
+			actions[actionID] = action
 		}
 	}
 	inPackage := func(actionID string) bool {
@@ -71,7 +81,7 @@ func plainAliasesOf(policy *config.RaylineARCPolicyServiceConfig) map[string]pla
 		return ok
 	}
 	aliases := plainAliasesOfActions(actions, func(actionID string) bool { return bound[actionID] || inPackage(actionID) })
-	plainAliasCache.Store(policy, aliases)
+	plainAliasCache.Store(key, aliases)
 	return aliases
 }
 
@@ -202,20 +212,28 @@ func logPlainAliases(v2 *selection.RaylineARCRouteExecutionV2, episodeIDHash str
 }
 
 // renamePlainAliasesInAnswer rewrites a routes answer so it names only what
-// the executor offered: every occurrence of a stand-in action id becomes its
-// plain action id, and in an object that named the stand-in as its action
-// (action_id or policy_action_id), the control becomes the plain control and
-// the arm and steering level are cleared: the plain action has no trained arm
-// and no steering level. The answer is returned unchanged without stand-ins.
+// the executor offered: every occurrence of a stand-in action id in what the
+// cell decided becomes its plain action id, and in an object that named the
+// stand-in as its action (action_id or policy_action_id), the control becomes
+// the plain control and the arm and steering level are cleared: the plain
+// action has no trained arm and no steering level. The routing echo is the
+// caller's own members (opaque turn ids among them), which are answered as
+// they were sent. The answer is returned unchanged without stand-ins.
 func renamePlainAliasesInAnswer(answer []byte, standIns map[string]selection.RaylineARCPlainStandIn) ([]byte, error) {
 	if len(standIns) == 0 {
 		return answer, nil
 	}
-	var tree any
+	var tree map[string]any
 	if err := json.Unmarshal(answer, &tree); err != nil {
 		return nil, err
 	}
-	return json.Marshal(renamePlainAliasesIn(tree, standIns))
+	routing, echoed := tree["routing"]
+	delete(tree, "routing")
+	tree = renamePlainAliasesIn(tree, standIns).(map[string]any)
+	if echoed {
+		tree["routing"] = routing
+	}
+	return json.Marshal(tree)
 }
 
 func renamePlainAliasesIn(node any, standIns map[string]selection.RaylineARCPlainStandIn) any {
