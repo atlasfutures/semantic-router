@@ -132,14 +132,22 @@ func toolResultCallIDs(message llmprotocol.Message) (map[string]struct{}, bool) 
 // own default model id, so that is the name the vendor is read from: an
 // alias claude-sonnet bound to anthropic/claude-sonnet-4.5 is anthropic.
 func (r *OpenAIRouter) armFamily(model string) string {
+	if r == nil {
+		return modelFamily(nil, model)
+	}
+	return modelFamily(r.Config, model)
+}
+
+// modelFamily is armFamily for a caller that holds only the config.
+func modelFamily(cfg *config.RouterConfig, model string) string {
 	name := strings.TrimSpace(model)
-	if r != nil && r.Config != nil {
-		params, known := r.Config.ModelConfig[name]
+	if cfg != nil {
+		params, known := cfg.ModelConfig[name]
 		if known && strings.TrimSpace(params.Publisher) != "" {
 			return strings.ToLower(strings.TrimSpace(params.Publisher))
 		}
-		if _, backend, found, err := r.Config.ResolvePrimaryBackendForModel(name); err == nil && found {
-			name = r.Config.ResolveExternalModelID(name, backend)
+		if _, backend, found, err := cfg.ResolvePrimaryBackendForModel(name); err == nil && found {
+			name = cfg.ResolveExternalModelID(name, backend)
 		} else if providerModel := strings.TrimSpace(params.ExternalModelIDs["default"]); known && providerModel != "" {
 			name = providerModel
 		}
