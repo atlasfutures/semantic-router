@@ -4,8 +4,8 @@ package extproc
 
 import (
 	"encoding/json"
+	"errors"
 	"reflect"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -13,7 +13,6 @@ import (
 	"github.com/atlasfutures/semantic-router/rayline-core/thinkingcontrol"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/routerruntime"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
@@ -25,11 +24,11 @@ var plainControlID = thinkingcontrol.Control{Native: "default"}.ID()
 // an action the fixture does not bind (it binds GLM under "none" and "up").
 const v5GLMPlain = "bd202891c3ed5bf9af5250868da17cb3ad68a05184ec5fa757876880257a5b26"
 
-// The stand-ins come from the package: a model bound under "none" and not
+// The aliases come from the package: a model bound under "none" and not
 // under its plain control gets one (GLM); a model bound under its plain
-// control does not (Opus, native only); and once the plain action is bound,
-// none is left.
-func TestPlainStandInsComeFromThePackage(t *testing.T) {
+// control does not (Opus, native only); nor does a plain action the package
+// has but the cell leaves unbound, or one that two "none" actions read as.
+func TestPlainAliasesComeFromThePackage(t *testing.T) {
 	if got := v5ActionID(plainControlID, "glm-5.3-flash"); got != v5GLMPlain {
 		t.Fatalf("plain GLM action id %s", got)
 	}
@@ -43,40 +42,33 @@ func TestPlainStandInsComeFromThePackage(t *testing.T) {
 	}
 	cfg := v5ConfigWith(t, func(rendered string) string { return rendered })
 	policy := cfg.Decisions[0].Algorithm.RaylineARC.PolicyService
-	want := map[string]plainStandIn{v5GLMPlain: {standInActionID: v5GLMNone, plainControlID: plainControlID, model: "glm-5.3-flash"}}
-	if got := plainStandInsOf(policy); !reflect.DeepEqual(got, want) {
-		t.Fatalf("stand-ins %+v", got)
+	want := map[string]plainAlias{v5GLMPlain: {standInActionID: v5GLMNone, plainControlID: plainControlID, model: "glm-5.3-flash"}}
+	if got := plainAliasesOf(policy); !reflect.DeepEqual(got, want) {
+		t.Fatalf("aliases %+v", got)
 	}
 	withPlain := *policy
 	withPlain.Bindings = append(append([]config.RaylineARCPolicyBinding{}, policy.Bindings...), config.RaylineARCPolicyBinding{ActionID: v5GLMPlain, Worker: "glm"})
-	if got := plainStandInsOf(&withPlain); got != nil {
-		t.Fatalf("a package that binds the plain action still stands in: %+v", got)
+	if got := plainAliasesOf(&withPlain); got != nil {
+		t.Fatalf("a cell that binds the plain action still aliases it: %+v", got)
 	}
-	if plainStandInsOf(nil) != nil {
-		t.Fatal("no policy service, no stand-ins")
+	if plainAliasesOf(nil) != nil {
+		t.Fatal("no policy service, no aliases")
 	}
-	// Two "none" actions of GLM at one base read as the same plain action:
-	// neither stands in for it, whatever order the bindings are read in.
+
+	none := mustV5Control(t, policy, v5GLMNone)
+	actions := map[string]config.RaylineARCPolicyActionV5{v5GLMNone: {ActionID: v5GLMNone, Model: "glm-5.3-flash", Control: none}}
+	if got := plainAliasesOfActions(actions, func(id string) bool { return id == v5GLMPlain }); got != nil {
+		t.Fatalf("a plain action the package has still aliases: %+v", got)
+	}
 	neutral := thinkingcontrol.Control{Native: "default", Instruction: &thinkingcontrol.Instruction{
 		Level: "none", NeutralText: "Until the next steering instruction, carry on as you were.",
 	}}
 	twin := v5ActionID(neutral.ID(), "glm-5.3-flash")
-	if action, ok := policy.PackageV5Action(v5GLMNone); !ok || action.Control.ID() == neutral.ID() {
-		t.Fatal("the fixture's none control must differ from the twin's")
-	}
-	actions := map[string]config.RaylineARCPolicyActionV5{
-		v5GLMNone: {ActionID: v5GLMNone, Model: "glm-5.3-flash", Control: mustV5Control(t, policy, v5GLMNone)},
-		twin:      {ActionID: twin, Model: "glm-5.3-flash", Control: neutral},
-	}
-	bound := map[string]bool{v5GLMNone: true, twin: true}
+	actions[twin] = config.RaylineARCPolicyActionV5{ActionID: twin, Model: "glm-5.3-flash", Control: neutral}
 	for range 20 {
-		if got := plainStandInsOfActions(bound, actions); got != nil {
-			t.Fatalf("an ambiguous plain action stood in: %+v", got)
+		if got := plainAliasesOfActions(actions, func(string) bool { return false }); got != nil {
+			t.Fatalf("an ambiguous plain action aliases: %+v", got)
 		}
-	}
-	delete(actions, twin)
-	if got := plainStandInsOfActions(bound, actions); len(got) != 1 || got[v5GLMPlain].standInActionID != v5GLMNone {
-		t.Fatalf("one none action must stand in: %+v", got)
 	}
 }
 
@@ -89,238 +81,197 @@ func mustV5Control(t *testing.T, policy *config.RaylineARCPolicyServiceConfig, a
 	return action.Control
 }
 
-func TestPlainStandInsInTheEnvelope(t *testing.T) {
-	local, opus, sonnet, haikuNone, haikuUp := strings.Repeat("1", 64), strings.Repeat("2", 64), strings.Repeat("3", 64),
-		strings.Repeat("4", 64), strings.Repeat("6", 64)
-	haikuPlain, other := strings.Repeat("5", 64), strings.Repeat("7", 64)
-	scorer := &policyServiceScorer{
-		bindings: map[string]policyBinding{
-			local: {model: "qwen3.8-27b"}, opus: {model: "claude-opus-5.5"}, sonnet: {model: "claude-sonnet-5.5"},
-			haikuNone: {model: "claude-haiku-5.5", level: "none"}, haikuUp: {model: "claude-haiku-5.5", level: "up"},
-		},
+// The property the stopgap claims, checked over the envelope's field
+// combinations: an envelope that never names the "none" action decides
+// exactly as on an oracle cell that binds the plain action as that "none"
+// action (same refusal, same decide members with the plain id read as the
+// "none" one); one that names it anywhere decides exactly as without the
+// stopgap.
+func TestPlainAliasMatchesAnOracleCell(t *testing.T) {
+	local, sonnet, haikuNone := strings.Repeat("1", 64), strings.Repeat("3", 64), strings.Repeat("4", 64)
+	haikuPlain := strings.Repeat("5", 64)
+	bindings := map[string]policyBinding{
+		local: {model: "qwen3.8-27b"}, sonnet: {model: "claude-sonnet-5.5"}, haikuNone: {model: "claude-haiku-5.5", level: "none"},
 	}
-	standIns := map[string]plainStandIn{haikuPlain: {standInActionID: haikuNone, plainControlID: plainControlID, model: "claude-haiku-5.5"}}
-	target := func(actionID, placement, capacity string) string {
-		return `{"action_id":"` + actionID + `","worker":"w","placement":"` + placement + `","cache":null,"capacity":` + capacity + `}`
+	cell := &policyServiceScorer{bindings: bindings}
+	oracleBindings := map[string]policyBinding{haikuPlain: {model: "claude-haiku-5.5"}}
+	for id, binding := range bindings {
+		oracleBindings[id] = binding
 	}
-	cloud := func(actionID string) string { return target(actionID, "cloud", "null") }
+	oracle := &policyServiceScorer{bindings: oracleBindings}
+	aliases := map[string]plainAlias{haikuPlain: {standInActionID: haikuNone, plainControlID: plainControlID, model: "claude-haiku-5.5"}}
+	available := []string{local, sonnet, haikuNone}
+
 	overWindow := `{"fits":false,"reason":"context_capacity","required":42733,"available":32768,"available_source":"configured","units":null,"provenance":"caller_bounded"}`
-	failed := `{"fits":false,"reason":"runtime_unavailable","required":null,"available":null,"available_source":null,"units":null,"provenance":"provider_reported"}`
-	retryOf := func(reconsult string) string {
-		if reconsult == "null" {
-			return "null"
-		}
-		return `"rt_0123456789abcdef0123456789abcdef"`
+	target := func(actionID, capacity string) string {
+		return `{"action_id":"` + actionID + `","worker":"w","placement":"cloud","cache":null,"capacity":` + capacity + `}`
 	}
-	envelope := func(history, lastServed, reconsult string, targets ...string) string {
-		return `{"version":"arc-execution-context.v2","turn":{"id":"sha256:` + strings.Repeat("a", 64) + `","attempt":1,"epoch":"e1","retry_of":` + retryOf(reconsult) + `,"reconsult":` + reconsult + `},` +
-			`"event":{"kind":"task_start","basis":"marker_inferred","compaction":null},"last_served":` + lastServed + `,"history":` + history + `,"hold":null,"expect":null,` +
-			`"targets":[` + strings.Join(targets, ",") + `]}`
+	type outcome struct {
+		class   string
+		unknown []raylinearc.PolicyReceiptExcluded
+		members string
+		aliased bool
 	}
-	apply := func(t *testing.T, body string) ([]raylinearc.PolicyReceiptExcluded, *raylinearc.PolicyDecisionRequest, *selection.RaylineARCRouteExecutionV2) {
-		t.Helper()
+	decide := func(t *testing.T, scorer *policyServiceScorer, body string, aliases map[string]plainAlias) (outcome, bool) {
 		routing, _, refusal := readRaylineRoutesRouting(executionV2Body(`{"execution":`+body+`}`), nil, config.DefaultRaylineARCValueUSDMax)
 		if refusal != nil {
-			t.Fatalf("parse refused %s (%s)", refusal.code, refusal.message)
+			return outcome{}, false
 		}
 		controls := raylineRoutesControls(routing, &config.RaylineARCRoutesRoutingConfig{}, time.Now())
-		request := &raylinearc.PolicyDecisionRequest{Selection: raylinearc.PolicySelection{AvailableActionIDs: []string{local, opus, sonnet, haikuNone, haikuUp}}}
-		applyPlainStandIns(controls.ExecutionV2, standIns, "episode")
+		applyPlainAliases(controls.ExecutionV2, aliases)
+		offer := available
+		if scorer == oracle {
+			offer = append(append([]string{}, available...), haikuPlain) // the oracle cell offers what it binds
+		}
+		request := &raylinearc.PolicyDecisionRequest{Selection: raylinearc.PolicySelection{AvailableActionIDs: offer}}
 		unknown, class := applyRoutePolicyAndExecutionV2(request, scorer, controls)
-		if class != "" {
-			t.Fatalf("refused %s", class)
-		}
-		return unknown, request, controls.ExecutionV2
+		members, _ := json.Marshal(decideMembers(t, request, nil))
+		return outcome{class: class, unknown: unknown, members: string(members), aliased: len(controls.ExecutionV2.StandIns) > 0}, true
 	}
-	capacityIDs := func(request *raylinearc.PolicyDecisionRequest) []string {
-		ids := []string{}
-		for _, entry := range request.Capacity {
-			ids = append(ids, entry.ActionID)
-		}
-		return ids
-	}
-	stoodIn := map[string]selection.RaylineARCPlainStandIn{haikuNone: {PlainActionID: haikuPlain, PlainControlID: plainControlID}}
 
-	// The Chat and Responses shapes: the executor offers Haiku only under
-	// its plain control. It is scored as Haiku "none" instead of being left
-	// out; with the local model over its window, failed, or absent.
-	for name, body := range map[string]string{
-		"chat over the window":      envelope(`[]`, "null", "null", target(local, "local", overWindow), cloud(haikuPlain), cloud(sonnet), cloud(opus)),
-		"responses without a local": envelope(`[]`, "null", "null", cloud(haikuPlain), cloud(sonnet), cloud(opus)),
-		"chat after a local failure": envelope(`[]`, "null", `"capacity"`,
-			target(local, "local", failed), cloud(haikuPlain), cloud(sonnet), cloud(opus)),
-	} {
-		t.Run(name, func(t *testing.T) {
-			unknown, request, v2 := apply(t, body)
-			if len(unknown) != 0 || !reflect.DeepEqual(v2.StandIns, stoodIn) {
-				t.Fatalf("unknown %v, stand-ins %+v", unknown, v2.StandIns)
+	ids := map[string]string{"plain": haikuPlain, "none": haikuNone}
+	cases := 0
+	for _, targets := range [][]string{{"plain"}, {"none"}, {"plain", "none"}, {}} {
+		for _, infeasible := range []bool{false, true} {
+			for _, history := range []string{"", "plain", "none", "both"} {
+				for _, served := range []string{"", "plain", "none", "plain-no-message"} {
+					for _, hold := range []string{"", "plain", "none"} {
+						parts := []string{target(sonnet, "null"), target(local, overWindow)}
+						for _, name := range targets {
+							capacity := "null"
+							if name == "plain" && infeasible {
+								capacity = overWindow
+							}
+							parts = append(parts, target(ids[name], capacity))
+						}
+						attribution := "[]"
+						switch history {
+						case "plain", "none":
+							attribution = `[{"message":1,"action_id":"` + ids[history] + `"}]`
+						case "both":
+							attribution = `[{"message":1,"action_id":"` + haikuNone + `"},{"message":3,"action_id":"` + haikuPlain + `"}]`
+						}
+						lastServed := "null"
+						switch served {
+						case "plain", "none":
+							lastServed = `{"action_id":"` + ids[served] + `","worker":"w","message":1}`
+						case "plain-no-message":
+							lastServed = `{"action_id":"` + haikuPlain + `","worker":"w","message":null}`
+						}
+						holdJSON := "null"
+						if hold != "" {
+							holdJSON = `{"scope":"action","action_id":"` + ids[hold] + `"}`
+						}
+						body := `{"version":"arc-execution-context.v2","turn":{"id":"sha256:` + strings.Repeat("a", 64) + `","attempt":1,"epoch":"e1","retry_of":null,"reconsult":null},` +
+							`"event":{"kind":"task_start","basis":"marker_inferred","compaction":null},"last_served":` + lastServed + `,"history":` + attribution +
+							`,"hold":` + holdJSON + `,"expect":null,"targets":[` + strings.Join(parts, ",") + `]}`
+						name := strings.Join(targets, "+") + "/inf=" + map[bool]string{true: "y", false: "n"}[infeasible] + "/h=" + history + "/ls=" + served + "/hold=" + hold
+						got, parsed := decide(t, cell, body, aliases)
+						if !parsed {
+							continue
+						}
+						cases++
+						namesNone := strings.Contains(body, haikuNone)
+						namesPlain := strings.Contains(body, haikuPlain)
+						if namesNone || !namesPlain {
+							want, _ := decide(t, cell, body, nil)
+							if !reflect.DeepEqual(got, want) {
+								t.Errorf("%s: with the stopgap %+v, without %+v", name, got, want)
+							}
+							continue
+						}
+						want, _ := decide(t, oracle, body, nil)
+						want.members = strings.ReplaceAll(want.members, haikuPlain, haikuNone)
+						want.aliased = true
+						if !reflect.DeepEqual(got, want) {
+							t.Errorf("%s: with the stopgap %+v, oracle %+v", name, got, want)
+						}
+					}
+				}
 			}
-			ids := capacityIDs(request)
-			if !strings.Contains(strings.Join(ids, ","), haikuNone) || strings.Contains(strings.Join(ids, ","), haikuPlain) {
-				t.Fatalf("decide capacity %v", ids)
-			}
-		})
+		}
 	}
-
-	// A later turn of such a conversation: its history and last_served name
-	// the plain action that ran, and are read as the stand-in.
-	t.Run("second turn", func(t *testing.T) {
-		_, request, v2 := apply(t, envelope(`[{"message":1,"action_id":"`+haikuPlain+`"}]`, `{"action_id":"`+haikuPlain+`","worker":"w","message":1}`, "null",
-			cloud(haikuPlain), cloud(sonnet)))
-		if len(request.Attribution) != 1 || request.Attribution[0].ActionID != haikuNone ||
-			request.Selection.LastServedActionID == nil || *request.Selection.LastServedActionID != haikuNone ||
-			!reflect.DeepEqual(v2.HeldStandIns, map[string]string{haikuNone: haikuPlain}) {
-			t.Fatalf("attribution %+v, last served %v", request.Attribution, request.Selection.LastServedActionID)
-		}
-	})
-
-	// A later turn that no longer offers Haiku at all (its backend excluded,
-	// say) still names the plain action that ran: read as the stand-in, not
-	// refused, and nothing is answered under it.
-	t.Run("history without the target", func(t *testing.T) {
-		_, request, v2 := apply(t, envelope(`[{"message":1,"action_id":"`+haikuPlain+`"}]`, `{"action_id":"`+haikuPlain+`","worker":"w","message":1}`, "null",
-			cloud(sonnet), cloud(opus)))
-		if v2.StandIns != nil || request.Attribution[0].ActionID != haikuNone || *request.Selection.LastServedActionID != haikuNone {
-			t.Fatalf("stand-ins %+v, attribution %+v", v2.StandIns, request.Attribution)
-		}
-	})
-
-	// A hold follows its target. Held on a plain target that is stood in
-	// for, it holds the stand-in; held on a plain target that is not (the
-	// Messages shape, here also marked not to fit), it keeps its own id and
-	// is refused as before.
-	hold := func(body, actionID string) string {
-		return strings.Replace(body, `"hold":null`, `"hold":{"scope":"action","action_id":"`+actionID+`"}`, 1)
+	if cases < 100 {
+		t.Fatalf("only %d envelopes parsed", cases)
 	}
-	t.Run("hold on a stood-in target", func(t *testing.T) {
-		_, request, v2 := apply(t, hold(envelope(`[]`, "null", "null", cloud(haikuPlain), cloud(sonnet)), haikuPlain))
-		if request.Selection.HeldActionID == nil || *request.Selection.HeldActionID != haikuNone ||
-			!reflect.DeepEqual(v2.HeldStandIns, map[string]string{haikuNone: haikuPlain}) {
-			t.Fatalf("held %v, held stand-ins %+v", request.Selection.HeldActionID, v2.HeldStandIns)
-		}
-	})
-	// An envelope the stand-in would make pass a check it fails on its own
-	// ids is left as it was, with the refusal it had before.
-	raw := func(t *testing.T, body string) (*selection.RaylineARCRouteExecutionV2, string) {
-		t.Helper()
-		routing, _, refusal := readRaylineRoutesRouting(executionV2Body(`{"execution":`+body+`}`), nil, config.DefaultRaylineARCValueUSDMax)
-		if refusal != nil {
-			t.Fatalf("parse refused %s (%s)", refusal.code, refusal.message)
-		}
-		controls := raylineRoutesControls(routing, &config.RaylineARCRoutesRoutingConfig{}, time.Now())
-		applyPlainStandIns(controls.ExecutionV2, standIns, "episode")
-		request := &raylinearc.PolicyDecisionRequest{Selection: raylinearc.PolicySelection{AvailableActionIDs: []string{haikuNone, haikuUp, opus, sonnet}}}
-		_, class := applyRoutePolicyAndExecutionV2(request, scorer, controls)
-		return controls.ExecutionV2, class
-	}
-	t.Run("hold on a target not stood in for", func(t *testing.T) {
-		v2, class := raw(t, hold(envelope(`[]`, "null", "null", target(haikuPlain, "cloud", overWindow), cloud(haikuNone), cloud(opus)), haikuPlain))
-		if *v2.HoldActionID != haikuPlain || v2.HeldStandIns != nil || class != arcFailureExecutionUnknownAction {
-			t.Fatalf("hold %s, held stand-ins %+v, class %q", *v2.HoldActionID, v2.HeldStandIns, class)
-		}
-	})
-	t.Run("hold on the stand-in itself", func(t *testing.T) {
-		// Only the plain target is offered, but the caller holds the none
-		// action: no target stands in, so the hold cannot be met through the
-		// plain action, and the plain target is left out as before.
-		v2, _ := raw(t, hold(envelope(`[]`, "null", "null", cloud(haikuPlain), cloud(sonnet)), haikuNone))
-		if v2.StandIns != nil || *v2.HoldActionID != haikuNone || slices.Contains(v2.TargetActionIDs, haikuNone) {
-			t.Fatalf("stand-ins %+v, hold %s, targets %v", v2.StandIns, *v2.HoldActionID, v2.TargetActionIDs)
-		}
-	})
-	t.Run("history and last_served disagree", func(t *testing.T) {
-		v2, class := raw(t, envelope(`[{"message":1,"action_id":"`+haikuPlain+`"}]`, `{"action_id":"`+haikuNone+`","worker":"w","message":1}`, "null",
-			cloud(haikuPlain), cloud(sonnet)))
-		if v2.StandIns != nil || v2.Attribution[0].ActionID != haikuPlain || class != arcFailureExecutionUnknownAction {
-			t.Fatalf("stand-ins %+v, attribution %+v, class %q", v2.StandIns, v2.Attribution, class)
-		}
-	})
-
-	// The Messages shape offers Haiku under "none" as well: nothing stands
-	// in, and the plain target is left out as before, so the decide is the
-	// one it was.
-	t.Run("messages unchanged", func(t *testing.T) {
-		unknown, request, v2 := apply(t, envelope(`[]`, "null", "null", cloud(haikuPlain), cloud(haikuNone), cloud(haikuUp), cloud(opus)))
-		if v2.StandIns != nil || len(unknown) != 1 || unknown[0].ActionID != haikuPlain {
-			t.Fatalf("unknown %v, stand-ins %+v", unknown, v2.StandIns)
-		}
-		if ids := capacityIDs(request); !reflect.DeepEqual(ids, []string{haikuNone, haikuUp, opus}) {
-			t.Fatalf("decide capacity %v", ids)
-		}
-	})
-
-	// A bound plain action (Opus, Sonnet) is untouched, and an unknown
-	// target that is no model's plain action is still left out.
-	t.Run("others unchanged", func(t *testing.T) {
-		unknown, _, v2 := apply(t, envelope(`[]`, "null", "null", cloud(opus), cloud(sonnet), cloud(other)))
-		want := []raylinearc.PolicyReceiptExcluded{{ActionID: other, Reason: "unknown_action"}}
-		if v2.StandIns != nil || !reflect.DeepEqual(unknown, want) {
-			t.Fatalf("unknown %v, stand-ins %+v", unknown, v2.StandIns)
-		}
-	})
 }
 
-// The answer names the plain action and control the executor offered, not
-// the stand-in, wherever the decision names the stand-in, with no arm or
-// steering level; the service's receipt is not changed in place.
-func TestPlainStandInsInTheAnswer(t *testing.T) {
+// Each lookup that used an alias logs it once, after its decision, with how
+// it ended, also when only its history named the plain action.
+func TestPlainAliasIsLoggedOncePerLookup(t *testing.T) {
+	haikuNone, haikuPlain := strings.Repeat("4", 64), strings.Repeat("5", 64)
+	v2 := &selection.RaylineARCRouteExecutionV2{
+		Attribution: []raylinearc.PolicyAttribution{{Message: 1, ActionID: haikuPlain}}, TargetActionIDs: []string{strings.Repeat("3", 64)},
+	}
+	applyPlainAliases(v2, map[string]plainAlias{haikuPlain: {standInActionID: haikuNone, plainControlID: plainControlID, model: "claude-haiku-5.5"}})
+	if v2.Attribution[0].ActionID != haikuNone {
+		t.Fatal("the history was not read as the stand-in")
+	}
+	logs := captureLogs(t)
+	logPlainAliases(v2, "episode", errors.New("refused"))
+	logPlainAliases(&selection.RaylineARCRouteExecutionV2{}, "episode", nil)
+	lines := 0
+	for _, entry := range logs.All() {
+		if entry.Message == "rayline_arc_route_target_stand_in" {
+			lines++
+			if fields := entry.ContextMap(); fields["plain_action_id"] != haikuPlain || fields["stand_in_action_id"] != haikuNone || fields["outcome"] != "failed" {
+				t.Fatalf("logged %v", fields)
+			}
+		}
+	}
+	if lines != 1 {
+		t.Fatalf("%d lines, want one", lines)
+	}
+	if encoded, _ := json.Marshal(v2); strings.Contains(string(encoded), "PlainActionID") {
+		t.Fatal("the bookkeeping is encoded with the envelope")
+	}
+}
+
+// The answer names only what the executor offered: every occurrence of the
+// stand-in id, in any member, and the control, arm and steering level of an
+// object that named it as its action.
+func TestPlainAliasesInTheAnswer(t *testing.T) {
 	haikuNone, haikuPlain, opus := strings.Repeat("4", 64), strings.Repeat("5", 64), strings.Repeat("2", 64)
 	noneControl := strings.Repeat("d", 64)
-	result := func(name, actionID string) routerruntime.RouteResult {
-		return routerruntime.RouteResult{Name: name, PolicyActionID: actionID, ControlID: noneControl, ArmID: "arm", ThinkingLevel: "none"}
-	}
-	receipt := &raylinearc.PolicyDecisionReceipt{
-		HeldFrom: &haikuNone, CapacityUnknown: []string{haikuNone, opus},
-		Excluded: []raylinearc.PolicyReceiptExcluded{{ActionID: haikuNone, Reason: "context_capacity"}, {ActionID: opus, Reason: "context_capacity"}},
-	}
-	facts := routerruntime.RouteDecision{
-		PolicyActionID: haikuNone, ControlID: noneControl, ArmID: "arm", ThinkingLevel: "none", Receipt: receipt,
-		Results: []routerruntime.RouteResult{result("swift", haikuNone), result("sage", opus)},
-	}
-	restorePlainStandIns(&facts, &selection.RaylineARCRouteExecutionV2{
-		StandIns:     map[string]selection.RaylineARCPlainStandIn{haikuNone: {PlainActionID: haikuPlain, PlainControlID: plainControlID}},
-		HeldStandIns: map[string]string{haikuNone: haikuPlain},
+	answer := `{"policy_action_id":"` + haikuNone + `","thinking_level":"none",` +
+		`"identity":{"action_id":"` + haikuNone + `","policy_action_id":"` + haikuNone + `","control_id":"` + noneControl + `","arm_id":"arm"},` +
+		`"alternatives":[{"action_id":"` + haikuNone + `","thinking_level":"none","model":"m"},{"action_id":"` + opus + `","thinking_level":"none"}],` +
+		`"receipt":{"action_id":"` + haikuNone + `","control_id":"` + noneControl + `","held_from":"` + haikuNone + `","excluded":[{"action_id":"` + haikuNone + `","reason":"r"}],"capacity_unknown":["` + haikuNone + `"]},` +
+		`"candidates":{"rows":[["` + haikuNone + `"]]}}`
+	renamed, err := renamePlainAliasesInAnswer([]byte(answer), map[string]selection.RaylineARCPlainStandIn{
+		haikuNone: {PlainActionID: haikuPlain, PlainControlID: plainControlID, Model: "claude-haiku-5.5"},
 	})
-	if facts.PolicyActionID != haikuPlain || facts.ControlID != plainControlID || facts.ArmID != "" || facts.ThinkingLevel != "" {
-		t.Fatalf("decision %+v", facts)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if swift := facts.Results[0]; swift.PolicyActionID != haikuPlain || swift.ControlID != plainControlID || swift.ArmID != "" || swift.ThinkingLevel != "" {
-		t.Fatalf("swift %+v", swift)
+	if strings.Contains(string(renamed), haikuNone) {
+		t.Fatalf("the answer still names the stand-in: %s", renamed)
 	}
-	if sage := facts.Results[1]; sage.PolicyActionID != opus || sage.ControlID != noneControl || sage.ArmID != "arm" {
-		t.Fatalf("sage %+v", sage)
+	var got map[string]any
+	_ = json.Unmarshal(renamed, &got)
+	identity := got["identity"].(map[string]any)
+	if identity["control_id"] != plainControlID || identity["arm_id"] != nil || got["thinking_level"] != nil {
+		t.Fatalf("identity %v, level %v", identity, got["thinking_level"])
 	}
-	if got := facts.Receipt; *got.HeldFrom != haikuPlain || !reflect.DeepEqual(got.CapacityUnknown, []string{haikuPlain, opus}) ||
-		got.Excluded[0].ActionID != haikuPlain || got.Excluded[1].ActionID != opus {
-		t.Fatalf("receipt %+v", got)
+	alternatives := got["alternatives"].([]any)
+	if first := alternatives[0].(map[string]any); first["thinking_level"] != nil || first["model"] != "m" {
+		t.Fatalf("alternative %v", first)
 	}
-	if *receipt.HeldFrom != haikuNone || receipt.Excluded[0].ActionID != haikuNone || receipt.CapacityUnknown[0] != haikuNone {
-		t.Fatal("the service's receipt was changed in place")
+	if second := alternatives[1].(map[string]any); second["action_id"] != opus || second["thinking_level"] != "none" {
+		t.Fatalf("another action's alternative changed: %v", second)
 	}
-	unchanged := routerruntime.RouteDecision{PolicyActionID: haikuNone, Receipt: receipt}
-	restorePlainStandIns(&unchanged, nil)
-	restorePlainStandIns(&unchanged, &selection.RaylineARCRouteExecutionV2{})
-	if unchanged.PolicyActionID != haikuNone || unchanged.Receipt != receipt {
-		t.Fatal("no stand-ins must change nothing")
-	}
-	// The "none" action itself last ran: held_from keeps its own id, whatever
-	// the targets stood in for.
-	ran := routerruntime.RouteDecision{PolicyActionID: haikuNone, Receipt: receipt}
-	restorePlainStandIns(&ran, &selection.RaylineARCRouteExecutionV2{
-		StandIns: map[string]selection.RaylineARCPlainStandIn{haikuNone: {PlainActionID: haikuPlain, PlainControlID: plainControlID}},
-	})
-	if *ran.Receipt.HeldFrom != haikuNone || ran.PolicyActionID != haikuPlain {
-		t.Fatalf("held_from %s, action %s", *ran.Receipt.HeldFrom, ran.PolicyActionID)
+	if same, _ := renamePlainAliasesInAnswer([]byte(answer), nil); string(same) != answer {
+		t.Fatal("an answer without stand-ins must be unchanged")
 	}
 }
 
 // Through the routes API on a v5 cell whose package binds GLM under "none"
 // and "up" but not plain: an executor that offers GLM only under its plain
 // control (the Chat and Responses shape) gets GLM decided and answered under
-// the plain action and control it offered, with a receipt naming it, as the
-// executor checks; one that also offers GLM "none" (the Messages shape) is
-// answered as before.
-func TestPlainStandInThroughTheRoutesAPI(t *testing.T) {
+// the plain action and control it offered, as the executor checks, and the
+// answer names the stand-in nowhere; one that also offers GLM "none" (the
+// Messages shape) is answered as before.
+func TestPlainAliasThroughTheRoutesAPI(t *testing.T) {
 	router, fake := v5Router(t, "api_format: openai")
 	arc := router.Config.Decisions[0].Algorithm.RaylineARC
 	arc.RoutesAPI.Enabled = true
@@ -336,7 +287,7 @@ func TestPlainStandInThroughTheRoutesAPI(t *testing.T) {
 	fake.receipt = &raylinearc.PolicyDecisionReceipt{
 		Policy: &preset, DecidedBy: raylinearc.PolicyReceiptDecidedBy{Model: &schedule, Thinking: "schedule"},
 	}
-	lookup := func(t *testing.T, targets ...string) map[string]any {
+	lookup := func(t *testing.T, targets ...string) (map[string]any, string) {
 		t.Helper()
 		parts := []string{}
 		for _, actionID := range targets {
@@ -351,30 +302,33 @@ func TestPlainStandInThroughTheRoutesAPI(t *testing.T) {
 		if status := immediateStatusCode(t, response); status != 200 {
 			t.Fatalf("status %d: %s", status, response.GetImmediateResponse().Body)
 		}
+		raw := response.GetImmediateResponse().Body
 		var payload map[string]any
-		if err := json.Unmarshal(response.GetImmediateResponse().Body, &payload); err != nil {
+		if err := json.Unmarshal(raw, &payload); err != nil {
 			t.Fatal(err)
 		}
-		return payload
+		return payload, string(raw)
 	}
 
-	payload := lookup(t, v5GLMPlain, v5OpusAction)
+	payload, raw := lookup(t, v5GLMPlain, v5OpusAction)
 	identity, _ := payload["identity"].(map[string]any)
 	receipt, _ := payload["receipt"].(map[string]any)
 	if identity == nil || identity["action_id"] != v5GLMPlain || identity["policy_action_id"] != v5GLMPlain ||
-		identity["control_id"] != plainControlID || identity["arm_id"] != nil {
+		identity["control_id"] != plainControlID || identity["arm_id"] != nil || payload["policy_action_id"] != v5GLMPlain {
 		t.Fatalf("identity %v", identity)
 	}
 	if receipt == nil || receipt["action_id"] != identity["action_id"] || receipt["control_id"] != identity["control_id"] {
 		t.Fatalf("receipt %v", receipt)
 	}
+	if strings.Contains(raw, v5GLMNone) {
+		t.Fatalf("the answer names the stand-in: %s", raw)
+	}
 	sent := fake.received()
-	last := sent[len(sent)-1]
-	if ids := capacityActionIDs(last); !reflect.DeepEqual(ids, []string{v5GLMNone, v5OpusAction}) {
+	if ids := capacityActionIDs(sent[len(sent)-1]); !reflect.DeepEqual(ids, []string{v5GLMNone, v5OpusAction}) {
 		t.Fatalf("decide capacity %v", ids)
 	}
 
-	payload = lookup(t, v5GLMPlain, v5GLMNone, v5OpusAction)
+	payload, _ = lookup(t, v5GLMPlain, v5GLMNone, v5OpusAction)
 	identity, _ = payload["identity"].(map[string]any)
 	if identity == nil || identity["action_id"] != v5GLMNone {
 		t.Fatalf("messages-shaped identity %v", identity)

@@ -3,51 +3,60 @@ package extproc
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"slices"
+	"encoding/json"
+	"sync"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/routerruntime"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
 )
 
-// --- Stopgap: a plain-control target scored as its model's steer-none action ---
+// --- Stopgap: a plain-control target scored as its model's none-level action ---
 //
 // An executor derives its targets from its thinking-controls registry. On a
 // wire format where the registry admits no steering instruction for a model
 // (Chat Completions and Responses for many models), the executor can offer
-// that model only under its plain control: its base with no instruction. A
-// v5 package may bind the model only under steering controls, so the plain
-// target is unknown here and, before this stopgap, was left out of the offer:
-// the model was never offered on those formats.
+// and run that model only under its plain control: its base with no
+// instruction. A v5 package may bind the model only under steering controls,
+// so the plain target is unknown here and is left out of the offer: the model
+// is never offered on those formats.
 //
-// When a v2 lookup's target is the plain action of a model whose package
-// binds that base's "none" steering action and not the plain one, and the
-// lookup does not already offer that "none" action, the target is scored as
-// the "none" action (same model, same base; "none" adds no instruction except
-// a neutral one when the level changes) and answered back under the plain
-// action and control, which is what the executor offered and runs. The score
-// is borrowed; what executes is exactly the plain action. Each lookup where
-// it applies logs rayline_arc_route_target_stand_in.
+// The stopgap is one alias per such model: its plain action is read as its
+// bound "none" steering action (same model and base; "none" adds no
+// instruction except a neutral one when the level changes). A v2 lookup that
+// names the plain action and never the "none" one is rewritten on the way in,
+// every action id field at once, so the envelope's own checks run on it as
+// they would on a cell that bound the plain action; the answer is rewritten
+// back on the way out, so the executor sees only the plain action it offered
+// and runs. The score is borrowed from the "none" action; what executes is
+// exactly the plain action. An envelope that names the "none" action anywhere
+// is left as it is, and decides as without this stopgap. Each lookup that used
+// an alias logs rayline_arc_route_target_stand_in after its decision.
 //
-// Remove this file, its two call sites and its tests once the serving
-// package binds the plain action itself: plainStandInsOf then finds nothing,
-// so the event stops firing.
+// Remove this file, its call sites and its tests once the serving package
+// binds the plain action itself: plainAliasesOf then finds nothing for that
+// model, so the event stops firing.
 
-// plainStandIn is one plain action the package lacks, the "none" steering
-// action it is scored as, and the plain control the answer names.
-type plainStandIn struct {
+// plainAlias is the "none" action a plain action is read as, and the plain
+// control the answer names.
+type plainAlias struct {
 	standInActionID string
 	plainControlID  string
 	model           string
 }
 
-// plainStandInsOf maps each plain action the cell does not bind to the bound
-// "none" steering action of the same model and base, for v5 bindings only;
-// nil when there is none.
-func plainStandInsOf(policy *config.RaylineARCPolicyServiceConfig) map[string]plainStandIn {
+// plainAliasCache holds plainAliasesOf per policy-service config: a config is
+// rebuilt on reload, so an entry is computed once per loaded package.
+var plainAliasCache sync.Map
+
+// plainAliasesOf maps each plain action that has a stand-in on this cell to
+// it; nil when none has.
+func plainAliasesOf(policy *config.RaylineARCPolicyServiceConfig) map[string]plainAlias {
 	if policy == nil {
 		return nil
+	}
+	if cached, ok := plainAliasCache.Load(policy); ok {
+		return cached.(map[string]plainAlias)
 	}
 	bound := make(map[string]bool, len(policy.Bindings))
 	actions := map[string]config.RaylineARCPolicyActionV5{}
@@ -57,15 +66,21 @@ func plainStandInsOf(policy *config.RaylineARCPolicyServiceConfig) map[string]pl
 			actions[binding.ActionID] = action
 		}
 	}
-	return plainStandInsOfActions(bound, actions)
+	inPackage := func(actionID string) bool {
+		_, ok := policy.PackageV5Action(actionID)
+		return ok
+	}
+	aliases := plainAliasesOfActions(actions, func(actionID string) bool { return bound[actionID] || inPackage(actionID) })
+	plainAliasCache.Store(policy, aliases)
+	return aliases
 }
 
-// plainStandInsOfActions is plainStandInsOf over the cell's bound action ids
-// and their v5 actions. A plain action that two or more bound "none" actions
-// read as (one model and base, another neutral text, say) has no one
-// stand-in, so it keeps none: the lookup goes on as without this stopgap.
-func plainStandInsOfActions(bound map[string]bool, actions map[string]config.RaylineARCPolicyActionV5) map[string]plainStandIn {
-	standIns := map[string]plainStandIn{}
+// plainAliasesOfActions maps the plain action of each bound v5 "none" action
+// to that action, unless the plain action is known (bound, or in the package
+// though the cell leaves it unbound) or more than one "none" action reads as
+// it (another neutral text, say): it then keeps no alias.
+func plainAliasesOfActions(actions map[string]config.RaylineARCPolicyActionV5, known func(actionID string) bool) map[string]plainAlias {
+	aliases := map[string]plainAlias{}
 	ambiguous := map[string]bool{}
 	for actionID, action := range actions {
 		if action.Control.Instruction == nil || action.Control.Instruction.Level != "none" {
@@ -75,188 +90,167 @@ func plainStandInsOfActions(bound map[string]bool, actions map[string]config.Ray
 		plain.Instruction = nil
 		controlID := plain.ID()
 		plainID := v5ActionID(controlID, action.Model)
-		if bound[plainID] {
+		if known(plainID) {
 			continue
 		}
-		if _, seen := standIns[plainID]; seen {
+		if _, seen := aliases[plainID]; seen {
 			ambiguous[plainID] = true
 		}
-		standIns[plainID] = plainStandIn{standInActionID: actionID, plainControlID: controlID, model: action.Model}
+		aliases[plainID] = plainAlias{standInActionID: actionID, plainControlID: controlID, model: action.Model}
 	}
 	for plainID := range ambiguous {
-		delete(standIns, plainID)
+		delete(aliases, plainID)
 	}
-	if len(standIns) == 0 {
+	if len(aliases) == 0 {
 		return nil
 	}
-	return standIns
+	return aliases
 }
 
-// v5ActionID is a v5 action's identity: sha256 of the JCS form of
+// v5ActionID is a v5 action's identity: sha256 of the RFC 8785 form of
 // {"control_id","model"}.
 func v5ActionID(controlID, model string) string {
 	sum := sha256.Sum256([]byte(`{"control_id":` + jcsString(controlID) + `,"model":` + jcsString(model) + `}`))
 	return hex.EncodeToString(sum[:])
 }
 
-// applyPlainStandIns rewrites a v2 envelope before it is decided, once per
+// applyPlainAliases rewrites a v2 envelope before it is decided, once per
 // lookup and before identical lookups are coalesced, so each caller's own
-// envelope says what it was answered under. It never makes an envelope pass a
-// check it failed: for a model whose envelope is inconsistent on the original
-// ids (history and last_served naming the same message as its plain and its
-// none action), nothing is rewritten, and the lookup is refused as it was.
-//
-// Otherwise a plain action the executor attributes or last served is read as
-// its stand-in whatever the targets: it ran as the stand-in's model and base,
-// and an unknown claim would refuse the lookup. A target that is a plain
-// action the cell lacks becomes its stand-in (its capacity, infeasibility and
-// cache evidence with it), and is recorded on the envelope for the answer and
-// logged, unless the lookup already offers the stand-in or holds it (a hold
-// on an action the caller did not offer stays unavailable). A hold follows its
-// target: it is read as the stand-in only when that target is.
-func applyPlainStandIns(v2 *selection.RaylineARCRouteExecutionV2, standIns map[string]plainStandIn, episodeIDHash string) {
-	if v2 == nil || len(standIns) == 0 {
+// envelope records what it is answered under. For each alias whose plain
+// action the envelope names and whose "none" action it never names, every
+// action id field is rewritten from the plain action to the "none" one and
+// the alias is recorded on the envelope (StandIns).
+func applyPlainAliases(v2 *selection.RaylineARCRouteExecutionV2, aliases map[string]plainAlias) {
+	if v2 == nil || len(aliases) == 0 {
 		return
 	}
-	consistent := func(plainID string, standIn plainStandIn) bool {
-		served, message := v2.LastServedActionID, v2.LastServedMessage
-		if served == nil || message == nil {
-			return true
-		}
-		pair := []string{plainID, standIn.standInActionID}
-		for _, entry := range v2.Attribution {
-			if entry.Message == *message && entry.ActionID != *served && slices.Contains(pair, entry.ActionID) && slices.Contains(pair, *served) {
-				return false
+	named := v2Named(v2)
+	renames := map[string]string{}
+	for plainID, alias := range aliases {
+		if named[plainID] && !named[alias.standInActionID] {
+			renames[plainID] = alias.standInActionID
+			if v2.StandIns == nil {
+				v2.StandIns = map[string]selection.RaylineARCPlainStandIn{}
+			}
+			v2.StandIns[alias.standInActionID] = selection.RaylineARCPlainStandIn{
+				PlainActionID: plainID, PlainControlID: alias.plainControlID, Model: alias.model,
 			}
 		}
-		return true
 	}
-	claims := map[string]string{}
-	for plainID, standIn := range standIns {
-		if consistent(plainID, standIn) {
-			claims[plainID] = standIn.standInActionID
-		}
-	}
-	held := func(actionID string) bool { return v2.HoldActionID != nil && *v2.HoldActionID == actionID }
-	targets := map[string]string{}
-	for _, target := range v2.TargetActionIDs {
-		standIn, ok := standIns[target]
-		if _, eligible := claims[target]; !ok || !eligible || slices.Contains(v2.TargetActionIDs, standIn.standInActionID) || held(standIn.standInActionID) {
-			continue
-		}
-		targets[target] = standIn.standInActionID
-		if v2.StandIns == nil {
-			v2.StandIns = map[string]selection.RaylineARCPlainStandIn{}
-		}
-		v2.StandIns[standIn.standInActionID] = selection.RaylineARCPlainStandIn{
-			PlainActionID: target, PlainControlID: standIn.plainControlID,
-		}
-		logging.ComponentWarnEvent("extproc", "rayline_arc_route_target_stand_in", map[string]interface{}{
-			"model": standIn.model, "plain_action_id": target, "stand_in_action_id": standIn.standInActionID,
-			"episode_id_hash": episodeIDHash,
+	if len(renames) > 0 {
+		v2RenameActions(v2, func(actionID string) string {
+			if to, ok := renames[actionID]; ok {
+				return to
+			}
+			return actionID
 		})
 	}
-	target := func(actionID string) string {
-		if to, ok := targets[actionID]; ok {
-			return to
-		}
+}
+
+// v2Named is every action id a v2 envelope names, in any field.
+func v2Named(v2 *selection.RaylineARCRouteExecutionV2) map[string]bool {
+	named := map[string]bool{}
+	v2RenameActions(v2, func(actionID string) string {
+		named[actionID] = true
 		return actionID
-	}
-	claim := func(actionID string) string {
-		if to, ok := claims[actionID]; ok {
-			return to
+	})
+	return named
+}
+
+// v2RenameActions applies rename to every action id field of a v2 envelope.
+func v2RenameActions(v2 *selection.RaylineARCRouteExecutionV2, rename func(string) string) {
+	for _, ids := range [][]string{v2.TargetActionIDs, v2.ActionIDs, v2.Infeasible} {
+		for index := range ids {
+			ids[index] = rename(ids[index])
 		}
-		return actionID
-	}
-	for index := range v2.TargetActionIDs {
-		v2.TargetActionIDs[index] = target(v2.TargetActionIDs[index])
-	}
-	for index := range v2.Infeasible {
-		v2.Infeasible[index] = target(v2.Infeasible[index])
 	}
 	for index := range v2.Capacity {
-		v2.Capacity[index].ActionID = target(v2.Capacity[index].ActionID)
+		v2.Capacity[index].ActionID = rename(v2.Capacity[index].ActionID)
+	}
+	for index := range v2.Attribution {
+		v2.Attribution[index].ActionID = rename(v2.Attribution[index].ActionID)
 	}
 	if v2.CacheContext != nil {
 		for index := range v2.CacheContext.Actions {
-			v2.CacheContext.Actions[index].ActionID = target(v2.CacheContext.Actions[index].ActionID)
+			v2.CacheContext.Actions[index].ActionID = rename(v2.CacheContext.Actions[index].ActionID)
 		}
 	}
-	for index := range v2.Attribution {
-		v2.Attribution[index].ActionID = claim(v2.Attribution[index].ActionID)
-	}
-	for _, field := range []struct {
-		id     **string
-		rename func(string) string
-	}{{&v2.LastServedActionID, claim}, {&v2.HoldActionID, target}} {
-		if *field.id == nil {
-			continue
-		}
-		original := **field.id
-		renamed := field.rename(original)
-		if renamed != original {
-			if v2.HeldStandIns == nil {
-				v2.HeldStandIns = map[string]string{}
-			}
-			v2.HeldStandIns[renamed] = original
-		}
-		*field.id = &renamed
-	}
-	// The claims the catalog check reads, as routesExecutionV2Controls lists
-	// them: the attributions, then last_served, then the hold.
-	named := make([]string, 0, len(v2.ActionIDs))
-	for _, entry := range v2.Attribution {
-		named = append(named, entry.ActionID)
-	}
-	for _, field := range []*string{v2.LastServedActionID, v2.HoldActionID} {
-		if field != nil {
-			named = append(named, *field)
+	for _, field := range []**string{&v2.LastServedActionID, &v2.HoldActionID} {
+		if *field != nil {
+			renamed := rename(**field)
+			*field = &renamed
 		}
 	}
-	v2.ActionIDs = named
 }
 
-// restorePlainStandIns answers each stand-in the decision names under the
-// plain action and control the executor offered. The arm and the thinking
-// level, which describe the stand-in's training and steering, are cleared:
-// the plain action has no trained arm and no steering level. The receipt's
-// held_from names what last ran, so it is restored from the executor's own
-// last_served or hold claim, never from a target: a stand-in action that did
-// run keeps its own id.
-func restorePlainStandIns(facts *routerruntime.RouteDecision, v2 *selection.RaylineARCRouteExecutionV2) {
-	if v2 == nil || len(v2.StandIns) == 0 && len(v2.HeldStandIns) == 0 {
+// logPlainAliases records, once per lookup that used an alias, that it did
+// and how the lookup ended.
+func logPlainAliases(v2 *selection.RaylineARCRouteExecutionV2, episodeIDHash string, err error) {
+	if v2 == nil || len(v2.StandIns) == 0 {
 		return
 	}
-	standIns := v2.StandIns
-	if plain, ok := standIns[facts.PolicyActionID]; ok {
-		facts.PolicyActionID, facts.ControlID, facts.ArmID, facts.ThinkingLevel = plain.PlainActionID, plain.PlainControlID, "", ""
+	outcome := "decided"
+	if err != nil {
+		outcome = "failed"
 	}
-	for index := range facts.Results {
-		result := &facts.Results[index]
-		if plain, ok := standIns[result.PolicyActionID]; ok {
-			result.PolicyActionID, result.ControlID, result.ArmID, result.ThinkingLevel = plain.PlainActionID, plain.PlainControlID, "", ""
+	for standInID, plain := range v2.StandIns {
+		logging.ComponentEvent("extproc", "rayline_arc_route_target_stand_in", map[string]interface{}{
+			"model": plain.Model, "plain_action_id": plain.PlainActionID, "stand_in_action_id": standInID,
+			"outcome": outcome, "episode_id_hash": episodeIDHash,
+		})
+	}
+}
+
+// renamePlainAliasesInAnswer rewrites a routes answer so it names only what
+// the executor offered: every occurrence of a stand-in action id becomes its
+// plain action id, and in an object that named the stand-in as its action
+// (action_id or policy_action_id), the control becomes the plain control and
+// the arm and steering level are cleared: the plain action has no trained arm
+// and no steering level. The answer is returned unchanged without stand-ins.
+func renamePlainAliasesInAnswer(answer []byte, standIns map[string]selection.RaylineARCPlainStandIn) ([]byte, error) {
+	if len(standIns) == 0 {
+		return answer, nil
+	}
+	var tree any
+	if err := json.Unmarshal(answer, &tree); err != nil {
+		return nil, err
+	}
+	return json.Marshal(renamePlainAliasesIn(tree, standIns))
+}
+
+func renamePlainAliasesIn(node any, standIns map[string]selection.RaylineARCPlainStandIn) any {
+	switch value := node.(type) {
+	case string:
+		if plain, ok := standIns[value]; ok {
+			return plain.PlainActionID
 		}
-	}
-	if facts.Receipt == nil {
-		return
-	}
-	receipt := *facts.Receipt
-	receipt.Excluded = slices.Clone(facts.Receipt.Excluded)
-	for index, entry := range receipt.Excluded {
-		if plain, ok := standIns[entry.ActionID]; ok {
-			receipt.Excluded[index].ActionID = plain.PlainActionID
+		return value
+	case []any:
+		for index := range value {
+			value[index] = renamePlainAliasesIn(value[index], standIns)
 		}
-	}
-	receipt.CapacityUnknown = slices.Clone(facts.Receipt.CapacityUnknown)
-	for index, actionID := range receipt.CapacityUnknown {
-		if plain, ok := standIns[actionID]; ok {
-			receipt.CapacityUnknown[index] = plain.PlainActionID
+		return value
+	case map[string]any:
+		var named *selection.RaylineARCPlainStandIn
+		for _, key := range []string{"action_id", "policy_action_id"} {
+			if id, ok := value[key].(string); ok {
+				if plain, found := standIns[id]; found {
+					named = &plain
+				}
+			}
 		}
-	}
-	if held := facts.Receipt.HeldFrom; held != nil {
-		if original, ok := v2.HeldStandIns[*held]; ok {
-			receipt.HeldFrom = &original
+		for key := range value {
+			value[key] = renamePlainAliasesIn(value[key], standIns)
 		}
+		if named != nil {
+			for key, cleared := range map[string]any{"control_id": named.PlainControlID, "arm_id": nil, "thinking_level": nil} {
+				if _, present := value[key]; present {
+					value[key] = cleared
+				}
+			}
+		}
+		return value
+	default:
+		return node
 	}
-	facts.Receipt = &receipt
 }

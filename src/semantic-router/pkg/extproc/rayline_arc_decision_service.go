@@ -114,8 +114,7 @@ func (service *raylineARCDecisionService) RouteDecision(
 	)
 	selectionContext.RaylineARC.RouteControls = request.Routing
 	if request.Routing != nil && algorithm.RaylineARC != nil {
-		applyPlainStandIns(request.Routing.ExecutionV2, plainStandInsOf(algorithm.RaylineARC.PolicyService),
-			selectionContext.RaylineARC.EpisodeIDHash)
+		applyPlainAliases(request.Routing.ExecutionV2, plainAliasesOf(algorithm.RaylineARC.PolicyService))
 	}
 	selectionContext.RaylineARC.RoutesLookup = true
 	selectionContext.RaylineARC.RoutesThrowaway = request.Ephemeral
@@ -179,6 +178,9 @@ func (service *raylineARCDecisionService) RouteDecision(
 	}
 
 	selected, err := service.selectWorker(ctx, algorithm, selectionContext, requestContext)
+	if request.Routing != nil {
+		logPlainAliases(request.Routing.ExecutionV2, selectionContext.RaylineARC.EpisodeIDHash, err)
+	}
 	if err != nil {
 		return routerruntime.RouteDecision{}, err
 	}
@@ -269,9 +271,6 @@ func (service *raylineARCDecisionService) RouteDecision(
 		decisionFacts.CacheTrace = trace.RouteCacheTrace
 		decisionFacts.Receipt = trace.RouteReceipt
 		decisionFacts.Signals = trace.Signals
-		if request.Routing.ExecutionV2 != nil {
-			restorePlainStandIns(&decisionFacts, request.Routing.ExecutionV2)
-		}
 	}
 	// The episode is reported only when the caller joined one. An ephemeral
 	// consult scored against a fresh in-memory episode, so its turn index and

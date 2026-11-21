@@ -266,21 +266,19 @@ type RaylineARCRouteExecutionV2 struct {
 	// offer rather than refused.
 	TargetActionIDs                                    []string
 	ExpectPackage, ExpectThinkingControls, ExpectOffer *string
-	// StandIns are the plain targets the cell scored as another action, by
+	// StandIns are the plain actions the cell read as another action, by
 	// that action: the answer names the plain action instead (extproc
-	// rayline_arc_plain_stand_in.go). Nil when none.
-	StandIns map[string]RaylineARCPlainStandIn
-	// HeldStandIns are the executor's last_served or hold claims read as
-	// another action, by that action: the plain action that ran. Nil when
-	// none.
-	HeldStandIns map[string]string
+	// rayline_arc_plain_stand_in.go). Nil when none. Bookkeeping, never
+	// encoded.
+	StandIns map[string]RaylineARCPlainStandIn `json:"-"`
 }
 
-// RaylineARCPlainStandIn is the plain action, and its control, a stand-in
-// action is answered as.
+// RaylineARCPlainStandIn is the plain action, its control and its model, a
+// stand-in action is answered as.
 type RaylineARCPlainStandIn struct {
 	PlainActionID  string
 	PlainControlID string
+	Model          string
 }
 
 // RaylineARCRouteExecution is a Decisions caller's execution context as

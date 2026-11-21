@@ -500,6 +500,18 @@ func (r *OpenAIRouter) handleRaylineRoutesAPI(
 		}
 	}
 	ctx.ImmediateResponseEncoded = true
+	if controls != nil && controls.ExecutionV2 != nil && len(controls.ExecutionV2.StandIns) > 0 {
+		// The executor is answered under the plain actions it offered
+		// (rayline_arc_plain_stand_in.go).
+		encoded, err := json.Marshal(payload)
+		if err == nil {
+			encoded, err = renamePlainAliasesInAnswer(encoded, controls.ExecutionV2.StandIns)
+		}
+		if err != nil {
+			return r.raylineRoutesFailure(ctx, lookupContext, routeID, err)
+		}
+		return r.createJSONResponse(200, json.RawMessage(encoded))
+	}
 	return r.createJSONResponse(200, payload)
 }
 
