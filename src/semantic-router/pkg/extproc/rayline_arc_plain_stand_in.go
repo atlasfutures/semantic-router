@@ -57,8 +57,8 @@ var plainAliasCache sync.Map
 // plainAliasesOf maps each plain action that has a stand-in on this cell to
 // it; nil when none has.
 func plainAliasesOf(policy *config.RaylineARCPolicyServiceConfig) map[string]plainAlias {
-	if policy == nil {
-		return nil
+	if policy == nil || !policy.IsPackageV5() {
+		return nil // a v4 package names no controls: nothing to alias, nothing to load
 	}
 	ids := make([]string, 0, len(policy.Bindings))
 	for _, binding := range policy.Bindings {
@@ -211,12 +211,22 @@ func logPlainAliases(v2 *selection.RaylineARCRouteExecutionV2, episodeIDHash str
 	if err != nil {
 		outcome = "failed"
 	}
-	for standInID, plain := range v2.StandIns {
-		logging.ComponentEvent("extproc", "rayline_arc_route_target_stand_in", map[string]interface{}{
-			"model": plain.Model, "plain_action_id": plain.PlainActionID, "stand_in_action_id": standInID,
-			"outcome": outcome, "episode_id_hash": episodeIDHash,
-		})
+	standInIDs := make([]string, 0, len(v2.StandIns))
+	for standInID := range v2.StandIns {
+		standInIDs = append(standInIDs, standInID)
 	}
+	slices.Sort(standInIDs)
+	models, plainIDs := make([]string, 0, len(standInIDs)), make([]string, 0, len(standInIDs))
+	for _, standInID := range standInIDs {
+		models = append(models, v2.StandIns[standInID].Model)
+		plainIDs = append(plainIDs, v2.StandIns[standInID].PlainActionID)
+	}
+	// One event per lookup, naming every alias it used, so the count is the
+	// number of affected lookups.
+	logging.ComponentEvent("extproc", "rayline_arc_route_target_stand_in", map[string]interface{}{
+		"models": models, "plain_action_ids": plainIDs, "stand_in_action_ids": standInIDs,
+		"outcome": outcome, "episode_id_hash": episodeIDHash,
+	})
 }
 
 // renamePlainAliasesInAnswer rewrites a routes answer so it names only what
@@ -225,8 +235,8 @@ func logPlainAliases(v2 *selection.RaylineARCRouteExecutionV2, episodeIDHash str
 // stand-in as its action (action_id or policy_action_id), the control becomes
 // the plain control and the arm and steering level are cleared: the plain
 // action has no trained arm and no steering level. The routing echo is the
-// caller's own members (opaque turn ids among them), which are answered as
-// they were sent. The answer is returned unchanged without stand-ins.
+// caller's own members (opaque turn ids among them) and the signals block are
+// answered as they were written. The answer is returned unchanged without stand-ins.
 func renamePlainAliasesInAnswer(answer []byte, standIns map[string]selection.RaylineARCPlainStandIn) ([]byte, error) {
 	if len(standIns) == 0 {
 		return answer, nil
@@ -237,11 +247,18 @@ func renamePlainAliasesInAnswer(answer []byte, standIns map[string]selection.Ray
 	if err := decoder.Decode(&tree); err != nil {
 		return nil, err
 	}
-	routing, echoed := tree["routing"]
-	delete(tree, "routing")
+	// The routing echo (the caller's own members) and the signals block (the
+	// service's, passed through as written) are opaque: never rewritten.
+	opaque := map[string]any{}
+	for _, key := range []string{"routing", "signals"} {
+		if value, present := tree[key]; present {
+			opaque[key] = value
+			delete(tree, key)
+		}
+	}
 	tree = renamePlainAliasesIn(tree, standIns).(map[string]any)
-	if echoed {
-		tree["routing"] = routing
+	for key, value := range opaque {
+		tree[key] = value
 	}
 	return json.Marshal(tree)
 }

@@ -54,6 +54,9 @@ func TestPlainAliasesComeFromThePackage(t *testing.T) {
 	if plainAliasesOf(nil) != nil {
 		t.Fatal("no policy service, no aliases")
 	}
+	if plainAliasesOf(&config.RaylineARCPolicyServiceConfig{Bindings: policy.Bindings}) != nil {
+		t.Fatal("a v4 policy (no manifest) has no aliases")
+	}
 
 	none := mustV5Control(t, policy, v5GLMNone)
 	actions := map[string]config.RaylineARCPolicyActionV5{v5GLMNone: {ActionID: v5GLMNone, Model: "glm-5.3-flash", Control: none}}
@@ -247,9 +250,14 @@ func TestPlainAliasIsLoggedOncePerLookup(t *testing.T) {
 	v2 := &selection.RaylineARCRouteExecutionV2{
 		Attribution: []raylinearc.PolicyAttribution{{Message: 1, ActionID: haikuPlain}}, TargetActionIDs: []string{strings.Repeat("3", 64)},
 	}
-	applyPlainAliases(v2, map[string]plainAlias{haikuPlain: {standInActionID: haikuNone, plainControlID: plainControlID, model: "claude-haiku-5.5"}})
-	if v2.Attribution[0].ActionID != haikuNone {
-		t.Fatal("the history was not read as the stand-in")
+	glmNone, glmPlain := strings.Repeat("6", 64), strings.Repeat("7", 64)
+	v2.TargetActionIDs = append(v2.TargetActionIDs, glmPlain)
+	applyPlainAliases(v2, map[string]plainAlias{
+		haikuPlain: {standInActionID: haikuNone, plainControlID: plainControlID, model: "claude-haiku-5.5"},
+		glmPlain:   {standInActionID: glmNone, plainControlID: plainControlID, model: "glm-5.3-flash"},
+	})
+	if v2.Attribution[0].ActionID != haikuNone || len(v2.StandIns) != 2 {
+		t.Fatalf("the history was not read as the stand-in, or an alias is missing: %+v", v2.StandIns)
 	}
 	logs := captureLogs(t)
 	logPlainAliases(v2, "episode", errors.New("refused"))
@@ -258,13 +266,15 @@ func TestPlainAliasIsLoggedOncePerLookup(t *testing.T) {
 	for _, entry := range logs.All() {
 		if entry.Message == "rayline_arc_route_target_stand_in" {
 			lines++
-			if fields := entry.ContextMap(); fields["plain_action_id"] != haikuPlain || fields["stand_in_action_id"] != haikuNone || fields["outcome"] != "failed" {
+			fields := entry.ContextMap()
+			if fields["outcome"] != "failed" || !reflect.DeepEqual(fields["stand_in_action_ids"], []interface{}{haikuNone, glmNone}) ||
+				!reflect.DeepEqual(fields["plain_action_ids"], []interface{}{haikuPlain, glmPlain}) {
 				t.Fatalf("logged %v", fields)
 			}
 		}
 	}
 	if lines != 1 {
-		t.Fatalf("%d lines, want one", lines)
+		t.Fatalf("%d lines for one lookup with two aliases, want one", lines)
 	}
 	if encoded, _ := json.Marshal(v2); strings.Contains(string(encoded), "PlainActionID") {
 		t.Fatal("the bookkeeping is encoded with the envelope")
@@ -282,6 +292,7 @@ func TestPlainAliasesInTheAnswer(t *testing.T) {
 		`"alternatives":[{"action_id":"` + haikuNone + `","thinking_level":"none","model":"m"},{"action_id":"` + opus + `","thinking_level":"none"}],` +
 		`"receipt":{"action_id":"` + haikuNone + `","control_id":"` + noneControl + `","held_from":"` + haikuNone + `","excluded":[{"action_id":"` + haikuNone + `","reason":"r"}],"capacity_unknown":["` + haikuNone + `"]},` +
 		`"candidates":{"rows":[["` + haikuNone + `"]]},` +
+		`"signals":{"reported":"` + haikuNone + `"},` +
 		`"routing":{"execution":{"turn":{"id":"` + haikuNone + `","epoch":"` + haikuNone + `"}}}}`
 	renamed, err := renamePlainAliasesInAnswer([]byte(answer), map[string]selection.RaylineARCPlainStandIn{
 		haikuNone: {PlainActionID: haikuPlain, PlainControlID: plainControlID, Model: "claude-haiku-5.5"},
@@ -297,7 +308,11 @@ func TestPlainAliasesInTheAnswer(t *testing.T) {
 	if turn["id"] != haikuNone || turn["epoch"] != haikuNone {
 		t.Fatalf("the routing echo was rewritten: %v", turn)
 	}
+	if got["signals"].(map[string]any)["reported"] != haikuNone {
+		t.Fatal("the signals block was rewritten")
+	}
 	delete(got, "routing")
+	delete(got, "signals")
 	if rest, _ := json.Marshal(got); strings.Contains(string(rest), haikuNone) {
 		t.Fatalf("the answer still names the stand-in: %s", rest)
 	}
