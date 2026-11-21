@@ -103,8 +103,15 @@ func TestPlainAliasMatchesAnOracleCell(t *testing.T) {
 	available := []string{local, sonnet, haikuNone}
 
 	overWindow := `{"fits":false,"reason":"context_capacity","required":42733,"available":32768,"available_source":"configured","units":null,"provenance":"caller_bounded"}`
-	target := func(actionID, capacity string) string {
-		return `{"action_id":"` + actionID + `","worker":"w","placement":"cloud","cache":null,"capacity":` + capacity + `}`
+	evidence := `{"context_epoch":"e1","gap_s":12.0,"ttl":null,"residency":{"state":"resident","provenance":"local_measured"},` +
+		`"usage":{"prompt_tokens":61000,"cache_read_tokens":null,"cache_write_tokens":null,"units":"provider:haiku","provenance":"provider_reported"},` +
+		`"current_prefix":{"tokens":69800,"overlap_tokens":61000,"units":"provider:haiku","provenance":"local_measured"}}`
+	target := func(actionID, capacity string, cached bool) string {
+		cache := "null"
+		if cached {
+			cache = evidence
+		}
+		return `{"action_id":"` + actionID + `","worker":"w","placement":"cloud","cache":` + cache + `,"capacity":` + capacity + `}`
 	}
 	type outcome struct {
 		class   string
@@ -125,74 +132,111 @@ func TestPlainAliasMatchesAnOracleCell(t *testing.T) {
 		}
 		request := &raylinearc.PolicyDecisionRequest{Selection: raylinearc.PolicySelection{AvailableActionIDs: offer}}
 		unknown, class := applyRoutePolicyAndExecutionV2(request, scorer, controls)
+		// The cache evidence reaches the decide request later, at the call
+		// (routeExecutionV2CacheContext): compared as that call reads it.
+		request.CacheContext = routeExecutionV2CacheContext(controls.ExecutionV2)
 		members, _ := json.Marshal(decideMembers(t, request, nil))
 		return outcome{class: class, unknown: unknown, members: string(members), aliased: len(controls.ExecutionV2.StandIns) > 0}, true
 	}
 
 	ids := map[string]string{"plain": haikuPlain, "none": haikuNone}
-	cases := 0
+	cases, oracleCases, oracleDecided := 0, 0, 0
 	for _, targets := range [][]string{{"plain"}, {"none"}, {"plain", "none"}, {}} {
-		for _, infeasible := range []bool{false, true} {
-			for _, history := range []string{"", "plain", "none", "both"} {
-				for _, served := range []string{"", "plain", "none", "plain-no-message"} {
-					for _, hold := range []string{"", "plain", "none"} {
-						parts := []string{target(sonnet, "null"), target(local, overWindow)}
-						for _, name := range targets {
-							capacity := "null"
-							if name == "plain" && infeasible {
-								capacity = overWindow
+		for _, cachedOn := range []string{"", "plain", "none"} {
+			for _, infeasible := range []bool{false, true} {
+				for _, history := range []string{"", "plain", "none", "both"} {
+					for _, served := range []string{"", "plain", "none", "plain-no-message"} {
+						for _, hold := range []string{"", "plain", "none"} {
+							parts := []string{target(sonnet, "null", false), target(local, overWindow, false)}
+							for _, name := range targets {
+								capacity := "null"
+								if name == "plain" && infeasible {
+									capacity = overWindow
+								}
+								parts = append(parts, target(ids[name], capacity, name == cachedOn))
 							}
-							parts = append(parts, target(ids[name], capacity))
-						}
-						attribution := "[]"
-						switch history {
-						case "plain", "none":
-							attribution = `[{"message":1,"action_id":"` + ids[history] + `"}]`
-						case "both":
-							attribution = `[{"message":1,"action_id":"` + haikuNone + `"},{"message":3,"action_id":"` + haikuPlain + `"}]`
-						}
-						lastServed := "null"
-						switch served {
-						case "plain", "none":
-							lastServed = `{"action_id":"` + ids[served] + `","worker":"w","message":1}`
-						case "plain-no-message":
-							lastServed = `{"action_id":"` + haikuPlain + `","worker":"w","message":null}`
-						}
-						holdJSON := "null"
-						if hold != "" {
-							holdJSON = `{"scope":"action","action_id":"` + ids[hold] + `"}`
-						}
-						body := `{"version":"arc-execution-context.v2","turn":{"id":"sha256:` + strings.Repeat("a", 64) + `","attempt":1,"epoch":"e1","retry_of":null,"reconsult":null},` +
-							`"event":{"kind":"task_start","basis":"marker_inferred","compaction":null},"last_served":` + lastServed + `,"history":` + attribution +
-							`,"hold":` + holdJSON + `,"expect":null,"targets":[` + strings.Join(parts, ",") + `]}`
-						name := strings.Join(targets, "+") + "/inf=" + map[bool]string{true: "y", false: "n"}[infeasible] + "/h=" + history + "/ls=" + served + "/hold=" + hold
-						got, parsed := decide(t, cell, body, aliases)
-						if !parsed {
-							continue
-						}
-						cases++
-						namesNone := strings.Contains(body, haikuNone)
-						namesPlain := strings.Contains(body, haikuPlain)
-						if namesNone || !namesPlain {
-							want, _ := decide(t, cell, body, nil)
+							attribution := "[]"
+							switch history {
+							case "plain", "none":
+								attribution = `[{"message":1,"action_id":"` + ids[history] + `"}]`
+							case "both":
+								attribution = `[{"message":1,"action_id":"` + haikuNone + `"},{"message":3,"action_id":"` + haikuPlain + `"}]`
+							}
+							lastServed := "null"
+							switch served {
+							case "plain", "none":
+								lastServed = `{"action_id":"` + ids[served] + `","worker":"w","message":1}`
+							case "plain-no-message":
+								lastServed = `{"action_id":"` + haikuPlain + `","worker":"w","message":null}`
+							}
+							holdJSON := "null"
+							if hold != "" {
+								holdJSON = `{"scope":"action","action_id":"` + ids[hold] + `"}`
+							}
+							body := `{"version":"arc-execution-context.v2","turn":{"id":"sha256:` + strings.Repeat("a", 64) + `","attempt":1,"epoch":"e1","retry_of":null,"reconsult":null},` +
+								`"event":{"kind":"task_start","basis":"marker_inferred","compaction":null},"last_served":` + lastServed + `,"history":` + attribution +
+								`,"hold":` + holdJSON + `,"expect":null,"targets":[` + strings.Join(parts, ",") + `]}`
+							name := strings.Join(targets, "+") + "/cache=" + cachedOn + "/inf=" + map[bool]string{true: "y", false: "n"}[infeasible] + "/h=" + history + "/ls=" + served + "/hold=" + hold
+							got, parsed := decide(t, cell, body, aliases)
+							if !parsed {
+								continue
+							}
+							cases++
+							namesNone := strings.Contains(body, haikuNone)
+							namesPlain := strings.Contains(body, haikuPlain)
+							if namesNone || !namesPlain {
+								want, _ := decide(t, cell, body, nil)
+								if !reflect.DeepEqual(got, want) {
+									t.Errorf("%s: with the stopgap %+v, without %+v", name, got, want)
+								}
+								continue
+							}
+							want, _ := decide(t, oracle, body, nil)
+							want.members = strings.ReplaceAll(want.members, haikuPlain, haikuNone)
+							want.aliased = true
 							if !reflect.DeepEqual(got, want) {
-								t.Errorf("%s: with the stopgap %+v, without %+v", name, got, want)
+								t.Errorf("%s: with the stopgap %+v, oracle %+v", name, got, want)
 							}
-							continue
-						}
-						want, _ := decide(t, oracle, body, nil)
-						want.members = strings.ReplaceAll(want.members, haikuPlain, haikuNone)
-						want.aliased = true
-						if !reflect.DeepEqual(got, want) {
-							t.Errorf("%s: with the stopgap %+v, oracle %+v", name, got, want)
+							oracleCases++
+							if got.class == "" {
+								oracleDecided++
+							}
 						}
 					}
 				}
 			}
 		}
 	}
-	if cases < 100 {
-		t.Fatalf("only %d envelopes parsed", cases)
+	// Guards against a table that passes because nothing reaches the oracle
+	// comparison (a parser change refusing plain-only envelopes, say).
+	if cases < 300 || oracleCases < 80 || oracleDecided < 40 {
+		t.Fatalf("%d envelopes parsed, %d compared with the oracle, %d of them decided", cases, oracleCases, oracleDecided)
+	}
+	t.Logf("%d envelopes, %d compared with the oracle, %d of them decided", cases, oracleCases, oracleDecided)
+}
+
+// A known limitation: once a turn ran under the alias, the executor's history
+// names the plain action. A later lookup of the same conversation that also
+// offers the none action (a client on another wire format) gets no alias, so
+// its plain claim is unknown and the lookup is refused, a refusal that could
+// not occur without the stopgap, since the plain action was never decided.
+func TestPlainAliasLimitationAcrossWireFormats(t *testing.T) {
+	sonnet, haikuNone, haikuPlain := strings.Repeat("3", 64), strings.Repeat("4", 64), strings.Repeat("5", 64)
+	scorer := &policyServiceScorer{bindings: map[string]policyBinding{sonnet: {model: "claude-sonnet-5.5"}, haikuNone: {model: "claude-haiku-5.5", level: "none"}}}
+	body := `{"version":"arc-execution-context.v2","turn":{"id":"sha256:` + strings.Repeat("a", 64) + `","attempt":1,"epoch":"e1","retry_of":null,"reconsult":null},` +
+		`"event":{"kind":"task_start","basis":"marker_inferred","compaction":null},"last_served":null,"history":[{"message":1,"action_id":"` + haikuPlain + `"}],` +
+		`"hold":null,"expect":null,"targets":[{"action_id":"` + haikuPlain + `","worker":"w","placement":"cloud","cache":null,"capacity":null},` +
+		`{"action_id":"` + haikuNone + `","worker":"w","placement":"cloud","cache":null,"capacity":null},` +
+		`{"action_id":"` + sonnet + `","worker":"w","placement":"cloud","cache":null,"capacity":null}]}`
+	routing, _, refusal := readRaylineRoutesRouting(executionV2Body(`{"execution":`+body+`}`), nil, config.DefaultRaylineARCValueUSDMax)
+	if refusal != nil {
+		t.Fatal(refusal.message)
+	}
+	controls := raylineRoutesControls(routing, &config.RaylineARCRoutesRoutingConfig{}, time.Now())
+	applyPlainAliases(controls.ExecutionV2, map[string]plainAlias{haikuPlain: {standInActionID: haikuNone, plainControlID: plainControlID, model: "claude-haiku-5.5"}})
+	request := &raylinearc.PolicyDecisionRequest{Selection: raylinearc.PolicySelection{AvailableActionIDs: []string{sonnet, haikuNone}}}
+	if _, class := applyRoutePolicyAndExecutionV2(request, scorer, controls); class != arcFailureExecutionUnknownAction {
+		t.Fatalf("class %q", class)
 	}
 }
 

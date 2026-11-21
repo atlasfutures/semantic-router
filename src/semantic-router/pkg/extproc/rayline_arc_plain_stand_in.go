@@ -1,6 +1,7 @@
 package extproc
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -75,6 +76,11 @@ func plainAliasesOf(policy *config.RaylineARCPolicyServiceConfig) map[string]pla
 		if action, ok := policy.PackageV5Action(actionID); ok {
 			actions[actionID] = action
 		}
+	}
+	if len(actions) == 0 {
+		// No v5 action read: not a v5 package, or one that did not load
+		// this time. Nothing is cached, so a later load is read again.
+		return nil
 	}
 	inPackage := func(actionID string) bool {
 		_, ok := policy.PackageV5Action(actionID)
@@ -194,7 +200,9 @@ func v2RenameActions(v2 *selection.RaylineARCRouteExecutionV2, rename func(strin
 }
 
 // logPlainAliases records, once per lookup that used an alias, that it did
-// and how the lookup ended.
+// and how its decision ended: decided, or failed (preparation and selection
+// failures alike). A routes answer that fails after a decided lookup is
+// logged by the routes failure event of the same request.
 func logPlainAliases(v2 *selection.RaylineARCRouteExecutionV2, episodeIDHash string, err error) {
 	if v2 == nil || len(v2.StandIns) == 0 {
 		return
@@ -224,7 +232,9 @@ func renamePlainAliasesInAnswer(answer []byte, standIns map[string]selection.Ray
 		return answer, nil
 	}
 	var tree map[string]any
-	if err := json.Unmarshal(answer, &tree); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(answer))
+	decoder.UseNumber() // numbers are kept as the answer wrote them
+	if err := decoder.Decode(&tree); err != nil {
 		return nil, err
 	}
 	routing, echoed := tree["routing"]
@@ -261,11 +271,13 @@ func renamePlainAliasesIn(node any, standIns map[string]selection.RaylineARCPlai
 			value[key] = renamePlainAliasesIn(value[key], standIns)
 		}
 		if named != nil {
-			for key, cleared := range map[string]any{"control_id": named.PlainControlID, "arm_id": nil, "thinking_level": nil} {
+			for key, cleared := range map[string]any{"control_id": named.PlainControlID, "arm_id": nil} {
 				if _, present := value[key]; present {
 					value[key] = cleared
 				}
 			}
+			// The answer omits a steering level an action does not have.
+			delete(value, "thinking_level")
 		}
 		return value
 	default:

@@ -239,6 +239,8 @@ type RaylineARCRouteControls struct {
 // RaylineARCRouteExecutionV2 is a v2 routing.execution as decide-request
 // members (arc_execution_v2.decide_inputs_v2) plus what the package-side
 // checks need (arc_execution_v2.bind_v2). Never written back to any state.
+// Every action id field added here must also be listed in extproc's
+// v2RenameActions (rayline_arc_plain_stand_in.go).
 type RaylineARCRouteExecutionV2 struct {
 	ContextEpoch string
 	Attribution  []raylinearc.PolicyAttribution
