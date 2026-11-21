@@ -239,6 +239,8 @@ type RaylineARCRouteControls struct {
 // RaylineARCRouteExecutionV2 is a v2 routing.execution as decide-request
 // members (arc_execution_v2.decide_inputs_v2) plus what the package-side
 // checks need (arc_execution_v2.bind_v2). Never written back to any state.
+// Every action id field added here must also be listed in extproc's
+// v2RenameActions (rayline_arc_plain_stand_in.go).
 type RaylineARCRouteExecutionV2 struct {
 	ContextEpoch string
 	Attribution  []raylinearc.PolicyAttribution
@@ -266,6 +268,19 @@ type RaylineARCRouteExecutionV2 struct {
 	// offer rather than refused.
 	TargetActionIDs                                    []string
 	ExpectPackage, ExpectThinkingControls, ExpectOffer *string
+	// StandIns are the plain actions the cell read as another action, by
+	// that action: the answer names the plain action instead (extproc
+	// rayline_arc_plain_stand_in.go). Nil when none. Bookkeeping, never
+	// encoded.
+	StandIns map[string]RaylineARCPlainStandIn `json:"-"`
+}
+
+// RaylineARCPlainStandIn is the plain action, its control and its model, a
+// stand-in action is answered as.
+type RaylineARCPlainStandIn struct {
+	PlainActionID  string
+	PlainControlID string
+	Model          string
 }
 
 // RaylineARCRouteExecution is a Decisions caller's execution context as
