@@ -51,13 +51,25 @@ func plainStandInsOf(policy *config.RaylineARCPolicyServiceConfig) map[string]pl
 		return nil
 	}
 	bound := make(map[string]bool, len(policy.Bindings))
+	actions := map[string]config.RaylineARCPolicyActionV5{}
 	for _, binding := range policy.Bindings {
 		bound[binding.ActionID] = true
+		if action, ok := policy.PackageV5Action(binding.ActionID); ok {
+			actions[binding.ActionID] = action
+		}
 	}
+	return plainStandInsOfActions(bound, actions)
+}
+
+// plainStandInsOfActions is plainStandInsOf over the cell's bound action ids
+// and their v5 actions. A plain action that two or more bound "none" actions
+// read as (one model and base, another neutral text, say) has no one
+// stand-in, so it keeps none: the lookup goes on as without this stopgap.
+func plainStandInsOfActions(bound map[string]bool, actions map[string]config.RaylineARCPolicyActionV5) map[string]plainStandIn {
 	standIns := map[string]plainStandIn{}
-	for actionID := range bound {
-		action, ok := policy.PackageV5Action(actionID)
-		if !ok || action.Control.Instruction == nil || action.Control.Instruction.Level != "none" {
+	ambiguous := map[string]bool{}
+	for actionID, action := range actions {
+		if action.Control.Instruction == nil || action.Control.Instruction.Level != "none" {
 			continue
 		}
 		plain := action.Control
@@ -67,7 +79,13 @@ func plainStandInsOf(policy *config.RaylineARCPolicyServiceConfig) map[string]pl
 		if bound[plainID] {
 			continue
 		}
+		if _, seen := standIns[plainID]; seen {
+			ambiguous[plainID] = true
+		}
 		standIns[plainID] = plainStandIn{standInActionID: actionID, plainControlID: controlID, model: action.Model}
+	}
+	for plainID := range ambiguous {
+		delete(standIns, plainID)
 	}
 	if len(standIns) == 0 {
 		return nil

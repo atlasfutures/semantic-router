@@ -50,6 +50,38 @@ func TestPlainStandInsComeFromThePackage(t *testing.T) {
 	if plainStandInsOf(nil) != nil {
 		t.Fatal("no policy service, no stand-ins")
 	}
+	// Two "none" actions of GLM at one base read as the same plain action:
+	// neither stands in for it, whatever order the bindings are read in.
+	neutral := thinkingcontrol.Control{Native: "default", Instruction: &thinkingcontrol.Instruction{
+		Level: "none", NeutralText: "Until the next steering instruction, carry on as you were.",
+	}}
+	twin := v5ActionID(neutral.ID(), "glm-5.3-flash")
+	if action, ok := policy.PackageV5Action(v5GLMNone); !ok || action.Control.ID() == neutral.ID() {
+		t.Fatal("the fixture's none control must differ from the twin's")
+	}
+	actions := map[string]config.RaylineARCPolicyActionV5{
+		v5GLMNone: {ActionID: v5GLMNone, Model: "glm-5.3-flash", Control: mustV5Control(t, policy, v5GLMNone)},
+		twin:      {ActionID: twin, Model: "glm-5.3-flash", Control: neutral},
+	}
+	bound := map[string]bool{v5GLMNone: true, twin: true}
+	for range 20 {
+		if got := plainStandInsOfActions(bound, actions); got != nil {
+			t.Fatalf("an ambiguous plain action stood in: %+v", got)
+		}
+	}
+	delete(actions, twin)
+	if got := plainStandInsOfActions(bound, actions); len(got) != 1 || got[v5GLMPlain].standInActionID != v5GLMNone {
+		t.Fatalf("one none action must stand in: %+v", got)
+	}
+}
+
+func mustV5Control(t *testing.T, policy *config.RaylineARCPolicyServiceConfig, actionID string) thinkingcontrol.Control {
+	t.Helper()
+	action, ok := policy.PackageV5Action(actionID)
+	if !ok {
+		t.Fatalf("no v5 action %s", actionID)
+	}
+	return action.Control
 }
 
 func TestPlainStandInsInTheEnvelope(t *testing.T) {
