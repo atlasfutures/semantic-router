@@ -24,6 +24,11 @@ func TestUpstreamErrorFieldsNamesContractPathsOnly(t *testing.T) {
 		{"Your request said 'hello world' and user.name was invalid", nil},
 		{"Request contains an invalid argument.", nil},
 		{"Unsupported parameter: 'max_tokens' is not supported with this model.", []string{"max_tokens"}},
+		{"Invalid 'input[0].name': 'tools.payroll.corp.internal' does not match the required name pattern", []string{"input[0].name"}},
+		{"Invalid 'tools[1].name': 'tools.function-gateway' is not allowed", []string{"tools[1].name"}},
+		{"Value 'text.content.example.org' in 'messages[2].content' is invalid.", []string{"messages[2].content"}},
+		{"messages[5].tool_calls.", []string{"messages[5].tool_calls"}},
+		{"see input[0].name:secret and messages[1].content/x", nil},
 	}
 	for _, c := range cases {
 		if got := upstreamErrorFields(c.message); !reflect.DeepEqual(got, c.want) {
