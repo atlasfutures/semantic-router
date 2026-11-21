@@ -262,9 +262,29 @@ func (pending *PendingDecision) replyIndex(digests *PrefixDigests, roles []strin
 // recorded, marked inferred, in the context the decision was made in.
 func (pending *PendingDecision) inferredPolicy(stored *PolicyEpisodeState, digests *PrefixDigests, reply int) *PolicyEpisodeState {
 	policy := pending.Policy
+	base := pending.contextBase(stored, stored != nil && stored.PrefixLen <= pending.PrefixLen &&
+		digests.Digest(stored.PrefixLen) == stored.PrefixDigest)
+	entry := policy.Entry
+	entry.Basis = PolicyLedgerBasisInferred
+	entry.Prices = clonePriceAudit(entry.Prices)
+	// The reply is the message at reply: the decided message count for an
+	// ordinary turn, the prefill's place for a completed prefill. The
+	// context's prefix is the decided message count, as a served turn's is,
+	// over the request's messages (a completed prefill's reply replaces the
+	// prefill).
+	entry.Message = reply
+	next := base.withLedgerEntry(entry, pending.PrefixLen, digests.Digest(pending.PrefixLen))
+	next.Exploration = policy.Exploration.Clone()
+	return next
+}
+
+// contextBase is the policy context the decision's turn is recorded in: the
+// stored one when the decision was made in it and the stored prefix is
+// still one the decision's messages extend, else a new one.
+func (pending *PendingDecision) contextBase(stored *PolicyEpisodeState, extended bool) *PolicyEpisodeState {
+	policy := pending.Policy
 	var base *PolicyEpisodeState
-	if stored != nil && stored.Epoch == policy.Epoch && stored.PrefixLen <= pending.PrefixLen &&
-		digests.Digest(stored.PrefixLen) == stored.PrefixDigest {
+	if stored != nil && stored.Epoch == policy.Epoch && extended {
 		base = stored.Clone()
 	} else {
 		// The decision opened a new context (a prefix break or a
@@ -281,17 +301,47 @@ func (pending *PendingDecision) inferredPolicy(stored *PolicyEpisodeState, diges
 	base.EpochStartTurn = policy.EpochStartTurn
 	base.CompactionCount = policy.CompactionCount
 	base.CompactionSummary = policy.CompactionSummary
-	entry := policy.Entry
-	entry.Basis = PolicyLedgerBasisInferred
-	entry.Prices = clonePriceAudit(entry.Prices)
-	// The reply is the message at reply: the decided message count for an
-	// ordinary turn, the prefill's place for a completed prefill. The
-	// context's prefix is the decided message count, as a served turn's is,
-	// over the request's messages (a completed prefill's reply replaces the
-	// prefill).
-	entry.Message = reply
-	next := base.withLedgerEntry(entry, pending.PrefixLen, digests.Digest(pending.PrefixLen))
-	next.Exploration = policy.Exploration.Clone()
+	return base
+}
+
+// reportedReply is where a reported turn's reply stands and the digest of
+// the messages before it: the decided message count, or, for a decision
+// whose request ended with a prefill, the prefill's place, which the
+// completed reply takes. A report carries no messages, so the prefix is the
+// one the decision saw.
+func (pending *PendingDecision) reportedReply() (int, string) {
+	if pending.PrefillBaseDigest != "" {
+		return pending.PrefixLen - 1, pending.PrefillBaseDigest
+	}
+	return pending.PrefixLen, pending.PrefixDigest
+}
+
+// reportedPolicy is stored with the decision's turn recorded from a report,
+// in the context the decision was made in, the prefix moved to the messages
+// before the reply; entry, when known, is recorded for the reply, else the
+// reply stays unattributed.
+func (pending *PendingDecision) reportedPolicy(stored *PolicyEpisodeState, entry *PolicyLedgerEntry) *PolicyEpisodeState {
+	reply, digest := pending.reportedReply()
+	base := pending.contextBase(stored, stored != nil && stored.PrefixLen <= reply)
+	// A regenerated reply (the same messages decided again after their
+	// turn was recorded) replaces the attribution at its position.
+	kept := base.Ledger[:0:0]
+	for _, recorded := range base.Ledger {
+		if recorded.Message < reply {
+			kept = append(kept, recorded)
+		}
+	}
+	base.Ledger = kept
+	var next *PolicyEpisodeState
+	if entry != nil {
+		recorded := *entry
+		recorded.Message = reply
+		next = base.withLedgerEntry(recorded, reply, digest)
+	} else {
+		next = base.Clone()
+		next.PrefixLen, next.PrefixDigest = reply, digest
+	}
+	next.Exploration = pending.Policy.Exploration.Clone()
 	return next
 }
 

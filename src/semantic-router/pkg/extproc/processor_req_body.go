@@ -36,6 +36,9 @@ func (r *OpenAIRouter) handleRequestBody(
 	// ingress codec because it discriminates its own wire format from the
 	// body, and before every routing side effect because there is no upstream
 	// turn for them to describe.
+	if reportResponse := r.handleRaylineReportAPI(requestBody, ctx); reportResponse != nil {
+		return reportResponse, nil
+	}
 	if routesResponse := r.handleRaylineRoutesAPI(requestBody, ctx); routesResponse != nil {
 		return routesResponse, nil
 	}

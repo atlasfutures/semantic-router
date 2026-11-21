@@ -1035,6 +1035,7 @@ func cloneARCState(
 		ReasoningProvenance:  append([]reasoning.ReasoningProvenance(nil), state.ReasoningProvenance...),
 		PolicyBoundary:       raylinearc.ClonePolicyBoundary(state.PolicyBoundary),
 		Pending:              raylinearc.ClonePendingDecision(state.Pending),
+		LastReport:           raylinearc.CloneLastReport(state.LastReport),
 	}
 	if state.PolicySession != nil {
 		session := *state.PolicySession
