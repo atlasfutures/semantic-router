@@ -24,3 +24,80 @@
 /src/ @FAUST-BENCHOU @shraderdm @drivebyer @ramkrishs @WUKUNTAI-0211 @AayushSaini101 @siloteemu @theohsiung @wilsonwu @Peterren
 /tools/ @FAUST-BENCHOU @shraderdm @drivebyer @ramkrishs @WUKUNTAI-0211 @AayushSaini101 @siloteemu @theohsiung @wilsonwu @Peterren
 /website/ @FAUST-BENCHOU @shraderdm @drivebyer @ramkrishs @WUKUNTAI-0211 @AayushSaini101 @siloteemu @theohsiung @wilsonwu @Peterren
+
+# --- High-risk paths (appended; last match wins) ---
+# High-risk paths: a change to the files below needs an approval from @atlasfutures/soc2-reviewers.
+
+# CI/CD, review rules, repo config
+/.github/                    @atlasfutures/soc2-reviewers
+CODEOWNERS                   @atlasfutures/soc2-reviewers
+.pre-commit-config.yaml      @atlasfutures/soc2-reviewers
+renovate.json                @atlasfutures/soc2-reviewers
+.gitmodules                  @atlasfutures/soc2-reviewers
+
+# Deploy and infrastructure
+infra/                       @atlasfutures/soc2-reviewers
+terraform/                   @atlasfutures/soc2-reviewers
+*.tf                         @atlasfutures/soc2-reviewers
+*.tfvars                     @atlasfutures/soc2-reviewers
+*.hcl                        @atlasfutures/soc2-reviewers
+firebase.json                @atlasfutures/soc2-reviewers
+.firebaserc                  @atlasfutures/soc2-reviewers
+firestore.rules              @atlasfutures/soc2-reviewers
+storage.rules                @atlasfutures/soc2-reviewers
+database.rules.json          @atlasfutures/soc2-reviewers
+Dockerfile                   @atlasfutures/soc2-reviewers
+Dockerfile.*                 @atlasfutures/soc2-reviewers
+*.dockerfile                 @atlasfutures/soc2-reviewers
+docker-compose*.yml          @atlasfutures/soc2-reviewers
+docker-compose*.yaml         @atlasfutures/soc2-reviewers
+cloudbuild*.yaml             @atlasfutures/soc2-reviewers
+cloudbuild*.yml              @atlasfutures/soc2-reviewers
+app.yaml                     @atlasfutures/soc2-reviewers
+fly.toml                     @atlasfutures/soc2-reviewers
+wrangler.toml                @atlasfutures/soc2-reviewers
+wrangler.json*               @atlasfutures/soc2-reviewers
+modal*.toml                  @atlasfutures/soc2-reviewers
+
+# Auth and IAM
+auth/                        @atlasfutures/soc2-reviewers
+iam/                         @atlasfutures/soc2-reviewers
+*auth*.py                    @atlasfutures/soc2-reviewers
+*auth*.ts                    @atlasfutures/soc2-reviewers
+*auth*.tsx                   @atlasfutures/soc2-reviewers
+*auth*.js                    @atlasfutures/soc2-reviewers
+*auth*.go                    @atlasfutures/soc2-reviewers
+*auth*.rs                    @atlasfutures/soc2-reviewers
+
+# Database migrations
+migrations/                  @atlasfutures/soc2-reviewers
+migration/                   @atlasfutures/soc2-reviewers
+alembic/                     @atlasfutures/soc2-reviewers
+*.migration.*                @atlasfutures/soc2-reviewers
+
+# Dependency manifests and lockfiles
+package.json                 @atlasfutures/soc2-reviewers
+package-lock.json            @atlasfutures/soc2-reviewers
+npm-shrinkwrap.json          @atlasfutures/soc2-reviewers
+pnpm-lock.yaml               @atlasfutures/soc2-reviewers
+pnpm-workspace.yaml          @atlasfutures/soc2-reviewers
+yarn.lock                    @atlasfutures/soc2-reviewers
+bun.lock                     @atlasfutures/soc2-reviewers
+bun.lockb                    @atlasfutures/soc2-reviewers
+.npmrc                       @atlasfutures/soc2-reviewers
+pyproject.toml               @atlasfutures/soc2-reviewers
+uv.lock                      @atlasfutures/soc2-reviewers
+poetry.lock                  @atlasfutures/soc2-reviewers
+Pipfile                      @atlasfutures/soc2-reviewers
+Pipfile.lock                 @atlasfutures/soc2-reviewers
+requirements*.txt            @atlasfutures/soc2-reviewers
+setup.py                     @atlasfutures/soc2-reviewers
+setup.cfg                    @atlasfutures/soc2-reviewers
+go.mod                       @atlasfutures/soc2-reviewers
+go.sum                       @atlasfutures/soc2-reviewers
+Cargo.toml                   @atlasfutures/soc2-reviewers
+Cargo.lock                   @atlasfutures/soc2-reviewers
+rust-toolchain*              @atlasfutures/soc2-reviewers
+Gemfile                      @atlasfutures/soc2-reviewers
+Gemfile.lock                 @atlasfutures/soc2-reviewers
+*.lock                       @atlasfutures/soc2-reviewers
