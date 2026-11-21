@@ -3,7 +3,6 @@ package extproc
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"slices"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
@@ -96,14 +95,7 @@ func plainStandInsOfActions(bound map[string]bool, actions map[string]config.Ray
 // v5ActionID is a v5 action's identity: sha256 of the JCS form of
 // {"control_id","model"}.
 func v5ActionID(controlID, model string) string {
-	raw, err := json.Marshal(struct {
-		ControlID string `json:"control_id"`
-		Model     string `json:"model"`
-	}{controlID, model})
-	if err != nil {
-		panic(err)
-	}
-	sum := sha256.Sum256(raw)
+	sum := sha256.Sum256([]byte(`{"control_id":` + jcsString(controlID) + `,"model":` + jcsString(model) + `}`))
 	return hex.EncodeToString(sum[:])
 }
 

@@ -36,6 +36,11 @@ func TestPlainStandInsComeFromThePackage(t *testing.T) {
 	if got := v5ActionID(plainControlID, "claude-opus-5"); got != v5OpusAction {
 		t.Fatalf("plain Opus action id %s, want the fixture's native Opus", got)
 	}
+	// RFC 8785 leaves "&", "<", ">", U+2028 and U+2029 unescaped, as the
+	// package's identity does; an HTML-safe encoder would not.
+	if got, want := v5ActionID(plainControlID, "a&b<c>\u2028"), sha256Hex([]byte("{\"control_id\":\""+plainControlID+"\",\"model\":\"a&b<c>\u2028\"}")); got != want {
+		t.Fatalf("JCS identity %s, want %s", got, want)
+	}
 	cfg := v5ConfigWith(t, func(rendered string) string { return rendered })
 	policy := cfg.Decisions[0].Algorithm.RaylineARC.PolicyService
 	want := map[string]plainStandIn{v5GLMPlain: {standInActionID: v5GLMNone, plainControlID: plainControlID, model: "glm-5.3-flash"}}
