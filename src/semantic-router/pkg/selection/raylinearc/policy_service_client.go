@@ -684,6 +684,16 @@ func (client *PolicyServiceClient) exchange(
 				refusal.Detail = map[string]any{"sub_reason": PolicyMediaRefusalSubReason(failure.Detail)}
 			case PolicyDecisionsV2RefusedClass, PolicyExplorationRefusedClass, PolicySignalRefusedClass:
 				refusal.Detail = map[string]any{"reason": failure.Detail["reason"]}
+			case "service_error":
+				// An error code outside the service's closed set is not the
+				// service's own answer: the log keeps the code, bounded.
+				refusal.Detail = map[string]any{"error": policyForeignErrorCode(failure.Error)}
+				// On a session token a 404 so is from in front of the service
+				// (prod 2026-11-21: decides on long-idle sessions answered it
+				// until the episode moved), so the turn moves, once.
+				if client.config.SessionToken != "" && response.StatusCode == http.StatusNotFound {
+					refusal.Class = PolicySessionUnrecognisedClass
+				}
 			}
 			return nil, refusal
 		}
@@ -693,6 +703,20 @@ func (client *PolicyServiceClient) exchange(
 		return nil, &PolicyServiceError{Class: "status", Status: response.StatusCode}
 	}
 	return body, nil
+}
+
+// policyForeignErrorPattern is an error code a log may carry as written:
+// short, and words, digits and separators only.
+var policyForeignErrorPattern = regexp.MustCompile(`^[A-Za-z0-9_.:\- ]{1,64}$`)
+
+// policyForeignErrorCode is an error code outside the service's closed set,
+// as a log field: the code itself when it is short plain words, else only its
+// length, so no free-form text travels further.
+func policyForeignErrorCode(code string) string {
+	if policyForeignErrorPattern.MatchString(code) {
+		return code
+	}
+	return fmt.Sprintf("[withheld] len=%d", len(code))
 }
 
 // maxPolicyTransportCauseBytes bounds PolicyServiceError.Cause.
