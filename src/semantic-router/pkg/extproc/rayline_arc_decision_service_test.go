@@ -33,6 +33,9 @@ type stubARCSelector struct {
 	onSelect func()
 	// offerKind, when set, is the offer kind the decision reports.
 	offerKind string
+	// policyLatency and serviceTotal, when set, are the decide's round trip
+	// and the service's own total.
+	policyLatency, serviceTotal time.Duration
 }
 
 func (s *stubARCSelector) Select(
@@ -54,11 +57,13 @@ func (s *stubARCSelector) Select(
 		Method:        selection.MethodRaylineARC,
 		Tier:          selection.TierSupported,
 		RaylineARC: &selection.RaylineARCTrace{
-			SelectedArm:      s.arm,
-			SerializedTokens: 11,
-			PolicyActionID:   s.policyAction,
-			SessionAction:    s.sessionAction,
-			OfferKind:        s.offerKind,
+			SelectedArm:        s.arm,
+			SerializedTokens:   11,
+			PolicyActionID:     s.policyAction,
+			SessionAction:      s.sessionAction,
+			OfferKind:          s.offerKind,
+			PolicyLatency:      s.policyLatency,
+			PolicyServiceTotal: s.serviceTotal,
 		},
 	}, nil
 }

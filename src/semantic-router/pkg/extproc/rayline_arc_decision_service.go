@@ -221,6 +221,10 @@ func (service *raylineARCDecisionService) RouteDecision(
 		LookupSession: lookupScoped,
 		SessionAction: boundedPolicySessionAction(trace.SessionAction),
 		Latency:       trace.EncoderLatency,
+		// The service's own time is the one that includes the encode on a
+		// two-stage package, which reports no encode time.
+		PolicyRoundTrip: trace.PolicyLatency,
+		ServiceTotal:    trace.PolicyServiceTotal,
 	}
 	decisionFacts.ThinkingLevel = trace.ThinkingLevel
 	decisionFacts.PolicyActionID = trace.PolicyActionID
