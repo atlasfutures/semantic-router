@@ -184,22 +184,39 @@ func TestRaylineARCGenerationRoutingRefusesACallerValueOnATier(t *testing.T) {
 	}
 }
 
-// generation_routing is read before the request's recipe is known, from the
-// default recipe: a config with named recipes refuses it (GrayHorse P2 on
-// #305), and a single-recipe one keeps it.
-func TestRaylineARCGenerationRoutingNeedsASingleRecipeCell(t *testing.T) {
+// generation_routing is read from the recipe the turn's model selects, so a
+// multi-recipe standing cell keeps it (configurable ARC beside fixed-V tiers);
+// only a recipe with two ARC decisions carrying the block is refused, since
+// which V applies would be a guess.
+func TestRaylineARCGenerationRoutingIsScopedPerRecipe(t *testing.T) {
 	_, decision := policyDispatchFixture()
 	decision.Algorithm.RaylineARC.PolicyService.GenerationRouting = &RaylineARCGenerationRoutingConfig{CallerValue: true}
-	single := &RouterConfig{Recipes: []RoutingRecipe{{Name: DefaultRecipeName}}}
+	single := &RouterConfig{Recipes: []RoutingRecipe{{Name: DefaultRecipeName, Profile: RoutingProfile{Decisions: []Decision{decision}}}}}
 	if err := validateRaylineARCGenerationRoutingScope(single, decision); err != nil {
 		t.Fatalf("a single-recipe cell refused: %v", err)
 	}
-	multi := &RouterConfig{Recipes: []RoutingRecipe{{Name: DefaultRecipeName}, {Name: "other"}}}
-	if err := validateRaylineARCGenerationRoutingScope(multi, decision); err == nil || !strings.Contains(err.Error(), "single-recipe") {
-		t.Fatalf("a multi-recipe config: err = %v", err)
+	tier := decision
+	tier.Name = "tier"
+	tier.Algorithm = &AlgorithmConfig{Type: decision.Algorithm.Type, RaylineARC: &RaylineARCAlgorithmConfig{}}
+	*tier.Algorithm.RaylineARC = *decision.Algorithm.RaylineARC
+	tierService := *decision.Algorithm.RaylineARC.PolicyService
+	tierService.GenerationRouting = &RaylineARCGenerationRoutingConfig{CallerValue: false}
+	tier.Algorithm.RaylineARC.PolicyService = &tierService
+	multi := &RouterConfig{Recipes: []RoutingRecipe{
+		{Name: DefaultRecipeName, Profile: RoutingProfile{Decisions: []Decision{decision}}},
+		{Name: "arc-sage", Profile: RoutingProfile{Decisions: []Decision{tier}}},
+	}}
+	if err := validateRaylineARCGenerationRoutingScope(multi, decision); err != nil {
+		t.Fatalf("a multi-recipe cell with one block per recipe refused: %v", err)
+	}
+	twice := &RouterConfig{Recipes: []RoutingRecipe{
+		{Name: DefaultRecipeName, Profile: RoutingProfile{Decisions: []Decision{decision, tier}}},
+	}}
+	if err := validateRaylineARCGenerationRoutingScope(twice, decision); err == nil || !strings.Contains(err.Error(), "a recipe serves one") {
+		t.Fatalf("a recipe with two blocks: err = %v", err)
 	}
 	decision.Algorithm.RaylineARC.PolicyService.GenerationRouting = nil
-	if err := validateRaylineARCGenerationRoutingScope(multi, decision); err != nil {
-		t.Fatalf("a cell without generation_routing refused: %v", err)
+	if err := validateRaylineARCGenerationRoutingScope(twice, decision); err != nil {
+		t.Fatalf("a decision without generation_routing refused: %v", err)
 	}
 }
