@@ -214,6 +214,27 @@ func (ticket RouteLookupTicket) LeaseRemaining(now time.Time) (time.Duration, bo
 // Held reports whether the ticket holds a slot, so Release frees something.
 func (ticket RouteLookupTicket) Held() bool { return ticket.release != nil }
 
+// Also returns the ticket with release joined to its own: releasing the
+// result frees the slot (if any) and then runs release, once. A zero ticket
+// joined to a release becomes Held, so a hold that outlives the backend call
+// (another budget's slot) is freed when the backend answers, like the lane's.
+func (ticket RouteLookupTicket) Also(release func()) RouteLookupTicket {
+	if release == nil {
+		return ticket
+	}
+	own := ticket.release
+	var once sync.Once
+	ticket.release = func() {
+		once.Do(func() {
+			if own != nil {
+				own()
+			}
+			release()
+		})
+	}
+	return ticket
+}
+
 // Release frees the lookup's slot. It is safe to call more than once and on
 // a zero ticket.
 func (ticket RouteLookupTicket) Release() {

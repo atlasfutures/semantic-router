@@ -185,26 +185,87 @@ _MAX_ROUTES_ADMISSION_INFLIGHT = 64
 
 
 class RaylineARCRoutesAdmissionConfig(BaseModel):
-    """Cell-wide cap on concurrent /v1/routes lookups (Go
-    RaylineARCRoutesAdmissionConfig). max_inflight 0 disables it; a lookup
-    that finds no slot within queue_wait_ms (0: 2000 ms or half the
-    deadline) is answered 429 lookup_capacity with Retry-After. Dispatched
-    turns never pass through it."""
+    """The lookups' own lane: a cell-wide cap on concurrent /v1/routes
+    lookups (Go RaylineARCRoutesAdmissionConfig). On by default: max_inflight
+    0 selects 8, disabled turns it off. A lookup that finds no slot within
+    queue_wait_ms (0: 2000 ms or half the deadline) is answered 429
+    lookup_capacity with Retry-After. Dispatched turns never pass through
+    it."""
 
     model_config = ConfigDict(extra="forbid")
 
+    disabled: bool = False
     max_inflight: int = Field(default=0, ge=0, le=_MAX_ROUTES_ADMISSION_INFLIGHT)
     queue_wait_ms: int = Field(default=0, ge=0, le=30_000)
     # 0: 35000. The encode rate an abandoned tracked lookup's slot is held at.
     abandoned_hold_tokens_per_second: int = Field(default=0, ge=0, le=10_000_000)
 
+    def explicit(self) -> bool:
+        return bool(
+            self.max_inflight
+            or self.queue_wait_ms
+            or self.abandoned_hold_tokens_per_second
+        )
+
     @model_validator(mode="after")
-    def _wait_needs_slots(self):
-        if self.queue_wait_ms and not self.max_inflight:
-            raise ValueError("routes_api.admission.queue_wait_ms needs max_inflight")
-        if self.abandoned_hold_tokens_per_second and not self.max_inflight:
+    def _settings_need_the_lane(self):
+        if self.disabled and self.explicit():
             raise ValueError(
-                "routes_api.admission.abandoned_hold_tokens_per_second needs max_inflight"
+                "routes_api.admission settings need the lane: drop disabled"
+            )
+        return self
+
+
+class RaylineARCRoutesCallerBudgetConfig(BaseModel):
+    """Per-caller /v1/routes budget (Go RaylineARCRoutesCallerBudgetConfig):
+    lookups per minute (0: 120) and at once (0: 4) per conversation, shared
+    across the cell over the episode Redis, failing open to per-process
+    counts. On by default; over budget is 429 caller_budget."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    disabled: bool = False
+    lookups_per_minute: int = Field(default=0, ge=0, le=100_000)
+    max_inflight: int = Field(default=0, ge=0, le=_MAX_ROUTES_ADMISSION_INFLIGHT)
+
+    def explicit(self) -> bool:
+        return bool(self.lookups_per_minute or self.max_inflight)
+
+    @model_validator(mode="after")
+    def _settings_need_the_budget(self):
+        if self.disabled and self.explicit():
+            raise ValueError(
+                "routes_api.caller_budget settings need the budget: drop disabled"
+            )
+        return self
+
+
+class RaylineARCRoutesRefusalCacheConfig(BaseModel):
+    """Replays a deterministic 4xx decision refusal to the same caller and
+    request for ttl_ms (0: 60000), at most max_entries (0: 4096) per process
+    (Go RaylineARCRoutesRefusalCacheConfig). On by default."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    disabled: bool = False
+    ttl_ms: int = Field(default=0, ge=0, le=600_000)
+    max_entries: int = Field(default=0, ge=0, le=1_000_000)
+
+    def explicit(self) -> bool:
+        return bool(self.ttl_ms or self.max_entries)
+
+    @field_validator("ttl_ms")
+    @classmethod
+    def _bounded_ttl(cls, value: int) -> int:
+        if value and value < 1000:
+            raise ValueError("ttl_ms must be 0 or at least 1000")
+        return value
+
+    @model_validator(mode="after")
+    def _settings_need_the_cache(self):
+        if self.disabled and self.explicit():
+            raise ValueError(
+                "routes_api.refusal_cache settings need the cache: drop disabled"
             )
         return self
 
@@ -234,8 +295,13 @@ class RaylineARCRoutesAPIConfig(BaseModel):
     # The Decisions routing controls; needs the endpoint enabled and a
     # policy-service cell (the Go loader refuses it on an artifact cell).
     routing: RaylineARCRoutesRoutingConfig | None = None
-    # Caps concurrent lookups across the cell; absent is disabled.
+    # The lookups' lane: caps concurrent lookups across the cell; absent is
+    # the default cap of 8.
     admission: RaylineARCRoutesAdmissionConfig | None = None
+    # Per-caller lookups per minute and at once; absent is the defaults.
+    caller_budget: RaylineARCRoutesCallerBudgetConfig | None = None
+    # Replays deterministic decision refusals; absent is the defaults.
+    refusal_cache: RaylineARCRoutesRefusalCacheConfig | None = None
     # Throwaway lookups estimated over this many tokens are answered without
     # an encode (the package fallback). 0 bounds nothing; policy-service
     # cells only.
@@ -250,9 +316,17 @@ class RaylineARCRoutesAPIConfig(BaseModel):
         return self
 
     @model_validator(mode="after")
+    def _protection_needs_the_endpoint(self):
+        for name in ("caller_budget", "refusal_cache"):
+            block = getattr(self, name)
+            if block is not None and block.explicit() and not self.enabled:
+                raise ValueError(f"routes_api.{name} needs the endpoint enabled")
+        return self
+
+    @model_validator(mode="after")
     def _admission_fits_the_deadline(self):
         admission = self.admission
-        if admission is None or not admission.max_inflight:
+        if admission is None or not admission.explicit():
             return self
         if not self.enabled:
             raise ValueError("routes_api.admission needs the endpoint enabled")
