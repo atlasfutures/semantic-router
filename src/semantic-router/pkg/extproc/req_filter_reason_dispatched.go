@@ -51,6 +51,7 @@ func recordDispatchedControls(ctx *RequestContext, body []byte) {
 	ctx.DispatchedReasoningEffort = ""
 	ctx.DispatchedReasoningBound = nil
 	ctx.DispatchedProviderOrder = nil
+	ctx.DispatchedProviderOnly = nil
 	ctx.DispatchedProviderPrivacy = dispatchedProviderPrivacy{}
 	wire.dispatchedReasoningWire.record(ctx)
 	wire.dispatchedProviderWire.record(ctx)
