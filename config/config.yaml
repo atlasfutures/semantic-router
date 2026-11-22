@@ -2053,6 +2053,12 @@ recipes:
                 # disables it.
                 connect_timeout_seconds: 5
                 max_inflight_calls: 0
+                # start_deadline_seconds bounds a routed turn that starts its
+                # episode: one still undecided by then (or whose session start
+                # failed) is served the package's fallback action, when the
+                # package names one. 0 selects 8 s; at most
+                # total_timeout_seconds.
+                start_deadline_seconds: 8
                 # The one package this decision serves; readiness refuses a
                 # service that has not loaded exactly it.
                 package_alias: rayline/arc-public-example
