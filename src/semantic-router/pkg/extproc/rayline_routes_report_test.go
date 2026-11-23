@@ -680,3 +680,28 @@ func TestFullDuplexReportRefusalNamesTheReport(t *testing.T) {
 		t.Fatalf("body %s", body)
 	}
 }
+
+// A report naming a model the config routes to a recipe that serves no ARC
+// reports is refused, and the default tier's pending decision is untouched.
+func TestRoutesReportNamingANonARCRecipeIsRefused(t *testing.T) {
+	fixture := newPendingRoutesFixture(t, true, "")
+	cfg := fixture.router.Config
+	cfg.Recipes = []config.RoutingRecipe{
+		{Name: config.DefaultRecipeName, Profile: config.RoutingProfile{Decisions: cfg.Decisions}},
+		{Name: "plain", Profile: config.RoutingProfile{}},
+	}
+	cfg.Entrypoints = []config.EntrypointMapping{{ModelNames: []string{"plain-chat"}, Recipe: "plain"}}
+	if recipe, ok := cfg.RecipeForRoutingModel("plain-chat"); !ok || recipe.Name != "plain" {
+		t.Fatalf("fixture: plain-chat resolves to %v (%t)", recipe, ok)
+	}
+	const conversation = "conversation-plain"
+	first := fixture.lookup(t, conversation, pendingRoutesBody(t, pendingTurnTask))
+	body := executedReport("", first.Model, nil)
+	body["model"] = "plain-chat"
+	if code, raw := fixture.postReport(t, conversation, "", body); code != 400 || !strings.Contains(string(raw), "unknown_model") {
+		t.Fatalf("status %d: %s", code, raw)
+	}
+	if state := fixture.stored(t, conversation); state.Pending == nil || state.TurnIndex != 0 {
+		t.Fatalf("the default tier's decision changed: %+v", state)
+	}
+}

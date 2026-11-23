@@ -332,10 +332,12 @@ func (r *OpenAIRouter) handleRaylineReportAPI(body []byte, ctx *RequestContext) 
 		return r.createRaylineRoutesCodedError(ctx, refusal)
 	}
 	// Only an absent model means the default tier. A named one must be a
-	// name this cell's config selects or a public ARC tier; a lookup reads
-	// any other name as the default tier, a report refuses it.
+	// name this cell's config routes to a recipe serving route lookups, or a
+	// public ARC tier; a lookup reads any other name as the default tier, a
+	// report refuses it.
 	if model := strings.TrimSpace(raylineRoutesModelOf(body)); model != "" {
-		if _, configured := r.Config.RecipeForRoutingModel(model); !configured && raylineARCCanonicalTier(model) == "" {
+		named, configured := r.Config.RecipeForRoutingModel(model)
+		if (configured && r.raylineRoutesDecision(named) == nil) || (!configured && raylineARCCanonicalTier(model) == "") {
 			return r.createRaylineRoutesCodedError(ctx, routesInvalid("unknown_model", "Unknown ARC model: "+model))
 		}
 	}
