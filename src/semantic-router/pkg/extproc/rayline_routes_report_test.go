@@ -376,8 +376,6 @@ func TestRoutesReportRefusals(t *testing.T) {
 		"blank level":       {"c", "", executedReport("", "off", map[string]any{"thinking_level": "  "}), 400, "invalid_report"},
 		"null tier":         {"c", "", map[string]any{"model": nil, "executed": map[string]any{"model": "off", "finished_at": time.Now().UTC().Format(time.RFC3339)}}, 400, "invalid_report"},
 		"ttl out of bounds": {"c", "", executedReport("", "off", map[string]any{"usage": map[string]any{"cache_ttl_seconds": 0}}), 400, "invalid_report"},
-		"zero-time finish":  {"c", "", executedReport("", "off", map[string]any{"finished_at": "0001-01-01T00:00:00.000000001Z"}), 400, "invalid_report"},
-		"day-old finish":    {"c", "", executedReport("", "off", map[string]any{"finished_at": time.Now().Add(-25 * time.Hour).UTC().Format(time.RFC3339)}), 400, "invalid_report"},
 	}
 	for name, tc := range cases {
 		code, body := fixture.postReport(t, tc.conversation, tc.source, tc.body)
@@ -741,5 +739,34 @@ func TestRoutesReportOutlivesTheNextLookup(t *testing.T) {
 	}
 	if answer := fixture.report(t, conversation, "", clientReport); answer.Status != "ignored" || answer.Reason != raylinearc.ReportDuplicate {
 		t.Fatalf("the client's retry %+v", answer)
+	}
+}
+
+// A finish time at the zero time, or long before the decision, is not the
+// decision's turn: the report is ignored (not_pending), named or not, and
+// writes nothing -- the record stays exactly as it was and stays readable.
+// (Stored, such a time read back as the zero time and made the record
+// invalid.)
+func TestRoutesReportWithAZeroTimeFinishWritesNothing(t *testing.T) {
+	fixture := newPendingRoutesFixture(t, true, "")
+	const conversation = "conversation-zero-time"
+	first := fixture.lookup(t, conversation, pendingRoutesBody(t, pendingTurnTask))
+	before := fixture.stored(t, conversation)
+	for _, routeID := range []string{first.RouteID, ""} {
+		for _, finished := range []string{"0001-01-01T00:00:00.000000001Z", time.Now().Add(-48 * time.Hour).UTC().Format(time.RFC3339)} {
+			body := executedReport(routeID, first.Model, map[string]any{"finished_at": finished})
+			answer := fixture.report(t, conversation, "", body)
+			if answer.Status != "ignored" || answer.Reason != raylinearc.ReportNotPending {
+				t.Fatalf("route %q finished %s: %+v", routeID, finished, answer)
+			}
+		}
+	}
+	after := fixture.stored(t, conversation)
+	if !reflect.DeepEqual(after, before) {
+		t.Fatalf("the record changed:\n before %+v\n after %+v", before, after)
+	}
+	// Still readable and reportable: the real report settles the decision.
+	if answer := fixture.report(t, conversation, "", executedReport(first.RouteID, first.Model, nil)); answer.Reason != raylinearc.ReportPendingResolved {
+		t.Fatalf("the real report %+v", answer)
 	}
 }

@@ -869,8 +869,11 @@ as a turn marked `reported`, for the model that actually ran:
   serves (a local model) is recorded as a turn with no arm.
 - `usage` is what the cell records of a call it serves: `prompt_tokens` is
   the whole prompt, cache read and write included. `finished_at` is required:
-  when the call's response completed, within the last day.
-  Output tokens and cost are not accepted.
+  when the call's response completed. Output tokens and cost are not
+  accepted.
+- Limits: `route_id` and `report_id` up to 128 bytes, `executed.model` up to
+  256 bytes, the whole body up to 16 KiB, `finished_at` at most one minute
+  ahead of the cell's clock; unknown members are refused.
 
 A well-formed report is answered `200` whether it changed the record or was
 ignored, so a caller never retries a report that was read:
