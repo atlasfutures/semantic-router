@@ -18,6 +18,7 @@ package raylinearc
 
 import (
 	"bytes"
+	"encoding/json"
 	"reflect"
 	"testing"
 	"time"
@@ -622,4 +623,36 @@ func TestStaleGatewayCorrectionIsIgnored(t *testing.T) {
 	if next, outcome := mustApplyReport(t, client, stale); outcome.Recorded || outcome.Reason != ReportNotPending || next != client {
 		t.Fatalf("a stale correction: %+v", outcome)
 	}
+}
+
+// A prefill decision asked again after a turn on the same messages was
+// recorded is reported in the same context: the earlier history and the
+// context's exclusions stay, and only the attribution at the reply's
+// position is replaced.
+func TestReportOfARepeatedPrefillDecisionKeepsTheContext(t *testing.T) {
+	prefill := `{"role":"assistant","content":"Sure:"}`
+	stored := withPendingLookup(t, executedEpisode(t), pendingTask, pendingReply1, pendingAsk2, prefill)
+	raw, _ := rawMessages(t, pendingTask, pendingReply1, pendingAsk2)
+	stored.Pending.PrefillBaseDigest = NewPrefixDigests(raw).Digest(3)
+	first, _ := mustApplyReport(t, stored, reportOf(ReportSourceClient, "rte_1", ranOn(1, pendingActionB, "vendor/b"), nil))
+	// The episode as a served turn on the full prefill request leaves it:
+	// prefix over all four messages, in the same context.
+	served := cloneEpisodeState(first)
+	served.Policy.PrefixLen, served.Policy.PrefixDigest = 4, NewPrefixDigests(mustRaw(t, pendingTask, pendingReply1, pendingAsk2, prefill)).Digest(4)
+	served.Policy = served.Policy.WithExclusion("vendor/x", "refusal")
+	again := withPendingLookup(t, served, pendingTask, pendingReply1, pendingAsk2, prefill)
+	again.Pending.RouteID, again.Pending.PrefillBaseDigest = "rte_2", stored.Pending.PrefillBaseDigest
+	next, outcome := mustApplyReport(t, again, reportOf(ReportSourceClient, "rte_2", ranOn(0, pendingActionA, "vendor/a"), nil))
+	if outcome.Reason != ReportPendingResolved {
+		t.Fatalf("outcome %+v", outcome)
+	}
+	if next.Policy.Epoch != served.Policy.Epoch || !next.Policy.Excludes("vendor/x") || next.Policy.Ledger[0].Message != 1 {
+		t.Fatalf("the context was replaced: epoch %d (want %d), ledger %+v", next.Policy.Epoch, served.Policy.Epoch, next.Policy.Ledger)
+	}
+}
+
+func mustRaw(t *testing.T, messages ...string) []json.RawMessage {
+	t.Helper()
+	raw, _ := rawMessages(t, messages...)
+	return raw
 }

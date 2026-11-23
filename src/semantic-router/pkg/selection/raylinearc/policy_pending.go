@@ -322,7 +322,10 @@ func (pending *PendingDecision) reportedReply() (int, string) {
 // reply stays unattributed.
 func (pending *PendingDecision) reportedPolicy(stored *PolicyEpisodeState, entry *PolicyLedgerEntry) *PolicyEpisodeState {
 	reply, digest := pending.reportedReply()
-	base := pending.contextBase(stored, stored != nil && stored.PrefixLen <= reply)
+	// Continuity is judged against the decision's own messages (a prefill
+	// included), as an inferred turn's is: a report carries no messages of
+	// its own to check.
+	base := pending.contextBase(stored, stored != nil && stored.PrefixLen <= pending.PrefixLen)
 	// A regenerated reply (the same messages decided again after their
 	// turn was recorded) replaces the attribution at its position.
 	kept := base.Ledger[:0:0]
