@@ -105,8 +105,14 @@ func maskedTestDecision(t *testing.T, vertex bool) (*config.RouterConfig, *confi
 func TestPolicyScorerLeavesMaskedBindingsOut(t *testing.T) {
 	cfg, decision := maskedTestDecision(t, true)
 	scorer := newPolicyServiceScorer(cfg, decision)
-	if _, offered := scorer.bindings[maskedTestGLMUp]; offered {
-		t.Fatal("the masked steer is in the offer")
+	// Still the package's (a response scoring it is not unbound), never offered.
+	if _, bound := scorer.bindings[maskedTestGLMUp]; !bound {
+		t.Fatal("the masked steer left the catalog")
+	}
+	for _, actionID := range scorer.actionOrder {
+		if actionID == maskedTestGLMUp {
+			t.Fatal("the masked steer is in the offer")
+		}
 	}
 	if len(scorer.actionOrder) != 2 || scorer.bindings[maskedTestOpus].model != "claude-opus-5" {
 		t.Fatalf("offer = %v", scorer.actionOrder)

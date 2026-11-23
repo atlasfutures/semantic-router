@@ -251,6 +251,11 @@ func (r *OpenAIRouter) completeProviderDispatch(
 	response *ext_proc.ProcessingResponse,
 	ctx *RequestContext,
 ) (*ext_proc.ProcessingResponse, error) {
+	if response.GetImmediateResponse() != nil {
+		// The dispatch was refused while it was built (no credential): the
+		// client gets that answer, and nothing is sent upstream.
+		return response, nil
+	}
 	r.handleToolSelectionForRequest(request, response, ctx)
 	if err := r.settleProviderDispatch(dispatch, ctx); err != nil {
 		return nil, err
@@ -421,6 +426,9 @@ func (r *OpenAIRouter) finalizeProviderDispatchResponse(
 	defer r.emitRoutingDecision(ctx)
 	if dispatch == nil || response == nil {
 		return nil, status.Error(codes.Internal, "provider dispatch is unavailable")
+	}
+	if response.GetImmediateResponse() != nil {
+		return response, nil
 	}
 	if r.Config != nil {
 		ctx.DispatchHostedTools = r.Config.ModelConfig[dispatch.logicalModel].HostedTools

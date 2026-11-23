@@ -228,14 +228,37 @@ func TestVertexClaudeDispatchFailsClosedWithoutToken(t *testing.T) {
 	request := testNeutralRequest(model, "hello")
 	ctx := routingTestContext(llmprotocol.AnthropicMessagesV1, request)
 
-	// The dispatch is refused (credential_resolution_failed): either the
-	// immediate 401 or the error that ends the turn; never a provider call.
+	// The dispatch is refused (credential_resolution_failed) with an
+	// immediate 401, never an ExtProc error: Envoy may be configured to let a
+	// request through when its ExtProc fails.
 	response, err := router.handleSpecifiedModelRouting(request, model, "", ctx)
-	if err == nil {
-		immediate := response.GetImmediateResponse()
-		if immediate == nil || immediate.GetStatus().GetCode() != 401 {
-			t.Fatalf("want the dispatch refused without a token, got %v", response)
-		}
+	if err != nil {
+		t.Fatalf("want an immediate 401, got the error %v", err)
+	}
+	if immediate := response.GetImmediateResponse(); immediate == nil || immediate.GetStatus().GetCode() != 401 {
+		t.Fatalf("want the dispatch refused without a token, got %v", response)
+	}
+}
+
+// A re-send re-reads the body it sends, which on Vertex AI Messages names no
+// model: the served model is still the dispatch's.
+func TestVertexMessagesOutboundModelSurvivesTheAdapter(t *testing.T) {
+	dispatch := &providerDispatch{
+		upstreamModel: "claude-x", targetFormat: llmprotocol.AnthropicMessagesV1,
+		profile: &config.ProviderProfile{Type: "vertex-ai", BaseURL: "https://vertex.example.com/v1/projects/p/locations/global"},
+	}
+	adapted, err := adaptVertexMessagesRequest([]byte(`{"model":"claude-x","messages":[]}`), dispatch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := readDispatchedOutboundParams(adapted, dispatch).Model; got != "claude-x" {
+		t.Fatalf("outbound model = %q", got)
+	}
+	// Another provider's body without a model stays without one.
+	other := &providerDispatch{upstreamModel: "m", targetFormat: llmprotocol.AnthropicMessagesV1,
+		profile: &config.ProviderProfile{Type: "anthropic"}}
+	if got := readDispatchedOutboundParams([]byte(`{"messages":[]}`), other).Model; got != "" {
+		t.Fatalf("non-Vertex outbound model = %q", got)
 	}
 }
 

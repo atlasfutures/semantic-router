@@ -265,12 +265,11 @@ func newPolicyServiceScorer(
 		scorer.zdrRoutes = append(scorer.zdrRoutes, zdrRoute)
 	}
 	// A binding the config masked (a steered control on a Vertex AI worker
-	// whose registry cell does not admit it) is never offered.
+	// whose registry cell does not admit it) stays in the catalog, so a
+	// response or attribution naming it is still this package's, and is
+	// never offered.
 	masked := raylineARCMaskedBindingIDs(decision, config.RaylineARCMaskedBindings(cfg, decision))
 	for _, binding := range policy.Bindings {
-		if masked[binding.ActionID] {
-			continue
-		}
 		level, model := binding.Level, binding.Model
 		var base *effortBase
 		// A v5 binding is only its action and worker; the package names the
@@ -295,9 +294,20 @@ func newPolicyServiceScorer(
 		scorer.bindings[binding.ActionID] = policyBinding{
 			arm: index[binding.Worker], dispatchArm: index[worker], level: level, model: model, base: base,
 		}
-		scorer.actionOrder = append(scorer.actionOrder, binding.ActionID)
+		if !masked[binding.ActionID] {
+			scorer.actionOrder = append(scorer.actionOrder, binding.ActionID)
+		}
 	}
-	scorer.armOffered = policyArmOffered(policy.PackageStageOneOfferedModels(), scorer.bindings, len(scorer.workers))
+	offerable := scorer.bindings
+	if len(masked) > 0 {
+		offerable = make(map[string]policyBinding, len(scorer.bindings))
+		for actionID, binding := range scorer.bindings {
+			if !masked[actionID] {
+				offerable[actionID] = binding
+			}
+		}
+	}
+	scorer.armOffered = policyArmOffered(policy.PackageStageOneOfferedModels(), offerable, len(scorer.workers))
 	if fallback := policy.PackageFallbackActionID(); fallback != "" {
 		if _, bound := scorer.bindings[fallback]; bound {
 			scorer.fallbackActionID = fallback
