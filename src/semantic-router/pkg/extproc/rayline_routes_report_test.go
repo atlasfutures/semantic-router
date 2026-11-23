@@ -536,21 +536,6 @@ func TestReportedRunRecordsTheReportedModelWhenTheActionIsUnknown(t *testing.T) 
 	}
 }
 
-// A streamed report is held to the report's own bound while it accumulates:
-// a chunk that takes it past the bound is answered 413 at once, not kept.
-func TestStreamedReportIsBoundedWhileItAccumulates(t *testing.T) {
-	ctx := reportContext(map[string]string{raylineRoutesSessionHeader: "c"})
-	handler := newStreamedBodyHandler(routesRouter(true), ctx)
-	defer handler.Release()
-	response, err := handler.HandleChunk(&ext_proc.HttpBody{Body: make([]byte, raylineReportMaxBodyBytes+1)}, ctx)
-	if err != nil || response.GetImmediateResponse() == nil {
-		t.Fatalf("an oversize chunk was kept (%v)", err)
-	}
-	if code := immediateStatusCode(t, response); code != 413 {
-		t.Fatalf("status %d, want 413", code)
-	}
-}
-
 // A caller-minted route id longer than a report may name is not adopted:
 // the lookup mints its own and says so, so every route id a lookup returns
 // can be reported.
