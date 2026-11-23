@@ -1,0 +1,167 @@
+package authz
+
+import (
+	"context"
+	"encoding/base64"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+)
+
+// BedrockKeyProviderType is the authz.providers[].type that selects the
+// Amazon Bedrock short-term API key provider.
+const BedrockKeyProviderType = "bedrock-short-term-key"
+
+const (
+	// bedrockKeyHost is the host a short-term key's request is signed for. It
+	// is the same in every Region; the key is valid only in the Region it is
+	// signed in.
+	bedrockKeyHost = "bedrock.amazonaws.com"
+	// bedrockKeyService is the SigV4 service name.
+	bedrockKeyService = "bedrock"
+	// bedrockKeyPrefix and bedrockKeyVersion frame the encoded request.
+	bedrockKeyPrefix  = "bedrock-api-key-"
+	bedrockKeyVersion = "&Version=1"
+	// bedrockKeyMaxLifetime is the longest a short-term key is valid. A key
+	// also stops working when the session credentials that signed it expire.
+	bedrockKeyMaxLifetime = 12 * time.Hour
+	// bedrockKeyRefreshFraction of a key's life passes before it is replaced:
+	// a 12-hour key is refreshed after 11 hours.
+	bedrockKeyRefreshFraction = 11.0 / 12.0
+	// bedrockKeyMinRefresh bounds how often keys are minted when the signing
+	// credentials are about to expire and every new key is short-lived.
+	bedrockKeyMinRefresh = time.Minute
+	// bedrockCredentialsExpiryWindow renews session credentials this long
+	// before they expire, so a refreshed key is signed with credentials that
+	// still have most of their life.
+	bedrockCredentialsExpiryWindow = 15 * time.Minute
+	// emptyPayloadSHA256 is the SHA-256 of an empty body: the request has
+	// none, and AWS's token generators sign its hash (not UNSIGNED-PAYLOAD).
+	emptyPayloadSHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+)
+
+// NewBedrockKeyProvider serves Amazon Bedrock short-term API keys from
+// source, as Bearer credentials for the bedrock provider. Keys are cached and
+// replaced before they expire (CloudTokenProvider).
+func NewBedrockKeyProvider(source TokenSource, opts ...CloudTokenOption) *CloudTokenProvider {
+	base := []CloudTokenOption{
+		WithCloudTokenProviders(ProviderBedrock),
+		func(p *CloudTokenProvider) { p.name = BedrockKeyProviderType },
+	}
+	return NewCloudTokenProvider(source, append(base, opts...)...)
+}
+
+// CredentialsLoader returns the AWS credentials provider and Region a key is
+// signed with.
+type CredentialsLoader func(ctx context.Context) (aws.CredentialsProvider, string, error)
+
+// BedrockShortTermKeySource mints Amazon Bedrock short-term API keys: a SigV4
+// presigned CallWithBearerToken request, signed with the workload's AWS
+// credentials, encoded as the key. On EKS the credentials come from Pod
+// Identity (or IRSA) through the SDK's default chain, so no key is stored
+// anywhere. Neither the presigned request nor the key is ever logged or
+// returned in an error.
+type BedrockShortTermKeySource struct {
+	load   CredentialsLoader
+	now    func() time.Time
+	signer *v4.Signer
+
+	credentials aws.CredentialsProvider
+	region      string
+}
+
+// NewBedrockShortTermKeySource returns a source that signs with the SDK's
+// default credential chain and Region (AWS_REGION). The chain is resolved on
+// first use, so a router without AWS credentials starts and fails closed.
+func NewBedrockShortTermKeySource() *BedrockShortTermKeySource {
+	return NewBedrockShortTermKeySourceWith(defaultAWSCredentials, time.Now)
+}
+
+// NewBedrockShortTermKeySourceWith returns a source with its credentials and
+// clock supplied (tests).
+func NewBedrockShortTermKeySourceWith(load CredentialsLoader, now func() time.Time) *BedrockShortTermKeySource {
+	return &BedrockShortTermKeySource{load: load, now: now, signer: v4.NewSigner()}
+}
+
+func defaultAWSCredentials(ctx context.Context) (aws.CredentialsProvider, string, error) {
+	cfg, err := awsconfig.LoadDefaultConfig(ctx,
+		awsconfig.WithCredentialsCacheOptions(func(options *aws.CredentialsCacheOptions) {
+			options.ExpiryWindow = bedrockCredentialsExpiryWindow
+		}))
+	if err != nil {
+		return nil, "", fmt.Errorf("load AWS configuration: %w", err)
+	}
+	return cfg.Credentials, cfg.Region, nil
+}
+
+// Token mints one short-term key.
+func (s *BedrockShortTermKeySource) Token(ctx context.Context) (AccessToken, error) {
+	if s.credentials == nil {
+		credentials, region, err := s.load(ctx)
+		if err != nil {
+			return AccessToken{}, err
+		}
+		if credentials == nil {
+			return AccessToken{}, errors.New("no AWS credentials provider")
+		}
+		if strings.TrimSpace(region) == "" {
+			return AccessToken{}, errors.New("no AWS Region (set AWS_REGION to the Bedrock Region)")
+		}
+		s.credentials, s.region = credentials, strings.TrimSpace(region)
+	}
+	creds, err := s.credentials.Retrieve(ctx)
+	if err != nil {
+		return AccessToken{}, fmt.Errorf("retrieve AWS credentials: %w", err)
+	}
+	if creds.AccessKeyID == "" || creds.SecretAccessKey == "" {
+		return AccessToken{}, errors.New("AWS credentials are empty")
+	}
+	issued := s.now()
+	lifetime := bedrockKeyMaxLifetime
+	if creds.CanExpire {
+		if remaining := creds.Expires.Sub(issued); remaining < lifetime {
+			lifetime = remaining
+		}
+	}
+	if lifetime <= 0 {
+		return AccessToken{}, errors.New("AWS credentials have expired")
+	}
+	key, err := s.sign(ctx, creds, issued)
+	if err != nil {
+		return AccessToken{}, err
+	}
+	refresh := time.Duration(float64(lifetime) * bedrockKeyRefreshFraction)
+	if refresh < bedrockKeyMinRefresh {
+		refresh = bedrockKeyMinRefresh
+	}
+	return AccessToken{Value: key, Expiry: issued.Add(lifetime), RefreshAt: issued.Add(refresh)}, nil
+}
+
+// sign presigns POST https://bedrock.amazonaws.com/?Action=CallWithBearerToken
+// for 12 hours and encodes it as AWS's token generators do: the URL without
+// its scheme, with &Version=1 appended, base64 (standard, padded), prefixed
+// with bedrock-api-key-.
+func (s *BedrockShortTermKeySource) sign(ctx context.Context, creds aws.Credentials, at time.Time) (string, error) {
+	query := url.Values{}
+	query.Set("Action", "CallWithBearerToken")
+	query.Set("X-Amz-Expires", strconv.Itoa(int(bedrockKeyMaxLifetime.Seconds())))
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://"+bedrockKeyHost+"/?"+query.Encode(), nil)
+	if err != nil {
+		return "", errors.New("build the short-term key request")
+	}
+	presigned, _, err := s.signer.PresignHTTP(ctx, creds, request, emptyPayloadSHA256, bedrockKeyService, s.region, at)
+	if err != nil {
+		// The signer's error is not wrapped: it could quote the request.
+		return "", errors.New("sign the short-term key request")
+	}
+	encoded := base64.StdEncoding.EncodeToString([]byte(strings.TrimPrefix(presigned, "https://") + bedrockKeyVersion))
+	return bedrockKeyPrefix + encoded, nil
+}

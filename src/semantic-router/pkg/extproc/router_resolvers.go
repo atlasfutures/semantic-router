@@ -14,6 +14,7 @@ var knownAuthzProviderTypes = map[string]bool{
 	"header-injection":           true,
 	"static-config":              true,
 	authz.CloudTokenProviderType: true,
+	authz.BedrockKeyProviderType: true,
 }
 
 // knownRateLimitProviderTypes is the set of valid rate limit provider type strings.
@@ -75,10 +76,11 @@ func validateAuthzProvider(index int, provider config.AuthzProviderConfig) []str
 		validationErrors = append(
 			validationErrors,
 			fmt.Sprintf(
-				"authz.providers[%d]: unknown type %q (valid types: header-injection, static-config, %s)",
+				"authz.providers[%d]: unknown type %q (valid types: header-injection, static-config, %s, %s)",
 				index,
 				provider.Type,
 				authz.CloudTokenProviderType,
+				authz.BedrockKeyProviderType,
 			),
 		)
 	}
@@ -120,6 +122,10 @@ func buildAuthzProvider(cfg *config.RouterConfig, provider config.AuthzProviderC
 	case authz.CloudTokenProviderType:
 		// Vertex AI with the workload's ambient Google identity: no static key.
 		return []authz.Provider{authz.NewCloudTokenProvider(authz.NewMetadataTokenSource())}
+	case authz.BedrockKeyProviderType:
+		// Amazon Bedrock with the workload's ambient AWS identity (EKS Pod
+		// Identity or any default-chain credential): no static key.
+		return []authz.Provider{authz.NewBedrockKeyProvider(authz.NewBedrockShortTermKeySource())}
 	default:
 		return nil
 	}
