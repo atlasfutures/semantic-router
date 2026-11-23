@@ -124,7 +124,8 @@ func raylineARCPolicyWorkerReady(cfg *config.RouterConfig, worker string) bool {
 		if raylineARCAmbientCredentialEndpoint(cfg, endpoint, profile) {
 			continue
 		}
-		if endpoint.APIKeyEnvName == "" || endpoint.APIKey == "" || endpoint.APIKeyInline {
+		if endpoint.APIKeyEnvName == "" || endpoint.APIKey == "" || endpoint.APIKeyInline ||
+			!raylineARCAuthzServesStaticKey(cfg) {
 			return false
 		}
 		switch {
@@ -141,6 +142,23 @@ func raylineARCPolicyWorkerReady(cfg *config.RouterConfig, worker string) bool {
 		}
 	}
 	return true
+}
+
+// raylineARCAuthzServesStaticKey reports whether the authz chain returns an
+// endpoint's configured key: the default chain does (it ends in
+// static-config, and an invalid chain falls back to it), and an explicit
+// chain does only when it lists static-config.
+func raylineARCAuthzServesStaticKey(cfg *config.RouterConfig) bool {
+	providers := cfg.Authz.Providers
+	if len(providers) == 0 || len(validateAuthzProviders(providers)) > 0 {
+		return true
+	}
+	for _, provider := range providers {
+		if provider.Type == "static-config" {
+			return true
+		}
+	}
+	return false
 }
 
 // raylineARCAmbientCredentialEndpoint reports a Vertex AI endpoint whose

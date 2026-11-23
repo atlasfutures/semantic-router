@@ -63,6 +63,38 @@ func TestPolicyDispatchReadinessAcceptsAVertexWorkerOnItsOwnIdentity(t *testing.
 	}
 }
 
+// A worker on a static key beside a keyless Vertex AI worker is ready only
+// when the explicit chain lists static-config: without it the key is never
+// returned and every turn sent to that worker is refused.
+func TestPolicyDispatchReadinessNeedsStaticConfigForAKeyedWorker(t *testing.T) {
+	mixed := func(chain ...string) (*config.RouterConfig, *config.Decision) {
+		cfg, decision := vertexReadinessConfig(func(c *config.RouterConfig) {
+			write := 1.25
+			c.ModelConfig["keyed"] = config.ModelParams{
+				PreferredEndpoints: []string{"keyed-openai"},
+				Pricing:            config.ModelPricing{Currency: "USD", PromptPer1M: 1, CompletionPer1M: 5, CacheWritePer1M: &write},
+			}
+			c.VLLMEndpoints = append(c.VLLMEndpoints, config.VLLMEndpoint{
+				Name: "keyed-openai", Address: "api.example.com", Port: 443, Type: "openai",
+				APIKeyEnvName: "EXAMPLE_API_KEY", APIKey: "test-key", ProviderProfileName: "keyed-openai",
+			})
+			c.ProviderProfiles["keyed-openai"] = config.ProviderProfile{Type: "openai", BaseURL: "https://api.example.com/v1"}
+			c.Authz.Providers = nil
+			for _, provider := range chain {
+				c.Authz.Providers = append(c.Authz.Providers, config.AuthzProviderConfig{Type: provider})
+			}
+		})
+		decision.ModelRefs = append(decision.ModelRefs, config.ModelRef{Model: "keyed"})
+		return cfg, decision
+	}
+	if cfg, decision := mixed("google-access-token"); raylineARCPolicyDispatchReady(cfg, decision) {
+		t.Fatal("a keyed worker passed readiness on a chain that never returns its key")
+	}
+	if cfg, decision := mixed("google-access-token", "static-config"); !raylineARCPolicyDispatchReady(cfg, decision) {
+		t.Fatal("a keyed worker beside a keyless Vertex AI worker was refused with static-config in the chain")
+	}
+}
+
 // A disabled worker is never sent a turn, so an install that does not serve
 // it (and so carries no key for it) stays ready; a disabled worker that an
 // in-service arm is dispatched on is still checked.

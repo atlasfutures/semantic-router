@@ -271,7 +271,8 @@ global:
 - **Failure.** When the provider has no usable token it returns no
   credential. Providers are tried in order and the first credential wins; when
   no provider in the chain supplies one and `fail_open` is `false`, the request
-  is refused with `401` and nothing is sent upstream. Keep `fail_open: false`.
+  is refused and nothing is sent upstream: with `401`, or with `500` when the
+  refused call is an internal Looper dispatch. Keep `fail_open: false`.
   A `header-injection` provider that maps a header to `vertex-ai` could supply
   a client-sent credential in place of the Router's, so do not map one to
   Vertex AI. Policy-service readiness is stricter than request handling: it
