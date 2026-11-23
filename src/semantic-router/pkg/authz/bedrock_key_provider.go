@@ -46,6 +46,11 @@ const (
 	bedrockCredentialsRenewBefore = 10 * time.Minute
 	// bedrockKeyMinValidity: a key this close to expiry is no longer served.
 	bedrockKeyMinValidity = 30 * time.Second
+	// bedrockCredentialsRenewCooldown: credentials are invalidated and
+	// fetched again at most this often. A key minted from near-expiry
+	// credentials is unusable at once, so without it every request would
+	// ask the credentials endpoint again until fresh credentials arrive.
+	bedrockCredentialsRenewCooldown = 30 * time.Second
 	// emptyPayloadSHA256 is the SHA-256 of an empty body: the request has
 	// none, and AWS's token generators sign its hash (not UNSIGNED-PAYLOAD).
 	emptyPayloadSHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -82,6 +87,8 @@ type BedrockShortTermKeySource struct {
 
 	credentials aws.CredentialsProvider
 	region      string
+	// renewedAt is when near-expiry credentials were last renewed.
+	renewedAt time.Time
 }
 
 // NewBedrockShortTermKeySource returns a source that signs with the SDK's
@@ -98,11 +105,15 @@ func NewBedrockShortTermKeySourceWith(load CredentialsLoader, now func() time.Ti
 }
 
 func defaultAWSCredentials(ctx context.Context) (aws.CredentialsProvider, string, error) {
-	// The SDK's credentials cache keeps its default window: a window shifts
-	// the Expires it reports, which would cut every key short (or, for a
-	// session no longer than the window, make fresh credentials look
-	// expired). Near-expiry credentials are renewed in Token instead.
-	cfg, err := awsconfig.LoadDefaultConfig(ctx)
+	// No credentials cache expiry window: a window shifts the Expires the
+	// cache reports, which would cut every key short (or, for a session no
+	// longer than the window, make fresh credentials look expired). The
+	// container (Pod Identity) provider sets five minutes unless told
+	// otherwise. Near-expiry credentials are renewed in Token instead.
+	cfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithCredentialsCacheOptions(func(options *aws.CredentialsCacheOptions) {
+		options.ExpiryWindow = 0
+		options.ExpiryWindowJitterFrac = 0
+	}))
 	if err != nil {
 		return nil, "", fmt.Errorf("load AWS configuration: %w", err)
 	}
@@ -129,10 +140,12 @@ func (s *BedrockShortTermKeySource) Token(ctx context.Context) (AccessToken, err
 		return AccessToken{}, err
 	}
 	issued := s.now()
-	if creds.CanExpire && creds.Expires.Sub(issued) < bedrockCredentialsRenewBefore {
+	if creds.CanExpire && creds.Expires.Sub(issued) < bedrockCredentialsRenewBefore &&
+		(s.renewedAt.IsZero() || issued.Sub(s.renewedAt) >= bedrockCredentialsRenewCooldown) {
 		// Ask for fresh credentials; keep the old ones if that fails or
 		// gives none that last longer.
 		if renewer, ok := s.credentials.(interface{ Invalidate() }); ok {
+			s.renewedAt = issued
 			renewer.Invalidate()
 			if fresh, err := s.retrieve(ctx); err == nil && (!fresh.CanExpire || fresh.Expires.After(creds.Expires)) {
 				creds = fresh

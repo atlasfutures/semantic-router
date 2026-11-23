@@ -318,6 +318,46 @@ func TestBedrockShortTermKeyRenewsNearExpiryCredentials(t *testing.T) {
 	}
 }
 
+// stuckCredentials stay near expiry however often they are renewed.
+type stuckCredentials struct {
+	expires     time.Time
+	invalidated atomic.Int32
+}
+
+func (r *stuckCredentials) Retrieve(context.Context) (aws.Credentials, error) {
+	return aws.Credentials{
+		AccessKeyID: testAccessKeyID, SecretAccessKey: testSecretAccessKey, SessionToken: testSessionToken,
+		CanExpire: true, Expires: r.expires,
+	}, nil
+}
+
+func (r *stuckCredentials) Invalidate() { r.invalidated.Add(1) }
+
+// Credentials that renewal cannot refresh are asked for again at most once
+// per cooldown, however often a key is minted from them.
+func TestBedrockShortTermKeyRenewsAtMostOncePerCooldown(t *testing.T) {
+	clock := &fakeClock{now: time.Date(2026, 11, 23, 15, 0, 0, 0, time.UTC)}
+	creds := &stuckCredentials{expires: clock.Now().Add(2 * time.Minute)}
+	load := func(context.Context) (aws.CredentialsProvider, string, error) { return creds, "us-east-1", nil }
+	source := NewBedrockShortTermKeySourceWith(load, clock.Now)
+	for i := 0; i < 5; i++ {
+		if _, err := source.Token(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		clock.Advance(time.Second)
+	}
+	if got := creds.invalidated.Load(); got != 1 {
+		t.Fatalf("renewed %d times in 5 s, want 1", got)
+	}
+	clock.Advance(bedrockCredentialsRenewCooldown)
+	if _, err := source.Token(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := creds.invalidated.Load(); got != 2 {
+		t.Fatalf("renewed %d times after the cooldown, want 2", got)
+	}
+}
+
 // When every key is short-lived (credentials that cannot be renewed), keys
 // are re-minted at their RefreshAt, not on every request.
 func TestBedrockKeyProviderThrottlesShortLivedKeys(t *testing.T) {
