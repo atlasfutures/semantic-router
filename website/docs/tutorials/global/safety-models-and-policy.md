@@ -241,6 +241,86 @@ Only trust identity headers set or sanitized by an authenticated upstream.
 `fail_open: true` trades availability for weaker enforcement and should be a
 deliberate policy choice.
 
+### Keyless Vertex AI credentials
+
+The `google-access-token` provider authenticates `vertex-ai` backends with the
+Router's own Google identity instead of a static key. It takes no fields:
+
+```yaml
+global:
+  services:
+    authz:
+      fail_open: false
+      providers:
+        - type: google-access-token
+```
+
+- **Where the token comes from.** The provider reads an OAuth access token
+  (cloud-platform scope) for the default service account from the GCE/GKE
+  metadata server, at `169.254.169.254` or the host in `GCE_METADATA_HOST`. On
+  GKE with Workload Identity, that is the identity bound to the pod's
+  Kubernetes service account. It does not read local Application Default
+  Credentials files or `GOOGLE_APPLICATION_CREDENTIALS`, so it works only where
+  a metadata server is reachable.
+- **Caching.** Tokens are cached. Refresh is driven by requests, not a timer:
+  a request in the last five minutes of a token's life is served the cached
+  token and starts one background refresh. A token is no longer used in its
+  last 30 seconds, so a request that finds no usable token (the first one, or
+  one after an idle period) waits for a refresh. Concurrent requests share one
+  refresh, and a failed refresh keeps the cached token while it is usable.
+- **Failure.** When the provider has no usable token it returns no
+  credential. Providers are tried in order and the first credential wins; when
+  no provider in the chain supplies one and `fail_open` is `false`, the request
+  is refused and nothing is sent upstream: with `401`, or with `500` when the
+  refused call is an internal Looper dispatch. Keep `fail_open: false`.
+  A `header-injection` provider that maps a header to `vertex-ai` could supply
+  a client-sent credential in place of the Router's, so do not map one to
+  Vertex AI. Policy-service readiness is stricter than request handling: it
+  does not count the keyless credential as served when the chain has any
+  `header-injection` provider or `fail_open: true`.
+- **Which backends.** The token is used only for `vertex-ai` backends; other
+  providers in the chain answer for other backends. Leave `api_key_env` unset
+  on the Vertex AI backends.
+
+A keyless Vertex AI backend names the model's Vertex AI id in
+`external_model_ids` and keeps `provider_model_id` as the model's canonical
+name. Claude partner models use the Anthropic Messages API (the Router calls
+`.../publishers/anthropic/models/<id>:rawPredict`, or `:streamRawPredict` when
+streaming). Other publisher models use the OpenAI-compatible endpoint:
+
+```yaml
+providers:
+  models:
+    - name: claude
+      provider_model_id: anthropic/claude-sonnet-5
+      external_model_ids:
+        vertex-ai: claude-sonnet-5
+      api_format: anthropic
+      backend_refs:
+        - name: vertex
+          base_url: https://aiplatform.googleapis.com/v1/projects/<project>/locations/global
+          provider: vertex-ai
+    - name: open-model
+      provider_model_id: publisher/open-model
+      external_model_ids:
+        vertex-ai: publisher/open-model
+      api_format: openai
+      backend_refs:
+        - name: vertex-openapi
+          base_url: https://aiplatform.googleapis.com/v1/projects/<project>/locations/global/endpoints/openapi
+          provider: vertex-ai
+routing:
+  modelCards:
+    # The Vertex AI id has no anthropic/ segment, so the card names its
+    # publisher: Claude-specific handling (thinking restoration, automatic
+    # prompt caching) keys on it.
+    - name: claude
+      publisher: anthropic
+```
+
+The identity needs `roles/aiplatform.user` (or an equivalent custom role) on
+the project in `base_url`.
+
 ## Data and Security
 
 - Local model variants keep inference in the Router process. Remote modules

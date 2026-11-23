@@ -43708,6 +43708,7 @@
       "display_name": "Google Vertex AI",
       "id": "vertex-ai",
       "path_overrides": {
+        "anthropic/messages@1#create": "/publishers/anthropic/models/{model}:rawPredict",
         "openai/chat-completions@1#create": "/chat/completions"
       },
       "presentation": {
@@ -43717,11 +43718,13 @@
         "monogram": "V"
       },
       "protocols": [
-        "openai/chat-completions@1"
+        "openai/chat-completions@1",
+        "anthropic/messages@1"
       ],
       "support_tier": "native",
       "supported_operations": [
-        "openai/chat-completions@1#create"
+        "openai/chat-completions@1#create",
+        "anthropic/messages@1#create"
       ]
     },
     {

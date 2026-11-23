@@ -343,6 +343,41 @@ routing:
     assert route["route"]["regex_rewrite"]["substitution"] == "/openai/v1\\1"
 
 
+def test_vertex_ai_route_keeps_the_routers_full_path(tmp_path, monkeypatch):
+    """The router sends Vertex AI requests on their full path (base path,
+    model and operation), so Envoy must not prefix the base path again."""
+    rendered = _render_envoy_config(
+        tmp_path,
+        monkeypatch,
+        """
+version: v0.3
+providers:
+  defaults:
+    model: claude
+  models:
+    - name: claude
+      provider_model_id: anthropic/claude-sonnet-5
+      external_model_ids:
+        vertex-ai: claude-sonnet-5
+      api_format: anthropic
+      backend_refs:
+        - name: vertex
+          base_url: https://aiplatform.googleapis.com/v1/projects/p/locations/global
+          provider: vertex-ai
+routing:
+  decisions:
+    - name: default-route
+      priority: 100
+      modelRefs:
+        - model: claude
+""",
+    )
+
+    for route in (_model_route(rendered, "claude"), _default_route(rendered)):
+        assert route["route"]["host_rewrite_literal"] == "aiplatform.googleapis.com"
+        assert "regex_rewrite" not in route["route"], route["route"]
+
+
 def test_catalog_provider_projection_rejects_missing_model_mapping(tmp_path):
     config_path = tmp_path / "config.yaml"
     config_path.write_text("""

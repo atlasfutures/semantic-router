@@ -161,7 +161,14 @@ func routeServicePriceArms(scorer *policyServiceScorer) []routeServicePriceArm {
 	}
 	standIn := map[twin]string{}
 	ambiguous := map[twin]bool{}
-	for _, actionID := range scorer.actionOrder {
+	// The relation comes from every bound action, masked ones too: a
+	// from-worker whose actions are all masked still names the package
+	// model its to-worker stands in for.
+	related := scorer.catalogOrder
+	if related == nil {
+		related = scorer.actionOrder
+	}
+	for _, actionID := range related {
 		binding, ok := scorer.bindings[actionID]
 		if !ok || !valid(binding.arm) || !valid(binding.dispatchArm) || binding.arm == binding.dispatchArm || binding.model == "" {
 			continue

@@ -379,6 +379,7 @@ func validateRaylineARCPolicyPackageV5Dispatch(cfg *RouterConfig, decision Decis
 	}
 	bound := make(map[string]bool, len(policy.Bindings))
 	overridable := make(map[string]bool, len(policy.DispatchEffortOverrides))
+	maskedByModel, admittedByModel := map[string]int{}, map[string]int{}
 	// An episode keeps one placer per worker and wire format (one per
 	// transcript), up to a bound; more than that would evict a placer whose
 	// instructions still need replaying.
@@ -400,24 +401,18 @@ func validateRaylineARCPolicyPackageV5Dispatch(cfg *RouterConfig, decision Decis
 			return fmt.Errorf("policy_service binding names action %s, which is not in the package", binding.ActionID)
 		}
 		bound[binding.ActionID] = true
-		provider, err := RaylineARCRegistryProvider(cfg, binding.Worker)
+		masked, err := raylineARCBindingAdmission(cfg, registry, policy, binding, action)
 		if err != nil {
-			return fmt.Errorf("policy_service binding for action %s: %w", binding.ActionID, err)
+			return err
 		}
-		served, err := RaylineARCRegistryModel(cfg, binding.Worker)
-		if err != nil {
-			return fmt.Errorf("policy_service binding for action %s: %w", binding.ActionID, err)
-		}
-		// The target format is chosen per request from the worker's accepted
-		// formats, so the control must be admitted on the cell of each one.
-		for _, apiFormat := range cfg.GetModelAcceptedFormats(binding.Worker) {
-			format, err := RaylineARCRegistryFormat(apiFormat)
-			if err != nil {
-				return fmt.Errorf("policy_service binding for action %s on worker %q: %w", binding.ActionID, binding.Worker, err)
+		if masked != nil {
+			maskedByModel[action.Model]++
+			if binding.ActionID == pkg.manifest.Decision.FallbackActionID {
+				return fmt.Errorf("policy_service binding for action %s on worker %q: the package's fallback action is not admitted: %s",
+					binding.ActionID, binding.Worker, masked.Reason)
 			}
-			if _, err := registry.Admit(served, provider, format, action.Control, policy.AllowExperimentalControls); err != nil {
-				return fmt.Errorf("policy_service binding for action %s on worker %q: %w", binding.ActionID, binding.Worker, err)
-			}
+		} else {
+			admittedByModel[action.Model]++
 		}
 		if _, overridden := policy.DispatchEffortOverride(binding.Worker); overridden && raylineARCOverridableBase(action.Control) {
 			overridable[binding.Worker] = true
@@ -431,6 +426,12 @@ func validateRaylineARCPolicyPackageV5Dispatch(cfg *RouterConfig, decision Decis
 	for _, action := range pkg.manifest.Actions {
 		if !bound[action.ActionID] {
 			return fmt.Errorf("package action %s is not bound to a worker", action.ActionID)
+		}
+	}
+	for model := range maskedByModel {
+		if admittedByModel[model] == 0 {
+			return fmt.Errorf("every action of model %q is on a Vertex AI worker whose registry cell does not admit its control; "+
+				"the model would never be offered", model)
 		}
 	}
 	nativeDefault := thinkingcontrol.Control{Native: raylineARCRegistryBaseDefault}
@@ -549,12 +550,127 @@ func RaylineARCRegistryModel(cfg *RouterConfig, worker string) (string, error) {
 	served := ""
 	for _, endpoint := range endpoints {
 		model := cfg.ResolveExternalModelID(worker, endpoint.Name)
+		if raylineARCVertexEndpoint(cfg, endpoint.Name) {
+			// Vertex AI names a publisher model by its own id; the registry
+			// names it by the model's provider_model_id.
+			canonical := cfg.ModelConfig[worker].ExternalModelIDs["default"]
+			if canonical == "" {
+				return "", fmt.Errorf("worker %q endpoint %q is on Vertex AI and names no provider_model_id for the registry",
+					worker, endpoint.Name)
+			}
+			model = canonical
+		}
 		if served != "" && served != model {
 			return "", fmt.Errorf("worker %q serves both %s and %s; its admission cell is ambiguous", worker, served, model)
 		}
 		served = model
 	}
 	return served, nil
+}
+
+// RaylineARCMaskedBinding is a policy binding left out of the offer: its
+// worker is served by Vertex AI, and the registry cell it dispatches on does
+// not admit its control.
+type RaylineARCMaskedBinding struct {
+	ActionID string
+	Model    string
+	Worker   string
+	Cell     string
+	Reason   string
+}
+
+// raylineARCBindingAdmission admits a binding's control on the registry cell
+// of each format its worker accepts. A refusal fails the config, except on a
+// worker served only by Vertex AI, where a steered control (one with an
+// instruction) is masked instead: steering evidence is bound to the
+// endpoints it was measured on, and Vertex AI is not one of them for every
+// model, so the binding is left out of the offer and the action's model is
+// served through its other actions. A plain control (no instruction) that
+// is refused still fails the config, on Vertex AI too.
+func raylineARCBindingAdmission(
+	cfg *RouterConfig,
+	registry *thinkingcontrol.Registry,
+	policy *RaylineARCPolicyServiceConfig,
+	binding RaylineARCPolicyBinding,
+	action RaylineARCPolicyActionV5,
+) (*RaylineARCMaskedBinding, error) {
+	provider, err := RaylineARCRegistryProvider(cfg, binding.Worker)
+	if err != nil {
+		return nil, fmt.Errorf("policy_service binding for action %s: %w", binding.ActionID, err)
+	}
+	served, err := RaylineARCRegistryModel(cfg, binding.Worker)
+	if err != nil {
+		return nil, fmt.Errorf("policy_service binding for action %s: %w", binding.ActionID, err)
+	}
+	// The target format is chosen per request from the worker's accepted
+	// formats, so the control must be admitted on the cell of each one.
+	for _, apiFormat := range cfg.GetModelAcceptedFormats(binding.Worker) {
+		format, err := RaylineARCRegistryFormat(apiFormat)
+		if err != nil {
+			return nil, fmt.Errorf("policy_service binding for action %s on worker %q: %w", binding.ActionID, binding.Worker, err)
+		}
+		if _, err := registry.Admit(served, provider, format, action.Control, policy.AllowExperimentalControls); err != nil {
+			if action.Control.Instruction == nil || !raylineARCVertexWorker(cfg, binding.Worker) {
+				return nil, fmt.Errorf("policy_service binding for action %s on worker %q: %w", binding.ActionID, binding.Worker, err)
+			}
+			return &RaylineARCMaskedBinding{
+				ActionID: binding.ActionID, Model: action.Model, Worker: binding.Worker,
+				Cell: served + " on " + provider + "x" + format, Reason: err.Error(),
+			}, nil
+		}
+	}
+	return nil, nil
+}
+
+// RaylineARCMaskedBindings lists the decision's bindings left out of the
+// offer (raylineARCBindingAdmission). It is empty for a decision without a
+// v5 package, and for one with no worker on Vertex AI. A config that loaded
+// has passed the same checks, so an error here lists nothing.
+func RaylineARCMaskedBindings(cfg *RouterConfig, decision *Decision) []RaylineARCMaskedBinding {
+	if cfg == nil || decision == nil || decision.Algorithm == nil || decision.Algorithm.RaylineARC == nil ||
+		decision.Algorithm.RaylineARC.PolicyService == nil || !decision.Algorithm.RaylineARC.PolicyService.IsPackageV5() {
+		return nil
+	}
+	policy := decision.Algorithm.RaylineARC.PolicyService
+	pkg, err := policy.loadPackageV5()
+	if err != nil {
+		return nil
+	}
+	registry, err := thinkingcontrol.Embedded()
+	if err != nil {
+		return nil
+	}
+	var masked []RaylineARCMaskedBinding
+	for _, binding := range policy.Bindings {
+		action, ok := pkg.actions[binding.ActionID]
+		if !ok || !raylineARCVertexWorker(cfg, binding.Worker) {
+			continue
+		}
+		if m, err := raylineARCBindingAdmission(cfg, registry, policy, binding, action); err == nil && m != nil {
+			masked = append(masked, *m)
+		}
+	}
+	return masked
+}
+
+// raylineARCVertexWorker reports whether every endpoint of the worker is
+// Vertex AI.
+func raylineARCVertexWorker(cfg *RouterConfig, worker string) bool {
+	endpoints := cfg.GetEndpointsForModel(worker)
+	if len(endpoints) == 0 {
+		return false
+	}
+	for _, endpoint := range endpoints {
+		if !raylineARCVertexEndpoint(cfg, endpoint.Name) {
+			return false
+		}
+	}
+	return true
+}
+
+func raylineARCVertexEndpoint(cfg *RouterConfig, endpointName string) bool {
+	profile, err := cfg.GetProviderProfileForEndpoint(endpointName)
+	return err == nil && profile != nil && strings.EqualFold(strings.TrimSpace(profile.Type), "vertex-ai")
 }
 
 func RaylineARCRegistryProvider(cfg *RouterConfig, worker string) (provider string, err error) {
@@ -575,6 +691,26 @@ func RaylineARCRegistryProvider(cfg *RouterConfig, worker string) (provider stri
 			name = "anthropic"
 		case strings.EqualFold(strings.TrimSpace(profile.Type), "openai"):
 			name = "openai"
+		case strings.EqualFold(strings.TrimSpace(profile.Type), "vertex-ai"):
+			// Vertex AI serves a publisher model on that publisher's API: the
+			// Anthropic Messages API for Claude, the OpenAI chat API for the
+			// open models. Neither has been measured on Vertex AI.
+			switch cfg.GetModelAPIFormat(worker) {
+			case APIFormatAnthropic:
+				// Admitted on OpenRouter Messages evidence (anthropic
+				// upstream); Vertex not measured. The controls are placed
+				// in the same Messages body, and the registry's base
+				// endpoints for these models include Vertex AI; the
+				// steering evidence was not taken on it.
+				name = "openrouter"
+			case APIFormatOpenAI:
+				// The chat cell: a control whose evidence is bound to other
+				// endpoints is not admitted here.
+				name = "openai"
+			default:
+				return "", fmt.Errorf("worker %q endpoint %q is on Vertex AI with api_format %q, which the thinking-control registry does not name",
+					worker, endpoint.Name, cfg.GetModelAPIFormat(worker))
+			}
 		default:
 			return "", fmt.Errorf("worker %q endpoint %q is provider type %q, which the thinking-control registry does not name",
 				worker, endpoint.Name, profile.Type)

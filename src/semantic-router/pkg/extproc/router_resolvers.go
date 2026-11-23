@@ -11,8 +11,9 @@ import (
 
 // knownAuthzProviderTypes is the set of valid provider type strings.
 var knownAuthzProviderTypes = map[string]bool{
-	"header-injection": true,
-	"static-config":    true,
+	"header-injection":           true,
+	"static-config":              true,
+	authz.CloudTokenProviderType: true,
 }
 
 // knownRateLimitProviderTypes is the set of valid rate limit provider type strings.
@@ -74,9 +75,10 @@ func validateAuthzProvider(index int, provider config.AuthzProviderConfig) []str
 		validationErrors = append(
 			validationErrors,
 			fmt.Sprintf(
-				"authz.providers[%d]: unknown type %q (valid types: header-injection, static-config)",
+				"authz.providers[%d]: unknown type %q (valid types: header-injection, static-config, %s)",
 				index,
 				provider.Type,
+				authz.CloudTokenProviderType,
 			),
 		)
 	}
@@ -115,6 +117,9 @@ func buildAuthzProvider(cfg *config.RouterConfig, provider config.AuthzProviderC
 		return []authz.Provider{headerProvider}
 	case "static-config":
 		return []authz.Provider{authz.NewStaticConfigProvider(cfg)}
+	case authz.CloudTokenProviderType:
+		// Vertex AI with the workload's ambient Google identity: no static key.
+		return []authz.Provider{authz.NewCloudTokenProvider(authz.NewMetadataTokenSource())}
 	default:
 		return nil
 	}
