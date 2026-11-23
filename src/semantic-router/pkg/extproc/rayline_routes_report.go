@@ -167,14 +167,19 @@ func readRaylineReport(body []byte, source string, now time.Time) (raylineReport
 		}
 	}
 	executed := wire.Executed
-	if executed == nil || executed.Model == "" || len(executed.Model) > raylineReportMaxModelBytes {
+	if executed == nil {
+		return raylineReport{}, reportInvalid("executed is required")
+	}
+	// Names are compared and stored without surrounding whitespace, and a
+	// blank one names nothing.
+	report.model = strings.TrimSpace(executed.Model)
+	if report.model == "" || len(report.model) > raylineReportMaxModelBytes {
 		return raylineReport{}, reportInvalid(fmt.Sprintf("executed.model is required, at most %d bytes", raylineReportMaxModelBytes))
 	}
-	report.model = executed.Model
-	if executed.ThinkingLevel != nil && *executed.ThinkingLevel == "" {
+	if executed.ThinkingLevel != nil && strings.TrimSpace(*executed.ThinkingLevel) == "" {
 		return raylineReport{}, reportInvalid("executed.thinking_level must not be empty")
 	}
-	report.thinkingLevel = stringOf(executed.ThinkingLevel)
+	report.thinkingLevel = strings.TrimSpace(stringOf(executed.ThinkingLevel))
 	if executed.ActionID != nil && !isLowerHexID(*executed.ActionID) {
 		return raylineReport{}, reportInvalid("executed.action_id must be 64 lowercase hex characters")
 	}

@@ -372,6 +372,8 @@ func TestRoutesReportRefusals(t *testing.T) {
 		"non-ARC tier":      {"c", "", map[string]any{"model": "gpt-typo", "executed": map[string]any{"model": "off", "finished_at": time.Now().UTC().Format(time.RFC3339)}}, 400, "unknown_model"},
 		"empty tier":        {"c", "", map[string]any{"model": "", "executed": map[string]any{"model": "off", "finished_at": time.Now().UTC().Format(time.RFC3339)}}, 400, "invalid_report"},
 		"blank tier":        {"c", "", map[string]any{"model": "  ", "executed": map[string]any{"model": "off", "finished_at": time.Now().UTC().Format(time.RFC3339)}}, 400, "invalid_report"},
+		"blank model":       {"c", "", map[string]any{"executed": map[string]any{"model": "   ", "finished_at": time.Now().UTC().Format(time.RFC3339)}}, 400, "invalid_report"},
+		"blank level":       {"c", "", executedReport("", "off", map[string]any{"thinking_level": "  "}), 400, "invalid_report"},
 		"null tier":         {"c", "", map[string]any{"model": nil, "executed": map[string]any{"model": "off", "finished_at": time.Now().UTC().Format(time.RFC3339)}}, 400, "invalid_report"},
 		"ttl out of bounds": {"c", "", executedReport("", "off", map[string]any{"usage": map[string]any{"cache_ttl_seconds": 0}}), 400, "invalid_report"},
 		"zero-time finish":  {"c", "", executedReport("", "off", map[string]any{"finished_at": "0001-01-01T00:00:00.000000001Z"}), 400, "invalid_report"},
