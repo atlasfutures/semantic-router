@@ -36,6 +36,7 @@ func TestPolicyDispatchReadinessAcceptsAVertexWorkerOnItsOwnIdentity(t *testing.
 		"header injection beside it": func(c *config.RouterConfig) {
 			c.Authz.Providers = append([]config.AuthzProviderConfig{{Type: "header-injection"}}, c.Authz.Providers...)
 		},
+		"a fail-open chain": func(c *config.RouterConfig) { c.Authz.FailOpen = true },
 		"an unknown provider type in the chain": func(c *config.RouterConfig) {
 			c.Authz.Providers = append(c.Authz.Providers, config.AuthzProviderConfig{Type: "nope"})
 		},

@@ -132,10 +132,15 @@ func raylineARCAmbientCredentialEndpoint(
 	return raylineARCAuthzServesAmbientCredential(cfg)
 }
 
-// raylineARCAuthzServesAmbientCredential reports a valid authz chain that
-// includes the google-access-token provider and no provider that reads a
-// credential from a caller's header.
+// raylineARCAuthzServesAmbientCredential reports a valid, fail-closed authz
+// chain that includes the google-access-token provider and no provider that
+// reads a credential from a caller's header. A fail-open chain would send a
+// request on without the router's credential when no token is at hand, and
+// with it any Authorization header the caller sent.
 func raylineARCAuthzServesAmbientCredential(cfg *config.RouterConfig) bool {
+	if cfg.Authz.FailOpen {
+		return false
+	}
 	providers := cfg.Authz.Providers
 	if len(validateAuthzProviders(providers)) > 0 {
 		return false
