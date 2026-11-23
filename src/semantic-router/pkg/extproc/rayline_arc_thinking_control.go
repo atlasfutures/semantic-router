@@ -49,6 +49,10 @@ type plannedThinkingControl struct {
 	control thinkingcontrol.Control
 	cell    *thinkingcontrol.Cell
 	placer  *thinkingcontrol.Placer
+	// retire is the worker whose placements in other scopes this one
+	// replaces ("" keeps them): set when every endpoint of the worker is in
+	// this placement's scope.
+	retire string
 	// effortOverride is the effort dispatch_effort_overrides sends on top of
 	// the control's native default base, at effortPath; empty sends the
 	// base's own wire.
@@ -224,6 +228,9 @@ func planRaylineARCThinkingControl(
 		return nil, false, err
 	}
 	planned := &plannedThinkingControl{key: key, control: action.Control, cell: cell, placer: placer}
+	if scope := raylineARCPlacementScope(dispatch.profile); scope != "" && raylineARCWorkerPlacementScope(cfg, worker) == scope {
+		planned.retire = worker
+	}
 	if config.RaylineARCOverridableBase(action.Control) {
 		if effort, ok := policy.DispatchEffortOverride(worker); ok {
 			path, err := dispatchEffortOverridePath(format, resolveProviderReasoningTransport(dispatch.profile))
@@ -255,7 +262,7 @@ func (planned *plannedThinkingControl) render(body []byte, ctx *RequestContext) 
 			return nil, err
 		}
 	}
-	ctx.RaylineARCTransaction.stageControlPlacement(raylinearc.ControlPlacement{Key: planned.key, State: planned.placer.State()})
+	ctx.RaylineARCTransaction.stageControlPlacement(raylinearc.ControlPlacement{Key: planned.key, State: planned.placer.State()}, planned.retire)
 	ctx.RaylineARCThinking = thinkingControlTrace(planned.cell, planned.control, receipt)
 	recordThinkingLeverTurn(ctx.RaylineARCThinking)
 	return rendered, nil
@@ -344,13 +351,30 @@ func raylineARCWorkerPlacementScope(cfg *config.RouterConfig, worker string) str
 }
 
 // raylineARCPlacementKeyParts splits a placer key into its worker and scope.
+// Only a scope raylineARCPlacementScope names counts as one: an older key's
+// worker|format|shape... segments are an unscoped placement.
 func raylineARCPlacementKeyParts(key string) (worker, scope string, ok bool) {
 	worker, rest, ok := strings.Cut(key, "|")
 	if !ok {
 		return "", "", false
 	}
-	if scope, _, scoped := strings.Cut(rest, "|"); scoped {
-		return worker, scope, true
+	if second, _, _ := strings.Cut(rest, "|"); second == "vertex-ai" {
+		return worker, second, true
 	}
 	return worker, "", true
+}
+
+// raylineARCRetirePlacements drops worker's placements in scopes other than
+// scope: a worker whose every endpoint is now in scope never resumes them,
+// and they would only push other workers' placements out of the bounded
+// record.
+func raylineARCRetirePlacements(placements []raylinearc.ControlPlacement, worker, scope string) []raylinearc.ControlPlacement {
+	kept := placements[:0:0]
+	for _, placement := range placements {
+		if owner, other, ok := raylineARCPlacementKeyParts(placement.Key); ok && owner == worker && other != scope {
+			continue
+		}
+		kept = append(kept, placement)
+	}
+	return kept
 }

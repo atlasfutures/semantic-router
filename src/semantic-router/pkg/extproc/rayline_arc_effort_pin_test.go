@@ -127,6 +127,11 @@ func TestEffortPinsReadOnlyTheWorkersCurrentPlacement(t *testing.T) {
 	if pins := (&policyServiceScorer{}).effortPins([]raylinearc.ControlPlacement{old}); len(pins) != 1 {
 		t.Fatalf("an unscoped worker's placement did not pin it: %v", pins)
 	}
+	// So is it by an older worker|format|shape... placement.
+	legacy := raylinearc.ControlPlacement{Key: "w|messages|high|-|true", State: thinkingcontrol.PlacerState{First: high}}
+	if pins := (&policyServiceScorer{}).effortPins([]raylinearc.ControlPlacement{legacy}); len(pins) != 1 {
+		t.Fatalf("an unscoped worker's older placement did not pin it: %v", pins)
+	}
 }
 
 func short(ids []string) string {
