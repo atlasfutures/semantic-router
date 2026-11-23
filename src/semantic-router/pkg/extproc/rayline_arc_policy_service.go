@@ -101,8 +101,19 @@ type policyServiceScorer struct {
 	workers     []raylinearc.WorkerManifest
 	bindings    map[string]policyBinding
 	actionOrder []string
+	// catalogOrder is every bound action, masked ones too, in binding
+	// order: a worker's trained model is named from it, whether or not the
+	// worker has an action to offer.
+	catalogOrder []string
+	// heldReleasable marks the arms with no action to offer (every one of
+	// their bindings masked); a hold on one is released. Nil when nothing
+	// is masked.
+	heldReleasable []bool
 	// effortOverrides is the cell's dispatch_effort_overrides, by worker.
 	effortOverrides map[string]string
+	// placementScopes is each worker's placer key scope
+	// (raylineARCPlacementScope), by worker; absent is "".
+	placementScopes map[string]string
 	// fallback is ADR 0120's fallback: excluded models leave the offer, and
 	// an excluded held model forces a decision.
 	fallback bool
@@ -249,6 +260,12 @@ func newPolicyServiceScorer(
 	}
 	index := make(map[string]int, len(decision.ModelRefs))
 	for arm, modelRef := range decision.ModelRefs {
+		if scope := raylineARCWorkerPlacementScope(cfg, modelRef.Model); scope != "" {
+			if scorer.placementScopes == nil {
+				scorer.placementScopes = map[string]string{}
+			}
+			scorer.placementScopes[modelRef.Model] = scope
+		}
 		index[modelRef.Model] = arm
 		scorer.workerIDs = append(scorer.workerIDs, modelRef.Model)
 		scorer.workers = append(scorer.workers, policyWorkerManifest(cfg, modelRef))
@@ -264,6 +281,11 @@ func newPolicyServiceScorer(
 		scorer.privacyRoutes = append(scorer.privacyRoutes, privacyRoute)
 		scorer.zdrRoutes = append(scorer.zdrRoutes, zdrRoute)
 	}
+	// A binding the config masked (a steered control on a Vertex AI worker
+	// whose registry cell does not admit it) stays in the catalog, so a
+	// response or attribution naming it is still this package's, and is
+	// never offered.
+	masked := raylineARCMaskedBindingIDs(decision, config.RaylineARCMaskedBindings(cfg, decision))
 	for _, binding := range policy.Bindings {
 		level, model := binding.Level, binding.Model
 		var base *effortBase
@@ -289,9 +311,28 @@ func newPolicyServiceScorer(
 		scorer.bindings[binding.ActionID] = policyBinding{
 			arm: index[binding.Worker], dispatchArm: index[worker], level: level, model: model, base: base,
 		}
-		scorer.actionOrder = append(scorer.actionOrder, binding.ActionID)
+		scorer.catalogOrder = append(scorer.catalogOrder, binding.ActionID)
+		if !masked[binding.ActionID] {
+			scorer.actionOrder = append(scorer.actionOrder, binding.ActionID)
+		}
 	}
-	scorer.armOffered = policyArmOffered(policy.PackageStageOneOfferedModels(), scorer.bindings, len(scorer.workers))
+	offerable := scorer.bindings
+	if len(masked) > 0 {
+		offerable = make(map[string]policyBinding, len(scorer.bindings))
+		scorer.heldReleasable = make([]bool, len(scorer.workers))
+		for arm := range scorer.heldReleasable {
+			scorer.heldReleasable[arm] = true
+		}
+		for actionID, binding := range scorer.bindings {
+			if !masked[actionID] {
+				offerable[actionID] = binding
+				if binding.arm >= 0 && binding.arm < len(scorer.heldReleasable) {
+					scorer.heldReleasable[binding.arm] = false
+				}
+			}
+		}
+	}
+	scorer.armOffered = policyArmOffered(policy.PackageStageOneOfferedModels(), offerable, len(scorer.workers))
 	if fallback := policy.PackageFallbackActionID(); fallback != "" {
 		if _, bound := scorer.bindings[fallback]; bound {
 			scorer.fallbackActionID = fallback
@@ -708,6 +749,11 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 			if out(sent, scorer.armModel(sent)) || len(hard) == len(workerIDs) && hard[held] {
 				held, forced = -1, true
 			}
+		}
+		// A held arm with nothing to offer (every binding masked, e.g. a
+		// hold kept from before its worker moved to Vertex AI) is released.
+		if held >= 0 && held < len(scorer.heldReleasable) && scorer.heldReleasable[held] {
+			held, forced = -1, true
 		}
 		available := make([]string, 0, len(scorer.actionOrder))
 		for _, actionID := range scorer.actionOrder {
@@ -1611,7 +1657,11 @@ func (scorer *policyServiceScorer) actionArm(actionID string) (int, bool) {
 
 // armModel is the trained model a worker serves, read from its bindings.
 func (scorer *policyServiceScorer) armModel(arm int) string {
-	for _, actionID := range scorer.actionOrder {
+	order := scorer.catalogOrder
+	if order == nil {
+		order = scorer.actionOrder
+	}
+	for _, actionID := range order {
 		if binding := scorer.bindings[actionID]; binding.arm == arm && binding.model != "" {
 			return binding.model
 		}

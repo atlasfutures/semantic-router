@@ -189,6 +189,12 @@ func readDispatchedOutboundParams(body []byte, dispatch *providerDispatch) *disp
 		return params
 	}
 	params.Model = wire.Model
+	if params.Model == "" && dispatch != nil && dispatch.targetFormat == llmprotocol.AnthropicMessagesV1 &&
+		providerIsVertexAI(dispatch.profile) {
+		// A Vertex AI Messages body names its model in the URL
+		// (adaptVertexMessagesRequest), so a re-send's body has none.
+		params.Model = dispatch.upstreamModel
+	}
 	if len(wire.Provider) > 0 && wire.Provider[0] == '{' {
 		// Only the routing fields the router knows are recorded: a client's
 		// own provider object reaches the wire unmodeled on a same-format

@@ -251,6 +251,11 @@ func (r *OpenAIRouter) completeProviderDispatch(
 	response *ext_proc.ProcessingResponse,
 	ctx *RequestContext,
 ) (*ext_proc.ProcessingResponse, error) {
+	if response.GetImmediateResponse() != nil {
+		// The dispatch was refused while it was built (no credential): the
+		// client gets that answer, and nothing is sent upstream.
+		return response, nil
+	}
 	r.handleToolSelectionForRequest(request, response, ctx)
 	if err := r.settleProviderDispatch(dispatch, ctx); err != nil {
 		return nil, err
@@ -400,7 +405,8 @@ func (r *OpenAIRouter) buildProviderDispatchResponse(
 		return errorResponse
 	}
 	appendRoutingHeaders(&state.setHeaders, dispatch.logicalModel)
-	setProviderRequestPath(&state.setHeaders, dispatch.profile, dispatch.targetFormat)
+	setProviderRequestPath(&state.setHeaders, dispatch.profile, dispatch.targetFormat,
+		dispatch.upstreamModel, ctx != nil && ctx.ExpectStreamingResponse)
 	r.applyDecisionHeaderMutations(state, ctx)
 	return buildRequestBodyContinueResponse(state, nil, false)
 }
@@ -420,6 +426,9 @@ func (r *OpenAIRouter) finalizeProviderDispatchResponse(
 	defer r.emitRoutingDecision(ctx)
 	if dispatch == nil || response == nil {
 		return nil, status.Error(codes.Internal, "provider dispatch is unavailable")
+	}
+	if response.GetImmediateResponse() != nil {
+		return response, nil
 	}
 	if r.Config != nil {
 		ctx.DispatchHostedTools = r.Config.ModelConfig[dispatch.logicalModel].HostedTools
@@ -453,6 +462,13 @@ func (r *OpenAIRouter) finalizeProviderDispatchResponse(
 	}
 	ctx.DispatchedOutbound = readDispatchedOutboundParams(body, dispatch)
 	ctx.DispatchedServiceTier = dispatchedServiceTier(body)
+	// Last: Vertex AI names the model in the URL, so the body drops it.
+	body, err = adaptVertexMessagesRequest(body, dispatch)
+	if err != nil {
+		abandonUpstreamSpan(ctx, "provider request could not be adapted")
+		metrics.RecordRequestError(dispatch.logicalModel, "provider_adapter_error")
+		return nil, status.Errorf(codes.Internal, "adapt Vertex AI request: %v", err)
+	}
 	r.stageFlexResend(ctx, dispatch, body)
 	r.stageEndpointResend(ctx, dispatch, body)
 	r.stageThinkingSignatureRetry(ctx, dispatch, body)
@@ -470,6 +486,7 @@ func (r *OpenAIRouter) finalizeProviderDispatchResponse(
 	if common.HeaderMutation == nil {
 		common.HeaderMutation = &ext_proc.HeaderMutation{}
 	}
+	resetVertexRequestPath(common.HeaderMutation, dispatch, body)
 	appendContentLengthHeader(&common.HeaderMutation.SetHeaders, len(body))
 	declareAutoCacheBeta(&common.HeaderMutation.SetHeaders, ctx)
 	stripServerSideFallbackBeta(common.HeaderMutation, ctx)
@@ -560,6 +577,7 @@ func (r *OpenAIRouter) appendProviderCredential(
 	if providerAuth.Prefix != "" {
 		value = providerAuth.Prefix + " " + accessKey
 	}
+	markCredentialHeader(providerAuth.Header)
 	state.setHeaders = append(state.setHeaders, overwriteRequestHeader(providerAuth.Header, value))
 	return nil
 }
@@ -580,14 +598,19 @@ func overwriteRequestHeader(key, value string) *core.HeaderValueOption {
 	}
 }
 
+// setProviderRequestPath sets :path for one dispatch. model is the backend's
+// model id and stream whether the response is streamed: a provider can put
+// either in the URL (Vertex AI's publishers/.../models/{model}:streamRawPredict).
 func setProviderRequestPath(
 	headersOut *[]*core.HeaderValueOption,
 	profile *config.ProviderProfile,
 	format llmprotocol.WireFormat,
+	model string,
+	stream bool,
 ) {
 	requestPath := requestWirePath(format)
 	if profile != nil {
-		if configured, err := profile.ResolveCreatePath(requestWireProtocol(format)); err == nil && configured != "" {
+		if configured, err := profile.ResolveRequestPath(requestWireProtocol(format), model, stream); err == nil && configured != "" {
 			requestPath = configured
 		}
 	}

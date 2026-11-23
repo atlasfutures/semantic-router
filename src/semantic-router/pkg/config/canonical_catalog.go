@@ -60,6 +60,9 @@ func applyEffectiveModelRegistry(
 			params.APIFormat = apiFormat
 		}
 		for bindingIndex, provider := range model.Providers {
+			if err := validateBedrockAuth(model.Alias, bindingIndex, provider); err != nil {
+				return err
+			}
 			if err := appendEffectiveProviderBinding(cfg, model, bindingIndex, provider, &params); err != nil {
 				return err
 			}

@@ -212,6 +212,45 @@ func (profile *ProviderProfile) ResolveCreatePath(protocolID string) (string, er
 	return profile.appendAPIVersion(path, definition.APIVersionQuery), nil
 }
 
+// modelPathPlaceholder in a catalog path override is replaced by the
+// backend's model id (Vertex AI publisher models carry it in the URL).
+const modelPathPlaceholder = "{model}"
+
+// ResolveRequestPath resolves the create path for one request. It is
+// ResolveCreatePath with the per-request parts filled in: a {model}
+// placeholder becomes the backend's (path-escaped) model id, and a streaming
+// request to a Vertex AI :rawPredict operation goes to :streamRawPredict.
+func (profile *ProviderProfile) ResolveRequestPath(protocolID, model string, stream bool) (string, error) {
+	path, err := profile.ResolveCreatePath(protocolID)
+	if err != nil {
+		return "", err
+	}
+	if strings.Contains(path, modelPathPlaceholder) {
+		if strings.TrimSpace(model) == "" {
+			return "", fmt.Errorf("provider path %q needs a model id", path)
+		}
+		path = strings.ReplaceAll(path, modelPathPlaceholder, url.PathEscape(model))
+	}
+	if stream && profile.Type == "vertex-ai" {
+		path = vertexStreamPath(path)
+	}
+	return path, nil
+}
+
+// vertexStreamPath swaps Vertex AI's :rawPredict method for its streaming
+// counterpart, keeping any query string.
+func vertexStreamPath(path string) string {
+	route, query, hasQuery := strings.Cut(path, "?")
+	if !strings.HasSuffix(route, ":rawPredict") {
+		return path
+	}
+	route = strings.TrimSuffix(route, ":rawPredict") + ":streamRawPredict"
+	if hasQuery {
+		return route + "?" + query
+	}
+	return route
+}
+
 func (profile *ProviderProfile) resolveProtocolID(requested, defaultProtocol string) string {
 	if requested != "" {
 		return requested

@@ -2,7 +2,7 @@
 
 package catalog
 
-const builtInCatalogDigest = "sha256:b4b46f333f2db6679e620c6171c850b9e7e39d26baa868473600473c96b4eacf"
+const builtInCatalogDigest = "sha256:f5a9d764fb40a239692a47c0c806250479d0404621e244e8e4ea1935bf5b11dd"
 
 const builtInCatalogJSON = `{
   "benchmarks": [
@@ -40893,6 +40893,7 @@ const builtInCatalogJSON = `{
         }
       ],
       "path_overrides": {
+        "anthropic/messages@1#create": "/v1/messages",
         "openai/chat-completions@1#create": "/chat/completions"
       },
       "presentation": {
@@ -40902,11 +40903,13 @@ const builtInCatalogJSON = `{
         "monogram": "AWS"
       },
       "protocols": [
-        "openai/chat-completions@1"
+        "openai/chat-completions@1",
+        "anthropic/messages@1"
       ],
       "support_tier": "native",
       "supported_operations": [
-        "openai/chat-completions@1#create"
+        "openai/chat-completions@1#create",
+        "anthropic/messages@1#create"
       ]
     },
     {
@@ -43714,6 +43717,7 @@ const builtInCatalogJSON = `{
       "display_name": "Google Vertex AI",
       "id": "vertex-ai",
       "path_overrides": {
+        "anthropic/messages@1#create": "/publishers/anthropic/models/{model}:rawPredict",
         "openai/chat-completions@1#create": "/chat/completions"
       },
       "presentation": {
@@ -43723,11 +43727,13 @@ const builtInCatalogJSON = `{
         "monogram": "V"
       },
       "protocols": [
-        "openai/chat-completions@1"
+        "openai/chat-completions@1",
+        "anthropic/messages@1"
       ],
       "support_tier": "native",
       "supported_operations": [
-        "openai/chat-completions@1#create"
+        "openai/chat-completions@1#create",
+        "anthropic/messages@1#create"
       ]
     },
     {
