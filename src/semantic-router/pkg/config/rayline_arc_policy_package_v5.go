@@ -593,11 +593,18 @@ func RaylineARCRegistryProvider(cfg *RouterConfig, worker string) (provider stri
 		case strings.EqualFold(strings.TrimSpace(profile.Type), "vertex-ai"):
 			// Vertex AI serves a publisher model on that publisher's API: the
 			// Anthropic Messages API for Claude, the OpenAI chat API for the
-			// open models. The registry cell is that API's.
+			// open models. Neither has been measured on Vertex AI.
 			switch cfg.GetModelAPIFormat(worker) {
 			case APIFormatAnthropic:
-				name = "anthropic"
+				// Admitted on OpenRouter Messages evidence (anthropic
+				// upstream); Vertex not measured. The controls are placed
+				// in the same Messages body, and the registry's base
+				// endpoints for these models include Vertex AI; the
+				// steering evidence was not taken on it.
+				name = "openrouter"
 			case APIFormatOpenAI:
+				// The chat cell: a control whose evidence is bound to other
+				// endpoints is not admitted here.
 				name = "openai"
 			default:
 				return "", fmt.Errorf("worker %q endpoint %q is on Vertex AI with api_format %q, which the thinking-control registry does not name",

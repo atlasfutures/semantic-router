@@ -68,7 +68,7 @@ func TestVertexKeylessConfigLoads(t *testing.T) {
 	}{
 		"claude-worker": {"anthropic/messages@1", "claude-x@v1",
 			"/v1/projects/p/locations/global/publishers/anthropic/models/claude-x@v1:streamRawPredict",
-			"anthropic", "anthropic/claude-x"},
+			"openrouter", "anthropic/claude-x"},
 		"open-worker": {"openai/chat-completions@1", "publisher/open-model",
 			"/v1/projects/p/locations/global/endpoints/openapi/chat/completions",
 			"openai", "open/open-model"},
@@ -90,8 +90,9 @@ func TestVertexKeylessConfigLoads(t *testing.T) {
 		if err != nil || path != w.path {
 			t.Fatalf("%s: path = %q, %v; want %q", model, path, err, w.path)
 		}
-		// The thinking-control registry cell is the publisher API's, named
-		// by the card's provider_model_id, not by the Vertex AI id.
+		// The thinking-control registry cell, named by the card's
+		// provider_model_id, not by the Vertex AI id: Messages on the
+		// OpenRouter Messages evidence, chat on the openai cell.
 		provider, err := RaylineARCRegistryProvider(cfg, model)
 		if err != nil || provider != w.registryProvider {
 			t.Fatalf("%s: registry provider = %q, %v; want %q", model, provider, err, w.registryProvider)
