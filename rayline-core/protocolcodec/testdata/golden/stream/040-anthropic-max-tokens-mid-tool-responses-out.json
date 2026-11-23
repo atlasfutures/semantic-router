@@ -52,7 +52,7 @@
       "event": "response.output_item.added",
       "data": {
         "item": {
-          "arguments": "{}",
+          "arguments": "",
           "call_id": "toolu_fixture",
           "id": "toolu_fixture",
           "name": "bash",
