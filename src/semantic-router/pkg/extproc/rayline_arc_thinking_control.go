@@ -17,10 +17,10 @@ limitations under the License.
 package extproc
 
 import (
-	"strings"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/tidwall/sjson"
 
@@ -332,7 +332,9 @@ func raylineARCPlacementScope(profile *config.ProviderProfile) string {
 
 // raylineARCWorkerPlacementScope is the placement scope of a worker's
 // endpoints ("" when they differ or cannot be read: such a worker is not a
-// Vertex AI-only one).
+// Vertex AI-only one). Config load refuses a model whose backends are of
+// different providers (TestVertexBackendIsNotMixedWithOthers), so a worker's
+// endpoints share one scope.
 func raylineARCWorkerPlacementScope(cfg *config.RouterConfig, worker string) string {
 	endpoints := cfg.GetEndpointsForModel(worker)
 	scope := ""
