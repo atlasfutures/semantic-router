@@ -210,7 +210,7 @@ func planRaylineARCThinkingControl(
 	if err != nil {
 		return nil, false, err
 	}
-	key := thinkingcontrol.PlacementKey(worker, format)
+	key := raylineARCPlacementKey(worker, format, dispatch.profile)
 	committed, found, hasEpisode := ctx.RaylineARCTransaction.committedControlPlacement(key)
 	if !hasEpisode {
 		return nil, false, errThinkingControlEpisode
@@ -298,4 +298,17 @@ func thinkingControlTrace(
 		trace.ResetReason = *receipt.EpochResetReason
 	}
 	return trace
+}
+
+// raylineARCPlacementKey names the worker's placer for a turn. A dispatch to
+// a managed cloud (Vertex AI) has a placer of its own: its registry cell
+// admits other controls than the endpoint the worker served before, so a
+// worker moved there under the same name, format and episode store starts a
+// new transcript instead of replaying instructions the cloud's cell refuses.
+// Every other dispatch keeps the plain worker|format key.
+func raylineARCPlacementKey(worker, format string, profile *config.ProviderProfile) string {
+	if providerIsVertexAI(profile) {
+		return thinkingcontrol.PlacementKey(worker+"|vertex-ai", format)
+	}
+	return thinkingcontrol.PlacementKey(worker, format)
 }

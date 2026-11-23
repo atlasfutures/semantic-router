@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // A keyless Vertex AI config: a Claude card on the Messages protocol, an open
 // model on the OpenAI-compatible endpoint, and the google-access-token authz
@@ -101,5 +104,19 @@ func TestVertexKeylessConfigLoads(t *testing.T) {
 		if err != nil || served != w.registryModel {
 			t.Fatalf("%s: registry model = %q, %v; want %q", model, served, err, w.registryModel)
 		}
+	}
+}
+
+// A Vertex AI backend's base URL names one API, so a model on it accepts one
+// format: listing both would resolve one of them under the wrong base path.
+func TestVertexBackendAcceptsOneFormat(t *testing.T) {
+	both := strings.Replace(vertexKeylessConfig, "      api_format: anthropic\n",
+		"      api_format: anthropic\n      accepted_formats: [anthropic, openai]\n", 1)
+	if both == vertexKeylessConfig {
+		t.Fatal("the fixture no longer has the Claude worker's api_format")
+	}
+	_, err := ParseYAMLBytes([]byte(both))
+	if err == nil || !strings.Contains(err.Error(), "Vertex AI, whose base URL serves one API") {
+		t.Fatalf("a Vertex AI model accepting two formats loaded: %v", err)
 	}
 }

@@ -48,6 +48,19 @@ func validateAcceptedFormatBindings(
 	formats []string,
 	providers []modelcatalog.EffectiveModelProvider,
 ) error {
+	if len(formats) > 1 {
+		for index, provider := range providers {
+			// A Vertex AI base URL names one API: the Messages publisher path
+			// or the OpenAI-compatible /endpoints/openapi. The other format's
+			// path would resolve under the wrong base.
+			if provider.Provider.Definition.ID == "vertex-ai" {
+				return fmt.Errorf(
+					"providers.models[%s].accepted_formats: backend_refs[%d] is Vertex AI, whose base URL serves one API; list one format",
+					modelName, index,
+				)
+			}
+		}
+	}
 	for _, format := range formats {
 		protocol := catalogProtocolForAPIFormat(format)
 		for index, provider := range providers {
