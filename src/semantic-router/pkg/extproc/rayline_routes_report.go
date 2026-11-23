@@ -281,9 +281,16 @@ func (scorer *policyServiceScorer) reportedRun(report raylineReport, candidates 
 	}
 	run := raylinearc.ReportedRun{Call: report.call}
 	if action == "" {
-		// Two arms can serve one model through different providers; the
-		// package's first is taken.
-		run.Arm = scorer.bindings[candidates[0]].arm
+		// The model's actions may sit on different policy arms (two arms can
+		// share one dispatch worker): with no action to tell them apart, the
+		// arm is not known and the turn is recorded with none.
+		arm := scorer.bindings[candidates[0]].arm
+		for _, candidate := range candidates[1:] {
+			if scorer.bindings[candidate].arm != arm {
+				return unattributedReportRun(report)
+			}
+		}
+		run.Arm = arm
 		run.Model = scorer.actionModel(candidates[0])
 		return run
 	}

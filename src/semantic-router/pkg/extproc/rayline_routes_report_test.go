@@ -616,3 +616,39 @@ func TestRoutesLookupThenReportThroughTheProcessingStream(t *testing.T) {
 		t.Fatalf("record %+v", state)
 	}
 }
+
+// A reported model whose actions sit on different arms (two policy arms
+// sharing one dispatch worker), none of them the decided action, says which
+// model ran but not which arm: the turn is recorded with no arm rather than
+// on the package's first.
+func TestReportedRunAcrossArmsIsUnattributed(t *testing.T) {
+	scorer := &policyServiceScorer{
+		workerIDs: []string{"glm", "opus"},
+		workers:   []raylinearc.WorkerManifest{{ID: "glm", Model: "vendor/glm"}, {ID: "opus", Model: "vendor/opus"}},
+		bindings: map[string]policyBinding{
+			"glm-up":   {arm: 0, dispatchArm: 1, model: "vendor/glm", level: "up"},
+			"opus-max": {arm: 1, dispatchArm: 1, model: "vendor/opus", level: "max"},
+		},
+		actionOrder: []string{"glm-up", "opus-max"},
+	}
+	report := raylineReport{model: "vendor/opus"}
+	candidates, refusal := scorer.reportCandidates(report)
+	if refusal != nil || len(candidates) != 2 {
+		t.Fatalf("candidates %v (%v)", candidates, refusal)
+	}
+	if run := scorer.reportedRun(report, candidates, "other"); run.Arm != -1 || run.ActionID != "" {
+		t.Fatalf("run %+v, want no arm", run)
+	}
+	if run := scorer.reportedRun(report, candidates, "opus-max"); run.Arm != 1 || run.ActionID != "opus-max" {
+		t.Fatalf("with the decided action: run %+v", run)
+	}
+}
+
+// A streamed report's guard breaches name the report, not a route lookup.
+func TestStreamedReportGuardBreachNamesTheReport(t *testing.T) {
+	ctx := reportContext(nil)
+	response := routesRouter(true).raylineRoutesGuardBreach(ctx, ErrStreamedBodyTooLarge)
+	if body := string(response.GetImmediateResponse().GetBody()); !strings.Contains(body, "report body") || strings.Contains(body, "route lookup") {
+		t.Fatalf("body %s", body)
+	}
+}

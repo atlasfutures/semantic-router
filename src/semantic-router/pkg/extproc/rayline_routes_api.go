@@ -1294,19 +1294,24 @@ func (r *OpenAIRouter) raylineRoutesGuardBreach(
 	ctx *RequestContext,
 	err error,
 ) *ext_proc.ProcessingResponse {
+	// A report shares this path; its caller is told about its own body.
+	what := "route lookup body"
+	if isRaylineReportRequest(ctx) {
+		what = "report body"
+	}
 	if errors.Is(err, ErrStreamedBodyTimeout) {
 		return r.createRaylineRoutesError(
 			ctx,
 			504,
 			"timeout_error",
-			"route lookup body did not arrive within the accumulation deadline",
+			what+" did not arrive within the accumulation deadline",
 		)
 	}
 	return r.createRaylineRoutesError(
 		ctx,
 		413,
 		"invalid_request_error",
-		"route lookup body exceeds the accumulation limit",
+		what+" exceeds the accumulation limit",
 	)
 }
 
