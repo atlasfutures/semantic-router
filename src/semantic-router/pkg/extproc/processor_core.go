@@ -65,11 +65,15 @@ func (r *OpenAIRouter) handleRequestBodyDispatch(v *ext_proc.ProcessingRequest_R
 		// safe answer: the lookup needs the whole body, and this mode hands
 		// the router chunks it is not accumulating.
 		if isRaylineServedRequest(ctx) {
+			what := "route lookup"
+			if isRaylineReportRequest(ctx) {
+				what = "report"
+			}
 			return r.createRaylineRoutesError(
 				ctx,
 				503,
 				"api_error",
-				"route lookup is unavailable while request bodies stream full duplex",
+				what+" is unavailable while request bodies stream full duplex",
 			), nil
 		}
 		return newFullDuplexRequestBodyResponse(v.RequestBody.GetBody(), eos), nil

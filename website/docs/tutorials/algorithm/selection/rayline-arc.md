@@ -860,7 +860,8 @@ as a turn marked `reported`, for the model that actually ran:
   to settle the conversation's pending decision, if the call finished after
   that decision was made; with nothing pending it changes nothing. `report_id`
   marks a retry of the same report as a duplicate. `model` is the ARC id the
-  conversation is routed by (the default tier when absent).
+  conversation is routed by (the default tier when absent; a name that is
+  not an ARC model this cell serves is refused).
 - `executed.model` is required, in the names a lookup returns. `action_id`
   (a lookup's `policy_action_id` or an alternative's `action_id`) or
   `thinking_level` pick the exact action; with the model alone, the decided
@@ -885,8 +886,8 @@ answer is an error in the lookup's envelope: `400` for a malformed report,
 conversation, `503` or `504` when the episode store fails or is slow.
 
 `x-rayline-report-source: gateway` marks a report from a gateway in front of
-the cell, of a call it sent to a provider itself; anything else is a client's
-report. When both name the same `route_id`, the gateway's report wins, while
+the cell, of a call it sent to a provider itself; `client`, or no header, is
+a client's report, and any other value is refused with `400`. When both name the same `route_id`, the gateway's report wins, while
 no later turn has been recorded. The header decides nothing else. A gateway
 that exposes this endpoint must set or overwrite it and remove it from client
 requests, or a client could claim the gateway's precedence.

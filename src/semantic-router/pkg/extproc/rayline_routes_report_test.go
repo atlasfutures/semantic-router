@@ -369,6 +369,7 @@ func TestRoutesReportRefusals(t *testing.T) {
 		"unknown source":    {"c", "admin", executedReport("", "off", nil), 400, "invalid_report"},
 		"output tokens":     {"c", "", executedReport("", "off", map[string]any{"usage": map[string]any{"output_tokens": 5}}), 400, "invalid_report"},
 		"unknown tier":      {"c", "", map[string]any{"model": "arc-9", "executed": map[string]any{"model": "off", "finished_at": time.Now().UTC().Format(time.RFC3339)}}, 400, "unknown_model"},
+		"non-ARC tier":      {"c", "", map[string]any{"model": "gpt-typo", "executed": map[string]any{"model": "off", "finished_at": time.Now().UTC().Format(time.RFC3339)}}, 400, "unknown_model"},
 		"ttl out of bounds": {"c", "", executedReport("", "off", map[string]any{"usage": map[string]any{"cache_ttl_seconds": 0}}), 400, "invalid_report"},
 		"zero-time finish":  {"c", "", executedReport("", "off", map[string]any{"finished_at": "0001-01-01T00:00:00.000000001Z"}), 400, "invalid_report"},
 		"day-old finish":    {"c", "", executedReport("", "off", map[string]any{"finished_at": time.Now().Add(-25 * time.Hour).UTC().Format(time.RFC3339)}), 400, "invalid_report"},
@@ -649,6 +650,33 @@ func TestStreamedReportGuardBreachNamesTheReport(t *testing.T) {
 	ctx := reportContext(nil)
 	response := routesRouter(true).raylineRoutesGuardBreach(ctx, ErrStreamedBodyTooLarge)
 	if body := string(response.GetImmediateResponse().GetBody()); !strings.Contains(body, "report body") || strings.Contains(body, "route lookup") {
+		t.Fatalf("body %s", body)
+	}
+}
+
+// A report naming the cell's own ARC model is accepted on that tier.
+func TestRoutesReportNamingTheCellsModel(t *testing.T) {
+	fixture := newPendingRoutesFixture(t, true, "")
+	first := fixture.lookup(t, "conversation-tier", pendingRoutesBody(t, pendingTurnTask))
+	body := executedReport(first.RouteID, first.Model, nil)
+	body["model"] = "rayline/arc-dev"
+	if answer := fixture.report(t, "conversation-tier", "", body); answer.Reason != raylinearc.ReportPendingResolved {
+		t.Fatalf("answer %+v", answer)
+	}
+}
+
+// A report refused because request bodies stream full duplex names the
+// report, not a route lookup.
+func TestFullDuplexReportRefusalNamesTheReport(t *testing.T) {
+	ctx := reportContext(nil)
+	ctx.FullDuplexRequestBody = true
+	response, err := routesRouter(true).handleRequestBodyDispatch(&ext_proc.ProcessingRequest_RequestBody{
+		RequestBody: &ext_proc.HttpBody{Body: []byte(`{}`), EndOfStream: true},
+	}, ctx)
+	if err != nil || response.GetImmediateResponse() == nil {
+		t.Fatalf("not refused here (%v)", err)
+	}
+	if body := string(response.GetImmediateResponse().GetBody()); !strings.Contains(body, "report") || strings.Contains(body, "route lookup") {
 		t.Fatalf("body %s", body)
 	}
 }

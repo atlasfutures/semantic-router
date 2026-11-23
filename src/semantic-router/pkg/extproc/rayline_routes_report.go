@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/atlasfutures/semantic-router/rayline-core/cachecontext"
@@ -329,6 +330,14 @@ func (r *OpenAIRouter) handleRaylineReportAPI(body []byte, ctx *RequestContext) 
 	recipe, target, refusal := r.raylineRoutesTier(body)
 	if refusal != nil {
 		return r.createRaylineRoutesCodedError(ctx, refusal)
+	}
+	// Only an absent model means the default tier. A named one must be a
+	// name this cell's config selects or a public ARC tier; a lookup reads
+	// any other name as the default tier, a report refuses it.
+	if model := strings.TrimSpace(raylineRoutesModelOf(body)); model != "" {
+		if _, configured := r.Config.RecipeForRoutingModel(model); !configured && raylineARCCanonicalTier(model) == "" {
+			return r.createRaylineRoutesCodedError(ctx, routesInvalid("unknown_model", "Unknown ARC model: "+model))
+		}
 	}
 	episode := raylineRoutesEpisodeIdentity(ctx)
 	if episode == "" {
