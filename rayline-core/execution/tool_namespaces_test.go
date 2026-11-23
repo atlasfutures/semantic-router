@@ -106,6 +106,30 @@ func TestLocalResponsesFlattensToolNamespaces(t *testing.T) {
 	}
 }
 
+// A turn that no longer declares a namespace still resends the calls made
+// under it; they reach the function-only server flattened.
+func TestLocalResponsesFlattensHistoryWithoutNamespaceTools(t *testing.T) {
+	var mu sync.Mutex
+	var sent []string
+	upstream := functionOnlyServer(t, "exec_command", &sent, &mu)
+	defer upstream.Close()
+	_, server := executorWithHTTPDecisions(t, onProtocol(t, testConfig(t, upstream.URL, false), llmprotocol.OpenAIResponsesV1), &decisionCapture{})
+	status, result := executeHTTP(t, server.URL, "/v1/responses", `{"model":"arc-1.0","max_output_tokens":64,"input":[`+
+		`{"role":"user","content":"spawn a helper"},`+
+		`{"type":"function_call","call_id":"call_old","namespace":"multi_agent_v1","name":"spawn_agent","arguments":"{}"},`+
+		`{"type":"function_call_output","call_id":"call_old","output":"agent-7"},`+
+		`{"role":"user","content":"go on"}],`+
+		`"tools":[{"type":"function","name":"exec_command","parameters":{"type":"object"}}]}`, "namespace-history-only")
+	if status != 200 {
+		t.Fatalf("history-only namespace returned %d: %s", status, result)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if !strings.Contains(sent[0], `"name":"multi_agent_v1__spawn_agent"`) {
+		t.Fatalf("the namespaced history call was not flattened: %s", sent[0])
+	}
+}
+
 // A plain tool already named like a flattened one cannot be told apart from
 // it: decoding refuses the request for every target, so nothing is sent.
 func TestFlattenedToolNameCollisionIsRefused(t *testing.T) {

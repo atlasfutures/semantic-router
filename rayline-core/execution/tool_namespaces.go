@@ -25,22 +25,22 @@ func flattensToolNamespaces(deployment Deployment) bool {
 // every namespaced call in the history under its qualified name, and returns
 // the map that restores the namespace on a returned call. Decoding already
 // refused a request in which a qualified name is also another tool's name
-// (duplicate_tool), so every flattened name stands for one tool.
+// (duplicate_tool), so every flattened name stands for one tool. A history
+// call is flattened even when this turn no longer declares its namespace.
 func flattenToolNamespaces(request *llmprotocol.Request) map[string][2]string {
 	namespaces := llmprotocol.ToolNamespaces(request.Tools)
-	if namespaces == nil {
-		return nil
-	}
-	tools := make([]llmprotocol.Tool, 0, len(request.Tools))
-	for _, tool := range request.Tools {
-		if tool.Namespace != "" {
-			tool.Description = llmprotocol.FlattenedToolDescription(tool)
-			tool.Name = llmprotocol.QualifiedToolName(tool.Namespace, tool.Name)
-			tool.Namespace, tool.NamespaceDescription = "", ""
+	if namespaces != nil {
+		tools := make([]llmprotocol.Tool, 0, len(request.Tools))
+		for _, tool := range request.Tools {
+			if tool.Namespace != "" {
+				tool.Description = llmprotocol.FlattenedToolDescription(tool)
+				tool.Name = llmprotocol.QualifiedToolName(tool.Namespace, tool.Name)
+				tool.Namespace, tool.NamespaceDescription = "", ""
+			}
+			tools = append(tools, tool)
 		}
-		tools = append(tools, tool)
+		request.Tools = tools
 	}
-	request.Tools = tools
 	messages := make([]llmprotocol.Message, len(request.Messages))
 	for index, message := range request.Messages {
 		messages[index] = message
