@@ -708,3 +708,36 @@ func TestRoutesReportNamingANonARCRecipeIsRefused(t *testing.T) {
 		t.Fatalf("the default tier's decision changed: %+v", state)
 	}
 }
+
+// The report of a turn outlives the client's next lookup: lookup, the
+// client's report, the next turn's lookup (which stores its own pending
+// decision), then the gateway's report naming the first route id replaces
+// the client's version of that turn, and the client's retry of its report
+// is recognised as a duplicate. Both need the episode the lookup writes to
+// keep the last report.
+func TestRoutesReportOutlivesTheNextLookup(t *testing.T) {
+	fixture := newPendingRoutesFixture(t, true, "")
+	fixture.picks = []string{fixture.actions[0], fixture.actions[2]}
+	const conversation = "conversation-outlives"
+	first := fixture.lookup(t, conversation, pendingRoutesBody(t, pendingTurnTask))
+	clientReport := executedReport(first.RouteID, first.Model, nil)
+	clientReport["report_id"] = "client-call-1"
+	if answer := fixture.report(t, conversation, "", clientReport); answer.Reason != raylinearc.ReportPendingResolved {
+		t.Fatalf("client report %+v", answer)
+	}
+	next := fixture.lookup(t, conversation, pendingRoutesBody(t, pendingTurnTask, pendingTurnReply, pendingTurnNext))
+	state := fixture.stored(t, conversation)
+	if state.Pending == nil || state.Pending.RouteID != next.RouteID || state.LastReport == nil || state.LastReport.RouteID != first.RouteID {
+		t.Fatalf("after the next lookup: pending %+v last report %+v", state.Pending, state.LastReport)
+	}
+	if answer := fixture.report(t, conversation, raylinearc.ReportSourceGateway, executedReport(first.RouteID, "off", nil)); answer.Reason != raylinearc.ReportClientReplaced {
+		t.Fatalf("gateway report %+v", answer)
+	}
+	state = fixture.stored(t, conversation)
+	if state.TurnIndex != 1 || *state.PreviousArm != 1 || state.Pending == nil || state.Pending.RouteID != next.RouteID {
+		t.Fatalf("after the gateway's correction: %+v pending %+v", state, state.Pending)
+	}
+	if answer := fixture.report(t, conversation, "", clientReport); answer.Status != "ignored" || answer.Reason != raylinearc.ReportDuplicate {
+		t.Fatalf("the client's retry %+v", answer)
+	}
+}
