@@ -438,6 +438,11 @@ func TestGatewayCorrectionBeforeALaterPendingDecision(t *testing.T) {
 			next.Pending.RouteID != "rte_2" || next.Pending.PriorServedModel != "vendor/a" {
 			t.Fatalf("superseded=%t: outcome %+v pending %+v", superseded, outcome, next.Pending)
 		}
+		// The later decision's own model stays the served-model record:
+		// the correction writes none while a decision is pending after it.
+		if next.ServedModel != "" {
+			t.Fatalf("superseded=%t: the correction writes served model %q over the pending decision's", superseded, next.ServedModel)
+		}
 	}
 }
 

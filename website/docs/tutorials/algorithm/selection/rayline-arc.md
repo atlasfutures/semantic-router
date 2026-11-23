@@ -872,8 +872,9 @@ as a turn marked `reported`, for the model that actually ran:
   when the call's response completed. Output tokens and cost are not
   accepted.
 - Limits: `route_id` and `report_id` up to 128 bytes, `executed.model` up to
-  256 bytes, the whole body up to 16 KiB, `finished_at` at most one minute
-  ahead of the cell's clock; unknown members are refused.
+  256 bytes, `cache_ttl_seconds` from 1 to 86400 when present, the whole
+  body up to 16 KiB, `finished_at` at most one minute ahead of the cell's
+  clock; unknown members are refused.
 
 A well-formed report is answered `200` whether it changed the record or was
 ignored, so a caller never retries a report that was read:

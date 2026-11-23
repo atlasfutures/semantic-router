@@ -356,7 +356,6 @@ func replaceClientReport(state *EpisodeState, report Report) (*EpisodeState, Rep
 	if entry := reportedEntry(decided, run); sameContext && entry != nil {
 		next.Policy = next.Policy.withLedgerEntry(*entry, next.Policy.PrefixLen, next.Policy.PrefixDigest)
 	}
-	next.ServedModel = run.Model
 	next.PreviousArm = nil
 	if run.Arm >= 0 {
 		arm := run.Arm
@@ -365,10 +364,14 @@ func replaceClientReport(state *EpisodeState, report Report) (*EpisodeState, Rep
 			LastUsed: report.FinishedAt.UTC(), LastInputTokens: last.InputTokens, Call: reportedCall(run, report, last.contextEpoch()),
 		}
 	}
-	// A decision pending after the corrected turn read the served model the
-	// client's report left; a request that drops it restores that record.
 	if next.Pending != nil {
+		// A decision pending after the corrected turn owns the served-model
+		// record (its lookup wrote its own model there) and keeps it; it read
+		// the client's model before it, which a request that drops it
+		// restores, so that is what is corrected.
 		next.Pending.PriorServedModel = run.Model
+	} else {
+		next.ServedModel = run.Model
 	}
 	next.LastReport = newLastReport(last.RouteID, report, state.TurnIndex, last.Message, run.Arm, nil)
 	next.LastReport.InputTokens, next.LastReport.Epoch = last.InputTokens, last.Epoch

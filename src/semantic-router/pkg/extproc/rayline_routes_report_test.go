@@ -730,11 +730,17 @@ func TestRoutesReportOutlivesTheNextLookup(t *testing.T) {
 	if state.Pending == nil || state.Pending.RouteID != next.RouteID || state.LastReport == nil || state.LastReport.RouteID != first.RouteID {
 		t.Fatalf("after the next lookup: pending %+v last report %+v", state.Pending, state.LastReport)
 	}
-	if answer := fixture.report(t, conversation, raylinearc.ReportSourceGateway, executedReport(first.RouteID, "off", nil)); answer.Reason != raylinearc.ReportClientReplaced {
+	if answer := fixture.report(t, conversation, raylinearc.ReportSourceGateway, executedReport(first.RouteID, "think", map[string]any{"thinking_level": "up"})); answer.Reason != raylinearc.ReportClientReplaced {
 		t.Fatalf("gateway report %+v", answer)
 	}
+	// The served-model record still names the pending next decision's model,
+	// as that lookup left it.
+	if served, err := fixture.store.LastServedModel(context.Background(), raylinearc.HashEpisodeID(conversation)); err != nil || served != state.Pending.Model {
+		t.Fatalf("served model %q (%v), want the pending decision's %q", served, err, state.Pending.Model)
+	}
 	state = fixture.stored(t, conversation)
-	if state.TurnIndex != 1 || *state.PreviousArm != 1 || state.Pending == nil || state.Pending.RouteID != next.RouteID {
+	if state.TurnIndex != 1 || *state.PreviousArm != 0 || state.Policy.Ledger[0].ActionID != fixture.actions[1] ||
+		state.Pending == nil || state.Pending.RouteID != next.RouteID {
 		t.Fatalf("after the gateway's correction: %+v pending %+v", state, state.Pending)
 	}
 	if answer := fixture.report(t, conversation, "", clientReport); answer.Status != "ignored" || answer.Reason != raylinearc.ReportDuplicate {
