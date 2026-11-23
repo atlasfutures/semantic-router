@@ -145,9 +145,18 @@ func recordPolicySession(
 		trace.PolicySessionBinding = binding
 	}
 	if trace.PolicySessionMoved {
-		logging.ComponentWarnEvent("extproc", "rayline_arc_policy_session_moved", map[string]interface{}{
+		fields := map[string]interface{}{
 			"episode_id_hash": episodeIDHash,
 			"sessions":        trace.PolicySessions,
-		})
+		}
+		// Why it moved, so a new answer that moves turns is named on its
+		// first hit.
+		if reason, code := binding.MoveReason(); reason != "" {
+			fields["reason"] = reason
+			if code != "" {
+				fields["upstream_error"] = code
+			}
+		}
+		logging.ComponentWarnEvent("extproc", "rayline_arc_policy_session_moved", fields)
 	}
 }

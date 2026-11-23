@@ -150,3 +150,7 @@ and [Chat parameter parser](https://github.com/ggml-org/llama.cpp/blob/36e36e63a
 with unchanged pins therefore does not prove residency; local cache TTL and
 residency remain unknown. Sidecar restart creates a fresh execution instance and
 clears all checkpoints. Transcript rewrites clear the branch epoch and checkpoints.
+
+## Change review
+
+Changes to `vsr-next` go through a pull request with `Router Go tests` passing and one approval.

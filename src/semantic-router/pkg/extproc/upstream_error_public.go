@@ -26,14 +26,21 @@ func publicUpstreamError(
 	if ctx != nil {
 		requestID = ctx.RequestID
 	}
-	logging.ComponentEvent("extproc", "upstream_error_redacted", map[string]interface{}{
+	redacted := llmprotocol.RedactProviderText(protocolError.Message)
+	fields := map[string]interface{}{
 		"request_id":        requestID,
 		"path":              path,
 		"upstream_status":   status,
 		"upstream_category": string(protocolError.Category),
 		"upstream_detail":   providerStreamFailureDetail(protocolError),
-		"upstream_message":  logging.ContentDescriptor(llmprotocol.RedactProviderText(protocolError.Message)),
+		"upstream_message":  logging.ContentDescriptor(redacted),
 		"public_code":       public.Code,
-	})
+	}
+	// Which request member the provider rejected, as contract paths only
+	// (upstreamErrorFields): the message itself stays withheld.
+	if named := upstreamErrorFields(redacted); len(named) > 0 {
+		fields["upstream_error_fields"] = named
+	}
+	logging.ComponentEvent("extproc", "upstream_error_redacted", fields)
 	return public
 }
