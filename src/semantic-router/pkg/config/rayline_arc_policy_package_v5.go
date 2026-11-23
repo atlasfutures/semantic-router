@@ -401,7 +401,7 @@ func validateRaylineARCPolicyPackageV5Dispatch(cfg *RouterConfig, decision Decis
 			return fmt.Errorf("policy_service binding names action %s, which is not in the package", binding.ActionID)
 		}
 		bound[binding.ActionID] = true
-		masked, err := raylineARCBindingAdmission(cfg, registry, policy, binding, action)
+		masked, err := raylineARCBindingAdmission(cfg, registry, policy, pkg, binding, action)
 		if err != nil {
 			return err
 		}
@@ -430,7 +430,7 @@ func validateRaylineARCPolicyPackageV5Dispatch(cfg *RouterConfig, decision Decis
 	}
 	for model := range maskedByModel {
 		if admittedByModel[model] == 0 {
-			return fmt.Errorf("every action of model %q is on a Vertex AI worker whose registry cell does not admit its control; "+
+			return fmt.Errorf("every action of model %q is on a Vertex AI or Bedrock worker whose registry cell does not admit its control; "+
 				"the model would never be offered", model)
 		}
 	}
@@ -550,13 +550,14 @@ func RaylineARCRegistryModel(cfg *RouterConfig, worker string) (string, error) {
 	served := ""
 	for _, endpoint := range endpoints {
 		model := cfg.ResolveExternalModelID(worker, endpoint.Name)
-		if raylineARCVertexEndpoint(cfg, endpoint.Name) {
-			// Vertex AI names a publisher model by its own id; the registry
-			// names it by the model's provider_model_id.
+		if cloud := raylineARCManagedCloudEndpoint(cfg, endpoint.Name); cloud != "" {
+			// A managed cloud names a model by its own id (a Vertex AI
+			// publisher model, a Bedrock model or inference profile); the
+			// registry names it by the model's provider_model_id.
 			canonical := cfg.ModelConfig[worker].ExternalModelIDs["default"]
 			if canonical == "" {
-				return "", fmt.Errorf("worker %q endpoint %q is on Vertex AI and names no provider_model_id for the registry",
-					worker, endpoint.Name)
+				return "", fmt.Errorf("worker %q endpoint %q is on %s and names no provider_model_id for the registry",
+					worker, endpoint.Name, cloud)
 			}
 			model = canonical
 		}
@@ -569,8 +570,8 @@ func RaylineARCRegistryModel(cfg *RouterConfig, worker string) (string, error) {
 }
 
 // RaylineARCMaskedBinding is a policy binding left out of the offer: its
-// worker is served by Vertex AI, and the registry cell it dispatches on does
-// not admit its control.
+// worker is served by a managed cloud (Vertex AI or Amazon Bedrock), and the
+// registry cell it dispatches on does not admit its control.
 type RaylineARCMaskedBinding struct {
 	ActionID string
 	Model    string
@@ -581,16 +582,25 @@ type RaylineARCMaskedBinding struct {
 
 // raylineARCBindingAdmission admits a binding's control on the registry cell
 // of each format its worker accepts. A refusal fails the config, except on a
-// worker served only by Vertex AI, where a steered control (one with an
-// instruction) is masked instead: steering evidence is bound to the
-// endpoints it was measured on, and Vertex AI is not one of them for every
-// model, so the binding is left out of the offer and the action's model is
-// served through its other actions. A plain control (no instruction) that
-// is refused still fails the config, on Vertex AI too.
+// worker served only by a managed cloud (Vertex AI or Amazon Bedrock), where
+// the binding is masked instead (left out of the offer, the action's model
+// served through its other actions) when its control is
+//   - steered (it has an instruction): steering evidence is bound to the
+//     endpoints it was measured on, and neither cloud is one of them for
+//     every model; or
+//   - plain with a named native effort (not off, not the native default, no
+//     budget), and the action is neither the package's fallback nor a
+//     reference action: the cloud's endpoint may not take that effort, and
+//     the model keeps its native-default action.
+//
+// Any other refused plain control still fails the config, on those clouds
+// too. The caller fails the config when masking leaves a model no admitted
+// action.
 func raylineARCBindingAdmission(
 	cfg *RouterConfig,
 	registry *thinkingcontrol.Registry,
 	policy *RaylineARCPolicyServiceConfig,
+	pkg *raylineARCPolicyPackageV5,
 	binding RaylineARCPolicyBinding,
 	action RaylineARCPolicyActionV5,
 ) (*RaylineARCMaskedBinding, error) {
@@ -610,21 +620,51 @@ func raylineARCBindingAdmission(
 			return nil, fmt.Errorf("policy_service binding for action %s on worker %q: %w", binding.ActionID, binding.Worker, err)
 		}
 		if _, err := registry.Admit(served, provider, format, action.Control, policy.AllowExperimentalControls); err != nil {
-			if action.Control.Instruction == nil || !raylineARCVertexWorker(cfg, binding.Worker) {
+			cell := served + " on " + provider + "x" + format
+			reason := err.Error()
+			switch {
+			case !raylineARCManagedCloudWorker(cfg, binding.Worker):
+				return nil, fmt.Errorf("policy_service binding for action %s on worker %q: %w", binding.ActionID, binding.Worker, err)
+			case action.Control.Instruction != nil:
+			case raylineARCMaskablePlainControl(pkg, binding.ActionID, action.Control):
+				reason = "native effort base not admitted on " + cell
+			default:
 				return nil, fmt.Errorf("policy_service binding for action %s on worker %q: %w", binding.ActionID, binding.Worker, err)
 			}
 			return &RaylineARCMaskedBinding{
 				ActionID: binding.ActionID, Model: action.Model, Worker: binding.Worker,
-				Cell: served + " on " + provider + "x" + format, Reason: err.Error(),
+				Cell: cell, Reason: reason,
 			}, nil
 		}
 	}
 	return nil, nil
 }
 
+// raylineARCMaskablePlainControl reports whether a refused plain control may
+// be masked on a managed-cloud worker: a named native effort, on an action
+// that is neither the package's fallback nor one of its reference actions.
+func raylineARCMaskablePlainControl(pkg *raylineARCPolicyPackageV5, actionID string, control thinkingcontrol.Control) bool {
+	if control.Instruction != nil || control.BudgetTokens != nil || pkg == nil || pkg.manifest == nil {
+		return false
+	}
+	switch control.Native {
+	case "", raylineARCRegistryBaseOff, raylineARCRegistryBaseDefault:
+		return false
+	}
+	if actionID == pkg.manifest.Decision.FallbackActionID {
+		return false
+	}
+	for _, reference := range pkg.manifest.Decision.ReferenceActionIDs {
+		if actionID == reference {
+			return false
+		}
+	}
+	return true
+}
+
 // RaylineARCMaskedBindings lists the decision's bindings left out of the
 // offer (raylineARCBindingAdmission). It is empty for a decision without a
-// v5 package, and for one with no worker on Vertex AI. A config that loaded
+// v5 package, and for one with no worker on a managed cloud. A config that loaded
 // has passed the same checks, so an error here lists nothing.
 func RaylineARCMaskedBindings(cfg *RouterConfig, decision *Decision) []RaylineARCMaskedBinding {
 	if cfg == nil || decision == nil || decision.Algorithm == nil || decision.Algorithm.RaylineARC == nil ||
@@ -643,34 +683,50 @@ func RaylineARCMaskedBindings(cfg *RouterConfig, decision *Decision) []RaylineAR
 	var masked []RaylineARCMaskedBinding
 	for _, binding := range policy.Bindings {
 		action, ok := pkg.actions[binding.ActionID]
-		if !ok || !raylineARCVertexWorker(cfg, binding.Worker) {
+		if !ok || !raylineARCManagedCloudWorker(cfg, binding.Worker) {
 			continue
 		}
-		if m, err := raylineARCBindingAdmission(cfg, registry, policy, binding, action); err == nil && m != nil {
+		if m, err := raylineARCBindingAdmission(cfg, registry, policy, pkg, binding, action); err == nil && m != nil {
 			masked = append(masked, *m)
 		}
 	}
 	return masked
 }
 
-// raylineARCVertexWorker reports whether every endpoint of the worker is
-// Vertex AI.
-func raylineARCVertexWorker(cfg *RouterConfig, worker string) bool {
+// raylineARCManagedCloudWorker reports whether every endpoint of the worker
+// is a managed cloud (Vertex AI or Amazon Bedrock).
+func raylineARCManagedCloudWorker(cfg *RouterConfig, worker string) bool {
 	endpoints := cfg.GetEndpointsForModel(worker)
 	if len(endpoints) == 0 {
 		return false
 	}
 	for _, endpoint := range endpoints {
-		if !raylineARCVertexEndpoint(cfg, endpoint.Name) {
+		if raylineARCManagedCloudEndpoint(cfg, endpoint.Name) == "" {
 			return false
 		}
 	}
 	return true
 }
 
-func raylineARCVertexEndpoint(cfg *RouterConfig, endpointName string) bool {
+// raylineARCManagedCloudEndpoint names the managed cloud an endpoint's
+// profile is (Vertex AI or Amazon Bedrock), or "" for any other provider.
+func raylineARCManagedCloudEndpoint(cfg *RouterConfig, endpointName string) string {
 	profile, err := cfg.GetProviderProfileForEndpoint(endpointName)
-	return err == nil && profile != nil && strings.EqualFold(strings.TrimSpace(profile.Type), "vertex-ai")
+	if err != nil || profile == nil {
+		return ""
+	}
+	return raylineARCManagedCloud(profile)
+}
+
+func raylineARCManagedCloud(profile *ProviderProfile) string {
+	switch strings.ToLower(strings.TrimSpace(profile.Type)) {
+	case "vertex-ai":
+		return "Vertex AI"
+	case "bedrock":
+		return "Amazon Bedrock"
+	default:
+		return ""
+	}
 }
 
 func RaylineARCRegistryProvider(cfg *RouterConfig, worker string) (provider string, err error) {
@@ -691,25 +747,25 @@ func RaylineARCRegistryProvider(cfg *RouterConfig, worker string) (provider stri
 			name = "anthropic"
 		case strings.EqualFold(strings.TrimSpace(profile.Type), "openai"):
 			name = "openai"
-		case strings.EqualFold(strings.TrimSpace(profile.Type), "vertex-ai"):
-			// Vertex AI serves a publisher model on that publisher's API: the
-			// Anthropic Messages API for Claude, the OpenAI chat API for the
-			// open models. Neither has been measured on Vertex AI.
+		case raylineARCManagedCloud(profile) != "":
+			// Vertex AI and Amazon Bedrock serve a model on its publisher's
+			// API: the Anthropic Messages API for Claude, the OpenAI chat API
+			// for the others. Neither cloud has been measured.
 			switch cfg.GetModelAPIFormat(worker) {
 			case APIFormatAnthropic:
 				// Admitted on OpenRouter Messages evidence (anthropic
-				// upstream); Vertex not measured. The controls are placed
-				// in the same Messages body, and the registry's base
-				// endpoints for these models include Vertex AI; the
-				// steering evidence was not taken on it.
+				// upstream); Vertex and Bedrock not measured. The controls
+				// are placed in the same Messages body, and the registry's
+				// base endpoints for these models include both clouds; the
+				// steering evidence was not taken on them.
 				name = "openrouter"
 			case APIFormatOpenAI:
 				// The chat cell: a control whose evidence is bound to other
 				// endpoints is not admitted here.
 				name = "openai"
 			default:
-				return "", fmt.Errorf("worker %q endpoint %q is on Vertex AI with api_format %q, which the thinking-control registry does not name",
-					worker, endpoint.Name, cfg.GetModelAPIFormat(worker))
+				return "", fmt.Errorf("worker %q endpoint %q is on %s with api_format %q, which the thinking-control registry does not name",
+					worker, endpoint.Name, raylineARCManagedCloud(profile), cfg.GetModelAPIFormat(worker))
 			}
 		default:
 			return "", fmt.Errorf("worker %q endpoint %q is provider type %q, which the thinking-control registry does not name",

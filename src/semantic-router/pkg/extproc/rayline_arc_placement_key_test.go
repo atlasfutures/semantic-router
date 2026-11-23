@@ -23,6 +23,10 @@ func TestRaylineARCPlacementKeySeparatesVertexAI(t *testing.T) {
 	if got := raylineARCPlacementKey("w", "chat", vertex); got == "w|chat" {
 		t.Fatal("a Vertex AI dispatch resumes the worker's other placer")
 	}
+	bedrock := &config.ProviderProfile{Type: "bedrock", BaseURL: "https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1"}
+	if got := raylineARCPlacementKey("w", "chat", bedrock); got != "w|bedrock|chat" {
+		t.Fatalf("a Bedrock dispatch's key = %q, want a placer of its own", got)
+	}
 }
 
 // Only a named scope is a scope: an older key's worker|format|shape...
@@ -32,6 +36,7 @@ func TestRaylineARCPlacementKeyPartsKeepLegacyKeysUnscoped(t *testing.T) {
 		"opus|messages":             {"opus", ""},
 		"opus|messages|high|-|true": {"opus", ""},
 		"opus|vertex-ai|chat":       {"opus", "vertex-ai"},
+		"opus|bedrock|messages":     {"opus", "bedrock"},
 	} {
 		worker, scope, ok := raylineARCPlacementKeyParts(key)
 		if !ok || worker != want[0] || scope != want[1] {

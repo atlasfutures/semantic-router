@@ -309,7 +309,7 @@ func thinkingControlTrace(
 }
 
 // raylineARCPlacementKey names the worker's placer for a turn. A dispatch to
-// a managed cloud (Vertex AI) has a placer of its own: its registry cell
+// a managed cloud (Vertex AI or Amazon Bedrock) has a placer of its own: its registry cell
 // admits other controls than the endpoint the worker served before, so a
 // worker moved there under the same name, format and episode store starts a
 // new transcript instead of replaying instructions the cloud's cell refuses.
@@ -322,17 +322,20 @@ func raylineARCPlacementKey(worker, format string, profile *config.ProviderProfi
 }
 
 // raylineARCPlacementScope is the scope a dispatch's placer key carries:
-// "vertex-ai" on Vertex AI, "" elsewhere.
+// "vertex-ai" on Vertex AI, "bedrock" on Amazon Bedrock, "" elsewhere.
 func raylineARCPlacementScope(profile *config.ProviderProfile) string {
-	if providerIsVertexAI(profile) {
+	switch {
+	case providerIsVertexAI(profile):
 		return "vertex-ai"
+	case providerIsBedrock(profile):
+		return "bedrock"
 	}
 	return ""
 }
 
 // raylineARCWorkerPlacementScope is the placement scope of a worker's
 // endpoints ("" when they differ or cannot be read: such a worker is not a
-// Vertex AI-only one). Config load refuses a model whose backends are of
+// managed-cloud-only one). Config load refuses a model whose backends are of
 // different providers (TestVertexBackendIsNotMixedWithOthers), so a worker's
 // endpoints share one scope.
 func raylineARCWorkerPlacementScope(cfg *config.RouterConfig, worker string) string {
@@ -360,7 +363,7 @@ func raylineARCPlacementKeyParts(key string) (worker, scope string, ok bool) {
 	if !ok {
 		return "", "", false
 	}
-	if second, _, _ := strings.Cut(rest, "|"); second == "vertex-ai" {
+	if second, _, _ := strings.Cut(rest, "|"); second == "vertex-ai" || second == "bedrock" {
 		return worker, second, true
 	}
 	return worker, "", true

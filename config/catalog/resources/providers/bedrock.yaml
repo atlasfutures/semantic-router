@@ -5,11 +5,17 @@ category: model_api
 support_tier: native
 protocols:
 - openai/chat-completions@1
+- anthropic/messages@1
 default_protocol: openai/chat-completions@1
 supported_operations:
 - openai/chat-completions@1#create
+- anthropic/messages@1#create
+# Chat Completions: base_url ends in .../openai/v1 (bedrock-runtime).
+# Messages (Claude): base_url ends in .../anthropic; the model (an inference
+# profile id) stays in the body, and anthropic-version is a header.
 path_overrides:
   openai/chat-completions@1#create: /chat/completions
+  anthropic/messages@1#create: /v1/messages
 auth:
   strategy: bearer
   header: Authorization
