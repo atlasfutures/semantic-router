@@ -111,6 +111,9 @@ type policyServiceScorer struct {
 	heldReleasable []bool
 	// effortOverrides is the cell's dispatch_effort_overrides, by worker.
 	effortOverrides map[string]string
+	// placementScopes is each worker's placer key scope
+	// (raylineARCPlacementScope), by worker; absent is "".
+	placementScopes map[string]string
 	// fallback is ADR 0120's fallback: excluded models leave the offer, and
 	// an excluded held model forces a decision.
 	fallback bool
@@ -257,6 +260,12 @@ func newPolicyServiceScorer(
 	}
 	index := make(map[string]int, len(decision.ModelRefs))
 	for arm, modelRef := range decision.ModelRefs {
+		if scope := raylineARCWorkerPlacementScope(cfg, modelRef.Model); scope != "" {
+			if scorer.placementScopes == nil {
+				scorer.placementScopes = map[string]string{}
+			}
+			scorer.placementScopes[modelRef.Model] = scope
+		}
 		index[modelRef.Model] = arm
 		scorer.workerIDs = append(scorer.workerIDs, modelRef.Model)
 		scorer.workers = append(scorer.workers, policyWorkerManifest(cfg, modelRef))

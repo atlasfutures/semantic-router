@@ -192,7 +192,9 @@ func NewMetadataTokenSource() *MetadataTokenSource {
 	return &MetadataTokenSource{
 		Host:   host,
 		Scopes: []string{googleCloudPlatformScope},
-		Client: &http.Client{Timeout: 10 * time.Second},
+		// The metadata server is link-local: never reach it through an
+		// HTTP(S)_PROXY, which would not exempt it by itself.
+		Client: &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{Proxy: nil}},
 	}
 }
 

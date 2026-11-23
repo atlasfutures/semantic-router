@@ -107,6 +107,28 @@ func TestV5OfferKeepsAWorkerAtItsTranscriptsBase(t *testing.T) {
 	}
 }
 
+// A worker now on Vertex AI is pinned only by its Vertex AI placement: the
+// placement it left on its earlier endpoint is not the transcript its turns
+// continue, so its base does not narrow the offer.
+func TestEffortPinsReadOnlyTheWorkersCurrentPlacement(t *testing.T) {
+	high := &thinkingcontrol.Control{Native: "high"}
+	plain := &thinkingcontrol.Control{Native: "default"}
+	scorer := &policyServiceScorer{placementScopes: map[string]string{"w": "vertex-ai"}}
+	old := raylinearc.ControlPlacement{Key: "w|messages", State: thinkingcontrol.PlacerState{First: high}}
+	if pins := scorer.effortPins([]raylinearc.ControlPlacement{old}); len(pins) != 0 {
+		t.Fatalf("the worker's earlier placement pinned it: %v", pins)
+	}
+	current := raylinearc.ControlPlacement{Key: "w|vertex-ai|chat", State: thinkingcontrol.PlacerState{First: plain}}
+	pins := scorer.effortPins([]raylinearc.ControlPlacement{old, current})
+	if pin, ok := pins["w"]; !ok || pin != effortBaseOf(*plain, "", false) {
+		t.Fatalf("pins = %v, want the Vertex AI placement's base", pins)
+	}
+	// A worker not on Vertex AI is pinned by its plain placement, as before.
+	if pins := (&policyServiceScorer{}).effortPins([]raylinearc.ControlPlacement{old}); len(pins) != 1 {
+		t.Fatalf("an unscoped worker's placement did not pin it: %v", pins)
+	}
+}
+
 func short(ids []string) string {
 	out := make([]string, 0, len(ids))
 	for _, id := range ids {

@@ -17,6 +17,7 @@ limitations under the License.
 package extproc
 
 import (
+	"strings"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -307,8 +308,49 @@ func thinkingControlTrace(
 // new transcript instead of replaying instructions the cloud's cell refuses.
 // Every other dispatch keeps the plain worker|format key.
 func raylineARCPlacementKey(worker, format string, profile *config.ProviderProfile) string {
-	if providerIsVertexAI(profile) {
-		return thinkingcontrol.PlacementKey(worker+"|vertex-ai", format)
+	if scope := raylineARCPlacementScope(profile); scope != "" {
+		return thinkingcontrol.PlacementKey(worker+"|"+scope, format)
 	}
 	return thinkingcontrol.PlacementKey(worker, format)
+}
+
+// raylineARCPlacementScope is the scope a dispatch's placer key carries:
+// "vertex-ai" on Vertex AI, "" elsewhere.
+func raylineARCPlacementScope(profile *config.ProviderProfile) string {
+	if providerIsVertexAI(profile) {
+		return "vertex-ai"
+	}
+	return ""
+}
+
+// raylineARCWorkerPlacementScope is the placement scope of a worker's
+// endpoints ("" when they differ or cannot be read: such a worker is not a
+// Vertex AI-only one).
+func raylineARCWorkerPlacementScope(cfg *config.RouterConfig, worker string) string {
+	endpoints := cfg.GetEndpointsForModel(worker)
+	scope := ""
+	for index, endpoint := range endpoints {
+		profile, err := cfg.GetProviderProfileForEndpoint(endpoint.Name)
+		if err != nil {
+			return ""
+		}
+		this := raylineARCPlacementScope(profile)
+		if index > 0 && this != scope {
+			return ""
+		}
+		scope = this
+	}
+	return scope
+}
+
+// raylineARCPlacementKeyParts splits a placer key into its worker and scope.
+func raylineARCPlacementKeyParts(key string) (worker, scope string, ok bool) {
+	worker, rest, ok := strings.Cut(key, "|")
+	if !ok {
+		return "", "", false
+	}
+	if scope, _, scoped := strings.Cut(rest, "|"); scoped {
+		return worker, scope, true
+	}
+	return worker, "", true
 }
