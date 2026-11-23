@@ -83,7 +83,7 @@ type raylineReportBody struct {
 	ReportID *string `json:"report_id"`
 	// Model is the ARC id the conversation is routed by; raylineRoutesTier
 	// reads it to pick the tier's episode store.
-	Model    *string                `json:"model"`
+	Model    json.RawMessage        `json:"model"`
 	Executed *raylineReportExecuted `json:"executed"`
 }
 
@@ -158,6 +158,14 @@ func readRaylineReport(body []byte, source string, now time.Time) (raylineReport
 		}
 	}
 	report.routeID, report.reportID = stringOf(wire.RouteID), stringOf(wire.ReportID)
+	// Only an absent model means the default tier: one that is present must
+	// name a model (null, empty or blank is refused).
+	if len(wire.Model) > 0 {
+		var model string
+		if json.Unmarshal(wire.Model, &model) != nil || strings.TrimSpace(model) == "" {
+			return raylineReport{}, reportInvalid("model, when present, must name an ARC model")
+		}
+	}
 	executed := wire.Executed
 	if executed == nil || executed.Model == "" || len(executed.Model) > raylineReportMaxModelBytes {
 		return raylineReport{}, reportInvalid(fmt.Sprintf("executed.model is required, at most %d bytes", raylineReportMaxModelBytes))
