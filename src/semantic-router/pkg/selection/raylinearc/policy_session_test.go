@@ -506,6 +506,64 @@ func TestPolicySessionUnrecognisedAnswerMovesOnce(t *testing.T) {
 	waitForTerminates(t, fake, 3)
 }
 
+// A JSON 404 for a token whose error is not one of the service's codes (prod
+// 2026-11-21: long-idle episodes failed policy_service_service_error on 3-6
+// turns before they moved) moves the turn once and names the code; the
+// service's own 404 package_not_loaded still fails it closed.
+func TestPolicySessionForeignJSON404MovesOnce(t *testing.T) {
+	fake := newFakeModalServer(t, 2)
+	backend := testSessionBackend(t, fake, time.Second)
+	first := backend.Bind(nil, false)
+	if _, err := sessionDecide(t, first); err != nil {
+		t.Fatal(err)
+	}
+	persisted, _ := first.Session()
+	fake.mu.Lock()
+	fake.unknownStatus, fake.unknownBody = http.StatusNotFound, `{"error":"session not found"}`
+	fake.mu.Unlock()
+	fake.expire(*persisted)
+	turn := backend.Bind(persisted, false)
+	if _, err := sessionDecide(t, turn); err != nil {
+		t.Fatalf("a foreign 404 for the session failed the turn: %v", err)
+	}
+	if _, moved := turn.Sessions(); !moved {
+		t.Fatal("a foreign 404 for the session did not move the turn")
+	}
+	if reason, code := turn.MoveReason(); reason != PolicySessionUnrecognisedClass || code != "session not found" {
+		t.Fatalf("MoveReason = %q, %q", reason, code)
+	}
+
+	fake.mu.Lock()
+	fake.unknownBody = `{"error":"package_not_loaded","detail":{}}`
+	fake.mu.Unlock()
+	again, _ := turn.Session()
+	fake.expire(*again)
+	refused := backend.Bind(again, false)
+	_, err := sessionDecide(t, refused)
+	var failure *PolicyServiceError
+	if !errors.As(err, &failure) || failure.Class != "package_not_loaded" {
+		t.Fatalf("package_not_loaded = %v, want it to fail the turn closed", err)
+	}
+	if _, moved := refused.Sessions(); moved {
+		t.Fatal("the service's package_not_loaded moved the turn")
+	}
+}
+
+// A foreign error code is logged as written only when it is short plain
+// words; anything else is withheld but for its length.
+func TestPolicyForeignErrorCodeIsBounded(t *testing.T) {
+	for code, want := range map[string]string{
+		"session not found":           "session not found",
+		"Unknown or expired session":  "Unknown or expired session",
+		"see https://x.example/a?b=c": "[withheld] len=27",
+		strings.Repeat("a", 65):       "[withheld] len=65",
+	} {
+		if got := policyForeignErrorCode(code); got != want {
+			t.Fatalf("policyForeignErrorCode(%q) = %q, want %q", code, got, want)
+		}
+	}
+}
+
 // A session that answers for another package (a container still on the
 // previous build after a rollover) is ended with the proxy key and the
 // token, and the turn is retried once on a new session.
