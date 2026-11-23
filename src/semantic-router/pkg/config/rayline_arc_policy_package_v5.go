@@ -401,7 +401,7 @@ func validateRaylineARCPolicyPackageV5Dispatch(cfg *RouterConfig, decision Decis
 			return fmt.Errorf("policy_service binding names action %s, which is not in the package", binding.ActionID)
 		}
 		bound[binding.ActionID] = true
-		masked, err := raylineARCBindingAdmission(cfg, registry, policy, binding, action)
+		masked, err := raylineARCBindingAdmission(cfg, registry, policy, pkg, binding, action)
 		if err != nil {
 			return err
 		}
@@ -583,16 +583,23 @@ type RaylineARCMaskedBinding struct {
 // raylineARCBindingAdmission admits a binding's control on the registry cell
 // of each format its worker accepts. A refusal fails the config, except on a
 // worker served only by a managed cloud (Vertex AI or Amazon Bedrock), where
-// a steered control (one with an instruction) is masked instead: steering
-// evidence is bound to the endpoints it was measured on, and neither cloud is
-// one of them for every model, so the binding is left out of the offer and
-// the action's model is served through its other actions. A plain control
-// (no instruction) that is refused still fails the config, on those clouds
-// too.
+// the binding is masked instead (left out of the offer, the action's model
+// served through its other actions) when its control is
+//   - steered (it has an instruction): steering evidence is bound to the
+//     endpoints it was measured on, and neither cloud is one of them for
+//     every model; or
+//   - plain with a named native effort (not off, not the native default, no
+//     budget), and the action is neither the package's fallback nor a
+//     reference action: the cloud's endpoint may not take that effort, and
+//     the model keeps its native-default action.
+// Any other refused plain control still fails the config, on those clouds
+// too. The caller fails the config when masking leaves a model no admitted
+// action.
 func raylineARCBindingAdmission(
 	cfg *RouterConfig,
 	registry *thinkingcontrol.Registry,
 	policy *RaylineARCPolicyServiceConfig,
+	pkg *raylineARCPolicyPackageV5,
 	binding RaylineARCPolicyBinding,
 	action RaylineARCPolicyActionV5,
 ) (*RaylineARCMaskedBinding, error) {
@@ -612,16 +619,46 @@ func raylineARCBindingAdmission(
 			return nil, fmt.Errorf("policy_service binding for action %s on worker %q: %w", binding.ActionID, binding.Worker, err)
 		}
 		if _, err := registry.Admit(served, provider, format, action.Control, policy.AllowExperimentalControls); err != nil {
-			if action.Control.Instruction == nil || !raylineARCManagedCloudWorker(cfg, binding.Worker) {
+			cell := served + " on " + provider + "x" + format
+			reason := err.Error()
+			switch {
+			case !raylineARCManagedCloudWorker(cfg, binding.Worker):
+				return nil, fmt.Errorf("policy_service binding for action %s on worker %q: %w", binding.ActionID, binding.Worker, err)
+			case action.Control.Instruction != nil:
+			case raylineARCMaskablePlainControl(pkg, binding.ActionID, action.Control):
+				reason = "native effort base not admitted on " + cell
+			default:
 				return nil, fmt.Errorf("policy_service binding for action %s on worker %q: %w", binding.ActionID, binding.Worker, err)
 			}
 			return &RaylineARCMaskedBinding{
 				ActionID: binding.ActionID, Model: action.Model, Worker: binding.Worker,
-				Cell: served + " on " + provider + "x" + format, Reason: err.Error(),
+				Cell: cell, Reason: reason,
 			}, nil
 		}
 	}
 	return nil, nil
+}
+
+// raylineARCMaskablePlainControl reports whether a refused plain control may
+// be masked on a managed-cloud worker: a named native effort, on an action
+// that is neither the package's fallback nor one of its reference actions.
+func raylineARCMaskablePlainControl(pkg *raylineARCPolicyPackageV5, actionID string, control thinkingcontrol.Control) bool {
+	if control.Instruction != nil || control.BudgetTokens != nil || pkg == nil || pkg.manifest == nil {
+		return false
+	}
+	switch control.Native {
+	case "", raylineARCRegistryBaseOff, raylineARCRegistryBaseDefault:
+		return false
+	}
+	if actionID == pkg.manifest.Decision.FallbackActionID {
+		return false
+	}
+	for _, reference := range pkg.manifest.Decision.ReferenceActionIDs {
+		if actionID == reference {
+			return false
+		}
+	}
+	return true
 }
 
 // RaylineARCMaskedBindings lists the decision's bindings left out of the
@@ -648,7 +685,7 @@ func RaylineARCMaskedBindings(cfg *RouterConfig, decision *Decision) []RaylineAR
 		if !ok || !raylineARCManagedCloudWorker(cfg, binding.Worker) {
 			continue
 		}
-		if m, err := raylineARCBindingAdmission(cfg, registry, policy, binding, action); err == nil && m != nil {
+		if m, err := raylineARCBindingAdmission(cfg, registry, policy, pkg, binding, action); err == nil && m != nil {
 			masked = append(masked, *m)
 		}
 	}

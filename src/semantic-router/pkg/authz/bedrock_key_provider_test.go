@@ -271,3 +271,76 @@ func TestBedrockKeyProviderRefreshesAtElevenHours(t *testing.T) {
 type tokenSourceFunc func(ctx context.Context) (AccessToken, error)
 
 func (f tokenSourceFunc) Token(ctx context.Context) (AccessToken, error) { return f(ctx) }
+
+// renewableCredentials serves credentials expiring at expires until
+// Invalidate is called, then credentials expiring at renewed.
+type renewableCredentials struct {
+	expires, renewed time.Time
+	invalidated      atomic.Bool
+}
+
+func (r *renewableCredentials) Retrieve(context.Context) (aws.Credentials, error) {
+	expires := r.expires
+	if r.invalidated.Load() {
+		expires = r.renewed
+	}
+	return aws.Credentials{
+		AccessKeyID: testAccessKeyID, SecretAccessKey: testSecretAccessKey, SessionToken: testSessionToken,
+		CanExpire: true, Expires: expires,
+	}, nil
+}
+
+func (r *renewableCredentials) Invalidate() { r.invalidated.Store(true) }
+
+// Credentials close to expiry are renewed before a key is signed, so the key
+// gets the renewed session's life rather than the old one's last minutes.
+func TestBedrockShortTermKeyRenewsNearExpiryCredentials(t *testing.T) {
+	issued := time.Date(2026, 11, 23, 15, 0, 0, 0, time.UTC)
+	now := func() time.Time { return issued }
+	for _, tc := range []struct {
+		name         string
+		expires      time.Time
+		wantRenewed  bool
+		wantKeyUntil time.Time
+	}{
+		{"near expiry", issued.Add(3 * time.Minute), true, issued.Add(time.Hour)},
+		{"fresh 15-minute session", issued.Add(15 * time.Minute), false, issued.Add(15 * time.Minute)},
+	} {
+		creds := &renewableCredentials{expires: tc.expires, renewed: issued.Add(time.Hour)}
+		load := func(context.Context) (aws.CredentialsProvider, string, error) { return creds, "us-east-1", nil }
+		tok, err := NewBedrockShortTermKeySourceWith(load, now).Token(context.Background())
+		if err != nil {
+			t.Fatalf("%s: Token: %v", tc.name, err)
+		}
+		if creds.invalidated.Load() != tc.wantRenewed || !tok.Expiry.Equal(tc.wantKeyUntil) {
+			t.Fatalf("%s: renewed %v expiry %v, want %v %v", tc.name, creds.invalidated.Load(), tok.Expiry, tc.wantRenewed, tc.wantKeyUntil)
+		}
+	}
+}
+
+// When every key is short-lived (credentials that cannot be renewed), keys
+// are re-minted at their RefreshAt, not on every request.
+func TestBedrockKeyProviderThrottlesShortLivedKeys(t *testing.T) {
+	clock := &fakeClock{now: time.Date(2026, 11, 23, 15, 0, 0, 0, time.UTC)}
+	source := NewBedrockShortTermKeySourceWith(staticAWSCredentials("us-east-1", clock.Now().Add(4*time.Minute), nil), clock.Now)
+	var calls atomic.Int32
+	counting := tokenSourceFunc(func(ctx context.Context) (AccessToken, error) {
+		calls.Add(1)
+		return source.Token(ctx)
+	})
+	p := NewBedrockKeyProvider(counting, WithCloudTokenClock(clock.Now))
+
+	first := p.GetKey(ProviderBedrock, "m", nil)
+	if first == "" {
+		t.Fatal("no key")
+	}
+	for i := 1; i <= 3; i++ {
+		clock.Advance(time.Minute)
+		if got := p.GetKey(ProviderBedrock, "m", nil); got != first {
+			t.Fatalf("minute %d: key replaced before its RefreshAt", i)
+		}
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("calls = %d, want 1", calls.Load())
+	}
+}

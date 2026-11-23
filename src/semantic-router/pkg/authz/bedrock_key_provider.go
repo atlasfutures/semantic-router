@@ -39,10 +39,13 @@ const (
 	// bedrockKeyMinRefresh bounds how often keys are minted when the signing
 	// credentials are about to expire and every new key is short-lived.
 	bedrockKeyMinRefresh = time.Minute
-	// bedrockCredentialsExpiryWindow renews session credentials this long
-	// before they expire, so a refreshed key is signed with credentials that
-	// still have most of their life.
-	bedrockCredentialsExpiryWindow = 15 * time.Minute
+	// bedrockCredentialsRenewBefore: session credentials with less life than
+	// this left are renewed before a key is signed with them, so a key is not
+	// cut short by credentials the SDK would otherwise keep serving until they
+	// expire.
+	bedrockCredentialsRenewBefore = 10 * time.Minute
+	// bedrockKeyMinValidity: a key this close to expiry is no longer served.
+	bedrockKeyMinValidity = 30 * time.Second
 	// emptyPayloadSHA256 is the SHA-256 of an empty body: the request has
 	// none, and AWS's token generators sign its hash (not UNSIGNED-PAYLOAD).
 	emptyPayloadSHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -50,10 +53,13 @@ const (
 
 // NewBedrockKeyProvider serves Amazon Bedrock short-term API keys from
 // source, as Bearer credentials for the bedrock provider. Keys are cached and
-// replaced before they expire (CloudTokenProvider).
+// replaced at their RefreshAt (CloudTokenProvider): there is no fixed
+// refresh-ahead margin, since a key's life follows its signing credentials'
+// and a fixed margin would re-mint on every request once that life is short.
 func NewBedrockKeyProvider(source TokenSource, opts ...CloudTokenOption) *CloudTokenProvider {
 	base := []CloudTokenOption{
 		WithCloudTokenProviders(ProviderBedrock),
+		WithCloudTokenRefreshAhead(0, bedrockKeyMinValidity),
 		func(p *CloudTokenProvider) { p.name = BedrockKeyProviderType },
 	}
 	return NewCloudTokenProvider(source, append(base, opts...)...)
@@ -92,10 +98,11 @@ func NewBedrockShortTermKeySourceWith(load CredentialsLoader, now func() time.Ti
 }
 
 func defaultAWSCredentials(ctx context.Context) (aws.CredentialsProvider, string, error) {
-	cfg, err := awsconfig.LoadDefaultConfig(ctx,
-		awsconfig.WithCredentialsCacheOptions(func(options *aws.CredentialsCacheOptions) {
-			options.ExpiryWindow = bedrockCredentialsExpiryWindow
-		}))
+	// The SDK's credentials cache keeps its default window: a window shifts
+	// the Expires it reports, which would cut every key short (or, for a
+	// session no longer than the window, make fresh credentials look
+	// expired). Near-expiry credentials are renewed in Token instead.
+	cfg, err := awsconfig.LoadDefaultConfig(ctx)
 	if err != nil {
 		return nil, "", fmt.Errorf("load AWS configuration: %w", err)
 	}
@@ -117,14 +124,21 @@ func (s *BedrockShortTermKeySource) Token(ctx context.Context) (AccessToken, err
 		}
 		s.credentials, s.region = credentials, strings.TrimSpace(region)
 	}
-	creds, err := s.credentials.Retrieve(ctx)
+	creds, err := s.retrieve(ctx)
 	if err != nil {
-		return AccessToken{}, fmt.Errorf("retrieve AWS credentials: %w", err)
-	}
-	if creds.AccessKeyID == "" || creds.SecretAccessKey == "" {
-		return AccessToken{}, errors.New("AWS credentials are empty")
+		return AccessToken{}, err
 	}
 	issued := s.now()
+	if creds.CanExpire && creds.Expires.Sub(issued) < bedrockCredentialsRenewBefore {
+		// Ask for fresh credentials; keep the old ones if that fails or
+		// gives none that last longer.
+		if renewer, ok := s.credentials.(interface{ Invalidate() }); ok {
+			renewer.Invalidate()
+			if fresh, err := s.retrieve(ctx); err == nil && (!fresh.CanExpire || fresh.Expires.After(creds.Expires)) {
+				creds = fresh
+			}
+		}
+	}
 	lifetime := bedrockKeyMaxLifetime
 	if creds.CanExpire {
 		if remaining := creds.Expires.Sub(issued); remaining < lifetime {
@@ -143,6 +157,17 @@ func (s *BedrockShortTermKeySource) Token(ctx context.Context) (AccessToken, err
 		refresh = bedrockKeyMinRefresh
 	}
 	return AccessToken{Value: key, Expiry: issued.Add(lifetime), RefreshAt: issued.Add(refresh)}, nil
+}
+
+func (s *BedrockShortTermKeySource) retrieve(ctx context.Context) (aws.Credentials, error) {
+	creds, err := s.credentials.Retrieve(ctx)
+	if err != nil {
+		return aws.Credentials{}, fmt.Errorf("retrieve AWS credentials: %w", err)
+	}
+	if creds.AccessKeyID == "" || creds.SecretAccessKey == "" {
+		return aws.Credentials{}, errors.New("AWS credentials are empty")
+	}
+	return creds, nil
 }
 
 // sign presigns POST https://bedrock.amazonaws.com/?Action=CallWithBearerToken
