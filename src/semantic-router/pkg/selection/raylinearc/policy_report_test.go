@@ -596,3 +596,18 @@ func TestNamedReportPredatingItsDecisionIsIgnored(t *testing.T) {
 		t.Fatalf("a report within the clock skew: %+v", outcome)
 	}
 }
+
+// A retry of a report naming a route id -- its report id, from the same
+// reporter -- is a duplicate even when a newer lookup has since reused that
+// caller-minted route id: it never settles the newer decision.
+func TestNamedReportRetryDoesNotSettleAReusedRouteID(t *testing.T) {
+	first := reportOf(ReportSourceClient, "rte_1", ranOn(1, pendingActionB, "vendor/b"), nil)
+	first.ReportID = "call-1"
+	recorded, _ := mustApplyReport(t, pendingEpisode(t), first)
+	reused := withPendingLookup(t, recorded, pendingTask, pendingReply1, pendingAsk2, `{"role":"assistant","content":"two"}`, `{"role":"user","content":"three"}`)
+	reused.LastReport = recorded.LastReport
+	reused.Pending.DecidedUnixMS = reportFinished.Add(30 * time.Second).UnixMilli()
+	if next, outcome := mustApplyReport(t, reused, first); outcome.Recorded || outcome.Reason != ReportDuplicate || next != reused {
+		t.Fatalf("the retry: %+v", outcome)
+	}
+}

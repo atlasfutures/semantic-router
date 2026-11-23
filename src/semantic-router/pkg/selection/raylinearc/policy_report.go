@@ -203,6 +203,12 @@ func ApplyReport(state *EpisodeState, report Report) (*EpisodeState, ReportOutco
 		return state, ignoredReport(ReportNoEpisode), nil
 	}
 	pending, last := state.Pending, state.LastReport
+	// A retry of the last report is matched first, so it never settles a
+	// decision made after it (one that reused its route id, or, naming none,
+	// the next lookup's).
+	if retryOfLastReport(last, report) {
+		return state, ignoredReport(ReportDuplicate), nil
+	}
 	if report.RouteID == "" {
 		return unnamedReport(state, report)
 	}
@@ -225,23 +231,25 @@ func ApplyReport(state *EpisodeState, report Report) (*EpisodeState, ReportOutco
 // decision was made. Anything else is not_pending, never a new turn: with no
 // position in the conversation, the cell cannot tell a call it has not seen
 // from a second report of one it has (the gateway's copy of a client's
-// report, a retry, a helper call). A retry of the last report -- its report
-// id, from the same reporter -- is a duplicate, matched first so it is never
-// applied to a decision made after it.
+// report, a retry, a helper call). A retry of the last report by its report
+// id is a duplicate (retryOfLastReport, matched before this).
 func unnamedReport(state *EpisodeState, report Report) (*EpisodeState, ReportOutcome, error) {
-	pending, last := state.Pending, state.LastReport
-	if last != nil && report.ReportID != "" {
-		if last.ReportID == report.ReportID && last.Source == report.Source {
-			return state, ignoredReport(ReportDuplicate), nil
-		}
-		if last.ClientReportID == report.ReportID && report.Source == ReportSourceClient {
-			return state, ignoredReport(ReportDuplicate), nil
-		}
-	}
+	pending := state.Pending
 	if pending != nil && !report.FinishedAt.Before(time.UnixMilli(pending.DecidedUnixMS)) {
 		return resolveReported(state, report)
 	}
 	return state, ignoredReport(ReportNotPending), nil
+}
+
+// retryOfLastReport reports whether report repeats the last report: its
+// report id from the same reporter, or the id of a client report the
+// gateway has since corrected, from the client.
+func retryOfLastReport(last *LastReport, report Report) bool {
+	if last == nil || report.ReportID == "" {
+		return false
+	}
+	return (last.ReportID == report.ReportID && last.Source == report.Source) ||
+		(last.ClientReportID == report.ReportID && report.Source == ReportSourceClient)
 }
 
 // staleRouteReport is the rule for a report naming a decision that is no
