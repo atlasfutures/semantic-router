@@ -126,3 +126,39 @@ func TestPolicyScorerLeavesMaskedBindingsOut(t *testing.T) {
 		t.Fatalf("offer = %v", scorer.actionOrder)
 	}
 }
+
+// A worker whose every binding is masked still names its trained model (for
+// refusal exclusions and dispatch identity), and a hold on it is released.
+func TestPolicyScorerAFullyMaskedWorker(t *testing.T) {
+	cfg, decision := maskedTestDecision(t, false)
+	// Opus's plain action stays on OpenRouter; its steer moves to a second
+	// Opus worker on Vertex AI's chat endpoint, where it is masked.
+	cfg.ModelConfig["arm-opus-vx"] = config.ModelParams{
+		PreferredEndpoints: []string{"vertex"}, APIFormat: config.APIFormatOpenAI,
+		ExternalModelIDs: map[string]string{"vertex-ai": "publisher/claude-opus-5", "default": "anthropic/claude-opus-5"},
+	}
+	params := cfg.ModelConfig["arm-opus"]
+	params.APIFormat = config.APIFormatAnthropic
+	cfg.ModelConfig["arm-opus"] = params
+	on := true
+	decision.ModelRefs = append(decision.ModelRefs,
+		config.ModelRef{Model: "arm-opus-vx", ModelReasoningControl: config.ModelReasoningControl{UseReasoning: &on}})
+	decision.Algorithm.RaylineARC.PolicyService.Bindings[2].Worker = "arm-opus-vx"
+	masked := config.RaylineARCMaskedBindings(cfg, decision)
+	if len(masked) != 1 || masked[0].Worker != "arm-opus-vx" {
+		t.Fatalf("masked = %+v", masked)
+	}
+	scorer := newPolicyServiceScorer(cfg, decision)
+	vx := 2
+	if got := scorer.armModel(vx); got != "claude-opus-5" {
+		t.Fatalf("the masked worker's model = %q, want its trained model", got)
+	}
+	if len(scorer.heldReleasable) != 3 || !scorer.heldReleasable[vx] || scorer.heldReleasable[0] || scorer.heldReleasable[1] {
+		t.Fatalf("heldReleasable = %v", scorer.heldReleasable)
+	}
+	// Nothing masked: no arm is releasable, and the offer is the catalog.
+	if scorer := newPolicyServiceScorer(maskedTestDecision(t, false)); scorer.heldReleasable != nil ||
+		len(scorer.catalogOrder) != len(scorer.actionOrder) {
+		t.Fatalf("heldReleasable = %v, catalog %v, offer %v", scorer.heldReleasable, scorer.catalogOrder, scorer.actionOrder)
+	}
+}

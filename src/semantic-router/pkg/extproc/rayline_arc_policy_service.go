@@ -101,6 +101,14 @@ type policyServiceScorer struct {
 	workers     []raylinearc.WorkerManifest
 	bindings    map[string]policyBinding
 	actionOrder []string
+	// catalogOrder is every bound action, masked ones too, in binding
+	// order: a worker's trained model is named from it, whether or not the
+	// worker has an action to offer.
+	catalogOrder []string
+	// heldReleasable marks the arms with no action to offer (every one of
+	// their bindings masked); a hold on one is released. Nil when nothing
+	// is masked.
+	heldReleasable []bool
 	// effortOverrides is the cell's dispatch_effort_overrides, by worker.
 	effortOverrides map[string]string
 	// fallback is ADR 0120's fallback: excluded models leave the offer, and
@@ -294,6 +302,7 @@ func newPolicyServiceScorer(
 		scorer.bindings[binding.ActionID] = policyBinding{
 			arm: index[binding.Worker], dispatchArm: index[worker], level: level, model: model, base: base,
 		}
+		scorer.catalogOrder = append(scorer.catalogOrder, binding.ActionID)
 		if !masked[binding.ActionID] {
 			scorer.actionOrder = append(scorer.actionOrder, binding.ActionID)
 		}
@@ -301,9 +310,16 @@ func newPolicyServiceScorer(
 	offerable := scorer.bindings
 	if len(masked) > 0 {
 		offerable = make(map[string]policyBinding, len(scorer.bindings))
+		scorer.heldReleasable = make([]bool, len(scorer.workers))
+		for arm := range scorer.heldReleasable {
+			scorer.heldReleasable[arm] = true
+		}
 		for actionID, binding := range scorer.bindings {
 			if !masked[actionID] {
 				offerable[actionID] = binding
+				if binding.arm >= 0 && binding.arm < len(scorer.heldReleasable) {
+					scorer.heldReleasable[binding.arm] = false
+				}
 			}
 		}
 	}
@@ -724,6 +740,11 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 			if out(sent, scorer.armModel(sent)) || len(hard) == len(workerIDs) && hard[held] {
 				held, forced = -1, true
 			}
+		}
+		// A held arm with nothing to offer (every binding masked, e.g. a
+		// hold kept from before its worker moved to Vertex AI) is released.
+		if held >= 0 && held < len(scorer.heldReleasable) && scorer.heldReleasable[held] {
+			held, forced = -1, true
 		}
 		available := make([]string, 0, len(scorer.actionOrder))
 		for _, actionID := range scorer.actionOrder {
@@ -1627,7 +1648,11 @@ func (scorer *policyServiceScorer) actionArm(actionID string) (int, bool) {
 
 // armModel is the trained model a worker serves, read from its bindings.
 func (scorer *policyServiceScorer) armModel(arm int) string {
-	for _, actionID := range scorer.actionOrder {
+	order := scorer.catalogOrder
+	if order == nil {
+		order = scorer.actionOrder
+	}
+	for _, actionID := range order {
 		if binding := scorer.bindings[actionID]; binding.arm == arm && binding.model != "" {
 			return binding.model
 		}

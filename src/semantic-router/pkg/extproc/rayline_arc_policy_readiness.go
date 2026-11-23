@@ -34,6 +34,41 @@ func raylineARCPolicyDispatchReady(cfg *config.RouterConfig, decision *config.De
 		if !raylineARCPolicyWorkerReady(cfg, modelRef.Model) {
 			return false
 		}
+		if !raylineARCVertexEffortOverrideCarriable(cfg, decision, modelRef.Model) {
+			return false
+		}
+	}
+	return true
+}
+
+// raylineARCVertexEffortOverrideCarriable reports whether a Vertex AI
+// worker's dispatch_effort_overrides entry, if it has one, can be written in
+// every format the worker accepts. Vertex AI's OpenAI-compatible endpoint
+// declares no reasoning transport, so an override there has no field to
+// carry it, and every turn that needs it would fail at dispatch.
+func raylineARCVertexEffortOverrideCarriable(cfg *config.RouterConfig, decision *config.Decision, worker string) bool {
+	if decision.Algorithm == nil || decision.Algorithm.RaylineARC == nil || decision.Algorithm.RaylineARC.PolicyService == nil {
+		return true
+	}
+	if _, overridden := decision.Algorithm.RaylineARC.PolicyService.DispatchEffortOverride(worker); !overridden {
+		return true
+	}
+	_, backend, found, err := cfg.ResolvePrimaryBackendForModel(worker)
+	if err != nil || !found {
+		return true // raylineARCPolicyWorkerReady already refused it
+	}
+	profile, err := cfg.GetProviderProfileForEndpoint(backend)
+	if err != nil || !providerIsVertexAI(profile) {
+		return true
+	}
+	for _, accepted := range cfg.GetModelAcceptedFormats(worker) {
+		format, err := wireFormatForModel(accepted)
+		if err != nil {
+			return false
+		}
+		if _, err := dispatchEffortOverridePath(registryFormatOf(format), resolveProviderReasoningTransport(profile)); err != nil {
+			return false
+		}
 	}
 	return true
 }

@@ -106,3 +106,26 @@ func TestPolicyDispatchReadinessSkipsOutOfServiceWorkers(t *testing.T) {
 		t.Fatal("the keyless worker itself is not ready; only its being out of service skips it")
 	}
 }
+
+// A Vertex AI worker's effort override must have a field to go in: on the
+// Messages API it does (output_config.effort); on the OpenAI-compatible
+// endpoint, which declares no reasoning transport, it does not.
+func TestPolicyDispatchReadinessRefusesAnUncarriableVertexEffortOverride(t *testing.T) {
+	withOverride := func(apiFormat string) (*config.RouterConfig, *config.Decision) {
+		cfg, decision := vertexReadinessConfig(func(c *config.RouterConfig) {
+			params := c.ModelConfig["think"]
+			params.APIFormat = apiFormat
+			c.ModelConfig["think"] = params
+		})
+		decision.Algorithm = &config.AlgorithmConfig{RaylineARC: &config.RaylineARCAlgorithmConfig{
+			PolicyService: &config.RaylineARCPolicyServiceConfig{DispatchEffortOverrides: map[string]string{"think": "high"}},
+		}}
+		return cfg, decision
+	}
+	if cfg, decision := withOverride(config.APIFormatAnthropic); !raylineARCPolicyDispatchReady(cfg, decision) {
+		t.Fatal("an effort override on a Vertex AI Messages worker was refused")
+	}
+	if cfg, decision := withOverride(config.APIFormatOpenAI); raylineARCPolicyDispatchReady(cfg, decision) {
+		t.Fatal("an effort override on a Vertex AI Chat worker, which has no field for it, passed readiness")
+	}
+}
