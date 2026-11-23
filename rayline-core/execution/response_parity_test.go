@@ -13,9 +13,10 @@ import (
 	"github.com/atlasfutures/semantic-router/rayline-core/protocolcodec"
 )
 
-// A Responses namespace tool reaches the Responses deployment as a namespace,
-// and the call it returns keeps its namespace, buffered and streamed.
-func TestExecutionCarriesNamespacedToolsOnResponses(t *testing.T) {
+// Rayline Platform serves namespace tools: a Responses namespace tool reaches
+// a cloud deployment as a namespace, and the call it returns keeps its
+// namespace, buffered and streamed.
+func TestCloudResponsesCarriesNamespacedTools(t *testing.T) {
 	for _, stream := range []bool{false, true} {
 		t.Run(fmt.Sprintf("stream=%v", stream), func(t *testing.T) {
 			body := `{"id":"resp1","object":"response","created_at":1,"status":"completed","model":"qwen-fixture","output":[{"type":"function_call","id":"fc_1","call_id":"call-1","namespace":"multi_agent_v1","name":"spawn_agent","arguments":"{}","status":"completed"}],"usage":{"input_tokens":20,"output_tokens":1,"total_tokens":21}}`
@@ -34,10 +35,16 @@ func TestExecutionCarriesNamespacedToolsOnResponses(t *testing.T) {
 			var dispatched []byte
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				dispatched, _ = io.ReadAll(r.Body)
+				modelPinHeaders(w.Header())
+				w.Header().Set("X-Rayline-Selected-Model", "moonshotai/kimi-k3")
 				_, _ = w.Write(wire)
 			}))
 			defer upstream.Close()
-			_, executor := executorWithHTTPDecisions(t, onProtocol(t, testConfig(t, upstream.URL, false), llmprotocol.OpenAIResponsesV1), &decisionCapture{})
+			config := onProtocol(t, modelPinConfig(t, upstream.URL), llmprotocol.OpenAIResponsesV1)
+			action := &config.Actions[0]
+			action.ControlID = "628d285537ca7cdb52c4bd3433cea7a1ec36005a14dbc67ffa1c40487d7b8ad0"
+			action.Control = publicControl(t, action.ControlID)
+			_, executor := executorWithHTTPDecisions(t, config, &decisionCapture{})
 			request := fmt.Sprintf(`{"model":"arc-1.0","stream":%v,"input":[{"role":"user","content":"spawn helper"}],"tools":[{"type":"namespace","name":"multi_agent_v1","tools":[{"type":"function","name":"spawn_agent","parameters":{"type":"object"}}]}]}`, stream)
 			status, output := executeHTTP(t, executor.URL, "/v1/responses", request, "namespaces")
 			if status != 200 {

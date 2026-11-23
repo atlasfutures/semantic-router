@@ -37,6 +37,9 @@ type responseMetadata struct {
 	publicModel   string
 	streamOptions llmprotocol.StreamOptions
 	workerFamily  string
+	// toolNamespaces restores the namespace on a call returned under a
+	// qualified name, when the request was flattened for its deployment.
+	toolNamespaces map[string][2]string
 }
 
 func responseMetadataFor(request llmprotocol.Request, deployment Deployment) responseMetadata {
@@ -54,6 +57,9 @@ func (server *Server) prepare(request llmprotocol.Request, envelope llmprotocol.
 	deployment := selected.deployment
 	response := responseMetadataFor(request, deployment)
 	nextIssuers, opaqueIssuer := prepareReasoning(&request, deployment, state)
+	if flattensToolNamespaces(deployment) {
+		response.toolNamespaces = flattenToolNamespaces(&request)
+	}
 	request.Model = deployment.WireModel
 	// The admitted v5 control owns native thinking. Clear the caller's neutral
 	// settings before cross-format capability checks; Render writes the exact
@@ -115,6 +121,9 @@ func (server *Server) prepare(request llmprotocol.Request, envelope llmprotocol.
 // The request arrived in its deployment's protocol: the core does not
 // translate between protocols.
 func prepareReasoning(request *llmprotocol.Request, deployment Deployment, state *branchState) ([]string, string) {
+	// Inherited reasoning goes first, so the encrypted issuer set below
+	// describes only blobs this branch's own turns issued.
+	inheritedChanged := neutraliseInheritedReasoning(request, state.inherited)
 	nextIssuers := reasoning.ApplyEncryptedReasoning(request, state.issuers, encryptedDeploymentIssuer(deployment), deployment.Protocol)
 	opaqueIssuer := opaqueDeploymentIssuer(deployment)
 	foreignDropped := 0
@@ -126,8 +135,8 @@ func prepareReasoning(request *llmprotocol.Request, deployment Deployment, state
 	}
 	carry := protocolcodec.CarryReasoningTo(request, deployment.Protocol)
 	opaqueDropped := reasoning.DropOpaqueReasoning(request, state.provenance, opaqueIssuer)
-	if foreignDropped+opaqueDropped+carry.Dropped()+carry.SignaturesStripped > 0 {
-		slog.Info("reasoning disposition", "deployment", deployment.ID,
+	if inheritedChanged+foreignDropped+opaqueDropped+carry.Dropped()+carry.SignaturesStripped > 0 {
+		slog.Info("reasoning disposition", "deployment", deployment.ID, "inherited_neutralised", inheritedChanged,
 			"removed", foreignDropped+opaqueDropped+carry.Dropped(), "signatures_removed", carry.SignaturesStripped)
 	}
 	return nextIssuers, opaqueIssuer
@@ -328,6 +337,7 @@ func (server *Server) forwardBuffered(writer http.ResponseWriter, upstream *http
 	}
 	result, err := server.engine.TranslateResponse(selected.deployment.Protocol, target, body, func(response *llmprotocol.Response) error {
 		response.Model = metadata.publicModel
+		llmprotocol.RestoreResponseToolNamespaces(response, metadata.toolNamespaces)
 		return nil
 	})
 	if err != nil {
@@ -344,10 +354,17 @@ func (server *Server) forwardBuffered(writer http.ResponseWriter, upstream *http
 }
 
 func (server *Server) forwardStream(writer http.ResponseWriter, incoming *http.Request, upstream *http.Response, target llmprotocol.WireFormat, selected admittedAction, metadata responseMetadata, pending *pendingTurn) (llmprotocol.Response, error) {
-	stream, err := server.engine.NewStream(selected.deployment.Protocol, target, llmprotocol.StreamContext{
+	var mutation protocolcodec.StreamEventMutation
+	if metadata.toolNamespaces != nil {
+		mutation = func(event *llmprotocol.Event) error {
+			llmprotocol.RestoreToolNamespace(event.ToolCall, metadata.toolNamespaces)
+			return nil
+		}
+	}
+	stream, err := server.engine.NewStreamWithMutation(selected.deployment.Protocol, target, llmprotocol.StreamContext{
 		Context: incoming.Context(), PublicModel: metadata.publicModel, ProviderModel: selected.deployment.WireModel,
 		Options: metadata.streamOptions, WorkerFamily: metadata.workerFamily,
-	})
+	}, mutation)
 	if err != nil {
 		server.writeError(writer, target, http.StatusBadGateway, "stream_translation_failed", err.Error())
 		return llmprotocol.Response{}, err
