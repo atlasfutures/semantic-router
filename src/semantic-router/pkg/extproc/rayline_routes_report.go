@@ -248,7 +248,13 @@ func (scorer *policyServiceScorer) reportCandidates(report raylineReport) ([]str
 		return []string{report.actionID}, nil
 	}
 	var served, candidates []string
-	for _, actionID := range scorer.actionOrder {
+	// Every bound action, those masked for this cell's own dispatch too: a
+	// caller may have run one elsewhere.
+	order := scorer.catalogOrder
+	if order == nil {
+		order = scorer.actionOrder
+	}
+	for _, actionID := range order {
 		if !scorer.actionServes(actionID, report.model) {
 			continue
 		}

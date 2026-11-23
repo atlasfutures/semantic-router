@@ -776,3 +776,36 @@ func TestRoutesReportWithAZeroTimeFinishWritesNothing(t *testing.T) {
 		t.Fatalf("the real report %+v", answer)
 	}
 }
+
+// An action masked for this cell's own dispatch transport is still a package
+// action a caller may have run elsewhere: a report naming its level, or a
+// model all of whose actions are masked, is attributed to it.
+func TestReportAttributesMaskedActions(t *testing.T) {
+	scorer := &policyServiceScorer{
+		workerIDs: []string{"opus", "vertex-only"},
+		workers:   []raylinearc.WorkerManifest{{ID: "opus", Model: "vendor/opus"}, {ID: "vertex-only", Model: "vendor/vx"}},
+		bindings: map[string]policyBinding{
+			"opus-none": {arm: 0, dispatchArm: 0, model: "vendor/opus", level: "none"},
+			"opus-up":   {arm: 0, dispatchArm: 0, model: "vendor/opus", level: "up"},
+			"vx-none":   {arm: 1, dispatchArm: 1, model: "vendor/vx", level: "none"},
+		},
+		// opus-up and vx-none are masked for this cell's transport.
+		actionOrder:  []string{"opus-none"},
+		catalogOrder: []string{"opus-none", "opus-up", "vx-none"},
+	}
+	up := raylineReport{model: "vendor/opus", thinkingLevel: "up"}
+	candidates, refusal := scorer.reportCandidates(up)
+	if refusal != nil || len(candidates) != 1 || candidates[0] != "opus-up" {
+		t.Fatalf("level of a masked action: %v (%v)", candidates, refusal)
+	}
+	modelOnly := raylineReport{model: "vendor/opus"}
+	candidates, _ = scorer.reportCandidates(modelOnly)
+	if run := scorer.reportedRun(modelOnly, candidates, "opus-up"); run.ActionID != "opus-up" {
+		t.Fatalf("model only, decided masked action: %+v", run)
+	}
+	fullyMasked := raylineReport{model: "vendor/vx"}
+	candidates, _ = scorer.reportCandidates(fullyMasked)
+	if run := scorer.reportedRun(fullyMasked, candidates, ""); run.Arm != 1 || run.ActionID != "vx-none" {
+		t.Fatalf("a model with every action masked: %+v", run)
+	}
+}
