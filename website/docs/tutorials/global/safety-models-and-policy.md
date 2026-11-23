@@ -321,6 +321,81 @@ routing:
 The identity needs `roles/aiplatform.user` (or an equivalent custom role) on
 the project in `base_url`.
 
+### Keyless Amazon Bedrock credentials
+
+The `bedrock-short-term-key` provider authenticates `bedrock` backends with
+Amazon Bedrock short-term API keys that the Router mints from its own AWS
+identity. No key is stored. The provider takes no fields:
+
+```yaml
+global:
+  services:
+    authz:
+      fail_open: false
+      providers:
+        - type: bedrock-short-term-key
+```
+
+- **Where the key comes from.** The Router signs a key (a SigV4 presigned
+  `CallWithBearerToken` request, encoded as AWS's token generators encode it)
+  with credentials from the AWS SDK's default chain: environment variables,
+  shared configuration, the container credentials endpoint (EKS Pod Identity,
+  ECS) or instance metadata. The Region is the SDK's (`AWS_REGION`). A key is
+  valid only in that Region, so every Bedrock `base_url` must name it.
+- **Lifetime.** A key lasts 12 hours or until the signing session's
+  credentials expire, whichever is sooner. It is replaced after eleven
+  twelfths of its life. Credentials with less than ten minutes left are
+  renewed before a key is signed. A failed credentials fetch is not retried
+  for 30 seconds.
+- **Caching and failure.** As for Vertex AI above: requests drive refresh,
+  concurrent requests share one refresh, and with no usable key the provider
+  returns no credential, so a fail-closed chain refuses the request. Keep
+  `fail_open: false`, and do not map a `header-injection` provider to
+  `bedrock`.
+- **Which backends.** The key is used only for `bedrock` backends. Leave
+  `api_key_env` unset on them. Bedrock reads keys only from
+  `Authorization: Bearer`, so a `bedrock` backend may not set another
+  `auth_header` or `auth_prefix`.
+
+A Bedrock base URL serves one API, so each backend lists one format. Claude
+models use the Anthropic Messages API under `/anthropic` (the Router calls
+`/anthropic/v1/messages`). Other models use the OpenAI-compatible API under
+`/openai/v1`. Name the Bedrock model or inference profile id in
+`external_model_ids`:
+
+```yaml
+providers:
+  models:
+    - name: claude
+      provider_model_id: anthropic/claude-sonnet-5
+      external_model_ids:
+        bedrock: us.anthropic.claude-sonnet-5
+      api_format: anthropic
+      backend_refs:
+        - name: bedrock-anthropic
+          base_url: https://bedrock-runtime.<region>.amazonaws.com/anthropic
+          provider: bedrock
+          extra_headers:
+            anthropic-version: "2023-06-01"
+    - name: open-model
+      provider_model_id: publisher/open-model
+      external_model_ids:
+        bedrock: us.publisher.open-model
+      api_format: openai
+      backend_refs:
+        - name: bedrock-openai
+          base_url: https://bedrock-runtime.<region>.amazonaws.com/openai/v1
+          provider: bedrock
+```
+
+The identity needs `bedrock:CallWithBearerToken` (it can be limited to
+short-term keys with the condition `bedrock:bearerTokenType` =
+`SHORT_TERM`), and `bedrock:InvokeModel` and
+`bedrock:InvokeModelWithResponseStream` on each inference profile and on the
+foundation model in every Region the profile routes to. For models served on
+the OpenAI-compatible API, the Bedrock model cards also list the account's
+`project/default` resource.
+
 ## Data and Security
 
 - Local model variants keep inference in the Router process. Remote modules

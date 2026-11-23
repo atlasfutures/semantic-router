@@ -577,6 +577,7 @@ func (r *OpenAIRouter) appendProviderCredential(
 	if providerAuth.Prefix != "" {
 		value = providerAuth.Prefix + " " + accessKey
 	}
+	markCredentialHeader(providerAuth.Header)
 	state.setHeaders = append(state.setHeaders, overwriteRequestHeader(providerAuth.Header, value))
 	return nil
 }

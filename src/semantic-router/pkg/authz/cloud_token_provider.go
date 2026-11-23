@@ -24,9 +24,13 @@ const CloudTokenProviderType = "google-access-token"
 const googleCloudPlatformScope = "https://www.googleapis.com/auth/cloud-platform"
 
 // AccessToken is a short-lived bearer credential and the time it stops working.
+// RefreshAt, when set, is when a background refresh starts if that is earlier
+// than the provider's refresh-ahead margin (a source whose tokens live a
+// variable time refreshes in proportion to their life).
 type AccessToken struct {
-	Value  string
-	Expiry time.Time
+	Value     string
+	Expiry    time.Time
+	RefreshAt time.Time
 }
 
 // TokenSource mints access tokens. Implementations are called at most once at
@@ -50,6 +54,7 @@ type TokenSource interface {
 // is none, GetKey returns "" and the credential chain decides (fail closed by
 // default).
 type CloudTokenProvider struct {
+	name         string
 	source       TokenSource
 	providers    map[LLMProvider]bool
 	refreshAhead time.Duration
@@ -93,6 +98,7 @@ func WithCloudTokenRefreshAhead(refreshAhead, minValidity time.Duration) CloudTo
 // NewCloudTokenProvider creates a provider that serves tokens from source.
 func NewCloudTokenProvider(source TokenSource, opts ...CloudTokenOption) *CloudTokenProvider {
 	p := &CloudTokenProvider{
+		name:         CloudTokenProviderType,
 		source:       source,
 		providers:    map[LLMProvider]bool{ProviderVertexAI: true},
 		refreshAhead: 5 * time.Minute,
@@ -107,7 +113,7 @@ func NewCloudTokenProvider(source TokenSource, opts ...CloudTokenOption) *CloudT
 }
 
 func (p *CloudTokenProvider) Name() string {
-	return CloudTokenProviderType
+	return p.name
 }
 
 // HeadersToStrip returns nil: the token never comes from a request header.
@@ -123,7 +129,7 @@ func (p *CloudTokenProvider) GetKey(provider LLMProvider, _ string, _ map[string
 	p.mu.Lock()
 	tok := p.cached
 	usable := p.usableLocked(tok)
-	if usable && p.now().Before(tok.Expiry.Add(-p.refreshAhead)) {
+	if usable && p.now().Before(p.refreshAtLocked(tok)) {
 		p.mu.Unlock()
 		return tok.Value
 	}
@@ -147,6 +153,14 @@ func (p *CloudTokenProvider) GetKey(provider LLMProvider, _ string, _ map[string
 	return ""
 }
 
+func (p *CloudTokenProvider) refreshAtLocked(tok AccessToken) time.Time {
+	at := tok.Expiry.Add(-p.refreshAhead)
+	if !tok.RefreshAt.IsZero() && tok.RefreshAt.Before(at) {
+		at = tok.RefreshAt
+	}
+	return at
+}
+
 func (p *CloudTokenProvider) usableLocked(tok AccessToken) bool {
 	return tok.Value != "" && p.now().Before(tok.Expiry.Add(-p.minValidity))
 }
@@ -165,7 +179,7 @@ func (p *CloudTokenProvider) refresh(done chan struct{}) {
 	} else if now := p.now(); now.Sub(p.lastErrLog) > time.Minute {
 		p.lastErrLog = now
 		logging.ComponentErrorEvent("authz", "cloud_token_refresh_failed", map[string]interface{}{
-			"provider": CloudTokenProviderType,
+			"provider": p.name,
 			"error":    err.Error(),
 		})
 	}

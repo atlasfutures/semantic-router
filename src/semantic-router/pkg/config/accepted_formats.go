@@ -50,12 +50,19 @@ func validateAcceptedFormatBindings(
 ) error {
 	if len(formats) > 1 {
 		for index, provider := range providers {
-			// A Vertex AI base URL names one API: the Messages publisher path
-			// or the OpenAI-compatible /endpoints/openapi. The other format's
-			// path would resolve under the wrong base.
-			if provider.Provider.Definition.ID == "vertex-ai" {
+			// A Vertex AI or Amazon Bedrock base URL names one API: Vertex
+			// AI's Messages publisher path or OpenAI-compatible
+			// /endpoints/openapi, Bedrock's /anthropic or /openai/v1. The other
+			// format's path would resolve under the wrong base.
+			switch provider.Provider.Definition.ID {
+			case "vertex-ai":
 				return fmt.Errorf(
 					"providers.models[%s].accepted_formats: backend_refs[%d] is Vertex AI, whose base URL serves one API; list one format",
+					modelName, index,
+				)
+			case "bedrock":
+				return fmt.Errorf(
+					"providers.models[%s].accepted_formats: backend_refs[%d] is Amazon Bedrock, whose base URL serves one API; list one format",
 					modelName, index,
 				)
 			}
@@ -123,4 +130,25 @@ func (c *RouterConfig) ModelAcceptsOnlyAPIFormat(modelName, format string) bool 
 // in format.
 func (c *RouterConfig) ModelAcceptsAPIFormat(modelName, format string) bool {
 	return slices.Contains(c.GetModelAcceptedFormats(modelName), format)
+}
+
+// validateBedrockAuth refuses an Amazon Bedrock backend whose auth_header or
+// auth_prefix moves the key off Bedrock's own shape (Authorization: Bearer).
+// Bedrock reads API keys, long- or short-term, only there, so another header
+// would carry the key to the wrong place and leave a caller's Authorization
+// header in force.
+func validateBedrockAuth(modelName string, index int, provider modelcatalog.EffectiveModelProvider) error {
+	if provider.Provider.Definition.ID != "bedrock" {
+		return nil
+	}
+	want := provider.Provider.Definition.Auth
+	header, prefix := provider.Provider.Instance.AuthHeader, provider.Provider.Instance.AuthPrefix
+	if (header != "" && !strings.EqualFold(strings.TrimSpace(header), want.Header)) ||
+		((provider.Provider.Instance.AuthPrefixSet || prefix != "") && prefix != want.Prefix) {
+		return fmt.Errorf(
+			"providers.models[%s].backend_refs[%d] is Amazon Bedrock, which reads its key only from %s: %s; remove auth_header and auth_prefix",
+			modelName, index, want.Header, want.Prefix,
+		)
+	}
+	return nil
 }
