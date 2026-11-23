@@ -115,6 +115,9 @@ func (server *Server) prepare(request llmprotocol.Request, envelope llmprotocol.
 // The request arrived in its deployment's protocol: the core does not
 // translate between protocols.
 func prepareReasoning(request *llmprotocol.Request, deployment Deployment, state *branchState) ([]string, string) {
+	// Inherited reasoning goes first, so the encrypted issuer set below
+	// describes only blobs this branch's own turns issued.
+	inheritedChanged := neutraliseInheritedReasoning(request, state.inherited)
 	nextIssuers := reasoning.ApplyEncryptedReasoning(request, state.issuers, encryptedDeploymentIssuer(deployment), deployment.Protocol)
 	opaqueIssuer := opaqueDeploymentIssuer(deployment)
 	foreignDropped := 0
@@ -126,8 +129,8 @@ func prepareReasoning(request *llmprotocol.Request, deployment Deployment, state
 	}
 	carry := protocolcodec.CarryReasoningTo(request, deployment.Protocol)
 	opaqueDropped := reasoning.DropOpaqueReasoning(request, state.provenance, opaqueIssuer)
-	if foreignDropped+opaqueDropped+carry.Dropped()+carry.SignaturesStripped > 0 {
-		slog.Info("reasoning disposition", "deployment", deployment.ID,
+	if inheritedChanged+foreignDropped+opaqueDropped+carry.Dropped()+carry.SignaturesStripped > 0 {
+		slog.Info("reasoning disposition", "deployment", deployment.ID, "inherited_neutralised", inheritedChanged,
 			"removed", foreignDropped+opaqueDropped+carry.Dropped(), "signatures_removed", carry.SignaturesStripped)
 	}
 	return nextIssuers, opaqueIssuer
