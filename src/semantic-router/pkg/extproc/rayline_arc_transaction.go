@@ -132,6 +132,9 @@ type raylineARCEpisodeTransaction struct {
 	// controlPlacement is the thinking-control placer this turn advanced,
 	// committed only with the turn.
 	controlPlacement *raylinearc.ControlPlacement
+	// retiredPlacementWorker is the worker whose placements in other scopes
+	// the commit drops (plannedThinkingControl.retire).
+	retiredPlacementWorker string
 	// reasoningIssuers is the issuer set this turn leaves behind, committed
 	// only with the turn; unstaged leaves the stored set as it was.
 	reasoningIssuers       []string
@@ -547,12 +550,14 @@ func (transaction *raylineARCEpisodeTransaction) stageUpstreamPrefix(prefix rayl
 }
 
 // stageControlPlacement records the placer state this turn's render left.
-func (transaction *raylineARCEpisodeTransaction) stageControlPlacement(placement raylinearc.ControlPlacement) {
+// A non-empty retire drops that worker's placements in other scopes.
+func (transaction *raylineARCEpisodeTransaction) stageControlPlacement(placement raylinearc.ControlPlacement, retire string) {
 	if transaction == nil {
 		return
 	}
 	cloned := raylinearc.CloneControlPlacements([]raylinearc.ControlPlacement{placement})[0]
 	transaction.controlPlacement = &cloned
+	transaction.retiredPlacementWorker = retire
 }
 
 // committedControlPlacement returns the placer state the prepared state
@@ -757,6 +762,10 @@ func (transaction *raylineARCEpisodeTransaction) nextState() (*raylinearc.Episod
 		nextState.Upstream = raylinearc.WithUpstreamPrefix(nextState.Upstream, *transaction.upstreamPrefix)
 	}
 	if transaction.controlPlacement != nil {
+		if worker := transaction.retiredPlacementWorker; worker != "" {
+			_, scope, _ := raylineARCPlacementKeyParts(transaction.controlPlacement.Key)
+			nextState.Controls = raylineARCRetirePlacements(nextState.Controls, worker, scope)
+		}
 		nextState.Controls = raylinearc.WithControlPlacement(nextState.Controls, *transaction.controlPlacement)
 	}
 	if len(transaction.opaqueReasoning) > 0 && transaction.dispatchWorker != "" {

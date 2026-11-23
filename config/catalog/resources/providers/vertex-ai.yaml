@@ -5,11 +5,18 @@ category: model_api
 support_tier: native
 protocols:
 - openai/chat-completions@1
+- anthropic/messages@1
 default_protocol: openai/chat-completions@1
 supported_operations:
 - openai/chat-completions@1#create
+- anthropic/messages@1#create
+# Chat Completions: base_url ends in .../locations/{location}/endpoints/openapi.
+# Messages (Claude partner models): base_url ends in .../locations/{location};
+# {model} is the backend's model id, and a streaming request goes to
+# :streamRawPredict instead of :rawPredict.
 path_overrides:
   openai/chat-completions@1#create: /chat/completions
+  anthropic/messages@1#create: /publishers/anthropic/models/{model}:rawPredict
 auth:
   strategy: bearer
   header: Authorization

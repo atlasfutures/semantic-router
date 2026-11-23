@@ -241,6 +241,161 @@ Only trust identity headers set or sanitized by an authenticated upstream.
 `fail_open: true` trades availability for weaker enforcement and should be a
 deliberate policy choice.
 
+### Keyless Vertex AI credentials
+
+The `google-access-token` provider authenticates `vertex-ai` backends with the
+Router's own Google identity instead of a static key. It takes no fields:
+
+```yaml
+global:
+  services:
+    authz:
+      fail_open: false
+      providers:
+        - type: google-access-token
+```
+
+- **Where the token comes from.** The provider reads an OAuth access token
+  (cloud-platform scope) for the default service account from the GCE/GKE
+  metadata server, at `169.254.169.254` or the host in `GCE_METADATA_HOST`. On
+  GKE with Workload Identity, that is the identity bound to the pod's
+  Kubernetes service account. It does not read local Application Default
+  Credentials files or `GOOGLE_APPLICATION_CREDENTIALS`, so it works only where
+  a metadata server is reachable.
+- **Caching.** Tokens are cached. Refresh is driven by requests, not a timer:
+  a request in the last five minutes of a token's life is served the cached
+  token and starts one background refresh. A token is no longer used in its
+  last 30 seconds, so a request that finds no usable token (the first one, or
+  one after an idle period) waits for a refresh. Concurrent requests share one
+  refresh, and a failed refresh keeps the cached token while it is usable.
+- **Failure.** When the provider has no usable token it returns no
+  credential. Providers are tried in order and the first credential wins; when
+  no provider in the chain supplies one and `fail_open` is `false`, the request
+  is refused and nothing is sent upstream: with `401`, or with `500` when the
+  refused call is an internal Looper dispatch. Keep `fail_open: false`.
+  A `header-injection` provider that maps a header to `vertex-ai` could supply
+  a client-sent credential in place of the Router's, so do not map one to
+  Vertex AI. Policy-service readiness is stricter than request handling: it
+  does not count the keyless credential as served when the chain has any
+  `header-injection` provider or `fail_open: true`.
+- **Which backends.** The token is used only for `vertex-ai` backends; other
+  providers in the chain answer for other backends. Leave `api_key_env` unset
+  on the Vertex AI backends.
+
+A keyless Vertex AI backend names the model's Vertex AI id in
+`external_model_ids` and keeps `provider_model_id` as the model's canonical
+name. Claude partner models use the Anthropic Messages API (the Router calls
+`.../publishers/anthropic/models/<id>:rawPredict`, or `:streamRawPredict` when
+streaming). Other publisher models use the OpenAI-compatible endpoint:
+
+```yaml
+providers:
+  models:
+    - name: claude
+      provider_model_id: anthropic/claude-sonnet-5
+      external_model_ids:
+        vertex-ai: claude-sonnet-5
+      api_format: anthropic
+      backend_refs:
+        - name: vertex
+          base_url: https://aiplatform.googleapis.com/v1/projects/<project>/locations/global
+          provider: vertex-ai
+    - name: open-model
+      provider_model_id: publisher/open-model
+      external_model_ids:
+        vertex-ai: publisher/open-model
+      api_format: openai
+      backend_refs:
+        - name: vertex-openapi
+          base_url: https://aiplatform.googleapis.com/v1/projects/<project>/locations/global/endpoints/openapi
+          provider: vertex-ai
+routing:
+  modelCards:
+    # The Vertex AI id has no anthropic/ segment, so the card names its
+    # publisher: Claude-specific handling (thinking restoration, automatic
+    # prompt caching) keys on it.
+    - name: claude
+      publisher: anthropic
+```
+
+The identity needs `roles/aiplatform.user` (or an equivalent custom role) on
+the project in `base_url`.
+
+### Keyless Amazon Bedrock credentials
+
+The `bedrock-short-term-key` provider authenticates `bedrock` backends with
+Amazon Bedrock short-term API keys that the Router mints from its own AWS
+identity. No key is stored. The provider takes no fields:
+
+```yaml
+global:
+  services:
+    authz:
+      fail_open: false
+      providers:
+        - type: bedrock-short-term-key
+```
+
+- **Where the key comes from.** The Router signs a key (a SigV4 presigned
+  `CallWithBearerToken` request, encoded as AWS's token generators encode it)
+  with credentials from the AWS SDK's default chain: environment variables,
+  shared configuration, the container credentials endpoint (EKS Pod Identity,
+  ECS) or instance metadata. The Region is the SDK's (`AWS_REGION`). A key is
+  valid only in that Region, so every Bedrock `base_url` must name it.
+- **Lifetime.** A key lasts 12 hours or until the signing session's
+  credentials expire, whichever is sooner. It is replaced after eleven
+  twelfths of its life. Credentials with less than ten minutes left are
+  renewed before a key is signed. A failed credentials fetch is not retried
+  for 30 seconds.
+- **Caching and failure.** As for Vertex AI above: requests drive refresh,
+  concurrent requests share one refresh, and with no usable key the provider
+  returns no credential, so a fail-closed chain refuses the request. Keep
+  `fail_open: false`, and do not map a `header-injection` provider to
+  `bedrock`.
+- **Which backends.** The key is used only for `bedrock` backends. Leave
+  `api_key_env` unset on them. Bedrock reads keys only from
+  `Authorization: Bearer`, so a `bedrock` backend may not set another
+  `auth_header` or `auth_prefix`.
+
+A Bedrock base URL serves one API, so each backend lists one format. Claude
+models use the Anthropic Messages API under `/anthropic` (the Router calls
+`/anthropic/v1/messages`). Other models use the OpenAI-compatible API under
+`/openai/v1`. Name the Bedrock model or inference profile id in
+`external_model_ids`:
+
+```yaml
+providers:
+  models:
+    - name: claude
+      provider_model_id: anthropic/claude-sonnet-5
+      external_model_ids:
+        bedrock: us.anthropic.claude-sonnet-5
+      api_format: anthropic
+      backend_refs:
+        - name: bedrock-anthropic
+          base_url: https://bedrock-runtime.<region>.amazonaws.com/anthropic
+          provider: bedrock
+          extra_headers:
+            anthropic-version: "2023-06-01"
+    - name: open-model
+      provider_model_id: publisher/open-model
+      external_model_ids:
+        bedrock: us.publisher.open-model
+      api_format: openai
+      backend_refs:
+        - name: bedrock-openai
+          base_url: https://bedrock-runtime.<region>.amazonaws.com/openai/v1
+          provider: bedrock
+```
+
+The identity needs `bedrock:CallWithBearerToken` (it can be limited to
+short-term keys with the condition `bedrock:bearerTokenType` =
+`SHORT_TERM`), and `bedrock:InvokeModel` and
+`bedrock:InvokeModelWithResponseStream` on each inference profile and on the
+foundation model in every Region the profile routes to. For models served on
+the OpenAI-compatible API, the Bedrock model cards also list the account's
+`project/default` resource.
+
 ## Data and Security
 
 - Local model variants keep inference in the Router process. Remote modules

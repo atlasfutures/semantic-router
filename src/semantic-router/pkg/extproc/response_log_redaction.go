@@ -3,6 +3,7 @@ package extproc
 import (
 	"fmt"
 	"strings"
+	"sync"
 
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
@@ -30,6 +31,19 @@ var sensitiveHeaderKeys = map[string]bool{
 	"x-goog-api-key":      true,
 }
 
+// credentialHeaderKeys holds the (lowercased) header names the router has
+// written a provider credential into: a profile's auth_header can be any name
+// (x-credential), and a minted credential (a Bedrock short-term key, a Google
+// access token) is as secret as a static one. Names come from configuration,
+// so the set stays small.
+var credentialHeaderKeys sync.Map
+
+// markCredentialHeader records that key carries a provider credential, so
+// log dumps redact it.
+func markCredentialHeader(key string) {
+	credentialHeaderKeys.Store(strings.ToLower(strings.TrimSpace(key)), struct{}{})
+}
+
 // isSensitiveHeaderKey reports whether a header's value should be redacted from
 // logs. It matches the explicit credential headers above and, defensively, any
 // header whose name carries a credential by convention (a "*-key" suffix or a
@@ -38,6 +52,9 @@ var sensitiveHeaderKeys = map[string]bool{
 func isSensitiveHeaderKey(key string) bool {
 	k := strings.ToLower(strings.TrimSpace(key))
 	if sensitiveHeaderKeys[k] {
+		return true
+	}
+	if _, credential := credentialHeaderKeys.Load(k); credential {
 		return true
 	}
 	return strings.HasSuffix(k, "-key") ||

@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/authz"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
@@ -25,12 +26,81 @@ func raylineARCPolicyDispatchReady(cfg *config.RouterConfig, decision *config.De
 	if cfg == nil || decision == nil {
 		return false
 	}
+	dispatchedOn := raylineARCPolicyDispatchTargets(cfg, decision)
 	for _, modelRef := range decision.ModelRefs {
+		if raylineARCPolicyWorkerOutOfService(cfg, modelRef.Model, dispatchedOn) {
+			continue
+		}
 		if !raylineARCPolicyWorkerReady(cfg, modelRef.Model) {
+			return false
+		}
+		if !raylineARCManagedCloudEffortOverrideCarriable(cfg, decision, modelRef.Model) {
 			return false
 		}
 	}
 	return true
+}
+
+// raylineARCManagedCloudEffortOverrideCarriable reports whether a Vertex AI
+// or Amazon Bedrock worker's dispatch_effort_overrides entry, if it has one,
+// can be written in every format the worker accepts. A cloud's
+// OpenAI-compatible endpoint declares no reasoning transport, so an override
+// there has no field to carry it, and every turn that needs it would fail at
+// dispatch.
+func raylineARCManagedCloudEffortOverrideCarriable(cfg *config.RouterConfig, decision *config.Decision, worker string) bool {
+	if decision.Algorithm == nil || decision.Algorithm.RaylineARC == nil || decision.Algorithm.RaylineARC.PolicyService == nil {
+		return true
+	}
+	if _, overridden := decision.Algorithm.RaylineARC.PolicyService.DispatchEffortOverride(worker); !overridden {
+		return true
+	}
+	_, backend, found, err := cfg.ResolvePrimaryBackendForModel(worker)
+	if err != nil || !found {
+		return true // raylineARCPolicyWorkerReady already refused it
+	}
+	profile, err := cfg.GetProviderProfileForEndpoint(backend)
+	if err != nil || ambientCredentialProviderType(profile) == "" {
+		return true
+	}
+	for _, accepted := range cfg.GetModelAcceptedFormats(worker) {
+		format, err := wireFormatForModel(accepted)
+		if err != nil {
+			return false
+		}
+		if _, err := dispatchEffortOverridePath(registryFormatOf(format), resolveProviderReasoningTransport(profile)); err != nil {
+			return false
+		}
+	}
+	return true
+}
+
+// raylineARCPolicyDispatchTargets names the workers an in-service arm is sent
+// on through dispatch_model_overrides.
+func raylineARCPolicyDispatchTargets(cfg *config.RouterConfig, decision *config.Decision) map[string]bool {
+	targets := map[string]bool{}
+	if decision.Algorithm == nil || decision.Algorithm.RaylineARC == nil ||
+		decision.Algorithm.RaylineARC.PolicyService == nil {
+		return targets
+	}
+	policy := decision.Algorithm.RaylineARC.PolicyService
+	for from, to := range policy.DispatchModelOverrides {
+		if params, ok := cfg.ModelConfig[strings.TrimSpace(from)]; ok && params.IsDisabled() {
+			continue
+		}
+		targets[strings.TrimSpace(to)] = true
+	}
+	return targets
+}
+
+// raylineARCPolicyWorkerOutOfService reports a worker no turn is sent to: its
+// card is disabled, so the policy's hard mask never offers it, and no
+// in-service arm is dispatched on it. Its provider contract is then not part
+// of what readiness proves; an install that does not serve a model (an
+// upstream that lacks it) carries no credential for it.
+func raylineARCPolicyWorkerOutOfService(cfg *config.RouterConfig, worker string, dispatchedOn map[string]bool) bool {
+	worker = strings.TrimSpace(worker)
+	params, ok := cfg.ModelConfig[worker]
+	return ok && params.IsDisabled() && !dispatchedOn[worker]
 }
 
 func raylineARCPolicyWorkerReady(cfg *config.RouterConfig, worker string) bool {
@@ -44,15 +114,19 @@ func raylineARCPolicyWorkerReady(cfg *config.RouterConfig, worker string) bool {
 	}
 	for index := range endpoints {
 		endpoint := &endpoints[index]
-		if endpoint.APIKeyEnvName == "" || endpoint.APIKey == "" || endpoint.APIKeyInline {
-			return false
-		}
 		profile, err := cfg.GetProviderProfileForEndpoint(endpoint.Name)
 		if err != nil || profile == nil || profile.ChatPath != "" {
 			return false
 		}
 		parsed, err := url.Parse(profile.BaseURL)
 		if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" {
+			return false
+		}
+		if raylineARCAmbientCredentialEndpoint(cfg, endpoint, profile) {
+			continue
+		}
+		if endpoint.APIKeyEnvName == "" || endpoint.APIKey == "" || endpoint.APIKeyInline ||
+			!raylineARCAuthzServesStaticKey(cfg) {
 			return false
 		}
 		switch {
@@ -69,6 +143,88 @@ func raylineARCPolicyWorkerReady(cfg *config.RouterConfig, worker string) bool {
 		}
 	}
 	return true
+}
+
+// raylineARCAuthzServesStaticKey reports whether the authz chain returns an
+// endpoint's configured key: the default chain does (it ends in
+// static-config, and an invalid chain falls back to it), and an explicit
+// chain does only when it lists static-config.
+func raylineARCAuthzServesStaticKey(cfg *config.RouterConfig) bool {
+	providers := cfg.Authz.Providers
+	if len(providers) == 0 || len(validateAuthzProviders(providers)) > 0 {
+		return true
+	}
+	for _, provider := range providers {
+		if provider.Type == "static-config" {
+			return true
+		}
+	}
+	return false
+}
+
+// raylineARCAmbientCredentialEndpoint reports a Vertex AI or Amazon Bedrock
+// endpoint whose credential comes from the router's own cloud identity rather
+// than a static key: the endpoint declares no key at all, the profile keeps
+// the provider's default Bearer shape, and the authz chain carries the
+// provider that mints that credential (google-access-token for Vertex AI,
+// bedrock-short-term-key for Bedrock). A key or a header the caller could
+// inject never stands in for it: the chain is the configured one, and a
+// static key on the endpoint takes it out of this path.
+func raylineARCAmbientCredentialEndpoint(
+	cfg *config.RouterConfig,
+	endpoint *config.VLLMEndpoint,
+	profile *config.ProviderProfile,
+) bool {
+	minter := ambientCredentialProviderType(profile)
+	if minter == "" || !strings.EqualFold(strings.TrimSpace(endpoint.Type), strings.TrimSpace(profile.Type)) {
+		return false
+	}
+	if endpoint.APIKeyEnvName != "" || endpoint.APIKey != "" || endpoint.APIKeyInline {
+		return false
+	}
+	if !raylineARCProviderDefaultAuth(profile) {
+		return false
+	}
+	return raylineARCAuthzServesAmbientCredential(cfg, minter)
+}
+
+// ambientCredentialProviderType is the authz provider type that mints a
+// profile's credential from the router's cloud identity, or "" for a
+// provider that has none.
+func ambientCredentialProviderType(profile *config.ProviderProfile) string {
+	switch {
+	case providerIsVertexAI(profile):
+		return authz.CloudTokenProviderType
+	case providerIsBedrock(profile):
+		return authz.BedrockKeyProviderType
+	default:
+		return ""
+	}
+}
+
+// raylineARCAuthzServesAmbientCredential reports a valid, fail-closed authz
+// chain that includes the minter provider and no provider that reads a
+// credential from a caller's header. A fail-open chain would send a request
+// on without the router's credential when no token is at hand, and with it
+// any Authorization header the caller sent.
+func raylineARCAuthzServesAmbientCredential(cfg *config.RouterConfig, minter string) bool {
+	if cfg.Authz.FailOpen {
+		return false
+	}
+	providers := cfg.Authz.Providers
+	if len(validateAuthzProviders(providers)) > 0 {
+		return false
+	}
+	ambient := false
+	for _, provider := range providers {
+		switch provider.Type {
+		case minter:
+			ambient = true
+		case "header-injection":
+			return false
+		}
+	}
+	return ambient
 }
 
 // raylineARCProviderDefaultAuth reports whether a profile keeps its provider

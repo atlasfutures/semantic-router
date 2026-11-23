@@ -69,7 +69,7 @@ func (r *OpenAIRouter) handleExternalGatewayModelRouting(
 	// Rewriting the protocol endpoint is part of request conversion. Envoy
 	// retains the already-selected route because this mode never clears the
 	// route cache, so upstream ownership remains with the external gateway.
-	setProviderRequestPath(&state.setHeaders, nil, targetFormat)
+	setProviderRequestPath(&state.setHeaders, nil, targetFormat, "", false)
 	response := buildRequestBodyContinueResponse(state, nil, false)
 
 	logging.ComponentDebugEvent("extproc", "external_gateway_dispatch_prepared", map[string]interface{}{

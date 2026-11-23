@@ -2,7 +2,6 @@ package extproc
 
 import (
 	"sort"
-	"strings"
 
 	"github.com/atlasfutures/semantic-router/rayline-core/thinkingcontrol"
 
@@ -50,8 +49,13 @@ func effortBaseOf(control thinkingcontrol.Control, override string, overridden b
 func (scorer *policyServiceScorer) effortPins(controls []raylinearc.ControlPlacement) map[string]effortBase {
 	pins := map[string]effortBase{}
 	for _, placement := range controls {
-		worker, _, found := strings.Cut(placement.Key, "|")
+		worker, scope, found := raylineARCPlacementKeyParts(placement.Key)
 		if !found || placement.State.First == nil {
+			continue
+		}
+		// A placement from the worker's earlier endpoint (another scope) is
+		// not the transcript its turns now continue: it pins nothing.
+		if scope != scorer.placementScopes[worker] {
 			continue
 		}
 		override, overridden := scorer.effortOverrides[worker]

@@ -77,6 +77,16 @@ func TestRouteServicePricesKeyARemappedArmByItsOwnID(t *testing.T) {
 	}
 }
 
+// A from-worker whose actions are all masked (left out of the offer) still
+// names the package model its to-worker stands in for: the to-worker's
+// admitted native action keeps the package model's price id.
+func TestRouteServicePricesKeepTheStandInWhenTheFromWorkerIsMasked(t *testing.T) {
+	scorer := remapScorer()
+	scorer.catalogOrder = scorer.actionOrder
+	scorer.actionOrder = []string{"flash-native", "opus-max"}
+	checkRemappedArmKeyedByItsOwnID(t, scorer)
+}
+
 func checkRemappedArmKeyedByItsOwnID(t *testing.T, scorer *policyServiceScorer) {
 	t.Helper()
 	caller := callerWorld(map[string]raylinearc.PolicyRoutingRate{

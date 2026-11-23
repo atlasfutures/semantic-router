@@ -1,7 +1,6 @@
 package execution
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -142,25 +141,9 @@ func stripModelPinReasoning(request *llmprotocol.Request) int {
 		contents := make([]llmprotocol.Content, 0, len(message.Content))
 		for _, content := range message.Content {
 			if content.Kind == llmprotocol.ContentReasoning {
-				if content.Signature != "" {
-					content.Signature = ""
-					dropped++
-				}
-				if extension := content.Extensions; extension != nil && extension.Format == llmprotocol.OpenAIChatV1 {
-					if _, exists := extension.Fields["reasoning_details"]; exists {
-						fields := make(map[string]json.RawMessage, len(extension.Fields))
-						for key, value := range extension.Fields {
-							if key != "reasoning_details" {
-								fields[key] = value
-							}
-						}
-						content.Extensions = nil
-						if len(fields) > 0 {
-							content.Extensions = &llmprotocol.UnmodeledFields{Format: extension.Format, Fields: fields}
-						}
-						dropped++
-					}
-				}
+				var stripped int
+				content, stripped = withoutReasoningProof(content)
+				dropped += stripped
 				if content.Text == "" && content.Extensions == nil {
 					continue
 				}

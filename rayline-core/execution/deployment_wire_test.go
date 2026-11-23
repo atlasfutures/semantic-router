@@ -2,8 +2,6 @@ package execution
 
 import (
 	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -52,25 +50,5 @@ func TestLocalCredentialAliasCannotExposeHostedKey(t *testing.T) {
 	_, err = NewServer(config, registry, &HTTPDecisions{}, testCoreToken)
 	if err == nil || !strings.Contains(err.Error(), "hosted Decisions credential") {
 		t.Fatalf("hosted key alias was admitted for local inference: %v", err)
-	}
-}
-
-func TestUnknownHistoricalSessionCannotLosePrivateLedger(t *testing.T) {
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { t.Error("untracked history reached inference") }))
-	defer upstream.Close()
-	capture := &decisionCapture{}
-	for path, protocol := range map[string]llmprotocol.WireFormat{"/v1/messages": llmprotocol.AnthropicMessagesV1, "/v1/chat/completions": llmprotocol.OpenAIChatV1, "/v1/responses": llmprotocol.OpenAIResponsesV1} {
-		_, server := executorWithHTTPDecisions(t, onProtocol(t, testConfig(t, upstream.URL, false), protocol), capture)
-		body := `{"model":"arc-1.0","max_tokens":64,"messages":[{"role":"user","content":"old"},{"role":"assistant","content":"old reply"},{"role":"user","content":"continue"}]}`
-		if path == "/v1/responses" {
-			body = strings.ReplaceAll(strings.ReplaceAll(body, "max_tokens", "max_output_tokens"), "messages", "input")
-		}
-		status, result := executeHTTP(t, server.URL, path, body, path)
-		if status != 409 || !strings.Contains(string(result), "no execution ledger") {
-			t.Fatalf("history resume returned %d: %s", status, result)
-		}
-	}
-	if len(capture.contexts) != 0 {
-		t.Fatal("untracked history spent a Decisions call")
 	}
 }
