@@ -186,6 +186,14 @@ func (encoder *responsesStreamEncoder) ensureResponsesOutputStarted(
 		if event.ToolCall != nil {
 			item.CallID, item.Name, item.Arguments = event.ToolCall.ID, event.ToolCall.Name, event.ToolCall.Arguments
 			item.Namespace = event.ToolCall.Namespace
+			// A start's "{}" is a placeholder the deltas replace (see
+			// encodeResponsesItemStart). A client that adds the deltas to
+			// the added item's arguments, as the OpenAI SDK's stream helper
+			// does, would otherwise assemble "{}" in front of them.
+			if strings.TrimSpace(item.Arguments) == "{}" {
+				item.Arguments = ""
+				encoder.placeholderCalls[key] = true
+			}
 		}
 	case responsesOutputImage:
 		item.Type = "image_generation_call"
@@ -799,6 +807,20 @@ func (encoder *responsesStreamEncoder) encodeCompletedResponsesOutput(
 		// Anthropic tool_use opens with, and the item says it is incomplete.
 		arguments = "{}"
 	}
+	var frames [][]byte
+	if open := encoder.openToolCalls[key]; encoder.placeholderCalls[key] && arguments != "" && (open == nil || open.Arguments == "") {
+		// The added item was opened empty and no delta filled it (a Claude
+		// call whose input never streamed): deliver the arguments the done
+		// event states, as the delta a client assembles them from.
+		delta, err := encoder.encodeResponsesStreamFrame(responsesEventWire{
+			Type: "response.function_call_arguments.delta", Sequence: encoder.nextWireSequence(),
+			ItemID: id, OutputIndex: responsesOutputIndex(index), Delta: arguments,
+		})
+		if err != nil {
+			return nil, nil, err
+		}
+		frames = append(frames, delta)
+	}
 	done := responsesEventWire{
 		Type: "response.function_call_arguments.done", Sequence: encoder.nextWireSequence(),
 		ItemID: id, OutputIndex: responsesOutputIndex(index),
@@ -808,7 +830,7 @@ func (encoder *responsesStreamEncoder) encodeCompletedResponsesOutput(
 	if err != nil {
 		return nil, nil, err
 	}
-	frames := [][]byte{doneFrame}
+	frames = append(frames, doneFrame)
 	wire := responsesEventWire{
 		Type: "response.output_item.done", Sequence: encoder.nextWireSequence(), OutputIndex: responsesOutputIndex(index),
 	}
