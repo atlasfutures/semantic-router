@@ -309,6 +309,13 @@ providers:
         - name: vertex-openapi
           base_url: https://aiplatform.googleapis.com/v1/projects/<project>/locations/global/endpoints/openapi
           provider: vertex-ai
+routing:
+  modelCards:
+    # The Vertex AI id has no anthropic/ segment, so the card names its
+    # publisher: Claude-specific handling (thinking restoration, automatic
+    # prompt caching) keys on it.
+    - name: claude
+      publisher: anthropic
 ```
 
 The identity needs `roles/aiplatform.user` (or an equivalent custom role) on
