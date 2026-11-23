@@ -398,6 +398,18 @@ one allowance for a session whose deployments do not share a limit and cannot
 be told a smaller one per arm. A turn whose admitted thinking budget leaves no
 strict room below the limit is refused rather than clamped, since Messages
 counts thinking inside `max_tokens`.
+
+A `local` Responses deployment receives no `namespace` tools, since a user's own
+Responses server may serve function tools only. Each namespaced function (Codex's
+sub-agent tools) is declared as a plain function named
+`<namespace>__<name>`, its description preceded by the namespace's, and each
+namespaced call in the history goes under that name too. A call the model returns
+under one of those names reaches the client with its namespace and name restored;
+a call under any other name passes through unchanged. A plain tool already named
+like a flattened one is refused at decoding (`duplicate_tool`), so each flattened
+name stands for one tool. Names are not shortened: a server that bounds function
+names refuses one over its limit. A `cloud` deployment gets namespace tools as the
+client sent them.
 `auth_env` names an optional credential.
 `capacity_estimate` (v2, optional, local deployments) tunes the sizing of a
 local deployment without a registered counter: `{"headroom_ratio": 0.05,
