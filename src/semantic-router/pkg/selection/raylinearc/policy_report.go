@@ -364,13 +364,15 @@ func replaceClientReport(state *EpisodeState, report Report) (*EpisodeState, Rep
 			LastUsed: report.FinishedAt.UTC(), LastInputTokens: last.InputTokens, Call: reportedCall(run, report, last.contextEpoch()),
 		}
 	}
+	// A decision pending after the corrected turn read the client's model as
+	// the served-model record, which a request that drops it restores: that
+	// is corrected. While it is pending its lookup's own model holds the
+	// record and stays; a superseded one has put the client's model back,
+	// so the record is corrected too.
 	if next.Pending != nil {
-		// A decision pending after the corrected turn owns the served-model
-		// record (its lookup wrote its own model there) and keeps it; it read
-		// the client's model before it, which a request that drops it
-		// restores, so that is what is corrected.
 		next.Pending.PriorServedModel = run.Model
-	} else {
+	}
+	if next.Pending == nil || next.Pending.Superseded {
 		next.ServedModel = run.Model
 	}
 	next.LastReport = newLastReport(last.RouteID, report, state.TurnIndex, last.Message, run.Arm, nil)
