@@ -313,8 +313,9 @@ func (server *Server) execute(writer http.ResponseWriter, incoming *http.Request
 	defer state.release()
 	fresh := state.pending == nil && state.completed == 0
 	if fresh && hasExecutionHistory(request) && !markerSidecall && !(explicitEvent != nil && explicitEvent.is(EventSidecall)) {
-		server.writeError(writer, format, http.StatusConflict, "execution_state_not_found", "this session has assistant or tool history but no execution ledger; start a fresh session")
-		return
+		// A resumed or forked session: its history is accepted unattributed
+		// and the ledger starts with this turn.
+		state.inheritHistory(request)
 	}
 	wire := wireMessageFingerprints(format, body)
 	rewrite := len(state.prefix) > 0 && !extendsPrefix(state.prefix, prefix)

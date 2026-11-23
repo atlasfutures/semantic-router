@@ -43,6 +43,10 @@ type branchState struct {
 	// seen fingerprints the wire messages of the last non-sidecall request
 	// this branch saw, committed or not: a compaction is detected against it.
 	seen []string
+	// inherited holds digests of the model-bound reasoning in a history the
+	// branch received without a ledger (a resumed or forked session). The
+	// client keeps resending it, so it outlives epoch resets.
+	inherited map[string]struct{}
 }
 
 type carriedTranscript struct {
