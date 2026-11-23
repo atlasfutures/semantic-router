@@ -14,6 +14,15 @@ from cli.utils import get_logger
 log = get_logger(__name__)
 
 
+def _router_sets_full_path(model) -> bool:
+    """Whether the router sends this model's requests on their full upstream
+    path (base path included), so Envoy must not prefix the base path."""
+    return any(
+        (backend.provider or "").strip().lower() == "vertex-ai"
+        for backend in (model.backend_refs or [])
+    )
+
+
 def _route_request_headers(endpoint: dict) -> list[dict[str, str]]:
     headers: dict[str, str] = {}
     for key, value in (endpoint.get("extra_headers") or {}).items():
@@ -115,7 +124,10 @@ def generate_envoy_config_from_user_config(
         route_request_headers = []
         if endpoints:
             first_path = endpoints[0].get("path", "")
-            if first_path:
+            # Vertex AI's base path is itself under /v1/ and the router sets
+            # the full request path (model and operation in the URL), so a
+            # /v1 rewrite would prepend the base path a second time.
+            if first_path and not _router_sets_full_path(model):
                 path_prefix = first_path
             route_request_headers = _route_request_headers(endpoints[0])
 
