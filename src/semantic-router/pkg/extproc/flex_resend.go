@@ -223,6 +223,11 @@ func (r *OpenAIRouter) buildResendCall(
 	// after the credential and the path, and before the cache beta is merged
 	// into whatever anthropic-beta it set.
 	r.applyDecisionHeaderMutations(state, ctx)
+	// A Vertex AI path names the model and the stream mode: the first
+	// dispatch rewrites it after the decision's mutation, and so does this.
+	vertexPath := &ext_proc.HeaderMutation{SetHeaders: state.setHeaders}
+	resetVertexRequestPath(vertexPath, dispatch, body)
+	state.setHeaders = vertexPath.SetHeaders
 	declareAutoCacheBeta(&state.setHeaders, ctx)
 	target, headers, err := flexResendRequestTarget(dispatch, state.setHeaders, state.removeHeaders, ctx)
 	if err != nil {

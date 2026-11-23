@@ -372,6 +372,31 @@ func TestVertexRequestPathFollowsTheSentBody(t *testing.T) {
 	}
 }
 
+// A decision's header_mutation that sets :path does not move a Vertex AI
+// re-send off its model path, as it does not move the first dispatch.
+func TestVertexResendPathOutlivesADecisionPathMutation(t *testing.T) {
+	router, model := vertexTestRouter(t, "https://vertex.example.com/v1/projects/p/locations/global", llmprotocol.AnthropicMessagesV1)
+	profile := router.Config.ProviderProfiles["vertex"]
+	dispatch := &providerDispatch{
+		logicalModel: model, upstreamModel: "claude-x", backendAddress: "vertex.example.com:443",
+		backendName: "vertex", profile: &profile, targetFormat: llmprotocol.AnthropicMessagesV1,
+	}
+	ctx := routingTestContext(llmprotocol.AnthropicMessagesV1, testNeutralRequest(model, "hi"))
+	ctx.VSRSelectedDecision = &config.Decision{Name: "path-mutation", Plugins: []config.DecisionPlugin{{
+		Type: "header_mutation",
+		Configuration: config.MustStructuredPayload(config.HeaderMutationPluginConfig{
+			Add: []config.HeaderPair{{Name: ":path", Value: "/v1/messages"}},
+		}),
+	}}}
+	call, refused := router.buildResendCall(ctx, model, dispatch, []byte(`{"messages":[],"stream":true}`))
+	if refused != "" {
+		t.Fatalf("buildResendCall refused: %s", refused)
+	}
+	if want := "https://vertex.example.com:443/v1/projects/p/locations/global/publishers/anthropic/models/claude-x:streamRawPredict"; call.url != want {
+		t.Fatalf("re-send url = %q, want %q", call.url, want)
+	}
+}
+
 func TestVertexResendPathFollowsTheSentBody(t *testing.T) {
 	router, model := vertexTestRouter(t, "https://vertex.example.com/v1/projects/p/locations/global", llmprotocol.AnthropicMessagesV1)
 	profile := router.Config.ProviderProfiles["vertex"]
