@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/authz"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
@@ -25,12 +26,45 @@ func raylineARCPolicyDispatchReady(cfg *config.RouterConfig, decision *config.De
 	if cfg == nil || decision == nil {
 		return false
 	}
+	dispatchedOn := raylineARCPolicyDispatchTargets(cfg, decision)
 	for _, modelRef := range decision.ModelRefs {
+		if raylineARCPolicyWorkerOutOfService(cfg, modelRef.Model, dispatchedOn) {
+			continue
+		}
 		if !raylineARCPolicyWorkerReady(cfg, modelRef.Model) {
 			return false
 		}
 	}
 	return true
+}
+
+// raylineARCPolicyDispatchTargets names the workers an in-service arm is sent
+// on through dispatch_model_overrides.
+func raylineARCPolicyDispatchTargets(cfg *config.RouterConfig, decision *config.Decision) map[string]bool {
+	targets := map[string]bool{}
+	if decision.Algorithm == nil || decision.Algorithm.RaylineARC == nil ||
+		decision.Algorithm.RaylineARC.PolicyService == nil {
+		return targets
+	}
+	policy := decision.Algorithm.RaylineARC.PolicyService
+	for from, to := range policy.DispatchModelOverrides {
+		if params, ok := cfg.ModelConfig[strings.TrimSpace(from)]; ok && params.IsDisabled() {
+			continue
+		}
+		targets[strings.TrimSpace(to)] = true
+	}
+	return targets
+}
+
+// raylineARCPolicyWorkerOutOfService reports a worker no turn is sent to: its
+// card is disabled, so the policy's hard mask never offers it, and no
+// in-service arm is dispatched on it. Its provider contract is then not part
+// of what readiness proves; an install that does not serve a model (an
+// upstream that lacks it) carries no credential for it.
+func raylineARCPolicyWorkerOutOfService(cfg *config.RouterConfig, worker string, dispatchedOn map[string]bool) bool {
+	worker = strings.TrimSpace(worker)
+	params, ok := cfg.ModelConfig[worker]
+	return ok && params.IsDisabled() && !dispatchedOn[worker]
 }
 
 func raylineARCPolicyWorkerReady(cfg *config.RouterConfig, worker string) bool {
@@ -44,15 +78,18 @@ func raylineARCPolicyWorkerReady(cfg *config.RouterConfig, worker string) bool {
 	}
 	for index := range endpoints {
 		endpoint := &endpoints[index]
-		if endpoint.APIKeyEnvName == "" || endpoint.APIKey == "" || endpoint.APIKeyInline {
-			return false
-		}
 		profile, err := cfg.GetProviderProfileForEndpoint(endpoint.Name)
 		if err != nil || profile == nil || profile.ChatPath != "" {
 			return false
 		}
 		parsed, err := url.Parse(profile.BaseURL)
 		if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" {
+			return false
+		}
+		if raylineARCAmbientCredentialEndpoint(cfg, endpoint, profile) {
+			continue
+		}
+		if endpoint.APIKeyEnvName == "" || endpoint.APIKey == "" || endpoint.APIKeyInline {
 			return false
 		}
 		switch {
@@ -69,6 +106,50 @@ func raylineARCPolicyWorkerReady(cfg *config.RouterConfig, worker string) bool {
 		}
 	}
 	return true
+}
+
+// raylineARCAmbientCredentialEndpoint reports a Vertex AI endpoint whose
+// credential is the router's own Google identity rather than a static key:
+// the endpoint declares no key at all, the profile keeps the provider's
+// default Bearer shape, and the authz chain carries the google-access-token
+// provider, which is what supplies that credential. A key or a header the
+// caller could inject never stands in for it: the chain is the configured
+// one, and a static key on the endpoint takes it out of this path.
+func raylineARCAmbientCredentialEndpoint(
+	cfg *config.RouterConfig,
+	endpoint *config.VLLMEndpoint,
+	profile *config.ProviderProfile,
+) bool {
+	if !strings.EqualFold(strings.TrimSpace(endpoint.Type), "vertex-ai") || !providerIsVertexAI(profile) {
+		return false
+	}
+	if endpoint.APIKeyEnvName != "" || endpoint.APIKey != "" || endpoint.APIKeyInline {
+		return false
+	}
+	if !raylineARCProviderDefaultAuth(profile) {
+		return false
+	}
+	return raylineARCAuthzServesAmbientCredential(cfg)
+}
+
+// raylineARCAuthzServesAmbientCredential reports a valid authz chain that
+// includes the google-access-token provider and no provider that reads a
+// credential from a caller's header.
+func raylineARCAuthzServesAmbientCredential(cfg *config.RouterConfig) bool {
+	providers := cfg.Authz.Providers
+	if len(validateAuthzProviders(providers)) > 0 {
+		return false
+	}
+	ambient := false
+	for _, provider := range providers {
+		switch provider.Type {
+		case authz.CloudTokenProviderType:
+			ambient = true
+		case "header-injection":
+			return false
+		}
+	}
+	return ambient
 }
 
 // raylineARCProviderDefaultAuth reports whether a profile keeps its provider
