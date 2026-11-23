@@ -27,7 +27,7 @@ func inheritedReasoningKeys(content llmprotocol.Content) []string {
 			keys = append(keys, "signature\x00"+content.Signature)
 		}
 		if details, ok := chatReasoningDetails(content); ok {
-			keys = append(keys, "details\x00"+string(details))
+			keys = append(keys, "details\x00"+canonicalJSON(details))
 		}
 	case llmprotocol.ContentUnmodeled:
 		if data, ok := protocolcodec.OpaqueReasoningData(content); ok {
@@ -60,7 +60,22 @@ func encryptedResponsesReasoning(content llmprotocol.Content) (string, bool) {
 	if json.Unmarshal(block.Raw, &item) != nil || len(item.EncryptedContent) == 0 || string(item.EncryptedContent) == "null" {
 		return "", false
 	}
-	return string(item.EncryptedContent), true
+	return canonicalJSON(item.EncryptedContent), true
+}
+
+// canonicalJSON keys a resent value by what it holds, not how the client
+// spelled it: whitespace, member order and string escapes may change between
+// turns. A value that does not parse is keyed by its bytes.
+func canonicalJSON(raw json.RawMessage) string {
+	var value any
+	if json.Unmarshal(raw, &value) != nil {
+		return string(raw)
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return string(raw)
+	}
+	return string(encoded)
 }
 
 // inheritHistory records the model-bound reasoning of a history the branch

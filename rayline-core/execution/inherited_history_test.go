@@ -228,3 +228,48 @@ func prepareIssuersAndCheck(t *testing.T, encode func(*testing.T, llmprotocol.Wi
 	}
 	return issuers
 }
+
+// A client may re-serialize the history between turns. Inherited reasoning
+// is recognized by its content, whatever its whitespace, member order or
+// string escapes.
+func TestInheritedReasoningIsRecognizedWhenRespelled(t *testing.T) {
+	engine := protocolcodec.NewBuiltinEngine()
+	cases := []struct {
+		format             llmprotocol.WireFormat
+		resumed, respelled string
+		token              string
+	}{
+		{llmprotocol.OpenAIChatV1,
+			`{"model":"m","messages":[{"role":"user","content":"old"},{"role":"assistant","content":"old reply","reasoning_details":[{"type":"reasoning.encrypted","data":"details-inherited","index":0}]},{"role":"user","content":"next"}]}`,
+			`{"model":"m","messages":[{"role":"user","content":"old"},{"role":"assistant","content":"old reply","reasoning_details":[ {"index":0, "data":"details-inherited", "type":"reasoning.encrypted"} ]},{"role":"user","content":"next"}]}`,
+			"details-inherited"},
+		{llmprotocol.OpenAIResponsesV1,
+			`{"model":"m","input":[{"role":"user","content":"old"},{"type":"reasoning","id":"rs_old","summary":[],"encrypted_content":"encrypted/inherited"},{"role":"user","content":"next"}]}`,
+			`{"model":"m","input":[{"role":"user","content":"old"},{"type":"reasoning","id":"rs_old","summary":[],"encrypted_content":"encrypted\/inherited"},{"role":"user","content":"next"}]}`,
+			"inherited"},
+	}
+	for _, tc := range cases {
+		t.Run(string(tc.format), func(t *testing.T) {
+			state := newBranchState()
+			resumed, _, _, err := engine.DecodeRequestForMutation(tc.format, []byte(tc.resumed))
+			if err != nil {
+				t.Fatal(err)
+			}
+			state.inheritHistory(resumed)
+			request, envelope, _, err := engine.DecodeRequestForMutation(tc.format, []byte(tc.respelled))
+			if err != nil {
+				t.Fatal(err)
+			}
+			deployment := Deployment{Kind: "cloud", ID: "target", URL: "https://provider.example/v1", WireModel: "m", IssuerSHA256: "approved-profile", Protocol: tc.format}
+			prepareReasoning(&request, deployment, state)
+			request.Generation++
+			encoded, err := engine.EncodeRequest(tc.format, request, envelope)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(encoded.Body), tc.token) {
+				t.Fatalf("re-spelled inherited reasoning was forwarded: %s", encoded.Body)
+			}
+		})
+	}
+}
