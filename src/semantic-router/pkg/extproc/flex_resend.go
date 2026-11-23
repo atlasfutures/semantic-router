@@ -218,7 +218,7 @@ func (r *OpenAIRouter) buildResendCall(
 		return nil, "credential_unavailable"
 	}
 	setProviderRequestPath(&state.setHeaders, dispatch.profile, dispatch.targetFormat,
-		dispatch.upstreamModel, ctx.ExpectStreamingResponse)
+		dispatch.upstreamModel, bodyRequestsStream(body))
 	// The decision's header_mutation, as the first dispatch applies it:
 	// after the credential and the path, and before the cache beta is merged
 	// into whatever anthropic-beta it set.

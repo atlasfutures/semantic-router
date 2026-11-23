@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 
+	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
+
 	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
@@ -47,4 +49,29 @@ func adaptVertexMessagesRequest(body []byte, dispatch *providerDispatch) ([]byte
 		return nil, fmt.Errorf("set anthropic_version: %w", err)
 	}
 	return out, nil
+}
+
+// bodyRequestsStream reports the stream flag of the body actually sent. A
+// Messages body omits it when false.
+func bodyRequestsStream(body []byte) bool {
+	return gjson.GetBytes(body, "stream").Bool()
+}
+
+// resetVertexRequestPath sets a Vertex AI dispatch's :path from the body that
+// is sent rather than from what the client asked: Vertex AI names the
+// streaming operation in the URL, and a request parameter policy can drop a
+// client's stream flag from the body. Any other dispatch is left alone.
+func resetVertexRequestPath(mutation *ext_proc.HeaderMutation, dispatch *providerDispatch, body []byte) {
+	if mutation == nil || dispatch == nil || !providerIsVertexAI(dispatch.profile) {
+		return
+	}
+	kept := mutation.SetHeaders[:0]
+	for _, option := range mutation.SetHeaders {
+		if option.GetHeader().GetKey() != ":path" {
+			kept = append(kept, option)
+		}
+	}
+	mutation.SetHeaders = kept
+	setProviderRequestPath(&mutation.SetHeaders, dispatch.profile, dispatch.targetFormat,
+		dispatch.upstreamModel, bodyRequestsStream(body))
 }

@@ -11,6 +11,9 @@ import (
 	"sync/atomic"
 	"testing"
 
+	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
+	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
+
 	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/authz"
@@ -302,5 +305,64 @@ func TestVertexClaudeResendReachesUpstream(t *testing.T) {
 	}
 	if string(s.body["anthropic_version"]) != `"vertex-2023-10-16"` {
 		t.Fatalf("upstream anthropic_version = %s", s.body["anthropic_version"])
+	}
+}
+
+// Vertex AI names the streaming operation in the URL, so the path follows the
+// body actually sent, not the client's request: a parameter policy can drop
+// the client's stream flag.
+func TestVertexRequestPathFollowsTheSentBody(t *testing.T) {
+	profile := &config.ProviderProfile{Type: "vertex-ai", BaseURL: "https://vertex.example.com/v1/projects/p/locations/global"}
+	dispatch := &providerDispatch{
+		upstreamModel: "claude-x", profile: profile, targetFormat: llmprotocol.AnthropicMessagesV1,
+	}
+	const prefix = "/v1/projects/p/locations/global/publishers/anthropic/models/claude-x:"
+	for body, want := range map[string]string{
+		`{"messages":[],"stream":true}`:  prefix + "streamRawPredict",
+		`{"messages":[]}`:                prefix + "rawPredict",
+		`{"messages":[],"stream":false}`: prefix + "rawPredict",
+	} {
+		mutation := &ext_proc.HeaderMutation{}
+		// What the dispatch set from the client's request: streaming.
+		setProviderRequestPath(&mutation.SetHeaders, profile, dispatch.targetFormat, "claude-x", true)
+		mutation.SetHeaders = append(mutation.SetHeaders, overwriteRequestHeader("x-other", "1"))
+		resetVertexRequestPath(mutation, dispatch, []byte(body))
+		headers := headerValuesByName(mutation.SetHeaders)
+		paths := 0
+		for _, option := range mutation.SetHeaders {
+			if option.GetHeader().GetKey() == ":path" {
+				paths++
+			}
+		}
+		if paths != 1 || headers[":path"] != want || headers["x-other"] != "1" {
+			t.Fatalf("%s: :path = %q (%d set), want %q once", body, headers[":path"], paths, want)
+		}
+	}
+
+	// Another provider's path is left as the dispatch set it.
+	other := &providerDispatch{profile: &config.ProviderProfile{Type: "anthropic", BaseURL: "https://api.example.com"},
+		targetFormat: llmprotocol.AnthropicMessagesV1}
+	mutation := &ext_proc.HeaderMutation{SetHeaders: []*core.HeaderValueOption{overwriteRequestHeader(":path", "/kept")}}
+	resetVertexRequestPath(mutation, other, []byte(`{"stream":true}`))
+	if got := headerValuesByName(mutation.SetHeaders)[":path"]; got != "/kept" {
+		t.Fatalf("non-Vertex :path = %q", got)
+	}
+}
+
+func TestVertexResendPathFollowsTheSentBody(t *testing.T) {
+	router, model := vertexTestRouter(t, "https://vertex.example.com/v1/projects/p/locations/global", llmprotocol.AnthropicMessagesV1)
+	profile := router.Config.ProviderProfiles["vertex"]
+	dispatch := &providerDispatch{
+		logicalModel: model, upstreamModel: "claude-x", backendAddress: "vertex.example.com:443",
+		backendName: "vertex", profile: &profile, targetFormat: llmprotocol.AnthropicMessagesV1,
+	}
+	ctx := routingTestContext(llmprotocol.AnthropicMessagesV1, testNeutralRequest(model, "hi"))
+	ctx.ExpectStreamingResponse = true
+	call, refused := router.buildResendCall(ctx, model, dispatch, []byte(`{"messages":[]}`))
+	if refused != "" {
+		t.Fatalf("buildResendCall refused: %s", refused)
+	}
+	if want := "https://vertex.example.com:443/v1/projects/p/locations/global/publishers/anthropic/models/claude-x:rawPredict"; call.url != want {
+		t.Fatalf("re-send url = %q, want %q", call.url, want)
 	}
 }

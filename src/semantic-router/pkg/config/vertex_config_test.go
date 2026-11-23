@@ -4,7 +4,8 @@ import "testing"
 
 // A keyless Vertex AI config: a Claude card on the Messages protocol, an open
 // model on the OpenAI-compatible endpoint, and the google-access-token authz
-// provider in place of static keys.
+// provider in place of static keys. Each card keeps its provider_model_id and
+// names the id Vertex AI serves it as in external_model_ids.
 const vertexKeylessConfig = `
 version: v0.3
 providers:
@@ -12,14 +13,18 @@ providers:
     model: claude-worker
   models:
     - name: claude-worker
-      provider_model_id: claude-x@v1
+      provider_model_id: anthropic/claude-x
+      external_model_ids:
+        vertex-ai: claude-x@v1
       api_format: anthropic
       backend_refs:
         - name: vertex
           base_url: https://aiplatform.googleapis.com/v1/projects/p/locations/global
           provider: vertex-ai
     - name: open-worker
-      provider_model_id: publisher/open-model
+      provider_model_id: open/open-model
+      external_model_ids:
+        vertex-ai: publisher/open-model
       api_format: openai
       backend_refs:
         - name: vertex-openapi
@@ -55,14 +60,18 @@ func TestVertexKeylessConfigLoads(t *testing.T) {
 		t.Fatalf("authz = %+v", cfg.Authz)
 	}
 	want := map[string]struct {
-		protocol string
-		model    string
-		path     string
+		protocol         string
+		model            string
+		path             string
+		registryProvider string
+		registryModel    string
 	}{
 		"claude-worker": {"anthropic/messages@1", "claude-x@v1",
-			"/v1/projects/p/locations/global/publishers/anthropic/models/claude-x@v1:streamRawPredict"},
+			"/v1/projects/p/locations/global/publishers/anthropic/models/claude-x@v1:streamRawPredict",
+			"anthropic", "anthropic/claude-x"},
 		"open-worker": {"openai/chat-completions@1", "publisher/open-model",
-			"/v1/projects/p/locations/global/endpoints/openapi/chat/completions"},
+			"/v1/projects/p/locations/global/endpoints/openapi/chat/completions",
+			"openai", "open/open-model"},
 	}
 	for model, w := range want {
 		address, backend, ok, err := cfg.ResolvePrimaryBackendForModel(model)
@@ -80,6 +89,16 @@ func TestVertexKeylessConfigLoads(t *testing.T) {
 		path, err := profile.ResolveRequestPath(w.protocol, upstream, true)
 		if err != nil || path != w.path {
 			t.Fatalf("%s: path = %q, %v; want %q", model, path, err, w.path)
+		}
+		// The thinking-control registry cell is the publisher API's, named
+		// by the card's provider_model_id, not by the Vertex AI id.
+		provider, err := RaylineARCRegistryProvider(cfg, model)
+		if err != nil || provider != w.registryProvider {
+			t.Fatalf("%s: registry provider = %q, %v; want %q", model, provider, err, w.registryProvider)
+		}
+		served, err := RaylineARCRegistryModel(cfg, model)
+		if err != nil || served != w.registryModel {
+			t.Fatalf("%s: registry model = %q, %v; want %q", model, served, err, w.registryModel)
 		}
 	}
 }

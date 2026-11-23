@@ -549,12 +549,27 @@ func RaylineARCRegistryModel(cfg *RouterConfig, worker string) (string, error) {
 	served := ""
 	for _, endpoint := range endpoints {
 		model := cfg.ResolveExternalModelID(worker, endpoint.Name)
+		if raylineARCVertexEndpoint(cfg, endpoint.Name) {
+			// Vertex AI names a publisher model by its own id; the registry
+			// names it by the model's provider_model_id.
+			canonical := cfg.ModelConfig[worker].ExternalModelIDs["default"]
+			if canonical == "" {
+				return "", fmt.Errorf("worker %q endpoint %q is on Vertex AI and names no provider_model_id for the registry",
+					worker, endpoint.Name)
+			}
+			model = canonical
+		}
 		if served != "" && served != model {
 			return "", fmt.Errorf("worker %q serves both %s and %s; its admission cell is ambiguous", worker, served, model)
 		}
 		served = model
 	}
 	return served, nil
+}
+
+func raylineARCVertexEndpoint(cfg *RouterConfig, endpointName string) bool {
+	profile, err := cfg.GetProviderProfileForEndpoint(endpointName)
+	return err == nil && profile != nil && strings.EqualFold(strings.TrimSpace(profile.Type), "vertex-ai")
 }
 
 func RaylineARCRegistryProvider(cfg *RouterConfig, worker string) (provider string, err error) {
@@ -575,6 +590,19 @@ func RaylineARCRegistryProvider(cfg *RouterConfig, worker string) (provider stri
 			name = "anthropic"
 		case strings.EqualFold(strings.TrimSpace(profile.Type), "openai"):
 			name = "openai"
+		case strings.EqualFold(strings.TrimSpace(profile.Type), "vertex-ai"):
+			// Vertex AI serves a publisher model on that publisher's API: the
+			// Anthropic Messages API for Claude, the OpenAI chat API for the
+			// open models. The registry cell is that API's.
+			switch cfg.GetModelAPIFormat(worker) {
+			case APIFormatAnthropic:
+				name = "anthropic"
+			case APIFormatOpenAI:
+				name = "openai"
+			default:
+				return "", fmt.Errorf("worker %q endpoint %q is on Vertex AI with api_format %q, which the thinking-control registry does not name",
+					worker, endpoint.Name, cfg.GetModelAPIFormat(worker))
+			}
 		default:
 			return "", fmt.Errorf("worker %q endpoint %q is provider type %q, which the thinking-control registry does not name",
 				worker, endpoint.Name, profile.Type)

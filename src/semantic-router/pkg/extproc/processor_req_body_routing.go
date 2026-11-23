@@ -478,6 +478,7 @@ func (r *OpenAIRouter) finalizeProviderDispatchResponse(
 	if common.HeaderMutation == nil {
 		common.HeaderMutation = &ext_proc.HeaderMutation{}
 	}
+	resetVertexRequestPath(common.HeaderMutation, dispatch, body)
 	appendContentLengthHeader(&common.HeaderMutation.SetHeaders, len(body))
 	declareAutoCacheBeta(&common.HeaderMutation.SetHeaders, ctx)
 	stripServerSideFallbackBeta(common.HeaderMutation, ctx)
