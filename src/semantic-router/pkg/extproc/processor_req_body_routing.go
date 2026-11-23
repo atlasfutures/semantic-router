@@ -400,7 +400,8 @@ func (r *OpenAIRouter) buildProviderDispatchResponse(
 		return errorResponse
 	}
 	appendRoutingHeaders(&state.setHeaders, dispatch.logicalModel)
-	setProviderRequestPath(&state.setHeaders, dispatch.profile, dispatch.targetFormat)
+	setProviderRequestPath(&state.setHeaders, dispatch.profile, dispatch.targetFormat,
+		dispatch.upstreamModel, ctx != nil && ctx.ExpectStreamingResponse)
 	r.applyDecisionHeaderMutations(state, ctx)
 	return buildRequestBodyContinueResponse(state, nil, false)
 }
@@ -453,6 +454,13 @@ func (r *OpenAIRouter) finalizeProviderDispatchResponse(
 	}
 	ctx.DispatchedOutbound = readDispatchedOutboundParams(body, dispatch)
 	ctx.DispatchedServiceTier = dispatchedServiceTier(body)
+	// Last: Vertex AI names the model in the URL, so the body drops it.
+	body, err = adaptVertexMessagesRequest(body, dispatch)
+	if err != nil {
+		abandonUpstreamSpan(ctx, "provider request could not be adapted")
+		metrics.RecordRequestError(dispatch.logicalModel, "provider_adapter_error")
+		return nil, status.Errorf(codes.Internal, "adapt Vertex AI request: %v", err)
+	}
 	r.stageFlexResend(ctx, dispatch, body)
 	r.stageEndpointResend(ctx, dispatch, body)
 	r.stageThinkingSignatureRetry(ctx, dispatch, body)
@@ -580,14 +588,19 @@ func overwriteRequestHeader(key, value string) *core.HeaderValueOption {
 	}
 }
 
+// setProviderRequestPath sets :path for one dispatch. model is the backend's
+// model id and stream whether the response is streamed: a provider can put
+// either in the URL (Vertex AI's publishers/.../models/{model}:streamRawPredict).
 func setProviderRequestPath(
 	headersOut *[]*core.HeaderValueOption,
 	profile *config.ProviderProfile,
 	format llmprotocol.WireFormat,
+	model string,
+	stream bool,
 ) {
 	requestPath := requestWirePath(format)
 	if profile != nil {
-		if configured, err := profile.ResolveCreatePath(requestWireProtocol(format)); err == nil && configured != "" {
+		if configured, err := profile.ResolveRequestPath(requestWireProtocol(format), model, stream); err == nil && configured != "" {
 			requestPath = configured
 		}
 	}

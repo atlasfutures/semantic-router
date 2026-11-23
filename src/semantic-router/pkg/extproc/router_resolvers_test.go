@@ -38,6 +38,23 @@ func TestBuildCredentialResolverFallsBackOnInvalidConfig(t *testing.T) {
 	}
 }
 
+func TestBuildCredentialResolverGoogleAccessToken(t *testing.T) {
+	cfg := &config.RouterConfig{}
+	cfg.Authz.Providers = []config.AuthzProviderConfig{{Type: "google-access-token"}}
+
+	resolver := buildCredentialResolver(cfg)
+	if resolver == nil {
+		t.Fatal("expected credential resolver")
+	}
+	if resolver.FailOpen() {
+		t.Fatal("expected the configured chain to keep fail_open=false")
+	}
+	names := resolver.ProviderNames()
+	if len(names) != 1 || names[0] != "google-access-token" {
+		t.Fatalf("unexpected provider chain: %#v", names)
+	}
+}
+
 func TestBuildRateLimitResolverCreatesLocalLimiter(t *testing.T) {
 	cfg := &config.RouterConfig{}
 	cfg.RateLimit.FailOpen = true

@@ -380,6 +380,8 @@ func TestSetProviderRequestPathCoversProtocolAndBaseURLMatrix(t *testing.T) {
 		name    string
 		profile config.ProviderProfile
 		format  llmprotocol.WireFormat
+		model   string
+		stream  bool
 		want    string
 	}{
 		{
@@ -430,11 +432,42 @@ func TestSetProviderRequestPathCoversProtocolAndBaseURLMatrix(t *testing.T) {
 			format:  llmprotocol.AnthropicMessagesV1,
 			want:    "/compatible/v1/messages",
 		},
+		{
+			name:    "Anthropic stream keeps the Messages path",
+			profile: config.ProviderProfile{Type: "anthropic", BaseURL: "https://api.example.com/v1"},
+			format:  llmprotocol.AnthropicMessagesV1,
+			model:   "claude-x",
+			stream:  true,
+			want:    "/v1/messages",
+		},
+		{
+			name:    "Vertex AI OpenAI-compatible chat",
+			profile: config.ProviderProfile{Type: "vertex-ai", BaseURL: "https://vertex.example.com/v1/projects/p/locations/global/endpoints/openapi"},
+			format:  llmprotocol.OpenAIChatV1,
+			model:   "publisher/open-model",
+			stream:  true,
+			want:    "/v1/projects/p/locations/global/endpoints/openapi/chat/completions",
+		},
+		{
+			name:    "Vertex AI Claude rawPredict",
+			profile: config.ProviderProfile{Type: "vertex-ai", BaseURL: "https://vertex.example.com/v1/projects/p/locations/global"},
+			format:  llmprotocol.AnthropicMessagesV1,
+			model:   "claude-x",
+			want:    "/v1/projects/p/locations/global/publishers/anthropic/models/claude-x:rawPredict",
+		},
+		{
+			name:    "Vertex AI Claude streamRawPredict",
+			profile: config.ProviderProfile{Type: "vertex-ai", BaseURL: "https://vertex.example.com/v1/projects/p/locations/global"},
+			format:  llmprotocol.AnthropicMessagesV1,
+			model:   "claude-x",
+			stream:  true,
+			want:    "/v1/projects/p/locations/global/publishers/anthropic/models/claude-x:streamRawPredict",
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			var mutations []*core.HeaderValueOption
-			setProviderRequestPath(&mutations, &test.profile, test.format)
+			setProviderRequestPath(&mutations, &test.profile, test.format, test.model, test.stream)
 			if got := headerValuesByName(mutations)[":path"]; got != test.want {
 				t.Fatalf("provider path = %q, want %q", got, test.want)
 			}

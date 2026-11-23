@@ -2,7 +2,7 @@
 
 package catalog
 
-const builtInCatalogDigest = "sha256:b4b46f333f2db6679e620c6171c850b9e7e39d26baa868473600473c96b4eacf"
+const builtInCatalogDigest = "sha256:3f1e2e560fed845b577414041370511ec7a514559a5ce5c4e3685d95e5129c9a"
 
 const builtInCatalogJSON = `{
   "benchmarks": [
@@ -43714,6 +43714,7 @@ const builtInCatalogJSON = `{
       "display_name": "Google Vertex AI",
       "id": "vertex-ai",
       "path_overrides": {
+        "anthropic/messages@1#create": "/publishers/anthropic/models/{model}:rawPredict",
         "openai/chat-completions@1#create": "/chat/completions"
       },
       "presentation": {
@@ -43723,11 +43724,13 @@ const builtInCatalogJSON = `{
         "monogram": "V"
       },
       "protocols": [
-        "openai/chat-completions@1"
+        "openai/chat-completions@1",
+        "anthropic/messages@1"
       ],
       "support_tier": "native",
       "supported_operations": [
-        "openai/chat-completions@1#create"
+        "openai/chat-completions@1#create",
+        "anthropic/messages@1#create"
       ]
     },
     {
