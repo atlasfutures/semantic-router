@@ -230,8 +230,12 @@ func isLowerHexID(value string) bool {
 // refused.
 func (scorer *policyServiceScorer) reportCandidates(report raylineReport) ([]string, *routesContractError) {
 	if report.actionID != "" {
-		if _, bound := scorer.bindings[report.actionID]; !bound || !scorer.actionServes(report.actionID, report.model) {
+		binding, bound := scorer.bindings[report.actionID]
+		if !bound || !scorer.actionServes(report.actionID, report.model) {
 			return nil, reportInvalid("executed.action_id is not an action of executed.model")
+		}
+		if report.thinkingLevel != "" && binding.level != report.thinkingLevel {
+			return nil, reportInvalid("executed.thinking_level is not the level of executed.action_id")
 		}
 		return []string{report.actionID}, nil
 	}

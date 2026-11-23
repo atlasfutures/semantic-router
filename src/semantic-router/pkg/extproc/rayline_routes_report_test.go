@@ -296,16 +296,18 @@ func TestRoutesReportModelMapping(t *testing.T) {
 		action int
 		status int
 	}{
-		"model alone, the decided level":  {pick: 1, model: "think", action: 1, status: 200},
-		"model and level":                 {pick: 0, model: "think", extra: map[string]any{"thinking_level": "up"}, action: 1, status: 200},
-		"model alone, its only action":    {pick: 0, model: "off", action: 2, status: 200},
-		"the action's model name":         {pick: 0, model: "vendor/off", action: 2, status: 200},
-		"unknown level for the model":     {pick: 0, model: "think", extra: map[string]any{"thinking_level": "max"}, status: 400},
-		"action of another model":         {pick: 0, model: "off", extra: map[string]any{"action_id": "@0"}, status: 400},
-		"action id of the model":          {pick: 0, model: "think", extra: map[string]any{"action_id": "@1"}, action: 1, status: 200},
-		"several levels, none decided":    {pick: 2, model: "think", action: -1, status: 200},
-		"malformed action id":             {pick: 0, model: "think", extra: map[string]any{"action_id": "x"}, status: 400},
-		"thinking level of unknown model": {pick: 0, model: "local/x", extra: map[string]any{"thinking_level": "up"}, action: -2, status: 200},
+		"model alone, the decided level":   {pick: 1, model: "think", action: 1, status: 200},
+		"model and level":                  {pick: 0, model: "think", extra: map[string]any{"thinking_level": "up"}, action: 1, status: 200},
+		"model alone, its only action":     {pick: 0, model: "off", action: 2, status: 200},
+		"the action's model name":          {pick: 0, model: "vendor/off", action: 2, status: 200},
+		"unknown level for the model":      {pick: 0, model: "think", extra: map[string]any{"thinking_level": "max"}, status: 400},
+		"action of another model":          {pick: 0, model: "off", extra: map[string]any{"action_id": "@0"}, status: 400},
+		"action id of the model":           {pick: 0, model: "think", extra: map[string]any{"action_id": "@1"}, action: 1, status: 200},
+		"action and a contradicting level": {pick: 0, model: "think", extra: map[string]any{"action_id": "@0", "thinking_level": "up"}, status: 400},
+		"action and its own level":         {pick: 0, model: "think", extra: map[string]any{"action_id": "@1", "thinking_level": "up"}, action: 1, status: 200},
+		"several levels, none decided":     {pick: 2, model: "think", action: -1, status: 200},
+		"malformed action id":              {pick: 0, model: "think", extra: map[string]any{"action_id": "x"}, status: 400},
+		"thinking level of unknown model":  {pick: 0, model: "local/x", extra: map[string]any{"thinking_level": "up"}, action: -2, status: 200},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {

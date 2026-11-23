@@ -129,6 +129,9 @@ type LastReport struct {
 	// trained arm), which a correction of the turn resolves against; nil
 	// when the decision recorded none.
 	Decided *PolicyLedgerEntry `json:"decided,omitempty"`
+	// DecidedUnixMS is when the turn's decision was made: a correction of a
+	// call that finished well before it is not this turn's.
+	DecidedUnixMS int64 `json:"decided_unix_ms,omitempty"`
 	// Epoch is the policy context Message is a position in.
 	Epoch int `json:"epoch"`
 	// InputTokens is the turn's encoded input tokens, as its decision
@@ -172,7 +175,7 @@ func (last *LastReport) validate(state *EpisodeState) error {
 		len(last.RouteID) > MaxReportIDBytes || len(last.ReportID) > MaxReportIDBytes ||
 		len(last.ClientReportID) > MaxReportIDBytes || (last.ClientReportID != "" && last.Source != ReportSourceGateway) ||
 		last.TurnIndex > state.TurnIndex || last.Message < -1 || last.Arm < -1 || last.Arm >= len(state.Warmth) ||
-		last.InputTokens < 0 || last.Epoch < 0 ||
+		last.InputTokens < 0 || last.Epoch < 0 || last.DecidedUnixMS < 0 ||
 		(last.Replaced != nil && (last.Source != ReportSourceClient || last.Arm < 0)) ||
 		(last.Decided != nil && (!isLowerHex64(last.Decided.ActionID) || len(last.Decided.ArmID) > maxPolicyArmIDBytes)) {
 		return errors.New("ARC episode last report is malformed")
@@ -275,6 +278,10 @@ func reportOfReportedTurn(state *EpisodeState, report Report) (*EpisodeState, Re
 		return state, ignoredReport(ReportDuplicate), nil
 	case report.Source != ReportSourceGateway:
 		return state, ignoredReport(ReportSuperseded), nil
+	case last.DecidedUnixMS > 0 &&
+		report.FinishedAt.Before(time.UnixMilli(last.DecidedUnixMS).Add(-ReportClockSkew)):
+		// An older call under a reused route id: not this turn's.
+		return state, ignoredReport(ReportNotPending), nil
 	}
 	return replaceClientReport(state, report)
 }
@@ -304,7 +311,7 @@ func resolveReported(state *EpisodeState, report Report) (*EpisodeState, ReportO
 		return state, ReportOutcome{}, err
 	}
 	next.LastReport = newLastReport(pending.RouteID, report, next.TurnIndex, message, run.Arm, replaced)
-	next.LastReport.InputTokens = pending.InputTokens
+	next.LastReport.InputTokens, next.LastReport.DecidedUnixMS = pending.InputTokens, pending.DecidedUnixMS
 	if next.Policy != nil {
 		next.LastReport.Epoch = next.Policy.Epoch
 	}
@@ -365,6 +372,7 @@ func replaceClientReport(state *EpisodeState, report Report) (*EpisodeState, Rep
 	}
 	next.LastReport = newLastReport(last.RouteID, report, state.TurnIndex, last.Message, run.Arm, nil)
 	next.LastReport.InputTokens, next.LastReport.Epoch = last.InputTokens, last.Epoch
+	next.LastReport.DecidedUnixMS = last.DecidedUnixMS
 	next.LastReport.Decided = last.Decided
 	next.LastReport.ClientReportID = last.ReportID
 	return next, recordedReport(ReportClientReplaced, last.RouteID, next, run), nil

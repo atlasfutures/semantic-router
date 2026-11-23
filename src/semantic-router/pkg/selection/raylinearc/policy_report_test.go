@@ -611,3 +611,15 @@ func TestNamedReportRetryDoesNotSettleAReusedRouteID(t *testing.T) {
 		t.Fatalf("the retry: %+v", outcome)
 	}
 }
+
+// A gateway correction of a call that finished well before the reported
+// turn's decision was made -- an older call under a reused route id -- is
+// not that turn's and changes nothing.
+func TestStaleGatewayCorrectionIsIgnored(t *testing.T) {
+	client, _ := mustApplyReport(t, pendingEpisode(t), reportOf(ReportSourceClient, "rte_1", ranOn(1, pendingActionB, "vendor/b"), nil))
+	stale := reportOf(ReportSourceGateway, "rte_1", ranOn(0, pendingActionA, "vendor/a"), nil)
+	stale.FinishedAt = pendingNow.Add(-ReportClockSkew - time.Second)
+	if next, outcome := mustApplyReport(t, client, stale); outcome.Recorded || outcome.Reason != ReportNotPending || next != client {
+		t.Fatalf("a stale correction: %+v", outcome)
+	}
+}
