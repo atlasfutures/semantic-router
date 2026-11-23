@@ -264,7 +264,13 @@ func newPolicyServiceScorer(
 		scorer.privacyRoutes = append(scorer.privacyRoutes, privacyRoute)
 		scorer.zdrRoutes = append(scorer.zdrRoutes, zdrRoute)
 	}
+	// A binding the config masked (a steered control on a Vertex AI worker
+	// whose registry cell does not admit it) is never offered.
+	masked := raylineARCMaskedBindingIDs(decision, config.RaylineARCMaskedBindings(cfg, decision))
 	for _, binding := range policy.Bindings {
+		if masked[binding.ActionID] {
+			continue
+		}
 		level, model := binding.Level, binding.Model
 		var base *effortBase
 		// A v5 binding is only its action and worker; the package names the
