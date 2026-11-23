@@ -578,3 +578,21 @@ func TestGatewayCorrectionResolvesAgainstTheDecision(t *testing.T) {
 		t.Fatalf("entry %+v, want the decided action with its trained arm", entry)
 	}
 }
+
+// A report naming the pending decision's route id, for a call that finished
+// well before the decision was made, is not that decision's turn -- a reused
+// caller-minted route id -- and changes nothing. Within the reporter's clock
+// skew it is accepted.
+func TestNamedReportPredatingItsDecisionIsIgnored(t *testing.T) {
+	stored := pendingEpisode(t)
+	stale := reportOf(ReportSourceClient, "rte_1", ranOn(1, pendingActionB, "vendor/b"), nil)
+	stale.FinishedAt = pendingNow.Add(-ReportClockSkew - time.Second)
+	if next, outcome := mustApplyReport(t, stored, stale); outcome.Recorded || outcome.Reason != ReportNotPending || next != stored {
+		t.Fatalf("a report from before the decision: %+v", outcome)
+	}
+	skewed := reportOf(ReportSourceClient, "rte_1", ranOn(1, pendingActionB, "vendor/b"), nil)
+	skewed.FinishedAt = pendingNow.Add(-ReportClockSkew + time.Second)
+	if _, outcome := mustApplyReport(t, stored, skewed); outcome.Reason != ReportPendingResolved {
+		t.Fatalf("a report within the clock skew: %+v", outcome)
+	}
+}

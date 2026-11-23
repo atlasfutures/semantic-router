@@ -38,6 +38,11 @@ const (
 	ReportSourceClient  = "client"
 )
 
+// ReportClockSkew is how far a reporter's clock may be from the cell's: a
+// finish time up to this far ahead of now is accepted, and a report naming
+// a decision may finish up to this long before it was made.
+const ReportClockSkew = time.Minute
+
 // ReportedTTLSource is the TTL source of a call's cache lifetime taken from a
 // report rather than from the request the cell sent.
 const ReportedTTLSource = "reported"
@@ -203,6 +208,11 @@ func ApplyReport(state *EpisodeState, report Report) (*EpisodeState, ReportOutco
 	}
 	switch {
 	case pending != nil && pending.RouteID == report.RouteID:
+		// A call that finished well before the decision was made is not its
+		// turn: a caller-minted route id used again.
+		if report.FinishedAt.Before(time.UnixMilli(pending.DecidedUnixMS).Add(-ReportClockSkew)) {
+			return state, ignoredReport(ReportNotPending), nil
+		}
 		return resolveReported(state, report)
 	case last != nil && last.RouteID == report.RouteID:
 		return reportOfReportedTurn(state, report)

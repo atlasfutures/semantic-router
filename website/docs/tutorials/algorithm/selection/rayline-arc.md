@@ -776,7 +776,7 @@ Three optional request headers shape continuity:
 |---|---|
 | `x-rayline-session` | the conversation this lookup belongs to. **Absent means stateless**, which is what a playground wants: experimenting must not advance a real conversation. A tracked lookup shares its episode with the generation turns that send the same value in `episode.id_header` |
 | `x-rayline-branch` | a subagent lane inside that conversation, so concurrent subagents are separate trajectories rather than each other's previous turn. A generation turn joins the same lane by sending `<session>:<branch>` as its session |
-| `x-rayline-route-id` | a caller-minted id this router adopts and echoes, so one id spans both records |
+| `x-rayline-route-id` | a caller-minted id this router adopts and echoes, so one id spans both records. Up to 128 bytes, the most a report may name; a longer one is not adopted, and the answer warns `route_id_not_adopted` |
 
 A branch without a session names a lane in no conversation, so it is dropped
 and reported as a `branch_ignored` warning rather than silently making the
@@ -855,7 +855,8 @@ as a turn marked `reported`, for the model that actually ran:
 }
 ```
 
-- `route_id` names the lookup's decision. A report without it is used only
+- `route_id` names the lookup's decision; a call that finished more than a
+  minute before that decision was made is not its turn. A report without it is used only
   to settle the conversation's pending decision, if the call finished after
   that decision was made; with nothing pending it changes nothing. `report_id`
   marks a retry of the same report as a duplicate. `model` is the ARC id the

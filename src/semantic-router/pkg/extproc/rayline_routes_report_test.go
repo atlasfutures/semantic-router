@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
@@ -545,5 +546,86 @@ func TestStreamedReportIsBoundedWhileItAccumulates(t *testing.T) {
 	}
 	if code := immediateStatusCode(t, response); code != 413 {
 		t.Fatalf("status %d, want 413", code)
+	}
+}
+
+// A caller-minted route id longer than a report may name is not adopted:
+// the lookup mints its own and says so, so every route id a lookup returns
+// can be reported.
+func TestRoutesLookupDoesNotAdoptAnUnreportableRouteID(t *testing.T) {
+	long := strings.Repeat("r", raylinearc.MaxReportIDBytes+1)
+	ctx := routesContext(map[string]string{raylineRoutesRouteIDHeader: long})
+	if id := raylineRoutesRouteID(ctx); id == long || !strings.HasPrefix(id, raylineRouteIDPrefix) {
+		t.Fatalf("route id %q", id)
+	}
+	warned := false
+	for _, warning := range raylineRoutesHeaderWarnings(ctx, nil) {
+		warned = warned || strings.HasPrefix(warning, "route_id_not_adopted:")
+	}
+	if !warned {
+		t.Fatal("no route_id_not_adopted warning")
+	}
+	fitting := strings.Repeat("r", raylinearc.MaxReportIDBytes)
+	if id := raylineRoutesRouteID(routesContext(map[string]string{raylineRoutesRouteIDHeader: fitting})); id != fitting {
+		t.Fatalf("a route id within the bound was not adopted: %q", id)
+	}
+}
+
+// processStream runs one request -- headers, then a body -- through the
+// router's ext_proc stream loop, as Envoy drives it, and returns the
+// immediate response it ended with.
+func processStream(t *testing.T, router *OpenAIRouter, path string, headers map[string]string, body []byte) *ext_proc.ImmediateResponse {
+	t.Helper()
+	headerMap := &core.HeaderMap{Headers: []*core.HeaderValue{
+		{Key: ":method", RawValue: []byte("POST")},
+		{Key: ":path", RawValue: []byte(path)},
+		{Key: "content-type", RawValue: []byte("application/json")},
+	}}
+	for name, value := range headers {
+		headerMap.Headers = append(headerMap.Headers, &core.HeaderValue{Key: name, RawValue: []byte(value)})
+	}
+	stream := NewMockStream([]*ext_proc.ProcessingRequest{
+		{Request: &ext_proc.ProcessingRequest_RequestHeaders{RequestHeaders: &ext_proc.HttpHeaders{Headers: headerMap}}},
+		{Request: &ext_proc.ProcessingRequest_RequestBody{RequestBody: &ext_proc.HttpBody{Body: body, EndOfStream: true}}},
+	})
+	if err := router.Process(stream); err != nil {
+		t.Fatalf("%s: stream error %v", path, err)
+	}
+	for _, response := range stream.Responses {
+		if immediate := response.GetImmediateResponse(); immediate != nil {
+			return immediate
+		}
+	}
+	t.Fatalf("%s: the stream ended without an immediate response (%d responses)", path, len(stream.Responses))
+	return nil
+}
+
+// Through the router's ext_proc stream loop, as Envoy drives it -- header
+// capture, the body phase, the immediate response -- a lookup and then a
+// report of what ran: the report is answered by the router itself and the
+// lookup's pending decision becomes a reported turn.
+func TestRoutesLookupThenReportThroughTheProcessingStream(t *testing.T) {
+	fixture := newPendingRoutesFixture(t, true, "")
+	const conversation = "conversation-stream"
+	headers := map[string]string{raylineRoutesSessionHeader: conversation, raylineRoutesFormatHeader: "anthropic"}
+	lookup := processStream(t, fixture.router, raylineRoutesAPIPath, headers, pendingRoutesBody(t, pendingTurnTask))
+	if lookup.GetStatus().GetCode() != 200 {
+		t.Fatalf("lookup %d: %s", lookup.GetStatus().GetCode(), lookup.GetBody())
+	}
+	fixture.router.background.Wait()
+	var decided raylineRoutesResponse
+	if err := json.Unmarshal(lookup.GetBody(), &decided); err != nil {
+		t.Fatal(err)
+	}
+	body, _ := json.Marshal(executedReport(decided.RouteID, decided.Model, nil))
+	report := processStream(t, fixture.router, raylineReportAPIPath, headers, body)
+	var answer reportAnswer
+	if err := json.Unmarshal(report.GetBody(), &answer); err != nil || report.GetStatus().GetCode() != 200 ||
+		answer.Status != "recorded" || answer.Reason != raylinearc.ReportPendingResolved {
+		t.Fatalf("report %d: %s", report.GetStatus().GetCode(), report.GetBody())
+	}
+	if state := fixture.stored(t, conversation); state.Pending != nil || state.TurnIndex != 1 ||
+		state.Policy.Ledger[0].Basis != raylinearc.PolicyLedgerBasisReported {
+		t.Fatalf("record %+v", state)
 	}
 }

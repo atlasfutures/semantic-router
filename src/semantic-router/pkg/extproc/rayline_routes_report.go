@@ -55,9 +55,6 @@ const (
 	raylineReportMaxModelBytes = 256
 	// raylineReportMaxTTLSeconds bounds a reported cache lifetime.
 	raylineReportMaxTTLSeconds = 24 * 60 * 60
-	// raylineReportClockSkew is how far ahead of this clock a finish time
-	// may lie, for the reporter's clock.
-	raylineReportClockSkew = time.Minute
 	// raylineReportMaxAge is how long after a call its report is still read:
 	// a report is sent right after the call, and an episode keeps far less
 	// idle history than this.
@@ -177,7 +174,7 @@ func readRaylineReport(body []byte, source string, now time.Time) (raylineReport
 	if err != nil {
 		return raylineReport{}, reportInvalid("executed.finished_at must be an RFC 3339 time")
 	}
-	if finished.After(now.Add(raylineReportClockSkew)) {
+	if finished.After(now.Add(raylinearc.ReportClockSkew)) {
 		return raylineReport{}, reportInvalid("executed.finished_at is in the future")
 	}
 	if finished.Before(now.Add(-raylineReportMaxAge)) {
