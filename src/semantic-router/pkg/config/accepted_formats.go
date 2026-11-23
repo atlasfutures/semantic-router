@@ -50,12 +50,19 @@ func validateAcceptedFormatBindings(
 ) error {
 	if len(formats) > 1 {
 		for index, provider := range providers {
-			// A Vertex AI base URL names one API: the Messages publisher path
-			// or the OpenAI-compatible /endpoints/openapi. The other format's
-			// path would resolve under the wrong base.
-			if provider.Provider.Definition.ID == "vertex-ai" {
+			// A Vertex AI or Amazon Bedrock base URL names one API: Vertex
+			// AI's Messages publisher path or OpenAI-compatible
+			// /endpoints/openapi, Bedrock's /anthropic or /openai/v1. The other
+			// format's path would resolve under the wrong base.
+			switch provider.Provider.Definition.ID {
+			case "vertex-ai":
 				return fmt.Errorf(
 					"providers.models[%s].accepted_formats: backend_refs[%d] is Vertex AI, whose base URL serves one API; list one format",
+					modelName, index,
+				)
+			case "bedrock":
+				return fmt.Errorf(
+					"providers.models[%s].accepted_formats: backend_refs[%d] is Amazon Bedrock, whose base URL serves one API; list one format",
 					modelName, index,
 				)
 			}

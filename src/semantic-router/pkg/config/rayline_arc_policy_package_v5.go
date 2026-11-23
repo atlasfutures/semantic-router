@@ -592,6 +592,7 @@ type RaylineARCMaskedBinding struct {
 //     budget), and the action is neither the package's fallback nor a
 //     reference action: the cloud's endpoint may not take that effort, and
 //     the model keeps its native-default action.
+//
 // Any other refused plain control still fails the config, on those clouds
 // too. The caller fails the config when masking leaves a model no admitted
 // action.

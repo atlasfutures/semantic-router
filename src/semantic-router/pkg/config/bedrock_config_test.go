@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // A keyless Amazon Bedrock config: a Claude card on Bedrock's Anthropic
 // Messages endpoint, an open model on its OpenAI-compatible endpoint, and the
@@ -105,5 +108,19 @@ func TestBedrockKeylessConfigLoads(t *testing.T) {
 	profile, err := cfg.GetProviderProfileForEndpoint(backend)
 	if err != nil || profile.ExtraHeaders["anthropic-version"] != "2023-06-01" {
 		t.Fatalf("the Messages profile does not carry anthropic-version: %+v, %v", profile, err)
+	}
+}
+
+// A Bedrock base URL serves one API (/anthropic or /openai/v1), so a Bedrock
+// model accepts one format.
+func TestBedrockBackendAcceptsOneFormat(t *testing.T) {
+	both := strings.Replace(bedrockKeylessConfig, "      api_format: anthropic\n",
+		"      api_format: anthropic\n      accepted_formats: [anthropic, openai]\n", 1)
+	if both == bedrockKeylessConfig {
+		t.Fatal("the fixture no longer has the Claude worker's api_format")
+	}
+	_, err := ParseYAMLBytes([]byte(both))
+	if err == nil || !strings.Contains(err.Error(), "Amazon Bedrock, whose base URL serves one API") {
+		t.Fatalf("a Bedrock model accepting two formats loaded: %v", err)
 	}
 }
