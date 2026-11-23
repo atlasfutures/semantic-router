@@ -124,3 +124,25 @@ func TestBedrockBackendAcceptsOneFormat(t *testing.T) {
 		t.Fatalf("a Bedrock model accepting two formats loaded: %v", err)
 	}
 }
+
+// A Bedrock backend keeps Authorization: Bearer; an explicit default is fine.
+func TestBedrockBackendKeepsItsAuthHeader(t *testing.T) {
+	const anchor = "          provider: bedrock\n          extra_headers:\n"
+	if !strings.Contains(bedrockKeylessConfig, anchor) {
+		t.Fatal("the fixture no longer has the Claude worker's backend")
+	}
+	for _, override := range []string{
+		"          auth_header: x-credential-carrier\n",
+		"          auth_prefix: \"\"\n",
+		"          auth_prefix: Token\n",
+	} {
+		_, err := ParseYAMLBytes([]byte(strings.Replace(bedrockKeylessConfig, anchor, "          provider: bedrock\n"+override+"          extra_headers:\n", 1)))
+		if err == nil || !strings.Contains(err.Error(), "reads its key only from Authorization: Bearer") {
+			t.Fatalf("a Bedrock backend with %q loaded: %v", strings.TrimSpace(override), err)
+		}
+	}
+	explicit := "          provider: bedrock\n          auth_header: authorization\n          auth_prefix: Bearer\n          extra_headers:\n"
+	if _, err := ParseYAMLBytes([]byte(strings.Replace(bedrockKeylessConfig, anchor, explicit, 1))); err != nil {
+		t.Fatalf("a Bedrock backend stating the default auth was refused: %v", err)
+	}
+}

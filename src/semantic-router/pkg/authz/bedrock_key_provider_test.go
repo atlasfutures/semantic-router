@@ -333,6 +333,66 @@ func (r *stuckCredentials) Retrieve(context.Context) (aws.Credentials, error) {
 
 func (r *stuckCredentials) Invalidate() { r.invalidated.Add(1) }
 
+// failingRenewal gives near-expiry credentials once, then fails every fetch.
+type failingRenewal struct {
+	expires time.Time
+	fetches atomic.Int32
+}
+
+func (r *failingRenewal) Retrieve(context.Context) (aws.Credentials, error) {
+	if r.fetches.Add(1) > 1 {
+		return aws.Credentials{}, errors.New("credentials endpoint unavailable")
+	}
+	return aws.Credentials{
+		AccessKeyID: testAccessKeyID, SecretAccessKey: testSecretAccessKey, SessionToken: testSessionToken,
+		CanExpire: true, Expires: r.expires,
+	}, nil
+}
+
+func (r *failingRenewal) Invalidate() {}
+
+// A renewal that fails is not retried on the next requests: until the
+// cooldown passes, keys are minted from the credentials already held.
+func TestBedrockFailedRenewalIsNotRetriedWithinTheCooldown(t *testing.T) {
+	clock := &fakeClock{now: time.Date(2026, 11, 23, 15, 0, 0, 0, time.UTC)}
+	creds := &failingRenewal{expires: clock.Now().Add(2 * time.Minute)}
+	load := func(context.Context) (aws.CredentialsProvider, string, error) { return creds, "us-east-1", nil }
+	source := NewBedrockShortTermKeySourceWith(load, clock.Now)
+	for i := 0; i < 10; i++ {
+		if _, err := source.Token(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		clock.Advance(time.Second)
+	}
+	if got := creds.fetches.Load(); got != 2 {
+		t.Fatalf("fetched credentials %d times in 10 s, want 2 (the first and one renewal)", got)
+	}
+}
+
+// With no credentials at all, a failed fetch is retried at most once per
+// cooldown and Token fails closed in between.
+func TestBedrockFailedFetchFailsClosedUntilTheCooldown(t *testing.T) {
+	clock := &fakeClock{now: time.Date(2026, 11, 23, 15, 0, 0, 0, time.UTC)}
+	creds := &failingRenewal{}
+	creds.fetches.Store(1)
+	load := func(context.Context) (aws.CredentialsProvider, string, error) { return creds, "us-east-1", nil }
+	source := NewBedrockShortTermKeySourceWith(load, clock.Now)
+	for i := 0; i < 5; i++ {
+		if _, err := source.Token(context.Background()); err == nil {
+			t.Fatal("minted a key with no credentials")
+		}
+		clock.Advance(time.Second)
+	}
+	if got := creds.fetches.Load() - 1; got != 1 {
+		t.Fatalf("fetched credentials %d times in 5 s, want 1", got)
+	}
+	clock.Advance(bedrockCredentialsRenewCooldown)
+	_, _ = source.Token(context.Background())
+	if got := creds.fetches.Load() - 1; got != 2 {
+		t.Fatalf("fetched credentials %d times after the cooldown, want 2", got)
+	}
+}
+
 // Credentials that renewal cannot refresh are asked for again at most once
 // per cooldown, however often a key is minted from them.
 func TestBedrockShortTermKeyRenewsAtMostOncePerCooldown(t *testing.T) {

@@ -89,6 +89,12 @@ type BedrockShortTermKeySource struct {
 	region      string
 	// renewedAt is when near-expiry credentials were last renewed.
 	renewedAt time.Time
+	// held is the last credentials fetched; retryAt, after a failed fetch,
+	// is when credentials are fetched again. Until then held is used (or,
+	// with none, Token fails), so a credentials endpoint that is down is
+	// asked at most once per cooldown.
+	held    aws.Credentials
+	retryAt time.Time
 }
 
 // NewBedrockShortTermKeySource returns a source that signs with the SDK's
@@ -135,20 +141,32 @@ func (s *BedrockShortTermKeySource) Token(ctx context.Context) (AccessToken, err
 		}
 		s.credentials, s.region = credentials, strings.TrimSpace(region)
 	}
-	creds, err := s.retrieve(ctx)
-	if err != nil {
-		return AccessToken{}, err
-	}
 	issued := s.now()
-	if creds.CanExpire && creds.Expires.Sub(issued) < bedrockCredentialsRenewBefore &&
+	backoff := issued.Before(s.retryAt)
+	creds := s.held
+	if !backoff {
+		fetched, err := s.retrieve(ctx)
+		if err != nil {
+			s.retryAt = issued.Add(bedrockCredentialsRenewCooldown)
+			return AccessToken{}, err
+		}
+		creds, s.held = fetched, fetched
+	} else if creds.AccessKeyID == "" {
+		return AccessToken{}, errors.New("AWS credentials are unavailable; retrying after a cooldown")
+	}
+	if !backoff && creds.CanExpire && creds.Expires.Sub(issued) < bedrockCredentialsRenewBefore &&
 		(s.renewedAt.IsZero() || issued.Sub(s.renewedAt) >= bedrockCredentialsRenewCooldown) {
 		// Ask for fresh credentials; keep the old ones if that fails or
 		// gives none that last longer.
 		if renewer, ok := s.credentials.(interface{ Invalidate() }); ok {
 			s.renewedAt = issued
 			renewer.Invalidate()
-			if fresh, err := s.retrieve(ctx); err == nil && (!fresh.CanExpire || fresh.Expires.After(creds.Expires)) {
-				creds = fresh
+			fresh, err := s.retrieve(ctx)
+			switch {
+			case err != nil:
+				s.retryAt = issued.Add(bedrockCredentialsRenewCooldown)
+			case !fresh.CanExpire || fresh.Expires.After(creds.Expires):
+				creds, s.held = fresh, fresh
 			}
 		}
 	}

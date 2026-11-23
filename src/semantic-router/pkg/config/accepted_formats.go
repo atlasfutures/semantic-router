@@ -131,3 +131,24 @@ func (c *RouterConfig) ModelAcceptsOnlyAPIFormat(modelName, format string) bool 
 func (c *RouterConfig) ModelAcceptsAPIFormat(modelName, format string) bool {
 	return slices.Contains(c.GetModelAcceptedFormats(modelName), format)
 }
+
+// validateBedrockAuth refuses an Amazon Bedrock backend whose auth_header or
+// auth_prefix moves the key off Bedrock's own shape (Authorization: Bearer).
+// Bedrock reads API keys, long- or short-term, only there, so another header
+// would carry the key to the wrong place and leave a caller's Authorization
+// header in force.
+func validateBedrockAuth(modelName string, index int, provider modelcatalog.EffectiveModelProvider) error {
+	if provider.Provider.Definition.ID != "bedrock" {
+		return nil
+	}
+	want := provider.Provider.Definition.Auth
+	header, prefix := provider.Provider.Instance.AuthHeader, provider.Provider.Instance.AuthPrefix
+	if (header != "" && !strings.EqualFold(strings.TrimSpace(header), want.Header)) ||
+		((provider.Provider.Instance.AuthPrefixSet || prefix != "") && prefix != want.Prefix) {
+		return fmt.Errorf(
+			"providers.models[%s].backend_refs[%d] is Amazon Bedrock, which reads its key only from %s: %s; remove auth_header and auth_prefix",
+			modelName, index, want.Header, want.Prefix,
+		)
+	}
+	return nil
+}
