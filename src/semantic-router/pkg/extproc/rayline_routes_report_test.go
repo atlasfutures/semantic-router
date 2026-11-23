@@ -809,3 +809,30 @@ func TestReportAttributesMaskedActions(t *testing.T) {
 		t.Fatalf("a model with every action masked: %+v", run)
 	}
 }
+
+// Actions on one worker may be trained on different models (a v4 package
+// binding several to it). A report naming only the worker's provider model,
+// none of them the decided action, says neither the action nor the model:
+// the turn is recorded with no arm rather than the package's first model.
+func TestReportedRunAcrossModelsOnOneArmIsUnattributed(t *testing.T) {
+	scorer := &policyServiceScorer{
+		workerIDs: []string{"shared"},
+		workers:   []raylinearc.WorkerManifest{{ID: "shared", Model: "vendor/shared"}},
+		bindings: map[string]policyBinding{
+			"a": {arm: 0, dispatchArm: 0, model: "trained/a", level: "none"},
+			"b": {arm: 0, dispatchArm: 0, model: "trained/b", level: "none"},
+		},
+		actionOrder: []string{"a", "b"},
+	}
+	report := raylineReport{model: "vendor/shared"}
+	candidates, refusal := scorer.reportCandidates(report)
+	if refusal != nil || len(candidates) != 2 {
+		t.Fatalf("candidates %v (%v)", candidates, refusal)
+	}
+	if run := scorer.reportedRun(report, candidates, "other"); run.Arm != -1 || run.ActionID != "" {
+		t.Fatalf("run %+v, want no arm", run)
+	}
+	if run := scorer.reportedRun(report, candidates, "b"); run.ActionID != "b" || run.Model != "trained/b" {
+		t.Fatalf("with the decided action: %+v", run)
+	}
+}
