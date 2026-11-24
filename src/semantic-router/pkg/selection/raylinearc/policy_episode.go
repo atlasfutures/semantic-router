@@ -56,8 +56,13 @@ const maxPolicyAuditFilledModelBytes = 96
 //
 // Basis is how the cell knows the action ran: empty when the cell served
 // the turn itself, PolicyLedgerBasisInferred when it assumed a route
-// lookup's decision ran. It is omitted when empty, so a served entry is
-// byte-identical to one written before the mark.
+// lookup's decision ran, PolicyLedgerBasisReported when a report said what
+// ran. It is omitted when empty, so a served entry is byte-identical to one
+// written before the mark.
+//
+// ArmID is empty for a reported action other than the decided one: no
+// decision named its trained arm, and the entry is attributed with a null
+// arm id, which the service reads as the action's model only.
 type PolicyLedgerEntry struct {
 	Message  int               `json:"message"`
 	ActionID string            `json:"action_id"`
@@ -411,7 +416,7 @@ func (state *PolicyEpisodeState) Validate() error {
 	for _, entry := range state.Ledger {
 		if entry.Message < 0 || entry.Message > state.PrefixLen ||
 			!isLowerHex64(entry.ActionID) || len(entry.ArmID) > maxPolicyArmIDBytes ||
-			(entry.Basis != "" && entry.Basis != PolicyLedgerBasisInferred) {
+			(entry.Basis != "" && entry.Basis != PolicyLedgerBasisInferred && entry.Basis != PolicyLedgerBasisReported) {
 			return errors.New("ARC policy episode ledger entry is malformed")
 		}
 		if entry.Prices != nil {
@@ -766,9 +771,13 @@ func (state *PolicyEpisodeState) attribution(messages []json.RawMessage, roles [
 		if entry.Message >= len(messages) || roles[entry.Message] != "assistant" {
 			continue
 		}
-		armID := entry.ArmID
+		var armID *string
+		if entry.ArmID != "" {
+			value := entry.ArmID
+			armID = &value
+		}
 		attribution = append(attribution, PolicyAttribution{
-			Message: entry.Message, ActionID: entry.ActionID, ArmID: &armID,
+			Message: entry.Message, ActionID: entry.ActionID, ArmID: armID,
 		})
 	}
 	return attribution

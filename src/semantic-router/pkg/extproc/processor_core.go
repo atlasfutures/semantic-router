@@ -36,7 +36,7 @@ func (r *OpenAIRouter) handleRequestBodyDispatch(v *ext_proc.ProcessingRequest_R
 	// the caller's body to the upstream and execute a turn the endpoint
 	// promises not to execute. The replay surface takes the same exception at
 	// the header phase, for the same reason.
-	if ctx.SkipProcessing && !isRaylineRoutesRequest(ctx) {
+	if ctx.SkipProcessing && !isRaylineServedRequest(ctx) {
 		if ctx.FullDuplexRequestBody {
 			return newFullDuplexRequestBodyResponse(v.RequestBody.GetBody(), v.RequestBody.GetEndOfStream()), nil
 		}
@@ -64,12 +64,16 @@ func (r *OpenAIRouter) handleRequestBodyDispatch(v *ext_proc.ProcessingRequest_R
 		// promise of no execution into a billed turn. Refusing is the only
 		// safe answer: the lookup needs the whole body, and this mode hands
 		// the router chunks it is not accumulating.
-		if isRaylineRoutesRequest(ctx) {
+		if isRaylineServedRequest(ctx) {
+			what := "route lookup"
+			if isRaylineReportRequest(ctx) {
+				what = "report"
+			}
 			return r.createRaylineRoutesError(
 				ctx,
 				503,
 				"api_error",
-				"route lookup is unavailable while request bodies stream full duplex",
+				what+" is unavailable while request bodies stream full duplex",
 			), nil
 		}
 		return newFullDuplexRequestBodyResponse(v.RequestBody.GetBody(), eos), nil

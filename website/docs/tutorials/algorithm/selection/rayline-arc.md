@@ -776,7 +776,7 @@ Three optional request headers shape continuity:
 |---|---|
 | `x-rayline-session` | the conversation this lookup belongs to. **Absent means stateless**, which is what a playground wants: experimenting must not advance a real conversation. A tracked lookup shares its episode with the generation turns that send the same value in `episode.id_header` |
 | `x-rayline-branch` | a subagent lane inside that conversation, so concurrent subagents are separate trajectories rather than each other's previous turn. A generation turn joins the same lane by sending `<session>:<branch>` as its session |
-| `x-rayline-route-id` | a caller-minted id this router adopts and echoes, so one id spans both records |
+| `x-rayline-route-id` | a caller-minted id this router adopts and echoes, so one id spans both records. Up to 128 bytes, the most a report may name; a longer one is not adopted, and the answer warns `route_id_not_adopted` |
 
 A branch without a session names a lane in no conversation, so it is dropped
 and reported as a `branch_ignored` warning rather than silently making the
@@ -826,6 +826,75 @@ sense, which is the signal that its episode ids are not stable per
 conversation. `episode` is omitted entirely from an ephemeral lookup rather
 than reported as turn zero. An artifact-mode cell still records the turn at
 decision time, assuming the caller ran it.
+
+### Reporting what ran
+
+A caller that runs the model itself can tell the cell what ran right after
+the turn, instead of leaving the next request to infer it. `POST /v1/report`
+is served wherever `/v1/routes` is, with the same `x-rayline-session` and
+`x-rayline-branch` headers, and records the conversation's pending decision
+as a turn marked `reported`, for the model that actually ran:
+
+```json
+{
+  "route_id": "rte_0123456789abcdef",
+  "report_id": "optional idempotency key",
+  "model": "arc-1.0",
+  "executed": {
+    "model": "anthropic/claude-sonnet-5",
+    "thinking_level": "up",
+    "action_id": "64 hex characters",
+    "usage": {
+      "prompt_tokens": 18234,
+      "cache_read_tokens": 17900,
+      "cache_write_tokens": 300,
+      "cache_ttl_seconds": 300
+    },
+    "finished_at": "2026-11-18T14:03:07.412Z"
+  }
+}
+```
+
+- `route_id` names the lookup's decision; a call that finished more than a
+  minute before that decision was made is not its turn. A report without it is used only
+  to settle the conversation's pending decision, if the call finished after
+  that decision was made; with nothing pending it changes nothing. `report_id`
+  marks a retry of the same report as a duplicate. `model` is the ARC id the
+  conversation is routed by (the default tier when absent; a name that is
+  not an ARC model this cell serves is refused).
+- `executed.model` is required, in the names a lookup returns. `action_id`
+  (a lookup's `policy_action_id` or an alternative's `action_id`) or
+  `thinking_level` pick the exact action; with the model alone, the decided
+  action is taken when it is that model's. A model no arm of the package
+  serves (a local model) is recorded as a turn with no arm.
+- `usage` is what the cell records of a call it serves: `prompt_tokens` is
+  the whole prompt, cache read and write included. `finished_at` is required:
+  when the call's response completed. Output tokens and cost are not
+  accepted.
+- Limits: `route_id` and `report_id` up to 128 bytes, `executed.model` up to
+  256 bytes, `cache_ttl_seconds` from 1 to 86400 when present, the whole
+  body up to 16 KiB, `finished_at` at most one minute ahead of the cell's
+  clock; unknown members are refused.
+
+A well-formed report is answered `200` whether it changed the record or was
+ignored, so a caller never retries a report that was read:
+`{"object": "route.report", "status": "recorded" | "ignored", "reason", "route_id", "turn_index", "attributed"}`.
+Reasons when recorded: `pending_resolved`, `client_report_replaced`.
+Reasons when ignored: `not_tracked` (`episode_writes` off, or not a
+policy-service cell; nothing is stored), `no_episode`, `not_pending` (the
+named decision was already recorded, replaced by a repeat ask, or dropped,
+so a report that comes after the next turn changes nothing; or, naming no
+decision, there was none pending), `duplicate`, `superseded`. Otherwise the
+answer is an error in the lookup's envelope: `400` for a malformed report,
+`429 episode_busy` with `retry-after` while another request is updating the
+conversation, `503` or `504` when the episode store fails or is slow.
+
+`x-rayline-report-source: gateway` marks a report from a gateway in front of
+the cell, of a call it sent to a provider itself; `client`, or no header, is
+a client's report, and any other value is refused with `400`. When both name the same `route_id`, the gateway's report wins, while
+no later turn has been recorded. The header decides nothing else. A gateway
+that exposes this endpoint must set or overwrite it and remove it from client
+requests, or a client could claim the gateway's precedence.
 
 ### Enabling it
 

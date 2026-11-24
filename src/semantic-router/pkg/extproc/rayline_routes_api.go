@@ -1153,6 +1153,10 @@ func raylineRoutesHeaderWarnings(
 	settings *config.RaylineARCRoutesAPIConfig,
 ) []string {
 	warnings := []string{}
+	if len(raylineRoutesHeader(ctx, raylineRoutesRouteIDHeader)) > raylinearc.MaxReportIDBytes {
+		warnings = append(warnings, fmt.Sprintf("route_id_not_adopted: %s is longer than %d bytes, so this route id was minted instead",
+			raylineRoutesRouteIDHeader, raylinearc.MaxReportIDBytes))
+	}
 	if raylineRoutesHeader(ctx, raylineRoutesCheckpointHeader) != "" {
 		warnings = append(warnings, "checkpoint_not_pinned: this cell serves one checkpoint and the requested pin was ignored")
 	}
@@ -1209,8 +1213,12 @@ func raylineRoutesEpisodeIdentity(ctx *RequestContext) string {
 
 // raylineRoutesRouteID adopts the caller's id when it sent one, so a single id
 // spans their record and ours, and mints one otherwise.
+//
+// An id longer than a report may name is not adopted: a lookup returns only
+// route ids its caller can report (raylineRoutesHeaderWarnings says so).
 func raylineRoutesRouteID(ctx *RequestContext) string {
-	if adopted := raylineRoutesHeader(ctx, raylineRoutesRouteIDHeader); adopted != "" {
+	if adopted := raylineRoutesHeader(ctx, raylineRoutesRouteIDHeader); adopted != "" &&
+		len(adopted) <= raylinearc.MaxReportIDBytes {
 		return adopted
 	}
 	// Half a UUID, not a quarter. Eight hex characters is 32 bits, where a
@@ -1286,19 +1294,24 @@ func (r *OpenAIRouter) raylineRoutesGuardBreach(
 	ctx *RequestContext,
 	err error,
 ) *ext_proc.ProcessingResponse {
+	// A report shares this path; its caller is told about its own body.
+	what := "route lookup body"
+	if isRaylineReportRequest(ctx) {
+		what = "report body"
+	}
 	if errors.Is(err, ErrStreamedBodyTimeout) {
 		return r.createRaylineRoutesError(
 			ctx,
 			504,
 			"timeout_error",
-			"route lookup body did not arrive within the accumulation deadline",
+			what+" did not arrive within the accumulation deadline",
 		)
 	}
 	return r.createRaylineRoutesError(
 		ctx,
 		413,
 		"invalid_request_error",
-		"route lookup body exceeds the accumulation limit",
+		what+" exceeds the accumulation limit",
 	)
 }
 

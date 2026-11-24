@@ -106,7 +106,7 @@ func (h *StreamedBodyHandler) HandleChunk(body *ext_proc.HttpBody, ctx *RequestC
 		// promises never to execute is executed and billed. Every other path
 		// can afford that fallback because forwarding is what it wanted
 		// anyway; this one cannot.
-		if isRaylineRoutesRequest(ctx) {
+		if isRaylineServedRequest(ctx) {
 			return h.router.raylineRoutesGuardBreach(ctx, err), nil
 		}
 		return nil, err
