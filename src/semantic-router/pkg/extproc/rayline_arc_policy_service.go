@@ -28,6 +28,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -72,7 +73,10 @@ type policyBinding struct {
 // not score embeddings: the policy service decides, and Select branches to it
 // before any encode.
 type policyServiceScorer struct {
-	schedule string
+	// lookupSessionsDegraded logs, once, that the service keeps no lookup
+	// sessions and route lookups run one-shot.
+	lookupSessionsDegraded sync.Once
+	schedule               string
 	// twoStage is a package whose service chooses the model itself, at the
 	// package's stage-one boundaries, and holds it between them (its
 	// manifest carries stage_one). The schedule then holds nothing on a main
@@ -674,9 +678,9 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	if arcContext.RoutesLookupSession {
 		switch {
 		case sideCall:
-			leaveRaylineRoutesLookupScope(arcContext)
+			leaveRaylineRoutesLookupScope(arcContext, raylineRoutesLookupLeftSideCall)
 		case !scorer.advertises(raylinearc.PolicyCapabilityLookupSessions):
-			return nil, failRaylineRoutesLookupScope(arcContext, arcFailureLookupSessionsUnadvertised)
+			leaveRaylineRoutesLookupScope(arcContext, raylineRoutesLookupLeftUnadvertised)
 		}
 	}
 	scheduled := scorer.schedule != "" && !sideCall
