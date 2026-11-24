@@ -56,6 +56,10 @@ type fakeModalServer struct {
 	nextID        int
 	startSleep    time.Duration
 	startCode     int
+	// startHangs is how many of the next starts hang until the caller gives
+	// up; startKeys are the idempotency keys of every start received.
+	startHangs int
+	startKeys  []string
 	// violations records a decide that carried the proxy key, or a start
 	// or terminate without the headers Modal needs.
 	violations []string
@@ -90,7 +94,16 @@ func (fake *fakeModalServer) serve(w http.ResponseWriter, r *http.Request) {
 	case policySessionStartPath:
 		fake.mu.Lock()
 		sleep, code := fake.startSleep, fake.startCode
+		fake.startKeys = append(fake.startKeys, r.Header.Get("x-idempotency-key"))
+		hang := fake.startHangs > 0
+		if hang {
+			fake.startHangs--
+		}
 		fake.mu.Unlock()
+		if hang {
+			<-r.Context().Done()
+			return
+		}
 		if sleep > 0 {
 			select {
 			case <-time.After(sleep):

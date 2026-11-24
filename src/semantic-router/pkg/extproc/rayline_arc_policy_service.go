@@ -476,6 +476,7 @@ func createRaylineARCPolicySelector(
 		if sessions, sessionsErr = raylinearc.NewPolicySessionBackend(clientFor(policy.BaseURL), raylinearc.PolicySessionConfig{
 			IdleTimeout:  time.Duration(policy.Sessions.EffectiveIdleTimeoutSeconds()) * time.Second,
 			StartTimeout: time.Duration(policy.Sessions.EffectiveStartTimeoutSeconds()) * time.Second,
+			OnStartRetry: recordPolicySessionStartRetry,
 		}); sessionsErr != nil {
 			return unavailable("policy_service_sessions")
 		}
@@ -555,6 +556,16 @@ func createRaylineARCPolicySelector(
 		raylineARCWait,
 	)
 	return selector, episodeStore, closeResources, nil, raylineARCReadinessPendingClass
+}
+
+// recordPolicySessionStartRetry counts and logs a session start retried with
+// a new session; every field is bounded and none is request content.
+func recordPolicySessionStartRetry(retry raylinearc.PolicySessionStartRetry) {
+	metrics.RecordRaylineARCPolicyModalSessionStartRetry(retry.Cause, retry.Outcome)
+	logging.ComponentWarnEvent("extproc", "rayline_arc_policy_modal_session_start_retry", map[string]interface{}{
+		"cause": retry.Cause, "status": retry.Status, "outcome": retry.Outcome,
+		"elapsed_ms": retry.Elapsed.Milliseconds(),
+	})
 }
 
 // policySessionRevision is the trace's session revision: a relaxed call has
@@ -1036,8 +1047,21 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 			}
 		}()
 	}
+	// callAdmit is the admission each call of the turn takes. A sessioned
+	// cell's binding takes the slot itself, around each decide only: a session
+	// start that waits on a booting container holds no slot, so it cannot
+	// shed other turns.
+	callAdmit := admit
 	if sessionBinding != nil {
 		decider = sessionBinding
+		sessionBinding.AdmitEachDecide(func() (func(), error) {
+			release, err := admit()
+			if err != nil {
+				return nil, &policyAdmissionError{err: err}
+			}
+			return release, nil
+		})
+		callAdmit = admitNoSlot
 	}
 	if ephemeral {
 		tracked := &privateDecideTracker{policyDecider: decider}
@@ -1093,9 +1117,9 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	// conversation: it is waited out until the lookup's deadline.
 	throughBusy := func(request raylinearc.PolicyDecisionRequest, wait time.Duration) (*raylinearc.PolicyDecisionResponse, error) {
 		if deadline, scoped := policyLookupSessionDeadline(arcContext); scoped {
-			return decidePolicyThroughBusyUntil(ctx, decider, request, deadline, true, admit, withCacheContext)
+			return decidePolicyThroughBusyUntil(ctx, decider, request, deadline, true, callAdmit, withCacheContext)
 		}
-		return decidePolicyThroughBusy(ctx, decider, request, wait, admit, withCacheContext)
+		return decidePolicyThroughBusy(ctx, decider, request, wait, callAdmit, withCacheContext)
 	}
 	firstBusyWait := policyFirstBusyWait(busyWait, scorer.policyAppendUnsettled(arcContext.EpisodeIDHash, state.TurnIndex))
 	var response *raylinearc.PolicyDecisionResponse
@@ -1733,6 +1757,9 @@ const (
 type policyAdmissionError struct{ err error }
 
 func (err *policyAdmissionError) Error() string { return err.err.Error() }
+
+// admitNoSlot admits a call without a slot: the decider admits its own.
+func admitNoSlot() (func(), error) { return func() {}, nil }
 
 // decidePolicyThroughBusy asks the service for the decision and retries a
 // session_busy answer for up to wait. The service holds a strict episode for

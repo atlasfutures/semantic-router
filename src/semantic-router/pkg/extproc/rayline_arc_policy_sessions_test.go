@@ -37,6 +37,12 @@ type fakeSessionedServer struct {
 	terminates int
 	// idleTimeouts are the idle timeouts the session starts asked for.
 	idleTimeouts []string
+	// hangStarts is how many of the next session starts hang until the caller
+	// gives up, as a start Modal placed on a container still booting does;
+	// each signals hanging when it begins. startAttempts counts every start.
+	hangStarts    int
+	hanging       chan struct{}
+	startAttempts int
 }
 
 func newFakeSessionedServer(t *testing.T, containers []*fakePolicyService) *fakeSessionedServer {
@@ -47,6 +53,17 @@ func newFakeSessionedServer(t *testing.T, containers []*fakePolicyService) *fake
 	front.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		front.mu.Lock()
 		if r.URL.Path == "/_modal/sessions/start" {
+			front.startAttempts++
+			if front.hangStarts > 0 {
+				front.hangStarts--
+				hanging := front.hanging
+				front.mu.Unlock()
+				if hanging != nil {
+					hanging <- struct{}{}
+				}
+				<-r.Context().Done()
+				return
+			}
 			defer front.mu.Unlock()
 			if r.Header.Get("Modal-Key") != "wk-test" || r.Header.Get("Modal-Secret") != "ws-test" {
 				w.WriteHeader(http.StatusUnauthorized)
@@ -108,6 +125,17 @@ func (front *fakeSessionedServer) containerOf(token string) int {
 
 func newPolicySessionFixture(t *testing.T) (*policySelectorFixture, *fakeSessionedServer) {
 	t.Helper()
+	return newPolicySessionFixtureWith(t, 2*time.Second, raylinearc.NewAdmissionGate(0))
+}
+
+// newPolicySessionFixtureWith is newPolicySessionFixture with the session
+// start timeout and the cell's admission gate.
+func newPolicySessionFixtureWith(
+	t *testing.T,
+	startTimeout time.Duration,
+	admission *raylinearc.AdmissionGate,
+) (*policySelectorFixture, *fakeSessionedServer) {
+	t.Helper()
 	decision := policyTestDecision("")
 	catalog := policyTestActionIDs(decision.Algorithm.RaylineARC.PolicyService.Bindings)
 	containers := []*fakePolicyService{
@@ -122,7 +150,7 @@ func newPolicySessionFixture(t *testing.T) (*policySelectorFixture, *fakeSession
 		BaseURL: front.server.URL, ModalKey: "wk-test", ModalSecret: "ws-test", TotalTimeout: 5 * time.Second,
 	})
 	sessions, err := raylinearc.NewPolicySessionBackend(client, raylinearc.PolicySessionConfig{
-		StartTimeout: 2 * time.Second, ReplacedGrace: time.Millisecond,
+		StartTimeout: startTimeout, ReplacedGrace: time.Millisecond,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -130,7 +158,7 @@ func newPolicySessionFixture(t *testing.T) (*policySelectorFixture, *fakeSession
 	selector := newRaylineARCSelector(nil, nil, nil, policyTestPackage)
 	selector.arm(&raylineARCArmedComponents{
 		scorer:         newPolicyServiceScorer(&config.RouterConfig{}, decision),
-		admission:      raylinearc.NewAdmissionGate(0),
+		admission:      admission,
 		policySessions: sessions,
 	})
 	return &policySelectorFixture{selector: selector, decision: decision}, front

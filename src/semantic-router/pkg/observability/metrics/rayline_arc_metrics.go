@@ -121,6 +121,13 @@ var (
 		},
 		[]string{"outcome"},
 	)
+	RaylineARCPolicyModalSessionStartRetries = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "llm_rayline_arc_policy_modal_session_start_retry_total",
+			Help: "Rayline ARC sticky-session starts retried once with a new session after a timeout, transport failure, 429 or 5xx, by the first failure's cause and the retry's outcome (recovered, failed, or skipped for want of deadline).",
+		},
+		[]string{"cause", "outcome"},
+	)
 	RaylineARCThinkingLeverTurns = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "llm_rayline_arc_thinking_lever_turns_total",
@@ -314,6 +321,10 @@ func RecordRaylineARCPolicyStagedTurn(deltaMismatchReason string) {
 
 func RecordRaylineARCPolicySessionStartRetry(outcome string) {
 	RaylineARCPolicySessionStartRetries.WithLabelValues(outcome).Inc()
+}
+
+func RecordRaylineARCPolicyModalSessionStartRetry(cause, outcome string) {
+	RaylineARCPolicyModalSessionStartRetries.WithLabelValues(cause, outcome).Inc()
 }
 
 func RecordRaylineARCThinkingLeverTurn(lever, outcome, reason string) {

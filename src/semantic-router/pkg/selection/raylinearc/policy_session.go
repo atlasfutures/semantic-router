@@ -170,6 +170,8 @@ type PolicySessionConfig struct {
 	IdleTimeout   time.Duration
 	StartTimeout  time.Duration
 	ReplacedGrace time.Duration
+	// OnStartRetry, when set, is told of each retried session start.
+	OnStartRetry func(PolicySessionStartRetry)
 }
 
 // PolicySessionBackend starts and ends the Modal sessions of a sessioned
@@ -275,17 +277,88 @@ func idempotencyKey() (string, error) {
 	return encoded[0:8] + "-" + encoded[8:12] + "-" + encoded[12:16] + "-" + encoded[16:20] + "-" + encoded[20:], nil
 }
 
-// Start starts one session, bounded by the start timeout. Any failure is a
-// PolicyServiceError of class session_start.
+// Start starts one session, bounded by the start timeout and retried once
+// (startIdle). Any failure is a PolicyServiceError of class session_start.
 func (backend *PolicySessionBackend) Start(ctx context.Context) (PolicySession, error) {
-	return backend.startIdle(ctx, backend.config.IdleTimeout)
+	return backend.startIdle(ctx, backend.config.IdleTimeout, time.Time{})
 }
 
+// PolicySessionStartRetry describes one retried session start for a bounded
+// log and metric: why the first attempt failed and how the retry ended. It
+// carries no token and no request content.
+type PolicySessionStartRetry struct {
+	// Cause is why the first attempt failed: timeout, transport or status.
+	Cause string
+	// Status is the first attempt's HTTP status (cause status), else 0.
+	Status int
+	// Outcome is recovered, failed, or skipped (too little time left).
+	Outcome string
+	// Elapsed is the time from the first attempt to the end of the retry.
+	Elapsed time.Duration
+}
+
+// policySessionStartRetryMinAttempt is the least time a retried start must
+// have before its caller's deadline; with less, the first failure stands.
+const policySessionStartRetryMinAttempt = 500 * time.Millisecond
+
 // startIdle starts one session that Modal ends after idle without a request.
-func (backend *PolicySessionBackend) startIdle(ctx context.Context, idle time.Duration) (PolicySession, error) {
+// A start that timed out, failed in transport, or was answered 429 or 5xx is
+// tried once more with a new idempotency key, so Modal opens a new session
+// (and may place it on another container) instead of answering for the first:
+// a scale-up can place a start on a container that is still booting, and
+// waiting on it would outlast the turn. Each attempt is bounded by the start
+// timeout, so a start takes at most two of them. A start refused for any other
+// reason, or whose caller has gone or has too little time left (notAfter, the
+// context's deadline), is not retried.
+func (backend *PolicySessionBackend) startIdle(
+	ctx context.Context,
+	idle time.Duration,
+	notAfter time.Time,
+) (PolicySession, error) {
+	began := time.Now()
+	session, cause, status, err := backend.startOnce(ctx, idle)
+	if err == nil || cause == "" || ctx.Err() != nil {
+		return session, err
+	}
+	retry := PolicySessionStartRetry{Cause: cause, Status: status}
+	report := func(outcome string) {
+		retry.Outcome, retry.Elapsed = outcome, time.Since(began)
+		if backend.config.OnStartRetry != nil {
+			backend.config.OnStartRetry(retry)
+		}
+	}
+	left := func(deadline time.Time) bool {
+		return !deadline.IsZero() && time.Until(deadline) < policySessionStartRetryMinAttempt
+	}
+	deadline, _ := ctx.Deadline()
+	if left(notAfter) || left(deadline) {
+		report("skipped")
+		return session, err
+	}
+	retryCtx := ctx
+	if !notAfter.IsZero() {
+		var cancel context.CancelFunc
+		retryCtx, cancel = context.WithDeadline(ctx, notAfter)
+		defer cancel()
+	}
+	session, _, _, err = backend.startOnce(retryCtx, idle)
+	if err != nil {
+		report("failed")
+		return session, err
+	}
+	report("recovered")
+	return session, nil
+}
+
+// startOnce sends one session start under a new idempotency key. cause names
+// a failure worth one retry (timeout, transport, status), "" for any other.
+func (backend *PolicySessionBackend) startOnce(
+	ctx context.Context,
+	idle time.Duration,
+) (_ PolicySession, cause string, _ int, _ error) {
 	key, err := backend.newKey()
 	if err != nil {
-		return PolicySession{}, &PolicyServiceError{Class: PolicySessionStartClass}
+		return PolicySession{}, "", 0, &PolicyServiceError{Class: PolicySessionStartClass}
 	}
 	header := http.Header{}
 	header.Set("x-modal-server-session-idle-timeout", strconv.Itoa(int(idle/time.Second)))
@@ -293,23 +366,34 @@ func (backend *PolicySessionBackend) startIdle(ctx context.Context, idle time.Du
 	header.Set("x-modal-timestamp", strconv.FormatFloat(float64(backend.now().UnixNano())/1e9, 'f', 6, 64))
 	status, body, err := backend.control(ctx, policySessionStartPath, header, backend.config.StartTimeout)
 	if err != nil {
-		return PolicySession{}, &PolicyServiceError{Class: PolicySessionStartClass}
+		cause = "transport"
+		if errors.Is(err, context.DeadlineExceeded) {
+			cause = "timeout"
+		}
+		if status != 0 {
+			// The answer arrived but could not be read.
+			cause = "status"
+		}
+		return PolicySession{}, cause, status, &PolicyServiceError{Class: PolicySessionStartClass}
 	}
 	if status != http.StatusOK {
-		return PolicySession{}, &PolicyServiceError{Class: PolicySessionStartClass, Status: status}
+		if status == http.StatusTooManyRequests || status >= http.StatusInternalServerError {
+			cause = "status"
+		}
+		return PolicySession{}, cause, status, &PolicyServiceError{Class: PolicySessionStartClass, Status: status}
 	}
 	var started struct {
 		SessionID string `json:"session_id"`
 		Token     string `json:"token"`
 	}
 	if json.Unmarshal(body, &started) != nil {
-		return PolicySession{}, &PolicyServiceError{Class: PolicySessionStartClass, Status: status}
+		return PolicySession{}, "", status, &PolicyServiceError{Class: PolicySessionStartClass, Status: status}
 	}
 	session := PolicySession{ID: started.SessionID, Token: started.Token}
 	if ValidatePolicySession(session) != nil {
-		return PolicySession{}, &PolicyServiceError{Class: PolicySessionStartClass, Status: status}
+		return PolicySession{}, "", status, &PolicyServiceError{Class: PolicySessionStartClass, Status: status}
 	}
-	return session, nil
+	return session, "", status, nil
 }
 
 // Terminate ends a session: its in-flight requests finish and new ones are
@@ -489,6 +573,19 @@ type PolicySessionBinding struct {
 	// the commit that records its replacement. An ephemeral turn records no
 	// replacement, so it never sets one.
 	replaced *PolicySession
+	// admit, when set, takes the caller's admission slot around each decide
+	// call only (AdmitEachDecide), never around a session start.
+	admit func() (func(), error)
+}
+
+// AdmitEachDecide makes the binding take an admission slot from admit around
+// each decide it sends, and hold none while it starts a session. A start can
+// wait out its whole timeout on a container that is still booting; a slot held
+// through it would shed unrelated turns while the cell's ready containers
+// stand idle. A refusal from admit is returned as the call's error, before
+// anything is sent.
+func (binding *PolicySessionBinding) AdmitEachDecide(admit func() (func(), error)) {
+	binding.admit = admit
 }
 
 // Decide asks the bound session for one decision.
@@ -585,6 +682,13 @@ func (binding *PolicySessionBinding) decide(
 	if binding.pastDeadline() {
 		return nil, ErrPolicyLookupDeadline
 	}
+	if binding.admit != nil {
+		release, err := binding.admit()
+		if err != nil {
+			return nil, err
+		}
+		defer release()
+	}
 	response, err := binding.backend.client.WithSessionToken(binding.current.Token).Decide(ctx, request)
 	if policySessionUncertain(err) && !errors.Is(ctx.Err(), context.Canceled) {
 		binding.backend.suspect.mark(*binding.current)
@@ -653,7 +757,7 @@ func (binding *PolicySessionBinding) start(ctx context.Context) error {
 	if binding.idleTimeout > 0 {
 		idle = binding.idleTimeout
 	}
-	session, err := binding.backend.startIdle(ctx, idle)
+	session, err := binding.backend.startIdle(ctx, idle, binding.notAfter)
 	if err != nil {
 		return err
 	}
