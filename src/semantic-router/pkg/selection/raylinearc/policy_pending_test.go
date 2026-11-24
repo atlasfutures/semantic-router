@@ -279,7 +279,7 @@ func TestEpisodeStateWireRefusesAMalformedPendingDecision(t *testing.T) {
 	}
 	state := cloneEpisodeState(stored)
 	state.Pending = nil
-	state.Policy.Ledger[0].Basis = "estimated"
+	state.Policy.Ledger[0].Basis = "guessed"
 	if _, err := marshalEpisodeState(state, 1, pendingNow); err == nil {
 		t.Fatal("an unknown basis was written")
 	}
