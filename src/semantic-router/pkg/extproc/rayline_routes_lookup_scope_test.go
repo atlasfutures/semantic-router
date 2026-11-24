@@ -74,7 +74,7 @@ func (selector *lookupScopeSelector) Select(
 	selector.mu.Lock()
 	defer selector.mu.Unlock()
 	if selector.sideCall && selCtx.RaylineARC != nil && selCtx.RaylineARC.RoutesLookupSession {
-		leaveRaylineRoutesLookupScope(selCtx.RaylineARC)
+		leaveRaylineRoutesLookupScope(selCtx.RaylineARC, raylineRoutesLookupLeftSideCall)
 	}
 	return selector.stubARCSelector.Select(ctx, selCtx)
 }
@@ -336,9 +336,8 @@ func TestUnscopedDecideOmitsSessionScope(t *testing.T) {
 	}
 }
 
-// A scope the service cannot serve fails the lookup loudly, with a logged
-// class, never as a one-shot lookup: no capability (no decide is sent) and
-// a refused scope.
+// A scope the service refuses fails the lookup loudly, with a logged
+// class, never as a one-shot lookup.
 func TestScopedLookupFailsWhenTheScopeCannotBeServed(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
@@ -348,7 +347,6 @@ func TestScopedLookupFailsWhenTheScopeCannotBeServed(t *testing.T) {
 		class     string
 		decides   int
 	}{
-		{name: "capability unadvertised", class: arcFailureLookupSessionsUnadvertised, decides: 0},
 		{name: "scope refused", advertise: true, failWith: "invalid_request",
 			detail: map[string]any{"field": raylinearc.PolicySessionScopeField}, class: arcFailureLookupScopeRefused, decides: 1},
 	} {
@@ -374,6 +372,29 @@ func TestScopedLookupFailsWhenTheScopeCannotBeServed(t *testing.T) {
 				t.Fatalf("%d decides, want %d", got, tc.decides)
 			}
 		})
+	}
+}
+
+// On a policy service that does not advertise lookup_sessions, a scoped
+// lookup leaves its scope and is decided one-shot: one decide, with no
+// session_scope, and a log line saying why.
+func TestScopedLookupWithoutLookupSessionsIsDecidedOneShot(t *testing.T) {
+	fixture := newPolicySelectorFixture(t, "")
+	actionID := fixture.decision.Algorithm.RaylineARC.PolicyService.Bindings[0].ActionID
+	fixture.fake.chooseWith(func(raylinearc.PolicyDecisionRequest) string { return actionID })
+	logs := captureLogs(t)
+	if _, err := fixture.scopedLookupOn(t, lookupScopeTestScope); err != nil {
+		t.Fatalf("a lookup on a service without lookup sessions failed: %v", err)
+	}
+	received := fixture.fake.received()
+	if len(received) != 1 {
+		t.Fatalf("%d decides, want 1", len(received))
+	}
+	if received[0].SessionScope != "" {
+		t.Fatalf("sent session_scope %q to a service that keeps no lookup sessions", received[0].SessionScope)
+	}
+	if line := findLogEvent(t, logs, "rayline_routes_lookup_scope_skipped"); line["reason"] != raylineRoutesLookupLeftUnadvertised {
+		t.Fatalf("skip line = %v", line)
 	}
 }
 
@@ -582,9 +603,10 @@ func TestScopedExecutionLookupIsSentStrict(t *testing.T) {
 }
 
 // Only a policy-service cell with the routes API on and a single service
-// decides on lookup scopes, and only such a cell needs the service to
-// advertise lookup_sessions to be ready. A replica pool keeps one-shot
-// lookups: its capability list is the cell's, not each replica's.
+// decides on lookup scopes. Readiness does not need the service to advertise
+// lookup_sessions: without it such a cell says once that it runs degraded.
+// A replica pool keeps one-shot lookups: its capability list is the cell's,
+// not each replica's.
 func TestLookupSessionsServedAndRequired(t *testing.T) {
 	single := policyTestDecision("").Algorithm.RaylineARC
 	single.RoutesAPI.Enabled = true
@@ -604,11 +626,20 @@ func TestLookupSessionsServedAndRequired(t *testing.T) {
 		}
 		scorer := &policyServiceScorer{}
 		scorer.setAdvertised([]string{raylinearc.PolicyCapabilityDecisionsV2})
-		err := requireRaylineRoutesLookupSessions(tc.arc, scorer)
-		var failure *raylinearc.PolicyServiceError
-		if tc.served != (errors.As(err, &failure) && failure.Class == raylinearc.PolicyCapabilityUnsupportedClass &&
-			failure.Detail["capability"] == raylinearc.PolicyCapabilityLookupSessions) {
-			t.Fatalf("%s: readiness without the capability = %v", name, err)
+		logs := captureLogs(t)
+		for range 2 {
+			if err := requireRaylineRoutesLookupSessions(tc.arc, scorer); err != nil {
+				t.Fatalf("%s: readiness without the capability = %v", name, err)
+			}
+		}
+		degraded := 0
+		for _, entry := range logs.All() {
+			if entry.ContextMap()["event"] == "rayline_arc_lookup_sessions_degraded" {
+				degraded++
+			}
+		}
+		if got := degraded; got != map[bool]int{true: 1, false: 0}[tc.served] {
+			t.Fatalf("%s: %d degraded lines, want one only where lookup scopes are served", name, got)
 		}
 		scorer.setAdvertised([]string{raylinearc.PolicyCapabilityLookupSessions})
 		if err := requireRaylineRoutesLookupSessions(tc.arc, scorer); err != nil {

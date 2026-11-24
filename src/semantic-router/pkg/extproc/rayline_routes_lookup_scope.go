@@ -48,19 +48,12 @@ import (
 // lookup on the same scope (session_busy) is waited out within the lookup's
 // deadline; a service that refuses the scope fails the lookup loudly. Only
 // lookups the scope does not apply to are decided one-shot: one that names
-// no conversation, one on a replica-pool cell, a side call and a private
-// (zdr) turn.
+// no conversation, one on a replica-pool cell, one on a policy service that
+// does not advertise lookup_sessions, a side call and a private (zdr) turn.
 
 // raylineRoutesLookupScopePrefix namespaces a lookup scope's episode
 // identity, so it can never hash to a routed conversation's episode.
 const raylineRoutesLookupScopePrefix = "lookup:"
-
-// arcFailureLookupSessionsUnadvertised fails a lookup-scoped decision when
-// the service does not advertise lookup_sessions: an older service would
-// run it as a strict episode on the scope, holding its arm for the next
-// lookup. Readiness requires the capability, so this is a service that lost
-// it after the cell armed.
-const arcFailureLookupSessionsUnadvertised = "policy_lookup_sessions_unadvertised"
 
 // arcFailureLookupDeadline fails a lookup-scoped decision whose deadline
 // passed before it was decided (a scope busy until then, or no time left to
@@ -97,23 +90,26 @@ func raylineRoutesLookupSessionsServed(arc *config.RaylineARCAlgorithmConfig) bo
 	return arc != nil && arc.RoutesAPI.Enabled && arc.PolicyService != nil && len(arc.PolicyService.Replicas) == 0
 }
 
-// requireRaylineRoutesLookupSessions keeps a cell that decides lookups on
-// lookup scopes from being ready on a service that does not keep them:
-// there is no one-shot fallback, and an older service would run a scoped
-// lookup as a strict episode on its scope. The policy service is deployed
-// with lookup_sessions before such a cell rolls.
+// requireRaylineRoutesLookupSessions no longer holds a cell back from being
+// ready on a service that does not advertise lookup_sessions: lookup scopes
+// only let throwaway /v1/routes lookups reuse one encoder session per
+// conversation, and no routed turn uses them. On such a service every
+// lookup leaves its scope at selection (leaveRaylineRoutesLookupScope) and
+// is decided one-shot on its own minted episode, as a replica pool's
+// lookups are, so no session_scope reaches a service that would run it as a
+// strict episode. The cell says once, at readiness, that it runs degraded.
 func requireRaylineRoutesLookupSessions(arc *config.RaylineARCAlgorithmConfig, scorer *policyServiceScorer) error {
 	if !raylineRoutesLookupSessionsServed(arc) || scorer.advertises(raylinearc.PolicyCapabilityLookupSessions) {
 		return nil
 	}
-	logging.ComponentErrorEvent("extproc", "rayline_arc_policy_service_unsupported", map[string]interface{}{
-		"package_alias": arc.PolicyService.PackageAlias, "class": raylinearc.PolicyCapabilityUnsupportedClass,
-		"capability": raylinearc.PolicyCapabilityLookupSessions,
+	scorer.lookupSessionsDegraded.Do(func() {
+		logging.ComponentEvent("extproc", "rayline_arc_lookup_sessions_degraded", map[string]interface{}{
+			"package_alias": arc.PolicyService.PackageAlias,
+			"capability":    raylinearc.PolicyCapabilityLookupSessions,
+			"effect":        "route lookups are decided one-shot, without a per-conversation lookup session",
+		})
 	})
-	return &raylinearc.PolicyServiceError{
-		Class:  raylinearc.PolicyCapabilityUnsupportedClass,
-		Detail: map[string]any{"capability": raylinearc.PolicyCapabilityLookupSessions},
-	}
+	return nil
 }
 
 // raylineRoutesLookupSessionEligible reports whether a decision is placed on
@@ -145,18 +141,25 @@ func applyRaylineRoutesLookupScope(arcContext *selection.RaylineARCSelectionCont
 	return true
 }
 
-// leaveRaylineRoutesLookupScope returns a lookup the selection read as a
-// side call to the minted episode it was prepared on. The service refuses
-// session_scope on a side call, and a side call is decided relaxed, one-shot,
-// as every throwaway side call is; the decision service then closes the
-// minted episode's session as it closes any one-shot lookup's.
-func leaveRaylineRoutesLookupScope(arcContext *selection.RaylineARCSelectionContext) {
+// Why a lookup left its scope (rayline_routes_lookup_scope_skipped).
+const (
+	raylineRoutesLookupLeftSideCall     = "side_call"
+	raylineRoutesLookupLeftUnadvertised = "lookup_sessions_unadvertised"
+)
+
+// leaveRaylineRoutesLookupScope returns a lookup to the minted episode it
+// was prepared on, deciding it one-shot; the decision service then closes the
+// minted episode's session as it closes any one-shot lookup's. reason is
+// side_call (the service refuses session_scope on a side call, which is
+// decided relaxed as every throwaway side call is) or
+// lookup_sessions_unadvertised (the service keeps no lookup sessions).
+func leaveRaylineRoutesLookupScope(arcContext *selection.RaylineARCSelectionContext, reason string) {
 	arcContext.EpisodeIDHash = arcContext.RoutesLookupMintedEpisode
 	arcContext.RoutesLookupSession = false
 	arcContext.PolicyLookupSessions, arcContext.PolicyLookupSessionKey = nil, ""
 	logging.ComponentEvent("extproc", "rayline_routes_lookup_scope_skipped", map[string]interface{}{
 		"request_id": arcContext.RequestID,
-		"reason":     "side_call",
+		"reason":     reason,
 	})
 }
 
