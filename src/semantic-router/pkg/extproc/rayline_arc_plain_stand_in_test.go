@@ -3,6 +3,7 @@
 package extproc
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"reflect"
@@ -412,4 +413,144 @@ func capacityActionIDs(request raylinearc.PolicyDecisionRequest) []string {
 		ids = append(ids, entry.ActionID)
 	}
 	return ids
+}
+
+// A report of a turn the executor ran under a plain action that has a
+// stand-in here names the plain action id: it is read as the stand-in, so the
+// turn is recorded on the stand-in's arm and action. A report of an aliased
+// lookup's own route id has nothing pending (a lookup carrying
+// routing.execution is ephemeral, rayline_routes_api.go) and is ignored, not
+// refused. An action id with no stand-in is still refused. Reports name GLM
+// as a lookup returns it.
+func TestPlainAliasInTheReport(t *testing.T) {
+	router, fake := v5Router(t, "api_format: openai")
+	arc := router.Config.Decisions[0].Algorithm.RaylineARC
+	arc.RoutesAPI.Enabled = true
+	arc.RoutesAPI.EpisodeWrites = true
+	arc.RoutesAPI.Routing = &config.RaylineARCRoutesRoutingConfig{}
+	registered, _ := router.ModelSelector.Get(selection.MethodRaylineARC)
+	registered.(*raylineARCSelector).armedComponents().scorer.(*policyServiceScorer).setAdvertised(
+		[]string{raylinearc.PolicyCapabilityLookupSessions})
+	// The service decides Opus; the executor then runs GLM under its plain
+	// control (a failover, say) and reports what ran.
+	fake.chooseWith(func(raylinearc.PolicyDecisionRequest) string { return v5OpusAction })
+	fake.tierPickModel = func(picked string) string {
+		if picked == v5OpusAction {
+			return "claude-opus-5"
+		}
+		return "glm-5.3-flash"
+	}
+	lookup := func(t *testing.T, conversation string, body []byte) string {
+		t.Helper()
+		response := router.handleRaylineRoutesAPI(body, routesContext(map[string]string{raylineRoutesSessionHeader: conversation}))
+		router.background.Wait()
+		if status := immediateStatusCode(t, response); status != 200 {
+			t.Fatalf("lookup status %d: %s", status, response.GetImmediateResponse().Body)
+		}
+		var payload struct {
+			RouteID string `json:"route_id"`
+		}
+		if err := json.Unmarshal(response.GetImmediateResponse().Body, &payload); err != nil {
+			t.Fatal(err)
+		}
+		return payload.RouteID
+	}
+	report := func(t *testing.T, conversation string, body map[string]any) (int, reportAnswer, string) {
+		t.Helper()
+		encoded, err := json.Marshal(body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response := router.handleRaylineReportAPI(encoded, reportContext(map[string]string{raylineRoutesSessionHeader: conversation}))
+		raw := response.GetImmediateResponse().Body
+		var answer reportAnswer
+		_ = json.Unmarshal(raw, &answer)
+		return immediateStatusCode(t, response), answer, string(raw)
+	}
+	stored := func(t *testing.T, conversation string) *raylinearc.EpisodeState {
+		t.Helper()
+		state, read, err := router.RaylineARCEpisodeStore.(raylinearc.EpisodeSnapshotStore).Snapshot(
+			context.Background(), raylinearc.HashEpisodeID(conversation), 2)
+		if err != nil || read.Version() == 0 {
+			t.Fatalf("no episode for %s: %v", conversation, err)
+		}
+		return state
+	}
+	tracked := []byte(`{"model":"arc-1.0","max_tokens":16,"messages":[{"role":"user","content":"summarise this"}]}`)
+
+	t.Run("the plain action is recorded as its stand-in", func(t *testing.T) {
+		routeID := lookup(t, "plain-report-recorded", tracked)
+		code, answer, raw := report(t, "plain-report-recorded",
+			executedReport(routeID, "z-ai/glm-5.3-flash", map[string]any{"action_id": v5GLMPlain}))
+		if code != 200 || answer.Status != "recorded" || answer.Attributed == nil || !*answer.Attributed {
+			t.Fatalf("report %d %s", code, raw)
+		}
+		state := stored(t, "plain-report-recorded")
+		ledger := state.Policy.Ledger
+		if len(ledger) != 1 || ledger[0].ActionID != v5GLMNone || ledger[0].Basis != raylinearc.PolicyLedgerBasisReported {
+			t.Fatalf("ledger %+v, want the stand-in reported", ledger)
+		}
+		if state.LastReport == nil || state.PreviousArm == nil || *state.PreviousArm != state.LastReport.Arm {
+			t.Fatalf("last report %+v previous arm %v", state.LastReport, state.PreviousArm)
+		}
+		if encoded, err := json.Marshal(state); err != nil || strings.Contains(string(encoded), v5GLMPlain) {
+			t.Fatalf("the plain action id was stored: %v %s", err, encoded)
+		}
+	})
+
+	t.Run("at the stand-in's thinking level", func(t *testing.T) {
+		scorer := registered.(*raylineARCSelector).armedComponents().scorer.(*policyServiceScorer)
+		level := scorer.bindings[v5GLMNone].level
+		other := scorer.bindings[v5GLMUp].level
+		if level == "" || level == other {
+			t.Fatalf("fixture levels none=%q up=%q", level, other)
+		}
+		routeID := lookup(t, "plain-report-level", tracked)
+		code, _, raw := report(t, "plain-report-level", executedReport(routeID, "z-ai/glm-5.3-flash",
+			map[string]any{"action_id": v5GLMPlain, "thinking_level": other}))
+		if code != 400 || !strings.Contains(raw, "executed.thinking_level is not the level of executed.action_id") {
+			t.Fatalf("another level of the plain action: %d %s", code, raw)
+		}
+		code, answer, raw := report(t, "plain-report-level", executedReport(routeID, "z-ai/glm-5.3-flash",
+			map[string]any{"action_id": v5GLMPlain, "thinking_level": level}))
+		if code != 200 || answer.Status != "recorded" {
+			t.Fatalf("the stand-in's level: %d %s", code, raw)
+		}
+	})
+
+	t.Run("an aliased lookup's route id has nothing pending", func(t *testing.T) {
+		lookup(t, "plain-report-aliased", tracked)
+		envelope := `{"version":"arc-execution-context.v2","turn":{"id":"sha256:` + strings.Repeat("b", 64) +
+			`","attempt":1,"epoch":"e1","retry_of":null,"reconsult":null},"event":{"kind":"task_start","basis":"marker_inferred","compaction":null},` +
+			`"last_served":null,"history":[],"hold":null,"expect":null,"targets":[` +
+			`{"action_id":"` + v5GLMPlain + `","worker":"w","placement":"cloud","cache":null,"capacity":null}]}`
+		fake.chooseWith(func(raylinearc.PolicyDecisionRequest) string { return v5GLMNone })
+		defer fake.chooseWith(func(raylinearc.PolicyDecisionRequest) string { return v5OpusAction })
+		aliased := lookup(t, "plain-report-aliased", []byte(`{"model":"arc-1.0","max_tokens":16,"messages":[{"role":"user","content":"summarise this"}],`+
+			`"routing":{"policy":{"preset":"arc-policy.hybrid-default.v1"},"execution":`+envelope+`}}`))
+		before := stored(t, "plain-report-aliased")
+		code, answer, raw := report(t, "plain-report-aliased",
+			executedReport(aliased, "z-ai/glm-5.3-flash", map[string]any{"action_id": v5GLMPlain}))
+		if code != 200 || answer.Status != "ignored" || answer.Reason != "not_pending" {
+			t.Fatalf("report of the aliased lookup %d %s", code, raw)
+		}
+		if after := stored(t, "plain-report-aliased"); !reflect.DeepEqual(before, after) {
+			t.Fatalf("the ignored report changed the episode: %+v", after)
+		}
+	})
+
+	for _, refused := range []struct {
+		name, model, actionID string
+	}{
+		{"the plain action of another model", "anthropic/claude-opus-5", v5GLMPlain},
+		{"an action id with no stand-in", "z-ai/glm-5.3-flash", strings.Repeat("c", 64)},
+	} {
+		t.Run(refused.name, func(t *testing.T) {
+			routeID := lookup(t, "plain-report-refused-"+refused.name, tracked)
+			code, _, raw := report(t, "plain-report-refused-"+refused.name, executedReport(routeID, refused.model, map[string]any{"action_id": refused.actionID}))
+			if code != 400 || !strings.Contains(raw, "executed.action_id is not an action of executed.model") {
+				t.Fatalf("%d %s", code, raw)
+			}
+		})
+	}
 }
