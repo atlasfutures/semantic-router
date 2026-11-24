@@ -463,11 +463,18 @@ func (r *OpenAIRouter) finalizeProviderDispatchResponse(
 	ctx.DispatchedOutbound = readDispatchedOutboundParams(body, dispatch)
 	ctx.DispatchedServiceTier = dispatchedServiceTier(body)
 	// Last: Vertex AI names the model in the URL, so the body drops it.
-	body, err = adaptVertexMessagesRequest(body, dispatch)
+	body, vertexDropped, err := adaptVertexMessagesRequest(body, dispatch)
 	if err != nil {
 		abandonUpstreamSpan(ctx, "provider request could not be adapted")
 		metrics.RecordRequestError(dispatch.logicalModel, "provider_adapter_error")
 		return nil, status.Errorf(codes.Internal, "adapt Vertex AI request: %v", err)
+	}
+	if len(vertexDropped) > 0 {
+		logging.ComponentEvent("extproc", "vertex_messages_fields_dropped", map[string]interface{}{
+			"request_id": ctx.RequestID,
+			"model":      dispatch.logicalModel,
+			"fields":     vertexDropped,
+		})
 	}
 	r.stageFlexResend(ctx, dispatch, body)
 	r.stageEndpointResend(ctx, dispatch, body)
@@ -488,8 +495,11 @@ func (r *OpenAIRouter) finalizeProviderDispatchResponse(
 	}
 	resetVertexRequestPath(common.HeaderMutation, dispatch, body)
 	appendContentLengthHeader(&common.HeaderMutation.SetHeaders, len(body))
+	ownBeta := dispatchedAnthropicBeta(common.HeaderMutation.SetHeaders)
 	declareAutoCacheBeta(&common.HeaderMutation.SetHeaders, ctx)
 	stripServerSideFallbackBeta(common.HeaderMutation, ctx)
+	// Last: a Vertex AI dispatch does not forward the client's betas.
+	limitVertexAnthropicBeta(common.HeaderMutation, dispatch, ctx, ownBeta)
 	common.BodyMutation = &ext_proc.BodyMutation{
 		Mutation: &ext_proc.BodyMutation_Body{Body: body},
 	}
