@@ -77,6 +77,57 @@ func TestUpstreamSessionIDStaysOffNonOpenRouterBackends(t *testing.T) {
 	}
 }
 
+// OpenRouter scopes an OpenAI worker's prompt cache by session_id, so a
+// per-conversation key would keep every new conversation from reading the
+// prefix (system, tools) another conversation of the same user already
+// wrote. An OpenAI worker is sent one key per user: two conversations of one
+// user carry the same session_id, another user's carries a different one,
+// and none of them is the per-conversation episode hash or the raw user id.
+func TestUpstreamSessionIDIsPerUserForAnOpenAIWorker(t *testing.T) {
+	router := upstreamSessionRouterForPublisher("https://openrouter.ai/api/v1", "OpenAI")
+	first := upstreamSessionRoutedBody(t, router, true, "user-42:conversation-7")["session_id"]
+	second := upstreamSessionRoutedBody(t, router, true, "user-42:conversation-8")["session_id"]
+	other := upstreamSessionRoutedBody(t, router, true, "user-43:conversation-7")["session_id"]
+
+	if first == nil || first == "" {
+		t.Fatalf("an OpenAI worker got no session_id")
+	}
+	if first != second {
+		t.Fatalf("one user's two conversations got different session_ids: %#v, %#v", first, second)
+	}
+	if first == other {
+		t.Fatalf("two users share a session_id: %#v", first)
+	}
+	if first == raylinearc.HashEpisodeID("user-42:conversation-7") {
+		t.Fatalf("an OpenAI worker was sent the per-conversation episode hash")
+	}
+	raw := upstreamSessionRouteBytes(t, router, true, "user-42:conversation-7")
+	if bytes.Contains(raw, []byte("user-42")) {
+		t.Fatalf("dispatched body carries the user id:\n%s", raw)
+	}
+}
+
+// An episode id that names no user (no user:conversation shape) gives an
+// OpenAI worker no session_id: a key of its own would only fence its cache.
+func TestUpstreamSessionIDIsAbsentForAnOpenAIWorkerWithoutAUser(t *testing.T) {
+	router := upstreamSessionRouterForPublisher("https://openrouter.ai/api/v1", "OpenAI")
+	body := upstreamSessionRoutedBody(t, router, true, "opaque-episode")
+
+	if _, present := body["session_id"]; present {
+		t.Fatalf("session_id is present for a userless episode: %#v", body["session_id"])
+	}
+}
+
+// Another family keeps the per-conversation key.
+func TestUpstreamSessionIDStaysPerConversationForOtherFamilies(t *testing.T) {
+	router := upstreamSessionRouterForPublisher("https://openrouter.ai/api/v1", "Anthropic")
+	body := upstreamSessionRoutedBody(t, router, true, upstreamSessionRawID)
+
+	if got, want := body["session_id"], raylinearc.HashEpisodeID(upstreamSessionRawID); got != want {
+		t.Fatalf("session_id = %#v, want the episode id hash %q", got, want)
+	}
+}
+
 // The field is sent upstream only. The neutral request the response path
 // renders from must never learn about it.
 func TestUpstreamSessionIDIsNotWrittenBackToTheNeutralRequest(t *testing.T) {
@@ -156,14 +207,20 @@ func upstreamSessionContext(
 		ctx.VSRRaylineARC = &selection.RaylineARCTrace{
 			EpisodeIDHash: raylinearc.HashEpisodeID(rawEpisodeID),
 		}
+		ctx.RaylineARCUserKey = raylineARCUserKey(rawEpisodeID)
 	}
 	return ctx
 }
 
 func upstreamSessionRouter(baseURL string) *OpenAIRouter {
+	return upstreamSessionRouterForPublisher(baseURL, "")
+}
+
+func upstreamSessionRouterForPublisher(baseURL string, publisher string) *OpenAIRouter {
 	arm := config.ModelParams{
 		PreferredEndpoints: []string{"backend"},
 		APIFormat:          config.APIFormatOpenAI,
+		Publisher:          publisher,
 	}
 	cfg := &config.RouterConfig{
 		BackendModels: config.BackendModels{
