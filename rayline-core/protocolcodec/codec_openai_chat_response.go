@@ -224,12 +224,14 @@ func decodeChatUsage(wire chatUsageWire) llmprotocol.Usage {
 		reasoning := wire.CompletionTokensDetails.ReasoningTokens
 		if chatReasoningOutsideCompletion(wire) {
 			// The provider counts reasoning beside completion_tokens, not
-			// inside it, and its total says so. Every count is its own,
-			// the output total included: it is total_tokens less
-			// prompt_tokens, both stated by the provider, so it is billed
-			// and settled as authoritative.
+			// inside it, and its total says so. The output total is
+			// total_tokens less prompt_tokens, both stated by the provider,
+			// so it is billed and settled as authoritative. The split keeps
+			// the provenance it has in the inclusive shape (reasoning
+			// stated, the rest derived), so a stream whose usage updates
+			// move between the two shapes never lowers its evidence.
 			usage.OutputReasoning = authoritative(reasoning)
-			usage.OutputOther = authoritative(wire.CompletionTokens)
+			usage.OutputOther = derived(wire.CompletionTokens)
 			usage.OutputTotal = authoritative(wire.CompletionTokens + reasoning)
 		} else if reasoning >= 0 && reasoning <= wire.CompletionTokens {
 			usage.OutputReasoning = authoritative(reasoning)

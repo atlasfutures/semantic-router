@@ -34,18 +34,18 @@ func TestReasoningCountedOutsideCompletionIsReconciledByItsTotal(t *testing.T) {
 			value int64
 			from  llmprotocol.UsageProvenance
 		}{
-			"output total":     {usage.OutputTotal, 8 + 320, llmprotocol.UsageAuthoritative},
-			"output reasoning": {usage.OutputReasoning, 320, llmprotocol.UsageAuthoritative},
-			"output other":     {usage.OutputOther, 8, llmprotocol.UsageAuthoritative},
-			"total":            {usage.Total, 510, llmprotocol.UsageAuthoritative},
-			"input total":      {usage.InputTotal, 182, llmprotocol.UsageAuthoritative},
+			"output total":     {usage.OutputTotal, 16 + 224, llmprotocol.UsageAuthoritative},
+			"output reasoning": {usage.OutputReasoning, 224, llmprotocol.UsageAuthoritative},
+			"output other":     {usage.OutputOther, 16, llmprotocol.UsageDerived},
+			"total":            {usage.Total, 460, llmprotocol.UsageAuthoritative},
+			"input total":      {usage.InputTotal, 220, llmprotocol.UsageAuthoritative},
 		} {
 			if check.count.Value == nil || *check.count.Value != check.value || check.count.Provenance != check.from {
 				t.Errorf("%s = %+v, want %d (%s)", name, check.count, check.value, check.from)
 			}
 		}
-		// What the client is billed: 182 prompt tokens, 128 of them cached.
-		assertArmUsage(t, billed, armUsage(54, 328, 128, 0, 320))
+		// The client is billed the reasoning as output: 16 + 224.
+		assertArmUsage(t, billed, armUsage(220, 240, 0, 0, 224))
 	})
 	t.Run("streamed", func(t *testing.T) {
 		stream := mustNewMatrixStream(t, NewBuiltinEngine(), llmprotocol.OpenAIChatV1, llmprotocol.AnthropicMessagesV1)
@@ -60,7 +60,8 @@ func TestReasoningCountedOutsideCompletionIsReconciledByItsTotal(t *testing.T) {
 		var encoded bytes.Buffer
 		writeFrames(&encoded, frames)
 		writeFrames(&encoded, finalFrames)
-		assertArmUsage(t, messageDeltaUsage(t, "chat-stream-grok.sse", encoded.Bytes()), armUsage(182, 219, 0, 0, 216))
+		// 220 prompt tokens, 128 of them cached; output 16 + 172.
+		assertArmUsage(t, messageDeltaUsage(t, "chat-stream-grok.sse", encoded.Bytes()), armUsage(92, 188, 128, 0, 172))
 	})
 }
 
@@ -93,7 +94,22 @@ func TestChatResponseMetadataOfAnyTypeDecodes(t *testing.T) {
 	body := loadVertexFixture(t, "chat-response-deepseek-flash.json")
 	// The engine validates the decoded response, usage totals included.
 	billed, _ := vertexAnthropicUsageFromResponse(t, body)
-	assertArmUsage(t, billed, armUsage(24, 7, 0, 0, 0))
+	assertArmUsage(t, billed, armUsage(18, 17, 0, 0, 0))
+
+	// Streamed, the chunks carry no metadata; the capture is pinned all the same.
+	stream := mustNewMatrixStream(t, NewBuiltinEngine(), llmprotocol.OpenAIChatV1, llmprotocol.AnthropicMessagesV1)
+	frames, _, _, err := stream.Push(loadVertexFixture(t, "chat-stream-deepseek-flash.sse"))
+	if err != nil {
+		t.Fatalf("push: %v", err)
+	}
+	finalFrames, _, _, err := stream.Finalize(nil)
+	if err != nil {
+		t.Fatalf("finalize: %v", err)
+	}
+	var encoded bytes.Buffer
+	writeFrames(&encoded, frames)
+	writeFrames(&encoded, finalFrames)
+	assertArmUsage(t, messageDeltaUsage(t, "chat-stream-deepseek-flash.sse", encoded.Bytes()), armUsage(18, 14, 0, 0, 0))
 }
 
 // vertexAnthropicUsageFromResponse translates a provider body to Messages as
@@ -129,8 +145,11 @@ func TestReasoningOutsideCompletionAfterAnEarlierUsageUpdate(t *testing.T) {
 		return `data: {"id":"fixture-grok-stream","object":"chat.completion.chunk","created":1795540101,"model":"xai/grok-4.7",` +
 			`"choices":[{"index":0,"delta":{"content":"` + content + `"},"finish_reason":null}],"usage":` + usage + "}\n\n"
 	}
+	// Inclusive (no reasoning), then beside completion, then a restatement
+	// with no reasoning again: every output total grows.
 	body := chunk("Hi", `{"prompt_tokens":10,"completion_tokens":0,"total_tokens":10,"completion_tokens_details":{"reasoning_tokens":0}}`) +
 		chunk(" there", `{"prompt_tokens":10,"completion_tokens":5,"total_tokens":35,"completion_tokens_details":{"reasoning_tokens":20}}`) +
+		chunk(".", `{"prompt_tokens":10,"completion_tokens":26,"total_tokens":36,"completion_tokens_details":{"reasoning_tokens":0}}`) +
 		`data: {"id":"fixture-grok-stream","object":"chat.completion.chunk","created":1795540101,"model":"xai/grok-4.7","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}` +
 		"\n\ndata: [DONE]\n\n"
 	frames, _, _, err := stream.Push([]byte(body))
@@ -144,5 +163,5 @@ func TestReasoningOutsideCompletionAfterAnEarlierUsageUpdate(t *testing.T) {
 	var encoded bytes.Buffer
 	writeFrames(&encoded, frames)
 	writeFrames(&encoded, finalFrames)
-	assertArmUsage(t, messageDeltaUsage(t, "two usage updates", encoded.Bytes()), armUsage(10, 25, 0, 0, 20))
+	assertArmUsage(t, messageDeltaUsage(t, "three usage updates", encoded.Bytes()), armUsage(10, 26, 0, 0, 0))
 }

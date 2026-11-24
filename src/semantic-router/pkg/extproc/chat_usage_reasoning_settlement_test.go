@@ -27,8 +27,8 @@ func TestReasoningOutsideCompletionIsSettled(t *testing.T) {
 	if usage.invalid {
 		t.Fatalf("settlement refused the usage: %s", usage.invalidReason)
 	}
-	if usage.promptTokens != 182 || usage.completionTokens != 8+320 || usage.totalTokens != 510 ||
-		usage.cachedPromptTokens != 128 {
+	if usage.promptTokens != 220 || usage.completionTokens != 16+224 || usage.totalTokens != 460 ||
+		usage.cachedPromptTokens != 0 {
 		t.Fatalf("settled usage = %+v", usage)
 	}
 }

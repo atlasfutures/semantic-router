@@ -1,11 +1,18 @@
-# Vertex AI OpenAI-compatible provider shapes
+# Vertex AI OpenAI-compatible provider captures
 
-Chat Completions responses from partner models served through Vertex AI's
-OpenAI-compatible endpoint. Each file reproduces the usage and metadata shape
-the provider sent. The ids, timestamps, content and counts are synthetic.
+Real responses from partner models served through Vertex AI's
+OpenAI-compatible Chat Completions endpoint, recorded 2026-11-24 (global
+location, HTTP 200, streamed with `stream_options.include_usage`). Response
+ids are replaced with `fixture-*`; everything else is byte-for-byte what the
+provider sent.
 
-| file | model family | mode | shape |
+| file | model | mode | usage recorded |
 |---|---|---|---|
-| `chat-response-grok.json` | xAI Grok | non-streamed | `reasoning_tokens` counted beside `completion_tokens`: total = prompt + completion + reasoning (182 + 8 + 320 = 510), cached 128; extra `usage` members `num_sources_used`, `cost_in_usd_ticks`, `extra_properties` |
-| `chat-stream-grok.sse` | xAI Grok | streamed | the same accounting on the final usage chunk (182 + 3 + 216 = 401) |
-| `chat-response-deepseek-flash.json` | DeepSeek | non-streamed | `metadata.weight_versions` is an array; `choices[].matched_stop`; `usage.extra_properties` |
+| `chat-response-grok.json` | `xai/grok-4.7` | non-streamed | 220 / 16, reasoning 224 counted beside completion: total 460 = 220 + 16 + 224, cached 0 |
+| `chat-stream-grok.sse` | `xai/grok-4.7` | streamed | 220 / 16, reasoning 172 beside completion: total 408, cached 128 |
+| `chat-response-deepseek-flash.json` | `deepseek-ai/deepseek-v4.1-flash-maas` | non-streamed | 18 / 17; `metadata.weight_versions` is an array of objects; `prompt_tokens_details` null |
+| `chat-stream-deepseek-flash.sse` | `deepseek-ai/deepseek-v4.1-flash-maas` | streamed | 18 / 14 |
+
+Both models also send `usage.extra_properties`; Grok sends
+`usage.cost_in_usd_ticks` and `usage.num_sources_used`. These have no
+protocol-neutral bucket and are dropped with a log line.
