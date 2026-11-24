@@ -135,6 +135,11 @@ func (service *raylineARCDecisionService) RouteDecision(
 		service.router.finalizeRaylineARCAbort(requestContext, failure)
 		return routerruntime.RouteDecision{}, prepareFailureError(failure)
 	}
+	// After preparation, so every lookup that uses an alias reaches its log
+	// line below (rayline_arc_plain_stand_in.go).
+	if request.Routing != nil && algorithm.RaylineARC != nil {
+		applyPlainAliases(request.Routing.ExecutionV2, plainAliasesOf(algorithm.RaylineARC.PolicyService))
+	}
 
 	// An ephemeral lookup minted its own encoder session and owns closing it,
 	// whatever happens next. Nothing else will: the ephemeral path prepares
@@ -175,6 +180,9 @@ func (service *raylineARCDecisionService) RouteDecision(
 	}
 
 	selected, err := service.selectWorker(ctx, algorithm, selectionContext, requestContext)
+	if request.Routing != nil {
+		logPlainAliases(request.Routing.ExecutionV2, selectionContext.RaylineARC.EpisodeIDHash, err)
+	}
 	if err != nil {
 		return routerruntime.RouteDecision{}, err
 	}
