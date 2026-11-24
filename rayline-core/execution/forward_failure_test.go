@@ -23,7 +23,7 @@ type forwardFixture struct {
 	prefix string   // the stream's opening events, ending with PARTIAL_ANSWER
 	fail   string   // the provider's in-stream error event
 	failed []string // the client's stream must carry one of these error events
-	done   string   // a success terminal the client must never see after a failure
+	done   []string // success terminals the client must never see after a failure
 	more   func(sequence int) string
 	json   string // a complete buffered answer
 }
@@ -39,7 +39,7 @@ var forwardFixtures = []forwardFixture{
 			sseFrame("content_block_delta", `{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"PARTIAL_ANSWER"}}`),
 		fail:   sseFrame("error", `{"type":"error","error":{"type":"overloaded_error","message":"mock provider stream failed"}}`),
 		failed: []string{"event: error\n"},
-		done:   "message_stop",
+		done:   []string{"message_stop"},
 		more: func(int) string {
 			return sseFrame("content_block_delta", `{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" MORE"}}`)
 		},
@@ -51,7 +51,7 @@ var forwardFixtures = []forwardFixture{
 		prefix: "data: {\"id\":\"chat1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"qwen-fixture\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"PARTIAL_ANSWER\"},\"finish_reason\":null}]}\n\n",
 		fail:   "data: {\"error\":{\"message\":\"mock provider stream failed\",\"type\":\"server_error\",\"param\":null,\"code\":\"provider_overloaded\"}}\n\n",
 		failed: []string{"data: {\"error\":"},
-		done:   `"finish_reason":"stop"`,
+		done:   []string{`"finish_reason":"stop"`, "[DONE]"},
 		more: func(int) string {
 			return "data: {\"id\":\"chat1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"qwen-fixture\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" MORE\"},\"finish_reason\":null}]}\n\n"
 		},
@@ -66,7 +66,7 @@ var forwardFixtures = []forwardFixture{
 			sseFrame("response.output_text.delta", `{"type":"response.output_text.delta","sequence_number":3,"output_index":0,"item_id":"msg_1","content_index":0,"delta":"PARTIAL_ANSWER"}`),
 		fail:   sseFrame("response.failed", `{"type":"response.failed","sequence_number":4,"response":{"id":"resp_1","object":"response","created_at":1,"model":"qwen-fixture","status":"failed","output":[],"error":{"code":"provider_overloaded","message":"mock provider stream failed"}}}`),
 		failed: []string{"event: response.failed\n", "event: error\n"},
-		done:   "response.completed",
+		done:   []string{"response.completed"},
 		more: func(sequence int) string {
 			return sseFrame("response.output_text.delta", fmt.Sprintf(`{"type":"response.output_text.delta","sequence_number":%d,"output_index":0,"item_id":"msg_1","content_index":0,"delta":" MORE"}`, sequence))
 		},
@@ -81,11 +81,18 @@ func forwardServer(t *testing.T, fixture forwardFixture, handler http.HandlerFun
 	return executorWithHTTPDecisions(t, onProtocol(t, testConfig(t, upstream.URL, false), fixture.wire), &decisionCapture{})
 }
 
-// A buffered answer whose upstream body failed (an error event in a stream
-// body) or ended early (a stream without its terminal event, or JSON short of
-// its Content-Length) reaches the client as a 502 without the partial text,
-// and commits nothing.
+// A buffered answer whose upstream body ended early (JSON short of its
+// Content-Length) reaches the client as a 502 without the partial text, and
+// commits nothing. A buffered request is never answered from an event stream:
+// a stream body, whether it carries an error event or ends before its
+// terminal event, is refused as an invalid body, so neither can become a
+// finished answer.
 func TestBufferedUpstreamFailureIsA502WithoutPartialText(t *testing.T) {
+	reasons := map[string]string{
+		"stream-error":     "upstream response body must be a JSON object",
+		"stream-truncated": "upstream response body must be a JSON object",
+		"json-truncated":   "selected endpoint response was incomplete",
+	}
 	for _, fixture := range forwardFixtures {
 		for _, shape := range []string{"stream-error", "stream-truncated", "json-truncated"} {
 			t.Run(fixture.path+"/"+shape, func(t *testing.T) {
@@ -104,7 +111,7 @@ func TestBufferedUpstreamFailureIsA502WithoutPartialText(t *testing.T) {
 					}
 				})
 				status, body := executeHTTP(t, core.URL, fixture.path, fmt.Sprintf(fixture.body, false), "buffered-"+shape)
-				if status != http.StatusBadGateway || strings.Contains(string(body), "PARTIAL_ANSWER") || !strings.Contains(string(body), `"error"`) {
+				if status != http.StatusBadGateway || strings.Contains(string(body), "PARTIAL_ANSWER") || !strings.Contains(string(body), reasons[shape]) {
 					t.Fatalf("a failed buffered upstream reached the client as %d: %s", status, body)
 				}
 				state, err := server.states.acquire(t.Context(), "buffered-"+shape, "main")
@@ -121,7 +128,8 @@ func TestBufferedUpstreamFailureIsA502WithoutPartialText(t *testing.T) {
 }
 
 // A streamed answer whose upstream failed or ended early ends with the
-// listener's error event, never with a success terminal.
+// listener's error event, never with a success terminal; a provider's error
+// reaches the client as that provider's error.
 func TestStreamedUpstreamFailureEndsWithAnError(t *testing.T) {
 	for _, fixture := range forwardFixtures {
 		for _, shape := range []string{"stream-error", "stream-truncated"} {
@@ -139,8 +147,14 @@ func TestStreamedUpstreamFailureEndsWithAnError(t *testing.T) {
 				for _, marker := range fixture.failed {
 					failed = failed || strings.Contains(text, marker)
 				}
-				if !strings.Contains(text, "PARTIAL_ANSWER") || !failed || strings.Contains(text, fixture.done) {
-					t.Fatalf("a failed stream did not end with an error: %s", text)
+				for _, marker := range fixture.done {
+					failed = failed && !strings.Contains(text, marker)
+				}
+				if shape == "stream-error" && !strings.Contains(text, "mock provider stream failed") {
+					failed = false
+				}
+				if !strings.Contains(text, "PARTIAL_ANSWER") || !failed {
+					t.Fatalf("a failed stream did not end with its error: %s", text)
 				}
 			})
 		}
@@ -206,8 +220,13 @@ func TestClientLeavingAStreamCancelsTheUpstream(t *testing.T) {
 				}
 				cancel()
 				_ = response.Body.Close()
-				if !<-cancelled {
-					t.Fatal("the upstream request outlived the client by 5s")
+				select {
+				case ok := <-cancelled:
+					if !ok {
+						t.Fatal("the upstream request outlived the client by 5s")
+					}
+				case <-time.After(10 * time.Second):
+					t.Fatal("the upstream handler never reported")
 				}
 				// The handler holds the branch until it returns.
 				state, err := server.states.acquire(t.Context(), session, "main")
@@ -228,12 +247,14 @@ func TestClientLeavingAStreamCancelsTheUpstream(t *testing.T) {
 func TestClientLeavingABufferedAnswerCancelsTheUpstream(t *testing.T) {
 	for _, fixture := range forwardFixtures {
 		t.Run(fixture.path, func(t *testing.T) {
+			started := make(chan struct{})
 			cancelled := make(chan bool, 1)
 			_, core := forwardServer(t, fixture, func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusOK)
 				_, _ = io.WriteString(w, fixture.json[:10])
 				w.(http.Flusher).Flush()
+				close(started)
 				select {
 				case <-r.Context().Done():
 					cancelled <- true
@@ -241,7 +262,7 @@ func TestClientLeavingABufferedAnswerCancelsTheUpstream(t *testing.T) {
 					cancelled <- false
 				}
 			})
-			ctx, cancel := context.WithTimeout(t.Context(), 300*time.Millisecond)
+			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			request, err := http.NewRequestWithContext(ctx, http.MethodPost, core.URL+fixture.path, strings.NewReader(fmt.Sprintf(fixture.body, false)))
 			if err != nil {
@@ -249,12 +270,30 @@ func TestClientLeavingABufferedAnswerCancelsTheUpstream(t *testing.T) {
 			}
 			request.Header.Set("Authorization", "Bearer "+testCoreToken)
 			request.Header.Set("X-Rayline-Session-Id", "leaving-buffered")
-			if response, err := http.DefaultClient.Do(request); err == nil {
-				_ = response.Body.Close()
-				t.Fatal("a stalled buffered answer returned before the client's deadline")
+			returned := make(chan error, 1)
+			go func() {
+				response, err := http.DefaultClient.Do(request)
+				if err == nil {
+					_ = response.Body.Close()
+				}
+				returned <- err
+			}()
+			select {
+			case <-started:
+			case <-time.After(10 * time.Second):
+				t.Fatal("the request never reached the upstream")
 			}
-			if !<-cancelled {
-				t.Fatal("the upstream request outlived the client by 5s")
+			cancel()
+			select {
+			case ok := <-cancelled:
+				if !ok {
+					t.Fatal("the upstream request outlived the client by 5s")
+				}
+			case <-time.After(10 * time.Second):
+				t.Fatal("the upstream handler never reported")
+			}
+			if err := <-returned; err == nil {
+				t.Fatal("a stalled buffered answer returned a response")
 			}
 		})
 	}
