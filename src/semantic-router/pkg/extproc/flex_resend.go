@@ -228,6 +228,7 @@ func (r *OpenAIRouter) buildResendCall(
 	vertexPath := &ext_proc.HeaderMutation{SetHeaders: state.setHeaders}
 	resetVertexRequestPath(vertexPath, dispatch, body)
 	state.setHeaders = vertexPath.SetHeaders
+	ownBeta := dispatchedAnthropicBeta(state.setHeaders)
 	declareAutoCacheBeta(&state.setHeaders, ctx)
 	target, headers, err := flexResendRequestTarget(dispatch, state.setHeaders, state.removeHeaders, ctx)
 	if err != nil {
@@ -238,6 +239,7 @@ func (r *OpenAIRouter) buildResendCall(
 		// call never carries the server-side fallback betas (ADR 0145).
 		stripServerSideFallbackBetaHeader(headers)
 	}
+	limitVertexAnthropicBetaHeader(headers, dispatch, ctx, ownBeta)
 	return &flexTwinCall{url: target, headers: headers, body: body}, ""
 }
 

@@ -63,7 +63,7 @@ func TestAdaptVertexMessagesRequest(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := adaptVertexMessagesRequest([]byte(tc.body), tc.dispatch)
+			got, _, err := adaptVertexMessagesRequest([]byte(tc.body), tc.dispatch)
 			if err != nil {
 				t.Fatalf("adaptVertexMessagesRequest: %v", err)
 			}
@@ -72,7 +72,7 @@ func TestAdaptVertexMessagesRequest(t *testing.T) {
 			}
 		})
 	}
-	if _, err := adaptVertexMessagesRequest([]byte(`[1]`), vertexMessages); err == nil {
+	if _, _, err := adaptVertexMessagesRequest([]byte(`[1]`), vertexMessages); err == nil {
 		t.Fatal("a non-object body was adapted; want error")
 	}
 }
@@ -247,7 +247,7 @@ func TestVertexMessagesOutboundModelSurvivesTheAdapter(t *testing.T) {
 		upstreamModel: "claude-x", targetFormat: llmprotocol.AnthropicMessagesV1,
 		profile: &config.ProviderProfile{Type: "vertex-ai", BaseURL: "https://vertex.example.com/v1/projects/p/locations/global"},
 	}
-	adapted, err := adaptVertexMessagesRequest([]byte(`{"model":"claude-x","messages":[]}`), dispatch)
+	adapted, _, err := adaptVertexMessagesRequest([]byte(`{"model":"claude-x","messages":[]}`), dispatch)
 	if err != nil {
 		t.Fatal(err)
 	}
