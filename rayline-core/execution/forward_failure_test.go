@@ -107,7 +107,8 @@ func TestBufferedUpstreamFailureIsA502WithoutPartialText(t *testing.T) {
 					case "json-truncated":
 						w.Header().Set("Content-Type", "application/json")
 						w.Header().Set("Content-Length", fmt.Sprint(len(fixture.json)))
-						_, _ = io.WriteString(w, fixture.json[:len(fixture.json)/2])
+						// Cut just past the partial text, short of Content-Length.
+						_, _ = io.WriteString(w, fixture.json[:strings.Index(fixture.json, "PARTIAL_ANSWER")+len("PARTIAL_ANSWER")])
 					}
 				})
 				status, body := executeHTTP(t, core.URL, fixture.path, fmt.Sprintf(fixture.body, false), "buffered-"+shape)
