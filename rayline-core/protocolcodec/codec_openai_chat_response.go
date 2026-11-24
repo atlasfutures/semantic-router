@@ -224,11 +224,13 @@ func decodeChatUsage(wire chatUsageWire) llmprotocol.Usage {
 		reasoning := wire.CompletionTokensDetails.ReasoningTokens
 		if chatReasoningOutsideCompletion(wire) {
 			// The provider counts reasoning beside completion_tokens, not
-			// inside it, and its total says so: every count is its own, and
-			// only the output total is the sum.
+			// inside it, and its total says so. Every count is its own,
+			// the output total included: it is total_tokens less
+			// prompt_tokens, both stated by the provider, so it is billed
+			// and settled as authoritative.
 			usage.OutputReasoning = authoritative(reasoning)
 			usage.OutputOther = authoritative(wire.CompletionTokens)
-			usage.OutputTotal = derived(wire.CompletionTokens + reasoning)
+			usage.OutputTotal = authoritative(wire.CompletionTokens + reasoning)
 		} else if reasoning >= 0 && reasoning <= wire.CompletionTokens {
 			usage.OutputReasoning = authoritative(reasoning)
 			usage.OutputOther = derived(wire.CompletionTokens - reasoning)

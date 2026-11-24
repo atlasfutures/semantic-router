@@ -34,7 +34,7 @@ func TestReasoningCountedOutsideCompletionIsReconciledByItsTotal(t *testing.T) {
 			value int64
 			from  llmprotocol.UsageProvenance
 		}{
-			"output total":     {usage.OutputTotal, 8 + 320, llmprotocol.UsageDerived},
+			"output total":     {usage.OutputTotal, 8 + 320, llmprotocol.UsageAuthoritative},
 			"output reasoning": {usage.OutputReasoning, 320, llmprotocol.UsageAuthoritative},
 			"output other":     {usage.OutputOther, 8, llmprotocol.UsageAuthoritative},
 			"total":            {usage.Total, 510, llmprotocol.UsageAuthoritative},
@@ -118,4 +118,31 @@ func vertexAnthropicUsageFromResponse(t *testing.T, body []byte) (armUsageWire, 
 		t.Fatalf("decode translated body: %v\n%s", err, result.Body)
 	}
 	return translated.Usage, result.Response
+}
+
+// A stream can report usage more than once. An early update with no
+// reasoning reads OpenAI's way, a later one beside completion_tokens: the
+// output total only grows and stays authoritative, so the merge accepts it.
+func TestReasoningOutsideCompletionAfterAnEarlierUsageUpdate(t *testing.T) {
+	stream := mustNewMatrixStream(t, NewBuiltinEngine(), llmprotocol.OpenAIChatV1, llmprotocol.AnthropicMessagesV1)
+	chunk := func(content, usage string) string {
+		return `data: {"id":"fixture-grok-stream","object":"chat.completion.chunk","created":1795540101,"model":"xai/grok-4.7",` +
+			`"choices":[{"index":0,"delta":{"content":"` + content + `"},"finish_reason":null}],"usage":` + usage + "}\n\n"
+	}
+	body := chunk("Hi", `{"prompt_tokens":10,"completion_tokens":0,"total_tokens":10,"completion_tokens_details":{"reasoning_tokens":0}}`) +
+		chunk(" there", `{"prompt_tokens":10,"completion_tokens":5,"total_tokens":35,"completion_tokens_details":{"reasoning_tokens":20}}`) +
+		`data: {"id":"fixture-grok-stream","object":"chat.completion.chunk","created":1795540101,"model":"xai/grok-4.7","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}` +
+		"\n\ndata: [DONE]\n\n"
+	frames, _, _, err := stream.Push([]byte(body))
+	if err != nil {
+		t.Fatalf("push: %v", err)
+	}
+	finalFrames, _, _, err := stream.Finalize(nil)
+	if err != nil {
+		t.Fatalf("finalize: %v", err)
+	}
+	var encoded bytes.Buffer
+	writeFrames(&encoded, frames)
+	writeFrames(&encoded, finalFrames)
+	assertArmUsage(t, messageDeltaUsage(t, "two usage updates", encoded.Bytes()), armUsage(10, 25, 0, 0, 20))
 }
