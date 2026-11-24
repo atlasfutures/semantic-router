@@ -34,7 +34,10 @@ import (
 // and runs. The score is borrowed from the "none" action; what executes is
 // exactly the plain action. An envelope that names the "none" action anywhere
 // is left as it is, and decides as without this stopgap. Each lookup that used
-// an alias logs rayline_arc_route_target_stand_in after its decision.
+// an alias logs rayline_arc_route_target_stand_in after its decision. A
+// /v1/report naming the plain action (the executor ran it after a tracked
+// lookup) is read as the stand-in too, so the turn is recorded on the action
+// this cell scores for it.
 //
 // Remove this file, its call sites and its tests once the serving package
 // binds the plain action itself: plainAliasesOf then finds nothing for that
@@ -121,6 +124,17 @@ func plainAliasesOfActions(actions map[string]config.RaylineARCPolicyActionV5, k
 		return nil
 	}
 	return aliases
+}
+
+// plainStandInOf is the action a report's action id is read as: the stand-in
+// of a plain action that has one on this cell, else the id itself. A report
+// names one action, so the lookup's rule for an envelope that also names the
+// stand-in has nothing to apply to.
+func plainStandInOf(policy *config.RaylineARCPolicyServiceConfig, actionID string) string {
+	if alias, ok := plainAliasesOf(policy)[actionID]; ok {
+		return alias.standInActionID
+	}
+	return actionID
 }
 
 // v5ActionID is a v5 action's identity: sha256 of the RFC 8785 form of

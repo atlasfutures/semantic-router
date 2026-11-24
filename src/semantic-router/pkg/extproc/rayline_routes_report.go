@@ -368,6 +368,9 @@ func (r *OpenAIRouter) handleRaylineReportAPI(body []byte, ctx *RequestContext) 
 	// The model is mapped before the switch is read, so a report is refused
 	// or accepted the same way whether episode writes are on or off.
 	scorer := newPolicyServiceScorer(r.Config, target)
+	// The plain action the executor ran is reported as offered; this cell
+	// scored it as its stand-in (rayline_arc_plain_stand_in.go).
+	report.actionID = plainStandInOf(arc.PolicyService, report.actionID)
 	candidates, refusal := scorer.reportCandidates(report)
 	if refusal != nil {
 		return r.createRaylineRoutesCodedError(ctx, refusal)
