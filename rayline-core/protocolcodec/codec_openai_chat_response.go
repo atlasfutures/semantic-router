@@ -3,6 +3,7 @@ package protocolcodec
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/atlasfutures/semantic-router/rayline-core/llmprotocol"
@@ -221,7 +222,18 @@ func decodeChatUsage(wire chatUsageWire) llmprotocol.Usage {
 	}
 	if wire.CompletionTokensDetails != nil {
 		reasoning := wire.CompletionTokensDetails.ReasoningTokens
-		if reasoning >= 0 && reasoning <= wire.CompletionTokens {
+		if chatReasoningOutsideCompletion(wire) {
+			// The provider counts reasoning beside completion_tokens, not
+			// inside it, and its total says so. The output total is
+			// total_tokens less prompt_tokens, both stated by the provider,
+			// so it is billed and settled as authoritative. The split keeps
+			// the provenance it has in the inclusive shape (reasoning
+			// stated, the rest derived), so a stream whose usage updates
+			// move between the two shapes never lowers its evidence.
+			usage.OutputReasoning = authoritative(reasoning)
+			usage.OutputOther = derived(wire.CompletionTokens)
+			usage.OutputTotal = authoritative(wire.CompletionTokens + reasoning)
+		} else if reasoning >= 0 && reasoning <= wire.CompletionTokens {
 			usage.OutputReasoning = authoritative(reasoning)
 			usage.OutputOther = derived(wire.CompletionTokens - reasoning)
 		} else {
@@ -229,6 +241,25 @@ func decodeChatUsage(wire chatUsageWire) llmprotocol.Usage {
 		}
 	}
 	return usage
+}
+
+// chatReasoningOutsideCompletion reports a usage object whose reasoning
+// tokens are counted beside completion_tokens rather than inside it, as xAI
+// counts them: total_tokens is prompt + completion + reasoning, and not
+// prompt + completion. Only the total decides it, so a provider that counts
+// reasoning inside completion_tokens, as OpenAI does, is never read this way,
+// and a usage object that matches neither reading is left to the totals
+// check.
+func chatReasoningOutsideCompletion(wire chatUsageWire) bool {
+	if wire.CompletionTokensDetails == nil {
+		return false
+	}
+	prompt, completion, reasoning := wire.PromptTokens, wire.CompletionTokens, wire.CompletionTokensDetails.ReasoningTokens
+	if prompt < 0 || completion < 0 || reasoning <= 0 ||
+		completion > math.MaxInt64-reasoning || prompt > math.MaxInt64-completion-reasoning {
+		return false
+	}
+	return wire.TotalTokens == prompt+completion+reasoning
 }
 
 func (OpenAIChatCodec) EncodeResponse(response llmprotocol.Response, envelope llmprotocol.Envelope, policy llmprotocol.Policy) ([]byte, llmprotocol.Diagnostics, error) {
