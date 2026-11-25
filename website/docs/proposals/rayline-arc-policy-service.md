@@ -619,6 +619,23 @@ session. It is exclusive with `replicas` and needs `modal_key_env` and
 - **Side calls.** A side call commits nothing: it decides on the episode's
   session when there is one and never records one. If it has to start its own,
   that session is ended once the call is done.
+- **Caller budget.** The Server's sessions are shared by every caller, so one
+  caller fanning out parallel requests (each a fork of a busy parent episode,
+  each starting a session) can exhaust them for everyone.
+  `sessions.max_new_sessions_per_caller` (0 or absent: off) bounds the new
+  sessions one caller opens in a rolling 10 minutes. The caller is the
+  gateway's opaque `x-rayline-caller` (a trusted turn-signal header, stripped
+  before dispatch); it is counted under a hash of its own in the episode
+  store's Redis (per process with the memory store). Only a turn whose episode
+  holds no session is counted: an existing session's turns, and a turn moving
+  off a lost session, never are. A turn past the budget is not refused: it is
+  decided one-shot (relaxed, as a side call is) on one overflow session the
+  router instance shares across all such turns, records no session, and is not
+  staged, so the episode's next turn starts or decides in full as any new
+  episode's does. A count the store cannot give fails open. Counted as
+  `llm_rayline_arc_policy_session_budget_total{outcome}` (`admitted`,
+  `over_budget_sessionless`, `redis_error`); each over-budget turn logs one
+  `rayline_arc_policy_session_over_budget` event without the caller.
 - **Readiness.** Every request to a sessioned Server needs a token, so the
   readiness check runs through a session of its own, which it ends. The start
   also warms a container, which a new deployment needs before it serves turns.

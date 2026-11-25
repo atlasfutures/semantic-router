@@ -190,6 +190,10 @@ type RaylineARCSelectionContext struct {
 	// that kind. Empty when the request was not classified ahead of selection.
 	PolicyCallKind       raylinearc.PolicyCallKind
 	PolicyCallKindSource string
+	// CallerKey is the hash the turn's caller is counted under for the cell's
+	// new policy-session budget (raylinearc.PolicySessionCallerKey of the
+	// gateway's x-rayline-caller); empty, the turn has no budget.
+	CallerKey string
 	// Fork is how the request was placed among its root episode's streams
 	// (rayline_arc_episode_forks.go): nil when fork detection did not run.
 	// A fork's EpisodeIDHash is its sibling's.

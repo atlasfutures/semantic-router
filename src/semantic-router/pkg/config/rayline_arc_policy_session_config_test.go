@@ -29,6 +29,9 @@ func TestRaylineARCPolicySessionsValidation(t *testing.T) {
 			Sessions: RaylineARCPolicySessionsConfig{Enabled: true},
 		}, "base_url and no replicas"},
 		{"start timeout too long", keyed(RaylineARCPolicySessionsConfig{Enabled: true, StartTimeoutSeconds: 300}), "start_timeout_seconds"},
+		{"caller budget", keyed(RaylineARCPolicySessionsConfig{Enabled: true, MaxNewSessionsPerCaller: 20}), ""},
+		{"caller budget without enabled", keyed(RaylineARCPolicySessionsConfig{MaxNewSessionsPerCaller: 20}), "require sessions.enabled"},
+		{"negative caller budget", keyed(RaylineARCPolicySessionsConfig{Enabled: true, MaxNewSessionsPerCaller: -1}), "max_new_sessions_per_caller"},
 		{"negative idle", keyed(RaylineARCPolicySessionsConfig{Enabled: true, IdleTimeoutSeconds: -1}), "idle_timeout_seconds"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -53,11 +56,11 @@ func TestRaylineARCPolicySessionsDefaultsAndYAML(t *testing.T) {
 base_url: https://policy.example.modal.direct
 modal_key_env: KEY
 modal_secret_env: SECRET
-sessions: {enabled: true}
+sessions: {enabled: true, max_new_sessions_per_caller: 20}
 `), &cfg); err != nil {
 		t.Fatal(err)
 	}
-	if err := validateRaylineARCPolicySessions(&cfg); err != nil || !cfg.Sessions.Enabled {
+	if err := validateRaylineARCPolicySessions(&cfg); err != nil || !cfg.Sessions.Enabled || cfg.Sessions.MaxNewSessionsPerCaller != 20 {
 		t.Fatalf("decoded %+v, err %v", cfg.Sessions, err)
 	}
 	if cfg.Sessions.EffectiveIdleTimeoutSeconds() != 900 || cfg.Sessions.EffectiveStartTimeoutSeconds() != 10 {
