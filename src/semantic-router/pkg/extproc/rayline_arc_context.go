@@ -335,6 +335,7 @@ func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 	result.PrivacyExcludedArms = privacyExcludedArms(reqCtx.RaylineARCPrivacyMode, reqCtx.RaylineARCPrivacyAllowedArms, modelRefs)
 	result.PrivacyMode = reqCtx.RaylineARCPrivacyMode
 	result.EphemeralTurn = raylineARCEphemeralTurn(reqCtx.RaylineARCPrivacyMode)
+	result.CallerKey = raylinearc.PolicySessionCallerKey(signalHeaders[raylineARCCallerHeader])
 	result.PrivacyExcludedArms, result.PrivacyArmEndpoints = r.withPrivacyEndpointConstraints(
 		result.PrivacyExcludedArms, reqCtx.RaylineARCPrivacyAllowedEndpoints, modelRefs, reqCtx.RaylineARCPrivacyMode,
 	)

@@ -508,6 +508,7 @@ func createRaylineARCPolicySelector(
 		policy:         client,
 		policyPool:     pool,
 		policySessions: sessions,
+		sessionBudget:  newPolicySessionBudget(policy, sessions, episodeStore),
 		prices:         newRoutingPriceCache(policy.RoutingPrices),
 	}
 	if armed.prices != nil {
@@ -1025,6 +1026,13 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	// one: a session it starts is ended once it is decided, never left to
 	// hold a container's session slot until Modal's idle timeout.
 	sessionBinding := armed.policySessionBindingFor(state, sideCall || arcContext.RoutesThrowaway, ephemeral)
+	// A turn that would open a new session counts against its caller's
+	// budget; past it, the turn is decided one-shot (relaxed) on the shared
+	// overflow session and opens none (rayline_arc_policy_session_budget.go).
+	if armed.sessionBudget.overBudget(ctx, arcContext, state, sessionBinding, ephemeral) {
+		sessionBinding = armed.policySessions.BindOverflow()
+		request.EpisodeMode = raylinearc.PolicyEpisodeModeRelaxed
+	}
 	if arcContext.RoutesLookupSession && armed.policySessions != nil {
 		// A lookup scope keeps one Modal session, pinned per scope, so each
 		// lookup reaches the container that holds its warm encoder session

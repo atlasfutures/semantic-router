@@ -10,6 +10,7 @@ const (
 	defaultRaylineARCPolicySessionStartSeconds = 10
 	maxRaylineARCPolicySessionIdleSeconds      = 24 * 60 * 60
 	maxRaylineARCPolicySessionStartSeconds     = 60
+	maxRaylineARCPolicySessionsPerCaller       = 100000
 )
 
 // RaylineARCPolicySessionsConfig selects a policy service deployed as a Modal
@@ -20,6 +21,12 @@ const (
 // calls base_url (or its replicas) as before.
 type RaylineARCPolicySessionsConfig struct {
 	Enabled bool `yaml:"enabled,omitempty"`
+	// MaxNewSessionsPerCaller bounds the new sessions one caller (the
+	// gateway's x-rayline-caller) may open in a rolling 10 minutes, counted
+	// in the episode store. A turn past it is decided one-shot on the cell's
+	// shared overflow session and opens none; a turn on a session its episode
+	// already holds is never counted. Zero or absent: no budget.
+	MaxNewSessionsPerCaller int `yaml:"max_new_sessions_per_caller,omitempty"`
 	// IdleTimeoutSeconds is how long Modal keeps a session without a request
 	// in flight; zero selects 900, the episode store's shipped idle TTL.
 	IdleTimeoutSeconds int `yaml:"idle_timeout_seconds,omitempty"`
@@ -53,7 +60,7 @@ func (cfg RaylineARCPolicySessionsConfig) EffectiveStartTimeoutSeconds() int {
 func validateRaylineARCPolicySessions(cfg *RaylineARCPolicyServiceConfig) error {
 	sessions := cfg.Sessions
 	if !sessions.Enabled {
-		if sessions.IdleTimeoutSeconds != 0 || sessions.StartTimeoutSeconds != 0 {
+		if sessions.IdleTimeoutSeconds != 0 || sessions.StartTimeoutSeconds != 0 || sessions.MaxNewSessionsPerCaller != 0 {
 			return fmt.Errorf("sessions settings require sessions.enabled")
 		}
 		return nil
@@ -69,6 +76,9 @@ func validateRaylineARCPolicySessions(cfg *RaylineARCPolicyServiceConfig) error 
 	}
 	if sessions.StartTimeoutSeconds < 0 || sessions.StartTimeoutSeconds > maxRaylineARCPolicySessionStartSeconds {
 		return fmt.Errorf("sessions.start_timeout_seconds must be between 1 and %d", maxRaylineARCPolicySessionStartSeconds)
+	}
+	if sessions.MaxNewSessionsPerCaller < 0 || sessions.MaxNewSessionsPerCaller > maxRaylineARCPolicySessionsPerCaller {
+		return fmt.Errorf("sessions.max_new_sessions_per_caller must be between 0 and %d", maxRaylineARCPolicySessionsPerCaller)
 	}
 	return nil
 }

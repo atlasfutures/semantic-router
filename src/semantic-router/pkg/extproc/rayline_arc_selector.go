@@ -141,6 +141,9 @@ type raylineARCArmedComponents struct {
 	// policySessions replaces policy when the cell decides through a Modal
 	// Server with sticky sessions: each episode decides on its session.
 	policySessions *raylinearc.PolicySessionBackend
+	// sessionBudget bounds the new policySessions each caller opens; nil
+	// without one (rayline_arc_policy_session_budget.go).
+	sessionBudget *policySessionBudget
 	// prices is the routing price cache, set only in the policy-service
 	// mode with routing_prices configured.
 	prices *raylinearc.RoutingPriceCache

@@ -58,6 +58,11 @@ const (
 	// request; absent or any other value leaves the cell's default
 	// (rayline_arc_refusal_reserve.go).
 	raylineARCRefusalFallbackHeader = "x-rayline-refusal-fallback"
+	// raylineARCCallerHeader is the gateway's opaque id of the caller (a
+	// hashed billing identity). The cell reads it only to count the new
+	// policy sessions each caller opens (rayline_arc_policy_session_budget.go),
+	// under a hash of its own; absent, the turn has no budget.
+	raylineARCCallerHeader = "x-rayline-caller"
 )
 
 // raylineARCRefusalFallbackOff reports the trusted opt-out.
@@ -94,7 +99,7 @@ func raylineARCTurnSignalHeadersForRemoval() []string {
 		raylineARCAgentKeySourceHeader, raylineARCParentSessionHeader, raylineARCParentAgentHeader,
 		raylineARCPrivacyModeHeader, raylineARCTrainingDataHeader, raylineARCExplorationTemperatureHeader,
 		raylineARCPrivacyAllowedArmsHeader, raylineARCPrivacyAllowedEndpointsHeader, raylineARCSessionKeyHeader,
-		raylineARCRefusalFallbackHeader,
+		raylineARCRefusalFallbackHeader, raylineARCCallerHeader,
 	}
 }
 

@@ -187,6 +187,9 @@ type PolicySessionBackend struct {
 	suspect *suspectSessions
 	// transportRetryBudget bounds a turn's move after a transport failure.
 	transportRetryBudget time.Duration
+	// overflow is the session shared by turns past their caller's
+	// new-session budget (policy_session_overflow.go).
+	overflow *policyOverflowSession
 }
 
 // suspectSessions remembers, by a hash of the token and until the session's
@@ -261,6 +264,7 @@ func NewPolicySessionBackend(client *PolicyServiceClient, config PolicySessionCo
 	return &PolicySessionBackend{
 		client: client, controlHTTP: noRedirectClient(client.http), config: config, now: time.Now, newKey: idempotencyKey,
 		suspect: newSuspectSessions(config.IdleTimeout, time.Now), transportRetryBudget: policySessionTransportRetryBudget,
+		overflow: newPolicyOverflowSession(),
 	}, nil
 }
 
@@ -467,6 +471,9 @@ type PolicySessionBinding struct {
 	backend   *PolicySessionBackend
 	persisted *PolicySession
 	ephemeral bool
+	// overflow routes the turn on the backend's shared overflow session
+	// (BindOverflow).
+	overflow bool
 	// holdUntilRelease keeps every started session, a stale one included,
 	// for ReleaseEpisode to reach before Release ends it (BindPrivate).
 	holdUntilRelease bool
@@ -496,6 +503,9 @@ func (binding *PolicySessionBinding) Decide(
 	ctx context.Context,
 	request PolicyDecisionRequest,
 ) (*PolicyDecisionResponse, error) {
+	if binding.overflow {
+		return binding.decideOverflow(ctx, request)
+	}
 	if binding.current == nil {
 		switch {
 		case binding.persisted != nil && binding.backend.suspect.has(*binding.persisted):
