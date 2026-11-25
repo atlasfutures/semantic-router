@@ -85,6 +85,24 @@ def test_append_passthrough_env_vars_includes_router_logging_settings(monkeypatc
     assert env_vars["SR_LOG_ENCODING"] == "console"
 
 
+def test_append_passthrough_env_vars_forwards_pickle_weights_opt_in(monkeypatch):
+    monkeypatch.setenv("SR_ALLOW_PTH_WEIGHTS", "1")
+
+    env_vars: dict[str, str] = {}
+    append_passthrough_env_vars(env_vars)
+
+    assert env_vars["SR_ALLOW_PTH_WEIGHTS"] == "1"
+
+
+def test_append_passthrough_env_vars_omits_unset_pickle_weights_opt_in(monkeypatch):
+    monkeypatch.delenv("SR_ALLOW_PTH_WEIGHTS", raising=False)
+
+    env_vars: dict[str, str] = {}
+    append_passthrough_env_vars(env_vars)
+
+    assert "SR_ALLOW_PTH_WEIGHTS" not in env_vars
+
+
 def test_append_passthrough_env_vars_includes_envoy_log_level_without_changing_router_level(
     monkeypatch,
 ):

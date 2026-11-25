@@ -76,6 +76,8 @@ PASSTHROUGH_ENV_RULES = (
     ("SR_LOG_ENCODING", False),
     ("SR_LOG_DEVELOPMENT", False),
     ("SR_LOG_ADD_CALLER", False),
+    # Opt-in for PyTorch pickle (pytorch_model.bin) weights in candle-binding.
+    ("SR_ALLOW_PTH_WEIGHTS", False),
     ("VLLM_SR_ENVOY_LOG_LEVEL", False),
 )
 
