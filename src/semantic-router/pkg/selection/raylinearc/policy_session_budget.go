@@ -133,7 +133,10 @@ func sessionStartMember(now time.Time) (string, error) {
 type MemoryPolicySessionBudget struct {
 	mu     sync.Mutex
 	starts map[string][]time.Time
-	now    func() time.Time
+	// swept is when callers with no start left in the window were last
+	// dropped; that sweep runs at most once a window.
+	swept time.Time
+	now   func() time.Time
 }
 
 // NewMemoryPolicySessionBudget is an empty process-local budget.
@@ -141,9 +144,10 @@ func NewMemoryPolicySessionBudget() *MemoryPolicySessionBudget {
 	return &MemoryPolicySessionBudget{starts: map[string][]time.Time{}, now: time.Now}
 }
 
-// AdmitPolicySessionStart counts in process; callers whose starts all fell
-// out of the window are dropped on the way, so the table stays bounded by the
-// callers active within one window.
+// AdmitPolicySessionStart counts in process. A check touches only its own
+// caller's starts (at most limit of them); callers whose starts all left the
+// window are dropped by a sweep at most once a window, so the table stays
+// bounded by the callers active within about two windows.
 func (budget *MemoryPolicySessionBudget) AdmitPolicySessionStart(
 	_ context.Context,
 	callerKey string,
@@ -157,22 +161,24 @@ func (budget *MemoryPolicySessionBudget) AdmitPolicySessionStart(
 	defer budget.mu.Unlock()
 	now := budget.now()
 	since := now.Add(-window)
-	for key, starts := range budget.starts {
-		kept := starts[:0]
-		for _, start := range starts {
-			if start.After(since) {
-				kept = append(kept, start)
+	if !budget.swept.After(since) {
+		for key, starts := range budget.starts {
+			if len(starts) == 0 || !starts[len(starts)-1].After(since) {
+				delete(budget.starts, key)
 			}
 		}
-		if len(kept) == 0 {
-			delete(budget.starts, key)
-		} else {
-			budget.starts[key] = kept
-		}
+		budget.swept = now
 	}
-	if len(budget.starts[callerKey]) >= limit {
+	starts := budget.starts[callerKey]
+	expired := 0
+	for expired < len(starts) && !starts[expired].After(since) {
+		expired++
+	}
+	starts = starts[expired:]
+	if len(starts) >= limit {
+		budget.starts[callerKey] = starts
 		return false, nil
 	}
-	budget.starts[callerKey] = append(budget.starts[callerKey], now)
+	budget.starts[callerKey] = append(starts, now)
 	return true, nil
 }
