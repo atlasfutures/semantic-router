@@ -21,7 +21,7 @@ rayline_arc_io = "rayline_arc_io:register_io_processor"
 test = [
     "httpx>=0.28,<1",
     "numpy>=2,<3",
-    "pytest>=8.3,<9",
+    "pytest>=8.3,<10",
     "ruff>=0.9,<1",
     "torch>=2.6,<3",
 ]
