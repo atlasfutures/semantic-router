@@ -70,6 +70,16 @@ updates:
         applies-to: security-updates
         patterns: ["*"]
 
+  - package-ecosystem: gomod
+    directory: /rayline-core
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0
+    groups:
+      rayline-core-go-security:
+        applies-to: security-updates
+        patterns: ["*"]
+
   - package-ecosystem: cargo
     directory: /candle-binding
     schedule:
