@@ -7,6 +7,7 @@ pub mod similarity;
 pub mod tokenization;
 pub mod tokenization_window;
 pub mod unified_error;
+pub mod weights;
 
 // Re-export main similarity functionality for backward compatibility
 pub use similarity::{normalize_l2, BertSimilarity};
@@ -43,3 +44,5 @@ pub mod similarity_test;
 pub mod tokenization_test;
 #[cfg(test)]
 pub mod unified_error_test;
+#[cfg(test)]
+pub mod weights_test;

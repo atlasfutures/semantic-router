@@ -83,7 +83,7 @@ impl TraditionalBertClassifier {
 
         // Load model weights
         let vb = if use_pth {
-            VarBuilder::from_pth(&weights_filename, DType::F32, &device)?
+            crate::core::weights::var_builder_from_pth(&weights_filename, DType::F32, &device)?
         } else {
             unsafe {
                 VarBuilder::from_mmaped_safetensors(
@@ -524,7 +524,7 @@ impl TraditionalBertTokenClassifier {
 
         // Load model weights
         let vb = if use_pth {
-            VarBuilder::from_pth(&weights_filename, DType::F32, &device)?
+            crate::core::weights::var_builder_from_pth(&weights_filename, DType::F32, &device)?
         } else {
             unsafe {
                 VarBuilder::from_mmaped_safetensors(
