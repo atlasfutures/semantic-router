@@ -18,24 +18,27 @@ type chatResponseWire struct {
 	// Provider names the upstream an aggregator routed the turn to. It is
 	// decoded so it stops counting as a dropped unknown member and can be
 	// named in Router telemetry. Encoding never sets it.
-	Provider          *string                   `json:"provider,omitempty"`
-	Metadata          map[string]string         `json:"metadata,omitempty"`
-	Moderation        json.RawMessage           `json:"moderation,omitempty"`
-	Error             *chatErrorWire            `json:"error,omitempty"`
-	ServiceTier       *chatServiceTierWire      `json:"service_tier,omitempty"`
-	SystemFingerprint *string                   `json:"system_fingerprint,omitempty"`
-	PromptLogprobs    *chatNullOnlyWire         `json:"prompt_logprobs,omitempty"`
-	PromptTokenIDs    []int64                   `json:"prompt_token_ids,omitempty"`
-	PromptText        *chatNullOnlyWire         `json:"prompt_text,omitempty"`
-	KVTransferParams  *chatKVTransferParamsWire `json:"kv_transfer_params,omitempty"`
-	ECTransferParams  *chatNullOnlyWire         `json:"ec_transfer_params,omitempty"`
-	Metrics           *chatNullOnlyWire         `json:"metrics,omitempty"`
-	DoRemoteDecode    *bool                     `json:"do_remote_decode,omitempty"`
-	DoRemotePrefill   *bool                     `json:"do_remote_prefill,omitempty"`
-	RemoteBlockIDs    []int64                   `json:"remote_block_ids,omitempty"`
-	RemoteEngineID    *string                   `json:"remote_engine_id,omitempty"`
-	RemoteHost        *string                   `json:"remote_host,omitempty"`
-	RemotePort        *int64                    `json:"remote_port,omitempty"`
+	Provider *string `json:"provider,omitempty"`
+	// Metadata is read only for its presence (it is request metadata, not
+	// model output), so a provider's value of any JSON type is accepted:
+	// some serving stacks report arrays here, such as weight_versions.
+	Metadata          map[string]json.RawMessage `json:"metadata,omitempty"`
+	Moderation        json.RawMessage            `json:"moderation,omitempty"`
+	Error             *chatErrorWire             `json:"error,omitempty"`
+	ServiceTier       *chatServiceTierWire       `json:"service_tier,omitempty"`
+	SystemFingerprint *string                    `json:"system_fingerprint,omitempty"`
+	PromptLogprobs    *chatNullOnlyWire          `json:"prompt_logprobs,omitempty"`
+	PromptTokenIDs    []int64                    `json:"prompt_token_ids,omitempty"`
+	PromptText        *chatNullOnlyWire          `json:"prompt_text,omitempty"`
+	KVTransferParams  *chatKVTransferParamsWire  `json:"kv_transfer_params,omitempty"`
+	ECTransferParams  *chatNullOnlyWire          `json:"ec_transfer_params,omitempty"`
+	Metrics           *chatNullOnlyWire          `json:"metrics,omitempty"`
+	DoRemoteDecode    *bool                      `json:"do_remote_decode,omitempty"`
+	DoRemotePrefill   *bool                      `json:"do_remote_prefill,omitempty"`
+	RemoteBlockIDs    []int64                    `json:"remote_block_ids,omitempty"`
+	RemoteEngineID    *string                    `json:"remote_engine_id,omitempty"`
+	RemoteHost        *string                    `json:"remote_host,omitempty"`
+	RemotePort        *int64                     `json:"remote_port,omitempty"`
 }
 
 // hasLegacyKVTransferMetadata recognizes the flat KV-transfer response
