@@ -34,7 +34,7 @@ require (
 	github.com/prometheus/client_model v0.6.2
 	github.com/qdrant/go-client v1.17.1
 	github.com/redis/go-redis/v9 v9.17.2
-	github.com/stretchr/testify v1.11.1
+	github.com/stretchr/testify v1.12.1
 	github.com/tidwall/gjson v1.18.0
 	github.com/tidwall/sjson v1.2.5
 	github.com/valkey-io/valkey-glide/go/v2 v2.6.1
@@ -42,11 +42,11 @@ require (
 	github.com/vllm-project/semantic-router/ml-binding v0.0.0-00010101000000-000000000000
 	github.com/vllm-project/semantic-router/nlp-binding v0.0.0-00010101000000-000000000000
 	github.com/vllm-project/semantic-router/openvino-binding v0.0.0-00010101000000-000000000000
-	go.opentelemetry.io/otel v1.45.0
-	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.34.0
+	go.opentelemetry.io/otel v1.47.0
+	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.45.0
 	go.opentelemetry.io/otel/exporters/stdout/stdouttrace v1.38.0
-	go.opentelemetry.io/otel/sdk v1.45.0
-	go.opentelemetry.io/otel/trace v1.45.0
+	go.opentelemetry.io/otel/sdk v1.47.0
+	go.opentelemetry.io/otel/trace v1.47.0
 	go.uber.org/zap v1.27.0
 	golang.org/x/net v0.63.0
 	golang.org/x/sync v0.25.0
@@ -74,6 +74,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.44.4 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sts v1.51.9 // indirect
 	github.com/aws/smithy-go v1.28.8 // indirect
+	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 )
 
 require (
@@ -131,13 +132,13 @@ require (
 	github.com/x448/float16 v0.8.4 // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
-	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.38.0 // indirect
-	go.opentelemetry.io/otel/metric v1.45.0 // indirect
+	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.45.0 // indirect
+	go.opentelemetry.io/otel/metric v1.47.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.11.0 // indirect
 	go.uber.org/automaxprocs v1.6.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.2 // indirect
-	go.yaml.in/yaml/v3 v3.0.4 // indirect
+	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/exp v0.0.0-20240719175910-8a7402abbf56 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
 	golang.org/x/term v0.48.0 // indirect
