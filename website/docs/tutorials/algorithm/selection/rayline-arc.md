@@ -293,9 +293,6 @@ ACL user. The router identity needs read-only access to the membership key;
 the controller identity needs membership CAS authority plus read/scan access
 to episode ownership fields.
 
-See [Rayline ARC Retained-Encoder Replica Contract](../../../../../tools/agent/docs/architecture/rayline-arc-replica-membership.md)
-for the full interaction, failure, observability, and rollout model.
-
 Modal proxy authentication is configured by environment-variable name, never
 by embedding credentials in YAML. Configure `modal_key_env` and
 `modal_secret_env` together for a protected Modal web endpoint, or omit both
