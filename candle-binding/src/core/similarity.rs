@@ -95,8 +95,11 @@ impl BertSimilarity {
 
                 // Try to get safetensors first, if that fails, fall back to pytorch_model.bin. This is for BAAI models
                 // create a special case for BAAI to download the correct weights to avoid downloading the wrong weights
-                let (weights, use_pth) = if model_id.starts_with("BAAI/") {
-                    // BAAI models typically use PyTorch model format
+                // BAAI models historically load pytorch_model.bin first. Keep that only when
+                // pickle weights are opted in; otherwise prefer safetensors like other repos.
+                let (weights, use_pth) = if model_id.starts_with("BAAI/")
+                    && crate::core::weights::pth_weights_allowed()
+                {
                     (api.get("pytorch_model.bin")?, true)
                 } else {
                     match api.get("model.safetensors") {
