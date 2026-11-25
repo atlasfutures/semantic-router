@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // ValidateModelPaths validates that all discovered paths contain valid model files.
@@ -82,5 +83,32 @@ func validateModelDirectory(path, modelName string) error {
 		return fmt.Errorf("%s model directory appears to be empty or invalid: %s", modelName, path)
 	}
 
-	return nil
+	return checkPickleOnlyWeights(path, modelName)
+}
+
+// allowPthWeightsEnv enables loading PyTorch pickle weights (pytorch_model.bin).
+// candle-binding enforces the same opt-in; see candle-binding/src/core/weights.rs.
+const allowPthWeightsEnv = "SR_ALLOW_PTH_WEIGHTS"
+
+func pthWeightsAllowed() bool {
+	v := strings.TrimSpace(os.Getenv(allowPthWeightsEnv))
+	return v == "1" || strings.EqualFold(v, "true")
+}
+
+// checkPickleOnlyWeights fails a model directory whose only weights are
+// pytorch_model.bin unless SR_ALLOW_PTH_WEIGHTS is set. The candle loaders
+// would refuse it at load time; this reports it at startup with the fix.
+func checkPickleOnlyWeights(path, modelName string) error {
+	if _, err := os.Stat(filepath.Join(path, "model.safetensors")); err == nil {
+		return nil
+	}
+	if _, err := os.Stat(filepath.Join(path, "pytorch_model.bin")); err != nil {
+		return nil
+	}
+	if pthWeightsAllowed() {
+		return nil
+	}
+	return fmt.Errorf("%s model at %s has only PyTorch pickle weights (pytorch_model.bin), "+
+		"which are disabled by default: convert them to model.safetensors or set %s=1",
+		modelName, path, allowPthWeightsEnv)
 }

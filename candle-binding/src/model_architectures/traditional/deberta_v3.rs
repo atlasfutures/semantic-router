@@ -233,7 +233,7 @@ impl DebertaV3Classifier {
 
         // Load model weights
         let vb = if use_pth {
-            VarBuilder::from_pth(&weights_path, DType::F32, &device)?
+            crate::core::weights::var_builder_from_pth(&weights_path, DType::F32, &device)?
         } else {
             unsafe {
                 VarBuilder::from_mmaped_safetensors(&[weights_path.clone()], DType::F32, &device)?

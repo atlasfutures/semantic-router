@@ -3,6 +3,7 @@ package classification
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -48,12 +49,12 @@ func createMockModelTree(t testing.TB, tempDir string) {
 	switch tb := t.(type) {
 	case *testing.T:
 		createMockModelFile(tb, modernbertDir, "config.json")
-		createMockModelFile(tb, intentDir, "pytorch_model.bin")
+		createMockModelFile(tb, intentDir, "model.safetensors")
 		createMockModelFile(tb, piiDir, "model.safetensors")
 		createMockModelFile(tb, securityDir, "config.json")
 	case *testing.B:
 		createMockModelFileForBench(tb, modernbertDir, "config.json")
-		createMockModelFileForBench(tb, intentDir, "pytorch_model.bin")
+		createMockModelFileForBench(tb, intentDir, "model.safetensors")
 		createMockModelFileForBench(tb, piiDir, "model.safetensors")
 		createMockModelFileForBench(tb, securityDir, "config.json")
 	}
@@ -115,7 +116,7 @@ func TestValidateModelPaths(t *testing.T) {
 	_ = os.MkdirAll(securityDir, 0o755)
 
 	createMockModelFile(t, modernbertDir, "config.json")
-	createMockModelFile(t, intentDir, "pytorch_model.bin")
+	createMockModelFile(t, intentDir, "model.safetensors")
 	createMockModelFile(t, piiDir, "model.safetensors")
 	createMockModelFile(t, securityDir, "tokenizer.json")
 
@@ -307,5 +308,47 @@ func BenchmarkAutoDiscoverModels(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, _ = AutoDiscoverModels(tempDir)
+	}
+}
+
+func TestValidateModelDirectoryPickleWeights(t *testing.T) {
+	tempDir := t.TempDir()
+	pickleOnly := filepath.Join(tempDir, "pickle-only")
+	both := filepath.Join(tempDir, "both")
+	_ = os.MkdirAll(pickleOnly, 0o755)
+	_ = os.MkdirAll(both, 0o755)
+	createMockModelFile(t, pickleOnly, "config.json")
+	createMockModelFile(t, pickleOnly, "pytorch_model.bin")
+	createMockModelFile(t, both, "pytorch_model.bin")
+	createMockModelFile(t, both, "model.safetensors")
+
+	tests := []struct {
+		name    string
+		env     string
+		dir     string
+		wantErr bool
+	}{
+		{name: "pickle-only refused by default", env: "", dir: pickleOnly, wantErr: true},
+		{name: "pickle-only refused for non-opt-in value", env: "yes", dir: pickleOnly, wantErr: true},
+		{name: "pickle-only allowed with opt-in 1", env: "1", dir: pickleOnly},
+		{name: "pickle-only allowed with opt-in true", env: "TRUE", dir: pickleOnly},
+		{name: "safetensors present is always fine", env: "", dir: both},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv(allowPthWeightsEnv, tt.env)
+			err := validateModelDirectory(tt.dir, "Intent classifier")
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("validateModelDirectory() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if err != nil {
+				for _, want := range []string{tt.dir, "pytorch_model.bin", "model.safetensors", allowPthWeightsEnv} {
+					if !strings.Contains(err.Error(), want) {
+						t.Errorf("error %q should mention %q", err, want)
+					}
+				}
+			}
+		})
 	}
 }

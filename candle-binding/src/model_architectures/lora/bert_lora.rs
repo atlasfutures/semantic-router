@@ -92,7 +92,7 @@ impl LoRABertClassifier {
 
         // Load base model weights
         let base_vb = if use_pth {
-            VarBuilder::from_pth(&weights_filename, DType::F32, &device)?
+            crate::core::weights::var_builder_from_pth(&weights_filename, DType::F32, &device)?
         } else {
             unsafe {
                 VarBuilder::from_mmaped_safetensors(
@@ -128,7 +128,7 @@ impl LoRABertClassifier {
                     )?
                 }
             } else {
-                VarBuilder::from_pth(lora_adapters_path, DType::F32, &device)?
+                crate::core::weights::var_builder_from_pth(lora_adapters_path, DType::F32, &device)?
             }
         } else {
             return Err(E::msg(format!(
@@ -524,7 +524,7 @@ impl HighPerformanceBertClassifier {
 
         // Create VarBuilder following old architecture pattern
         let vb = if use_pth {
-            VarBuilder::from_pth(&weights_path, DType::F32, &device)?
+            crate::core::weights::var_builder_from_pth(&weights_path, DType::F32, &device)?
         } else {
             unsafe { VarBuilder::from_mmaped_safetensors(&[weights_path], DType::F32, &device)? }
         };
@@ -680,7 +680,7 @@ impl HighPerformanceBertTokenClassifier {
 
         // Create VarBuilder following old architecture pattern
         let vb = if use_pth {
-            VarBuilder::from_pth(&weights_path, DType::F32, &device)?
+            crate::core::weights::var_builder_from_pth(&weights_path, DType::F32, &device)?
         } else {
             unsafe { VarBuilder::from_mmaped_safetensors(&[weights_path], DType::F32, &device)? }
         };
