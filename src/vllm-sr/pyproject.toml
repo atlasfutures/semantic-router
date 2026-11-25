@@ -62,3 +62,12 @@ include-package-data = false
 [tool.pytest.ini_options]
 addopts = ["-v"]
 testpaths = ["tests"]
+
+[tool.uv]
+# filelock GHSA-v4x8-3wr5-3wq8 affects >=3.20.4,<=4.2.0. The fix (4.2.1) needs
+# Python 3.11+, so Python 3.10 stays on 3.20.3, below the affected range. Both are exact
+# so the lock takes the first patched release, not the newest.
+constraint-dependencies = [
+    "filelock==4.2.1; python_version >= '3.11'",
+    "filelock==3.20.3; python_version < '3.11'",
+]
