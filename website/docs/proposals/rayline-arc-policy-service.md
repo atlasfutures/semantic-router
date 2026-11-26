@@ -601,9 +601,19 @@ session. It is exclusive with `replicas` and needs `modal_key_env` and
   an episode without one keeps its earlier bytes. The token is a credential:
   never logged.
 - **Start bound.** A start is bounded by `start_timeout_seconds` (10 by
-  default; Modal queues a start for capacity for minutes). A start that lapses
-  or is refused fails the turn as `policy_service_session_start` (public
-  class `unavailable`) and commits nothing.
+  default; Modal queues a start for capacity for minutes). A start that lapses,
+  fails in transport, or is answered 429 or 5xx is tried once more under a new
+  idempotency key, so Modal opens a new session, which a scale-up may place on
+  a ready container instead of one still booting; a start therefore waits at
+  most two start timeouts, and less when a lookup's deadline leaves too little
+  for the second (it is then skipped). Each retry is counted in
+  `llm_rayline_arc_policy_modal_session_start_retry_total` by cause and
+  outcome. A start that still fails, or is refused otherwise, fails the turn
+  as `policy_service_session_start` (public class `unavailable`) and commits
+  nothing.
+- **Admission.** A sessioned turn takes its `max_inflight_calls` slot around
+  each decide call only, never while it starts a session: a start waiting on
+  a booting container cannot shed other turns.
 - **Lost session.** Modal's 502 with an empty body (the token's container is
   gone) and its 404 `Unknown or expired session` never reached a container
   holding the episode, so the turn starts a new session and is retried there
