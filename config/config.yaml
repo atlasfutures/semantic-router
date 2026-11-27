@@ -214,6 +214,13 @@ providers:
       # (claude-haiku-5.5, claude-sonnet-5.5, claude-opus-5.5): their silence
       # is the thinking itself, which another host would only restart.
       host_retry: false
+      # Hold back the first head_retry_tokens completion tokens of a streamed
+      # turn, and re-send the turn once, unchanged, when the upstream stream
+      # ends without its terminal event inside that window and nothing has
+      # reached the client. Off by default; on, the window defaults to 8.
+      # Needs response_body_mode: FULL_DUPLEX_STREAMED.
+      head_retry: false
+      head_retry_tokens: 0
       backend_refs:
         - name: openrouter-standard
           base_url: https://openrouter.ai/api/v1

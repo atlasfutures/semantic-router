@@ -57,6 +57,8 @@ func applyCanonicalModelCardOverlay(cfg *RouterConfig, canonical *CanonicalConfi
 		params.FirstContentSec = model.FirstContentSec
 		params.IdleSec = model.IdleSec
 		params.HostRetry = copyBool(model.HostRetry)
+		params.HeadRetry = model.HeadRetry
+		params.HeadRetryTokens = model.HeadRetryTokens
 		cfg.ModelConfig[model.Name] = params
 	}
 }

@@ -40,3 +40,27 @@ func (c *RouterConfig) HostRetryForModel(modelName string) bool {
 	}
 	return c.ResponseStreamHostRetry
 }
+
+// DefaultStreamHeadRetryTokens is the window an arm's head_retry holds back
+// when it sets no head_retry_tokens of its own.
+const DefaultStreamHeadRetryTokens = 8
+
+// StreamHeadRetryTokensForModel is how many completion tokens of a streamed
+// turn on the arm are held back so that a stream the upstream ends early can
+// be re-sent once before any content reaches the client: the arm's own
+// head_retry_tokens, else DefaultStreamHeadRetryTokens, when its head_retry is
+// on. Zero means the arm holds nothing back, which is the default. It accepts
+// the names the other model lookups accept.
+func (c *RouterConfig) StreamHeadRetryTokensForModel(modelName string) int {
+	if c == nil {
+		return 0
+	}
+	params, found := c.resolveModelConfig(modelName)
+	if !found || !params.HeadRetry {
+		return 0
+	}
+	if params.HeadRetryTokens > 0 {
+		return params.HeadRetryTokens
+	}
+	return DefaultStreamHeadRetryTokens
+}

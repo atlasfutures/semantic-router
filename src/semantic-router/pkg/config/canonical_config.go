@@ -294,6 +294,9 @@ func validateCanonicalProviderModel(
 	if model.IdleSec < 0 {
 		return "", fmt.Errorf("providers.models[%s].idle_sec must not be negative", model.Name)
 	}
+	if model.HeadRetryTokens < 0 {
+		return "", fmt.Errorf("providers.models[%s].head_retry_tokens must not be negative", model.Name)
+	}
 	if err := validateCanonicalProviderModelMetadata(model); err != nil {
 		return "", err
 	}
