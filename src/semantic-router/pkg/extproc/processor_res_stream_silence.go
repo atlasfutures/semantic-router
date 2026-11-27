@@ -141,6 +141,9 @@ func streamContentEvent(eventType llmprotocol.EventType) bool {
 // silentStreamError is what the client is told, and what classes the turn a
 // timeout.
 func silentStreamError(ctx *RequestContext) *llmprotocol.ProtocolError {
+	if ctx != nil && ctx.HostRetry != nil && ctx.HostRetry.headRetried && ctx.HostRetry.failedClass != "" {
+		return headRetryFailedError(ctx.HostRetry.failedClass)
+	}
 	if ctx != nil && ctx.HostRetry != nil && ctx.HostRetry.failedClass != "" {
 		return reservedArmFailedError(ctx.HostRetry.failedClass)
 	}

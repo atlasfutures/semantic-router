@@ -92,6 +92,7 @@ func recordTurnFailureDetail(ctx *RequestContext, class, detail string, contentS
 		fields["policy_action_id"] = trace.PolicyActionID
 	}
 	addUpstreamErrorTextFields(fields, ctx.UpstreamErrorText)
+	addHeadRetryTurnFields(fields, ctx)
 	if stop := responseStopTelemetry(ctx); stop.known() {
 		fields["provider_stop_reason"] = stop.providerStop
 		fields["stop_details_type"] = stop.detailsType
