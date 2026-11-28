@@ -12,8 +12,12 @@ import (
 // saw it: whether the connection was reused and how long it sat idle, and
 // the client-side phases in milliseconds from the moment the request was
 // handed to the transport. DNS, connect and TLS are zero on a reused
-// connection. A phase that never happened reads zero.
+// connection. A phase that never happened reads zero. RequestBytes is the
+// length of the request body sent, and Proto the response's protocol
+// ("HTTP/1.1", "HTTP/2.0"), empty when no response was read.
 type PolicyHTTPTiming struct {
+	RequestBytes    int
+	Proto           string
 	Reused          bool
 	WasIdle         bool
 	IdleMillis      float64
@@ -96,6 +100,26 @@ func withPolicyHTTPTrace(ctx context.Context) (context.Context, *policyHTTPTrace
 		},
 	}
 	return httptrace.WithClientTrace(ctx, client), trace
+}
+
+// recordRequest notes the length of the body sent and recordProto the
+// protocol the response came back on; both are nil-safe.
+func (trace *policyHTTPTrace) recordRequest(requestBytes int) {
+	if trace == nil {
+		return
+	}
+	trace.mu.Lock()
+	trace.timing.RequestBytes = requestBytes
+	trace.mu.Unlock()
+}
+
+func (trace *policyHTTPTrace) recordProto(proto string) {
+	if trace == nil {
+		return
+	}
+	trace.mu.Lock()
+	trace.timing.Proto = proto
+	trace.mu.Unlock()
 }
 
 // snapshot is the exchange as recorded so far; nil-safe.

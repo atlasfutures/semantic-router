@@ -599,7 +599,8 @@ func (client *PolicyServiceClient) doTraced(
 	ctx, cancel := context.WithTimeout(ctx, client.config.TotalTimeout)
 	defer cancel()
 	ctx, trace := withPolicyHTTPTrace(ctx)
-	body, err := client.exchange(ctx, method, path, payload)
+	trace.recordRequest(len(payload))
+	body, err := client.exchange(ctx, method, path, payload, trace)
 	timing := trace.snapshot()
 	var failure *PolicyServiceError
 	if errors.As(err, &failure) {
@@ -613,6 +614,7 @@ func (client *PolicyServiceClient) exchange(
 	method string,
 	path string,
 	payload []byte,
+	trace *policyHTTPTrace,
 ) ([]byte, error) {
 	var reader io.Reader
 	if payload != nil {
@@ -640,6 +642,7 @@ func (client *PolicyServiceClient) exchange(
 		return nil, &PolicyServiceError{Class: "transport", Cause: client.transportCause(err)}
 	}
 	defer func() { _ = response.Body.Close() }()
+	trace.recordProto(response.Proto)
 	body, err := io.ReadAll(io.LimitReader(response.Body, maxPolicyServiceResponseBytes+1))
 	if err != nil {
 		return nil, &PolicyServiceError{Class: "transport", Status: response.StatusCode, Cause: client.transportCause(err)}

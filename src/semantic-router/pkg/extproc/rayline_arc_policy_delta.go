@@ -40,8 +40,9 @@ package extproc
 // sake.
 //
 // What a turn carries to the next is an allow-list: the staged entry holds
-// only the service's digest and count, VSR's own digest of the same
-// messages and the committed turn it belongs to. Every commit replaces it or
+// only the service's digest and count, VSR's own digests of the same
+// messages (and of the appended reply's parts) and the committed turn it
+// belongs to. Every commit replaces it or
 // drops it, so nothing outlives the turn that wrote it.
 
 import (
@@ -95,6 +96,11 @@ type policyStagedTurn struct {
 	// as the history's or the appended reply's.
 	appendedFrom  int
 	historyDigest string
+	// appendedShape is the appended reply's shape, read only to log which
+	// part of it an appended_mismatch echo differs in
+	// (rayline_arc_policy_delta_mismatch.go). It stays in this process: a
+	// turn hydrated from the shared record has none.
+	appendedShape *policyAppendedShape
 	// unsettled is an append VSR stopped waiting for (a timeout or a
 	// transport failure): the service may still hold the episode busy, so the
 	// next turn sends in full and retries session_busy one acquire timeout
@@ -688,6 +694,7 @@ func (transaction *raylineARCEpisodeTransaction) appendPolicyStagedTurn(parent c
 		digest:        policyDeltaDigest(messages, len(messages)),
 		appendedFrom:  len(staging.messages),
 		historyDigest: policyDeltaDigest(messages, len(staging.messages)),
+		appendedShape: policyAppendedShapeOf(assistant),
 	}
 	fields := map[string]interface{}{
 		"request_id": staging.requestID, "episode_id_hash": staging.episodeIDHash,

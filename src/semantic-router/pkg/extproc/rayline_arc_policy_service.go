@@ -1090,10 +1090,15 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 			mismatch = "none"
 		}
 		metrics.RecordRaylineARCPolicyStagedTurn(mismatch)
-		logging.ComponentEvent("extproc", "rayline_arc_policy_staged_turn", map[string]interface{}{
+		fields := map[string]interface{}{
 			"request_id": arcContext.RequestID, "episode_id_hash": arcContext.EpisodeIDHash,
 			"delta_mismatch_reason": mismatch,
-		})
+		}
+		if mismatch == "appended_mismatch" {
+			// Which part of the echoed reply differs, one of a fixed set.
+			fields["appended_mismatch_part"] = policyAppendedMismatchPart(scorer, arcContext.EpisodeIDHash, messages)
+		}
+		logging.ComponentEvent("extproc", "rayline_arc_policy_staged_turn", fields)
 	}
 	decisionMode := policyStagedFullMode(staging)
 	busyWait := scorer.busyWait
