@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 	"github.com/stretchr/testify/assert"
@@ -177,6 +178,34 @@ func TestHeadRetryReSendsACutInsideTheWindow(t *testing.T) {
 	assert.Nil(t, lines[1]["failure_class"])
 	event := findLogEvent(t, logs, "stream_head_retry")
 	assertFields(t, "retry event", event, map[string]interface{}{"buffered_tokens": 1, "window_tokens": 8})
+}
+
+// A head re-send is no host retry: a turn already past the host-retry
+// budget still gives it the full first-content limit, and it serves.
+func TestHeadRetryReSendIsNotBoundByTheHostRetryBudget(t *testing.T) {
+	upstream := newHeadUpstream(t, headChunk("gen-served", "served again")+headStop("gen-served"))
+	router := headRetryRouter(upstream.server.URL, true, 0)
+	router.Config.ResponseStreamHostRetryBudgetSec = 1
+	stream := NewMockStream(nil)
+
+	ctx, _ := routeFlexTurn(t, router, hostRetryArm, true)
+	// The cut call ran past the host-retry budget before it ended.
+	ctx.StartTime = ctx.StartTime.Add(-5 * time.Second)
+	ctx.ProcessingStartTime = ctx.StartTime
+	require.NoError(t, router.processResponseHeaders(NewMockStream(nil), flexUpstreamHeaders(http.StatusOK, "text/event-stream"), ctx))
+	require.NoError(t, router.handleProcessRequest(stream, fullDuplexResponseBodyRequest(headChunk("gen-cut", "Hi"), false), ctx))
+	require.NoError(t, router.handleProcessRequest(stream, fullDuplexResponseBodyRequest(openRouterKeepaliveChunk, true), ctx))
+	require.True(t, ctx.HostRetry.started(), "the early end was not re-sent")
+	_, capped := router.hostRetryBudgetLeft(ctx)
+	assert.False(t, capped, "the head re-send is bound by the host-retry budget")
+	assert.Equal(t, 90*time.Second, router.streamSilenceLimit(ctx))
+	drainSpliced(t, router, ctx, stream)
+
+	sent, ended := clientBytes(stream)
+	assert.True(t, ended)
+	assert.Contains(t, sent, "served again")
+	assert.Empty(t, ctx.ResponseFailureClass)
+	assert.Len(t, upstream.received(), 1)
 }
 
 // Past the window the held frames are sent, and a later cut is today's
