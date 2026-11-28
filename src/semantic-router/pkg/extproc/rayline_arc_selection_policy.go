@@ -271,7 +271,9 @@ func observeRaylineARCSelection(
 // addPolicyHTTPTimingFields puts the decide call's httptrace on the selection
 // log as numbers under policy_http_: whether the connection was reused and
 // was idle (0 or 1), how long it idled, and the client-side phases in
-// milliseconds. A decision with no traced call carries none.
+// milliseconds, beside the decide request body's length in bytes and the
+// response's HTTP protocol ("HTTP/1.1", "HTTP/2.0"; "" when no response was
+// read). A decision with no traced call carries none.
 func addPolicyHTTPTimingFields(fields map[string]interface{}, timing *raylinearc.PolicyHTTPTiming) {
 	if timing == nil {
 		return
@@ -291,4 +293,6 @@ func addPolicyHTTPTimingFields(fields map[string]interface{}, timing *raylinearc
 	fields["policy_http_tls_ms"] = timing.TLSMillis
 	fields["policy_http_wrote_request_ms"] = timing.WroteMillis
 	fields["policy_http_first_byte_ms"] = timing.FirstByteMillis
+	fields["policy_http_request_bytes"] = timing.RequestBytes
+	fields["policy_http_proto"] = timing.Proto
 }
