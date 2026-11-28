@@ -15,6 +15,7 @@ func TestRaylineARCSelectionLogCarriesThePolicyHTTPTiming(t *testing.T) {
 		SelectedArm:    0,
 		PolicyActionID: "action-0",
 		PolicyHTTP: &raylinearc.PolicyHTTPTiming{
+			RequestBytes: 4096, Proto: "HTTP/2.0",
 			Reused: true, WasIdle: true, IdleMillis: 1200,
 			GotConnMillis: 0.2, WroteMillis: 0.5, FirstByteMillis: 61,
 		},
@@ -31,6 +32,8 @@ func TestRaylineARCSelectionLogCarriesThePolicyHTTPTiming(t *testing.T) {
 		"policy_http_tls_ms":           0.0,
 		"policy_http_wrote_request_ms": 0.5,
 		"policy_http_first_byte_ms":    61.0,
+		"policy_http_request_bytes":    int64(4096),
+		"policy_http_proto":            "HTTP/2.0",
 	}
 	for key, value := range want {
 		if fields[key] != value {
@@ -58,6 +61,10 @@ func TestRaylineARCPolicySelectionCarriesTheDecideHTTPTiming(t *testing.T) {
 	timing := result.RaylineARC.PolicyHTTP
 	if timing == nil || timing.FirstByteMillis <= 0 {
 		t.Fatalf("selection trace PolicyHTTP = %+v, want the decide exchange's timing", timing)
+	}
+	bodies := fixture.fake.receivedBodies()
+	if timing.RequestBytes != len(bodies[len(bodies)-1]) || timing.Proto != "HTTP/1.1" {
+		t.Fatalf("request_bytes %d proto %q, want %d and HTTP/1.1", timing.RequestBytes, timing.Proto, len(bodies[len(bodies)-1]))
 	}
 }
 

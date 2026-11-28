@@ -540,6 +540,11 @@ func TestDeltaRefusedResendsInFull(t *testing.T) {
 			if second.RaylineARC.PolicyActionID != fixture.decided || second.RaylineARC.PolicyDecisionMode != policyDecisionModeSync {
 				t.Fatalf("turn 2 served %s (%s)", second.RaylineARC.PolicyActionID, second.RaylineARC.PolicyDecisionMode)
 			}
+			// The logged exchange is the full resend, not the refused delta.
+			bodies := fixture.fake.receivedBodies()
+			if timing := second.RaylineARC.PolicyHTTP; timing == nil || timing.RequestBytes != len(bodies[len(bodies)-1]) {
+				t.Fatalf("turn 2 PolicyHTTP %+v, want the full resend's %d bytes", timing, len(bodies[len(bodies)-1]))
+			}
 			complete(t, ctx, deltaReply(t))
 		})
 	}
