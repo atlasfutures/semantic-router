@@ -82,6 +82,14 @@ type CanonicalProviderModel struct {
 	// own (Claude's native thinking with display omitted streams nothing
 	// while it thinks) sets it false: another host would only think again.
 	HostRetry *bool `yaml:"host_retry,omitempty"`
+	// HeadRetry holds back the first HeadRetryTokens completion tokens of
+	// this arm's streamed turn, and re-sends the turn once, unchanged, when
+	// the upstream stream ends without its terminal event inside that window
+	// and nothing has reached the client yet. Off by default.
+	HeadRetry bool `yaml:"head_retry,omitempty"`
+	// HeadRetryTokens is the window HeadRetry holds back, in completion
+	// tokens. Absent or zero, DefaultStreamHeadRetryTokens.
+	HeadRetryTokens int `yaml:"head_retry_tokens,omitempty"`
 }
 
 // CanonicalReasoning either references one built-in family or defines the

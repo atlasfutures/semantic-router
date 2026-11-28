@@ -448,6 +448,10 @@ type ModelParams struct {
 	IdleSec int `yaml:"idle_sec,omitempty"`
 	// HostRetry is the arm's own host-retry switch; see HostRetryForModel.
 	HostRetry *bool `yaml:"host_retry,omitempty"`
+	// HeadRetry and HeadRetryTokens are the arm's streamed-head re-send; see
+	// StreamHeadRetryTokensForModel.
+	HeadRetry       bool `yaml:"head_retry,omitempty"`
+	HeadRetryTokens int  `yaml:"head_retry_tokens,omitempty"`
 }
 
 // EvidenceScore resolves a versioned static model index. Missing, failed, and

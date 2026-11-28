@@ -1864,6 +1864,10 @@ class Model(BaseModel):
     # Mirrors CanonicalProviderModel.HostRetry: the arm's own host-retry
     # switch; absent follows global response_stream.host_retry.
     host_retry: Optional[bool] = None
+    # Mirrors CanonicalProviderModel.HeadRetry and HeadRetryTokens: the arm's
+    # streamed-head re-send, off by default, and its window (0 or absent: 8).
+    head_retry: Optional[bool] = None
+    head_retry_tokens: Optional[int] = Field(default=None, ge=0)
 
     @model_validator(mode="before")
     @classmethod

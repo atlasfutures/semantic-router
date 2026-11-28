@@ -222,6 +222,16 @@ type llmUsageRecord struct {
 	// client. Null when the turn held nothing, and on the line of a call
 	// that was replaced.
 	StreamHoldMS *int64 `json:"stream_hold_ms"`
+	// HeadRetry marks the calls of a streamed turn whose upstream stream
+	// ended early inside its arm's head-retry window and was re-sent once
+	// (stream_head_retry.go): head_attempt on the call that was cut,
+	// head_retry on the re-send, which served the client whatever its
+	// outcome. HeadRetryTokens is the window, on every line of a turn that
+	// had one; HeadRetryBufferedTokens the completion tokens the cut call
+	// had produced, held from the client, when it ended. Null otherwise.
+	HeadRetry               *string `json:"head_retry"`
+	HeadRetryTokens         *int    `json:"head_retry_tokens"`
+	HeadRetryBufferedTokens *int    `json:"head_retry_buffered_tokens"`
 	// RefusalReserve marks the calls of a streamed ARC turn refused before
 	// any text or tool call and re-served in place on the policy's next
 	// choice (rayline_arc_refusal_reserve.go): refused_attempt on each
@@ -468,6 +478,7 @@ func (r *OpenAIRouter) newLLMUsageRecord(ctx *RequestContext, usage responseUsag
 	}
 	record.StreamHoldMS = streamHoldMillis(ctx)
 	addHostRetryFields(&record, ctx)
+	addHeadRetryFields(&record, ctx)
 	addRefusalReserveFields(&record, ctx)
 	addUsageRecordARCAttribution(&record, ctx)
 	return record
