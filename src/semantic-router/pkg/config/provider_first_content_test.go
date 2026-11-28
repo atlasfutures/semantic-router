@@ -169,3 +169,46 @@ func TestEndpointStreamResendLoadsAndIsOffByDefault(t *testing.T) {
 		t.Fatal("endpoint_stream_resend was dropped by the canonical export")
 	}
 }
+
+// An arm's head retry is off by default; on, it holds back the default
+// window unless the arm sets its own.
+func TestArmHeadRetryWindow(t *testing.T) {
+	cases := map[string]struct {
+		fields string
+		want   int
+	}{
+		"absent":           {"", 0},
+		"tokens alone":     {"      head_retry_tokens: 32\n", 0},
+		"on, default":      {"      head_retry: true\n", DefaultStreamHeadRetryTokens},
+		"on, arm override": {"      head_retry: true\n      head_retry_tokens: 32\n", 32},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			source := providerPreferencesConfigYAML(tc.fields)
+			parsed, err := ParseYAMLBytes([]byte(source))
+			if err != nil {
+				t.Fatalf("ParseYAMLBytes: %v", err)
+			}
+			if got := parsed.StreamHeadRetryTokensForModel("model-a"); got != tc.want {
+				t.Fatalf("window = %d, want %d", got, tc.want)
+			}
+			if got := parsed.StreamHeadRetryTokensForModel("another-model"); got != 0 {
+				t.Fatalf("an arm without head_retry has window %d", got)
+			}
+			var raw map[string]interface{}
+			if err := yamlv3.Unmarshal([]byte(source), &raw); err != nil {
+				t.Fatalf("unmarshal raw canonical config: %v", err)
+			}
+			if warnings := collectUnknownFields(raw, reflect.TypeOf(CanonicalConfig{})); len(warnings) != 0 {
+				t.Fatalf("the keys are not known canonical keys: %v", warnings)
+			}
+		})
+	}
+}
+
+func TestNegativeArmHeadRetryTokensIsRefused(t *testing.T) {
+	_, err := ParseYAMLBytes([]byte(providerPreferencesConfigYAML("      head_retry: true\n      head_retry_tokens: -1\n")))
+	if err == nil || !strings.Contains(err.Error(), "providers.models[model-a].head_retry_tokens") {
+		t.Fatalf("err = %v", err)
+	}
+}

@@ -160,6 +160,13 @@ func (r *OpenAIRouter) handleSemanticStreamingResponseBody(
 		if !cut && r.reserveRefusedTurn(ctx) {
 			return droppedHostChunk(ctx)
 		}
+		// Only the codec's finalize knows the stream ended without its
+		// terminal (a Chat stream completes there). Inside the head-retry
+		// window, with nothing of it sent, the re-send takes the turn over
+		// and the cut never reaches the client.
+		if !cut && r.retryStreamHead(ctx) {
+			return droppedHostChunk(ctx)
+		}
 		r.finalizeSemanticStreamingResponse(ctx, buffers.streamErr)
 		if cut {
 			releaseCutTurn(ctx)
@@ -766,7 +773,8 @@ func (r *OpenAIRouter) classStreamFailure(
 		if routerStreamCutCodes[inBand.Code] {
 			class = turnFailureTimeout
 		}
-		if plan := ctx.HostRetry; inBand.Code == reservedArmFailedCode && plan != nil && plan.failedClass != "" {
+		if plan := ctx.HostRetry; (inBand.Code == reservedArmFailedCode || inBand.Code == streamHeadRetryFailedCode) &&
+			plan != nil && plan.failedClass != "" {
 			class = plan.failedClass
 		}
 		recordTurnFailureDetail(ctx, class, codecStreamFailureDetail(inBand), sent)

@@ -483,6 +483,18 @@ global:
 
   The lasting fix for that silence is to request the thinking display as
   `summarized`, so the thinking streams as content.
+- A model may set `providers.models[].head_retry: true` to re-send a streamed
+  turn whose upstream stream ends without its terminal event (logged as
+  `stream_incomplete`) within its first `head_retry_tokens` completion tokens
+  (default 8). Until that many tokens have arrived, the Router holds the
+  stream's frames and sends SSE comments in their place; a stream that ends
+  cleanly sooner is sent whole. An early end while held is re-sent once with
+  the dispatched body unchanged, and the new call's stream reaches the client
+  on the same response. A cut after the window, or a cut of the re-send, ends
+  the turn as before. The cut call's `llm_usage` line carries
+  `head_retry: head_attempt`, the re-send's `head_retry: head_retry`, and
+  both carry `head_retry_tokens` and `head_retry_buffered_tokens`. It needs
+  `response_body_mode: FULL_DUPLEX_STREAMED`. Off by default.
 - `host_retry_budget_sec` caps the time a turn spends on host retries: a
   re-send waits for its first content only until the turn is that old, no
   further host is tried after that, and the turn ends as a first-content

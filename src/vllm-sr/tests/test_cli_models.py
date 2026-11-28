@@ -231,6 +231,20 @@ def test_arm_first_content_limit_and_host_retry_parse_beside_the_pin():
         UserConfig(**raw)
 
 
+def test_arm_head_retry_parses_beside_the_pin():
+    raw = _provider_model(order=["anthropic"], allow_fallbacks=False)
+    model = raw["providers"]["models"][0]
+    assert UserConfig(**raw).providers.models[0].head_retry is None
+    model["head_retry"] = True
+    model["head_retry_tokens"] = 32
+    config = UserConfig(**raw)
+    assert config.providers.models[0].head_retry is True
+    assert config.providers.models[0].head_retry_tokens == 32
+    model["head_retry_tokens"] = -1
+    with pytest.raises(ValueError):
+        UserConfig(**raw)
+
+
 def test_arm_idle_limit_parses_beside_the_first_content_limit():
     raw = _provider_model(order=["together"], allow_fallbacks=False)
     model = raw["providers"]["models"][0]

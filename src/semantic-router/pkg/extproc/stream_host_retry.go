@@ -132,6 +132,14 @@ type hostRetryPlan struct {
 	// (llm_usage stream_hold_ms).
 	holdStarted  time.Time
 	holdReleased time.Time
+	// headTokens is the arm's head-retry window (stream_head_retry.go): the
+	// completion tokens held back so a stream the upstream ends early can be
+	// re-sent once, unseen. Zero holds nothing back.
+	headTokens int
+	// headRetried says the head re-send was made; headBuffered is how many
+	// completion tokens the cut call had produced when it ended.
+	headRetried  bool
+	headBuffered int
 }
 
 type hostAttempt struct {
@@ -170,13 +178,24 @@ func (r *OpenAIRouter) stageHostRetry(ctx *RequestContext, dispatch *providerDis
 		return
 	}
 	ctx.HostRetry = nil
-	if r == nil || r.Config == nil || dispatch == nil || !r.Config.HostRetryForModel(dispatch.logicalModel) ||
+	if r == nil || r.Config == nil || dispatch == nil ||
 		ctx.LooperRequest || ctx.FlexResend != nil || !providerIsOpenRouter(dispatch.profile) {
 		return
 	}
-	hosts := pinnedHosts(body)
-	sameHost := len(hosts) == 1 && r.Config.ResponseStreamSingleHostResend
-	if len(hosts) < 2 && !sameHost {
+	var hosts []string
+	sameHost := false
+	if r.Config.HostRetryForModel(dispatch.logicalModel) {
+		hosts = pinnedHosts(body)
+		sameHost = len(hosts) == 1 && r.Config.ResponseStreamSingleHostResend
+		if len(hosts) < 2 && !sameHost {
+			hosts = nil
+		}
+	}
+	// An arm with a head-retry window gets a plan even when it has no host
+	// to move to: the plan carries the head re-send, and with no hosts it
+	// never re-sends on one.
+	headTokens := r.Config.StreamHeadRetryTokensForModel(dispatch.logicalModel)
+	if len(hosts) == 0 && headTokens == 0 {
 		return
 	}
 	ctx.HostRetry = &hostRetryPlan{
@@ -185,6 +204,7 @@ func (r *OpenAIRouter) stageHostRetry(ctx *RequestContext, dispatch *providerDis
 		hosts:      hosts,
 		attempts:   []hostAttempt{{started: ctx.StartTime}},
 		sameHost:   sameHost,
+		headTokens: headTokens,
 	}
 }
 
@@ -262,6 +282,10 @@ func (plan *hostRetryPlan) remaining() []string {
 // canReplace reports that the call in flight could still be replaced: by
 // another host, or once by its own when the plan is a same-host one.
 func (plan *hostRetryPlan) canReplace() bool {
+	if plan.headRetried {
+		// The head re-send was the turn's one re-send.
+		return false
+	}
 	if plan.sameHost {
 		return len(plan.attempts) == 1
 	}
@@ -297,6 +321,9 @@ func (r *OpenAIRouter) holdingForHostRetry(ctx *RequestContext) bool {
 	plan := ctx.HostRetry
 	if plan != nil && plan.endpoint != nil {
 		return r.holdingForEndpointResend(ctx)
+	}
+	if r.holdingStreamHead(ctx) {
+		return true
 	}
 	return plan != nil && !refusalReserveServing(ctx) && !plan.exposed && streamSilenceTimerArmed(ctx) && !ctx.StreamContentSeen &&
 		!ctx.StreamingComplete && r.streamSilenceLimit(ctx) > 0 && plan.canReplace()
@@ -507,7 +534,7 @@ func (r *OpenAIRouter) failHost(ctx *RequestContext, class, detail string) bool 
 		return true
 	}
 	plan.exhausted = true
-	if refusalReserveServing(ctx) {
+	if refusalReserveServing(ctx) || plan.headRetried {
 		plan.failedClass = class
 	}
 	return false
@@ -576,15 +603,27 @@ func mustMarshalStrings(values []string) json.RawMessage {
 // failed, so the turn's own failure state is left for the call that takes
 // over.
 func (r *OpenAIRouter) settleStalledHost(ctx *RequestContext, class, detail string, mark func(*llmUsageRecord)) {
-	latency := time.Duration(0)
-	if !ctx.StartTime.IsZero() {
-		latency = time.Since(ctx.StartTime)
-	}
 	// What the call stated before it stalled (Messages states its input
 	// usage at message_start) is kept; what it did not stays unknown.
 	usage := responseUsageMetrics{}
 	if ctx.SemanticStreamState != nil {
 		usage = partialStreamUsage(ctx.SemanticStreamState.usage)
+	}
+	r.settleReplacedCall(ctx, class, detail, usage, mark)
+}
+
+// settleReplacedCall writes the usage line of a call a re-send replaced
+// before any of its frames reached the client, with the usage it is settled
+// at.
+func (r *OpenAIRouter) settleReplacedCall(
+	ctx *RequestContext,
+	class, detail string,
+	usage responseUsageMetrics,
+	mark func(*llmUsageRecord),
+) {
+	latency := time.Duration(0)
+	if !ctx.StartTime.IsZero() {
+		latency = time.Since(ctx.StartTime)
 	}
 	record := r.newLLMUsageRecord(ctx, usage)
 	latencyMillis := latency.Milliseconds()
